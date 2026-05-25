@@ -1,7 +1,11 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+
+import {
+  motion,
+  AnimatePresence,
+} from "framer-motion"
 
 import {
   Menu,
@@ -82,8 +86,8 @@ export function Navigation() {
         opacity: 1,
       }}
       transition={{
-        duration: 1,
-        ease: "easeOut",
+        duration: 1.2,
+        ease: [0.22, 1, 0.36, 1],
       }}
       className="
         fixed
@@ -100,7 +104,7 @@ export function Navigation() {
       <div
         className={`
           relative
-          overflow-visible
+          overflow-hidden
           rounded-[30px]
           border
           border-white/10
@@ -110,25 +114,49 @@ export function Navigation() {
           ${
             isScrolled
               ? `
-                bg-black/70
-                backdrop-blur-3xl
-                shadow-[0_0_80px_rgba(0,255,255,0.05)]
+                bg-black/72
+                backdrop-blur-2xl
+                shadow-[0_10px_60px_rgba(0,0,0,0.45)]
               `
               : `
-                bg-black/40
-                backdrop-blur-2xl
+                bg-black/38
+                backdrop-blur-xl
               `
           }
         `}
       >
 
-        {/* GLOW */}
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-cyan-400/[0.04] via-transparent to-blue-500/[0.04]" />
+        {/* =========================================
+        SOFT LIGHT
+        ========================================= */}
 
-        {/* NOISE */}
-        <div className="pointer-events-none absolute inset-0 opacity-[0.02] bg-[url('/noise.png')]" />
+        <div
+          className="
+            pointer-events-none
+            absolute
+            inset-0
+            bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_60%)]
+          "
+        />
 
-        {/* MAIN NAV */}
+        {/* =========================================
+        NOISE
+        ========================================= */}
+
+        <div
+          className="
+            pointer-events-none
+            absolute
+            inset-0
+            opacity-[0.015]
+            bg-[url('/noise.png')]
+          "
+        />
+
+        {/* =========================================
+        MAIN NAV
+        ========================================= */}
+
         <div
           className="
             relative
@@ -143,7 +171,10 @@ export function Navigation() {
           "
         >
 
-          {/* LEFT */}
+          {/* =========================================
+          LEFT
+          ========================================= */}
+
           <div className="flex items-center gap-5">
 
             <Link
@@ -153,15 +184,33 @@ export function Navigation() {
 
               <motion.div
                 whileHover={{
-                  scale: 1.03,
+                  scale: 1.02,
                 }}
-                className="flex items-center gap-4"
+                transition={{
+                  duration: 0.3,
+                }}
+                className="
+                  flex
+                  items-center
+                  gap-4
+                "
               >
 
-                {/* LOGO */}
+                {/* =========================================
+                LOGO
+                ========================================= */}
+
                 <div className="relative">
 
-                  <div className="absolute inset-0 rounded-2xl bg-cyan-400/20 blur-2xl" />
+                  <div
+                    className="
+                      absolute
+                      inset-0
+                      rounded-2xl
+                      bg-white/[0.08]
+                      blur-xl
+                    "
+                  />
 
                   <div
                     className="
@@ -173,29 +222,39 @@ export function Navigation() {
                       justify-center
                       rounded-2xl
                       border
-                      border-cyan-400/20
-                      bg-gradient-to-br
-                      from-cyan-400
-                      to-blue-500
+                      border-white/10
+                      bg-white/[0.05]
+                      backdrop-blur-xl
                     "
                   >
 
-                    <span className="text-lg font-black text-white">
+                    <span
+                      className="
+                        text-lg
+                        font-black
+                        text-white
+                      "
+                    >
+
                       I
+
                     </span>
 
                   </div>
 
                 </div>
 
-                {/* TEXT */}
+                {/* =========================================
+                TEXT
+                ========================================= */}
+
                 <div className="hidden sm:block">
 
                   <h1
                     className="
                       text-[1.15rem]
                       font-black
-                      tracking-[-0.05em]
+                      tracking-[-0.045em]
                       text-white
                     "
                   >
@@ -209,8 +268,8 @@ export function Navigation() {
                       mt-1
                       text-[8px]
                       uppercase
-                      tracking-[0.28em]
-                      text-cyan-300
+                      tracking-[0.30em]
+                      text-white/45
                     "
                   >
 
@@ -226,10 +285,16 @@ export function Navigation() {
 
           </div>
 
-          {/* RIGHT */}
+          {/* =========================================
+          RIGHT
+          ========================================= */}
+
           <div className="flex items-center gap-3">
 
-            {/* IMNOVA LABS */}
+            {/* =========================================
+            IMNOVA LABS BUTTON
+            ========================================= */}
+
             <motion.button
               whileHover={{
                 scale: 1.02,
@@ -258,9 +323,9 @@ export function Navigation() {
                 backdrop-blur-xl
                 transition-all
                 duration-300
-                hover:border-cyan-400/20
-                hover:bg-white/[0.05]
-                hover:text-cyan-300
+                hover:border-white/20
+                hover:bg-white/[0.06]
+                hover:text-white
                 whitespace-nowrap
               "
             >
@@ -273,7 +338,10 @@ export function Navigation() {
 
             </motion.button>
 
-            {/* MENU */}
+            {/* =========================================
+            MENU BUTTON
+            ========================================= */}
+
             <motion.button
               whileHover={{
                 scale: 1.03,
@@ -297,8 +365,8 @@ export function Navigation() {
                 backdrop-blur-xl
                 transition-all
                 duration-300
-                hover:border-cyan-400/20
-                hover:bg-white/[0.05]
+                hover:border-white/20
+                hover:bg-white/[0.06]
               "
             >
 
@@ -329,7 +397,10 @@ export function Navigation() {
 
         </div>
 
-        {/* MOBILE MENU */}
+        {/* =========================================
+        MOBILE MENU
+        ========================================= */}
+
         <AnimatePresence>
 
           {isMenuOpen && (
@@ -338,18 +409,21 @@ export function Navigation() {
               initial={{
                 opacity: 0,
                 y: -20,
+                filter: "blur(10px)",
               }}
               animate={{
                 opacity: 1,
                 y: 0,
+                filter: "blur(0px)",
               }}
               exit={{
                 opacity: 0,
                 y: -20,
+                filter: "blur(10px)",
               }}
               transition={{
-                duration: 0.35,
-                ease: "easeOut",
+                duration: 0.45,
+                ease: [0.22, 1, 0.36, 1],
               }}
               className="
                 relative
@@ -363,7 +437,10 @@ export function Navigation() {
 
               <div className="grid gap-10 lg:grid-cols-2">
 
-                {/* LINKS */}
+                {/* =========================================
+                LINKS
+                ========================================= */}
+
                 <div className="flex flex-col gap-5">
 
                   {navItems.map(
@@ -391,17 +468,34 @@ export function Navigation() {
                           setIsMenuOpen(false)
                         }
                         className="
+                          group
+                          relative
+                          w-fit
                           text-[13px]
                           uppercase
                           tracking-[0.30em]
                           text-white/70
                           transition-all
                           duration-300
-                          hover:text-cyan-300
+                          hover:text-white
                         "
                       >
 
                         {item.name}
+
+                        <span
+                          className="
+                            absolute
+                            -bottom-1
+                            left-0
+                            h-px
+                            w-0
+                            bg-white/60
+                            transition-all
+                            duration-300
+                            group-hover:w-full
+                          "
+                        />
 
                       </Link>
 
@@ -411,7 +505,10 @@ export function Navigation() {
 
                 </div>
 
-                {/* STORE */}
+                {/* =========================================
+                STORE
+                ========================================= */}
+
                 <div className="flex flex-col gap-4">
 
                   <div
@@ -420,7 +517,7 @@ export function Navigation() {
                       text-[10px]
                       uppercase
                       tracking-[0.35em]
-                      text-cyan-300
+                      text-white/40
                     "
                   >
 
@@ -445,14 +542,14 @@ export function Navigation() {
                         text-white
                         transition-all
                         duration-300
-                        hover:border-cyan-400/20
-                        hover:bg-white/[0.05]
+                        hover:border-white/20
+                        hover:bg-white/[0.06]
                       "
                     >
 
                       <div className="flex items-center justify-between">
 
-                        <span>
+                        <span className="text-white/80">
                           {item.name}
                         </span>
 
@@ -461,6 +558,10 @@ export function Navigation() {
                             h-4
                             w-4
                             rotate-[-90deg]
+                            text-white/50
+                            transition-transform
+                            duration-300
+                            group-hover:translate-x-1
                           "
                         />
 

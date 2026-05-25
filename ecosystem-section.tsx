@@ -11,6 +11,8 @@ import {
   Package,
   ArrowUpRight,
   Timer,
+  TrendingUp,
+  Cpu,
 } from "lucide-react"
 
 import { products } from "@/data/products"
@@ -140,7 +142,7 @@ export function EcosystemSection() {
 
     if (distance <= 0) {
 
-      return "Revelación Disponible"
+      return "LIVE"
 
     }
 
@@ -198,7 +200,7 @@ export function EcosystemSection() {
   const metrics = [
     {
       label:
-        "Episodios Activos",
+        "Productos Activos",
 
       value:
         totalProducts,
@@ -209,7 +211,7 @@ export function EcosystemSection() {
 
     {
       label:
-        "Próximas Revelaciones",
+        "Próximos Lanzamientos",
 
       value:
         launchReady,
@@ -253,22 +255,34 @@ export function EcosystemSection() {
       "
     >
 
-      {/* BACKGROUND */}
+      {/* =========================================
+      BACKGROUND
+      ========================================= */}
 
-      <div className="absolute inset-0 bg-gradient-to-b from-background to-secondary/20" />
+      <div className="absolute inset-0 bg-black" />
 
       <div
         className="
           absolute
           top-1/2
           left-1/2
-          h-[800px]
-          w-[800px]
+          h-[900px]
+          w-[900px]
           -translate-x-1/2
           -translate-y-1/2
           rounded-full
-          bg-primary/5
-          blur-[150px]
+          bg-white/[0.03]
+          blur-[180px]
+        "
+      />
+
+      <div
+        className="
+          absolute
+          inset-0
+          opacity-[0.015]
+          bg-[linear-gradient(rgba(255,255,255,0.10)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.10)_1px,transparent_1px)]
+          bg-[size:140px_140px]
         "
       />
 
@@ -282,7 +296,9 @@ export function EcosystemSection() {
         "
       >
 
-        {/* HEADER */}
+        {/* =========================================
+        HEADER
+        ========================================= */}
 
         <motion.div
           initial={{
@@ -298,10 +314,10 @@ export function EcosystemSection() {
               : {}
           }
           transition={{
-            duration: 0.8,
+            duration: 1,
           }}
           className="
-            mb-20
+            mb-24
             text-center
           "
         >
@@ -310,42 +326,44 @@ export function EcosystemSection() {
             className="
               inline-flex
               items-center
-              gap-2
+              gap-3
               rounded-full
               border
-              border-cyan-400/20
-              bg-cyan-400/10
-              px-4
-              py-2
-              text-xs
+              border-white/10
+              bg-white/[0.03]
+              px-5
+              py-3
+              text-[10px]
               uppercase
-              tracking-[0.3em]
-              text-cyan-300
+              tracking-[0.35em]
+              text-white/60
+              backdrop-blur-md
             "
           >
 
-            TEMPORADA 01™
+            <Cpu className="h-4 w-4" />
+
+            AI ECOSYSTEM • SEASON 01
 
           </span>
 
           <h2
             className="
-              mt-8
-              text-4xl
+              mx-auto
+              mt-10
+              max-w-5xl
+              text-5xl
               font-black
+              leading-[0.95]
+              tracking-[-0.05em]
               text-white
-              sm:text-5xl
-              lg:text-6xl
+              sm:text-6xl
+              lg:text-7xl
             "
           >
 
-            EL FUTURO DE LA
-
-            <span className="text-cyan-400">
-
-              {" "}NUTRICIÓN
-
-            </span>
+            El Ecosistema de
+            Innovación del Futuro
 
           </h2>
 
@@ -356,18 +374,21 @@ export function EcosystemSection() {
               max-w-3xl
               text-lg
               leading-relaxed
-              text-zinc-400
+              text-white/55
             "
           >
 
-            Una nueva generación de innovación
-            desarrollada en tiempo real por IMNOVA™.
+            Un sistema operativo de productos,
+            nutrición y tecnología diseñado para
+            evolucionar en tiempo real.
 
           </p>
 
         </motion.div>
 
-        {/* METRICS */}
+        {/* =========================================
+        METRICS
+        ========================================= */}
 
         <div
           className="
@@ -378,7 +399,7 @@ export function EcosystemSection() {
           "
         >
 
-          {metrics.map((metric) => (
+          {metrics.map((metric, index) => (
 
             <motion.div
               key={metric.label}
@@ -395,20 +416,42 @@ export function EcosystemSection() {
                   : {}
               }
               transition={{
-                duration: 0.6,
+                duration: 0.7,
+                delay: index * 0.05,
               }}
               className="
-                rounded-[30px]
+                group
+                relative
+                overflow-hidden
+                rounded-[32px]
                 border
                 border-white/10
                 bg-white/[0.03]
-                p-7
-                backdrop-blur-2xl
+                p-8
+                backdrop-blur-md
+                transition-all
+                duration-500
+                hover:-translate-y-1
+                hover:border-white/20
+                hover:bg-white/[0.05]
               "
             >
 
+              {/* LIGHT */}
+
               <div
                 className="
+                  pointer-events-none
+                  absolute
+                  inset-0
+                  bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_60%)]
+                "
+              />
+
+              <div
+                className="
+                  relative
+                  z-10
                   flex
                   items-center
                   justify-between
@@ -419,10 +462,10 @@ export function EcosystemSection() {
 
                   <p
                     className="
-                      text-sm
+                      text-[10px]
                       uppercase
-                      tracking-[0.25em]
-                      text-zinc-500
+                      tracking-[0.35em]
+                      text-white/35
                     "
                   >
 
@@ -432,9 +475,10 @@ export function EcosystemSection() {
 
                   <h3
                     className="
-                      mt-4
-                      text-5xl
+                      mt-5
+                      text-6xl
                       font-black
+                      tracking-[-0.06em]
                       text-white
                     "
                   >
@@ -442,6 +486,24 @@ export function EcosystemSection() {
                     {metric.value}
 
                   </h3>
+
+                  <div
+                    className="
+                      mt-5
+                      flex
+                      items-center
+                      gap-2
+                      text-white/40
+                    "
+                  >
+
+                    <TrendingUp className="h-4 w-4" />
+
+                    <span className="text-sm">
+                      Sistema Activo
+                    </span>
+
+                  </div>
 
                 </div>
 
@@ -453,15 +515,17 @@ export function EcosystemSection() {
                     items-center
                     justify-center
                     rounded-2xl
-                    bg-cyan-400/10
+                    border
+                    border-white/10
+                    bg-white/[0.03]
                   "
                 >
 
                   <metric.icon
                     className="
-                      h-8
-                      w-8
-                      text-cyan-300
+                      h-7
+                      w-7
+                      text-white/70
                     "
                   />
 
@@ -475,24 +539,26 @@ export function EcosystemSection() {
 
         </div>
 
-        {/* PRODUCTS */}
+        {/* =========================================
+        PRODUCTS
+        ========================================= */}
 
         <div
           className="
-            mt-16
+            mt-20
             grid
             gap-8
             lg:grid-cols-2
           "
         >
 
-          {liveProducts.map((product) => (
+          {liveProducts.map((product, index) => (
 
             <motion.div
               key={product.id}
               initial={{
                 opacity: 0,
-                y: 40,
+                y: 50,
               }}
               animate={
                 isInView
@@ -503,217 +569,220 @@ export function EcosystemSection() {
                   : {}
               }
               transition={{
-                duration: 0.6,
+                duration: 0.7,
+                delay: index * 0.08,
               }}
-              className={`
+              className="
+                group
                 relative
                 overflow-hidden
                 rounded-[36px]
                 border
-                ${product.theme.border}
+                border-white/10
                 bg-white/[0.03]
                 p-8
-                backdrop-blur-2xl
-              `}
+                backdrop-blur-md
+                transition-all
+                duration-500
+                hover:-translate-y-1
+                hover:border-white/20
+                hover:bg-white/[0.05]
+              "
             >
 
+              {/* =========================================
+              LIGHTING
+              ========================================= */}
+
               <div
-                className={`
+                className="
+                  pointer-events-none
                   absolute
                   inset-0
-                  bg-gradient-to-br
-                  ${product.theme.glow}
-                  opacity-[0.03]
-                `}
+                  bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_60%)]
+                "
               />
 
               <div className="relative z-10">
 
-                <div
-                  className={`
-                    inline-flex
-                    rounded-full
-                    border
-                    ${product.theme.border}
-                    ${product.theme.bg}
-                    px-4
-                    py-2
-                    text-xs
-                    uppercase
-                    tracking-[0.3em]
-                    ${product.theme.text}
-                  `}
-                >
-
-                  {product.category}
-
-                </div>
-
-                <div className="mt-6">
-
-                  <p
-                    className="
-                      text-xs
-                      uppercase
-                      tracking-[0.3em]
-                      text-zinc-500
-                    "
-                  >
-
-                    EPISODIO 0{product.id}
-
-                  </p>
-
-                  <h3
-                    className="
-                      mt-3
-                      flex
-                      items-center
-                      gap-2
-                      text-4xl
-                      font-black
-                      text-white
-                    "
-                  >
-
-                    {product.name}
-
-                    <ArrowUpRight
-                      className="
-                        h-5
-                        w-5
-                        text-cyan-300
-                      "
-                    />
-
-                  </h3>
-
-                </div>
-
-                <p
-                  className="
-                    mt-4
-                    text-zinc-400
-                    leading-relaxed
-                  "
-                >
-
-                  {product.phase}
-
-                </p>
+                {/* =========================================
+                TOP
+                ========================================= */}
 
                 <div
                   className="
-                    mt-8
                     flex
-                    items-center
+                    items-start
                     justify-between
+                    gap-6
                   "
                 >
 
                   <div>
 
-                    <p
+                    <div
                       className="
-                        text-xs
+                        inline-flex
+                        items-center
+                        gap-2
+                        rounded-full
+                        border
+                        border-white/10
+                        bg-white/[0.03]
+                        px-4
+                        py-2
+                        text-[10px]
                         uppercase
-                        tracking-[0.25em]
-                        text-zinc-500
+                        tracking-[0.35em]
+                        text-white/50
                       "
                     >
 
-                      Estado Público
+                      <div className="h-2 w-2 rounded-full bg-green-400" />
 
-                    </p>
+                      LIVE SYSTEM
 
-                    <p
-                      className={`
-                        mt-3
-                        text-lg
-                        font-bold
-                        ${product.theme.text}
-                      `}
+                    </div>
+
+                    <h3
+                      className="
+                        mt-6
+                        text-4xl
+                        font-black
+                        tracking-[-0.05em]
+                        text-white
+                      "
                     >
 
-                      {product.status}
+                      {product.name}
+
+                    </h3>
+
+                    <p
+                      className="
+                        mt-4
+                        max-w-xl
+                        leading-relaxed
+                        text-white/55
+                      "
+                    >
+
+                      {product.phase}
 
                     </p>
 
                   </div>
 
-                  <div className="text-right">
-
-                    <p
-                      className="
-                        text-xs
-                        uppercase
-                        tracking-[0.25em]
-                        text-zinc-500
-                      "
-                    >
-
-                      Desarrollo
-
-                    </p>
-
-                    <p
-                      className={`
-                        mt-3
-                        text-lg
-                        font-bold
-                        ${product.theme.text}
-                      `}
-                    >
-
-                      {product.progress}%
-
-                    </p>
-
-                  </div>
-
-                </div>
-
-                <div
-                  className="
-                    mt-6
-                    h-3
-                    overflow-hidden
-                    rounded-full
-                    bg-white/10
-                  "
-                >
-
-                  <motion.div
-                    initial={{
-                      width: 0,
-                    }}
-                    animate={{
-                      width:
-                        `${product.progress}%`,
-                    }}
-                    transition={{
-                      duration: 1,
-                    }}
-                    className={`
-                      h-full
-                      rounded-full
-                      bg-gradient-to-r
-                      ${product.theme.glow}
-                    `}
+                  <ArrowUpRight
+                    className="
+                      h-6
+                      w-6
+                      text-white/30
+                      transition-all
+                      duration-300
+                      group-hover:translate-x-1
+                      group-hover:-translate-y-1
+                    "
                   />
 
                 </div>
 
+                {/* =========================================
+                STATS
+                ========================================= */}
+
                 <div
                   className="
-                    mt-8
-                    rounded-3xl
-                    border
-                    border-cyan-400/10
-                    bg-cyan-400/[0.04]
-                    p-5
+                    mt-10
+                    grid
+                    grid-cols-2
+                    gap-5
                   "
                 >
+
+                  <div
+                    className="
+                      rounded-[28px]
+                      border
+                      border-white/10
+                      bg-white/[0.03]
+                      p-5
+                    "
+                  >
+
+                    <div
+                      className="
+                        text-[10px]
+                        uppercase
+                        tracking-[0.35em]
+                        text-white/35
+                      "
+                    >
+
+                      STATUS
+
+                    </div>
+
+                    <div
+                      className="
+                        mt-4
+                        text-lg
+                        font-semibold
+                        text-white
+                      "
+                    >
+
+                      {product.status}
+
+                    </div>
+
+                  </div>
+
+                  <div
+                    className="
+                      rounded-[28px]
+                      border
+                      border-white/10
+                      bg-white/[0.03]
+                      p-5
+                    "
+                  >
+
+                    <div
+                      className="
+                        text-[10px]
+                        uppercase
+                        tracking-[0.35em]
+                        text-white/35
+                      "
+                    >
+
+                      DESARROLLO
+
+                    </div>
+
+                    <div
+                      className="
+                        mt-4
+                        text-lg
+                        font-semibold
+                        text-white
+                      "
+                    >
+
+                      {product.progress}%
+
+                    </div>
+
+                  </div>
+
+                </div>
+
+                {/* =========================================
+                PROGRESS
+                ========================================= */}
+
+                <div className="mt-10">
 
                   <div
                     className="
@@ -723,25 +792,108 @@ export function EcosystemSection() {
                     "
                   >
 
+                    <span
+                      className="
+                        text-[10px]
+                        uppercase
+                        tracking-[0.35em]
+                        text-white/35
+                      "
+                    >
+
+                      AI PROGRESS
+
+                    </span>
+
+                    <span
+                      className="
+                        text-sm
+                        text-white/45
+                      "
+                    >
+
+                      {product.progress}% synced
+
+                    </span>
+
+                  </div>
+
+                  <div
+                    className="
+                      mt-4
+                      h-[8px]
+                      overflow-hidden
+                      rounded-full
+                      bg-white/5
+                    "
+                  >
+
+                    <motion.div
+                      initial={{
+                        width: 0,
+                      }}
+                      animate={{
+                        width:
+                          `${product.progress}%`,
+                      }}
+                      transition={{
+                        duration: 1.2,
+                      }}
+                      className="
+                        h-full
+                        rounded-full
+                        bg-white/70
+                      "
+                    />
+
+                  </div>
+
+                </div>
+
+                {/* =========================================
+                REVEAL SECTION
+                ========================================= */}
+
+                <div
+                  className="
+                    mt-10
+                    rounded-[28px]
+                    border
+                    border-white/10
+                    bg-white/[0.03]
+                    p-6
+                  "
+                >
+
+                  <div
+                    className="
+                      flex
+                      items-center
+                      justify-between
+                      gap-6
+                    "
+                  >
+
                     <div>
 
                       <p
                         className="
-                          text-xs
+                          text-[10px]
                           uppercase
-                          tracking-[0.25em]
-                          text-zinc-500
+                          tracking-[0.35em]
+                          text-white/35
                         "
                       >
 
-                        Próxima Revelación
+                        NEXT DEPLOYMENT
 
                       </p>
 
                       <p
                         className="
-                          mt-3
-                          text-cyan-300
+                          mt-4
+                          text-white/75
+                          leading-relaxed
                         "
                       >
 
@@ -756,6 +908,12 @@ export function EcosystemSection() {
                         flex
                         items-center
                         gap-3
+                        rounded-2xl
+                        border
+                        border-white/10
+                        bg-black/30
+                        px-5
+                        py-4
                       "
                     >
 
@@ -763,7 +921,7 @@ export function EcosystemSection() {
                         className="
                           h-5
                           w-5
-                          text-cyan-300
+                          text-white/45
                         "
                       />
 
@@ -771,6 +929,7 @@ export function EcosystemSection() {
                         className="
                           text-lg
                           font-black
+                          tracking-[-0.04em]
                           text-white
                         "
                       >

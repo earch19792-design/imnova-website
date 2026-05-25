@@ -1,3 +1,25 @@
+"use client"
+
+/* 
+================================================
+MENÚ PRINCIPAL
+SECCIÓN: IMNOVA LABS
+COMPONENTE: ImnovaLabs
+VERSIÓN: AI CINEMATIC PREMIUM
+================================================
+*/
+
+import {
+  motion,
+  useMotionValue,
+  useSpring,
+  useTransform,
+} from "framer-motion"
+
+import {
+  useEffect,
+} from "react"
+
 const pipelineSteps = [
   {
     title: "IDEA",
@@ -57,26 +79,168 @@ const pipelineSteps = [
 ]
 
 export default function ImnovaLabs() {
+
+  /* =================================================
+  MOUSE REACTIVE LIGHT
+  ================================================= */
+
+  const mouseX =
+    useMotionValue(0)
+
+  const mouseY =
+    useMotionValue(0)
+
+  const smoothMouseX =
+    useSpring(mouseX, {
+      stiffness: 120,
+      damping: 20,
+    })
+
+  const smoothMouseY =
+    useSpring(mouseY, {
+      stiffness: 120,
+      damping: 20,
+    })
+
+  const glowX =
+    useTransform(
+      smoothMouseX,
+      [-500, 500],
+      ["45%", "55%"]
+    )
+
+  const glowY =
+    useTransform(
+      smoothMouseY,
+      [-500, 500],
+      ["45%", "55%"]
+    )
+
+  /* =================================================
+  GLOBAL MOUSE TRACKING
+  ================================================= */
+
+  useEffect(() => {
+
+    const handleMouseMove =
+      (e: MouseEvent) => {
+
+        const centerX =
+          window.innerWidth / 2
+
+        const centerY =
+          window.innerHeight / 2
+
+        mouseX.set(
+          e.clientX - centerX
+        )
+
+        mouseY.set(
+          e.clientY - centerY
+        )
+
+      }
+
+    window.addEventListener(
+      "mousemove",
+      handleMouseMove
+    )
+
+    return () => {
+
+      window.removeEventListener(
+        "mousemove",
+        handleMouseMove
+      )
+
+    }
+
+  }, [mouseX, mouseY])
+
   return (
+
     <section
       id="imnova-labs"
       className="
         relative
+        isolate
         overflow-hidden
         border-t
         border-white/10
         bg-black
-        py-32
+        py-36
       "
     >
 
-      {/* BACKGROUND */}
+      {/* =================================================
+      BASE BACKGROUND
+      ================================================= */}
 
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(0,255,255,0.08),transparent_30%)]" />
+      <div className="absolute inset-0 bg-black" />
 
-      {/* GRID */}
+      {/* =================================================
+      MOUSE REACTIVE LIGHT
+      ================================================= */}
 
-      <div className="absolute inset-0 opacity-[0.02] bg-[linear-gradient(rgba(255,255,255,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.08)_1px,transparent_1px)] bg-[size:120px_120px]" />
+      <motion.div
+        style={{
+          background:
+            `radial-gradient(circle at ${glowX} ${glowY},
+            rgba(255,255,255,0.05),
+            transparent 35%)`,
+        }}
+        className="
+          pointer-events-none
+          absolute
+          inset-0
+          opacity-80
+          blur-3xl
+        "
+      />
+
+      {/* =================================================
+      AMBIENT LIGHTING
+      ================================================= */}
+
+      <motion.div
+        animate={{
+          opacity: [0.3, 0.5, 0.3],
+          scale: [1, 1.08, 1],
+        }}
+        transition={{
+          duration: 12,
+          repeat: Infinity,
+          ease: "easeInOut",
+        }}
+        className="
+          absolute
+          right-0
+          top-0
+          h-[700px]
+          w-[700px]
+          rounded-full
+          bg-white/[0.03]
+          blur-[180px]
+        "
+      />
+
+      {/* =================================================
+      GRID
+      ================================================= */}
+
+      <div
+        className="
+          absolute
+          inset-0
+          opacity-[0.015]
+          bg-[linear-gradient(rgba(255,255,255,0.10)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.10)_1px,transparent_1px)]
+          bg-[size:120px_120px]
+        "
+      />
+
+      {/* =================================================
+      CONTENT
+      ================================================= */}
 
       <div
         className="
@@ -89,51 +253,102 @@ export default function ImnovaLabs() {
         "
       >
 
-        {/* HEADER */}
+        {/* =================================================
+        HEADER
+        ================================================= */}
 
-        <div className="max-w-3xl">
+        <motion.div
+          initial={{
+            opacity: 0,
+            y: 40,
+            filter: "blur(10px)",
+          }}
+          whileInView={{
+            opacity: 1,
+            y: 0,
+            filter: "blur(0px)",
+          }}
+          transition={{
+            duration: 1,
+            ease: [0.22, 1, 0.36, 1],
+          }}
+          viewport={{ once: true }}
+          className="
+            max-w-4xl
+          "
+        >
+
+          {/* BADGE */}
 
           <div
             className="
-              mb-5
+              mb-6
               inline-flex
               items-center
               gap-3
               rounded-full
               border
-              border-cyan-400/20
+              border-white/10
               bg-white/[0.03]
               px-5
               py-3
-              backdrop-blur-xl
+              backdrop-blur-md
             "
           >
 
-            <div className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(0,255,255,0.8)]" />
+            <span className="relative flex h-2.5 w-2.5">
+
+              <span
+                className="
+                  absolute
+                  inline-flex
+                  h-full
+                  w-full
+                  animate-ping
+                  rounded-full
+                  bg-green-400
+                  opacity-75
+                "
+              />
+
+              <span
+                className="
+                  relative
+                  inline-flex
+                  h-2.5
+                  w-2.5
+                  rounded-full
+                  bg-green-400
+                "
+              />
+
+            </span>
 
             <span
               className="
                 text-[10px]
                 uppercase
                 tracking-[0.35em]
-                text-cyan-300
+                text-white/60
               "
             >
 
-              IMNOVA LABS
+              IMNOVA LABS • LIVE SYSTEM
 
             </span>
 
           </div>
 
+          {/* TITLE */}
+
           <h2
             className="
               text-5xl
-              md:text-6xl
               font-black
-              leading-[0.95]
+              leading-[0.92]
               tracking-[-0.06em]
               text-white
+              md:text-7xl
             "
           >
 
@@ -143,9 +358,9 @@ export default function ImnovaLabs() {
               className="
                 block
                 bg-gradient-to-r
-                from-cyan-200
-                via-blue-300
-                to-white
+                from-white
+                via-zinc-200
+                to-zinc-500
                 bg-clip-text
                 text-transparent
               "
@@ -157,92 +372,162 @@ export default function ImnovaLabs() {
 
           </h2>
 
+          {/* DIVIDER */}
+
+          <div
+            className="
+              mt-10
+              h-px
+              w-24
+              rounded-full
+              bg-gradient-to-r
+              from-transparent
+              via-white/30
+              to-transparent
+            "
+          />
+
+          {/* DESCRIPTION */}
+
           <p
             className="
-              mt-8
+              mt-10
               max-w-2xl
               text-lg
-              leading-8
-              text-zinc-400
+              leading-relaxed
+              text-white/50
             "
           >
 
-            Seguimiento del desarrollo de productos
-            desde la idea inicial hasta su lanzamiento.
+            Seguimiento inteligente del
+            desarrollo de productos desde
+            la idea inicial hasta la expansión
+            global del ecosistema IMNOVA™.
 
           </p>
 
-        </div>
+        </motion.div>
 
-        {/* LIVE STATUS */}
+        {/* =================================================
+        LIVE STATUS
+        ================================================= */}
 
-        <div
+        <motion.div
+          initial={{
+            opacity: 0,
+            y: 40,
+          }}
+          whileInView={{
+            opacity: 1,
+            y: 0,
+          }}
+          transition={{
+            duration: 0.9,
+            delay: 0.1,
+          }}
+          viewport={{ once: true }}
           className="
             mt-16
             flex
             flex-wrap
-            items-center
             gap-4
           "
         >
 
-          <div
-            className="
-              flex
-              items-center
-              gap-3
-              rounded-2xl
-              border
-              border-cyan-400/20
-              bg-cyan-400/[0.06]
-              px-5
-              py-4
-              shadow-[0_0_30px_rgba(0,255,255,0.10)]
-            "
-          >
-
-            <div className="h-2 w-2 rounded-full bg-cyan-300 animate-pulse" />
-
-            <span
-              className="
-                text-[10px]
-                uppercase
-                tracking-[0.30em]
-                text-cyan-300
-              "
-            >
-
-              SISTEMA ACTIVO
-
-            </span>
-
-          </div>
+          {/* SYSTEM */}
 
           <div
             className="
-              rounded-2xl
+              rounded-[28px]
               border
               border-white/10
               bg-white/[0.03]
-              px-5
-              py-4
+              px-6
+              py-5
+              backdrop-blur-md
             "
           >
 
-            <span
+            <div
               className="
                 text-[10px]
                 uppercase
-                tracking-[0.30em]
-                text-white/50
+                tracking-[0.35em]
+                text-white/35
               "
             >
 
-              PROYECTO ACTUAL
+              SYSTEM
 
-            </span>
+            </div>
 
-            <div className="mt-2 text-white font-semibold">
+            <div
+              className="
+                mt-3
+                flex
+                items-center
+                gap-3
+              "
+            >
+
+              <div
+                className="
+                  h-2.5
+                  w-2.5
+                  rounded-full
+                  bg-green-400
+                "
+              />
+
+              <span
+                className="
+                  font-semibold
+                  text-white
+                "
+              >
+
+                ACTIVE
+
+              </span>
+
+            </div>
+
+          </div>
+
+          {/* PRODUCT */}
+
+          <div
+            className="
+              rounded-[28px]
+              border
+              border-white/10
+              bg-white/[0.03]
+              px-6
+              py-5
+              backdrop-blur-md
+            "
+          >
+
+            <div
+              className="
+                text-[10px]
+                uppercase
+                tracking-[0.35em]
+                text-white/35
+              "
+            >
+
+              ACTIVE PROJECT
+
+            </div>
+
+            <div
+              className="
+                mt-3
+                font-semibold
+                text-white
+              "
+            >
 
               MASH NUTRI+
 
@@ -250,161 +535,268 @@ export default function ImnovaLabs() {
 
           </div>
 
+          {/* STAGE */}
+
           <div
             className="
-              rounded-2xl
+              rounded-[28px]
               border
               border-white/10
               bg-white/[0.03]
-              px-5
-              py-4
+              px-6
+              py-5
+              backdrop-blur-md
             "
           >
 
-            <span
+            <div
               className="
                 text-[10px]
                 uppercase
-                tracking-[0.30em]
-                text-white/50
+                tracking-[0.35em]
+                text-white/35
               "
             >
 
-              ETAPA ACTIVA
+              CURRENT PHASE
 
-            </span>
+            </div>
 
-            <div className="mt-2 text-cyan-300 font-semibold">
+            <div
+              className="
+                mt-3
+                font-semibold
+                text-white
+              "
+            >
 
-              PROTOTIPO
+              PROTOTYPE
 
             </div>
 
           </div>
 
-        </div>
+        </motion.div>
 
-        {/* TEST BUTTON */}
+        {/* =================================================
+        ACTION BUTTON
+        ================================================= */}
 
-        <button
+        <motion.button
+          whileHover={{
+            scale: 1.02,
+          }}
+          whileTap={{
+            scale: 0.98,
+          }}
           onClick={async () => {
 
-            await fetch("/api/imnova-labs", {
-              method: "POST",
+            await fetch(
+              "/api/imnova-labs",
+              {
+                method: "POST",
 
-              headers: {
-                "Content-Type": "application/json",
-              },
+                headers: {
+                  "Content-Type":
+                    "application/json",
+                },
 
-              body: JSON.stringify({
-                product: "MASH NUTRI+",
-                status: "TESTING",
-                progress: "72%",
-              }),
-            })
+                body: JSON.stringify({
+                  product:
+                    "MASH NUTRI+",
 
-            alert("WhatsApp enviado 🚀")
+                  status:
+                    "TESTING",
+
+                  progress:
+                    "72%",
+                }),
+              }
+            )
+
+            alert(
+              "WhatsApp enviado 🚀"
+            )
 
           }}
           className="
             mt-10
             rounded-2xl
             border
-            border-cyan-400/20
-            bg-cyan-400/[0.08]
-            px-6
+            border-white/10
+            bg-white/[0.03]
+            px-7
             py-4
             text-sm
-            font-medium
-            text-cyan-300
+            font-semibold
+            uppercase
+            tracking-[0.18em]
+            text-white
+            backdrop-blur-md
             transition-all
             duration-300
-            hover:bg-cyan-400/[0.12]
+            hover:border-white/20
+            hover:bg-white/[0.06]
           "
         >
 
-          TEST WHATSAPP
+          Test Notification
 
-        </button>
+        </motion.button>
 
-        {/* TIMELINE */}
+        {/* =================================================
+        TIMELINE
+        ================================================= */}
 
         <div className="mt-24 grid gap-6">
 
-          {pipelineSteps.map((step, index) => (
+          {pipelineSteps.map(
+            (
+              step,
+              index
+            ) => (
 
-            <div
+            <motion.div
               key={step.title}
+              initial={{
+                opacity: 0,
+                y: 50,
+                filter: "blur(10px)",
+              }}
+              whileInView={{
+                opacity: 1,
+                y: 0,
+                filter: "blur(0px)",
+              }}
+              transition={{
+                duration: 0.8,
+                delay:
+                  index * 0.06,
+                ease: [
+                  0.22,
+                  1,
+                  0.36,
+                  1,
+                ],
+              }}
+              viewport={{ once: true }}
               className={`
+                group
                 relative
                 overflow-hidden
-                rounded-[32px]
+                rounded-[36px]
                 border
                 p-8
-                backdrop-blur-xl
+                backdrop-blur-md
                 transition-all
-                duration-300
+                duration-500
 
                 ${
                   step.status === "ACTIVO"
+
                     ? `
-                      border-cyan-400/30
-                      bg-cyan-400/[0.06]
-                      shadow-[0_0_40px_rgba(0,255,255,0.12)]
+                      border-white/20
+                      bg-white/[0.05]
                     `
+
                     : `
                       border-white/10
                       bg-white/[0.03]
                     `
                 }
 
-                hover:border-cyan-400/20
+                hover:-translate-y-1
+                hover:border-white/20
                 hover:bg-white/[0.05]
               `}
             >
 
-              {/* GLOW */}
+              {/* =========================================
+              LIGHTING
+              ========================================= */}
 
-              <div className="absolute inset-0 bg-gradient-to-r from-cyan-400/[0.02] to-transparent" />
+              <div
+                className="
+                  pointer-events-none
+                  absolute
+                  inset-0
+                  bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_60%)]
+                "
+              />
 
               <div className="relative z-10">
 
-                <div className="flex items-center justify-between">
+                {/* TOP */}
 
-                  <h3
+                <div
+                  className="
+                    flex
+                    items-center
+                    justify-between
+                    gap-6
+                  "
+                >
+
+                  <div>
+
+                    <div
+                      className="
+                        text-[10px]
+                        uppercase
+                        tracking-[0.35em]
+                        text-white/35
+                      "
+                    >
+
+                      ETAPA {index + 1}
+
+                    </div>
+
+                    <h3
+                      className="
+                        mt-4
+                        text-3xl
+                        font-black
+                        tracking-[-0.05em]
+                        text-white
+                      "
+                    >
+
+                      {step.title}
+
+                    </h3>
+
+                  </div>
+
+                  <div
                     className="
-                      text-2xl
-                      font-black
-                      tracking-[-0.04em]
-                      text-white
-                    "
-                  >
-
-                    {step.title}
-
-                  </h3>
-
-                  <span
-                    className="
+                      rounded-full
+                      border
+                      border-white/10
+                      bg-white/[0.03]
+                      px-4
+                      py-2
                       text-[10px]
                       uppercase
                       tracking-[0.30em]
-                      text-cyan-300
+                      text-white/55
                     "
                   >
 
-                    ETAPA {index + 1}
+                    {step.status}
 
-                  </span>
+                  </div>
 
                 </div>
 
+                {/* DESCRIPTION */}
+
                 <p
                   className="
-                    mt-4
-                    max-w-xl
-                    leading-7
-                    text-zinc-400
+                    mt-6
+                    max-w-2xl
+                    leading-relaxed
+                    text-white/50
                   "
                 >
 
@@ -412,65 +804,83 @@ export default function ImnovaLabs() {
 
                 </p>
 
-                <div className="mt-6 flex items-center justify-between">
+                {/* PROGRESS */}
 
-                  <span
-                    className="
-                      text-[10px]
-                      uppercase
-                      tracking-[0.30em]
-                      text-cyan-300
-                    "
-                  >
-
-                    {step.status}
-
-                  </span>
-
-                  <span
-                    className="
-                      text-sm
-                      font-medium
-                      text-white/60
-                    "
-                  >
-
-                    {step.progress}
-
-                  </span>
-
-                </div>
-
-                {/* PROGRESS BAR */}
-
-                <div
-                  className="
-                    mt-5
-                    h-[5px]
-                    overflow-hidden
-                    rounded-full
-                    bg-white/5
-                  "
-                >
+                <div className="mt-8">
 
                   <div
                     className="
-                      h-full
-                      rounded-full
-                      bg-gradient-to-r
-                      from-cyan-300
-                      to-blue-500
+                      mb-4
+                      flex
+                      items-center
+                      justify-between
                     "
-                    style={{
-                      width: step.progress,
-                    }}
-                  />
+                  >
+
+                    <span
+                      className="
+                        text-[10px]
+                        uppercase
+                        tracking-[0.30em]
+                        text-white/35
+                      "
+                    >
+
+                      DEVELOPMENT
+
+                    </span>
+
+                    <span
+                      className="
+                        text-sm
+                        font-semibold
+                        text-white/60
+                      "
+                    >
+
+                      {step.progress}
+
+                    </span>
+
+                  </div>
+
+                  <div
+                    className="
+                      h-[6px]
+                      overflow-hidden
+                      rounded-full
+                      bg-white/5
+                    "
+                  >
+
+                    <motion.div
+                      initial={{
+                        width: 0,
+                      }}
+                      whileInView={{
+                        width:
+                          step.progress,
+                      }}
+                      transition={{
+                        duration: 1.2,
+                      }}
+                      viewport={{
+                        once: true,
+                      }}
+                      className="
+                        h-full
+                        rounded-full
+                        bg-white/70
+                      "
+                    />
+
+                  </div>
 
                 </div>
 
               </div>
 
-            </div>
+            </motion.div>
 
           ))}
 

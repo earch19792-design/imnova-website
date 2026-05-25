@@ -5,58 +5,213 @@
 MENÚ PRINCIPAL
 SECCIÓN: INNOVACIONES
 COMPONENTE: InnovationsSection
+VERSIÓN: CINEMATIC PREMIUM AI
 ================================================
 */
 
 import Image from "next/image"
 import Link from "next/link"
-import { motion } from "framer-motion"
+
+import {
+  motion,
+  useMotionValue,
+  useSpring,
+  useTransform,
+} from "framer-motion"
 
 import {
   Sparkles,
   ArrowUpRight,
 } from "lucide-react"
 
+import {
+  useEffect,
+} from "react"
+
 import products from "../lib/products"
 
 export function InnovationsSection() {
+
+  /* =================================================
+  MOUSE REACTIVE LIGHTING
+  ================================================= */
+
+  const mouseX =
+    useMotionValue(0)
+
+  const mouseY =
+    useMotionValue(0)
+
+  const smoothMouseX =
+    useSpring(mouseX, {
+      stiffness: 120,
+      damping: 20,
+    })
+
+  const smoothMouseY =
+    useSpring(mouseY, {
+      stiffness: 120,
+      damping: 20,
+    })
+
+  const glowX =
+    useTransform(
+      smoothMouseX,
+      [-500, 500],
+      ["45%", "55%"]
+    )
+
+  const glowY =
+    useTransform(
+      smoothMouseY,
+      [-500, 500],
+      ["45%", "55%"]
+    )
+
+  /* =================================================
+  GLOBAL MOUSE TRACKING
+  ================================================= */
+
+  useEffect(() => {
+
+    const handleMouseMove =
+      (e: MouseEvent) => {
+
+        const centerX =
+          window.innerWidth / 2
+
+        const centerY =
+          window.innerHeight / 2
+
+        mouseX.set(
+          e.clientX - centerX
+        )
+
+        mouseY.set(
+          e.clientY - centerY
+        )
+
+      }
+
+    window.addEventListener(
+      "mousemove",
+      handleMouseMove
+    )
+
+    return () => {
+
+      window.removeEventListener(
+        "mousemove",
+        handleMouseMove
+      )
+
+    }
+
+  }, [mouseX, mouseY])
+
   return (
+
     <section
       id="innovations"
       className="
         relative
         isolate
         overflow-hidden
-        bg-gradient-to-b
-        from-[#020617]
-        via-black
-        to-black
+        bg-black
         py-44
         md:py-52
       "
     >
 
       {/* =================================================
-      BACKGROUND EFFECTS
+      BASE BACKGROUND
       ================================================= */}
 
-      {/* Main Glow */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(0,255,255,0.08),transparent_50%)]" />
+      <div className="absolute inset-0 bg-black" />
 
-      {/* Ambient Glow Top */}
-      <div className="pointer-events-none absolute left-1/2 top-0 h-[700px] w-[700px] -translate-x-1/2 rounded-full bg-cyan-500/10 blur-[180px]" />
+      {/* =================================================
+      MOUSE REACTIVE LIGHT
+      ================================================= */}
 
-      {/* Ambient Glow Left */}
-      <div className="pointer-events-none absolute left-0 top-1/3 h-[500px] w-[500px] rounded-full bg-cyan-400/5 blur-[140px]" />
+      <motion.div
+        style={{
+          background:
+            `radial-gradient(circle at ${glowX} ${glowY},
+            rgba(255,255,255,0.05),
+            transparent 35%)`,
+        }}
+        className="
+          pointer-events-none
+          absolute
+          inset-0
+          opacity-80
+          blur-3xl
+        "
+      />
 
-      {/* Ambient Glow Right */}
-      <div className="pointer-events-none absolute bottom-0 right-0 h-[600px] w-[600px] rounded-full bg-blue-500/5 blur-[160px]" />
+      {/* =================================================
+      AMBIENT LIGHTING
+      ================================================= */}
 
-      {/* Grid Overlay */}
-      <div className="absolute inset-0 opacity-[0.02] bg-[linear-gradient(rgba(0,255,255,0.10)_1px,transparent_1px),linear-gradient(90deg,rgba(0,255,255,0.10)_1px,transparent_1px)] bg-[size:90px_90px]" />
+      <motion.div
+        animate={{
+          opacity: [0.3, 0.6, 0.3],
+          scale: [1, 1.08, 1],
+        }}
+        transition={{
+          duration: 12,
+          repeat: Infinity,
+          ease: "easeInOut",
+        }}
+        className="
+          pointer-events-none
+          absolute
+          left-1/2
+          top-0
+          h-[800px]
+          w-[800px]
+          -translate-x-1/2
+          rounded-full
+          bg-white/[0.03]
+          blur-[180px]
+        "
+      />
 
-      {/* Divider */}
-      <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+      {/* =================================================
+      GRID
+      ================================================= */}
+
+      <div
+        className="
+          absolute
+          inset-0
+          opacity-[0.015]
+          bg-[linear-gradient(rgba(255,255,255,0.10)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.10)_1px,transparent_1px)]
+          bg-[size:120px_120px]
+        "
+      />
+
+      {/* =================================================
+      TOP DIVIDER
+      ================================================= */}
+
+      <div
+        className="
+          absolute
+          left-0
+          right-0
+          top-0
+          h-px
+          bg-gradient-to-r
+          from-transparent
+          via-white/10
+          to-transparent
+        "
+      />
+
+      {/* =================================================
+      CONTENT
+      ================================================= */}
 
       <div className="relative z-10 mx-auto max-w-7xl px-6">
 
@@ -65,21 +220,57 @@ export function InnovationsSection() {
         ================================================= */}
 
         <motion.div
-          initial={{ opacity: 0, y: 40 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.9 }}
+          initial={{
+            opacity: 0,
+            y: 40,
+            filter: "blur(10px)",
+          }}
+          whileInView={{
+            opacity: 1,
+            y: 0,
+            filter: "blur(0px)",
+          }}
+          transition={{
+            duration: 1,
+            ease: [0.22, 1, 0.36, 1],
+          }}
           viewport={{ once: true }}
-          className="mb-28 text-center"
+          className="mb-32 text-center"
         >
 
-          {/* Badge */}
-          <div className="inline-flex items-center gap-3 rounded-full border border-cyan-400/20 bg-white/[0.04] px-6 py-3 backdrop-blur-2xl">
+          {/* BADGE */}
 
-            <span className="text-cyan-300">
-              ✦
-            </span>
+          <div
+            className="
+              inline-flex
+              items-center
+              gap-3
+              rounded-full
+              border
+              border-white/10
+              bg-white/[0.03]
+              px-6
+              py-3
+              backdrop-blur-md
+            "
+          >
 
-            <span className="text-xs uppercase tracking-[0.45em] text-cyan-300">
+            <Sparkles
+              className="
+                h-4
+                w-4
+                text-white/60
+              "
+            />
+
+            <span
+              className="
+                text-[10px]
+                uppercase
+                tracking-[0.40em]
+                text-white/60
+              "
+            >
 
               IMNOVA ECOSYSTEM
 
@@ -87,29 +278,76 @@ export function InnovationsSection() {
 
           </div>
 
-          {/* Title */}
-          <h2 className="mx-auto mt-10 max-w-6xl text-5xl font-black leading-[1.02] tracking-[-0.05em] text-white sm:text-6xl lg:text-7xl">
+          {/* TITLE */}
 
-            Diseñamos el futuro{" "}
+          <h2
+            className="
+              mx-auto
+              mt-12
+              max-w-6xl
+              text-5xl
+              font-black
+              leading-[0.95]
+              tracking-[-0.06em]
+              text-white
+              sm:text-6xl
+              lg:text-7xl
+            "
+          >
 
-            <span className="bg-gradient-to-r from-cyan-200 via-blue-300 to-white bg-clip-text text-transparent">
+            Diseñamos el Futuro
 
-              a través de innovación real.
+            <span
+              className="
+                block
+                bg-gradient-to-r
+                from-white
+                via-zinc-200
+                to-zinc-500
+                bg-clip-text
+                text-transparent
+              "
+            >
+
+              mediante innovación real.
 
             </span>
 
           </h2>
 
-          {/* Divider */}
-          <div className="mx-auto mt-10 h-[2px] w-28 rounded-full bg-white/10" />
+          {/* DIVIDER */}
 
-          {/* Description */}
-          <p className="mx-auto mt-10 max-w-4xl text-xl leading-9 text-zinc-300">
+          <div
+            className="
+              mx-auto
+              mt-10
+              h-px
+              w-28
+              rounded-full
+              bg-gradient-to-r
+              from-transparent
+              via-white/20
+              to-transparent
+            "
+          />
 
-            Nutrición funcional, tecnología inteligente
-            y productos premium desarrollados para redefinir
-            la manera en que las personas viven,
-            consumen y evolucionan.
+          {/* DESCRIPTION */}
+
+          <p
+            className="
+              mx-auto
+              mt-10
+              max-w-4xl
+              text-xl
+              leading-relaxed
+              text-white/50
+            "
+          >
+
+            Nutrición funcional, tecnología
+            inteligente y sistemas premium
+            desarrollados para redefinir la
+            evolución humana.
 
           </p>
 
@@ -119,70 +357,107 @@ export function InnovationsSection() {
         PRODUCT GRID
         ================================================= */}
 
-        <div className="grid gap-10 lg:grid-cols-3">
+        <div
+          className="
+            grid
+            gap-8
+            lg:grid-cols-3
+          "
+        >
 
-          {products.slice(0, 3).map((product, index) => (
+          {products.slice(0, 3).map(
+            (
+              product,
+              index
+            ) => (
 
             <motion.article
               key={product.id}
-              initial={{ opacity: 0, y: 50 }}
-              whileInView={{ opacity: 1, y: 0 }}
+              initial={{
+                opacity: 0,
+                y: 60,
+                filter: "blur(12px)",
+              }}
+              whileInView={{
+                opacity: 1,
+                y: 0,
+                filter: "blur(0px)",
+              }}
               transition={{
-                duration: 0.7,
-                delay: index * 0.15,
+                duration: 0.9,
+                delay:
+                  index * 0.08,
+                ease: [
+                  0.22,
+                  1,
+                  0.36,
+                  1,
+                ],
               }}
               viewport={{ once: true }}
               whileHover={{
-                y: -12,
+                y: -8,
               }}
               className="
                 group
                 relative
                 overflow-hidden
-                rounded-[40px]
+                rounded-[36px]
                 border
                 border-white/10
-                bg-white/[0.04]
+                bg-white/[0.03]
                 p-7
-                backdrop-blur-2xl
+                backdrop-blur-md
                 transition-all
-                duration-700
-                hover:border-cyan-300/30
+                duration-500
+                hover:border-white/20
                 hover:bg-white/[0.05]
-                hover:shadow-[0_0_140px_rgba(34,211,238,0.10)]
               "
             >
 
-              {/* Hover Gradient */}
-              <div className="pointer-events-none absolute inset-0 opacity-0 transition duration-700 group-hover:opacity-100">
+              {/* =========================================
+              CARD LIGHTING
+              ========================================= */}
 
-                <div className="absolute inset-0 bg-gradient-to-br from-cyan-400/10 via-transparent to-blue-500/10" />
+              <div
+                className="
+                  pointer-events-none
+                  absolute
+                  inset-0
+                  bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_60%)]
+                "
+              />
 
-              </div>
-
-              {/* Glow Orb */}
-              <div className="absolute right-0 top-0 h-52 w-52 rounded-full bg-cyan-400/10 blur-[120px] opacity-0 transition-opacity duration-700 group-hover:opacity-100" />
-
-              {/* =================================================
+              {/* =========================================
               TOP BAR
-              ================================================= */}
+              ========================================= */}
 
-              <div className="relative z-10 mb-6 flex items-center justify-between">
+              <div
+                className="
+                  relative
+                  z-10
+                  mb-6
+                  flex
+                  items-center
+                  justify-between
+                "
+              >
 
-                {/* Category */}
+                {/* CATEGORY */}
+
                 <span
                   className="
                     rounded-full
                     border
-                    border-cyan-400/20
-                    bg-cyan-400/10
+                    border-white/10
+                    bg-white/[0.03]
                     px-4
                     py-2
-                    text-[11px]
+                    text-[10px]
                     uppercase
                     tracking-[0.35em]
-                    text-cyan-300
-                    backdrop-blur-xl
+                    text-white/55
+                    backdrop-blur-md
                   "
                 >
 
@@ -190,24 +465,25 @@ export function InnovationsSection() {
 
                 </span>
 
-                {/* Icon */}
+                {/* ICON */}
+
                 <Sparkles
                   className="
                     h-5
                     w-5
-                    text-cyan-300
+                    text-white/40
                     transition-all
                     duration-500
                     group-hover:rotate-12
-                    group-hover:scale-125
+                    group-hover:scale-110
                   "
                 />
 
               </div>
 
-              {/* =================================================
+              {/* =========================================
               IMAGE CONTAINER
-              ================================================= */}
+              ========================================= */}
 
               <div
                 className="
@@ -216,24 +492,59 @@ export function InnovationsSection() {
                   rounded-[32px]
                   border
                   border-white/10
-                  bg-black/40
+                  bg-white/[0.03]
                   p-8
-                  backdrop-blur-xl
+                  backdrop-blur-md
                 "
               >
 
-                {/* Glow */}
-                <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-cyan-400/10 via-transparent to-transparent opacity-70 transition duration-700 group-hover:scale-110" />
+                {/* AMBIENT LIGHT */}
 
-                {/* Background Orb */}
-                <div className="absolute inset-0 flex items-center justify-center">
+                <div
+                  className="
+                    absolute
+                    inset-0
+                    bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.06),transparent_65%)]
+                  "
+                />
 
-                  <div className="h-[240px] w-[240px] rounded-full bg-cyan-400/10 blur-[100px]" />
+                {/* FLOATING ORB */}
 
-                </div>
+                <motion.div
+                  animate={{
+                    scale: [1, 1.08, 1],
+                    opacity: [0.3, 0.5, 0.3],
+                  }}
+                  transition={{
+                    duration: 6,
+                    repeat: Infinity,
+                    ease: "easeInOut",
+                  }}
+                  className="
+                    absolute
+                    left-1/2
+                    top-1/2
+                    h-[260px]
+                    w-[260px]
+                    -translate-x-1/2
+                    -translate-y-1/2
+                    rounded-full
+                    bg-white/[0.04]
+                    blur-[100px]
+                  "
+                />
 
-                {/* Image */}
-                <div className="relative flex h-[360px] items-center justify-center">
+                {/* IMAGE */}
+
+                <div
+                  className="
+                    relative
+                    flex
+                    h-[360px]
+                    items-center
+                    justify-center
+                  "
+                >
 
                   <Image
                     src={product.image}
@@ -248,8 +559,8 @@ export function InnovationsSection() {
                       object-contain
                       transition-all
                       duration-700
-                      group-hover:-translate-y-3
-                      group-hover:scale-110
+                      group-hover:-translate-y-2
+                      group-hover:scale-105
                       ${
                         product.slug === "mash-coffee"
                           ? "scale-[1.45]"
@@ -262,22 +573,28 @@ export function InnovationsSection() {
 
               </div>
 
-              {/* =================================================
+              {/* =========================================
               CONTENT
-              ================================================= */}
+              ========================================= */}
 
-              <div className="relative z-10 mt-8 flex flex-col">
+              <div
+                className="
+                  relative
+                  z-10
+                  mt-8
+                  flex
+                  flex-col
+                "
+              >
 
-                {/* Product Name */}
+                {/* PRODUCT NAME */}
+
                 <h3
                   className="
                     text-4xl
                     font-black
-                    tracking-[-0.04em]
+                    tracking-[-0.05em]
                     text-white
-                    transition
-                    duration-500
-                    group-hover:text-cyan-200
                   "
                 >
 
@@ -285,14 +602,22 @@ export function InnovationsSection() {
 
                 </h3>
 
-                {/* Description */}
-                <p className="mt-5 text-lg leading-8 text-zinc-400">
+                {/* DESCRIPTION */}
+
+                <p
+                  className="
+                    mt-5
+                    leading-relaxed
+                    text-white/50
+                  "
+                >
 
                   {product.description}
 
                 </p>
 
                 {/* CTA */}
+
                 <Link
                   href={`/store/${product.slug}`}
                   className="
@@ -303,35 +628,40 @@ export function InnovationsSection() {
                     gap-3
                     rounded-2xl
                     border
-                    border-cyan-400/20
-                    bg-cyan-400/10
+                    border-white/10
+                    bg-white/[0.03]
                     px-6
                     py-4
                     text-sm
-                    font-black
+                    font-semibold
                     uppercase
-                    tracking-[0.2em]
-                    text-cyan-200
-                    backdrop-blur-xl
+                    tracking-[0.18em]
+                    text-white
+                    backdrop-blur-md
                     transition-all
-                    duration-500
-                    hover:scale-[1.03]
-                    hover:border-cyan-300/40
-                    hover:bg-cyan-300/20
-                    hover:shadow-[0_0_60px_rgba(34,211,238,0.18)]
+                    duration-300
+                    hover:scale-[1.02]
+                    hover:border-white/20
+                    hover:bg-white/[0.06]
                   "
                 >
 
                   Explorar Innovación
 
-                  <ArrowUpRight className="h-4 w-4" />
+                  <ArrowUpRight
+                    className="
+                      h-4
+                      w-4
+                      transition-transform
+                      duration-300
+                      group-hover:translate-x-1
+                      group-hover:-translate-y-1
+                    "
+                  />
 
                 </Link>
 
               </div>
-
-              {/* Border Glow */}
-              <div className="absolute inset-0 rounded-[40px] border border-cyan-400/0 transition-colors duration-700 group-hover:border-cyan-400/20" />
 
             </motion.article>
 
@@ -343,7 +673,21 @@ export function InnovationsSection() {
         BOTTOM INDICATORS
         ================================================= */}
 
-        <div className="mt-24 flex flex-wrap items-center justify-center gap-6 text-center text-xs uppercase tracking-[0.3em] text-zinc-600">
+        <div
+          className="
+            mt-28
+            flex
+            flex-wrap
+            items-center
+            justify-center
+            gap-6
+            text-center
+            text-[10px]
+            uppercase
+            tracking-[0.35em]
+            text-white/30
+          "
+        >
 
           <span>Innovación</span>
           <span>•</span>
@@ -351,7 +695,7 @@ export function InnovationsSection() {
           <span>Wellness</span>
           <span>•</span>
 
-          <span>Tecnología Inteligente</span>
+          <span>AI Systems</span>
           <span>•</span>
 
           <span>Expansión Global</span>

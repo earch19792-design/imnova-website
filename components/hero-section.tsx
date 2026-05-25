@@ -1,7 +1,22 @@
 "use client"
 
-import { motion, AnimatePresence } from "framer-motion"
-import { useEffect, useState } from "react"
+import {
+  motion,
+  AnimatePresence,
+  useScroll,
+  useTransform,
+  useMotionValue,
+  useSpring,
+} from "framer-motion"
+
+import {
+  useEffect,
+  useState,
+} from "react"
+
+import {
+  ChevronDown,
+} from "lucide-react"
 
 const heroImages = [
   "/hero/imnova-hero-01.webp",
@@ -10,17 +25,134 @@ const heroImages = [
 ]
 
 export function HeroSection() {
-  const [currentImage, setCurrentImage] = useState(0)
+
+  const [
+    currentImage,
+    setCurrentImage,
+  ] = useState(0)
+
+  /* =================================================
+  SCROLL SYSTEM
+  ================================================= */
+
+  const { scrollY } =
+    useScroll()
+
+  const y =
+    useTransform(
+      scrollY,
+      [0, 700],
+      [0, 180]
+    )
+
+  const opacity =
+    useTransform(
+      scrollY,
+      [0, 400],
+      [1, 0.4]
+    )
+
+  /* =================================================
+  MOUSE REACTIVE LIGHT
+  ================================================= */
+
+  const mouseX =
+    useMotionValue(0)
+
+  const mouseY =
+    useMotionValue(0)
+
+  const smoothMouseX =
+    useSpring(mouseX, {
+      stiffness: 120,
+      damping: 20,
+    })
+
+  const smoothMouseY =
+    useSpring(mouseY, {
+      stiffness: 120,
+      damping: 20,
+    })
+
+  const glowX =
+    useTransform(
+      smoothMouseX,
+      [-500, 500],
+      ["45%", "55%"]
+    )
+
+  const glowY =
+    useTransform(
+      smoothMouseY,
+      [-500, 500],
+      ["45%", "55%"]
+    )
+
+  /* =================================================
+  IMAGE ROTATION
+  ================================================= */
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentImage((prev) => (prev + 1) % heroImages.length)
-    }, 8000)
 
-    return () => clearInterval(interval)
+    const interval =
+      setInterval(() => {
+
+        setCurrentImage(
+          (prev) =>
+            (prev + 1) %
+            heroImages.length
+        )
+
+      }, 8000)
+
+    return () =>
+      clearInterval(interval)
+
   }, [])
 
+  /* =================================================
+  GLOBAL MOUSE TRACKING
+  ================================================= */
+
+  useEffect(() => {
+
+    const handleMouseMove =
+      (e: MouseEvent) => {
+
+        const centerX =
+          window.innerWidth / 2
+
+        const centerY =
+          window.innerHeight / 2
+
+        mouseX.set(
+          e.clientX - centerX
+        )
+
+        mouseY.set(
+          e.clientY - centerY
+        )
+
+      }
+
+    window.addEventListener(
+      "mousemove",
+      handleMouseMove
+    )
+
+    return () => {
+
+      window.removeEventListener(
+        "mousemove",
+        handleMouseMove
+      )
+
+    }
+
+  }, [mouseX, mouseY])
+
   return (
+
     <section
       id="hero"
       className="
@@ -32,9 +164,9 @@ export function HeroSection() {
       "
     >
 
-      {/* =========================================
+      {/* =================================================
       BACKGROUND SLIDER
-      ========================================= */}
+      ================================================= */}
 
       <div className="absolute inset-0">
 
@@ -44,66 +176,56 @@ export function HeroSection() {
             key={currentImage}
             initial={{
               opacity: 0,
-              scale: 1.05,
+              scale: 1.12,
             }}
             animate={{
               opacity: 1,
-              scale: 1.01,
+              scale: 1.02,
             }}
             exit={{
               opacity: 0,
             }}
             transition={{
-              duration: 1.4,
-              ease: "easeInOut",
+              duration: 2,
+              ease: [0.22, 1, 0.36, 1],
             }}
             className="
               absolute
               inset-0
               bg-cover
               bg-center
+              will-change-transform
             "
             style={{
-              backgroundImage: `url(${heroImages[currentImage]})`,
+              backgroundImage:
+                `url(${heroImages[currentImage]})`,
             }}
           />
 
         </AnimatePresence>
 
-        {/* DARK OVERLAY */}
+        {/* =================================================
+        CINEMATIC OVERLAYS
+        ================================================= */}
 
         <div
           className="
             absolute
             inset-0
             bg-gradient-to-r
-            from-black/75
-            via-black/50
-            to-transparent
+            from-black/88
+            via-black/58
+            to-black/20
           "
         />
-
-        {/* EXTRA DEPTH */}
 
         <div
           className="
             absolute
             inset-0
-            bg-[radial-gradient(circle_at_left,rgba(0,0,0,0.92),transparent_45%)]
+            bg-[radial-gradient(circle_at_left,rgba(0,0,0,0.96),transparent_50%)]
           "
         />
-
-        {/* CYAN GLOW */}
-
-        <div
-          className="
-            absolute
-            inset-0
-            bg-[radial-gradient(circle_at_top_right,rgba(0,255,255,0.10),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(59,130,246,0.08),transparent_35%)]
-          "
-        />
-
-        {/* VIGNETTE */}
 
         <div
           className="
@@ -112,17 +234,66 @@ export function HeroSection() {
             bg-gradient-to-b
             from-black/10
             via-transparent
-            to-black/85
+            to-black
           "
         />
 
-        {/* GRID */}
+        {/* =================================================
+        REACTIVE LIGHT
+        ================================================= */}
+
+        <motion.div
+          style={{
+            background:
+              `radial-gradient(circle at ${glowX} ${glowY},
+              rgba(255,255,255,0.08),
+              transparent 35%)`,
+          }}
+          className="
+            pointer-events-none
+            absolute
+            inset-0
+            opacity-80
+            blur-3xl
+          "
+        />
+
+        {/* =================================================
+        AMBIENT ORBS
+        ================================================= */}
+
+        <motion.div
+          animate={{
+            opacity: [0.25, 0.45, 0.25],
+            scale: [1, 1.08, 1],
+          }}
+          transition={{
+            duration: 10,
+            repeat: Infinity,
+            ease: "easeInOut",
+          }}
+          className="
+            absolute
+            left-1/2
+            top-0
+            h-[700px]
+            w-[700px]
+            -translate-x-1/2
+            rounded-full
+            bg-white/[0.03]
+            blur-[180px]
+          "
+        />
+
+        {/* =================================================
+        GRID
+        ================================================= */}
 
         <div
           className="
             absolute
             inset-0
-            opacity-[0.02]
+            opacity-[0.015]
             bg-[linear-gradient(rgba(255,255,255,0.10)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.10)_1px,transparent_1px)]
             bg-[size:160px_160px]
           "
@@ -130,11 +301,80 @@ export function HeroSection() {
 
       </div>
 
-      {/* =========================================
-      CONTENT
-      ========================================= */}
+      {/* =================================================
+      FLOATING AI ORBS
+      ================================================= */}
 
-      <div
+      <motion.div
+        animate={{
+          y: [-10, 10, -10],
+        }}
+        transition={{
+          duration: 6,
+          repeat: Infinity,
+          ease: "easeInOut",
+        }}
+        className="
+          absolute
+          right-[8%]
+          top-[22%]
+          hidden
+          h-36
+          w-36
+          rounded-full
+          border
+          border-white/10
+          bg-white/[0.03]
+          backdrop-blur-xl
+          lg:block
+        "
+      >
+
+        <div
+          className="
+            absolute
+            inset-0
+            rounded-full
+            bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_65%)]
+          "
+        />
+
+      </motion.div>
+
+      <motion.div
+        animate={{
+          y: [10, -10, 10],
+        }}
+        transition={{
+          duration: 8,
+          repeat: Infinity,
+          ease: "easeInOut",
+        }}
+        className="
+          absolute
+          bottom-[18%]
+          right-[16%]
+          hidden
+          h-20
+          w-20
+          rounded-full
+          border
+          border-white/10
+          bg-white/[0.03]
+          backdrop-blur-xl
+          lg:block
+        "
+      />
+
+      {/* =================================================
+      CONTENT
+      ================================================= */}
+
+      <motion.div
+        style={{
+          y,
+          opacity,
+        }}
         className="
           relative
           z-10
@@ -144,18 +384,204 @@ export function HeroSection() {
           max-w-7xl
           items-center
           px-6
-          sm:px-8
-          lg:px-12
           pt-32
           pb-24
+          sm:px-8
+          lg:px-12
         "
       >
 
-        <div className="max-w-4xl">
+        <div className="max-w-5xl">
 
-          {/* =========================================
+          {/* =================================================
           BADGE
-          ========================================= */}
+          ================================================= */}
+
+          <motion.div
+            initial={{
+              opacity: 0,
+              y: 20,
+              filter: "blur(10px)",
+            }}
+            animate={{
+              opacity: 1,
+              y: 0,
+              filter: "blur(0px)",
+            }}
+            transition={{
+              duration: 1,
+              ease: [0.22, 1, 0.36, 1],
+            }}
+            className="
+              mb-8
+              inline-flex
+              items-center
+              gap-3
+              rounded-full
+              border
+              border-white/10
+              bg-white/[0.04]
+              px-5
+              py-3
+              backdrop-blur-md
+            "
+          >
+
+            <div
+              className="
+                relative
+                flex
+                h-2.5
+                w-2.5
+              "
+            >
+
+              <span
+                className="
+                  absolute
+                  inline-flex
+                  h-full
+                  w-full
+                  animate-ping
+                  rounded-full
+                  bg-white/70
+                  opacity-75
+                "
+              />
+
+              <span
+                className="
+                  relative
+                  inline-flex
+                  h-2.5
+                  w-2.5
+                  rounded-full
+                  bg-white/80
+                "
+              />
+
+            </div>
+
+            <span
+              className="
+                text-[10px]
+                uppercase
+                tracking-[0.35em]
+                text-white/70
+              "
+            >
+
+              IMNOVA™ • AI WELLNESS SYSTEM
+
+            </span>
+
+          </motion.div>
+
+          {/* =================================================
+          TITLE
+          ================================================= */}
+
+          <motion.h1
+            initial={{
+              opacity: 0,
+              y: 50,
+              filter: "blur(12px)",
+            }}
+            animate={{
+              opacity: 1,
+              y: 0,
+              filter: "blur(0px)",
+            }}
+            transition={{
+              duration: 1.2,
+              delay: 0.1,
+              ease: [0.22, 1, 0.36, 1],
+            }}
+            className="
+              max-w-6xl
+              text-5xl
+              font-black
+              leading-[0.88]
+              tracking-[-0.06em]
+              text-white
+              sm:text-6xl
+              md:text-7xl
+              lg:text-[5.4rem]
+              xl:text-[6.4rem]
+            "
+          >
+
+            Construimos
+
+            <span
+              className="
+                block
+                bg-gradient-to-r
+                from-white
+                via-zinc-200
+                to-zinc-500
+                bg-clip-text
+                text-transparent
+              "
+            >
+
+              Tecnología Humana
+
+            </span>
+
+            <span
+              className="
+                block
+                text-zinc-300
+              "
+            >
+
+              del Futuro.
+
+            </span>
+
+          </motion.h1>
+
+          {/* =================================================
+          DESCRIPTION
+          ================================================= */}
+
+          <motion.p
+            initial={{
+              opacity: 0,
+              y: 30,
+              filter: "blur(10px)",
+            }}
+            animate={{
+              opacity: 1,
+              y: 0,
+              filter: "blur(0px)",
+            }}
+            transition={{
+              duration: 1.2,
+              delay: 0.25,
+              ease: [0.22, 1, 0.36, 1],
+            }}
+            className="
+              mt-10
+              max-w-2xl
+              text-lg
+              leading-8
+              text-white/60
+              sm:text-xl
+            "
+          >
+
+            Creamos ecosistemas inteligentes
+            donde tecnología, nutrición y
+            bienestar evolucionan juntos
+            para redefinir la experiencia humana.
+
+          </motion.p>
+
+          {/* =================================================
+          BUTTONS
+          ================================================= */}
 
           <motion.div
             initial={{
@@ -167,102 +593,73 @@ export function HeroSection() {
               y: 0,
             }}
             transition={{
-              duration: 0.8,
+              duration: 1,
+              delay: 0.4,
             }}
             className="
-              mb-8
-              inline-flex
-              items-center
-              gap-3
-              rounded-full
-              border
-              border-cyan-400/20
-              bg-white/[0.04]
-              px-5
-              py-3
-              backdrop-blur-xl
+              mt-12
+              flex
+              flex-wrap
+              gap-4
             "
           >
 
-            <div className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_20px_rgba(0,255,255,0.8)]" />
-
-            <span
+            <button
               className="
-                text-[10px]
+                rounded-2xl
+                bg-white
+                px-8
+                py-4
+                text-sm
+                font-semibold
                 uppercase
-                tracking-[0.35em]
-                text-cyan-300
+                tracking-[0.18em]
+                text-black
+                transition-all
+                duration-300
+                hover:scale-[1.02]
+                hover:bg-zinc-200
+                active:scale-[0.98]
               "
             >
 
-              Tecnología y Bienestar del Futuro
+              Explorar Ecosistema
 
-            </span>
+            </button>
+
+            <button
+              className="
+                rounded-2xl
+                border
+                border-white/10
+                bg-white/[0.03]
+                px-8
+                py-4
+                text-sm
+                font-semibold
+                uppercase
+                tracking-[0.18em]
+                text-white
+                backdrop-blur-md
+                transition-all
+                duration-300
+                hover:border-white/20
+                hover:bg-white/[0.06]
+                active:scale-[0.98]
+              "
+            >
+
+              Ver Tecnología
+
+            </button>
 
           </motion.div>
 
-          {/* =========================================
-          TITLE
-          ========================================= */}
+          {/* =================================================
+          LIVE METRICS
+          ================================================= */}
 
-          <motion.h1
-            initial={{
-              opacity: 0,
-              y: 40,
-            }}
-            animate={{
-              opacity: 1,
-              y: 0,
-            }}
-            transition={{
-              duration: 1,
-              delay: 0.1,
-            }}
-            className="
-              text-5xl
-              sm:text-6xl
-              md:text-7xl
-              lg:text-[5.2rem]
-              xl:text-[6rem]
-              font-black
-              leading-[0.88]
-              tracking-[-0.07em]
-              text-white
-              max-w-5xl
-            "
-          >
-
-            Tecnología.
-
-            <span
-              className="
-                block
-                bg-gradient-to-r
-                from-cyan-200
-                via-blue-300
-                to-white
-                bg-clip-text
-                text-transparent
-              "
-            >
-
-              Nutrición.
-
-            </span>
-
-            <span className="block text-zinc-200">
-
-              Evolución.
-
-            </span>
-
-          </motion.h1>
-
-          {/* =========================================
-          DESCRIPTION
-          ========================================= */}
-
-          <motion.p
+          <motion.div
             initial={{
               opacity: 0,
               y: 20,
@@ -273,58 +670,104 @@ export function HeroSection() {
             }}
             transition={{
               duration: 1,
-              delay: 0.25,
+              delay: 0.55,
             }}
             className="
-              mt-10
-              max-w-2xl
-              text-lg
-              sm:text-xl
-              leading-8
-              text-zinc-300
+              mt-16
+              flex
+              flex-wrap
+              gap-6
             "
           >
 
-            Creamos productos y ecosistemas de nueva generación
-            que integran tecnología, bienestar y nutrición funcional.
+            {[
+              "AI SYSTEMS",
+              "WELLNESS",
+              "GLOBAL EXPANSION",
+            ].map((item) => (
 
-          </motion.p>
-
-          {/* =========================================
-          INDICATORS
-          ========================================= */}
-
-          <div className="mt-14 flex gap-3">
-
-            {heroImages.map((_, index) => (
               <div
-                key={index}
-                className={`
-                  h-[4px]
+                key={item}
+                className="
                   rounded-full
-                  transition-all
-                  duration-700
+                  border
+                  border-white/10
+                  bg-white/[0.03]
+                  px-5
+                  py-3
+                  text-[10px]
+                  uppercase
+                  tracking-[0.30em]
+                  text-white/45
+                  backdrop-blur-md
+                "
+              >
 
-                  ${
-                    currentImage === index
-                      ? "w-16 bg-cyan-300"
-                      : "w-6 bg-white/20"
-                  }
-                `}
-              />
+                {item}
+
+              </div>
+
             ))}
 
-          </div>
+          </motion.div>
 
         </div>
 
-      </div>
+      </motion.div>
 
-      {/* =========================================
-      BOTTOM FADE
-      ========================================= */}
+      {/* =================================================
+      SCROLL INDICATOR
+      ================================================= */}
 
-      <div className="absolute bottom-0 left-0 right-0 h-40 bg-gradient-to-t from-black to-transparent" />
+      <motion.div
+        animate={{
+          y: [0, 10, 0],
+        }}
+        transition={{
+          duration: 2,
+          repeat: Infinity,
+        }}
+        className="
+          absolute
+          bottom-10
+          left-1/2
+          z-20
+          -translate-x-1/2
+        "
+      >
+
+        <div
+          className="
+            flex
+            flex-col
+            items-center
+            gap-3
+            text-white/35
+          "
+        >
+
+          <span
+            className="
+              text-[10px]
+              uppercase
+              tracking-[0.35em]
+            "
+          >
+
+            Scroll
+
+          </span>
+
+          <ChevronDown
+            className="
+              h-5
+              w-5
+            "
+          />
+
+        </div>
+
+      </motion.div>
 
     </section>
   )

@@ -128,64 +128,163 @@ export default function RootLayout({
     <html
       lang="es"
       suppressHydrationWarning
+      className="
+        scroll-smooth
+      "
     >
 
       <body
         className={`
           ${orbitron.className}
+          relative
+          overflow-x-hidden
           bg-black
           text-white
           antialiased
-          overflow-x-hidden
-          selection:bg-cyan-400
+          selection:bg-white
           selection:text-black
         `}
       >
 
-        {/* GLOBAL BACKGROUND */}
+        {/* =================================================
+        GLOBAL BACKGROUND
+        ================================================= */}
 
         <div
           className="
             fixed
             inset-0
             -z-50
-            bg-[radial-gradient(circle_at_top,#0f172a_0%,#000_45%)]
+            bg-black
           "
         />
 
-        {/* GRID EFFECT */}
+        {/* =================================================
+        CINEMATIC AMBIENT LIGHT
+        ================================================= */}
 
         <div
           className="
+            pointer-events-none
             fixed
             inset-0
             -z-40
-            opacity-[0.04]
-            bg-[linear-gradient(rgba(0,255,255,0.2)_1px,transparent_1px),linear-gradient(90deg,rgba(0,255,255,0.2)_1px,transparent_1px)]
-            bg-[size:40px_40px]
-            pointer-events-none
+            overflow-hidden
           "
-        />
+        >
 
-        {/* CYAN GLOW */}
+          {/* TOP LIGHT */}
+
+          <div
+            className="
+              absolute
+              left-1/2
+              top-[-300px]
+              h-[900px]
+              w-[900px]
+              -translate-x-1/2
+              rounded-full
+              bg-white/[0.035]
+              blur-[180px]
+            "
+          />
+
+          {/* LEFT LIGHT */}
+
+          <div
+            className="
+              absolute
+              left-[-200px]
+              top-[25%]
+              h-[500px]
+              w-[500px]
+              rounded-full
+              bg-white/[0.02]
+              blur-[140px]
+            "
+          />
+
+          {/* RIGHT LIGHT */}
+
+          <div
+            className="
+              absolute
+              right-[-200px]
+              bottom-[10%]
+              h-[500px]
+              w-[500px]
+              rounded-full
+              bg-white/[0.02]
+              blur-[140px]
+            "
+          />
+
+        </div>
+
+        {/* =================================================
+        PREMIUM GRID
+        ================================================= */}
 
         <div
           className="
-            fixed
-            top-[-250px]
-            left-1/2
-            h-[500px]
-            w-[500px]
-            -translate-x-1/2
-            rounded-full
-            bg-cyan-400/10
-            blur-3xl
             pointer-events-none
+            fixed
+            inset-0
             -z-30
+            opacity-[0.015]
+            bg-[linear-gradient(rgba(255,255,255,0.10)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.10)_1px,transparent_1px)]
+            bg-[size:120px_120px]
           "
         />
 
-        {children}
+        {/* =================================================
+        NOISE TEXTURE
+        ================================================= */}
+
+        <div
+          className="
+            pointer-events-none
+            fixed
+            inset-0
+            -z-20
+            opacity-[0.018]
+            mix-blend-soft-light
+            bg-[url('/noise.png')]
+          "
+        />
+
+        {/* =================================================
+        GLOBAL VIGNETTE
+        ================================================= */}
+
+        <div
+          className="
+            pointer-events-none
+            fixed
+            inset-0
+            -z-10
+            bg-[radial-gradient(circle_at_center,transparent_45%,rgba(0,0,0,0.85)_100%)]
+          "
+        />
+
+        {/* =================================================
+        MAIN CONTENT
+        ================================================= */}
+
+        <main
+          className="
+            relative
+            z-10
+          "
+        >
+
+          {children}
+
+        </main>
+
+        {/* =================================================
+        ANALYTICS
+        ================================================= */}
 
         <Analytics />
 

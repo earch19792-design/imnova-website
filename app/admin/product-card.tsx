@@ -1,6 +1,17 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import {
+  motion,
+  useMotionValue,
+  useSpring,
+  useTransform,
+} from "framer-motion"
+
+import {
+  useEffect,
+  useRef,
+  useState,
+} from "react"
 
 type Product = {
   id: number
@@ -11,6 +22,7 @@ type Product = {
   progress: number
   phase: string
   nextMilestone: string
+
   theme: {
     border: string
     text: string
@@ -27,36 +39,88 @@ export function ProductCard({
 }: Props) {
 
   /* =========================================
+  3D INTERACTION SYSTEM
+  ========================================= */
+
+  const cardRef =
+    useRef<HTMLDivElement>(null)
+
+  const mouseX =
+    useMotionValue(0)
+
+  const mouseY =
+    useMotionValue(0)
+
+  const rotateX =
+    useSpring(
+      useTransform(
+        mouseY,
+        [-300, 300],
+        [10, -10]
+      ),
+      {
+        stiffness: 140,
+        damping: 18,
+      }
+    )
+
+  const rotateY =
+    useSpring(
+      useTransform(
+        mouseX,
+        [-300, 300],
+        [-10, 10]
+      ),
+      {
+        stiffness: 140,
+        damping: 18,
+      }
+    )
+
+  const glowX =
+    useTransform(
+      mouseX,
+      [-300, 300],
+      ["35%", "65%"]
+    )
+
+  const glowY =
+    useTransform(
+      mouseY,
+      [-300, 300],
+      ["35%", "65%"]
+    )
+
+  /* =========================================
   AUTO PROGRESS SYSTEM
   ========================================= */
 
-  const progressMap: Record<string, number> = {
+  const progressMap: Record<
+    string,
+    number
+  > = {
 
-  "⚡ Concepto": 10,
+    "⚡ Concepto": 10,
 
-  "🧪 Probando mejoras": 35,
+    "🧪 Probando mejoras": 35,
 
-  "🔥 Preparando lanzamiento": 60,
+    "🔥 Preparando lanzamiento": 60,
 
-  "🏭 Producción": 80,
+    "🏭 Producción": 80,
 
-  "🌎 Comercialización": 90,
+    "🌎 Comercialización": 90,
 
-  "🚀 Disponible": 100,
-}
+    "🚀 Disponible": 100,
+  }
 
-  /* =========================================
-  PRODUCT STATUS LIST
-  ========================================= */
-
- const statuses = [
-  "⚡ Concepto",
-  "🧪 Probando mejoras",
-  "🔥 Preparando lanzamiento",
-  "🏭 Producción",
-  "🌎 Comercialización",
-  "🚀 Disponible",
-]
+  const statuses = [
+    "⚡ Concepto",
+    "🧪 Probando mejoras",
+    "🔥 Preparando lanzamiento",
+    "🏭 Producción",
+    "🌎 Comercialización",
+    "🚀 Disponible",
+  ]
 
   /* =========================================
   STATES
@@ -81,6 +145,43 @@ export function ProductCard({
   ] = useState(
     product.nextMilestone
   )
+
+  /* =========================================
+  MOUSE TRACKING
+  ========================================= */
+
+  const handleMouseMove =
+    (
+      e: React.MouseEvent<HTMLDivElement>
+    ) => {
+
+      const rect =
+        cardRef.current?.getBoundingClientRect()
+
+      if (!rect) return
+
+      const x =
+        e.clientX -
+        rect.left -
+        rect.width / 2
+
+      const y =
+        e.clientY -
+        rect.top -
+        rect.height / 2
+
+      mouseX.set(x)
+      mouseY.set(y)
+
+    }
+
+  const handleMouseLeave =
+    () => {
+
+      mouseX.set(0)
+      mouseY.set(0)
+
+    }
 
   /* =========================================
   AUTO UPDATE PROGRESS
@@ -136,155 +237,37 @@ export function ProductCard({
   SAVE DATA
   ========================================= */
 
-  const saveChanges = async () => {
+  const saveChanges =
+    async () => {
 
-    const updatedProduct = {
-      id: product.id,
-      status,
-      progress,
-      phase,
-      nextMilestone,
-    }
-
-    /* SAVE LOCAL */
-
-    localStorage.setItem(
-      `product-${product.id}`,
-      JSON.stringify(updatedProduct)
-    )
-
-    /* REALTIME UPDATE */
-
-    window.dispatchEvent(
-      new CustomEvent(
-        "productsUpdated",
-        {
-          detail:
-            updatedProduct,
-        }
-      )
-    )
-
-    /* =========================================
-    PROGRESS BAR VISUAL
-    ========================================= */
-
-    const progressBar =
-      "█".repeat(
-        Math.floor(progress / 10)
-      ) +
-      "░".repeat(
-        10 -
-        Math.floor(progress / 10)
-      )
-
-    /* =========================================
-    WHATSAPP MESSAGE PREMIUM
-    ========================================= */
-
-    const whatsappMessage = `
-
-🚀 *IMNOVA LABS*
-
-━━━━━━━━━━━━━━━
-
-🧬 *PRODUCTO*
-${product.name}
-
-🌎 *ESTADO ACTUAL*
-${status.toUpperCase()}
-
-📊 *DESARROLLO*
-${progressBar} ${progress}%
-
-⚡ *ACTUALIZACIÓN*
-${phase}
-
-🔮 *PRÓXIMA FASE*
-${nextMilestone}
-
-${
-  progress === 100
-    ? "🔥 Tu producto ya se encuentra en comercialización activa y disponible para expansión de mercado."
-    : "⚙️ Nuestro equipo continúa optimizando tu innovación."
-}
-
-━━━━━━━━━━━━━━━
-
-© IMNOVA LABS
-
-`
-
-    /* =========================================
-    IMAGE URL
-    SOLO EN COMERCIALIZACIÓN
-    ========================================= */
-
-    const imageUrl =
-      status ===
-      "🌎 Comercialización"
-        ? product.image
-        : undefined
-
-    /* =========================================
-    WHATSAPP API
-    ========================================= */
-
-    try {
-
-      const response = await fetch(
-        "/api/innova-lab",
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-
-          body: JSON.stringify({
-            message:
-              whatsappMessage,
-
-            imageUrl,
-          }),
-        }
-      )
-
-      if (!response.ok) {
-
-        throw new Error(
-          `HTTP ERROR ${response.status}`
-        )
-
+      const updatedProduct = {
+        id: product.id,
+        status,
+        progress,
+        phase,
+        nextMilestone,
       }
 
-      const data =
-        await response.json()
-
-      console.log(
-        "WhatsApp enviado:",
-        data
+      localStorage.setItem(
+        `product-${product.id}`,
+        JSON.stringify(updatedProduct)
       )
 
-    } catch (error) {
-
-      console.error(
-        "ERROR WHATSAPP:",
-        error
+      window.dispatchEvent(
+        new CustomEvent(
+          "productsUpdated",
+          {
+            detail:
+              updatedProduct,
+          }
+        )
       )
 
       alert(
-        "Error enviando WhatsApp"
+        "Cambios guardados"
       )
 
     }
-
-    alert(
-      "Cambios guardados"
-    )
-
-  }
 
   /* =========================================
   DASHBOARD ACTIVE PRODUCTS
@@ -312,201 +295,461 @@ ${
 
   return (
 
-    <div
-      className={`
+    <motion.div
+      ref={cardRef}
+      onMouseMove={
+        handleMouseMove
+      }
+      onMouseLeave={
+        handleMouseLeave
+      }
+      style={{
+        rotateX,
+        rotateY,
+        transformStyle:
+          "preserve-3d",
+      }}
+      transition={{
+        type: "spring",
+        stiffness: 140,
+        damping: 18,
+      }}
+      className="
+        group
         relative
         overflow-hidden
-        rounded-[40px]
+        rounded-[36px]
         border
-        ${product.theme.border}
-        bg-black/60
+        border-white/10
+        bg-white/[0.03]
         p-8
-        backdrop-blur-2xl
+        backdrop-blur-md
         transition-all
         duration-500
-        hover:scale-[1.01]
-        hover:border-cyan-400/40
-      `}
+        hover:border-white/20
+        hover:bg-white/[0.05]
+        will-change-transform
+      "
     >
 
-      {/* STATUS SELECTOR */}
+      {/* =========================================
+      REACTIVE LIGHT
+      ========================================= */}
 
-      <select
-        value={status}
-        onChange={(e) =>
-          setStatus(
-            e.target.value
-          )
-        }
+      <motion.div
+        style={{
+          background:
+            `radial-gradient(circle at ${glowX} ${glowY},
+            rgba(255,255,255,0.10),
+            transparent 45%)`,
+        }}
         className="
-          mb-6
-          w-full
-          rounded-2xl
-          border
-          border-white/10
-          bg-black/40
-          p-4
-          text-white
+          pointer-events-none
+          absolute
+          inset-0
+          opacity-0
+          transition-opacity
+          duration-500
+          group-hover:opacity-100
         "
+      />
+
+      {/* =========================================
+      AMBIENT LIGHT
+      ========================================= */}
+
+      <div
+        className="
+          pointer-events-none
+          absolute
+          inset-0
+          bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_60%)]
+        "
+      />
+
+      {/* =========================================
+      NOISE
+      ========================================= */}
+
+      <div
+        className="
+          pointer-events-none
+          absolute
+          inset-0
+          opacity-[0.015]
+          bg-[url('/noise.png')]
+        "
+      />
+
+      {/* =========================================
+      CONTENT
+      ========================================= */}
+
+      <div
+        className="
+          relative
+          z-10
+        "
+        style={{
+          transform:
+            "translateZ(40px)",
+        }}
       >
 
-        {statuses.map((s) => (
+        {/* STATUS */}
 
-          <option
-            key={s}
-            value={s}
-          >
-            {s}
-          </option>
-
-        ))}
-
-      </select>
-
-      {/* PRODUCT NAME */}
-
-      <h2
-        className="
-          text-3xl
-          font-black
-          text-white
-        "
-      >
-        {product.name}
-      </h2>
-
-      {/* PROGRESS */}
-
-      <div className="mt-8">
-
-        <div className="
-          text-sm
-          uppercase
-          tracking-[0.3em]
-          text-zinc-400
-        ">
-          Desarrollo
-        </div>
-
-        <div className="
-          mt-3
-          text-2xl
-          font-bold
-          text-white
-        ">
-          {progress}%
-        </div>
-
-        <div className="
-          mt-4
-          font-mono
-          text-cyan-300
-        ">
-          {
-            "█".repeat(
-              Math.floor(progress / 10)
-            ) +
-            "░".repeat(
-              10 -
-              Math.floor(progress / 10)
+        <select
+          value={status}
+          onChange={(e) =>
+            setStatus(
+              e.target.value
             )
           }
-        </div>
-
-      </div>
-
-      {/* DASHBOARD */}
-
-      <div className="
-        mt-10
-        grid
-        grid-cols-2
-        gap-4
-      ">
-
-        <div
           className="
-            rounded-3xl
+            mb-8
+            w-full
+            rounded-2xl
             border
             border-white/10
-            bg-black/40
-            p-6
+            bg-white/[0.03]
+            p-4
+            text-sm
+            text-white/80
+            backdrop-blur-md
+            outline-none
+            transition-all
+            duration-300
+            hover:border-white/20
           "
         >
 
-          <div className="
-            text-xs
+          {statuses.map((s) => (
+
+            <option
+              key={s}
+              value={s}
+            >
+              {s}
+            </option>
+
+          ))}
+
+        </select>
+
+        {/* TITLE */}
+
+        <h2
+          className="
+            text-3xl
+            font-black
+            tracking-[-0.04em]
+            text-white
+          "
+        >
+
+          {product.name}
+
+        </h2>
+
+        {/* CATEGORY */}
+
+        <p
+          className="
+            mt-3
+            text-sm
             uppercase
-            tracking-[0.3em]
-            text-zinc-500
-          ">
-            ACTIVOS
+            tracking-[0.25em]
+            text-white/35
+          "
+        >
+
+          {product.category}
+
+        </p>
+
+        {/* PROGRESS */}
+
+        <div className="mt-10">
+
+          <div
+            className="
+              text-[10px]
+              uppercase
+              tracking-[0.35em]
+              text-white/40
+            "
+          >
+
+            DESARROLLO
+
           </div>
 
-          <div className="
-            mt-3
-            text-4xl
-            font-black
-            text-white
-          ">
-            {activeProducts}
+          <div
+            className="
+              mt-4
+              flex
+              items-end
+              gap-3
+            "
+          >
+
+            <div
+              className="
+                text-5xl
+                font-black
+                tracking-[-0.05em]
+                text-white
+              "
+            >
+
+              {progress}
+
+            </div>
+
+            <div
+              className="
+                mb-1
+                text-lg
+                text-white/40
+              "
+            >
+
+              %
+
+            </div>
+
+          </div>
+
+          {/* PROGRESS BAR */}
+
+          <div
+            className="
+              mt-6
+              h-[6px]
+              w-full
+              overflow-hidden
+              rounded-full
+              bg-white/5
+            "
+          >
+
+            <motion.div
+              initial={{
+                width: 0,
+              }}
+              animate={{
+                width:
+                  `${progress}%`,
+              }}
+              transition={{
+                duration: 1,
+              }}
+              className="
+                h-full
+                rounded-full
+                bg-white/70
+              "
+            />
+
           </div>
 
         </div>
+
+        {/* DASHBOARD */}
 
         <div
           className="
-            rounded-3xl
-            border
-            border-cyan-400/10
-            bg-black/40
-            p-6
+            mt-10
+            grid
+            grid-cols-2
+            gap-5
           "
         >
 
-          <div className="
-            text-xs
-            uppercase
-            tracking-[0.3em]
-            text-zinc-500
-          ">
-            EN COMERCIALIZACIÓN
+          <div
+            className="
+              rounded-[28px]
+              border
+              border-white/10
+              bg-white/[0.03]
+              p-6
+              backdrop-blur-md
+            "
+          >
+
+            <div
+              className="
+                text-[10px]
+                uppercase
+                tracking-[0.30em]
+                text-white/35
+              "
+            >
+
+              ACTIVOS
+
+            </div>
+
+            <div
+              className="
+                mt-4
+                text-5xl
+                font-black
+                tracking-[-0.05em]
+                text-white
+              "
+            >
+
+              {activeProducts}
+
+            </div>
+
           </div>
 
-          <div className="
-            mt-3
-            text-4xl
-            font-black
-            text-cyan-300
-          ">
-            {comercializando}
+          <div
+            className="
+              rounded-[28px]
+              border
+              border-white/10
+              bg-white/[0.03]
+              p-6
+              backdrop-blur-md
+            "
+          >
+
+            <div
+              className="
+                text-[10px]
+                uppercase
+                tracking-[0.30em]
+                text-white/35
+              "
+            >
+
+              MERCADO
+
+            </div>
+
+            <div
+              className="
+                mt-4
+                text-5xl
+                font-black
+                tracking-[-0.05em]
+                text-white
+              "
+            >
+
+              {comercializando}
+
+            </div>
+
           </div>
 
         </div>
 
+        {/* INFO */}
+
+        <div
+          className="
+            mt-10
+            space-y-6
+          "
+        >
+
+          <div>
+
+            <div
+              className="
+                text-[10px]
+                uppercase
+                tracking-[0.30em]
+                text-white/35
+              "
+            >
+
+              FASE ACTUAL
+
+            </div>
+
+            <p
+              className="
+                mt-3
+                text-white/75
+                leading-relaxed
+              "
+            >
+
+              {phase}
+
+            </p>
+
+          </div>
+
+          <div>
+
+            <div
+              className="
+                text-[10px]
+                uppercase
+                tracking-[0.30em]
+                text-white/35
+              "
+            >
+
+              PRÓXIMO OBJETIVO
+
+            </div>
+
+            <p
+              className="
+                mt-3
+                text-white/75
+                leading-relaxed
+              "
+            >
+
+              {nextMilestone}
+
+            </p>
+
+          </div>
+
+        </div>
+
+        {/* BUTTON */}
+
+        <button
+          onClick={saveChanges}
+          className="
+            mt-12
+            w-full
+            rounded-[24px]
+            border
+            border-white/10
+            bg-white
+            px-6
+            py-4
+            text-sm
+            font-semibold
+            uppercase
+            tracking-[0.18em]
+            text-black
+            transition-all
+            duration-300
+            hover:scale-[1.01]
+            hover:bg-zinc-200
+            active:scale-[0.98]
+          "
+        >
+
+          Guardar Cambios
+
+        </button>
+
       </div>
 
-      {/* SAVE BUTTON */}
-
-      <button
-        onClick={saveChanges}
-        className="
-          mt-10
-          w-full
-          rounded-3xl
-          bg-cyan-400
-          px-6
-          py-4
-          font-black
-          text-black
-          transition-all
-          hover:scale-[1.02]
-        "
-      >
-        GUARDAR CAMBIOS
-      </button>
-
-    </div>
+    </motion.div>
 
   )
 

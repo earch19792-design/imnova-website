@@ -1,7 +1,15 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import {
+  useEffect,
+  useState,
+} from "react"
+
 import { useRouter } from "next/navigation"
+
+import {
+  motion,
+} from "framer-motion"
 
 import { products } from "@/data/products"
 
@@ -174,6 +182,7 @@ export default function AdminPage() {
 
     <main
       className="
+        relative
         min-h-screen
         overflow-hidden
         bg-black
@@ -181,38 +190,80 @@ export default function AdminPage() {
       "
     >
 
-      {/* BACKGROUND */}
+      {/* =========================================
+      GLOBAL BACKGROUND
+      ========================================= */}
 
-      <div
+      <div className="fixed inset-0 bg-black" />
+
+      {/* =========================================
+      AMBIENT LIGHTING
+      ========================================= */}
+
+      <motion.div
+        animate={{
+          opacity: [0.4, 0.7, 0.4],
+        }}
+        transition={{
+          duration: 8,
+          repeat: Infinity,
+          ease: "easeInOut",
+        }}
         className="
-          fixed
-          inset-0
           pointer-events-none
-          bg-[radial-gradient(circle_at_top,#0f172a_0%,#000_45%)]
+          fixed
+          left-1/2
+          top-0
+          h-[900px]
+          w-[900px]
+          -translate-x-1/2
+          rounded-full
+          bg-white/[0.03]
+          blur-[180px]
         "
       />
 
+      {/* =========================================
+      GRID
+      ========================================= */}
+
       <div
         className="
+          pointer-events-none
           fixed
           inset-0
-          pointer-events-none
-          opacity-[0.04]
-          bg-[linear-gradient(rgba(0,255,255,0.2)_1px,transparent_1px),linear-gradient(90deg,rgba(0,255,255,0.2)_1px,transparent_1px)]
-          bg-[size:40px_40px]
+          opacity-[0.015]
+          bg-[linear-gradient(rgba(255,255,255,0.10)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.10)_1px,transparent_1px)]
+          bg-[size:60px_60px]
         "
       />
 
-      {/* SIDEBAR */}
+      {/* =========================================
+      SIDEBAR
+      ========================================= */}
 
       <Sidebar
         selectedMenu={selectedMenu}
         setSelectedMenu={setSelectedMenu}
       />
 
-      {/* CONTENT */}
+      {/* =========================================
+      CONTENT
+      ========================================= */}
 
-      <div
+      <motion.div
+        initial={{
+          opacity: 0,
+          y: 20,
+        }}
+        animate={{
+          opacity: 1,
+          y: 0,
+        }}
+        transition={{
+          duration: 1,
+          ease: [0.22, 1, 0.36, 1],
+        }}
         className="
           relative
           z-10
@@ -222,39 +273,52 @@ export default function AdminPage() {
         "
       >
 
-        {/* HEADER */}
+        {/* =========================================
+        HEADER
+        ========================================= */}
 
         <div
           className="
             flex
-            items-center
+            items-start
             justify-between
+            gap-10
           "
         >
 
           <div>
 
-            <p
+            <div
               className="
-                text-xs
+                inline-flex
+                items-center
+                gap-3
+                rounded-full
+                border
+                border-white/10
+                bg-white/[0.03]
+                px-5
+                py-3
+                text-[10px]
                 uppercase
-                tracking-[0.45em]
-                text-cyan-300
+                tracking-[0.35em]
+                text-white/60
+                backdrop-blur-md
               "
             >
 
-              IMNOVA LABS // CORE SYSTEM
+              IMNOVA LABS • CORE SYSTEM
 
-            </p>
+            </div>
 
             <h1
               className="
-                mt-4
-                text-6xl
+                mt-8
+                text-7xl
                 font-black
-                tracking-wider
+                leading-none
+                tracking-[-0.06em]
                 text-white
-                drop-shadow-[0_0_20px_rgba(0,255,255,0.35)]
               "
             >
 
@@ -264,22 +328,30 @@ export default function AdminPage() {
 
             <p
               className="
-                mt-4
-                max-w-xl
-                text-sm
+                mt-6
+                max-w-2xl
+                text-lg
                 leading-relaxed
-                text-zinc-400
+                text-white/50
               "
             >
 
-              Tecnología • Nutrición • Evolución
+              Sistema operativo inteligente
+              diseñado para monitorear,
+              desarrollar y expandir el
+              ecosistema IMNOVA™.
 
             </p>
 
+            {/* =========================================
+            ACTIONS
+            ========================================= */}
+
             <div
               className="
-                mt-8
+                mt-10
                 flex
+                flex-wrap
                 gap-4
               "
             >
@@ -289,28 +361,23 @@ export default function AdminPage() {
                   router.push("/")
                 }
                 className="
-                  flex
-                  items-center
-                  gap-3
                   rounded-2xl
                   border
-                  border-cyan-400/20
-                  bg-cyan-400/10
-                  px-6
+                  border-white/10
+                  bg-white
+                  px-7
                   py-4
                   text-sm
-                  font-medium
-                  text-cyan-300
-                  backdrop-blur-xl
+                  font-semibold
+                  text-black
                   transition-all
                   duration-300
                   hover:scale-[1.02]
-                  hover:border-cyan-400/40
-                  hover:bg-cyan-400/20
+                  hover:bg-zinc-200
                 "
               >
 
-                ← Regresar al sitio principal
+                Regresar al Sitio
 
               </button>
 
@@ -319,23 +386,22 @@ export default function AdminPage() {
                 className="
                   rounded-2xl
                   border
-                  border-red-400/20
-                  bg-red-500/10
-                  px-6
+                  border-white/10
+                  bg-white/[0.03]
+                  px-7
                   py-4
                   text-sm
-                  font-medium
-                  text-red-300
-                  backdrop-blur-xl
+                  font-semibold
+                  text-white
+                  backdrop-blur-md
                   transition-all
                   duration-300
-                  hover:scale-[1.02]
-                  hover:border-red-400/40
-                  hover:bg-red-500/20
+                  hover:bg-white/[0.06]
+                  hover:border-white/20
                 "
               >
 
-                Cerrar sesión
+                Cerrar Sesión
 
               </button>
 
@@ -343,91 +409,120 @@ export default function AdminPage() {
 
           </div>
 
-          {/* SYSTEM STATUS */}
+          {/* =========================================
+          SYSTEM STATUS
+          ========================================= */}
 
-          <div
+          <motion.div
+            animate={{
+              y: [-4, 4, -4],
+            }}
+            transition={{
+              duration: 5,
+              repeat: Infinity,
+              ease: "easeInOut",
+            }}
             className="
-              rounded-3xl
+              relative
+              overflow-hidden
+              rounded-[32px]
               border
-              border-cyan-400/20
+              border-white/10
               bg-white/[0.03]
               px-8
-              py-6
-              backdrop-blur-2xl
-              shadow-[0_0_40px_rgba(0,255,255,0.08)]
+              py-7
+              backdrop-blur-md
             "
           >
 
-            <p
-              className="
-                text-xs
-                uppercase
-                tracking-[0.35em]
-                text-cyan-300
-              "
-            >
-
-              SYSTEM STATUS
-
-            </p>
-
             <div
               className="
-                mt-4
-                flex
-                items-center
-                gap-3
+                absolute
+                inset-0
+                bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_60%)]
               "
-            >
+            />
 
-              <div
-                className="
-                  h-3
-                  w-3
-                  animate-pulse
-                  rounded-full
-                  bg-cyan-400
-                  shadow-[0_0_15px_rgba(34,211,238,1)]
-                "
-              />
+            <div className="relative z-10">
 
               <p
                 className="
-                  text-lg
-                  font-semibold
-                  text-white
+                  text-[10px]
+                  uppercase
+                  tracking-[0.35em]
+                  text-white/40
                 "
               >
 
-                IMNOVA CORE ACTIVE
+                SYSTEM STATUS
 
               </p>
 
+              <div
+                className="
+                  mt-5
+                  flex
+                  items-center
+                  gap-4
+                "
+              >
+
+                <div
+                  className="
+                    h-3
+                    w-3
+                    rounded-full
+                    bg-green-400
+                    shadow-[0_0_15px_rgba(74,222,128,0.7)]
+                  "
+                />
+
+                <p
+                  className="
+                    text-lg
+                    font-semibold
+                    text-white
+                  "
+                >
+
+                  IMNOVA CORE ACTIVE
+
+                </p>
+
+              </div>
+
             </div>
 
-          </div>
+          </motion.div>
 
         </div>
 
-        {/* DASHBOARD */}
+        {/* =========================================
+        DASHBOARD
+        ========================================= */}
 
         {
           selectedMenu === "dashboard" && (
 
             <>
-              <div className="mt-14">
+
+              {/* METRICS */}
+
+              <div className="mt-16">
 
                 <Metrics />
 
               </div>
 
-              <div className="mt-14">
+              {/* PRODUCTS */}
+
+              <div className="mt-16">
 
                 <div
                   className="
-                    mb-8
+                    mb-10
                     flex
-                    items-center
+                    items-end
                     justify-between
                   "
                 >
@@ -436,10 +531,10 @@ export default function AdminPage() {
 
                     <p
                       className="
-                        text-xs
+                        text-[10px]
                         uppercase
                         tracking-[0.35em]
-                        text-cyan-300
+                        text-white/35
                       "
                     >
 
@@ -449,9 +544,10 @@ export default function AdminPage() {
 
                     <h2
                       className="
-                        mt-3
-                        text-4xl
+                        mt-4
+                        text-5xl
                         font-black
+                        tracking-[-0.05em]
                         text-white
                       "
                     >
@@ -475,19 +571,31 @@ export default function AdminPage() {
 
                   {liveProducts.map((product) => (
 
-                    <div
+                    <motion.div
                       key={product.id}
+                      initial={{
+                        opacity: 0,
+                        y: 40,
+                      }}
+                      animate={{
+                        opacity: 1,
+                        y: 0,
+                      }}
+                      transition={{
+                        duration: 0.7,
+                      }}
                       className="
-                        rounded-[32px]
+                        rounded-[36px]
                         border
-                        border-cyan-400/15
+                        border-white/10
                         bg-white/[0.03]
                         p-2
-                        backdrop-blur-2xl
+                        backdrop-blur-md
                         transition-all
                         duration-500
                         hover:-translate-y-1
-                        hover:border-cyan-400/35
+                        hover:border-white/20
+                        hover:bg-white/[0.04]
                       "
                     >
 
@@ -495,7 +603,7 @@ export default function AdminPage() {
                         product={product}
                       />
 
-                    </div>
+                    </motion.div>
 
                   ))}
 
@@ -503,24 +611,41 @@ export default function AdminPage() {
 
               </div>
 
-              <div className="mt-14 pb-20">
+              {/* ACTIVITY */}
+
+              <div className="mt-16 pb-20">
 
                 <div
                   className="
-                    rounded-[32px]
+                    relative
+                    overflow-hidden
+                    rounded-[36px]
                     border
-                    border-cyan-400/15
+                    border-white/10
                     bg-white/[0.03]
                     p-8
-                    backdrop-blur-2xl
+                    backdrop-blur-md
                   "
                 >
 
-                  <ActivityFeed />
+                  <div
+                    className="
+                      absolute
+                      inset-0
+                      bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_60%)]
+                    "
+                  />
+
+                  <div className="relative z-10">
+
+                    <ActivityFeed />
+
+                  </div>
 
                 </div>
 
               </div>
+
             </>
 
           )
@@ -529,12 +654,13 @@ export default function AdminPage() {
         {
           selectedMenu === "products" && (
 
-            <div className="mt-14">
+            <div className="mt-16">
 
               <h2
                 className="
-                  text-5xl
+                  text-6xl
                   font-black
+                  tracking-[-0.05em]
                   text-white
                 "
               >
@@ -551,12 +677,13 @@ export default function AdminPage() {
         {
           selectedMenu === "analytics" && (
 
-            <div className="mt-14">
+            <div className="mt-16">
 
               <h2
                 className="
-                  text-5xl
+                  text-6xl
                   font-black
+                  tracking-[-0.05em]
                   text-white
                 "
               >
@@ -570,7 +697,7 @@ export default function AdminPage() {
           )
         }
 
-      </div>
+      </motion.div>
 
     </main>
 
