@@ -25,6 +25,7 @@ const navItems = [
   { name: "Ecosistema", href: "#ecosystem" },
   { name: "Innovaciones", href: "#innovations" },
   { name: "Tecnología", href: "#technology" },
+  { name: "Club IMNOVA", href: "#club" },
   { name: "Contacto", href: "#contact" },
 ]
 
@@ -388,96 +389,7 @@ export function Navigation() {
                     >
 
                       <div className="absolute inset-0 bg-gradient-to-br from-cyan-400/[0.05] via-transparent to-transparent" />
-
-                      <div className="relative z-10">
-
-                        <div className="mb-5">
-
-                          <p
-                            className="
-                              text-xs
-                              uppercase
-                              tracking-[0.35em]
-                              text-cyan-300
-                            "
-                          >
-
-                            IMNOVA STORE
-
-                          </p>
-
-                          <h3
-                            className="
-                              mt-3
-                              text-2xl
-                              font-black
-                              tracking-[-0.03em]
-                              text-white
-                            "
-                          >
-
-                            Ecosistema Comercial
-
-                          </h3>
-
-                        </div>
-
-                        <div className="flex flex-col gap-3">
-
-                          {storeLinks.map((item) => (
-
-                            <Link
-                              key={item.name}
-                              href={item.href}
-                              className="
-                                group
-                                rounded-2xl
-                                border
-                                border-cyan-400/10
-                                bg-white/[0.04]
-                                px-5
-                                py-4
-                                transition-all
-                                duration-300
-                                hover:border-cyan-300/40
-                                hover:bg-white/[0.08]
-                                hover:translate-x-1
-                              "
-                            >
-
-                              <div className="flex items-center justify-between">
-
-                                <span className="text-sm font-medium text-white">
-
-                                  {item.name}
-
-                                </span>
-
-                                <span
-                                  className="
-                                    text-cyan-300
-                                    transition-transform
-                                    duration-300
-                                    group-hover:translate-x-1
-                                  "
-                                >
-
-                                  →
-
-                                </span>
-
-                              </div>
-
-                            </Link>
-
-                          ))}
-
-                        </div>
-
-                      </div>
-
-                    </motion.div>
-
+                      
                   )}
 
                 </AnimatePresence>

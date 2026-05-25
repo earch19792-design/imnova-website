@@ -18,6 +18,7 @@ import { FutureSection } from "@/components/future-section"
 import { GlobalSection } from "@/components/global-section"
 import { PartnersSection } from "@/components/partners-section"
 import { ContactSection } from "@/components/contact-section"
+import InnovaPopup from "@/components/imnova-popup" 
 import { Footer } from "@/components/footer"
 
 export default function IMNOVAPage() {
@@ -119,6 +120,8 @@ export default function IMNOVAPage() {
       CONTACT SECTION
       ================================================= */}
       <ContactSection />
+
+      <InnovaPopup />
 
       {/* =================================================
       FOOTER
