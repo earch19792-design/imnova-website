@@ -14,17 +14,17 @@ export default function InnovaPopup() {
   const [success, setSuccess] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
- useEffect(() => {
 
-  setMounted(true);
+  useEffect(() => {
+    setMounted(true);
 
-  const hasAccess = localStorage.getItem("innova-access");
+    const hasAccess = localStorage.getItem("innova-access");
 
-  if (hasAccess !== "true") {
-    setIsOpen(true);
-  }
+    if (hasAccess !== "true") {
+      setIsOpen(true);
+    }
+  }, []);
 
-}, []);
   const niches = [
     {
       title: "Performance",
@@ -68,6 +68,7 @@ export default function InnovaPopup() {
 
   const handleSubmit = async () => {
     try {
+      // Validaciones
       if (!fullName || !phone) {
         alert("Completa nombre y teléfono");
         return;
@@ -77,78 +78,94 @@ export default function InnovaPopup() {
         alert("Selecciona al menos un nicho");
         return;
       }
-      const cleanPhone = phone
-  .replace(/\D/g, "")
-  .trim();
 
-setLoading(true);
+      setLoading(true);
 
-const { data: existingUsers, error: checkError } = await supabase
-  .from("subscribers")
-  .select("id")
-  .eq("telefono", cleanPhone);
+      // Limpiar teléfono
+      const cleanPhone = phone.replace(/\D/g, "").trim();
 
-console.log("PHONE:", cleanPhone);
-console.log("USERS:", existingUsers);
-console.log("ERROR:", checkError);
+      console.log("PHONE:", cleanPhone);
 
-if (checkError) {
-  console.error(checkError);
-}
+      // Revisar duplicados
+      const { data: existingUsers, error: checkError } = await supabase
+        .from("subscribers")
+        .select("id")
+        .eq("telefono", cleanPhone);
 
-if (existingUsers && existingUsers.length > 0) {
+      console.log("USERS:", existingUsers);
+      console.log("CHECK ERROR:", checkError);
 
-  alert("Este número ya está registrado.");
+      if (checkError) {
+        throw checkError;
+      }
 
-  localStorage.setItem("innova-access", "true");
+      // Si ya existe
+      if (existingUsers && existingUsers.length > 0) {
+        alert("Este número ya está registrado.");
 
-  setLoading(false);
+        localStorage.setItem("innova-access", "true");
 
-  setTimeout(() => {
-    setIsOpen(false);
-  }, 1000);
+        setTimeout(() => {
+          setIsOpen(false);
+        }, 1000);
 
-  return;
-}
-      const { error } = await supabase
+        return;
+      }
+
+      // Insertar usuario
+      const { data, error } = await supabase
         .from("subscribers")
         .insert([
           {
-  nombre: fullName,
-  telefono: cleanPhone,
-  email: email,
-  nichos: [...selectedNiches],
-}
-        ]);
+            nombre: fullName,
+            telefono: cleanPhone,
+            email: email,
+            nichos: selectedNiches,
+          },
+        ])
+        .select();
+
+      console.log("INSERT DATA:", data);
+      console.log("INSERT ERROR:", error);
 
       if (error) {
         throw error;
       }
 
+      // Éxito
       setSuccess(true);
-  localStorage.setItem("innova-access", "true");
 
-setTimeout(() => {
-  setIsOpen(false);
-}, 2200);
+      localStorage.setItem("innova-access", "true");
+
+      setTimeout(() => {
+        setIsOpen(false);
+      }, 2200);
+
+      // Limpiar form
       setFullName("");
       setPhone("");
       setEmail("");
       setSelectedNiches([]);
 
-    } catch (err) {
-      console.error(err);
-      alert("Error guardando datos");
+    } catch (err: any) {
+      console.error("REAL ERROR:", err);
+
+      alert(
+        err?.message ||
+        JSON.stringify(err) ||
+        "Error guardando datos"
+      );
     } finally {
       setLoading(false);
     }
   };
-if (!mounted) return null;
 
-if (!isOpen) return null;
+  if (!mounted) return null;
+
+  if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center overflow-auto bg-black/80 p-4 backdrop-blur-sm">
-
       <div
         className="
           relative
@@ -164,7 +181,6 @@ if (!isOpen) return null;
           shadow-[0_0_80px_rgba(59,130,246,0.35)]
         "
       >
-
         {/* CLOSE */}
         <button
           onClick={() => window.location.reload()}
@@ -174,17 +190,13 @@ if (!isOpen) return null;
         </button>
 
         <div className="grid min-h-[640px] lg:grid-cols-2">
-
           {/* LEFT SIDE */}
           <div className="relative overflow-hidden border-r border-cyan-500/20 bg-[radial-gradient(circle_at_top,#0f172a,#020617)] p-8 lg:p-12">
-
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,#3b82f6_0%,transparent_70%)] opacity-20" />
 
             <div className="relative z-10">
-
               {/* LOGO */}
               <div className="mb-8 flex items-center gap-4">
-
                 <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400 to-violet-500 text-3xl font-black text-white shadow-[0_0_25px_rgba(59,130,246,0.7)]">
                   N
                 </div>
@@ -202,7 +214,6 @@ if (!isOpen) return null;
 
               {/* HERO */}
               <div className="max-w-xl">
-
                 <div className="mb-4 inline-flex items-center rounded-full border border-violet-500/40 bg-violet-500/10 px-4 py-2 text-sm text-violet-300 backdrop-blur-md">
                   ✦ Acceso Exclusivo
                 </div>
@@ -222,219 +233,89 @@ if (!isOpen) return null;
                   lanzamientos premium y experiencias seleccionadas
                   inteligentemente para vos.
                 </p>
-
               </div>
-
-              {/* PRODUCTS */}
-              <div className="relative mt-14 flex flex-wrap items-end justify-center gap-6 rounded-[32px] border border-cyan-500/20 bg-black/30 p-8 backdrop-blur-xl">
-
-                <div className="absolute inset-0 rounded-[32px] bg-[radial-gradient(circle_at_center,#3b82f6_0%,transparent_70%)] opacity-20" />
-
-                {/* PANCAKE */}
-                <img
-                  src="/images/mash-nutri+-PANCAKE.png"
-                  alt="Mash Pancake"
-                  className="relative z-10 w-24 rounded-2xl shadow-2xl transition hover:scale-105 lg:w-32"
-                />
-
-                {/* PAN */}
-                <img
-                  src="/images/mash-nutri+-PAN.png"
-                  alt="Mash Pan"
-                  className="relative z-10 w-28 rounded-2xl shadow-2xl transition hover:scale-105 lg:w-36"
-                />
-
-                {/* COFFEE */}
-                <img
-                  src="/images/mash-coffee.png"
-                  alt="Mash Coffee"
-                  className="relative z-10 w-36 rounded-2xl shadow-2xl transition hover:scale-105 lg:w-52"
-                />
-
-              </div>
-
-              {/* FEATURES */}
-              <div className="mt-10 grid grid-cols-2 gap-4 lg:grid-cols-4">
-
-                {[
-                  "Acceso anticipado",
-                  "Ofertas exclusivas",
-                  "Contenido premium",
-                  "IA inteligente",
-                ].map((item) => (
-
-                  <div
-                    key={item}
-                    className="rounded-2xl border border-cyan-500/20 bg-white/5 p-4 text-center text-sm text-slate-200 backdrop-blur-md"
-                  >
-                    {item}
-                  </div>
-
-                ))}
-
-              </div>
-
             </div>
           </div>
 
           {/* RIGHT SIDE */}
           <div className="relative bg-[#050816] p-8 lg:p-12">
-
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,#8b5cf6_0%,transparent_70%)] opacity-10" />
-
             <div className="relative z-10 mx-auto max-w-2xl">
-
-              {/* TITLE */}
               <div className="mb-10">
-
                 <h2 className="text-4xl font-black text-white lg:text-5xl">
                   ÚNETE A
 
                   <span className="bg-gradient-to-r from-violet-400 to-cyan-400 bg-clip-text text-transparent">
                     {" "}INNOVA CLUB
                   </span>
-
                 </h2>
 
                 <p className="mt-4 text-lg text-slate-300">
                   Completá tus datos y activá tu acceso exclusivo.
                 </p>
-
               </div>
 
               {/* FORM */}
               <div className="space-y-5">
-
                 <input
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="Nombre completo"
-                  className="w-full rounded-2xl border border-cyan-500/20 bg-black/30 px-6 py-5 text-white outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/40 backdrop-blur-xl"
+                  className="w-full rounded-2xl border border-cyan-500/20 bg-black/30 px-6 py-5 text-white outline-none"
                 />
 
                 <input
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   placeholder="Teléfono / WhatsApp"
-                  className="w-full rounded-2xl border border-cyan-500/20 bg-black/30 px-6 py-5 text-white outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/40 backdrop-blur-xl"
+                  className="w-full rounded-2xl border border-cyan-500/20 bg-black/30 px-6 py-5 text-white outline-none"
                 />
 
                 <input
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="Email"
-                  className="w-full rounded-2xl border border-cyan-500/20 bg-black/30 px-6 py-5 text-white outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/40 backdrop-blur-xl"
+                  className="w-full rounded-2xl border border-cyan-500/20 bg-black/30 px-6 py-5 text-white outline-none"
                 />
-
               </div>
 
               {/* NICHES */}
-              <div className="mt-10">
+              <div className="mt-10 grid grid-cols-2 gap-5 lg:grid-cols-3">
+                {niches.map((niche) => {
+                  const active = selectedNiches.includes(niche.title);
 
-                <h3 className="mb-3 text-center text-2xl font-black tracking-wide text-white">
-                  ELEGÍ LOS UNIVERSOS QUE MÁS TE INTERESAN
-                </h3>
-
-                <p className="mb-10 text-center text-sm text-slate-400">
-                  Personalizaremos tu experiencia según tus intereses.
-                </p>
-
-                <div className="grid grid-cols-2 gap-5 lg:grid-cols-3">
-
-                  {niches.map((niche) => {
-
-                    const active = selectedNiches.includes(niche.title);
-
-                    return (
-                      <button
-                        key={niche.title}
-                        onClick={() => toggleNiche(niche.title)}
-                        className={`
-                          group
-                          relative
-                          overflow-hidden
-                          rounded-[28px]
-                          border
-                          p-5
-                          text-left
-                          transition-all
-                          duration-300
-                          backdrop-blur-xl
-                          hover:-translate-y-1
-                          hover:shadow-[0_0_30px_rgba(34,211,238,0.18)]
-                          ${
-                            active
-                              ? "border-cyan-400 bg-cyan-500/15 shadow-[0_0_35px_rgba(34,211,238,0.25)]"
-                              : "border-cyan-500/20 bg-black/30 hover:border-cyan-400/70"
-                          }
-                        `}
+                  return (
+                    <button
+                      key={niche.title}
+                      onClick={() => toggleNiche(niche.title)}
+                      className={`rounded-[28px] border p-5 text-left transition-all ${
+                        active
+                          ? "border-cyan-400 bg-cyan-500/15"
+                          : "border-cyan-500/20 bg-black/30"
+                      }`}
+                    >
+                      <div
+                        className={`mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br ${niche.glow} text-xl`}
                       >
+                        {niche.icon}
+                      </div>
 
-                        {/* Glow Background */}
-                        <div className="absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100 bg-[radial-gradient(circle_at_top,#22d3ee22,transparent_70%)]" />
+                      <h4 className="text-base font-bold text-white">
+                        {niche.title}
+                      </h4>
 
-                        {/* Icon */}
-                        <div
-                          className={`
-                            relative
-                            z-10
-                            mb-4
-                            flex
-                            h-12
-                            w-12
-                            items-center
-                            justify-center
-                            rounded-2xl
-                            bg-gradient-to-br
-                            ${niche.glow}
-                            text-xl
-                            shadow-xl
-                          `}
-                        >
-                          {niche.icon}
-                        </div>
-
-                        {/* Title */}
-                        <h4 className="relative z-10 text-base lg:text-lg font-bold text-white">
-                          {niche.title}
-                        </h4>
-
-                        {/* Subtitle */}
-                        <p className="relative z-10 mt-2 text-xs lg:text-sm leading-relaxed text-slate-400">
-                          {niche.subtitle}
-                        </p>
-
-                        {/* Bottom Glow */}
-                        <div
-                          className={`
-                            absolute
-                            bottom-0
-                            left-0
-                            h-[2px]
-                            w-full
-                            bg-gradient-to-r
-                            ${niche.glow}
-                            opacity-60
-                          `}
-                        />
-
-                      </button>
-                    );
-                  })}
-                </div>
-
-              </div>
-
-              {/* AI NOTICE */}
-              <div className="mt-8 rounded-2xl border border-violet-500/20 bg-violet-500/10 px-5 py-4 text-sm text-violet-200 backdrop-blur-md">
-                ✦ Analizando tus intereses para personalizar tu experiencia...
+                      <p className="mt-2 text-sm text-slate-400">
+                        {niche.subtitle}
+                      </p>
+                    </button>
+                  );
+                })}
               </div>
 
               {/* BUTTON */}
               <button
                 onClick={handleSubmit}
                 disabled={loading}
-                className="mt-8 w-full rounded-3xl bg-gradient-to-r from-violet-600 via-fuchsia-500 to-cyan-500 px-8 py-6 text-2xl font-black tracking-wide text-white shadow-[0_0_40px_rgba(139,92,246,0.6)] transition hover:scale-[1.01] disabled:opacity-50"
+                className="mt-8 w-full rounded-3xl bg-gradient-to-r from-violet-600 via-fuchsia-500 to-cyan-500 px-8 py-6 text-2xl font-black text-white"
               >
                 {loading ? "ACTIVANDO..." : "ACTIVAR ACCESO"}
               </button>
@@ -445,14 +326,6 @@ if (!isOpen) return null;
                   ✅ Acceso activado correctamente.
                 </div>
               )}
-
-              {/* FOOTER */}
-              <div className="mt-8 flex flex-wrap items-center justify-center gap-6 text-sm text-slate-400">
-                <span>✔ Acceso inmediato</span>
-                <span>✔ Sin spam</span>
-                <span>✔ Cancelá cuando quieras</span>
-              </div>
-
             </div>
           </div>
         </div>
