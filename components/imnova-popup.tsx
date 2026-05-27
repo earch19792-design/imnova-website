@@ -19,9 +19,11 @@ export default function InnovaPopup() {
 
   const [password, setPassword] =
     useState("")
-
-  const [isLogin, setIsLogin] =
+    const [isLogin, setIsLogin] =
     useState(false)
+
+  const [countryCode, setCountryCode] =
+  useState("+505")
 
   const [phone, setPhone] =
     useState("")
@@ -101,81 +103,228 @@ export default function InnovaPopup() {
     checkSession()
 
   }, [])
-
+  
   /* =================================================
   NICHES
   ================================================= */
 
   const niches = [
 
-    {
-      title:
-        "Poneme Activo",
+  {
+    title:
+      "Poneme Activo",
 
-      subtitle:
-        "Gym, energía y rendimiento",
+    subtitle:
+      "Gym, energía y rendimiento",
 
-      icon:
-        "⚡",
-    },
+    status:
+      "Detectando alto rendimiento...",
 
-    {
-      title:
-        "Cosas del Futuro",
+    icon:
+      "⚡",
 
-      subtitle:
-        "Tecnología brutal e innovación",
+    image:
+      "/images/imnova-fitness.webp",
 
-      icon:
-        "◉",
-    },
+    quote:
+      "⚡ Energía desbloqueada.",
 
-    {
-      title:
-        "Pa' Rendír Más",
+    glow:
+      "from-cyan-400/30 to-cyan-600/10",
 
-      subtitle:
-        "Bebidas funcionales y enfoque",
+    energy:
+      "bg-cyan-400/20",
 
-      icon:
-        "☕",
-    },
+    scene:
+      "IM NOVA tomando PURA+ y comiendo pancakes Mash Nutri+ en un gym futurista.",
+  },
 
-    {
-      title:
-        "Vida Inteligente",
+  {
+    title:
+      "Cosas del Futuro",
 
-      subtitle:
-        "Productos premium para el día a día",
+    subtitle:
+      "Tecnología brutal e innovación",
 
-      icon:
-        "◆",
-    },
+    status:
+      "Conectando al ecosistema IMNOVA...",
 
-    {
-      title:
-        "Poneme Más Guapo",
+    icon:
+      "◉",
 
-      subtitle:
-        "Skincare, glow up y cuidado premium",
+    image:
+      "/images/imnova-tech.webp",
 
-      icon:
-        "✨",
-    },
+    quote:
+      "◉ Bienvenido al futuro.",
 
-    {
-      title:
-        "Promos Tuani",
+    glow:
+      "from-blue-500/30 to-indigo-600/10",
 
-      subtitle:
-        "Acceso exclusivo y descuentos",
+    energy:
+      "bg-blue-500/20",
 
-      icon:
-        "✺",
-    },
+    scene:
+      "IM NOVA usando hologramas, IA y gadgets futuristas.",
+  },
 
-  ]
+  {
+    title:
+      "Pa’ Rendir Más",
 
+    subtitle:
+      "Bebidas funcionales y enfoque",
+
+    status:
+      "Modo enfoque sincronizado...",
+
+    icon:
+      "☕",
+
+    image:
+      "/images/imnova-focus.webp",
+
+    quote:
+      "☕ Modo enfoque activado.",
+
+    glow:
+      "from-orange-400/30 to-yellow-500/10",
+
+    energy:
+      "bg-orange-400/20",
+
+    scene:
+      "IM NOVA trabajando con Mash Coffee y setup productivity premium.",
+  },
+
+  {
+    title:
+      "Vida Inteligente",
+
+    subtitle:
+      "Productos premium para el día a día",
+
+    status:
+      "Sincronizando vida inteligente...",
+
+    icon:
+      "◆",
+
+    image:
+      "/images/imnova-lifestyle.webp",
+
+    quote:
+      "◆ Simplificá tu vida.",
+
+    glow:
+      "from-emerald-400/30 to-green-600/10",
+
+    energy:
+      "bg-emerald-400/20",
+
+    scene:
+      "IM NOVA interactuando con gadgets smart home y estilo de vida futurista.",
+  },
+
+  {
+    title:
+      "Poneme Más Guapo",
+
+    subtitle:
+      "Skincare, glow up y cuidado premium",
+
+    status:
+      "Glow premium activado...",
+
+    icon:
+      "✨",
+
+    image:
+      "/images/imnova-skincare.webp",
+
+    quote:
+      "✨ Glow premium activado.",
+
+    glow:
+      "from-pink-400/30 to-fuchsia-600/10",
+
+    energy:
+      "bg-pink-400/20",
+
+    scene:
+      "IM NOVA usando skincare premium con iluminación luxury glow.",
+  },
+
+  {
+    title:
+      "Promos Tuani",
+
+    subtitle:
+      "Acceso exclusivo y descuentos",
+
+    status:
+      "Buscando beneficios exclusivos...",
+
+    icon:
+      "✺",
+
+    image:
+      "/images/imnova-deals.webp",
+
+    quote:
+      "✺ Acceso VIP desbloqueado.",
+
+    glow:
+      "from-yellow-300/30 to-orange-500/10",
+
+    energy:
+      "bg-yellow-300/20",
+
+    scene:
+      "IM NOVA mostrando ofertas premium y acceso VIP futurista.",
+  },
+]
+const [activeNiche, setActiveNiche] =
+  useState(niches[0])
+
+const [isSwitching, setIsSwitching] =
+  useState(false)
+
+const [displayText, setDisplayText] =
+  useState("")
+
+useEffect(() => {
+
+  if (!isSwitching) return
+
+  const text =
+    "Sincronizando preferencias..."
+
+  let index = 0
+
+  setDisplayText("")
+
+  const interval =
+    setInterval(() => {
+
+      setDisplayText(
+        text.slice(0, index)
+      )
+
+      index++
+
+      if (index > text.length) {
+
+        clearInterval(interval)
+
+      }
+
+    }, 35)
+
+  return () =>
+    clearInterval(interval)
+
+}, [isSwitching])
   /* =================================================
   TOGGLE NICHE
   ================================================= */
@@ -223,8 +372,9 @@ export default function InnovaPopup() {
 
             alert(
               "Ingresá email y contraseña"
+            
             )
-
+            console.log("HANDLE SUBMIT FUNCIONANDO")
             return
 
           }
@@ -323,10 +473,15 @@ export default function InnovaPopup() {
         SAVE USER DATA
         ========================================= */
 
-        const cleanPhone =
-          phone
-            .replace(/\D/g, "")
-            .trim()
+        const cleanPhone = (
+  countryCode +
+  phone.replace(/\D/g, "")
+).trim()
+console.log({
+  countryCode,
+  phone,
+  cleanPhone,
+})
 
         const {
           error,
@@ -388,24 +543,24 @@ export default function InnovaPopup() {
 
       } catch (err: any) {
 
-  console.log(
-    "SUPABASE ERROR:",
-    JSON.stringify(err, null, 2)
-  )
+        console.log(
+          "SUPABASE ERROR:",
+          JSON.stringify(err, null, 2)
+        )
 
-  console.log(err)
+        console.log(err)
 
-  alert(
+        alert(
 
-    err?.message ||
+          err?.message ||
 
-    err?.error_description ||
+          err?.error_description ||
 
-    "Error autenticando usuario"
+          "Error autenticando usuario"
 
-  )
+        )
 
-} finally {
+      } finally {
 
         setLoading(false)
 
@@ -447,6 +602,33 @@ export default function InnovaPopup() {
         >
 
           {/* BACKGROUND */}
+          <motion.div
+  key={activeNiche.title}
+  initial={{
+    opacity: 0,
+    scale: 0.7,
+  }}
+  animate={{
+    opacity: 1,
+    scale: 1,
+  }}
+  transition={{
+    duration: 1,
+  }}
+  className={`
+    pointer-events-none
+    absolute
+    left-1/2
+    top-1/2
+    h-[700px]
+    w-[700px]
+    -translate-x-1/2
+    -translate-y-1/2
+    rounded-full
+    blur-3xl
+    ${activeNiche.energy}
+  `}
+/>
 
           <div
             className="
@@ -519,56 +701,6 @@ export default function InnovaPopup() {
               shadow-[0_0_120px_rgba(34,211,238,0.08)]
             "
           >
-
-            {/* GUEST BUTTON */}
-
-            <button
-              onClick={() => {
-
-                localStorage.setItem(
-                  "innova-access",
-                  "guest"
-                )
-
-                localStorage.setItem(
-                  "innova-access-expiration",
-                  String(
-                    Date.now() +
-                    24 * 60 * 60 * 1000
-                  )
-                )
-
-                setIsOpen(false)
-
-                router.push("/")
-
-              }}
-              className="
-                absolute
-                right-5
-                top-5
-                z-20
-                rounded-full
-                border
-                border-white/10
-                bg-white/[0.04]
-                px-4
-                py-2
-                text-xs
-                uppercase
-                tracking-[0.2em]
-                text-white/60
-                transition-all
-                duration-300
-                hover:border-cyan-400/30
-                hover:bg-cyan-400/10
-                hover:text-cyan-200
-              "
-            >
-
-              Invitado
-
-            </button>
 
             <div
               className="
@@ -695,32 +827,45 @@ export default function InnovaPopup() {
                   />
 
                   <motion.img
-                    src="/images/imnova-popup-3d.webp"
-                    alt="IMNOVA"
-                    animate={{
-                      y: [0, -20, 0],
-                      rotateY: [0, 6, 0],
-                      scale: [1, 1.03, 1],
-                    }}
-                    transition={{
-                      duration: 8,
-                      repeat: Infinity,
-                      ease: "easeInOut",
-                    }}
-                    className="
-                      relative
-                      z-10
-                      w-full
-                      max-w-[620px]
-                      rounded-[40px]
-                      object-contain
-                      mix-blend-screen
-                      opacity-95
-                      drop-shadow-[0_0_100px_rgba(34,211,238,0.45)]
-                    "
-                  />
+  key={activeNiche.image}
+  src={activeNiche.image}
+  alt={activeNiche.title}
 
-                </div>
+  initial={{
+    opacity: 0,
+    scale: 0.92,
+    y: 30,
+  }}
+
+  animate={{
+    opacity: 1,
+    scale: [1, 1.04, 1],
+    y: [0, -18, 0],
+    rotateY: [0, 8, 0],
+    rotateX: [0, 2, 0],
+    filter: [
+      "drop-shadow(0 0 40px rgba(34,211,238,0.25))",
+      "drop-shadow(0 0 90px rgba(34,211,238,0.55))",
+      "drop-shadow(0 0 40px rgba(34,211,238,0.25))",
+    ],
+  }}
+
+  transition={{
+    duration: 8,
+    repeat: Infinity,
+    ease: "easeInOut",
+  }}
+
+  className="
+    relative
+    z-10
+    w-full
+    max-w-[620px]
+    rounded-[40px]
+    object-contain
+    opacity-95
+  "
+/>                </div>
 
               </div>
 
@@ -734,54 +879,93 @@ export default function InnovaPopup() {
                 "
               >
 
-                {/* SWITCH */}
+                {/* TOP ACCESS BAR */}
 
                 <div
                   className="
-                    mb-6
+                    mb-8
                     flex
                     items-center
                     justify-between
+                    gap-4
                   "
                 >
 
-                  <button
-                    onClick={() =>
-                      setIsLogin(true)
-                    }
-                    className={`
-                      text-sm
-                      transition-all
+                  <div>
 
-                      ${
-                        isLogin
-                          ? "text-cyan-200"
-                          : "text-white/40"
+                    <p
+                      className="
+                        text-sm
+                        text-white/40
+                      "
+                    >
+
+                      ¿Ya sos parte de IMNOVA™?
+
+                    </p>
+
+                    <button
+                      onClick={() =>
+                        setIsLogin(true)
                       }
-                    `}
+                      className="
+                        mt-1
+                        text-sm
+                        font-medium
+                        text-cyan-200
+                        transition-all
+                        duration-300
+                        hover:text-cyan-100
+                      "
+                    >
+
+                      Iniciar sesión →
+
+                    </button>
+
+                  </div>
+
+                  <button
+                    onClick={async () => {
+
+                      localStorage.setItem(
+                        "innova-access",
+                        "guest"
+                      )
+
+                      localStorage.setItem(
+                        "innova-access-expiration",
+                        String(
+                          Date.now() +
+                          24 * 60 * 60 * 1000
+                        )
+                      )
+
+                      setIsOpen(false)
+
+                      router.push("/")
+
+                    }}
+                    className="
+                      rounded-full
+                      border
+                      border-white/10
+                      bg-white/[0.04]
+                      px-5
+                      py-2
+                      text-[11px]
+                      uppercase
+                      tracking-[0.25em]
+                      text-white/50
+                      transition-all
+                      duration-300
+                      hover:border-cyan-400/30
+                      hover:bg-cyan-400/[0.08]
+                      hover:text-cyan-100
+                    "
                   >
 
-                    Iniciar sesión
-
-                  </button>
-
-                  <button
-                    onClick={() =>
-                      setIsLogin(false)
-                    }
-                    className={`
-                      text-sm
-                      transition-all
-
-                      ${
-                        !isLogin
-                          ? "text-cyan-200"
-                          : "text-white/40"
-                      }
-                    `}
-                  >
-
-                    Crear acceso
+                    Continuar como invitado →
 
                   </button>
 
@@ -796,282 +980,373 @@ export default function InnovaPopup() {
                   "
                 >
 
-                  {isLogin
-                    ? "Bienvenido de nuevo"
-                    : "Activá tu acceso"}
+                  {
+                    isLogin
+                      ? "Bienvenido de nuevo"
+                      : "Activá tu acceso IMNOVA™"
+                  }
 
                 </h3>
 
                 <div
-                  className="
-                    mt-4
-                    rounded-2xl
-                    border
-                    border-cyan-400/20
-                    bg-cyan-400/[0.06]
-                    p-5
-                    backdrop-blur-xl
-                  "
-                >
+  className={`
+    mt-4
+    rounded-2xl
+    border
+    border-cyan-400/20
+    bg-gradient-to-br
+    ${activeNiche.glow}
+    p-5
+    backdrop-blur-xl
+  `}
+>
 
-                  <p
-                    className="
-                      text-sm
-                      leading-relaxed
-                      text-cyan-100
-                    "
-                  >
+  <div
+    className="
+      text-sm
+      leading-relaxed
+      text-cyan-100
+    "
+  >
 
-                    ⚡ Accedé al ecosistema
-                    IMNOVA™ y desbloqueá
-                    experiencias, productos
-                    y contenido exclusivo.
+    {
+      isSwitching
 
-                  </p>
+        ? displayText
 
-                </div>
+        : activeNiche.quote
+    }
 
-                {/* FORM */}
+  </div>
 
-                <div className="mt-6 space-y-4">
+</div>
+               {/* FORM */}
 
-                  {!isLogin && (
+<div className="mt-6 space-y-4">
 
-                    <>
-                      <input
-                        value={fullName}
-                        onChange={(e) =>
-                          setFullName(
-                            e.target.value
-                          )
-                        }
-                        placeholder="Tu nombre"
-                        className="
-                          w-full
-                          rounded-2xl
-                          border
-                          border-white/10
-                          bg-white/[0.06]
-                          px-6
-                          py-4
-                          text-white
-                          outline-none
-                          placeholder:text-white/45
-                        "
-                      />
+  {!isLogin && (
 
-                      <input
-                        value={phone}
-                        onChange={(e) =>
-                          setPhone(
-                            e.target.value
-                          )
-                        }
-                        placeholder="WhatsApp"
-                        className="
-                          w-full
-                          rounded-2xl
-                          border
-                          border-white/10
-                          bg-white/[0.06]
-                          px-6
-                          py-4
-                          text-white
-                          outline-none
-                          placeholder:text-white/45
-                        "
-                      />
-                    </>
+    <>
 
-                  )}
+      {/* NAME */}
 
-                  <input
-                    value={email}
-                    onChange={(e) =>
-                      setEmail(
-                        e.target.value
-                      )
-                    }
-                    placeholder="Correo electrónico"
-                    className="
-                      w-full
-                      rounded-2xl
-                      border
-                      border-white/10
-                      bg-white/[0.06]
-                      px-6
-                      py-4
-                      text-white
-                      outline-none
-                      placeholder:text-white/45
-                    "
-                  />
+      <input
+        value={fullName}
+        onChange={(e) =>
+          setFullName(
+            e.target.value
+          )
+        }
+        placeholder="Tu nombre"
+        className="
+          w-full
+          rounded-2xl
+          border
+          border-white/10
+          bg-white/[0.06]
+          px-6
+          py-4
+          text-white
+          outline-none
+          placeholder:text-white/45
+        "
+      />
 
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) =>
-                      setPassword(
-                        e.target.value
-                      )
-                    }
-                    placeholder="Contraseña"
-                    className="
-                      w-full
-                      rounded-2xl
-                      border
-                      border-white/10
-                      bg-white/[0.06]
-                      px-6
-                      py-4
-                      text-white
-                      outline-none
-                      placeholder:text-white/45
-                    "
-                  />
+      {/* PHONE */}
 
-                </div>
+      <div className="flex gap-3">
 
-                {/* NICHES */}
+       <select
+  value={countryCode}
+  onChange={(e) =>
+    setCountryCode(
+      e.target.value
+    )
+  }
+  className="
+    rounded-2xl
+    border
+    border-white/10
+    bg-white/[0.06]
+    px-4
+    text-white
+    outline-none
+  "
+>
 
-                {!isLogin && (
+  {/* CENTROAMÉRICA */}
 
-                  <div
-                    className="
-                      mt-8
-                      grid
-                      grid-cols-2
-                      gap-4
-                    "
-                  >
+  <option value="+501">
+    🇧🇿 Belize +501
+  </option>
 
-                    {niches.map(
-                      (niche) => {
+  <option value="+502">
+    🇬🇹 Guatemala +502
+  </option>
 
-                        const active =
-                          selectedNiches.includes(
-                            niche.title
-                          )
+  <option value="+503">
+    🇸🇻 El Salvador +503
+  </option>
 
-                        return (
+  <option value="+504">
+    🇭🇳 Honduras +504
+  </option>
 
-                          <button
-                            key={niche.title}
-                            type="button"
-                            onClick={() =>
-                              toggleNiche(
-                                niche.title
-                              )
-                            }
-                            className={`
-                              rounded-[28px]
-                              border
-                              p-5
-                              text-left
-                              transition-all
-                              duration-500
+  <option value="+505">
+    🇳🇮 Nicaragua +505
+  </option>
 
-                              ${
-                                active
+  <option value="+506">
+    🇨🇷 Costa Rica +506
+  </option>
 
-                                  ? `
-                                    border-cyan-400/40
-                                    bg-cyan-400/[0.10]
-                                  `
+  <option value="+507">
+    🇵🇦 Panamá +507
+  </option>
 
-                                  : `
-                                    border-white/10
-                                    bg-white/[0.04]
-                                  `
-                              }
-                            `}
-                          >
+  {/* NORTEAMÉRICA */}
 
-                            <div
-                              className="
-                                mb-4
-                                text-2xl
-                              "
-                            >
+  <option value="+1">
+    🇺🇸 Estados Unidos +1
+  </option>
 
-                              {niche.icon}
+  <option value="+1">
+    🇨🇦 Canadá +1
+  </option>
 
-                            </div>
+</select>
+        <input
+          value={phone}
+          onChange={(e) =>
+            setPhone(
+              e.target.value
+            )
+          }
+          placeholder="Número WhatsApp"
+          className="
+            w-full
+            rounded-2xl
+            border
+            border-white/10
+            bg-white/[0.06]
+            px-6
+            py-4
+            text-white
+            outline-none
+            placeholder:text-white/45
+          "
+        />
 
-                            <h4
-                              className="
-                                text-sm
-                                font-bold
-                                text-white
-                              "
-                            >
+      </div>
 
-                              {niche.title}
+    </>
 
-                            </h4>
+  )}
 
-                            <p
-                              className="
-                                mt-2
-                                text-xs
-                                text-white/60
-                              "
-                            >
+  {/* EMAIL */}
 
-                              {niche.subtitle}
+  <input
+    value={email}
+    onChange={(e) =>
+      setEmail(
+        e.target.value
+      )
+    }
+    placeholder="Correo electrónico"
+    className="
+      w-full
+      rounded-2xl
+      border
+      border-white/10
+      bg-white/[0.06]
+      px-6
+      py-4
+      text-white
+      outline-none
+      placeholder:text-white/45
+    "
+  />
 
-                            </p>
+  {/* PASSWORD */}
 
-                          </button>
+  <input
+    type="password"
+    value={password}
+    onChange={(e) =>
+      setPassword(
+        e.target.value
+      )
+    }
+    placeholder="Contraseña"
+    className="
+      w-full
+      rounded-2xl
+      border
+      border-white/10
+      bg-white/[0.06]
+      px-6
+      py-4
+      text-white
+      outline-none
+      placeholder:text-white/45
+    "
+  />
 
-                        )
+</div>
 
-                      }
-                    )}
+{/* NICHES */}
 
-                  </div>
+{!isLogin && (
 
-                )}
+  <div
+    className="
+      mt-6
+      grid
+      grid-cols-2
+      gap-4
+    "
+  >
 
-                {/* BUTTON */}
+    {niches.map(
+      (niche) => {
 
-                <button
-                  onClick={handleSubmit}
-                  disabled={loading}
-                  className="
-                    mt-8
-                    w-full
-                    rounded-3xl
-                    border
-                    border-cyan-400/20
-                    bg-gradient-to-r
-                    from-cyan-300
-                    to-white
-                    px-8
-                    py-5
-                    text-sm
-                    font-black
-                    uppercase
-                    tracking-[0.25em]
-                    text-black
-                    transition-all
-                    duration-500
-                    hover:scale-[1.01]
-                    disabled:opacity-50
-                  "
-                >
+        const active =
+          selectedNiches.includes(
+            niche.title
+          )
 
-                  {
-                    loading
-                      ? "PROCESANDO..."
-                      : isLogin
-                        ? "INICIAR SESIÓN"
-                        : "CREAR ACCESO"
-                  }
+        return (
 
-                </button>
+          <button
+            key={niche.title}
+            type="button"
+           onClick={() => {
 
-                {/* SUCCESS */}
+  toggleNiche(
+    niche.title
+  )
+
+  setIsSwitching(true)
+
+  setTimeout(() => {
+
+    setActiveNiche(niche)
+
+    setIsSwitching(false)
+
+  }, 700)
+
+}}
+
+            className={`
+              rounded-[28px]
+              border
+              p-5
+              text-left
+              transition-all
+              duration-500
+
+              ${
+                active
+
+                  ? `
+                    border-cyan-400/40
+                    bg-cyan-400/[0.10]
+                    shadow-[0_0_40px_rgba(34,211,238,0.15)]
+                  `
+
+                  : `
+                    border-white/10
+                    bg-white/[0.04]
+                  `
+              }
+            `}
+          >
+
+            <div
+              className="
+                mb-4
+                text-2xl
+              "
+            >
+
+              {niche.icon}
+
+            </div>
+
+            <h4
+              className="
+                text-sm
+                font-bold
+                text-white
+              "
+            >
+
+              {niche.title}
+
+            </h4>
+
+            <p
+              className="
+                mt-2
+                text-xs
+                text-white/60
+              "
+            >
+
+              {niche.subtitle}
+
+            </p>
+
+          </button>
+
+        )
+
+      }
+    )}
+
+  </div>
+
+)}
+
+{/* BUTTON */}
+
+<button
+  type="button"
+  onClick={handleSubmit}
+  disabled={loading}
+  className="
+    mt-8
+    w-full
+    rounded-3xl
+    border
+    border-cyan-400/20
+    bg-gradient-to-r
+    from-cyan-300
+    to-white
+    px-8
+    py-5
+    text-sm
+    font-black
+    uppercase
+    tracking-[0.25em]
+    text-black
+    transition-all
+    duration-500
+    hover:scale-[1.01]
+    disabled:opacity-50
+  "
+>
+
+  {
+    loading
+      ? "PROCESANDO..."
+      : isLogin
+        ? "INICIAR SESIÓN"
+        : "ACTIVAR MI ACCESO"
+  }
+
+</button>               {/* SUCCESS */}
 
                 {success && (
 

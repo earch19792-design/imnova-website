@@ -157,13 +157,67 @@ export default function ImnovaLabs() {
 
   }, [mouseX, mouseY])
 
-  return (
+const currentStep =
+  pipelineSteps.find(
+    (step) =>
+      step.status === "ACTIVO"
+  )
 
+const currentPhaseData = {
+
+  title:
+    currentStep?.title,
+
+  progress:
+    currentStep?.progress,
+
+  currentMessage:
+
+    currentStep?.title === "PROTOTIPO"
+
+      ? "Nueva fórmula nutricional optimizada para una mejor experiencia y absorción funcional."
+
+      : currentStep?.title === "TESTING"
+
+      ? "Pruebas avanzadas de rendimiento y validación del producto en escenarios reales."
+
+      : currentStep?.title === "PRODUCCIÓN"
+
+      ? "Optimización de manufactura, supply chain y preparación de escalamiento."
+
+      : currentStep?.title === "LANZAMIENTO"
+
+      ? "Preparación estratégica para salida oficial y expansión del ecosistema IMNOVA™."
+
+      : "Desarrollo activo del ecosistema IMNOVA™.",
+
+  nextObjective:
+
+    currentStep?.title === "PROTOTIPO"
+
+      ? "Revelación oficial del nuevo packaging este viernes."
+
+      : currentStep?.title === "TESTING"
+
+      ? "Validación final antes de producción masiva."
+
+      : currentStep?.title === "PRODUCCIÓN"
+
+      ? "Inicio de fabricación y distribución estratégica."
+
+      : currentStep?.title === "LANZAMIENTO"
+
+      ? "Expansión global y activación de campañas."
+
+      : "Continuar optimización del sistema.",
+
+}
     <section
       id="imnova-labs"
       className="
         relative
         isolate
+        min-h-screen
         overflow-hidden
         border-t
         border-white/10
@@ -584,8 +638,9 @@ export default function ImnovaLabs() {
 
         <motion.button
           whileHover={{
-            scale: 1.02,
-          }}
+          y: -8,
+         scale: 1.015,
+        }}
           whileTap={{
             scale: 0.98,
           }}
@@ -885,6 +940,437 @@ export default function ImnovaLabs() {
           ))}
 
         </div>
+        {/* =================================================
+DASHBOARD 2 — LEADS OVERVIEW
+================================================= */}
+
+<div className="mt-32">
+
+  {/* HEADER */}
+
+  <motion.div
+    initial={{
+      opacity: 0,
+      y: 40,
+    }}
+    whileInView={{
+      opacity: 1,
+      y: 0,
+    }}
+    transition={{
+      duration: 0.8,
+    }}
+    viewport={{ once: true }}
+    className="
+      mb-12
+      flex
+      flex-col
+      gap-6
+      lg:flex-row
+      lg:items-end
+      lg:justify-between
+    "
+  >
+
+    <div>
+
+      <div
+        className="
+          inline-flex
+          items-center
+          gap-3
+          rounded-full
+          border
+          border-cyan-400/20
+          bg-cyan-400/[0.08]
+          px-5
+          py-3
+          backdrop-blur-md
+        "
+      >
+
+        <div
+          className="
+            h-2
+            w-2
+            rounded-full
+            bg-cyan-300
+          "
+        />
+
+        <span
+          className="
+            text-[10px]
+            uppercase
+            tracking-[0.35em]
+            text-cyan-100
+          "
+        >
+
+          IMNOVA ANALYTICS
+
+        </span>
+
+      </div>
+
+      <h3
+        className="
+          mt-8
+          text-5xl
+          font-black
+          leading-[0.95]
+          tracking-[-0.06em]
+          text-white
+        "
+      >
+
+        Leads
+
+        <span
+          className="
+            block
+            bg-gradient-to-r
+            from-cyan-200
+            via-white
+            to-zinc-500
+            bg-clip-text
+            text-transparent
+          "
+        >
+
+          Overview
+
+        </span>
+
+      </h3>
+      <p
+  className="
+    mt-6
+    max-w-xl
+    leading-relaxed
+    text-white/45
+  "
+>
+
+  Inteligencia de mercado,
+  comportamiento de usuarios
+  y validación del ecosistema
+  IMNOVA™ en tiempo real.
+
+</p>
+
+    </div>
+
+    <div
+      className="
+        rounded-[28px]
+        border
+        border-cyan-400/15
+        bg-cyan-400/[0.05]
+        px-6
+        py-5
+        backdrop-blur-md
+      "
+    >
+
+      <div
+        className="
+          text-[10px]
+          uppercase
+          tracking-[0.35em]
+          text-cyan-100/50
+        "
+      >
+
+        STATUS
+
+      </div>
+
+      <div
+        className="
+          mt-3
+          flex
+          items-center
+          gap-3
+        "
+      >
+
+        <div
+          className="
+            h-2.5
+            w-2.5
+            rounded-full
+            bg-green-400
+          "
+        />
+
+        <span
+          className="
+            font-semibold
+            text-white
+          "
+        >
+
+          LIVE DATA ACTIVE
+
+        </span>
+
+      </div>
+
+    </div>
+
+  </motion.div>
+
+  {/* CARDS */}
+
+  <div
+    className="
+      grid
+      gap-6
+      md:grid-cols-2
+      xl:grid-cols-4
+    "
+  >
+
+    {[
+      {
+        title:
+          "Total Leads",
+
+        value:
+          "1,284",
+
+        icon:
+          "👥",
+
+        glow:
+          "from-cyan-400/20 to-cyan-600/5",
+      },
+
+      {
+        title:
+          "Leads Hoy",
+
+        value:
+          "84",
+
+        icon:
+          "⚡",
+
+        glow:
+          "from-orange-400/20 to-yellow-500/5",
+      },
+
+      {
+        title:
+          "Conversion Rate",
+
+        value:
+          "34%",
+
+        icon:
+          "🚀",
+
+        glow:
+          "from-emerald-400/20 to-green-500/5",
+      },
+
+      {
+        title:
+          "Top Nicho",
+
+        value:
+          "Fitness",
+
+        icon:
+          "🏆",
+
+        glow:
+          "from-pink-400/20 to-fuchsia-500/5",
+      },
+
+    ].map((card, index) => (
+
+      <motion.div
+        key={card.title}
+
+        initial={{
+          opacity: 0,
+          y: 40,
+          filter: "blur(10px)",
+        }}
+
+        whileInView={{
+          opacity: 1,
+          y: 0,
+          filter: "blur(0px)",
+        }}
+
+        transition={{
+          duration: 0.8,
+          delay:
+            index * 0.08,
+          ease: [0.22, 1, 0.36, 1],
+        }}
+
+        viewport={{ once: true }}
+
+        whileHover={{
+        y: -8,
+      scale: 1.015,
+      }}
+
+        className={`
+          group
+          relative
+          overflow-hidden
+          rounded-[36px]
+          border
+          border-white/10
+          bg-gradient-to-br
+          ${card.glow}
+          p-8
+          backdrop-blur-2xl
+          transition-all
+          duration-500
+        `}
+      >
+
+        {/* LIGHT */}
+        <div
+  className="
+  pointer-events-none
+    absolute
+    inset-0
+    opacity-0
+    transition-opacity
+    duration-500
+    group-hover:opacity-100
+    bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.06),transparent_60%)]
+       "
+    />
+
+        <div
+          className="
+            absolute
+            right-[-60px]
+            top-[-60px]
+            h-[180px]
+            w-[180px]
+            rounded-full
+            bg-cyan-300/10
+            blur-3xl
+          "
+        />
+
+        {/* GRID */}
+
+        <div
+          className="
+            absolute
+            inset-0
+            opacity-[0.04]
+            bg-[linear-gradient(rgba(255,255,255,0.10)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.10)_1px,transparent_1px)]
+           bg-[size:60px_60px]
+          "
+        />
+
+        <div className="relative z-10">
+
+          {/* TOP */}
+
+          <div
+            className="
+              flex
+              items-center
+              justify-between
+            "
+          >
+
+            <span
+              className="
+                text-sm
+                text-white/50
+              "
+            >
+
+              {card.title}
+
+            </span>
+
+            <span
+              className="
+                text-3xl
+              "
+            >
+
+              {card.icon}
+
+            </span>
+
+          </div>
+
+          {/* VALUE */}
+
+          <div className="mt-10">
+
+            <h4
+              className="
+                text-6xl
+                font-black
+                tracking-[-0.08em]
+                text-white
+              "
+            >
+
+              {card.value}
+
+            </h4>
+
+            <div
+              className="
+                mt-5
+                flex
+                items-center
+                gap-3
+              "
+            >
+
+              <div
+                className="
+                  h-2
+                  w-2
+                  rounded-full
+                  bg-cyan-300
+                "
+              />
+
+              <span
+                className="
+                  text-[10px]
+                  uppercase
+                  tracking-[0.35em]
+                  text-cyan-100/60
+                "
+              >
+
+                LIVE METRIC
+
+              </span>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </motion.div>
+
+    ))}
+
+  </div>
+
+</div>
 
       </div>
 
