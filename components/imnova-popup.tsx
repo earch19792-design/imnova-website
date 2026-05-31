@@ -10,8 +10,15 @@ import {
 import { supabase } from "@/lib/supabase"
 import { useRouter } from "next/navigation"
 
-export default function InnovaPopup() {
+interface InnovaPopupProps {
+  isOpen: boolean
+  onClose: () => void
+}
 
+export default function InnovaPopup({
+  isOpen,
+  onClose,
+}: InnovaPopupProps) {
   const router = useRouter()
 
   const [fullName, setFullName] =
@@ -42,8 +49,7 @@ export default function InnovaPopup() {
   const [success, setSuccess] =
     useState(false)
 
-  const [isOpen, setIsOpen] =
-    useState(false)
+  
 
   const [mounted, setMounted] =
     useState(false)
@@ -54,55 +60,9 @@ export default function InnovaPopup() {
 
   useEffect(() => {
 
-    const checkSession =
-      async () => {
+  setMounted(true)
 
-        setMounted(true)
-
-        const {
-          data: { session },
-        } = await supabase.auth.getSession()
-
-        if (session) {
-
-          setIsOpen(false)
-
-          return
-
-        }
-
-        const expiration =
-          localStorage.getItem(
-            "innova-access-expiration"
-          )
-
-        if (!expiration) {
-
-          setIsOpen(true)
-
-          return
-
-        }
-
-        const now = Date.now()
-
-        if (
-          now > Number(expiration)
-        ) {
-
-          setIsOpen(true)
-
-          return
-
-        }
-
-        setIsOpen(false)
-
-      }
-
-    checkSession()
-
-  }, [])
+}, [])
   
   /* =================================================
   NICHES
@@ -298,7 +258,7 @@ useEffect(() => {
   if (!isSwitching) return
 
   const text =
-    "Sincronizando preferencias..."
+    activeNiche.status
 
   let index = 0
 
@@ -314,9 +274,7 @@ useEffect(() => {
       index++
 
       if (index > text.length) {
-
         clearInterval(interval)
-
       }
 
     }, 35)
@@ -324,8 +282,9 @@ useEffect(() => {
   return () =>
     clearInterval(interval)
 
-}, [isSwitching])
-  /* =================================================
+}, [isSwitching, activeNiche]) 
+
+/* =================================================
   TOGGLE NICHE
   ================================================= */
 
@@ -409,7 +368,7 @@ useEffect(() => {
 
           setTimeout(() => {
 
-            setIsOpen(false)
+            onClose()
 
             router.push("/")
 
@@ -830,13 +789,11 @@ console.log({
   key={activeNiche.image}
   src={activeNiche.image}
   alt={activeNiche.title}
-
   initial={{
     opacity: 0,
     scale: 0.92,
     y: 30,
   }}
-
   animate={{
     opacity: 1,
     scale: [1, 1.04, 1],
@@ -849,13 +806,11 @@ console.log({
       "drop-shadow(0 0 40px rgba(34,211,238,0.25))",
     ],
   }}
-
   transition={{
     duration: 8,
     repeat: Infinity,
     ease: "easeInOut",
   }}
-
   className="
     relative
     z-10
@@ -865,7 +820,10 @@ console.log({
     object-contain
     opacity-95
   "
-/>                </div>
+/>
+
+{/* TEMPORALMENTE ELIMINADO */}
+               </div>
 
               </div>
 
@@ -987,6 +945,23 @@ console.log({
                   }
 
                 </h3>
+                {isLogin && (
+
+  <button
+    onClick={() => setIsLogin(false)}
+    className="
+      mt-4
+      text-sm
+      text-cyan-200
+      hover:text-cyan-100
+    "
+  >
+
+    ← Crear cuenta nueva
+
+  </button>
+
+)}
 
                 <div
   className={`
@@ -1010,11 +985,9 @@ console.log({
   >
 
     {
-      isSwitching
-
-        ? displayText
-
-        : activeNiche.quote
+       isSwitching
+    ? `${displayText}|`
+    : activeNiche.quote
     }
 
   </div>
@@ -1228,14 +1201,13 @@ console.log({
 
   setIsSwitching(true)
 
-  setTimeout(() => {
+setActiveNiche(niche)
 
-    setActiveNiche(niche)
+setTimeout(() => {
 
-    setIsSwitching(false)
+  setIsSwitching(false)
 
-  }, 700)
-
+}, 700)
 }}
 
             className={`
