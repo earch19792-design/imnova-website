@@ -19,10 +19,6 @@ export async function sendWhatsAppUpdate(
     "50586546986",
     "50586268473",
 
-
-    // temporalmente deja SOLO UN NÚMERO
-    // para depuración
-
   ]
 
   if (!token || !phoneId) {
@@ -42,65 +38,42 @@ export async function sendWhatsAppUpdate(
 
   }
 
+  const results = []
+
   for (const phone of phones) {
 
     try {
 
       await new Promise(
-
         resolve =>
-
           setTimeout(
             resolve,
             300
           )
-
       )
 
-      let payload
+      const payload = {
 
-      if (imageUrl) {
+        messaging_product:
+          "whatsapp",
 
-        payload = {
+        to: phone,
 
-          messaging_product:
-            "whatsapp",
+        type: "template",
 
-          to: phone,
+        template: {
 
-          type: "image",
+          name:
+            "hello_world",
 
-          image: {
+          language: {
 
-            link:
-              imageUrl,
-
-            caption:
-              message,
+            code:
+              "en_US",
 
           },
 
-        }
-
-      } else {
-
-        payload = {
-
-          messaging_product:
-            "whatsapp",
-
-          to: phone,
-
-          type: "text",
-
-          text: {
-
-            body:
-              message,
-
-          },
-
-        }
+        },
 
       }
 
@@ -109,121 +82,99 @@ export async function sendWhatsAppUpdate(
         phone
       )
 
-      const response = await fetch(
+      const response =
+        await fetch(
 
-        `https://graph.facebook.com/v25.0/${phoneId}/messages`,
+          `https://graph.facebook.com/v25.0/${phoneId}/messages`,
 
-        {
+          {
 
-          method: "POST",
+            method: "POST",
 
-          headers: {
+            headers: {
 
-            Authorization:
-              `Bearer ${token}`,
+              Authorization:
+                `Bearer ${token}`,
 
-            "Content-Type":
-              "application/json",
+              "Content-Type":
+                "application/json",
 
-          },
+            },
 
-          body:
-            JSON.stringify(
-              payload
-            ),
+            body:
+              JSON.stringify(
+                payload
+              ),
 
-        }
+          }
 
-      )
-
-      const raw =
-        await response.text()
-
-      console.log(
-        "RAW RESPONSE:",
-        raw
-      )
-
-      let data
-
-      try {
-
-        data =
-          JSON.parse(raw)
-
-      } catch {
-
-        data = raw
-
-      }
-
-      console.log(
-        "STATUS:",
-        response.status
-      )
-
-      if (!response.ok) {
-
-        console.error(
-          "META ERROR:",
-          data
         )
 
-        return {
-
-          success: false,
-
-          status:
-            response.status,
-
-          data,
-
-        }
-
-      }
+      const data =
+        await response.json()
 
       console.log(
-        "META SUCCESS:",
+        "META RESPONSE:",
         data
       )
 
-      return {
+      results.push({
 
-        success: true,
+        phone,
+
+        success:
+          response.ok,
 
         status:
           response.status,
 
         data,
 
-      }
+      })
 
     } catch (error) {
 
       console.error(
         "WHATSAPP ERROR:",
+        phone,
         error
       )
 
-      return {
+      results.push({
+
+        phone,
 
         success: false,
 
         error:
           String(error),
 
-      }
+      })
 
     }
 
   }
 
+  const successful =
+    results.filter(
+      r => r.success
+    ).length
+
   return {
 
-    success: false,
+    success:
+      successful > 0,
 
-    error:
-      "NO SE PROCESÓ NINGÚN NÚMERO",
+    total:
+      phones.length,
+
+    successful,
+
+    failed:
+      phones.length -
+      successful,
+
+    results,
 
   }
 

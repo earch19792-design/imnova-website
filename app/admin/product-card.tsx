@@ -238,37 +238,82 @@ export function ProductCard({
   ========================================= */
 
   const saveChanges =
-    async () => {
+  async () => {
 
-      const updatedProduct = {
-        id: product.id,
-        status,
-        progress,
-        phase,
-        nextMilestone,
-      }
+    const updatedProduct = {
+      id: product.id,
+      status,
+      progress,
+      phase,
+      nextMilestone,
+    }
 
-      localStorage.setItem(
-        `product-${product.id}`,
-        JSON.stringify(updatedProduct)
+    localStorage.setItem(
+      `product-${product.id}`,
+      JSON.stringify(updatedProduct)
+    )
+
+    window.dispatchEvent(
+      new CustomEvent(
+        "productsUpdated",
+        {
+          detail:
+            updatedProduct,
+        }
       )
+    )
 
-      window.dispatchEvent(
-        new CustomEvent(
-          "productsUpdated",
+    try {
+
+      const response =
+        await fetch(
+          "/api/innova-lab",
           {
-            detail:
-              updatedProduct,
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body: JSON.stringify({
+
+              message:
+                `🚀 IMNOVA UPDATE
+
+Producto: ${product.name}
+
+Estado: ${status}
+
+Progreso: ${progress}%`,
+
+            }),
+
           }
         )
+
+      const result =
+        await response.json()
+
+      console.log(
+        "WHATSAPP RESULT:",
+        result
       )
 
-      alert(
-        "Cambios guardados"
+    } catch (error) {
+
+      console.error(
+        "ERROR WHATSAPP:",
+        error
       )
 
     }
 
+    alert(
+      "Cambios guardados"
+    )
+
+  }
   /* =========================================
   DASHBOARD ACTIVE PRODUCTS
   ========================================= */

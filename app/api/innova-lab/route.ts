@@ -17,15 +17,36 @@ export async function POST(
 
     const {
 
+      product,
+
+      status,
+
+      progress,
+
       message,
 
       imageUrl,
 
     } = body
 
+    const finalMessage =
+
+      message ||
+
+      `🚀 IMNOVA LABS UPDATE
+
+Producto: ${product || "N/A"}
+
+Estado: ${status || "N/A"}
+
+Progreso: ${progress || "N/A"}
+
+Fecha: ${new Date().toLocaleString()}
+`
+
     console.log(
-      "MESSAGE:",
-      message
+      "FINAL MESSAGE:",
+      finalMessage
     )
 
     console.log(
@@ -36,7 +57,7 @@ export async function POST(
     const result =
       await sendWhatsAppUpdate(
 
-        message,
+        finalMessage,
 
         imageUrl
 

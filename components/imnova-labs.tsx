@@ -645,80 +645,69 @@ return (
           whileTap={{
             scale: 0.98,
           }}
-          onClick={async () => {
+         onClick={async () => {
 
-            await fetch(
-              "/api/imnova-labs",
-              {
-                method: "POST",
+  try {
 
-                headers: {
-                  "Content-Type":
-                    "application/json",
-                },
+    const response =
+      await fetch(
+        "/api/innova-lab",
+        {
+          method: "POST",
 
-                body: JSON.stringify({
-                  product:
-                    "MASH NUTRI+",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
 
-                  status:
-                    "TESTING",
+          body: JSON.stringify({
+            product:
+              "MASH NUTRI+",
 
-                  progress:
-                    "72%",
-                }),
-              }
-            )
+            status:
+              "TESTING",
 
-            alert(
-              "WhatsApp enviado 🚀"
-            )
+            progress:
+              "72%",
+          }),
+        }
+      )
 
-          }}
-          className="
-            mt-10
-            rounded-2xl
-            border
-            border-white/10
-            bg-white/[0.03]
-            px-7
-            py-4
-            text-sm
-            font-semibold
-            uppercase
-            tracking-[0.18em]
-            text-white
-            backdrop-blur-md
-            transition-all
-            duration-300
-            hover:border-white/20
-            hover:bg-white/[0.06]
-          "
-        >
+    const result =
+      await response.json()
 
-          Test Notification
+    console.log(
+      "WHATSAPP RESULT:",
+      result
+    )
 
-        </motion.button>
+    if (
+      result.success
+    ) {
 
-        {/* =================================================
-        TIMELINE
-        ================================================= */}
+      alert(
+        "WhatsApp enviado 🚀"
+      )
 
-        <div className="mt-24 grid gap-6">
+    } else {
 
-          {pipelineSteps.map(
-            (
-              step,
-              index
-            ) => (
+      alert(
+        "Error enviando WhatsApp ❌"
+      )
 
-            <motion.div
-              key={step.title}
-              initial={{
-                opacity: 0,
-                y: 50,
-                filter: "blur(10px)",
-              }}
+    }
+
+  } catch (error) {
+
+    console.error(error)
+
+    alert(
+      "Error de conexión ❌"
+    )
+
+  }
+
+}}
               whileInView={{
                 opacity: 1,
                 y: 0,
