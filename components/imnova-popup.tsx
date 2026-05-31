@@ -37,6 +37,8 @@ export default function InnovaPopup({
 
   const [email, setEmail] =
     useState("")
+    const [objective, setObjective] =
+  useState("")
 
   const [
     selectedNiches,
@@ -382,21 +384,21 @@ useEffect(() => {
         SIGNUP VALIDATION
         ========================================= */
 
-        if (
-          !fullName ||
-          !phone ||
-          !email ||
-          !password
-        ) {
+       if (
+  !fullName ||
+  !phone ||
+  !email ||
+  !password ||
+  !objective
+) {
 
-          alert(
-            "Completá todos los campos"
-          )
+  alert(
+    "Completá todos los campos"
+  )
 
-          return
+  return
 
-        }
-
+}
         if (
           selectedNiches.length === 0
         ) {
@@ -463,7 +465,10 @@ console.log({
                 selectedNiches,
 
               auth_id:
-                authData.user?.id,
+  authData.user?.id,
+
+objetivo_principal:
+  objective,
             },
           ])
 
@@ -486,14 +491,13 @@ console.log({
 
         setSuccess(true)
 
-        setTimeout(() => {
+       setTimeout(() => {
 
-          setIsOpen(false)
+  onClose()
 
-          router.push("/")
+  router.push("/")
 
-        }, 1800)
-
+}, 1800)
         setFullName("")
         setPhone("")
         setEmail("")
@@ -884,26 +888,26 @@ console.log({
                   </div>
 
                   <button
-                    onClick={async () => {
+  onClick={async () => {
 
-                      localStorage.setItem(
-                        "innova-access",
-                        "guest"
-                      )
+    localStorage.setItem(
+      "innova-access",
+      "guest"
+    )
 
-                      localStorage.setItem(
-                        "innova-access-expiration",
-                        String(
-                          Date.now() +
-                          24 * 60 * 60 * 1000
-                        )
-                      )
+    localStorage.setItem(
+      "innova-access-expiration",
+      String(
+        Date.now() +
+        24 * 60 * 60 * 1000
+      )
+    )
 
-                      setIsOpen(false)
+    onClose()
 
-                      router.push("/")
+    router.push("/")
 
-                    }}
+  }}
                     className="
                       rounded-full
                       border
@@ -1115,7 +1119,57 @@ console.log({
     </>
 
   )}
+   {/* OBJETIVO PRINCIPAL */}
 
+{!isLogin && (
+
+  <select
+    value={objective}
+    onChange={(e) =>
+      setObjective(
+        e.target.value
+      )
+    }
+    className="
+      w-full
+      rounded-2xl
+      border
+      border-white/10
+      bg-white/[0.06]
+      px-6
+      py-4
+      text-white
+      outline-none
+    "
+  >
+
+    <option value="">
+      🎯 ¿Cuál es tu objetivo principal?
+    </option>
+
+    <option value="fitness">
+      🏋️ Mejorar mi físico
+    </option>
+
+    <option value="productividad">
+      🧠 Aumentar mi productividad
+    </option>
+
+    <option value="imagen">
+      ✨ Mejorar mi imagen personal
+    </option>
+
+    <option value="salud">
+      🌱 Tener una vida más saludable
+    </option>
+
+    <option value="emprender">
+      🚀 Emprender e innovar
+    </option>
+
+  </select>
+
+)}
   {/* EMAIL */}
 
   <input
