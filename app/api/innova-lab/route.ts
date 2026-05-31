@@ -33,17 +33,25 @@ export async function POST(
       imageUrl
     )
 
-    await sendWhatsAppUpdate(
+    const result =
+      await sendWhatsAppUpdate(
 
-      message,
+        message,
 
-      imageUrl
+        imageUrl
 
+      )
+
+    console.log(
+      "WHATSAPP RESULT:",
+      result
     )
 
     return NextResponse.json({
 
       success: true,
+
+      result,
 
     })
 
@@ -57,11 +65,18 @@ export async function POST(
     return NextResponse.json(
 
       {
+
         success: false,
+
+        error:
+          String(error),
+
       },
 
       {
+
         status: 500,
+
       }
 
     )

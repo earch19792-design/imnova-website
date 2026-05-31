@@ -19,11 +19,11 @@ export async function sendWhatsAppUpdate(
     "50586546986",
     "50586268473",
 
-  ]
 
-  /* =========================================
-  VALIDACIÓN
-  ========================================= */
+    // temporalmente deja SOLO UN NÚMERO
+    // para depuración
+
+  ]
 
   if (!token || !phoneId) {
 
@@ -31,21 +31,20 @@ export async function sendWhatsAppUpdate(
       "FALTAN VARIABLES DE ENTORNO"
     )
 
-    return
+    return {
+
+      success: false,
+
+      error:
+        "FALTAN VARIABLES DE ENTORNO",
+
+    }
 
   }
-
-  /* =========================================
-  LOOP PHONES
-  ========================================= */
 
   for (const phone of phones) {
 
     try {
-
-      /* =========================================
-      DELAY ANTI RATE LIMIT
-      ========================================= */
 
       await new Promise(
 
@@ -59,10 +58,6 @@ export async function sendWhatsAppUpdate(
       )
 
       let payload
-
-      /* =========================================
-      ENVÍA IMAGEN SI EXISTE imageUrl
-      ========================================= */
 
       if (imageUrl) {
 
@@ -89,10 +84,6 @@ export async function sendWhatsAppUpdate(
 
       } else {
 
-        /* =========================================
-        SOLO TEXTO
-        ========================================= */
-
         payload = {
 
           messaging_product:
@@ -113,23 +104,10 @@ export async function sendWhatsAppUpdate(
 
       }
 
-      /* =========================================
-      DEBUG
-      ========================================= */
-
       console.log(
         "ENVIANDO A:",
         phone
       )
-
-      console.log(
-        "IMAGE URL:",
-        imageUrl
-      )
-
-      /* =========================================
-      FETCH META API
-      ========================================= */
 
       const response = await fetch(
 
@@ -149,17 +127,14 @@ export async function sendWhatsAppUpdate(
 
           },
 
-          body: JSON.stringify(
-            payload
-          ),
+          body:
+            JSON.stringify(
+              payload
+            ),
 
         }
 
       )
-
-      /* =========================================
-      RAW RESPONSE
-      ========================================= */
 
       const raw =
         await response.text()
@@ -182,18 +157,9 @@ export async function sendWhatsAppUpdate(
 
       }
 
-      /* =========================================
-      LOGS
-      ========================================= */
-
       console.log(
         "STATUS:",
         response.status
-      )
-
-      console.log(
-        "PHONE:",
-        phone
       )
 
       if (!response.ok) {
@@ -203,12 +169,32 @@ export async function sendWhatsAppUpdate(
           data
         )
 
-      } else {
+        return {
 
-        console.log(
-          "META SUCCESS:",
-          data
-        )
+          success: false,
+
+          status:
+            response.status,
+
+          data,
+
+        }
+
+      }
+
+      console.log(
+        "META SUCCESS:",
+        data
+      )
+
+      return {
+
+        success: true,
+
+        status:
+          response.status,
+
+        data,
 
       }
 
@@ -219,7 +205,25 @@ export async function sendWhatsAppUpdate(
         error
       )
 
+      return {
+
+        success: false,
+
+        error:
+          String(error),
+
+      }
+
     }
+
+  }
+
+  return {
+
+    success: false,
+
+    error:
+      "NO SE PROCESÓ NINGÚN NÚMERO",
 
   }
 

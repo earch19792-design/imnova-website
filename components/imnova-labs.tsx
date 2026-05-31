@@ -212,6 +212,7 @@ const currentPhaseData = {
       : "Continuar optimización del sistema.",
 
 }
+return (
     <section
       id="imnova-labs"
       className="
