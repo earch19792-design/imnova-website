@@ -322,12 +322,17 @@ const createCampaign = () => {
           ease: [0.22, 1, 0.36, 1],
         }}
         className="
-          relative
-          z-10
-          ml-[280px]
-          px-10
-          py-10
-        "
+  relative
+  z-10
+  ml-0
+  lg:ml-[280px]
+  px-4
+  sm:px-6
+  lg:px-10
+  py-6
+  lg:py-10
+"
+        
       >
 
         {/* =========================================
@@ -335,12 +340,15 @@ const createCampaign = () => {
         ========================================= */}
 
         <div
-          className="
-            flex
-            items-start
-            justify-between
-            gap-10
-          "
+      className="
+  flex
+  flex-col
+  lg:flex-row
+  lg:items-start
+  lg:justify-between
+  gap-6
+  lg:gap-10
+"
         >
 
           <div>
@@ -863,15 +871,18 @@ Ahora mismo deberías ver:
     setShowCampaignModal(true)
   }
   className="
-    rounded-2xl
-    border
-    border-cyan-400/20
-    bg-cyan-400/10
-    px-5
-    py-2
-    text-sm
-    text-cyan-300
-  "
+  rounded-2xl
+  border
+  border-cyan-400/20
+  bg-cyan-400/10
+  px-3
+  sm:px-5
+  py-2
+  text-xs
+  sm:text-sm
+  text-cyan-300
+"
+
 >
   + Nueva Campaña
 </button>

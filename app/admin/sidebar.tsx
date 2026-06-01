@@ -19,32 +19,27 @@ export function Sidebar({
   selectedMenu,
   setSelectedMenu,
 }: SidebarProps) {
-
   const items = [
     {
       label: "Dashboard",
       icon: LayoutDashboard,
       value: "dashboard",
     },
-
     {
       label: "Productos",
       icon: Package,
       value: "products",
     },
-
     {
       label: "Campañas",
       icon: Activity,
       value: "campaigns",
     },
-
     {
       label: "Analytics",
       icon: BarChart3,
       value: "analytics",
     },
-
     {
       label: "Configuración",
       icon: Settings,
@@ -53,14 +48,14 @@ export function Sidebar({
   ]
 
   return (
-
     <aside
       className="
+        hidden
+        lg:flex
         fixed
         left-0
         top-0
         z-50
-        flex
         h-screen
         w-[280px]
         flex-col
@@ -70,7 +65,6 @@ export function Sidebar({
         backdrop-blur-3xl
       "
     >
-
       {/* LOGO */}
       <div
         className="
@@ -83,7 +77,6 @@ export function Sidebar({
           py-8
         "
       >
-
         <div
           className="
             flex
@@ -98,7 +91,6 @@ export function Sidebar({
             shadow-[0_0_40px_rgba(0,255,255,0.25)]
           "
         >
-
           <span
             className="
               text-2xl
@@ -108,11 +100,9 @@ export function Sidebar({
           >
             I
           </span>
-
         </div>
 
         <div>
-
           <h1
             className="
               text-xl
@@ -134,9 +124,7 @@ export function Sidebar({
           >
             Control Center
           </p>
-
         </div>
-
       </div>
 
       {/* MENU */}
@@ -150,15 +138,11 @@ export function Sidebar({
           py-8
         "
       >
-
         {items.map((item) => (
-
           <button
             key={item.label}
             onClick={() =>
-              setSelectedMenu(
-                item.value
-              )
+              setSelectedMenu(item.value)
             }
             className={`
               flex
@@ -173,8 +157,7 @@ export function Sidebar({
               duration-300
 
               ${
-                selectedMenu ===
-                item.value
+                selectedMenu === item.value
                   ? "border-cyan-400/30 bg-cyan-400/10"
                   : "border-white/5 bg-white/[0.03]"
               }
@@ -183,7 +166,6 @@ export function Sidebar({
               hover:bg-cyan-400/[0.05]
             `}
           >
-
             <div
               className="
                 flex
@@ -195,7 +177,6 @@ export function Sidebar({
                 bg-cyan-400/10
               "
             >
-
               <item.icon
                 className="
                   h-5
@@ -203,7 +184,6 @@ export function Sidebar({
                   text-cyan-300
                 "
               />
-
             </div>
 
             <span
@@ -215,11 +195,8 @@ export function Sidebar({
             >
               {item.label}
             </span>
-
           </button>
-
         ))}
-
       </div>
 
       {/* FOOTER */}
@@ -230,7 +207,6 @@ export function Sidebar({
           p-6
         "
       >
-
         <div
           className="
             rounded-2xl
@@ -240,7 +216,6 @@ export function Sidebar({
             p-5
           "
         >
-
           <p
             className="
               text-xs
@@ -262,12 +237,8 @@ export function Sidebar({
           >
             IMNOVA ECOSYSTEM™
           </h3>
-
         </div>
-
       </div>
-
     </aside>
-
   )
 }
