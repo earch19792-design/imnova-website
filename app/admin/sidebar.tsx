@@ -8,28 +8,47 @@ import {
   Settings,
 } from "lucide-react"
 
-export function Sidebar() {
+type SidebarProps = {
+  selectedMenu: string
+  setSelectedMenu: (
+    menu: string
+  ) => void
+}
+
+export function Sidebar({
+  selectedMenu,
+  setSelectedMenu,
+}: SidebarProps) {
 
   const items = [
     {
       label: "Dashboard",
       icon: LayoutDashboard,
+      value: "dashboard",
     },
+
     {
       label: "Productos",
       icon: Package,
+      value: "products",
     },
+
     {
-      label: "Actividad",
+      label: "Campañas",
       icon: Activity,
+      value: "campaigns",
     },
+
     {
       label: "Analytics",
       icon: BarChart3,
+      value: "analytics",
     },
+
     {
       label: "Configuración",
       icon: Settings,
+      value: "settings",
     },
   ]
 
@@ -87,9 +106,7 @@ export function Sidebar() {
               text-white
             "
           >
-
             I
-
           </span>
 
         </div>
@@ -103,9 +120,7 @@ export function Sidebar() {
               text-white
             "
           >
-
             IMNOVA LABS™
-
           </h1>
 
           <p
@@ -117,9 +132,7 @@ export function Sidebar() {
               text-cyan-300
             "
           >
-
             Control Center
-
           </p>
 
         </div>
@@ -142,22 +155,33 @@ export function Sidebar() {
 
           <button
             key={item.label}
-            className="
+            onClick={() =>
+              setSelectedMenu(
+                item.value
+              )
+            }
+            className={`
               flex
               items-center
               gap-4
               rounded-2xl
               border
-              border-white/5
-              bg-white/[0.03]
               px-5
               py-4
               text-left
               transition-all
               duration-300
+
+              ${
+                selectedMenu ===
+                item.value
+                  ? "border-cyan-400/30 bg-cyan-400/10"
+                  : "border-white/5 bg-white/[0.03]"
+              }
+
               hover:border-cyan-400/20
               hover:bg-cyan-400/[0.05]
-            "
+            `}
           >
 
             <div
@@ -189,9 +213,7 @@ export function Sidebar() {
                 text-white
               "
             >
-
               {item.label}
-
             </span>
 
           </button>
@@ -227,9 +249,7 @@ export function Sidebar() {
               text-cyan-300
             "
           >
-
             Sistema Operativo
-
           </p>
 
           <h3
@@ -240,9 +260,7 @@ export function Sidebar() {
               text-white
             "
           >
-
             IMNOVA ECOSYSTEM™
-
           </h3>
 
         </div>
