@@ -1,8 +1,9 @@
 export async function sendWhatsAppUpdate(
+  product: string,
 
-  message: string,
+  status: string,
 
-  imageUrl?: string
+  progress: string
 
 ) {
 
@@ -52,30 +53,70 @@ export async function sendWhatsAppUpdate(
           )
       )
 
-      const payload = {
+    const payload = {
 
-        messaging_product:
-          "whatsapp",
+  messaging_product:
+    "whatsapp",
 
-        to: phone,
+  to: phone,
 
-        type: "template",
+  type: "template",
 
-        template: {
+  template: {
 
-          name:
-            "hello_world",
+    name:
+      "imnova_update",
 
-          language: {
+    language: {
 
-            code:
-              "en_US",
+      code:
+        "es",
+
+    },
+
+    components: [
+
+      {
+
+        type: "body",
+
+        parameters: [
+
+          {
+
+            type: "text",
+
+            text: product || "N/A",
 
           },
 
-        },
+          {
 
-      }
+            type: "text",
+
+            text: status || "N/A",
+
+          },
+
+          {
+
+            type: "text",
+
+            text: String(
+              progress || "0%"
+            ),
+
+          },
+
+        ],
+
+      },
+
+    ],
+
+  },
+
+}
 
       console.log(
         "ENVIANDO A:",

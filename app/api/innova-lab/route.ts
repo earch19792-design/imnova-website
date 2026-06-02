@@ -55,13 +55,15 @@ Fecha: ${new Date().toLocaleString()}
     )
 
     const result =
-      await sendWhatsAppUpdate(
+  await sendWhatsAppUpdate(
 
-        finalMessage,
+    product,
 
-        imageUrl
+    status,
 
-      )
+    progress
+
+  )
 
     console.log(
       "WHATSAPP RESULT:",
