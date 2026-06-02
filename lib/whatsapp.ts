@@ -1,4 +1,5 @@
 export async function sendWhatsAppUpdate(
+
   product: string,
 
   status: string,
@@ -53,74 +54,86 @@ export async function sendWhatsAppUpdate(
           )
       )
 
-    const payload = {
+      const payload = {
 
-  messaging_product:
-    "whatsapp",
+        messaging_product:
+          "whatsapp",
 
-  to: phone,
+        to: phone,
 
-  type: "template",
+        type: "template",
 
-  template: {
+        template: {
 
-    name:
-      "imnova_update",
+         
+            name: "imnova_update",
 
-    language: {
+          language: {
 
-      code:
-        "es",
-
-    },
-
-    components: [
-
-      {
-
-        type: "body",
-
-        parameters: [
-
-          {
-
-            type: "text",
-
-            text: product || "N/A",
+            code:
+             "es",
 
           },
 
-          {
+          components: [
 
-            type: "text",
+            {
 
-            text: status || "N/A",
+              type: "body",
 
-          },
+              parameters: [
 
-          {
+                {
 
-            type: "text",
+                  type: "text",
 
-            text: String(
-              progress || "0%"
-            ),
+                  text:
+                    product || "N/A",
 
-          },
+                },
 
-        ],
+                {
 
-      },
+                  type: "text",
 
-    ],
+                  text:
+                    status || "N/A",
 
-  },
+                },
 
-}
+                {
+
+                  type: "text",
+
+                  text:
+                    String(
+                      progress || "0%"
+                    ),
+
+                },
+
+              ],
+
+            },
+
+          ],
+
+        },
+
+      }
 
       console.log(
         "ENVIANDO A:",
         phone
+      )
+
+      console.log(
+        "PAYLOAD:",
+        JSON.stringify(
+          payload,
+          null,
+          2
+        )
       )
 
       const response =
@@ -156,7 +169,11 @@ export async function sendWhatsAppUpdate(
 
       console.log(
         "META RESPONSE:",
-        data
+        JSON.stringify(
+          data,
+          null,
+          2
+        )
       )
 
       results.push({

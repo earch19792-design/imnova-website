@@ -236,8 +236,7 @@ export function ProductCard({
   /* =========================================
   SAVE DATA
   ========================================= */
-
-  const saveChanges =
+const saveChanges =
   async () => {
 
     const updatedProduct = {
@@ -269,23 +268,25 @@ export function ProductCard({
         await fetch(
           "/api/innova-lab",
           {
+
             method: "POST",
 
             headers: {
+
               "Content-Type":
                 "application/json",
+
             },
 
             body: JSON.stringify({
 
-              message:
-                `🚀 IMNOVA UPDATE
+              product:
+                product.name,
 
-Producto: ${product.name}
+              status,
 
-Estado: ${status}
-
-Progreso: ${progress}%`,
+              progress:
+                `${progress}%`,
 
             }),
 
@@ -314,9 +315,6 @@ Progreso: ${progress}%`,
     )
 
   }
-  /* =========================================
-  DASHBOARD ACTIVE PRODUCTS
-  ========================================= */
 
   const activeStatuses = [
     "⚡ Concepto",
