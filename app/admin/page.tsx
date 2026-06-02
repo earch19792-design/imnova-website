@@ -82,21 +82,25 @@ const [campaignBudget, setCampaignBudget] = useState("")
 const [campaignType, setCampaignType] = useState("validation")
 const createCampaign = () => {
 
-  const newCampaign = {
+const newCampaign = {
 
-    id: Date.now(),
+  id: Date.now(),
 
-    name: campaignName,
+  name:
+    campaignType === "validation"
+      ? `${validationIdea} ${campaignChannel}`
+      : `${campaignProduct} ${campaignChannel}`,
 
-    product: campaignProduct,
+  product: campaignProduct,
 
-    channel: campaignChannel,
+  channel: campaignChannel,
 
-    status: "Draft",
+  status: "Draft",
 
-    leads: 0,
+  leads: 0,
 
-  }
+}
+  
 
   setCampaigns([
     ...campaigns,
@@ -761,7 +765,7 @@ const createCampaign = () => {
           grid
           grid-cols-1
           gap-6
-          md:grid-cols-3
+          md:grid-cols-4
         "
       >
 
@@ -824,9 +828,7 @@ const createCampaign = () => {
     )
   }
 </p>
-Resultado esperado
 
-Ahora mismo deberías ver:
 
         </div>
 
@@ -942,8 +944,8 @@ Ahora mismo deberías ver:
       </td>
 
       <td className="p-5 text-white/70">
-        {campaign.product}
-      </td>
+  {campaign.product || "Idea en Validación"}
+</td>
 
       <td className="p-5 text-white/70">
         {campaign.channel}
@@ -983,21 +985,9 @@ Ahora mismo deberías ver:
 
   )
 }
-        {
-          selectedMenu === "analytics" && (
-
-            <div className="mt-16">
-
-              <h2
-                className="
-                  text-6xl
-                  font-black
-                  tracking-[-0.05em]
-                  text-white
-                "
-              >
+      
                 {
-  selectedMenu === "campaigns" && (
+  selectedMenu === "analytics" && (
 
     <div className="mt-16">
 
@@ -1009,17 +999,10 @@ Ahora mismo deberías ver:
           text-white
         "
       >
-        Campañas
+       
       </h2>
 
-      <p
-        className="
-          mt-4
-          text-white/50
-        "
-      >
-        Centro de gestión de campañas IMNOVA.
-      </p>
+     
 
       <div
         className="
@@ -1027,7 +1010,7 @@ Ahora mismo deberías ver:
           grid
           grid-cols-1
           gap-6
-          md:grid-cols-3
+          md:grid-cols-4
         "
       >
 
@@ -1042,7 +1025,7 @@ Ahora mismo deberías ver:
         >
           <h3>Total Campañas</h3>
           <p className="mt-3 text-4xl font-bold">
-            2
+         {campaigns.length}
           </p>
         </div>
 
@@ -1057,8 +1040,13 @@ Ahora mismo deberías ver:
         >
           <h3>Activas</h3>
           <p className="mt-3 text-4xl font-bold">
-            1
-          </p>
+  {
+    campaigns.filter(
+      campaign =>
+        campaign.status === "Active"
+    ).length
+  }
+</p>
         </div>
 
         <div
@@ -1072,9 +1060,102 @@ Ahora mismo deberías ver:
         >
           <h3>Leads</h3>
           <p className="mt-3 text-4xl font-bold">
-            42
-          </p>
+  {
+    campaigns.reduce(
+      (total, campaign) =>
+        total + campaign.leads,
+      0
+    )
+  }
+</p>
         </div>
+        <div
+  className="
+    rounded-3xl
+    border
+    border-white/10
+    bg-white/[0.03]
+    p-6
+  "
+>
+  <h3>Productos</h3>
+
+  <p className="mt-3 text-4xl font-bold">
+    {products.length}
+  </p>
+
+</div>
+<div
+  className="
+    mt-10
+    w-full
+    rounded-3xl
+    border
+    border-white/10
+    bg-white/[0.03]
+    p-8
+  "
+>
+
+  <h3
+    className="
+      text-2xl
+      font-bold
+      text-white
+    "
+  >
+    Rendimiento por Canal
+  </h3>
+
+  <div className="mt-6 space-y-4">
+
+    <div className="flex justify-between text-white">
+      <span>TikTok</span>
+      <span>
+        {
+          campaigns.filter(
+            c => c.channel === "TikTok"
+          ).length
+        }
+      </span>
+    </div>
+
+    <div className="flex justify-between text-white">
+      <span>Facebook</span>
+      <span>
+        {
+          campaigns.filter(
+            c => c.channel === "Facebook"
+          ).length
+        }
+      </span>
+    </div>
+
+    <div className="flex justify-between text-white">
+      <span>Instagram</span>
+      <span>
+        {
+          campaigns.filter(
+            c => c.channel === "Instagram"
+          ).length
+        }
+      </span>
+    </div>
+
+    <div className="flex justify-between text-white">
+      <span>Google Ads</span>
+      <span>
+        {
+          campaigns.filter(
+            c => c.channel === "Google Ads"
+          ).length
+        }
+      </span>
+    </div>
+
+  </div>
+
+</div>
 
       </div>
 
@@ -1082,17 +1163,12 @@ Ahora mismo deberías ver:
 
   )
 }
-                Analytics
+                
 
-              </h2>
-
-            </div>
-
-          )
-        }
 
       </motion.div>
-     {
+     { 
+     
   showCampaignModal && (
 
     <div
