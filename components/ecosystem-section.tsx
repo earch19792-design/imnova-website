@@ -205,7 +205,24 @@ export function EcosystemSection() {
     once: true,
     margin: "-100px",
   })
+const commercialized =
+  liveProducts.filter(
+    product =>
+      product.status === "🚀 Disponible" ||
+      product.status === "🌎 Comercialización"
+  )
 
+const nextLaunch =
+  liveProducts
+    .filter(
+      product =>
+        product.status !== "🚀 Disponible" &&
+        product.status !== "🌎 Comercialización"
+    )
+    .sort(
+      (a, b) =>
+        b.progress - a.progress
+    )[0]
   return (
 
     <section
@@ -394,7 +411,7 @@ export function EcosystemSection() {
           <h2
             className="
               mx-auto
-              max-w-5xl
+              max-w-3xl
               text-5xl
               font-black
               leading-[0.92]
@@ -469,347 +486,143 @@ export function EcosystemSection() {
         {/* =================================================
         PRODUCTS GRID
         ================================================= */}
+       <div
+  className="
+    mx-auto
+    mb-16
+    flex
+    max-w-5xl
+    items-start
+    justify-between
+    gap-8
+  "
+>
 
-        <div
-          className="
-            grid
-            gap-8
-            md:grid-cols-2
-          "
-        >
+  <div>
 
-          {liveProducts.map(
-            (
-              product,
-              index
-            ) => (
+    <div
+      className="
+        text-xs
+        uppercase
+        tracking-[0.35em]
+        text-white/35
+      "
+    >
+      COMERCIALIZÁNDOSE
+    </div>
+<div
+  className="
+    hidden
+    md:block
+    w-px
+    self-stretch
+    bg-white/10
+  "
+/>
+<div
 
-            <motion.div
-              key={product.id}
-              initial={{
-                opacity: 0,
-                y: 60,
-                filter: "blur(12px)",
-              }}
-              animate={
-                isInView
-                  ? {
-                      opacity: 1,
-                      y: 0,
-                      filter: "blur(0px)",
-                    }
-                  : {}
-              }
-              transition={{
-                duration: 0.9,
-                delay:
-                  index * 0.08,
-                ease: [
-                  0.22,
-                  1,
-                  0.36,
-                  1,
-                ],
-              }}
-              className="
-                group
-                relative
-                overflow-hidden
-                rounded-[36px]
-                border
-                border-white/10
-                bg-white/[0.03]
-                p-8
-                backdrop-blur-md
-                transition-all
-                duration-500
-                hover:-translate-y-1
-                hover:border-white/20
-                hover:bg-white/[0.05]
-              "
-            >
 
-              {/* =========================================
-              CARD LIGHTING
-              ========================================= */}
+  className="
+    mt-6
+    flex
+    flex-wrap
+    gap-4
+  "
+>
 
-              <div
-                className="
-                  pointer-events-none
-                  absolute
-                  inset-0
-                  bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_60%)]
-                "
-              />
+  {commercialized.map(product => (
 
-              {/* =========================================
-              TOP BAR
-              ========================================= */}
+    <div
+      key={product.id}
+      className="
+        rounded-full
+        border
+        border-white/10
+        bg-white/[0.03]
+        px-6
+        py-3
+        text-sm
+        text-white/90
+        backdrop-blur-xl
+        transition-all
+        duration-300
+        hover:border-white/20
+        hover:bg-white/[0.06]
+      "
+    >
+      🚀 {product.name}
+    </div>
 
-              <div
-                className="
-                  relative
-                  z-10
-                  flex
-                  items-center
-                  justify-between
-                "
-              >
+  ))}
 
-                <div
-                  className="
-                    inline-flex
-                    items-center
-                    gap-3
-                    rounded-full
-                    border
-                    border-white/10
-                    bg-white/[0.03]
-                    px-4
-                    py-2
-                    text-[10px]
-                    uppercase
-                    tracking-[0.30em]
-                    text-white/50
-                  "
-                >
+</div>
+<div
+  className="
+    mt-6
+    text-sm
+    uppercase
+    tracking-[0.25em]
+    text-white/40
+  "
+>
+  {commercialized.length} PRODUCTOS ACTIVOS
+</div>
 
-                  <div className="h-2 w-2 rounded-full bg-green-400" />
+  </div>
 
-                  LIVE PRODUCT
+  {nextLaunch && (
 
-                </div>
+    <div
+  className="
+    min-w-[420px]
+    rounded-[32px]
+    border
+    border-white/10
+    bg-white/[0.03]
+    px-8
+    py-8
+    backdrop-blur-xl
+  "
+>
 
-                <div
-                  className="
-                    text-[10px]
-                    uppercase
-                    tracking-[0.30em]
-                    text-white/35
-                  "
-                >
+      <div
+        className="
+          text-[10px]
+          uppercase
+          tracking-[0.30em]
+          text-white/40
+        "
+      >
+        PRÓXIMO LANZAMIENTO
+      </div>
 
-                  {product.progress}% SYNCED
+      <div
+        className="
+          mt-2
+          text-lg
+          font-semibold
+          text-white
+        "
+      >
+        {nextLaunch.name}
+      </div>
 
-                </div>
+      <div
+        className="
+          mt-1
+          text-sm
+          text-white/50
+        "
+      >
+        {nextLaunch.progress}% • {nextLaunch.status}
+      </div>
 
-              </div>
+    </div>
 
-              {/* =========================================
-              PRODUCT NAME
-              ========================================= */}
+  )}
 
-              <h3
-                className="
-                  relative
-                  z-10
-                  mt-8
-                  text-4xl
-                  font-black
-                  leading-none
-                  tracking-[-0.05em]
-                  text-white
-                "
-              >
-
-                {product.name}
-
-              </h3>
-
-              {/* =========================================
-              PHASE
-              ========================================= */}
-
-              <p
-                className="
-                  relative
-                  z-10
-                  mt-5
-                  max-w-lg
-                  leading-relaxed
-                  text-white/55
-                "
-              >
-
-                {product.phase}
-
-              </p>
-
-              {/* =========================================
-              PROGRESS
-              ========================================= */}
-
-              <div
-                className="
-                  relative
-                  z-10
-                  mt-10
-                "
-              >
-
-                <div
-                  className="
-                    mb-4
-                    flex
-                    items-center
-                    justify-between
-                  "
-                >
-
-                  <span
-                    className="
-                      text-[10px]
-                      uppercase
-                      tracking-[0.30em]
-                      text-white/35
-                    "
-                  >
-
-                    DEVELOPMENT
-
-                  </span>
-
-                  <span
-                    className="
-                      text-sm
-                      font-semibold
-                      text-white/65
-                    "
-                  >
-
-                    {product.progress}%
-
-                  </span>
-
-                </div>
-
-                <div
-                  className="
-                    h-[8px]
-                    overflow-hidden
-                    rounded-full
-                    bg-white/5
-                  "
-                >
-
-                  <motion.div
-                    animate={{
-                      width:
-                        `${product.progress}%`,
-                    }}
-                    transition={{
-                      duration: 1.2,
-                    }}
-                    className="
-                      h-full
-                      rounded-full
-                      bg-white/70
-                    "
-                  />
-
-                </div>
-
-              </div>
-
-              {/* =========================================
-              FOOTER
-              ========================================= */}
-
-              <div
-                className="
-                  relative
-                  z-10
-                  mt-10
-                  grid
-                  grid-cols-2
-                  gap-5
-                "
-              >
-
-                <div
-                  className="
-                    rounded-[28px]
-                    border
-                    border-white/10
-                    bg-white/[0.03]
-                    p-5
-                  "
-                >
-
-                  <div
-                    className="
-                      text-[10px]
-                      uppercase
-                      tracking-[0.30em]
-                      text-white/35
-                    "
-                  >
-
-                    STATUS
-
-                  </div>
-
-                  <div
-                    className="
-                      mt-3
-                      text-sm
-                      font-medium
-                      text-white
-                    "
-                  >
-
-                    {product.status}
-
-                  </div>
-
-                </div>
-
-                <div
-                  className="
-                    rounded-[28px]
-                    border
-                    border-white/10
-                    bg-white/[0.03]
-                    p-5
-                  "
-                >
-
-                  <div
-                    className="
-                      text-[10px]
-                      uppercase
-                      tracking-[0.30em]
-                      text-white/35
-                    "
-                  >
-
-                    NEXT PHASE
-
-                  </div>
-
-                  <div
-                    className="
-                      mt-3
-                      text-sm
-                      font-medium
-                      text-white
-                    "
-                  >
-
-                    {product.nextMilestone}
-
-                  </div>
-
-                </div>
-
-              </div>
-
-            </motion.div>
-
-          ))}
-
-        </div>
-
+</div>
+        
       </div>
 
     </section>
