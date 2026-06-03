@@ -17,6 +17,7 @@ import {
 import {
   ChevronDown,
 } from "lucide-react"
+import { imnovaProducts } from "@/lib/imnova-products"
 
 const heroImages = [
   "/hero/imnova-hero-01.webp",
@@ -30,6 +31,24 @@ export function HeroSection() {
     currentImage,
     setCurrentImage,
   ] = useState(0)
+  const conceptProducts =
+  imnovaProducts.filter(
+    p => p.status === "⚡ Concepto"
+  ).length
+
+const developmentProducts =
+  imnovaProducts.filter(
+    p =>
+      p.status === "🧪 Probando mejoras" ||
+      p.status === "🔥 Preparando lanzamiento" ||
+      p.status === "🏭 Producción" ||
+      p.status === "🌎 Comercialización"
+  ).length
+
+const availableProducts =
+  imnovaProducts.filter(
+    p => p.status === "🚀 Disponible"
+  ).length
 
   /* =================================================
   SCROLL SYSTEM
@@ -680,12 +699,11 @@ export function HeroSection() {
             "
           >
 
-            {[
-              "AI SYSTEMS",
-              "WELLNESS",
-              "GLOBAL EXPANSION",
-            ].map((item) => (
-
+{[
+  `💡 Conceptos: ${conceptProducts}`,
+  `🧪 Desarrollo: ${developmentProducts}`,
+  `🚀 Disponibles: ${availableProducts}`,
+     ].map((item) => (
               <div
                 key={item}
                 className="

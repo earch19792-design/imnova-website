@@ -65,58 +65,13 @@ export async function sendWhatsAppUpdate(
 
         template: {
 
-         
-            name: "imnova_update",
+          name: "hello_world",
 
           language: {
 
-            code:
-             "es",
+            code: "en_US",
 
           },
-
-          components: [
-
-            {
-
-              type: "body",
-
-              parameters: [
-
-                {
-
-                  type: "text",
-
-                  text:
-                    product || "N/A",
-
-                },
-
-                {
-
-                  type: "text",
-
-                  text:
-                    status || "N/A",
-
-                },
-
-                {
-
-                  type: "text",
-
-                  text:
-                    String(
-                      progress || "0%"
-                    ),
-
-                },
-
-              ],
-
-            },
-
-          ],
 
         },
 

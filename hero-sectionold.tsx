@@ -64,44 +64,25 @@ export function HeroSection() {
   LIVE PRODUCT METRICS
   ========================================= */
 
-  const launchingProducts =
+  const conceptProducts =
     products.filter(
       p =>
-        p.status ===
-        "🔥 Preparando lanzamiento"
+        p.status === "💡 Idea inicial"
     ).length
 
-  const activeProducts =
-    products.length
-
-  const commercialProducts =
+  const developmentProducts =
     products.filter(
       p =>
-        p.status ===
-        "🌎 Comercialización"
+        p.status === "⚙️ Desarrollo" ||
+        p.status === "🧪 Probando mejoras" ||
+        p.status === "🔥 Preparando lanzamiento"
     ).length
 
-  const testingProducts =
+  const availableProducts =
     products.filter(
       p =>
-        p.status ===
-        "🧪 Probando mejoras"
+        p.status === "🌎 Comercialización"
     ).length
-
-  const productsInDevelopment =
-    products
-      .filter(
-        p =>
-          p.status !==
-          "🌎 Comercialización"
-      )
-      .slice(0, 3)
-
-  const commercializationCities = [
-    "Managua",
-    "León",
-    "MercadosX",
-  ]
 
   /* =========================================
   HERO
@@ -643,7 +624,7 @@ export function HeroSection() {
                 </div>
 
                 <div className="text-6xl font-black text-white">
-                  {launchingProducts}+
+                  {developmentProducts}
                 </div>
 
                 <div
@@ -655,7 +636,7 @@ export function HeroSection() {
                     text-zinc-400
                   "
                 >
-                  Marca en lanzamiento
+                  Desarrollo
                 </div>
 
               </div>
@@ -699,7 +680,7 @@ export function HeroSection() {
                 </div>
 
                 <div className="text-6xl font-black text-white">
-                  {activeProducts}
+                  {conceptProducts + developmentProducts + availableProducts}
                 </div>
 
                 <div
@@ -711,7 +692,7 @@ export function HeroSection() {
                     text-zinc-400
                   "
                 >
-                  Innovaciones activas
+                  Total productos
                 </div>
 
               </div>
@@ -755,7 +736,7 @@ export function HeroSection() {
                 </div>
 
                 <div className="text-6xl font-black text-white">
-                  {testingProducts}
+                  {developmentProducts}
                 </div>
 
                 <div
@@ -767,7 +748,7 @@ export function HeroSection() {
                     text-zinc-400
                   "
                 >
-                  En laboratorio
+                  Desarrollo activo
                 </div>
 
               </div>
@@ -812,9 +793,7 @@ export function HeroSection() {
 
                 <div className="text-6xl font-black text-white">
 
-                  {commercialProducts > 0
-                    ? "Global"
-                    : "Soon"}
+                  {availableProducts}
 
                 </div>
 
@@ -827,7 +806,7 @@ export function HeroSection() {
                     text-zinc-400
                   "
                 >
-                  Expansión internacional
+                  Disponibles
                 </div>
 
               </div>

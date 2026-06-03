@@ -523,7 +523,7 @@ const saveChanges =
             "
           >
 
-            DESARROLLO
+            PROGRESO
 
           </div>
 
@@ -598,16 +598,7 @@ const saveChanges =
 
         </div>
 
-        {/* DASHBOARD */}
-
-        <div
-          className="
-            mt-10
-            grid
-            grid-cols-2
-            gap-5
-          "
-        >
+     
 
           <div
             className="
@@ -620,76 +611,9 @@ const saveChanges =
             "
           >
 
-            <div
-              className="
-                text-[10px]
-                uppercase
-                tracking-[0.30em]
-                text-white/35
-              "
-            >
-
-              ACTIVOS
-
-            </div>
-
-            <div
-              className="
-                mt-4
-                text-5xl
-                font-black
-                tracking-[-0.05em]
-                text-white
-              "
-            >
-
-              {activeProducts}
-
-            </div>
-
+          
           </div>
 
-          <div
-            className="
-              rounded-[28px]
-              border
-              border-white/10
-              bg-white/[0.03]
-              p-6
-              backdrop-blur-md
-            "
-          >
-
-            <div
-              className="
-                text-[10px]
-                uppercase
-                tracking-[0.30em]
-                text-white/35
-              "
-            >
-
-              MERCADO
-
-            </div>
-
-            <div
-              className="
-                mt-4
-                text-5xl
-                font-black
-                tracking-[-0.05em]
-                text-white
-              "
-            >
-
-              {comercializando}
-
-            </div>
-
-          </div>
-
-        </div>
 
         {/* INFO */}
 
@@ -711,7 +635,7 @@ const saveChanges =
               "
             >
 
-              FASE ACTUAL
+              ESTADO
 
             </div>
 
@@ -740,7 +664,7 @@ const saveChanges =
               "
             >
 
-              PRÓXIMO OBJETIVO
+              PRÓXIMA ETAPA
 
             </div>
 

@@ -14,15 +14,16 @@ export function PublicStatusStats() {
   const [conceptCount, setConceptCount] =
     useState(0)
 
-  const [
-    upcomingCount,
-    setUpcomingCount,
-  ] = useState(0)
+  
 
   const [
-    availableCount,
-    setAvailableCount,
-  ] = useState(0)
+  developmentCount,
+  setDevelopmentCount,
+] = useState(0)
+const [
+  availableCount,
+  setAvailableCount,
+] = useState(0)
 
   /* =========================================
   LOAD PRODUCT STATES
@@ -31,7 +32,7 @@ export function PublicStatusStats() {
   useEffect(() => {
 
     let concept = 0
-    let upcoming = 0
+   let development = 0
     let available = 0
 
     products.forEach((product) => {
@@ -40,6 +41,15 @@ export function PublicStatusStats() {
         localStorage.getItem(
           `product-${product.id}`
         )
+        console.log(
+  "ID:",
+  product.id
+)
+
+console.log(
+  "LOCAL STORAGE:",
+  saved
+)
 
       const parsed =
         saved
@@ -48,49 +58,64 @@ export function PublicStatusStats() {
 
       const status =
         parsed.status
+        console.log(
+  product.name,
+  status
+)
 
+console.log(
+  "STATUS:",
+  JSON.stringify(status)
+)
+console.log(
+  "CONTEO ACTUAL:",
+  {
+    concept,
+    development,
+    available,
+  }
+)
       /* =========================================
       PUBLIC STATUS MAPPING
       ========================================= */
 
-      if (
-        status === "⚡ Concepto" ||
-        status === "🧪 Probando mejoras"
-      ) {
+     if (
+  status === "⚡ Concepto"
+) {
 
-        concept++
+  concept++
 
-      }
+}
 
-      else if (
-        status ===
-          "🔥 Preparando lanzamiento" ||
+else if (
 
-        status ===
-          "🏭 Producción" ||
+  status === "🧪 Probando mejoras" ||
 
-        status ===
-          "🌎 Comercialización"
-      ) {
+  status === "🔥 Preparando lanzamiento" ||
 
-        upcoming++
+  status === "🏭 Producción" ||
 
-      }
+  status === "🌎 Comercialización"
 
-      else if (
-        status ===
-        "🚀 Disponible"
-      ) {
+) {
 
-        available++
+  development++
 
-      }
+}
 
-    })
+else if (
+
+  status === "🚀 Disponible"
+
+) {
+
+  available++
+
+}    })
 
     setConceptCount(concept)
 
-    setUpcomingCount(upcoming)
+   setDevelopmentCount(development)
 
     setAvailableCount(available)
 
@@ -109,10 +134,10 @@ export function PublicStatusStats() {
     },
 
     {
-      value: upcomingCount,
-      label: "Próximamente",
-      icon: "🔥",
-    },
+  value: developmentCount,
+  label: "Desarrollo",
+  icon: "🧪",
+},
 
     {
       value: availableCount,

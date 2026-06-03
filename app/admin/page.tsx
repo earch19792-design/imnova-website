@@ -15,7 +15,7 @@ import { products } from "@/data/products"
 import { Sidebar } from "@/app/admin/sidebar"
 import { Metrics } from "@/app/admin/metrics"
 import { ProductCard } from "@/app/admin/product-card"
-import { ActivityFeed } from "@/app/admin/activity-feed"
+
 
 type Product = {
   id: number
@@ -719,7 +719,7 @@ const newCampaign = {
 
                   <div className="relative z-10">
 
-                    <ActivityFeed />
+                    
 
                   </div>
 
