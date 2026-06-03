@@ -20,18 +20,19 @@ from "@/data/products"
 LIVE METRICS
 ================================================= */
 
-const launchReady =
+const developmentProducts =
   products.filter(
     (product) =>
-      product.status ===
-      "Launch Ready"
+      product.status === "🧪 Probando mejoras" ||
+      product.status === "🔥 Preparando lanzamiento" ||
+      product.status === "🏭 Producción" ||
+      product.status === "🌎 Comercialización"
   ).length
 
-const testingProducts =
+const availableProducts =
   products.filter(
     (product) =>
-      product.status ===
-      "Testing"
+      product.status === "🚀 Disponible"
   ).length
 
 const techMetrics = [
@@ -48,10 +49,10 @@ const techMetrics = [
 
   {
     label:
-      "Launch Ready",
+      "En Desarrollo",
 
     value:
-      launchReady,
+      developmentProducts,
 
     icon:
       Activity,
@@ -59,10 +60,10 @@ const techMetrics = [
 
   {
     label:
-      "En Testing",
+      "Disponibles",
 
     value:
-      testingProducts,
+      availableProducts,
 
     icon:
       GitBranch,
@@ -70,10 +71,10 @@ const techMetrics = [
 
   {
     label:
-      "Innovación Global",
+      "IMNOVA Labs",
 
     value:
-      "Activa",
+      "Activo",
 
     icon:
       Database,
@@ -85,12 +86,12 @@ RESEARCH AREAS
 ================================================= */
 
 const researchAreas = [
-  "Nutrición Inteligente",
-  "Wellness Functional",
-  "Protein Formulation",
-  "AI Commerce",
-  "Amazon Ecosystem",
-  "Smart Branding",
+  "Nutrición Funcional",
+  "Desarrollo de Productos",
+  "Formulación Avanzada",
+  "Ecommerce",
+  "Amazon FBA",
+  "Construcción de Marcas",
 ]
 
 export function TechnologySection() {
@@ -280,7 +281,7 @@ export function TechnologySection() {
 
             Seguimiento inteligente del
             desarrollo de productos,
-            testing y lanzamientos globales.
+            validación, lanzamiento y comercialización dentro del ecosistema IMNOVA.
 
           </p>
 

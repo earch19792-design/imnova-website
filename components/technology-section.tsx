@@ -651,40 +651,94 @@ export function TechnologySection() {
 
                 </div>
 
-                {/* =================================================
-                FLOATING BADGES
-                ================================================= */}
+  {/* FLOATING BADGES */}
 
-                <motion.div
-                  animate={{
-                    y: [-5, 5, -5],
-                  }}
-                  transition={{
-                    duration: 4,
-                    repeat: Infinity,
-                  }}
-                  className="
-                    absolute
-                    left-6
-                    top-6
-                    rounded-2xl
-                    border
-                    border-cyan-400/20
-                    bg-black/50
-                    px-5
-                    py-3
-                    text-xs
-                    uppercase
-                    tracking-[0.2em]
-                    text-cyan-200
-                    backdrop-blur-2xl
-                    shadow-[0_0_40px_rgba(0,255,255,0.08)]
-                  "
-                >
+<motion.div
+  animate={{
+    y: [-5, 5, -5],
+  }}
+  transition={{
+    duration: 4,
+    repeat: Infinity,
+  }}
+  className="
+    absolute
+    left-6
+    top-6
+    rounded-2xl
+    border
+    border-cyan-400/20
+    bg-black/50
+    px-5
+    py-3
+    text-xs
+    uppercase
+    tracking-[0.2em]
+    text-cyan-200
+    backdrop-blur-2xl
+    shadow-[0_0_40px_rgba(0,255,255,0.08)]
+  "
+>
+  ● Innovación Activa
+</motion.div>
 
-                  ● Innovación Activa
+<motion.div
+  animate={{
+    y: [5, -5, 5],
+  }}
+  transition={{
+    duration: 3.5,
+    repeat: Infinity,
+  }}
+  className="
+    absolute
+    right-6
+    top-6
+    rounded-2xl
+    border
+    border-cyan-400/20
+    bg-black/50
+    px-5
+    py-3
+    text-xs
+    uppercase
+    tracking-[0.2em]
+    text-cyan-200
+    backdrop-blur-2xl
+    shadow-[0_0_40px_rgba(0,255,255,0.08)]
+  "
+>
+  ● IMNOVA Labs
+</motion.div>
 
-                </motion.div>
+<motion.div
+  animate={{
+    y: [-6, 6, -6],
+  }}
+  transition={{
+    duration: 4.5,
+    repeat: Infinity,
+  }}
+  className="
+    absolute
+    bottom-6
+    right-6
+    rounded-2xl
+    border
+    border-cyan-400/20
+    bg-black/50
+    px-5
+    py-3
+    text-xs
+    uppercase
+    tracking-[0.2em]
+    text-cyan-200
+    backdrop-blur-2xl
+    shadow-[0_0_40px_rgba(0,255,255,0.08)]
+  "
+>
+  ● Ecosistema Inteligente
+</motion.div>
 
                 <motion.div
                   animate={{
@@ -713,7 +767,7 @@ export function TechnologySection() {
                   "
                 >
 
-                  ● Visión Global
+                 ● Desarrollo Activo
 
                 </motion.div>
 
@@ -836,7 +890,7 @@ export function TechnologySection() {
           <span>Wellness</span>
           <span>•</span>
 
-          <span>Expansión Global</span>
+         <span>Desarrollo</span>
 
         </div>
 

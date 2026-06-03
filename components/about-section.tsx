@@ -10,13 +10,21 @@ COMPONENTE: AboutSection
 
 import { motion } from "framer-motion"
 import { useInView } from "framer-motion"
-import { useRef } from "react"
+
+import {
+  useRef,
+  useState,
+  useEffect,
+} from "react"
+
+import { products } from "@/data/products"
 
 import {
   Sparkles,
   Zap,
   Globe,
 } from "lucide-react"
+
 import { PublicStatusStats }
 from "@/components/home/public-status-stats"
 
@@ -28,6 +36,38 @@ export function AboutSection() {
     once: true,
     margin: "-100px",
   })
+  const [availableProduct, setAvailableProduct] =
+  useState<any>(null)
+
+useEffect(() => {
+
+  for (const product of products) {
+
+    const saved =
+      localStorage.getItem(
+        `product-${product.id}`
+      )
+
+    const parsed =
+      saved
+        ? JSON.parse(saved)
+        : product
+       
+
+    if (
+      parsed.status ===
+      "🚀 Disponible"
+    ) {
+
+      setAvailableProduct(parsed)
+
+      break
+
+    }
+
+  }
+
+}, [])
 
   
 
@@ -118,11 +158,11 @@ export function AboutSection() {
 
               <p className="max-w-2xl text-lg leading-8 text-zinc-400">
 
-                IMNOVA construye marcas y experiencias premium
-                enfocadas en bienestar, innovación funcional
-                y tecnología aplicada para consumidores globales
-                que buscan una vida más inteligente,
-                eficiente y equilibrada.
+            IMNOVA construye marcas y experiencias premium
+            enfocadas en bienestar, innovación funcional
+            y desarrollo de productos para consumidores
+            que buscan soluciones más inteligentes,
+            eficientes y alineadas con el futuro.
 
               </p>
 
@@ -138,21 +178,7 @@ export function AboutSection() {
             BOTTOM INDICATORS
             ================================================= */}
 
-            <div className="mt-16 flex flex-wrap gap-6 text-xs uppercase tracking-[0.3em] text-zinc-600">
-
-              <span>Innovación</span>
-              <span>•</span>
-
-              <span>Wellness</span>
-              <span>•</span>
-
-              <span>Tecnología Inteligente</span>
-              <span>•</span>
-
-              <span>Ecommerce Global</span>
-
-            </div>
-
+           
           </motion.div>
 
           {/* =================================================
@@ -347,13 +373,13 @@ export function AboutSection() {
 
                   <div>
 
-                    <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
-                      Tecnología
-                    </div>
+                   <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
+                 🚀 Disponible
+                 </div>
 
-                    <div className="mt-1 text-sm font-semibold text-white">
-                      Expansión Global
-                    </div>
+                <div className="mt-1 text-sm font-semibold text-white">
+                 {availableProduct?.name || "Próximamente"}
+                 </div>
 
                   </div>
 
