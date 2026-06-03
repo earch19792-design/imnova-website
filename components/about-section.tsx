@@ -36,10 +36,22 @@ export function AboutSection() {
     once: true,
     margin: "-100px",
   })
-  const [availableProduct, setAvailableProduct] =
-  useState<any>(null)
+const [availableProducts, setAvailableProducts] =
+  useState<any[]>([])
+
+const [currentProduct, setCurrentProduct] =
+  useState(0)
+
+const [upcomingProducts, setUpcomingProducts] =
+  useState<any[]>([])
+
+const [currentUpcoming, setCurrentUpcoming] =
+  useState(0)
 
 useEffect(() => {
+
+  const available: any[] = []
+  const upcoming: any[] = []
 
   for (const product of products) {
 
@@ -52,25 +64,95 @@ useEffect(() => {
       saved
         ? JSON.parse(saved)
         : product
-       
+
+    const merged = {
+      ...product,
+      ...parsed,
+    }
 
     if (
-      parsed.status ===
+      merged.status ===
       "🚀 Disponible"
     ) {
 
-      setAvailableProduct(parsed)
+      available.push(merged)
 
-      break
+    } else {
+
+      upcoming.push(merged)
 
     }
 
   }
 
+  setAvailableProducts(
+    available
+  )
+
+ setUpcomingProducts(
+  upcoming.sort(
+    (a, b) =>
+      b.progress - a.progress
+  )
+)
+
 }, [])
 
-  
 
+useEffect(() => {
+
+  if (
+    availableProducts.length <= 1
+  ) return
+
+  const interval =
+    setInterval(() => {
+
+      setCurrentProduct(
+        (prev) =>
+          (
+            prev + 1
+          ) %
+          availableProducts.length
+      )
+
+    }, 5000)
+
+  return () =>
+    clearInterval(interval)
+
+}, [availableProducts])
+useEffect(() => {
+
+  if (
+    upcomingProducts.length <= 1
+  ) return
+
+  const interval =
+    setInterval(() => {
+
+      setCurrentUpcoming(
+        (prev) =>
+          (
+            prev + 1
+          ) %
+          upcomingProducts.length
+      )
+
+    }, 5000)
+
+  return () =>
+    clearInterval(interval)
+
+}, [upcomingProducts])
+const featuredProduct =
+  availableProducts[
+    currentProduct
+  ]
+  const featuredUpcoming =
+  upcomingProducts[
+    currentUpcoming
+  ]
   return (
     <section
       id="about"
@@ -316,27 +398,52 @@ useEffect(() => {
 
                 <div className="flex items-center gap-4">
 
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-400/10">
+  <div
+    className="
+      flex
+      h-14
+      w-14
+      items-center
+      justify-center
+      overflow-hidden
+      rounded-2xl
+      bg-cyan-400/10
+    "
+  >
 
-                    <Sparkles className="h-5 w-5 text-cyan-300" />
+    {featuredProduct?.image ? (
 
-                  </div>
+      <img
+        src={featuredProduct.image}
+        alt={featuredProduct.name}
+        className="
+          h-full
+          w-full
+          object-contain
+        "
+      />
 
-                  <div>
+    ) : (
 
-                    <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
-                      Innovación
-                    </div>
+      <Zap className="h-5 w-5 text-cyan-300" />
 
-                    <div className="mt-1 text-sm font-semibold text-white">
-                      Nueva Generación
-                    </div>
+    )}
 
-                  </div>
+  </div>
 
-                </div>
+  <div>
 
-              </motion.div>
+    <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
+      🚀 Productos Disponibles
+    </div>
+
+    <div className="mt-1 text-sm font-semibold text-white">
+      {featuredProduct?.name || "Próximamente"}
+    </div>
+
+  </div>
+
+</div>              </motion.div>
 
               {/* =================================================
               FLOATING CARD 2
@@ -374,12 +481,12 @@ useEffect(() => {
                   <div>
 
                    <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
-                 🚀 Disponible
-                 </div>
+  ⚡ Próximo Lanzamiento
+</div>
 
                 <div className="mt-1 text-sm font-semibold text-white">
-                 {availableProduct?.name || "Próximamente"}
-                 </div>
+  {featuredUpcoming?.name || "En desarrollo"}
+</div>
 
                   </div>
 

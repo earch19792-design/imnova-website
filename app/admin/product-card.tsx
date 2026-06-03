@@ -241,12 +241,16 @@ const saveChanges =
 
     const updatedProduct = {
       id: product.id,
+      name: product.name,
       status,
       progress,
       phase,
       nextMilestone,
     }
-
+   
+alert(
+  JSON.stringify(updatedProduct)
+)
     localStorage.setItem(
       `product-${product.id}`,
       JSON.stringify(updatedProduct)
@@ -296,10 +300,12 @@ const saveChanges =
       const result =
         await response.json()
 
-      console.log(
-        "WHATSAPP RESULT:",
-        result
-      )
+      if (
+  process.env.NODE_ENV ===
+  "development"
+) {
+  
+}
 
     } catch (error) {
 

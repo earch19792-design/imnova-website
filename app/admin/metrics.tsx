@@ -38,10 +38,7 @@ export function Metrics() {
       event: Event
     ) => {
 
-      console.log(
-        "EVENTO RECIBIDO METRICS",
-        event
-      )
+      
 
       const customEvent =
         event as CustomEvent
@@ -101,10 +98,7 @@ export function Metrics() {
   DEBUG
   ========================================= */
 
-  console.log(
-    "LIVE PRODUCTS",
-    liveProducts
-  )
+  
 
   /* =========================================
   LIVE METRICS
