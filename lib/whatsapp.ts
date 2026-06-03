@@ -63,33 +63,60 @@ export async function sendWhatsAppUpdate(
 
         type: "template",
 
-        template: {
+       template: {
 
-          name: "hello_world",
+  name: "imnova_update",
 
-          language: {
+  language: {
 
-            code: "en_US",
+    code: "es",
 
-          },
+  },
+
+  components: [
+
+    {
+
+      type: "body",
+
+      parameters: [
+
+        {
+
+          type: "text",
+
+          text: product || "N/A",
 
         },
 
+        {
+
+          type: "text",
+
+          text: status || "N/A",
+
+        },
+
+        {
+
+          type: "text",
+
+          text: String(progress || "0"),
+
+        },
+
+      ],
+
+    },
+
+  ],
+
+},
       }
 
-      console.log(
-        "ENVIANDO A:",
-        phone
-      )
+      
 
-      console.log(
-        "PAYLOAD:",
-        JSON.stringify(
-          payload,
-          null,
-          2
-        )
-      )
+      
 
       const response =
         await fetch(
@@ -122,14 +149,7 @@ export async function sendWhatsAppUpdate(
       const data =
         await response.json()
 
-      console.log(
-        "META RESPONSE:",
-        JSON.stringify(
-          data,
-          null,
-          2
-        )
-      )
+     
 
       results.push({
 

@@ -44,16 +44,6 @@ Progreso: ${progress || "N/A"}
 Fecha: ${new Date().toLocaleString()}
 `
 
-    console.log(
-      "FINAL MESSAGE:",
-      finalMessage
-    )
-
-    console.log(
-      "IMAGE URL:",
-      imageUrl
-    )
-
     const result =
   await sendWhatsAppUpdate(
 
@@ -65,10 +55,15 @@ Fecha: ${new Date().toLocaleString()}
 
   )
 
-    console.log(
-      "WHATSAPP RESULT:",
-      result
-    )
+   if (
+  process.env.NODE_ENV ===
+  "development"
+) {
+  console.log(
+    "WHATSAPP RESULT:",
+    result
+  )
+}
 
     return NextResponse.json({
 
