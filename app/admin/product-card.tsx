@@ -248,9 +248,7 @@ const saveChanges =
       nextMilestone,
     }
    
-alert(
-  JSON.stringify(updatedProduct)
-)
+
     localStorage.setItem(
       `product-${product.id}`,
       JSON.stringify(updatedProduct)
@@ -316,9 +314,7 @@ alert(
 
     }
 
-    alert(
-      "Cambios guardados"
-    )
+    
 
   }
 
