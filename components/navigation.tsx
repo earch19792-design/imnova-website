@@ -18,7 +18,6 @@ import Link from "next/link"
 
 const navItems = [
   { name: "Inicio", href: "#hero" },
-  { name: "Ecosistema", href: "#ecosystem" },
   { name: "Innovaciones", href: "#innovations" },
   { name: "Tecnología", href: "#technology" },
   { name: "Nutrición", href: "#nutrition" },
