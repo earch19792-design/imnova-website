@@ -1,24 +1,39 @@
 export const products = [
 
-  {
-    id: 1,
+ {
+  id: 1,
 
-    name:
-      "MASH NUTRI+",
+  featuredLaunch: true,
 
-    image:
-      "https://imnova-website-z1qh.vercel.app/images/mash-nutri+-PAN.png",
-       distribution: [
+  innovationTitle:
+    "PRÓXIMA INNOVACIÓN",
 
-    "Managua - MercadoX",
+  innovationSubtitle:
+    "Nutrición funcional diseñada para energía sostenida y alto rendimiento diario.",
 
-    "León - FitStore",
+  problemSolved:
+    "Las alternativas saludables suelen ser altas en carbohidratos, bajas en proteína y generan poca saciedad.",
 
+  benefits: [
+    "Alto en proteína",
+    "Low Carb",
+    "Mayor saciedad",
+    "Nutrición inteligente",
   ],
 
-    category:
-      "Nutrición Inteligente",
+  name:
+    "MASH NUTRI+",
 
+  image:
+    "https://imnova-website-z1qh.vercel.app/images/mash-nutri+-PAN.png",
+
+  distribution: [
+    "Managua - MercadoX",
+    "León - FitStore",
+  ],
+
+  category:
+    "Nutrición Inteligente",
     status:
       "⚡ Ajustes finales",
 
@@ -109,6 +124,23 @@ export const products = [
 
     name:
       "MASH NUTRI+ PANCAKE",
+    featuredLaunch: true,
+
+innovationTitle:
+  "PRÓXIMA INNOVACIÓN",
+
+innovationSubtitle:
+  "Pancakes funcionales diseñados para nutrición inteligente y alto rendimiento.",
+
+problemSolved:
+  "Las mezclas tradicionales suelen ser altas en carbohidratos y bajas en proteína.",
+
+benefits: [
+  "Alto en proteína",
+  "Low Carb",
+  "Mayor saciedad",
+  "Preparación rápida",
+],
 
     image:
       "https://imnova-website-z1qh.vercel.app/images/mash-nutri+-PANCAKE.png",
@@ -117,6 +149,7 @@ export const products = [
     "Managua - MercadoX",
 
     "León - FitStore",
+    
 
   ],
     category:

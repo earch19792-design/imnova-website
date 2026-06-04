@@ -38,6 +38,13 @@ type Product = {
   phase: string
   nextMilestone: string
 
+  image?: string
+  innovationTitle?: string
+  innovationSubtitle?: string
+  problemSolved?: string
+  benefits?: string[]
+  featuredLaunch?: boolean
+
   theme: {
     glow: string
     border: string
@@ -47,7 +54,6 @@ type Product = {
 }
 
 export function EcosystemSection() {
-
   const ref = useRef(null)
 
   const [
@@ -206,23 +212,18 @@ export function EcosystemSection() {
     margin: "-100px",
   })
 const commercialized =
-  liveProducts.filter(
-    product =>
-      product.status === "🚀 Disponible" ||
-      product.status === "🌎 Comercialización"
-  )
+  liveProducts
+    .sort((a, b) => b.progress - a.progress)
+    .slice(0, 2)
 
 const nextLaunch =
-  liveProducts
-    .filter(
-      product =>
-        product.status !== "🚀 Disponible" &&
-        product.status !== "🌎 Comercialización"
-    )
-    .sort(
-      (a, b) =>
-        b.progress - a.progress
-    )[0]
+  liveProducts.find(
+    product => product.featuredLaunch === true
+  )
+ console.log(
+  "PRODUCTO 1",
+  liveProducts[0]
+)
   return (
 
     <section
@@ -512,17 +513,6 @@ const nextLaunch =
     </div>
 <div
   className="
-    hidden
-    md:block
-    w-px
-    self-stretch
-    bg-white/10
-  "
-/>
-<div
-
-
-  className="
     mt-6
     flex
     flex-wrap
@@ -596,26 +586,133 @@ const nextLaunch =
         PRÓXIMO LANZAMIENTO
       </div>
 
-      <div
-        className="
-          mt-2
-          text-lg
-          font-semibold
-          text-white
-        "
-      >
-        {nextLaunch.name}
-      </div>
+      <motion.img
+  src={nextLaunch.image}
+  alt={nextLaunch.name}
+  animate={{
+    y: [0, -8, 0],
+  }}
+  transition={{
+    duration: 5,
+    repeat: Infinity,
+    ease: "easeInOut",
+  }}
+  className="
+    mx-auto
+    mt-6
+    h-32
+    object-contain
+    drop-shadow-[0_0_30px_rgba(255,255,255,0.20)]
+  "
+/>
 
+<div
+  className="
+    mt-6
+    text-xl
+    font-bold
+    text-white
+  "
+>
+  {nextLaunch.name}
+</div>
+
+<div
+  className="
+    mt-2
+    text-sm
+    text-white/60
+  "
+>
+  {nextLaunch.innovationSubtitle}
+</div>
+
+<div
+  className="
+    mt-6
+    text-[10px]
+    uppercase
+    tracking-[0.25em]
+    text-white/40
+  "
+>
+  PROBLEMA QUE RESUELVE
+</div>
+
+<div
+  className="
+    mt-2
+    text-sm
+    leading-relaxed
+    text-white/60
+  "
+>
+  {nextLaunch.problemSolved}
+</div>
+
+<div
+  className="
+    mt-6
+    flex
+    flex-wrap
+    gap-2
+  "
+>
+  {nextLaunch.benefits?.map(
+    (benefit: string) => (
       <div
+        key={benefit}
         className="
-          mt-1
-          text-sm
-          text-white/50
+          rounded-full
+          border
+          border-white/10
+          bg-white/[0.03]
+          px-3
+          py-1
+          text-xs
+          text-white/80
         "
       >
-        {nextLaunch.progress}% • {nextLaunch.status}
+        ✓ {benefit}
       </div>
+    )
+  )}
+</div>
+
+<div
+  className="
+    mt-6
+    h-2
+    overflow-hidden
+    rounded-full
+    bg-white/10
+  "
+>
+  <motion.div
+    initial={{ width: 0 }}
+    animate={{
+      width: `${nextLaunch.progress}%`,
+    }}
+    transition={{
+      duration: 1.5,
+    }}
+    className="
+      h-full
+      rounded-full
+      bg-white
+    "
+  />
+</div>
+
+<div
+  className="
+    mt-3
+    text-sm
+    text-white/60
+  "
+>
+  {nextLaunch.progress}% • {nextLaunch.status}
+</div>
 
     </div>
 

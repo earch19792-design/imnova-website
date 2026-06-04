@@ -14,7 +14,6 @@ import { Navigation } from "@/components/navigation"
 import { HeroSection } from "@/components/hero-section"
 import { PromoBanner } from "@/components/promo-banner"
 import { AboutSection } from "@/components/about-section"
-import { EcosystemSection } from "@/components/ecosystem-section"
 import { InnovationsSection } from "@/components/innovations-section"
 import { MissionSection } from "@/components/mission-section"
 import { TechnologySection } from "@/components/technology-section"
@@ -129,11 +128,6 @@ export default function IMNOVAPage() {
       ABOUT SECTION
       ================================================= */}
       <AboutSection />
-
-      {/* =================================================
-      ECOSYSTEM SECTION
-      ================================================= */}
-      <EcosystemSection />
 
       {/* =================================================
       INNOVATIONS SECTION
