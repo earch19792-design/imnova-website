@@ -302,14 +302,64 @@ const featuredProduct =
                   "
                 >
 
-                  {/* Outer Glow */}
-                  <div className="absolute inset-0 rounded-full bg-gradient-to-br from-cyan-400/20 to-cyan-400/5 animate-pulse-glow" />
+                 <motion.div
+  animate={{
+    scale: [1, 1.15, 1],
+    opacity: [0.4, 0.9, 0.4],
+  }}
+  transition={{
+    duration: 6,
+    repeat: Infinity,
+    ease: "easeInOut",
+  }}
+  className="
+    absolute
+    inset-0
+    rounded-full
+    bg-gradient-to-br
+    from-cyan-400/25
+    to-cyan-400/5
+    blur-md
+  "
+/>
 
                   {/* Ring 1 */}
-                  <div className="absolute inset-4 rounded-full border border-cyan-400/20" />
+                  <motion.div
+  animate={{
+    rotate: 360,
+  }}
+  transition={{
+    duration: 50,
+    repeat: Infinity,
+    ease: "linear",
+  }}
+  className="
+    absolute
+    inset-4
+    rounded-full
+    border
+    border-cyan-400/20
+  "
+/>
 
                   {/* Ring 2 */}
-                  <div className="absolute inset-10 rounded-full border border-cyan-400/10" />
+                  <motion.div
+  animate={{
+    rotate: 360,
+  }}
+  transition={{
+    duration: 50,
+    repeat: Infinity,
+    ease: "linear",
+  }}
+  className="
+    absolute
+    inset-4
+    rounded-full
+    border
+    border-cyan-400/20
+  "
+/>
 
                   {/* Ring 3 */}
                   <div className="absolute inset-16 rounded-full border border-white/5" />
@@ -317,21 +367,31 @@ const featuredProduct =
                   {/* Center */}
                   <div className="absolute inset-0 flex items-center justify-center">
 
-                    <div className="text-center">
+                   <motion.div
+  className="text-center"
+  animate={{
+    scale: [1, 1.06, 1],
+  }}
+  transition={{
+    duration: 5,
+    repeat: Infinity,
+    ease: "easeInOut",
+  }}
+>
 
-                      <div className="bg-gradient-to-br from-white via-cyan-200 to-cyan-400 bg-clip-text text-7xl font-black tracking-[-0.05em] text-transparent">
+  <div className="bg-gradient-to-br from-white via-cyan-200 to-cyan-400 bg-clip-text text-7xl font-black tracking-[-0.05em] text-transparent">
 
-                        IM
+    IM
 
-                      </div>
+  </div>
 
-                      <div className="mt-3 text-xs uppercase tracking-[0.45em] text-zinc-500">
+  <div className="mt-3 text-xs uppercase tracking-[0.45em] text-zinc-500">
 
-                        NOVA
+    NOVA
 
-                      </div>
+  </div>
 
-                    </div>
+</motion.div>
 
                   </div>
 
@@ -375,87 +435,124 @@ const featuredProduct =
               FLOATING CARD 1
               ================================================= */}
 
-              <motion.div
-                animate={{ y: [-12, 12, -12] }}
-                transition={{
-                  duration: 4,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                }}
-                className="
-                  absolute
-                  -right-4
-                  -top-4
-                  rounded-[28px]
-                  border
-                  border-white/10
-                  bg-white/[0.04]
-                  p-6
-                  backdrop-blur-2xl
-                  shadow-[0_0_60px_rgba(0,255,255,0.05)]
-                "
-              >
+            <motion.div
+  animate={{
+    y: [-12, 12, -12],
+    rotate: [-1, 1, -1],
+  }}
+  whileHover={{
+    scale: 1.05,
+    y: -10,
+  }}
+  transition={{
+    duration: 4,
+    repeat: Infinity,
+    ease: "easeInOut",
+  }}
+  className="
+    relative
+    overflow-hidden
+    absolute
+    -right-4
+    -top-4
+    rounded-[28px]
+    border
+    border-white/10
+    bg-white/[0.04]
+    p-6
+    backdrop-blur-2xl
+    shadow-[0_0_60px_rgba(0,255,255,0.05)]
+  "
+>
 
-                <div className="flex items-center gap-4">
-
-  <div
+  <motion.div
     className="
-      flex
-      h-14
-      w-14
-      items-center
-      justify-center
-      overflow-hidden
-      rounded-2xl
-      bg-cyan-400/10
+      absolute
+      inset-0
+      bg-gradient-to-r
+      from-transparent
+      via-white/[0.06]
+      to-transparent
+      pointer-events-none
     "
-  >
+    animate={{
+      x: ["-150%", "250%"],
+    }}
+    transition={{
+      duration: 5,
+      repeat: Infinity,
+      ease: "linear",
+    }}
+  />
 
-    {featuredProduct?.image ? (
+  <div className="flex items-center gap-4">
 
-      <img
-        src={featuredProduct.image}
-        alt={featuredProduct.name}
-        className="
-          h-full
-          w-full
-          object-contain
-        "
-      />
+    <div
+      className="
+        flex
+        h-14
+        w-14
+        items-center
+        justify-center
+        overflow-hidden
+        rounded-2xl
+        bg-cyan-400/10
+      "
+    >
 
-    ) : (
+      {featuredProduct?.image ? (
 
-      <Zap className="h-5 w-5 text-cyan-300" />
+        <img
+          src={featuredProduct.image}
+          alt={featuredProduct.name}
+          className="
+            h-full
+            w-full
+            object-contain
+          "
+        />
 
-    )}
+      ) : (
+
+        <Zap className="h-5 w-5 text-cyan-300" />
+
+      )}
+
+    </div>
+
+    <div>
+
+      <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
+        🚀 Productos Disponibles
+      </div>
+
+      <div className="mt-1 text-sm font-semibold text-white">
+        {featuredProduct?.name || "Próximamente"}
+      </div>
+
+    </div>
 
   </div>
 
-  <div>
-
-    <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
-      🚀 Productos Disponibles
-    </div>
-
-    <div className="mt-1 text-sm font-semibold text-white">
-      {featuredProduct?.name || "Próximamente"}
-    </div>
-
-  </div>
-
-</div>              </motion.div>
-
+</motion.div>
               {/* =================================================
               FLOATING CARD 2
               ================================================= */}
 
               <motion.div
-                animate={{ y: [12, -12, 12] }}
-                transition={{
-                  duration: 5,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                }}
+  animate={{
+    y: [12, -12, 12],
+    rotate: [1, -1, 1],
+  }}
+  whileHover={{
+    scale: 1.05,
+    y: -10,
+  }}
+  transition={{
+    duration: 5,
+    repeat: Infinity,
+    ease: "easeInOut",
+  }}
                 className="
                   absolute
                   -bottom-4

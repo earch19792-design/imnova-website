@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 
 import { products } from "@/data/products"
+import { motion } from "framer-motion"
 
 type Product = {
   id: number
@@ -46,10 +47,7 @@ const [
   product.id
 )
 
-console.log(
-  "LOCAL STORAGE:",
-  saved
-)
+
 
       const parsed =
         saved
@@ -157,25 +155,40 @@ else if (
       "
     >
 
-      {stats.map((stat) => (
+     {stats.map((stat) => (
 
-        <div
-          key={stat.label}
-          className="
-            rounded-[28px]
-            border
-            border-white/10
-            bg-white/[0.03]
-            p-6
-            text-center
-            backdrop-blur-2xl
-          "
-        >
+  <div
+    key={stat.label}
+    className="
+      rounded-[28px]
+      border
+      border-white/10
+      bg-white/[0.03]
+      p-6
+      text-center
+      backdrop-blur-2xl
+      transition-all
+      duration-300
+      hover:-translate-y-3
+      hover:scale-105
+      hover:border-cyan-400/30
+      hover:bg-white/[0.05]
+    "
+  >
 
-          <div className="text-4xl">
-            {stat.icon}
-          </div>
-
+          <motion.div
+  className="text-4xl"
+  animate={{
+    y: [0, -4, 0],
+  }}
+  transition={{
+    duration: 3,
+    repeat: Infinity,
+    ease: "easeInOut",
+  }}
+>
+  {stat.icon}
+</motion.div>
           <div
             className="
               mt-4
