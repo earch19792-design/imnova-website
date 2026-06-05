@@ -699,7 +699,7 @@ const saveChanges =
             bg-white
             px-6
             py-4
-            text-sm
+            text-sma
             font-semibold
             uppercase
             tracking-[0.18em]

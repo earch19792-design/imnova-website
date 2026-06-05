@@ -20,8 +20,8 @@ const navItems = [
   { name: "Inicio", href: "#hero" },
   { name: "Innovaciones", href: "#innovations" },
   { name: "Tecnología", href: "#technology" },
-  { name: "Nutrición", href: "#nutrition" },
-  { name: "Contacto", href: "/contact" },
+  { name: "Bienestar", href: "#about" },
+  { name: "Contacto", href: "#contact" },
 ]
 
 const categoryLinks = [
@@ -48,6 +48,8 @@ export function Navigation() {
     const handleScroll = () => {
       setIsScrolled(window.scrollY > 40)
     }
+
+    handleScroll()
 
     window.addEventListener(
       "scroll",
@@ -295,6 +297,7 @@ export function Navigation() {
             ========================================= */}
 
             <motion.button
+              type="button"
               whileHover={{
                 scale: 1.02,
               }}
@@ -342,6 +345,9 @@ export function Navigation() {
             ========================================= */}
 
             <motion.button
+              type="button"
+              aria-expanded={isMenuOpen}
+              aria-label="Toggle navigation menu"
               whileHover={{
                 scale: 1.03,
               }}
@@ -530,6 +536,9 @@ export function Navigation() {
                     <Link
                       key={item.name}
                       href={item.href}
+                      onClick={() =>
+                        setIsMenuOpen(false)
+                      }
                       className="
                         group
                         rounded-[24px]

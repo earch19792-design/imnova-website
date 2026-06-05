@@ -98,10 +98,12 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    box-sizing: border-box;
   }
 
   html {
     scroll-behavior: smooth;
+    scroll-padding-top: 5.5rem;
   }
 
   body {
@@ -109,6 +111,12 @@
     overflow-x: hidden;
     min-height: 100vh;
     position: relative;
+  }
+
+  img {
+    display: block;
+    max-width: 100%;
+    height: auto;
   }
 
   body::before {

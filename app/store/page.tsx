@@ -11,7 +11,7 @@ VERSIÓN: PREMIUM STORE + CARRITO LATERAL
 
 import Image from "next/image"
 import Link from "next/link"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 
 import {
   ShoppingBag,
@@ -20,7 +20,8 @@ import {
   Minus,
 } from "lucide-react"
 
-import products from "../../lib/products"
+
+import { getProducts } from "@/lib/products-service"
 
 function formatPrice(
   price: string,
@@ -35,7 +36,20 @@ function formatPrice(
 export default function StorePage() {
 
   const [cart, setCart] = useState<any[]>([])
+  const [products, setProducts] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
   const [openCart, setOpenCart] = useState(false)
+    useEffect(() => {
+    async function loadProducts() {
+      const data = await getProducts()
+      console.log("STORE PRODUCTS:", data)
+
+      setProducts(data || [])
+      setLoading(false)
+    }
+
+    loadProducts()
+  }, [])
 
   /* =================================================
   CART FUNCTIONS
@@ -128,7 +142,13 @@ export default function StorePage() {
       ),
     [cart]
   )
-
+if (loading) {
+  return (
+    <div className="min-h-screen flex items-center justify-center text-white">
+      Cargando productos...
+    </div>
+  )
+}
   return (
     <div
       className="
@@ -440,19 +460,18 @@ export default function StorePage() {
               <div className="absolute inset-0 bg-amber-400/5 blur-3xl" />
 
               <Image
-                src={product.image}
-                alt={product.name}
-                fill
-                className="
-                  pointer-events-none
-                  object-contain
-                  p-10
-                  transition-all
-                  duration-700
-                  group-hover:scale-105
-                "
-              />
-
+  src={product.image_url}
+  alt={product.name}
+  fill
+  className="
+    pointer-events-none
+    object-contain
+    p-10
+    transition-all
+    duration-700
+    group-hover:scale-105
+  "
+/>
             </div>
 
             {/* CONTENT */}
@@ -647,16 +666,15 @@ export default function StorePage() {
                   <div className="relative h-24 w-24 overflow-hidden rounded-2xl bg-white/[0.03]">
 
                     <Image
-                      src={item.product.image}
-                      alt={item.product.name}
-                      fill
-                      className="object-contain p-3"
-                    />
+  src={item.product.image_url}
+  alt={item.product.name}
+  fill
+  className="object-contain p-3"
+/>
 
-                  </div>
+</div>
 
-                  <div className="flex flex-1 flex-col justify-between">
-
+<div className="flex flex-1 flex-col justify-between">
                     <div>
 
                       <h3 className="font-black">
