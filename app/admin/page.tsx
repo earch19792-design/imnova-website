@@ -84,11 +84,6 @@ export default function AdminPage() {
   ] = useState("dashboard")
 
   const [
-    metricsKey,
-    setMetricsKey,
-  ] = useState(0)
-
-  const [
     showCampaignModal,
     setShowCampaignModal,
   ] = useState(false)
@@ -196,10 +191,6 @@ export default function AdminPage() {
     async () => {
 
       await loadAdminData()
-
-      setMetricsKey(
-        (prev) => prev + 1
-      )
 
     }
 
@@ -934,6 +925,24 @@ export default function AdminPage() {
                           </div>
 
                           <button
+                            onClick={() => {
+
+                              if (!product.slug) {
+
+                                console.error(
+                                  "PRODUCTO SIN SLUG:",
+                                  product
+                                )
+
+                                return
+
+                              }
+
+                              router.push(
+                                `/admin/products/${product.slug}`
+                              )
+
+                            }}
                             className="
                               mt-8
                               rounded-2xl
