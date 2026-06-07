@@ -604,7 +604,10 @@ export default function AdminPage() {
             <>
 
               <div className="mt-16">
-                <Metrics key={metricsKey} />
+                <Metrics
+                 products={liveProducts}
+                states={productStates}
+                   />
               </div>
 
               <div className="mt-16">

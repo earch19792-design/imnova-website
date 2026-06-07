@@ -1,21 +1,11 @@
 "use client"
 
 import {
-  useEffect,
-  useState,
-} from "react"
-
-import {
   Package,
   Rocket,
   Activity,
   FlaskConical,
 } from "lucide-react"
-
-import {
-  getProducts,
-  getProductStates,
-} from "@/lib/products-service"
 
 type Product = {
   id: string
@@ -28,36 +18,15 @@ type ProductState = {
   progress: number
 }
 
-export function Metrics() {
+type MetricsProps = {
+  products: Product[]
+  states: ProductState[]
+}
 
-  const [
-    products,
-    setProducts,
-  ] = useState<Product[]>([])
-
-  const [
-    states,
-    setStates,
-  ] = useState<ProductState[]>([])
-
-  useEffect(() => {
-
-    async function loadMetrics() {
-
-      const productsData =
-        await getProducts()
-
-      const statesData =
-        await getProductStates()
-
-      setProducts(productsData || [])
-      setStates(statesData || [])
-
-    }
-
-    loadMetrics()
-
-  }, [])
+export function Metrics({
+  products,
+  states,
+}: MetricsProps) {
 
   const getState =
     (stateId: string | null) =>
@@ -102,40 +71,32 @@ export function Metrics() {
     {
       label:
         "Innovaciones Activas",
-
       value:
         totalProducts,
-
       icon:
         Package,
     },
     {
       label:
         "Próximos Lanzamientos",
-
       value:
         launchReady,
-
       icon:
         Rocket,
     },
     {
       label:
         "En Laboratorio",
-
       value:
         testing,
-
       icon:
         FlaskConical,
     },
     {
       label:
         "Desarrollo Global",
-
       value:
         `${avgProgress}%`,
-
       icon:
         Activity,
     },
