@@ -1,5 +1,3 @@
-"use client"
-
 /* 
 ================================================
 MENÚ PRINCIPAL
@@ -9,14 +7,12 @@ NEXT.JS 16 FIXED VERSION
 ================================================
 */
 
-import { use } from "react"
-
 import Image from "next/image"
 import Link from "next/link"
 
 import { notFound } from "next/navigation"
 
-import products from "../../../lib/products"
+import { getProductBySlug } from "@/lib/products-service"
 
 /* =================================================
 PRODUCT EXPERIENCES
@@ -202,7 +198,7 @@ function formatPrice(
 PRODUCT PAGE
 ================================================= */
 
-export default function ProductPage({
+export default async function ProductPage({
   params,
 }: {
   params: Promise<{ slug: string }>
@@ -213,16 +209,15 @@ export default function ProductPage({
   ========================================= */
 
   const { slug } =
-    use(params)
+    await params
 
   /* =========================================
   FIND PRODUCT
   ========================================= */
 
   const product =
-    products.find(
-      (p) =>
-        p.slug === slug
+    await getProductBySlug(
+      slug
     )
 
   if (!product) {
@@ -542,7 +537,7 @@ export default function ProductPage({
               >
 
                 <Image
-                  src={product.image}
+                  src={product.image_url || "/placeholder.jpg"}
                   alt={product.name}
                   fill
                   className="object-contain"

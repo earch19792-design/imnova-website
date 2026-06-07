@@ -26,11 +26,15 @@ import {
 
 import {
   useEffect,
+  useState,
 } from "react"
 
-import products from "../lib/products"
+import { getProducts } from "@/lib/products-service"
 
 export function InnovationsSection() {
+
+  const [products, setProducts] =
+    useState<any[]>([])
 
   /* =================================================
   MOUSE REACTIVE LIGHTING
@@ -67,6 +71,25 @@ export function InnovationsSection() {
       [-500, 500],
       ["45%", "55%"]
     )
+
+  /* =================================================
+  LOAD PRODUCTS
+  ================================================= */
+
+  useEffect(() => {
+
+    async function loadProducts() {
+
+      const data =
+        await getProducts()
+
+      setProducts(data)
+
+    }
+
+    loadProducts()
+
+  }, [])
 
   /* =================================================
   GLOBAL MOUSE TRACKING
@@ -547,7 +570,7 @@ export function InnovationsSection() {
                 >
 
                   <Image
-                    src={product.image}
+                    src={product.image_url || "/placeholder.jpg"}
                     alt={product.name}
                     width={420}
                     height={420}
