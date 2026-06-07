@@ -1,6 +1,9 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import {
+  useEffect,
+  useState,
+} from "react"
 
 import {
   Package,
@@ -9,128 +12,91 @@ import {
   FlaskConical,
 } from "lucide-react"
 
-import { products } from "@/data/products"
+import {
+  getProducts,
+  getProductStates,
+} from "@/lib/products-service"
 
 type Product = {
   id: string
+  state_id: string | null
+}
+
+type ProductState = {
+  id: string
   name: string
-  category: string
-  status: string
   progress: number
-  phase: string
-  nextMilestone: string
 }
 
 export function Metrics() {
 
   const [
-    liveProducts,
-    setLiveProducts,
-  ] = useState<Product[]>(products)
+    products,
+    setProducts,
+  ] = useState<Product[]>([])
 
-  /* =========================================
-  REALTIME SYNC
-  ========================================= */
+  const [
+    states,
+    setStates,
+  ] = useState<ProductState[]>([])
 
   useEffect(() => {
 
-    const handleUpdate = (
-      event: Event
-    ) => {
+    async function loadMetrics() {
 
-      
+      const productsData =
+        await getProducts()
 
-      const customEvent =
-        event as CustomEvent
+      const statesData =
+        await getProductStates()
 
-      const updated =
-        customEvent.detail
-
-      setLiveProducts((prevProducts) =>
-
-        prevProducts.map((product) =>
-
-          product.id === updated.id
-
-            ? {
-
-                ...product,
-
-                status:
-                  updated.status,
-
-                progress:
-                  updated.progress,
-
-                phase:
-                  updated.phase,
-
-                nextMilestone:
-                  updated.nextMilestone,
-
-              }
-
-            : product
-
-        )
-
-      )
+      setProducts(productsData || [])
+      setStates(statesData || [])
 
     }
 
-    window.addEventListener(
-      "productsUpdated",
-      handleUpdate as EventListener
-    )
-
-    return () => {
-
-      window.removeEventListener(
-        "productsUpdated",
-        handleUpdate as EventListener
-      )
-
-    }
+    loadMetrics()
 
   }, [])
 
-  /* =========================================
-  DEBUG
-  ========================================= */
-
-  
-
-  /* =========================================
-  LIVE METRICS
-  ========================================= */
+  const getState =
+    (stateId: string | null) =>
+      states.find(
+        (state) =>
+          state.id === stateId
+      )
 
   const totalProducts =
-    liveProducts.length
+    products.length
 
   const launchReady =
-    liveProducts.filter(
-      (p) =>
-        p.status ===
-        "🔥 Preparando lanzamiento"
+    products.filter(
+      (product) =>
+        getState(product.state_id)?.name ===
+        "Comercialización"
     ).length
 
   const testing =
-    liveProducts.filter(
-      (p) =>
-        p.status ===
-        "🧪 Probando mejoras"
+    products.filter(
+      (product) =>
+        getState(product.state_id)?.name ===
+        "Testing"
     ).length
 
   const avgProgress =
-    Math.round(
-
-      liveProducts.reduce(
-        (acc, p) =>
-          acc + p.progress,
-        0
-      ) / liveProducts.length
-
-    )
+    products.length > 0
+      ? Math.round(
+          products.reduce(
+            (acc, product) =>
+              acc +
+              (
+                getState(product.state_id)
+                  ?.progress || 0
+              ),
+            0
+          ) / products.length
+        )
+      : 0
 
   const metrics = [
     {
@@ -143,7 +109,6 @@ export function Metrics() {
       icon:
         Package,
     },
-
     {
       label:
         "Próximos Lanzamientos",
@@ -154,7 +119,6 @@ export function Metrics() {
       icon:
         Rocket,
     },
-
     {
       label:
         "En Laboratorio",
@@ -165,7 +129,6 @@ export function Metrics() {
       icon:
         FlaskConical,
     },
-
     {
       label:
         "Desarrollo Global",
@@ -189,88 +152,89 @@ export function Metrics() {
       "
     >
 
-      {metrics.map((metric) => (
-
-        <div
-          key={metric.label}
-          className="
-            rounded-[30px]
-            border
-            border-white/10
-            bg-white/[0.03]
-            p-7
-            backdrop-blur-2xl
-            shadow-[0_0_50px_rgba(0,255,255,0.03)]
-          "
-        >
-
-          <div
-            className="
-              flex
-              items-center
-              justify-between
-            "
-          >
-
-            <div>
-
-              <p
-                className="
-                  text-sm
-                  uppercase
-                  tracking-[0.25em]
-                  text-zinc-500
-                "
-              >
-
-                {metric.label}
-
-              </p>
-
-              <h2
-                className="
-                  mt-4
-                  text-5xl
-                  font-black
-                  text-white
-                "
-              >
-
-                {metric.value}
-
-              </h2>
-
-            </div>
+      {
+        metrics.map(
+          (metric) => (
 
             <div
+              key={metric.label}
               className="
-                flex
-                h-16
-                w-16
-                items-center
-                justify-center
-                rounded-2xl
-                bg-cyan-400/10
+                rounded-[30px]
+                border
+                border-white/10
+                bg-white/[0.03]
+                p-7
+                backdrop-blur-2xl
+                shadow-[0_0_50px_rgba(0,255,255,0.03)]
               "
             >
 
-              <metric.icon
+              <div
                 className="
-                  h-8
-                  w-8
-                  text-cyan-300
+                  flex
+                  items-center
+                  justify-between
                 "
-              />
+              >
+
+                <div>
+
+                  <p
+                    className="
+                      text-sm
+                      uppercase
+                      tracking-[0.25em]
+                      text-zinc-500
+                    "
+                  >
+                    {metric.label}
+                  </p>
+
+                  <h2
+                    className="
+                      mt-4
+                      text-5xl
+                      font-black
+                      text-white
+                    "
+                  >
+                    {metric.value}
+                  </h2>
+
+                </div>
+
+                <div
+                  className="
+                    flex
+                    h-16
+                    w-16
+                    items-center
+                    justify-center
+                    rounded-2xl
+                    bg-cyan-400/10
+                  "
+                >
+
+                  <metric.icon
+                    className="
+                      h-8
+                      w-8
+                      text-cyan-300
+                    "
+                  />
+
+                </div>
+
+              </div>
 
             </div>
 
-          </div>
-
-        </div>
-
-      ))}
+          )
+        )
+      }
 
     </div>
 
   )
+
 }

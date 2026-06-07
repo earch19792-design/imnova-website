@@ -1,11 +1,7 @@
 export async function sendWhatsAppUpdate(
-
   product: string,
-
   status: string,
-
   progress: string
-
 ) {
 
   const token =
@@ -15,27 +11,22 @@ export async function sendWhatsAppUpdate(
     process.env.WHATSAPP_PHONE_NUMBER_ID?.trim()
 
   const phones = [
-
     "50558199840",
     "50557812948",
     "50586546986",
     "50586268473",
-
   ]
 
   if (!token || !phoneId) {
 
     console.error(
-      "FALTAN VARIABLES DE ENTORNO"
+      "FALTAN VARIABLES DE ENTORNO WHATSAPP"
     )
 
     return {
-
       success: false,
-
       error:
-        "FALTAN VARIABLES DE ENTORNO",
-
+        "FALTAN VARIABLES DE ENTORNO WHATSAPP",
     }
 
   }
@@ -47,122 +38,106 @@ export async function sendWhatsAppUpdate(
     try {
 
       await new Promise(
-        resolve =>
-          setTimeout(
-            resolve,
-            300
-          )
+        (resolve) =>
+          setTimeout(resolve, 300)
       )
 
       const payload = {
-
         messaging_product:
           "whatsapp",
 
-        to: phone,
+        to:
+          phone,
 
-        type: "template",
+        type:
+          "template",
 
-       template: {
+        template: {
+          name:
+            "imnova_update",
 
-  name: "imnova_update",
+          language: {
+            code:
+              "es",
+          },
 
-  language: {
+          components: [
+            {
+              type:
+                "body",
 
-    code: "es",
+              parameters: [
+                {
+                  type:
+                    "text",
 
-  },
+                  text:
+                    product || "N/A",
+                },
+                {
+                  type:
+                    "text",
 
-  components: [
+                  text:
+                    status || "N/A",
+                },
+                {
+                  type:
+                    "text",
 
-    {
-
-      type: "body",
-
-      parameters: [
-
-        {
-
-          type: "text",
-
-          text: product || "N/A",
-
+                  text:
+                    String(
+                      progress || "0%"
+                    ),
+                },
+              ],
+            },
+          ],
         },
-
-        {
-
-          type: "text",
-
-          text: status || "N/A",
-
-        },
-
-        {
-
-          type: "text",
-
-          text: String(progress || "0"),
-
-        },
-
-      ],
-
-    },
-
-  ],
-
-},
       }
-
-      
-
-      
 
       const response =
         await fetch(
-
           `https://graph.facebook.com/v25.0/${phoneId}/messages`,
-
           {
-
-            method: "POST",
+            method:
+              "POST",
 
             headers: {
-
               Authorization:
                 `Bearer ${token}`,
 
               "Content-Type":
                 "application/json",
-
             },
 
             body:
-              JSON.stringify(
-                payload
-              ),
-
+              JSON.stringify(payload),
           }
-
         )
 
       const data =
         await response.json()
 
-     
+      console.log(
+        "WHATSAPP META RESPONSE:",
+        {
+          phone,
+          status:
+            response.status,
+          ok:
+            response.ok,
+          data,
+        }
+      )
 
       results.push({
-
         phone,
-
         success:
           response.ok,
-
         status:
           response.status,
-
         data,
-
       })
 
     } catch (error) {
@@ -174,14 +149,11 @@ export async function sendWhatsAppUpdate(
       )
 
       results.push({
-
         phone,
-
-        success: false,
-
+        success:
+          false,
         error:
           String(error),
-
       })
 
     }
@@ -190,25 +162,20 @@ export async function sendWhatsAppUpdate(
 
   const successful =
     results.filter(
-      r => r.success
+      (result) =>
+        result.success
     ).length
 
   return {
-
     success:
       successful > 0,
-
     total:
       phones.length,
-
     successful,
-
     failed:
       phones.length -
       successful,
-
     results,
-
   }
 
 }

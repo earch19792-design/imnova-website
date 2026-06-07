@@ -2,77 +2,134 @@ import { supabase } from "./supabase"
 
 export async function getProducts() {
 
-  const { data, error } = await supabase
-    .from("products")
-    .select("*")
+  const { data, error } =
+    await supabase
+      .from("products")
+      .select("*")
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
 
-  console.log("SUPABASE PRODUCTS DATA:", data)
-  console.log("SUPABASE PRODUCTS ERROR:", error)
+  if (error) {
+
+    console.error(
+      "GET PRODUCTS ERROR:",
+      error
+    )
+
+    return []
+
+  }
 
   return data || []
+
 }
 
 export async function getProductStates() {
 
-  const { data, error } = await supabase
-    .from("product_states")
-    .select("*")
+  const { data, error } =
+    await supabase
+      .from("product_states")
+      .select("*")
+      .eq(
+        "is_active",
+        true
+      )
+      .order(
+        "sort_order",
+        {
+          ascending: true,
+        }
+      )
 
-  console.log("SUPABASE STATES DATA:", data)
-  console.log("SUPABASE STATES ERROR:", error)
+  if (error) {
+
+    console.error(
+      "GET PRODUCT STATES ERROR:",
+      error
+    )
+
+    return []
+
+  }
 
   return data || []
+
+}
+
+export async function getProductBySlug(
+  slug: string
+) {
+
+  const { data, error } =
+    await supabase
+      .from("products")
+      .select("*")
+      .eq(
+        "slug",
+        slug
+      )
+      .single()
+
+  if (error) {
+
+    console.error(
+      "GET PRODUCT BY SLUG ERROR:",
+      error
+    )
+
+    return null
+
+  }
+
+  return data
+
 }
 
 export async function updateProduct(
-  id: string | number,
+  productId: string,
   updates: {
-    progress?: number
+    state_id?: string | null
   }
 ) {
 
-  console.log("UPDATE PRODUCT PAYLOAD:", { id, updates })
+  console.log(
+    "UPDATE PRODUCT:",
+    {
+      productId,
+      updates,
+    }
+  )
 
-  const { data, error } = await supabase
-    .from("products")
-    .update(updates)
-    .eq("id", id)
-    .select()
-
-  if (error) {
-    console.error("UPDATE PRODUCT ERROR CODE:", error.code)
-    console.error("UPDATE PRODUCT ERROR MESSAGE:", error.message)
-    console.error("UPDATE PRODUCT ERROR DETAILS:", error)
-    return null
-  }
-
-  console.log("PRODUCT UPDATED:", data)
-  return data
-}
-
-export async function updateProductState(
-  id: string | number,
-  updates: {
-    name?: string
-    progress?: number
-  }
-) {
-
-  console.log("UPDATE STATE PAYLOAD:", { id, updates })
-
-  const { data, error } = await supabase
-    .from("product_states")
-    .update(updates)
-    .eq("id", id)
-    .select()
+  const { data, error } =
+    await supabase
+      .from("products")
+      .update(updates)
+      .eq(
+        "id",
+        productId
+      )
+      .select("*")
 
   if (error) {
-    console.error("UPDATE STATE ERROR CODE:", error.code)
-    console.error("UPDATE STATE ERROR MESSAGE:", error.message)
-    console.error("UPDATE STATE ERROR DETAILS:", error)
+
+    console.error(
+      "UPDATE PRODUCT ERROR:",
+      error
+    )
+
     return null
+
   }
 
-  console.log("STATE UPDATED:", data)
+  console.log(
+    "PRODUCT UPDATED:",
+    data
+  )
+
   return data
+
 }

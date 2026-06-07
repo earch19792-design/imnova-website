@@ -16,54 +16,29 @@ export async function POST(
       await req.json()
 
     const {
-
       product,
-
       status,
-
       progress,
-
-      message,
-
-      imageUrl,
-
     } = body
 
-    const finalMessage =
-
-      message ||
-
-      `🚀 IMNOVA LABS UPDATE
-
-Producto: ${product || "N/A"}
-
-Estado: ${status || "N/A"}
-
-Progreso: ${progress || "N/A"}
-
-Fecha: ${new Date().toLocaleString()}
-`
-
     const result =
-  await sendWhatsAppUpdate(
+      await sendWhatsAppUpdate(
+        product,
+        status,
+        progress
+      )
 
-    product,
+    if (
+      process.env.NODE_ENV ===
+      "development"
+    ) {
 
-    status,
+      console.log(
+        "WHATSAPP RESULT:",
+        result
+      )
 
-    progress
-
-  )
-
-   if (
-  process.env.NODE_ENV ===
-  "development"
-) {
-  console.log(
-    "WHATSAPP RESULT:",
-    result
-  )
-}
+    }
 
     return NextResponse.json({
 
@@ -81,22 +56,13 @@ Fecha: ${new Date().toLocaleString()}
     )
 
     return NextResponse.json(
-
       {
-
         success: false,
-
-        error:
-          String(error),
-
+        error: String(error),
       },
-
       {
-
         status: 500,
-
       }
-
     )
 
   }

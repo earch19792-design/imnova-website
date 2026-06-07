@@ -84,6 +84,11 @@ export default function AdminPage() {
   ] = useState("dashboard")
 
   const [
+    metricsKey,
+    setMetricsKey,
+  ] = useState(0)
+
+  const [
     showCampaignModal,
     setShowCampaignModal,
   ] = useState(false)
@@ -191,6 +196,10 @@ export default function AdminPage() {
     async () => {
 
       await loadAdminData()
+
+      setMetricsKey(
+        (prev) => prev + 1
+      )
 
     }
 
@@ -595,7 +604,7 @@ export default function AdminPage() {
             <>
 
               <div className="mt-16">
-                <Metrics />
+                <Metrics key={metricsKey} />
               </div>
 
               <div className="mt-16">
@@ -745,6 +754,16 @@ export default function AdminPage() {
                 Productos
               </h2>
 
+              <p
+                className="
+                  mt-4
+                  text-lg
+                  text-white/50
+                "
+              >
+                Catálogo central de productos IMNOVA.
+              </p>
+
               <div
                 className="
                   mt-10
@@ -757,16 +776,185 @@ export default function AdminPage() {
 
                 {
                   liveProducts.map(
-                    (product) => (
+                    (product) => {
 
-                      <ProductCard
-                        key={product.id}
-                        product={product}
-                        states={productStates}
-                        onUpdate={handleProductUpdate}
-                      />
+                      const state =
+                        productStates.find(
+                          (item) =>
+                            item.id === product.state_id
+                        )
 
-                    )
+                      const progress =
+                        state?.progress || 0
+
+                      return (
+
+                        <div
+                          key={product.id}
+                          className="
+                            rounded-[32px]
+                            border
+                            border-white/10
+                            bg-white/[0.03]
+                            p-8
+                            backdrop-blur-md
+                            transition-all
+                            duration-300
+                            hover:border-cyan-400/30
+                            hover:bg-white/[0.05]
+                          "
+                        >
+
+                          <div
+                            className="
+                              flex
+                              flex-col
+                              gap-5
+                              sm:flex-row
+                              sm:items-start
+                              sm:justify-between
+                            "
+                          >
+
+                            <div>
+
+                              <p
+                                className="
+                                  text-[10px]
+                                  uppercase
+                                  tracking-[0.35em]
+                                  text-cyan-300/60
+                                "
+                              >
+                                Producto
+                              </p>
+
+                              <h3
+                                className="
+                                  mt-3
+                                  text-4xl
+                                  font-black
+                                  tracking-[-0.04em]
+                                  text-white
+                                "
+                              >
+                                {product.name}
+                              </h3>
+
+                              <p
+                                className="
+                                  mt-3
+                                  text-sm
+                                  uppercase
+                                  tracking-[0.25em]
+                                  text-white/35
+                                "
+                              >
+                                {product.category}
+                              </p>
+
+                              <p
+                                className="
+                                  mt-4
+                                  text-sm
+                                  text-white/40
+                                "
+                              >
+                                {
+                                  product.slug ||
+                                  product.direct_url ||
+                                  "Sin ruta asignada"
+                                }
+                              </p>
+
+                            </div>
+
+                            <span
+                              className="
+                                rounded-full
+                                border
+                                border-white/10
+                                bg-white/[0.05]
+                                px-4
+                                py-2
+                                text-xs
+                                uppercase
+                                tracking-[0.2em]
+                                text-white/70
+                              "
+                            >
+                              {state?.name || "Sin estado"}
+                            </span>
+
+                          </div>
+
+                          <div className="mt-8">
+
+                            <div
+                              className="
+                                flex
+                                items-center
+                                justify-between
+                                text-xs
+                                uppercase
+                                tracking-[0.25em]
+                                text-white/35
+                              "
+                            >
+                              <span>Progreso</span>
+                              <span>{progress}%</span>
+                            </div>
+
+                            <div
+                              className="
+                                mt-3
+                                h-[6px]
+                                w-full
+                                overflow-hidden
+                                rounded-full
+                                bg-white/5
+                              "
+                            >
+                              <div
+                                className="
+                                  h-full
+                                  rounded-full
+                                  bg-white/70
+                                "
+                                style={{
+                                  width:
+                                    `${progress}%`,
+                                }}
+                              />
+                            </div>
+
+                          </div>
+
+                          <button
+                            className="
+                              mt-8
+                              rounded-2xl
+                              border
+                              border-cyan-400/20
+                              bg-cyan-400/10
+                              px-5
+                              py-3
+                              text-sm
+                              font-semibold
+                              text-cyan-300
+                              transition-all
+                              duration-300
+                              hover:bg-cyan-400/20
+                            "
+                          >
+                            Ver detalle
+                          </button>
+
+                        </div>
+
+                      )
+
+                    }
                   )
                 }
 
