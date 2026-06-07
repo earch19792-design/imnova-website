@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import {
   motion,
@@ -17,7 +17,19 @@ import {
 import {
   ChevronDown,
 } from "lucide-react"
-import { imnovaProducts } from "@/lib/imnova-products"
+import {
+  getProducts,
+  getProductStates,
+} from "@/lib/products-service"
+
+type Product = {
+  state_id: string | null
+}
+
+type ProductState = {
+  id: string
+  name: string
+}
 
 const heroImages = [
   "/hero/imnova-hero-01.webp",
@@ -31,25 +43,96 @@ export function HeroSection() {
     currentImage,
     setCurrentImage,
   ] = useState(0)
-  const conceptProducts =
-  imnovaProducts.filter(
-    p => p.status === "⚡ Concepto"
-  ).length
 
-const developmentProducts =
-  imnovaProducts.filter(
-    p =>
-      p.status === "🧪 Probando mejoras" ||
-      p.status === "🔥 Preparando lanzamiento" ||
-      p.status === "🏭 Producción" ||
-      p.status === "🌎 Comercialización"
-  ).length
+  const [
+    conceptProducts,
+    setConceptProducts,
+  ] = useState(0)
 
-const availableProducts =
-  imnovaProducts.filter(
-    p => p.status === "🚀 Disponible"
-  ).length
+  const [
+    developmentProducts,
+    setDevelopmentProducts,
+  ] = useState(0)
 
+  const [
+    availableProducts,
+    setAvailableProducts,
+  ] = useState(0)
+
+  useEffect(() => {
+
+    async function loadProductCounts() {
+
+      const products =
+        await getProducts()
+
+      const states =
+        await getProductStates()
+
+      const stateMap =
+        new Map(
+          (states as ProductState[]).map(
+            (state) => [
+              state.id,
+              state.name,
+            ]
+          )
+        )
+
+      let concept = 0
+      let development = 0
+      let available = 0
+
+      ;(products as Product[]).forEach(
+        (product) => {
+
+          const stateName =
+            product.state_id
+              ? stateMap.get(
+                  product.state_id
+                )
+              : null
+
+          if (
+            stateName === "Idea" ||
+            stateName === "Validación" ||
+            stateName === "Priorizado"
+          ) {
+
+            concept++
+
+          }
+
+          else if (
+            stateName === "Testing" ||
+            stateName === "Producción" ||
+            stateName === "Comercialización"
+          ) {
+
+            development++
+
+          }
+
+          else if (
+            stateName === "Disponible"
+          ) {
+
+            available++
+
+          }
+
+        }
+      )
+
+      setConceptProducts(concept)
+      setDevelopmentProducts(development)
+      setAvailableProducts(available)
+
+    }
+
+    loadProductCounts()
+
+  }, [])
   /* =================================================
   SCROLL SYSTEM
   ================================================= */
@@ -490,7 +573,7 @@ const availableProducts =
               "
             >
 
-              IMNOVA™ • AI WELLNESS SYSTEM
+              IMNOVAâ„¢ â€¢ AI WELLNESS SYSTEM
 
             </span>
 
@@ -544,7 +627,7 @@ const availableProducts =
               "
             >
 
-              Tecnología Humana
+              TecnologÃ­a Humana
 
             </span>
 
@@ -592,7 +675,7 @@ const availableProducts =
           >
 
             Creamos ecosistemas inteligentes
-            donde tecnología, nutrición y
+            donde tecnologÃ­a, nutriciÃ³n y
             bienestar evolucionan juntos
             para redefinir la experiencia humana.
 
@@ -668,7 +751,7 @@ const availableProducts =
               "
             >
 
-              Ver Tecnología
+              Ver TecnologÃ­a
 
             </button>
 
@@ -700,9 +783,9 @@ const availableProducts =
           >
 
 {[
-  `💡 Conceptos: ${conceptProducts}`,
-  `🧪 Desarrollo: ${developmentProducts}`,
-  `🚀 Disponibles: ${availableProducts}`,
+  `ðŸ’¡ Conceptos: ${conceptProducts}`,
+  `ðŸ§ª Desarrollo: ${developmentProducts}`,
+  `ðŸš€ Disponibles: ${availableProducts}`,
      ].map((item) => (
               <div
                 key={item}
@@ -790,3 +873,4 @@ const availableProducts =
     </section>
   )
 }
+

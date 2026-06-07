@@ -23,22 +23,26 @@ import {
   useState,
 } from "react"
 
-import { products } from "@/data/products"
+import {
+  getProducts,
+  getProductStates,
+} from "@/lib/products-service"
 
 /* =================================================
 LIVE PRODUCT TYPE
 ================================================= */
 
 type Product = {
-  id: number
+  id: string
+  state_id: string | null
   name: string
-  category: string
+  category?: string
   status: string
   progress: number
-  phase: string
-  nextMilestone: string
+  phase?: string
+  nextMilestone?: string
 
-  image?: string
+  image_url?: string | null
   innovationTitle?: string
   innovationSubtitle?: string
   problemSolved?: string
@@ -53,13 +57,19 @@ type Product = {
   }
 }
 
+type ProductState = {
+  id: string
+  name: string
+  progress: number
+}
+
 export function EcosystemSection() {
   const ref = useRef(null)
 
   const [
     liveProducts,
     setLiveProducts,
-  ] = useState<Product[]>(products)
+  ] = useState<Product[]>([])
 
   /* =================================================
   MOUSE REACTIVE LIGHTING
@@ -103,44 +113,55 @@ export function EcosystemSection() {
 
   useEffect(() => {
 
-    const loadProducts = () => {
+    async function loadProducts() {
+
+      const products =
+        await getProducts()
+
+      const states =
+        await getProductStates()
+
+      const stateMap =
+        new Map(
+          (states as ProductState[]).map(
+            (state) => [
+              state.id,
+              state,
+            ]
+          )
+        )
 
       const updatedProducts =
-        products.map((product) => {
+        (products as Product[]).map(
+          (product) => {
 
-          const saved =
-            localStorage.getItem(
-              `product-${product.id}`
-            )
-
-          if (saved) {
-
-            const parsed =
-              JSON.parse(saved)
+            const state =
+              product.state_id
+                ? stateMap.get(
+                    product.state_id
+                  )
+                : null
 
             return {
 
               ...product,
 
               status:
-                parsed.status,
+                state?.name || "",
 
               progress:
-                parsed.progress,
+                state?.progress || 0,
 
               phase:
-                parsed.phase,
+                "",
 
               nextMilestone:
-                parsed.nextMilestone,
+                "",
 
             }
 
           }
-
-          return product
-
-        })
+        )
 
       setLiveProducts(
         updatedProducts
@@ -149,20 +170,6 @@ export function EcosystemSection() {
     }
 
     loadProducts()
-
-    window.addEventListener(
-      "productsUpdated",
-      loadProducts as EventListener
-    )
-
-    return () => {
-
-      window.removeEventListener(
-        "productsUpdated",
-        loadProducts as EventListener
-      )
-
-    }
 
   }, [])
 
@@ -587,7 +594,7 @@ const nextLaunch =
       </div>
 
       <motion.img
-  src={nextLaunch.image}
+  src={nextLaunch.image_url || "/placeholder.jpg"}
   alt={nextLaunch.name}
   animate={{
     y: [0, -8, 0],

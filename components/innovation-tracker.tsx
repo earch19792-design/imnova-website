@@ -1,9 +1,84 @@
 "use client"
 
-import { products }
-from "@/data/products"
+import { useEffect, useState } from "react"
+
+import {
+  getProducts,
+  getProductStates,
+} from "@/lib/products-service"
+
+type Product = {
+  id: string
+  state_id: string | null
+  name: string
+  category: string
+  phase?: string
+  nextMilestone?: string
+}
+
+type ProductState = {
+  id: string
+  name: string
+  progress: number
+}
 
 export function InnovationTracker() {
+
+  const [products, setProducts] =
+    useState<any[]>([])
+
+  useEffect(() => {
+
+    async function loadProducts() {
+
+      const products =
+        await getProducts()
+
+      const states =
+        await getProductStates()
+
+      const stateMap =
+        new Map(
+          (states as ProductState[]).map(
+            (state) => [
+              state.id,
+              state,
+            ]
+          )
+        )
+
+      setProducts(
+        (products as Product[]).map(
+          (product) => {
+
+            const state =
+              product.state_id
+                ? stateMap.get(
+                    product.state_id
+                  )
+                : null
+
+            return {
+              ...product,
+              status:
+                state?.name || "",
+              progress:
+                state?.progress || 0,
+              phase:
+                state?.name || "",
+              nextMilestone:
+                "",
+            }
+
+          }
+        )
+      )
+
+    }
+
+    loadProducts()
+
+  }, [])
 
   return (
 

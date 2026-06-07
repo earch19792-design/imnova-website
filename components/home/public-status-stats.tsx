@@ -2,12 +2,19 @@
 
 import { useEffect, useState } from "react"
 
-import { products } from "@/data/products"
+import {
+  getProducts,
+  getProductStates,
+} from "@/lib/products-service"
 import { motion } from "framer-motion"
 
 type Product = {
-  id: number
-  status: string
+  state_id: string | null
+}
+
+type ProductState = {
+  id: string
+  name: string
 }
 
 export function PublicStatusStats() {
@@ -32,90 +39,86 @@ const [
 
   useEffect(() => {
 
-    let concept = 0
-   let development = 0
-    let available = 0
+    async function loadProductStates() {
 
-    products.forEach((product) => {
+      const products =
+        await getProducts()
 
-      const saved =
-        localStorage.getItem(
-          `product-${product.id}`
+      const states =
+        await getProductStates()
+
+      const stateMap =
+        new Map(
+          (states as ProductState[]).map(
+            (state) => [
+              state.id,
+              state.name,
+            ]
+          )
         )
-        console.log(
-  "ID:",
-  product.id
-)
 
+      let concept = 0
+      let development = 0
+      let available = 0
 
+      ;(products as Product[]).forEach(
+        (product) => {
 
-      const parsed =
-        saved
-          ? JSON.parse(saved)
-          : product
+          const stateName =
+            product.state_id
+              ? stateMap.get(
+                  product.state_id
+                )
+              : null
 
-      const status =
-        parsed.status
-        console.log(
-  product.name,
-  status
-)
+          /* =========================================
+          PUBLIC STATUS MAPPING
+          ========================================= */
 
-console.log(
-  "STATUS:",
-  JSON.stringify(status)
-)
-console.log(
-  "CONTEO ACTUAL:",
-  {
-    concept,
-    development,
-    available,
-  }
-)
-      /* =========================================
-      PUBLIC STATUS MAPPING
-      ========================================= */
+          if (
+            stateName === "Idea" ||
+            stateName === "Validación" ||
+            stateName === "Priorizado"
+          ) {
 
-     if (
-  status === "⚡ Concepto"
-) {
+            concept++
 
-  concept++
+          }
 
-}
+          else if (
 
-else if (
+            stateName === "Testing" ||
+            stateName === "Producción" ||
+            stateName === "Comercialización"
 
-  status === "🧪 Probando mejoras" ||
+          ) {
 
-  status === "🔥 Preparando lanzamiento" ||
+            development++
 
-  status === "🏭 Producción" ||
+          }
 
-  status === "🌎 Comercialización"
+          else if (
 
-) {
+            stateName === "Disponible"
 
-  development++
+          ) {
 
-}
+            available++
 
-else if (
+          }
 
-  status === "🚀 Disponible"
+        }
+      )
 
-) {
+      setConceptCount(concept)
 
-  available++
+      setDevelopmentCount(development)
 
-}    })
+      setAvailableCount(available)
 
-    setConceptCount(concept)
+    }
 
-   setDevelopmentCount(development)
-
-    setAvailableCount(available)
+    loadProductStates()
 
   }, [])
 

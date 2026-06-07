@@ -17,7 +17,10 @@ import {
   useEffect,
 } from "react"
 
-import { products } from "@/data/products"
+import {
+  getProducts,
+  getProductStates,
+} from "@/lib/products-service"
 
 import {
   Sparkles,
@@ -27,6 +30,23 @@ import {
 
 import { PublicStatusStats }
 from "@/components/home/public-status-stats"
+
+type Product = {
+  id: string
+  state_id: string | null
+  name: string
+  category?: string
+  description?: string
+  slug?: string
+  direct_url?: string
+  image_url?: string | null
+}
+
+type ProductState = {
+  id: string
+  name: string
+  progress: number
+}
 
 export function AboutSection() {
 
@@ -50,29 +70,45 @@ const [currentUpcoming, setCurrentUpcoming] =
 
 useEffect(() => {
 
-  const available: any[] = []
-  const upcoming: any[] = []
+  async function loadProducts() {
 
-  for (const product of products) {
+    const products =
+      await getProducts()
 
-    const saved =
-      localStorage.getItem(
-        `product-${product.id}`
+    const states =
+      await getProductStates()
+
+    const stateMap =
+      new Map(
+        (states as ProductState[]).map(
+          (state) => [
+            state.id,
+            state,
+          ]
+        )
       )
 
-    const parsed =
-      saved
-        ? JSON.parse(saved)
-        : product
+    const available: any[] = []
+    const upcoming: any[] = []
+
+    for (const product of products as Product[]) {
+
+      const state =
+        product.state_id
+          ? stateMap.get(
+              product.state_id
+            )
+          : null
 
     const merged = {
       ...product,
-      ...parsed,
+      progress:
+        state?.progress || 0,
     }
 
     if (
-      merged.status ===
-      "🚀 Disponible"
+      state?.name ===
+      "Disponible"
     ) {
 
       available.push(merged)
@@ -95,6 +131,10 @@ useEffect(() => {
       b.progress - a.progress
   )
 )
+
+  }
+
+  loadProducts()
 
 }, [])
 
@@ -500,10 +540,10 @@ const featuredProduct =
       "
     >
 
-      {featuredProduct?.image ? (
+      {featuredProduct ? (
 
         <img
-          src={featuredProduct.image}
+          src={featuredProduct.image_url || "/placeholder.jpg"}
           alt={featuredProduct.name}
           className="
             h-full
