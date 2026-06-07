@@ -13,34 +13,51 @@ import {
   useState,
 } from "react"
 
-type Product = {
-  id: number
-  name: string
-  image: string
-  category: string
-  status: string
-  progress: number
-  phase: string
-  nextMilestone: string
+import {
+  updateProduct,
+} from "@/lib/products-service"
 
-  theme: {
+import {
+  useToast,
+} from "@/hooks/use-toast"
+
+type Product = {
+  id: string
+  state_id: string | null
+  name: string
+  image?: string
+  image_url?: string
+  category: string
+  description?: string
+
+  theme?: {
     border: string
     text: string
     bg: string
   }
 }
 
+type ProductState = {
+  id: string
+  name: string
+  progress: number
+  sort_order?: number
+  is_active?: boolean
+}
+
 type Props = {
   product: Product
+  states: ProductState[]
+  onUpdate?: () => void
 }
 
 export function ProductCard({
   product,
+  states,
+  onUpdate,
 }: Props) {
 
-  /* =========================================
-  3D INTERACTION SYSTEM
-  ========================================= */
+  const { toast } = useToast()
 
   const cardRef =
     useRef<HTMLDivElement>(null)
@@ -91,64 +108,32 @@ export function ProductCard({
       ["35%", "65%"]
     )
 
-  /* =========================================
-  AUTO PROGRESS SYSTEM
-  ========================================= */
-
-  const progressMap: Record<
-    string,
-    number
-  > = {
-
-    "⚡ Concepto": 10,
-
-    "🧪 Probando mejoras": 35,
-
-    "🔥 Preparando lanzamiento": 60,
-
-    "🏭 Producción": 80,
-
-    "🌎 Comercialización": 90,
-
-    "🚀 Disponible": 100,
-  }
-
-  const statuses = [
-    "⚡ Concepto",
-    "🧪 Probando mejoras",
-    "🔥 Preparando lanzamiento",
-    "🏭 Producción",
-    "🌎 Comercialización",
-    "🚀 Disponible",
-  ]
-
-  /* =========================================
-  STATES
-  ========================================= */
-
-  const [status, setStatus] =
-    useState(product.status)
-
-  const [progress, setProgress] =
-    useState<number>(
-      progressMap[
-        product.status
-      ] || 0
-    )
-
-  const [phase, setPhase] =
-    useState(product.phase)
-
   const [
-    nextMilestone,
-    setNextMilestone,
+    selectedStateId,
+    setSelectedStateId,
   ] = useState(
-    product.nextMilestone
+    product.state_id || ""
   )
 
-  /* =========================================
-  MOUSE TRACKING
-  ========================================= */
+  useEffect(() => {
+
+    setSelectedStateId(
+      product.state_id || ""
+    )
+
+  }, [product.state_id])
+
+  const selectedState =
+    states.find(
+      (state) =>
+        state.id === selectedStateId
+    )
+
+  const currentProgress =
+    selectedState?.progress || 0
+
+  const currentStatus =
+    selectedState?.name || "Sin estado"
 
   const handleMouseMove =
     (
@@ -183,160 +168,132 @@ export function ProductCard({
 
     }
 
-  /* =========================================
-  AUTO UPDATE PROGRESS
-  ========================================= */
+  const saveChanges =
+    async () => {
 
-  useEffect(() => {
+      try {
 
-    setProgress(
-      progressMap[status] || 0
-    )
+        if (!selectedStateId) {
 
-  }, [status])
+          toast({
+            title: "⚠️ Estado requerido",
+            description:
+              "Selecciona un estado antes de guardar.",
+          })
 
-  /* =========================================
-  LOAD SAVED DATA
-  ========================================= */
+          return
 
-  useEffect(() => {
-
-    const saved =
-      localStorage.getItem(
-        `product-${product.id}`
-      )
-
-    if (saved) {
-
-      const parsed =
-        JSON.parse(saved)
-
-      setStatus(
-        parsed.status
-      )
-
-      setProgress(
-        progressMap[
-          parsed.status
-        ] || 0
-      )
-
-      setPhase(
-        parsed.phase
-      )
-
-      setNextMilestone(
-        parsed.nextMilestone
-      )
-
-    }
-
-  }, [product.id])
-
-  /* =========================================
-  SAVE DATA
-  ========================================= */
-const saveChanges =
-  async () => {
-
-    const updatedProduct = {
-      id: product.id,
-      name: product.name,
-      status,
-      progress,
-      phase,
-      nextMilestone,
-    }
-   
-
-    localStorage.setItem(
-      `product-${product.id}`,
-      JSON.stringify(updatedProduct)
-    )
-
-    window.dispatchEvent(
-      new CustomEvent(
-        "productsUpdated",
-        {
-          detail:
-            updatedProduct,
         }
-      )
-    )
 
-    try {
-
-      const response =
-        await fetch(
-          "/api/innova-lab",
-          {
-
-            method: "POST",
-
-            headers: {
-
-              "Content-Type":
-                "application/json",
-
-            },
-
-            body: JSON.stringify({
-
-              product:
-                product.name,
-
-              status,
-
-              progress:
-                `${progress}%`,
-
-            }),
-
-          }
+        console.log(
+          "PRODUCT ID:",
+          product.id
         )
 
-      const result =
-        await response.json()
+        console.log(
+          "SELECTED STATE ID:",
+          selectedStateId
+        )
 
-      if (
-  process.env.NODE_ENV ===
-  "development"
-) {
-  
-}
+        console.log(
+          "SELECTED STATE:",
+          selectedState
+        )
 
-    } catch (error) {
+        const result =
+          await updateProduct(
+            product.id,
+            {
+              state_id:
+                selectedStateId,
+            }
+          )
 
-      console.error(
-        "ERROR WHATSAPP:",
-        error
-      )
+        console.log(
+          "PRODUCT UPDATED:",
+          result
+        )
+
+        if (!result) {
+
+          toast({
+            title: "❌ Error",
+            description:
+              "No se pudo actualizar el producto en Supabase.",
+          })
+
+          return
+
+        }
+
+        toast({
+          title: "✅ Producto actualizado",
+          description:
+            `${product.name} cambió a ${currentStatus}`,
+        })
+
+        if (onUpdate) {
+          onUpdate()
+        }
+
+        const response =
+          await fetch(
+            "/api/innova-lab",
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+
+              body: JSON.stringify({
+                product:
+                  product.name,
+
+                status:
+                  currentStatus,
+
+                progress:
+                  `${currentProgress}%`,
+              }),
+            }
+          )
+
+        console.log(
+          "WHATSAPP RESPONSE STATUS:",
+          response.status
+        )
+
+        console.log(
+          "WHATSAPP RESPONSE OK:",
+          response.ok
+        )
+
+        const text =
+          await response.text()
+
+        console.log(
+          "WHATSAPP RESPONSE BODY:",
+          text
+        )
+
+      } catch (error) {
+
+        console.error(
+          "ERROR GUARDANDO PRODUCTO:",
+          error
+        )
+
+        toast({
+          title: "❌ Error",
+          description:
+            "No se pudo guardar el cambio.",
+        })
+
+      }
 
     }
-
-    
-
-  }
-
-  const activeStatuses = [
-    "⚡ Concepto",
-    "🧪 Probando mejoras",
-    "🔥 Preparando lanzamiento",
-    "🚀 Disponible",
-    "🏭 Producción",
-    "🌎 Comercialización",
-  ]
-
-  const activeProducts =
-    activeStatuses.includes(status)
-      ? 1
-      : 0
-
-  const comercializando =
-    status ===
-    "🌎 Comercialización"
-      ? 1
-      : 0
 
   return (
 
@@ -377,10 +334,6 @@ const saveChanges =
       "
     >
 
-      {/* =========================================
-      REACTIVE LIGHT
-      ========================================= */}
-
       <motion.div
         style={{
           background:
@@ -399,10 +352,6 @@ const saveChanges =
         "
       />
 
-      {/* =========================================
-      AMBIENT LIGHT
-      ========================================= */}
-
       <div
         className="
           pointer-events-none
@@ -411,24 +360,6 @@ const saveChanges =
           bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_60%)]
         "
       />
-
-      {/* =========================================
-      NOISE
-      ========================================= */}
-
-      <div
-        className="
-          pointer-events-none
-          absolute
-          inset-0
-          opacity-[0.015]
-          bg-[url('/noise.png')]
-        "
-      />
-
-      {/* =========================================
-      CONTENT
-      ========================================= */}
 
       <div
         className="
@@ -441,12 +372,10 @@ const saveChanges =
         }}
       >
 
-        {/* STATUS */}
-
         <select
-          value={status}
+          value={selectedStateId}
           onChange={(e) =>
-            setStatus(
+            setSelectedStateId(
               e.target.value
             )
           }
@@ -468,20 +397,26 @@ const saveChanges =
           "
         >
 
-          {statuses.map((s) => (
+          <option value="">
+            Seleccionar estado
+          </option>
 
-            <option
-              key={s}
-              value={s}
-            >
-              {s}
-            </option>
+          {
+            states.map(
+              (state) => (
 
-          ))}
+                <option
+                  key={state.id}
+                  value={state.id}
+                >
+                  {state.name}
+                </option>
+
+              )
+            )
+          }
 
         </select>
-
-        {/* TITLE */}
 
         <h2
           className="
@@ -491,12 +426,8 @@ const saveChanges =
             text-white
           "
         >
-
           {product.name}
-
         </h2>
-
-        {/* CATEGORY */}
 
         <p
           className="
@@ -507,12 +438,8 @@ const saveChanges =
             text-white/35
           "
         >
-
           {product.category}
-
         </p>
-
-        {/* PROGRESS */}
 
         <div className="mt-10">
 
@@ -524,9 +451,7 @@ const saveChanges =
               text-white/40
             "
           >
-
             PROGRESO
-
           </div>
 
           <div
@@ -546,9 +471,7 @@ const saveChanges =
                 text-white
               "
             >
-
-              {progress}
-
+              {currentProgress}
             </div>
 
             <div
@@ -558,14 +481,10 @@ const saveChanges =
                 text-white/40
               "
             >
-
               %
-
             </div>
 
           </div>
-
-          {/* PROGRESS BAR */}
 
           <div
             className="
@@ -584,7 +503,7 @@ const saveChanges =
               }}
               animate={{
                 width:
-                  `${progress}%`,
+                  `${currentProgress}%`,
               }}
               transition={{
                 duration: 1,
@@ -599,25 +518,6 @@ const saveChanges =
           </div>
 
         </div>
-
-     
-
-          <div
-            className="
-              rounded-[28px]
-              border
-              border-white/10
-              bg-white/[0.03]
-              p-6
-              backdrop-blur-md
-            "
-          >
-
-          
-          </div>
-
-
-        {/* INFO */}
 
         <div
           className="
@@ -636,9 +536,7 @@ const saveChanges =
                 text-white/35
               "
             >
-
               ESTADO
-
             </div>
 
             <p
@@ -648,9 +546,7 @@ const saveChanges =
                 leading-relaxed
               "
             >
-
-              {phase}
-
+              {currentStatus}
             </p>
 
           </div>
@@ -665,9 +561,7 @@ const saveChanges =
                 text-white/35
               "
             >
-
               PRÓXIMA ETAPA
-
             </div>
 
             <p
@@ -677,16 +571,16 @@ const saveChanges =
                 leading-relaxed
               "
             >
-
-              {nextMilestone}
-
+              {
+                currentStatus === "Disponible"
+                  ? "Producto listo para comercialización"
+                  : "Continuar avance dentro del flujo IMNOVA"
+              }
             </p>
 
           </div>
 
         </div>
-
-        {/* BUTTON */}
 
         <button
           onClick={saveChanges}
@@ -699,7 +593,7 @@ const saveChanges =
             bg-white
             px-6
             py-4
-            text-sma
+            text-sm
             font-semibold
             uppercase
             tracking-[0.18em]
@@ -711,9 +605,7 @@ const saveChanges =
             active:scale-[0.98]
           "
         >
-
           Guardar Cambios
-
         </button>
 
       </div>

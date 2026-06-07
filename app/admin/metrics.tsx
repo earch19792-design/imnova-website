@@ -12,7 +12,7 @@ import {
 import { products } from "@/data/products"
 
 type Product = {
-  id: number
+  id: string
   name: string
   category: string
   status: string

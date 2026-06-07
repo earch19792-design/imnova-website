@@ -287,10 +287,70 @@ export function Navigation() {
           </div>
 
           {/* =========================================
+          CENTER NAVIGATION
+          ========================================= */}
+
+          <nav className="hidden md:flex items-center gap-6">
+            {navItems.map((item) => (
+              <Link
+                key={item.name}
+                href={item.href}
+                className="
+                  text-sm
+                  uppercase
+                  tracking-[0.18em]
+                  text-white/70
+                  transition-all
+                  duration-300
+                  hover:text-white
+                "
+              >
+                {item.name}
+              </Link>
+            ))}
+          </nav>
+
+          {/* =========================================
           RIGHT
           ========================================= */}
 
           <div className="flex items-center gap-3">
+
+            {/* =========================================
+            TIENDA BUTTON
+            ========================================= */}
+
+            <Link
+              href="/store"
+              className="
+                relative
+                z-50
+                hidden
+                sm:inline-flex
+                items-center
+                justify-center
+                rounded-2xl
+                border
+                border-white/10
+                bg-cyan-400/10
+                px-4
+                py-3
+                text-[10px]
+                uppercase
+                tracking-[0.28em]
+                font-medium
+                text-cyan-100
+                backdrop-blur-xl
+                transition-all
+                duration-300
+                hover:border-white/20
+                hover:bg-cyan-400/20
+                hover:text-white
+                whitespace-nowrap
+              "
+            >
+              Tienda
+            </Link>
 
             {/* =========================================
             IMNOVA LABS BUTTON

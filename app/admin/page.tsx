@@ -10,28 +10,53 @@ import { useRouter } from "next/navigation"
 import {
   motion,
 } from "framer-motion"
-import { products } from "@/data/products"
+
+import {
+  getProducts,
+  getProductStates,
+} from "@/lib/products-service"
 
 import { Sidebar } from "@/app/admin/sidebar"
 import { Metrics } from "@/app/admin/metrics"
 import { ProductCard } from "@/app/admin/product-card"
 
-
 type Product = {
-  id: number
+  id: string
+  state_id: string | null
+  slug?: string
   name: string
-  image: string
   category: string
-  status: string
-  progress: number
-  phase: string
-  nextMilestone: string
+  description?: string
+  image_url?: string
+  image?: string
+  price?: number
+  currency?: string
+  direct_url?: string
+  bullets?: string[]
+  featured?: boolean
 
-  theme: {
+  theme?: {
     border: string
     text: string
     bg: string
   }
+}
+
+type ProductState = {
+  id: string
+  name: string
+  progress: number
+  sort_order?: number
+  is_active?: boolean
+}
+
+type Campaign = {
+  id: number
+  name: string
+  product: string
+  channel: string
+  status: string
+  leads: number
 }
 
 export default function AdminPage() {
@@ -46,78 +71,168 @@ export default function AdminPage() {
   const [
     liveProducts,
     setLiveProducts,
-  ] = useState<Product[]>(products)
+  ] = useState<Product[]>([])
+
+  const [
+    productStates,
+    setProductStates,
+  ] = useState<ProductState[]>([])
 
   const [
     selectedMenu,
     setSelectedMenu,
   ] = useState("dashboard")
+
   const [
-  showCampaignModal,
-  setShowCampaignModal,
-] = useState(false)
-const [campaigns, setCampaigns] = useState([
-  {
-    id: 1,
-    name: "Mash Coffee TikTok",
-    product: "Mash Coffee",
-    channel: "TikTok",
-    status: "Active",
-    leads: 42,
-  },
-  {
-    id: 2,
-    name: "Bienes y Raíces Facebook",
-    product: "Casas Premium",
-    channel: "Facebook",
-    status: "Draft",
-    leads: 0,
-  },
-])
-const [campaignName, setCampaignName] = useState("")
-const [validationIdea, setValidationIdea] =useState("")
-const [campaignProduct, setCampaignProduct] = useState("")
-const [campaignChannel, setCampaignChannel] = useState("TikTok")
-const [campaignBudget, setCampaignBudget] = useState("")
-const [campaignType, setCampaignType] = useState("validation")
-const createCampaign = () => {
+    showCampaignModal,
+    setShowCampaignModal,
+  ] = useState(false)
 
-const newCampaign = {
-
-  id: Date.now(),
-
-  name:
-    campaignType === "validation"
-      ? `${validationIdea} ${campaignChannel}`
-      : `${campaignProduct} ${campaignChannel}`,
-
-  product: campaignProduct,
-
-  channel: campaignChannel,
-
-  status: "Draft",
-
-  leads: 0,
-
-}
-  
-
-  setCampaigns([
-    ...campaigns,
-    newCampaign,
+  const [
+    campaigns,
+    setCampaigns,
+  ] = useState<Campaign[]>([
+    {
+      id: 1,
+      name: "Mash Coffee TikTok",
+      product: "Mash Coffee",
+      channel: "TikTok",
+      status: "Active",
+      leads: 42,
+    },
+    {
+      id: 2,
+      name: "Bienes y Raíces Facebook",
+      product: "Casas Premium",
+      channel: "Facebook",
+      status: "Draft",
+      leads: 0,
+    },
   ])
 
-  setCampaignName("")
-  setCampaignProduct("")
-  setCampaignChannel("TikTok")
-  setCampaignBudget("")
+  const [
+    validationIdea,
+    setValidationIdea,
+  ] = useState("")
 
-  setShowCampaignModal(false)
+  const [
+    campaignProduct,
+    setCampaignProduct,
+  ] = useState("")
 
-}
-  /* =========================================
-  AUTH
-  ========================================= */
+  const [
+    campaignChannel,
+    setCampaignChannel,
+  ] = useState("TikTok")
+
+  const [
+    campaignBudget,
+    setCampaignBudget,
+  ] = useState("")
+
+  const [
+    campaignType,
+    setCampaignType,
+  ] = useState("validation")
+
+  const normalizeProduct =
+    (product: any): Product => {
+
+      return {
+        ...product,
+
+        image:
+          product.image ||
+          product.image_url ||
+          "",
+
+        theme:
+          product.theme ?? {
+            border: "",
+            text: "",
+            bg: "",
+          },
+      }
+
+    }
+
+  const loadAdminData =
+    async () => {
+
+      const products =
+        await getProducts()
+
+      const states =
+        await getProductStates()
+
+      setLiveProducts(
+        (products || []).map(
+          normalizeProduct
+        )
+      )
+
+      setProductStates(
+        states || []
+      )
+
+      console.log(
+        "ADMIN PRODUCTS:",
+        products
+      )
+
+      console.log(
+        "PRODUCT STATES:",
+        states
+      )
+
+    }
+
+  const handleProductUpdate =
+    async () => {
+
+      await loadAdminData()
+
+    }
+
+  const createCampaign =
+    () => {
+
+      const newCampaign: Campaign = {
+        id: Date.now(),
+
+        name:
+          campaignType === "validation"
+            ? `${validationIdea} ${campaignChannel}`
+            : `${campaignProduct} ${campaignChannel}`,
+
+        product:
+          campaignType === "validation"
+            ? validationIdea
+            : campaignProduct,
+
+        channel:
+          campaignChannel,
+
+        status:
+          "Draft",
+
+        leads:
+          0,
+      }
+
+      setCampaigns([
+        ...campaigns,
+        newCampaign,
+      ])
+
+      setValidationIdea("")
+      setCampaignProduct("")
+      setCampaignChannel("TikTok")
+      setCampaignBudget("")
+      setCampaignType("validation")
+      setShowCampaignModal(false)
+
+    }
 
   useEffect(() => {
 
@@ -142,87 +257,26 @@ const newCampaign = {
 
   }, [router])
 
-  /* =========================================
-  REALTIME PRODUCT UPDATE
-  ========================================= */
-
   useEffect(() => {
 
-    const handleUpdate = (
-      event: Event
-    ) => {
+    if (!isAuthenticated) return
 
-      const customEvent =
-        event as CustomEvent
+    loadAdminData()
 
-      const updated =
-        customEvent.detail
+  }, [isAuthenticated])
 
-      setLiveProducts(
-        (prevProducts) =>
+  const handleLogout =
+    () => {
 
-          prevProducts.map(
-            (product) =>
+      localStorage.removeItem(
+        "imnova-admin"
+      )
 
-              product.id === updated.id
-
-                ? {
-                    ...product,
-
-                    status:
-                      updated.status,
-
-                    progress:
-                      updated.progress,
-
-                    phase:
-                      updated.phase,
-
-                    nextMilestone:
-                      updated.nextMilestone,
-                  }
-
-                : product
-          )
+      router.push(
+        "/admin/login"
       )
 
     }
-
-    window.addEventListener(
-      "productsUpdated",
-      handleUpdate as EventListener
-    )
-
-    return () => {
-
-      window.removeEventListener(
-        "productsUpdated",
-        handleUpdate as EventListener
-      )
-
-    }
-
-  }, [])
-
-  /* =========================================
-  LOGOUT
-  ========================================= */
-
-  const handleLogout = () => {
-
-    localStorage.removeItem(
-      "imnova-admin"
-    )
-
-    router.push(
-      "/admin/login"
-    )
-
-  }
-
-  /* =========================================
-  LOADING SCREEN
-  ========================================= */
 
   if (!isAuthenticated) {
 
@@ -251,15 +305,7 @@ const newCampaign = {
       "
     >
 
-      {/* =========================================
-      GLOBAL BACKGROUND
-      ========================================= */}
-
       <div className="fixed inset-0 bg-black" />
-
-      {/* =========================================
-      AMBIENT LIGHTING
-      ========================================= */}
 
       <motion.div
         animate={{
@@ -284,10 +330,6 @@ const newCampaign = {
         "
       />
 
-      {/* =========================================
-      GRID
-      ========================================= */}
-
       <div
         className="
           pointer-events-none
@@ -299,18 +341,10 @@ const newCampaign = {
         "
       />
 
-      {/* =========================================
-      SIDEBAR
-      ========================================= */}
-
       <Sidebar
         selectedMenu={selectedMenu}
         setSelectedMenu={setSelectedMenu}
       />
-
-      {/* =========================================
-      CONTENT
-      ========================================= */}
 
       <motion.div
         initial={{
@@ -326,33 +360,28 @@ const newCampaign = {
           ease: [0.22, 1, 0.36, 1],
         }}
         className="
-  relative
-  z-10
-  ml-0
-  lg:ml-[280px]
-  px-4
-  sm:px-6
-  lg:px-10
-  py-6
-  lg:py-10
-"
-        
+          relative
+          z-10
+          ml-0
+          lg:ml-[280px]
+          px-4
+          sm:px-6
+          lg:px-10
+          py-6
+          lg:py-10
+        "
       >
 
-        {/* =========================================
-        HEADER
-        ========================================= */}
-
         <div
-      className="
-  flex
-  flex-col
-  lg:flex-row
-  lg:items-start
-  lg:justify-between
-  gap-6
-  lg:gap-10
-"
+          className="
+            flex
+            flex-col
+            lg:flex-row
+            lg:items-start
+            lg:justify-between
+            gap-6
+            lg:gap-10
+          "
         >
 
           <div>
@@ -375,58 +404,52 @@ const newCampaign = {
                 backdrop-blur-md
               "
             >
-
               IMNOVA LABS • CORE SYSTEM
-
             </div>
 
             <h1
-  className="
-    mt-8
-    text-7xl
-    font-black
-    leading-none
-    tracking-[-0.06em]
-    text-white
-  "
->
-  {
-    selectedMenu === "dashboard"
-      ? "Dashboard"
-      : selectedMenu === "products"
-      ? "Productos"
-      : selectedMenu === "campaigns"
-      ? "Campañas"
-      : selectedMenu === "analytics"
-      ? "Analytics"
-      : "IMNOVA"
-  }
-</h1>
+              className="
+                mt-8
+                text-7xl
+                font-black
+                leading-none
+                tracking-[-0.06em]
+                text-white
+              "
+            >
+              {
+                selectedMenu === "dashboard"
+                  ? "Dashboard"
+                  : selectedMenu === "products"
+                  ? "Productos"
+                  : selectedMenu === "campaigns"
+                  ? "Campañas"
+                  : selectedMenu === "analytics"
+                  ? "Analytics"
+                  : "IMNOVA"
+              }
+            </h1>
 
-           <p
-  className="
-    mt-8
-    max-w-4xl
-    text-2xl
-    text-white/50
-  "
->
-  {
-    selectedMenu === "dashboard"
-      ? "Sistema operativo inteligente diseñado para monitorear, desarrollar y expandir el ecosistema IMNOVA."
-      : selectedMenu === "products"
-      ? "Gestión centralizada de productos y proyectos."
-      : selectedMenu === "campaigns"
-      ? "Centro de gestión de campañas y generación de leads."
-      : selectedMenu === "analytics"
-      ? "Métricas, rendimiento y crecimiento del ecosistema."
-      : "IMNOVA OS"
-  }
-</p>
-
-            {/* =========================================
-            ACTIONS
-            ========================================= */}
+            <p
+              className="
+                mt-8
+                max-w-4xl
+                text-2xl
+                text-white/50
+              "
+            >
+              {
+                selectedMenu === "dashboard"
+                  ? "Sistema operativo inteligente diseñado para monitorear, desarrollar y expandir el ecosistema IMNOVA."
+                  : selectedMenu === "products"
+                  ? "Gestión centralizada de productos y proyectos."
+                  : selectedMenu === "campaigns"
+                  ? "Centro de gestión de campañas y generación de leads."
+                  : selectedMenu === "analytics"
+                  ? "Métricas, rendimiento y crecimiento del ecosistema."
+                  : "IMNOVA OS"
+              }
+            </p>
 
             <div
               className="
@@ -457,9 +480,7 @@ const newCampaign = {
                   hover:bg-zinc-200
                 "
               >
-
                 Regresar al Sitio
-
               </button>
 
               <button
@@ -481,18 +502,12 @@ const newCampaign = {
                   hover:border-white/20
                 "
               >
-
                 Cerrar Sesión
-
               </button>
 
             </div>
 
           </div>
-
-          {/* =========================================
-          SYSTEM STATUS
-          ========================================= */}
 
           <motion.div
             animate={{
@@ -534,9 +549,7 @@ const newCampaign = {
                   text-white/40
                 "
               >
-
                 SYSTEM STATUS
-
               </p>
 
               <div
@@ -565,9 +578,7 @@ const newCampaign = {
                     text-white
                   "
                 >
-
                   IMNOVA CORE ACTIVE
-
                 </p>
 
               </div>
@@ -578,24 +589,14 @@ const newCampaign = {
 
         </div>
 
-        {/* =========================================
-        DASHBOARD
-        ========================================= */}
-
         {
           selectedMenu === "dashboard" && (
 
             <>
 
-              {/* METRICS */}
-
               <div className="mt-16">
-
                 <Metrics />
-
               </div>
-
-              {/* PRODUCTS */}
 
               <div className="mt-16">
 
@@ -618,9 +619,7 @@ const newCampaign = {
                         text-white/35
                       "
                     >
-
                       LIVE PRODUCTS
-
                     </p>
 
                     <h2
@@ -632,9 +631,7 @@ const newCampaign = {
                         text-white
                       "
                     >
-
                       Ecosistema IMNOVA
-
                     </h2>
 
                   </div>
@@ -650,49 +647,53 @@ const newCampaign = {
                   "
                 >
 
-                  {liveProducts.map((product) => (
+                  {
+                    liveProducts.map(
+                      (product) => (
 
-                    <motion.div
-                      key={product.id}
-                      initial={{
-                        opacity: 0,
-                        y: 40,
-                      }}
-                      animate={{
-                        opacity: 1,
-                        y: 0,
-                      }}
-                      transition={{
-                        duration: 0.7,
-                      }}
-                      className="
-                        rounded-[36px]
-                        border
-                        border-white/10
-                        bg-white/[0.03]
-                        p-2
-                        backdrop-blur-md
-                        transition-all
-                        duration-500
-                        hover:-translate-y-1
-                        hover:border-white/20
-                        hover:bg-white/[0.04]
-                      "
-                    >
+                        <motion.div
+                          key={product.id}
+                          initial={{
+                            opacity: 0,
+                            y: 40,
+                          }}
+                          animate={{
+                            opacity: 1,
+                            y: 0,
+                          }}
+                          transition={{
+                            duration: 0.7,
+                          }}
+                          className="
+                            rounded-[36px]
+                            border
+                            border-white/10
+                            bg-white/[0.03]
+                            p-2
+                            backdrop-blur-md
+                            transition-all
+                            duration-500
+                            hover:-translate-y-1
+                            hover:border-white/20
+                            hover:bg-white/[0.04]
+                          "
+                        >
 
-                      <ProductCard
-                        product={product}
-                      />
+                          <ProductCard
+                            product={product}
+                            states={productStates}
+                            onUpdate={handleProductUpdate}
+                          />
 
-                    </motion.div>
+                        </motion.div>
 
-                  ))}
+                      )
+                    )
+                  }
 
                 </div>
 
               </div>
-
-              {/* ACTIVITY */}
 
               <div className="mt-16 pb-20">
 
@@ -717,11 +718,7 @@ const newCampaign = {
                     "
                   />
 
-                  <div className="relative z-10">
-
-                    
-
-                  </div>
+                  <div className="relative z-10" />
 
                 </div>
 
@@ -745,653 +742,707 @@ const newCampaign = {
                   text-white
                 "
               >
-
                 Productos
-
               </h2>
+
+              <div
+                className="
+                  mt-10
+                  grid
+                  grid-cols-1
+                  gap-8
+                  xl:grid-cols-2
+                "
+              >
+
+                {
+                  liveProducts.map(
+                    (product) => (
+
+                      <ProductCard
+                        key={product.id}
+                        product={product}
+                        states={productStates}
+                        onUpdate={handleProductUpdate}
+                      />
+
+                    )
+                  )
+                }
+
+              </div>
 
             </div>
 
           )
         }
-         {
-  selectedMenu === "campaigns" && (
 
-    <div className="mt-16">
+        {
+          selectedMenu === "campaigns" && (
 
-      <div
-        className="
-          mt-10
-          grid
-          grid-cols-1
-          gap-6
-          md:grid-cols-4
-        "
-      >
+            <div className="mt-16">
 
-        <div
-          className="
-            rounded-3xl
-            border
-            border-white/10
-            bg-white/[0.03]
-            p-6
-          "
-        >
-          <h3>Total Campañas</h3>
+              <div
+                className="
+                  mt-10
+                  grid
+                  grid-cols-1
+                  gap-6
+                  md:grid-cols-4
+                "
+              >
 
-          <p className="mt-3 text-4xl font-bold">
-         {campaigns.length}
-         </p>
+                <div
+                  className="
+                    rounded-3xl
+                    border
+                    border-white/10
+                    bg-white/[0.03]
+                    p-6
+                  "
+                >
+                  <h3>Total Campañas</h3>
 
-        </div>
+                  <p className="mt-3 text-4xl font-bold">
+                    {campaigns.length}
+                  </p>
+                </div>
 
-        <div
-          className="
-            rounded-3xl
-            border
-            border-white/10
-            bg-white/[0.03]
-            p-6
-          "
-        >
-          <h3>Activas</h3>
+                <div
+                  className="
+                    rounded-3xl
+                    border
+                    border-white/10
+                    bg-white/[0.03]
+                    p-6
+                  "
+                >
+                  <h3>Activas</h3>
 
-         <p className="mt-3 text-4xl font-bold">
-  {
-    campaigns.filter(
-      campaign =>
-        campaign.status === "Active"
-    ).length
-  }
-</p>
+                  <p className="mt-3 text-4xl font-bold">
+                    {
+                      campaigns.filter(
+                        campaign =>
+                          campaign.status === "Active"
+                      ).length
+                    }
+                  </p>
+                </div>
 
-        </div>
+                <div
+                  className="
+                    rounded-3xl
+                    border
+                    border-white/10
+                    bg-white/[0.03]
+                    p-6
+                  "
+                >
+                  <h3>Leads</h3>
 
-        <div
-          className="
-            rounded-3xl
-            border
-            border-white/10
-            bg-white/[0.03]
-            p-6
-          "
-        >
-          <h3>Leads</h3>
+                  <p className="mt-3 text-4xl font-bold">
+                    {
+                      campaigns.reduce(
+                        (total, campaign) =>
+                          total + campaign.leads,
+                        0
+                      )
+                    }
+                  </p>
+                </div>
 
-         <p className="mt-3 text-4xl font-bold">
-  {
-    campaigns.reduce(
-      (total, campaign) =>
-        total + campaign.leads,
-      0
-    )
-  }
-</p>
+              </div>
 
+              <div
+                className="
+                  mt-12
+                  overflow-hidden
+                  rounded-3xl
+                  border
+                  border-white/10
+                  bg-white/[0.03]
+                "
+              >
 
-        </div>
+                <div
+                  className="
+                    flex
+                    items-center
+                    justify-between
+                    border-b
+                    border-white/10
+                    p-6
+                  "
+                >
 
-      </div>
+                  <h3
+                    className="
+                      text-2xl
+                      font-bold
+                      text-white
+                    "
+                  >
+                    Campañas Activas
+                  </h3>
 
-      {/* TABLA DE CAMPAÑAS */}
+                  <button
+                    onClick={() =>
+                      setShowCampaignModal(true)
+                    }
+                    className="
+                      rounded-2xl
+                      border
+                      border-cyan-400/20
+                      bg-cyan-400/10
+                      px-3
+                      sm:px-5
+                      py-2
+                      text-xs
+                      sm:text-sm
+                      text-cyan-300
+                    "
+                  >
+                    + Nueva Campaña
+                  </button>
 
-      <div
-        className="
-          mt-12
-          overflow-hidden
-          rounded-3xl
-          border
-          border-white/10
-          bg-white/[0.03]
-        "
-      >
+                </div>
 
-        <div
-          className="
-            flex
-            items-center
-            justify-between
-            border-b
-            border-white/10
-            p-6
-          "
-        >
+                <table className="w-full">
 
-          <h3
+                  <thead>
+
+                    <tr
+                      className="
+                        border-b
+                        border-white/10
+                        text-left
+                      "
+                    >
+
+                      <th className="p-5 text-white/60">
+                        Campaña
+                      </th>
+
+                      <th className="p-5 text-white/60">
+                        Producto
+                      </th>
+
+                      <th className="p-5 text-white/60">
+                        Canal
+                      </th>
+
+                      <th className="p-5 text-white/60">
+                        Estado
+                      </th>
+
+                      <th className="p-5 text-white/60">
+                        Leads
+                      </th>
+
+                    </tr>
+
+                  </thead>
+
+                  <tbody>
+
+                    {
+                      campaigns.map(
+                        (campaign) => (
+
+                          <tr
+                            key={campaign.id}
+                            className="
+                              border-b
+                              border-white/5
+                            "
+                          >
+
+                            <td className="p-5 text-white">
+                              {campaign.name}
+                            </td>
+
+                            <td className="p-5 text-white/70">
+                              {campaign.product || "Idea en Validación"}
+                            </td>
+
+                            <td className="p-5 text-white/70">
+                              {campaign.channel}
+                            </td>
+
+                            <td className="p-5">
+
+                              <span
+                                className="
+                                  rounded-full
+                                  bg-yellow-500/20
+                                  px-3
+                                  py-1
+                                  text-yellow-400
+                                "
+                              >
+                                {campaign.status}
+                              </span>
+
+                            </td>
+
+                            <td className="p-5 text-white">
+                              {campaign.leads}
+                            </td>
+
+                          </tr>
+
+                        )
+                      )
+                    }
+
+                  </tbody>
+
+                </table>
+
+              </div>
+
+            </div>
+
+          )
+        }
+
+        {
+          selectedMenu === "analytics" && (
+
+            <div className="mt-16">
+
+              <div
+                className="
+                  mt-10
+                  grid
+                  grid-cols-1
+                  gap-6
+                  md:grid-cols-4
+                "
+              >
+
+                <div
+                  className="
+                    rounded-3xl
+                    border
+                    border-white/10
+                    bg-white/[0.03]
+                    p-6
+                  "
+                >
+                  <h3>Total Campañas</h3>
+
+                  <p className="mt-3 text-4xl font-bold">
+                    {campaigns.length}
+                  </p>
+                </div>
+
+                <div
+                  className="
+                    rounded-3xl
+                    border
+                    border-white/10
+                    bg-white/[0.03]
+                    p-6
+                  "
+                >
+                  <h3>Activas</h3>
+
+                  <p className="mt-3 text-4xl font-bold">
+                    {
+                      campaigns.filter(
+                        campaign =>
+                          campaign.status === "Active"
+                      ).length
+                    }
+                  </p>
+                </div>
+
+                <div
+                  className="
+                    rounded-3xl
+                    border
+                    border-white/10
+                    bg-white/[0.03]
+                    p-6
+                  "
+                >
+                  <h3>Leads</h3>
+
+                  <p className="mt-3 text-4xl font-bold">
+                    {
+                      campaigns.reduce(
+                        (total, campaign) =>
+                          total + campaign.leads,
+                        0
+                      )
+                    }
+                  </p>
+                </div>
+
+                <div
+                  className="
+                    rounded-3xl
+                    border
+                    border-white/10
+                    bg-white/[0.03]
+                    p-6
+                  "
+                >
+                  <h3>Productos</h3>
+
+                  <p className="mt-3 text-4xl font-bold">
+                    {liveProducts.length}
+                  </p>
+                </div>
+
+                <div
+                  className="
+                    mt-10
+                    w-full
+                    rounded-3xl
+                    border
+                    border-white/10
+                    bg-white/[0.03]
+                    p-8
+                    md:col-span-4
+                  "
+                >
+
+                  <h3
+                    className="
+                      text-2xl
+                      font-bold
+                      text-white
+                    "
+                  >
+                    Rendimiento por Canal
+                  </h3>
+
+                  <div className="mt-6 space-y-4">
+
+                    <div className="flex justify-between text-white">
+                      <span>TikTok</span>
+                      <span>
+                        {
+                          campaigns.filter(
+                            c => c.channel === "TikTok"
+                          ).length
+                        }
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between text-white">
+                      <span>Facebook</span>
+                      <span>
+                        {
+                          campaigns.filter(
+                            c => c.channel === "Facebook"
+                          ).length
+                        }
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between text-white">
+                      <span>Instagram</span>
+                      <span>
+                        {
+                          campaigns.filter(
+                            c => c.channel === "Instagram"
+                          ).length
+                        }
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between text-white">
+                      <span>Google Ads</span>
+                      <span>
+                        {
+                          campaigns.filter(
+                            c => c.channel === "Google Ads"
+                          ).length
+                        }
+                      </span>
+                    </div>
+
+                  </div>
+
+                </div>
+
+              </div>
+
+            </div>
+
+          )
+        }
+
+      </motion.div>
+
+      {
+        showCampaignModal && (
+
+          <div
             className="
-              text-2xl
-              font-bold
-              text-white
+              fixed
+              inset-0
+              z-[999]
+              flex
+              items-center
+              justify-center
+              bg-black/80
+              backdrop-blur-md
             "
           >
-            Campañas Activas
-          </h3>
 
-          <button
-  onClick={() =>
-    setShowCampaignModal(true)
-  }
-  className="
-  rounded-2xl
-  border
-  border-cyan-400/20
-  bg-cyan-400/10
-  px-3
-  sm:px-5
-  py-2
-  text-xs
-  sm:text-sm
-  text-cyan-300
-"
-
->
-  + Nueva Campaña
-</button>
-
-        </div>
-
-        <table className="w-full">
-
-          <thead>
-
-            <tr
+            <div
               className="
-                border-b
+                w-full
+                max-w-2xl
+                rounded-3xl
+                border
                 border-white/10
-                text-left
+                bg-[#050505]
+                p-8
               "
             >
 
-              <th className="p-5 text-white/60">
-                Campaña
-              </th>
+              <div
+                className="
+                  flex
+                  items-center
+                  justify-between
+                "
+              >
 
-              <th className="p-5 text-white/60">
-                Producto
-              </th>
+                <h2
+                  className="
+                    text-4xl
+                    font-black
+                    text-white
+                  "
+                >
+                  Nueva Campaña
+                </h2>
 
-              <th className="p-5 text-white/60">
-                Canal
-              </th>
+                <button
+                  onClick={() =>
+                    setShowCampaignModal(false)
+                  }
+                  className="text-white"
+                >
+                  ✕
+                </button>
 
-              <th className="p-5 text-white/60">
-                Estado
-              </th>
+              </div>
 
-              <th className="p-5 text-white/60">
-                Leads
-              </th>
+              <div
+                className="
+                  mt-8
+                  grid
+                  gap-5
+                "
+              >
 
-            </tr>
+                <select
+                  value={campaignType}
+                  onChange={(e) =>
+                    setCampaignType(
+                      e.target.value
+                    )
+                  }
+                  className="
+                    w-full
+                    rounded-2xl
+                    border
+                    border-white/10
+                    bg-[#0b0b0b]
+                    p-4
+                    text-white
+                  "
+                >
+                  <option value="validation">
+                    Validación
+                  </option>
 
-          </thead>
+                  <option value="product">
+                    Producto Existente
+                  </option>
+                </select>
 
-          <tbody>
-
-  {campaigns.map((campaign) => (
-
-    <tr
-      key={campaign.id}
-      className="
-        border-b
-        border-white/5
-      "
-    >
-
-      <td className="p-5 text-white">
-        {campaign.name}
-      </td>
-
-      <td className="p-5 text-white/70">
-  {campaign.product || "Idea en Validación"}
-</td>
-
-      <td className="p-5 text-white/70">
-        {campaign.channel}
-      </td>
-
-      <td className="p-5">
-
-        <span
-          className="
-            rounded-full
-            bg-yellow-500/20
-            px-3
-            py-1
-            text-yellow-400
-          "
-        >
-          {campaign.status}
-        </span>
-
-      </td>
-
-      <td className="p-5 text-white">
-        {campaign.leads}
-      </td>
-
-    </tr>
-
-  ))}
-
-</tbody>
-
-        </table>
-
-      </div>
-
-    </div>
-
-  )
-}
-      
                 {
-  selectedMenu === "analytics" && (
+                  campaignType === "validation" && (
 
-    <div className="mt-16">
+                    <input
+                      value={validationIdea}
+                      onChange={(e) =>
+                        setValidationIdea(
+                          e.target.value
+                        )
+                      }
+                      placeholder="Idea o producto a validar"
+                      className="
+                        w-full
+                        rounded-2xl
+                        border
+                        border-white/10
+                        bg-white/[0.03]
+                        p-4
+                        text-white
+                      "
+                    />
 
-      <h2
-        className="
-          text-6xl
-          font-black
-          tracking-[-0.05em]
-          text-white
-        "
-      >
-       
-      </h2>
+                  )
+                }
 
-     
+                {
+                  campaignType === "product" && (
 
-      <div
-        className="
-          mt-10
-          grid
-          grid-cols-1
-          gap-6
-          md:grid-cols-4
-        "
-      >
+                    <select
+                      value={campaignProduct}
+                      onChange={(e) =>
+                        setCampaignProduct(
+                          e.target.value
+                        )
+                      }
+                      className="
+                        w-full
+                        rounded-2xl
+                        border
+                        border-white/10
+                        bg-[#0b0b0b]
+                        p-4
+                        text-white
+                      "
+                    >
+                      <option value="">
+                        Seleccionar producto
+                      </option>
 
-        <div
-          className="
-            rounded-3xl
-            border
-            border-white/10
-            bg-white/[0.03]
-            p-6
-          "
-        >
-          <h3>Total Campañas</h3>
-          <p className="mt-3 text-4xl font-bold">
-         {campaigns.length}
-          </p>
-        </div>
+                      {
+                        liveProducts.map(
+                          (product) => (
 
-        <div
-          className="
-            rounded-3xl
-            border
-            border-white/10
-            bg-white/[0.03]
-            p-6
-          "
-        >
-          <h3>Activas</h3>
-          <p className="mt-3 text-4xl font-bold">
-  {
-    campaigns.filter(
-      campaign =>
-        campaign.status === "Active"
-    ).length
-  }
-</p>
-        </div>
+                            <option
+                              key={product.id}
+                              value={product.name}
+                            >
+                              {product.name}
+                            </option>
 
-        <div
-          className="
-            rounded-3xl
-            border
-            border-white/10
-            bg-white/[0.03]
-            p-6
-          "
-        >
-          <h3>Leads</h3>
-          <p className="mt-3 text-4xl font-bold">
-  {
-    campaigns.reduce(
-      (total, campaign) =>
-        total + campaign.leads,
-      0
-    )
-  }
-</p>
-        </div>
-        <div
-  className="
-    rounded-3xl
-    border
-    border-white/10
-    bg-white/[0.03]
-    p-6
-  "
->
-  <h3>Productos</h3>
+                          )
+                        )
+                      }
 
-  <p className="mt-3 text-4xl font-bold">
-    {products.length}
-  </p>
+                    </select>
 
-</div>
-<div
-  className="
-    mt-10
-    w-full
-    rounded-3xl
-    border
-    border-white/10
-    bg-white/[0.03]
-    p-8
-  "
->
+                  )
+                }
 
-  <h3
-    className="
-      text-2xl
-      font-bold
-      text-white
-    "
-  >
-    Rendimiento por Canal
-  </h3>
+                <select
+                  value={campaignChannel}
+                  onChange={(e) =>
+                    setCampaignChannel(
+                      e.target.value
+                    )
+                  }
+                  className="
+                    w-full
+                    rounded-2xl
+                    border
+                    border-white/10
+                    bg-[#0b0b0b]
+                    p-4
+                    text-white
+                  "
+                >
+                  <option value="TikTok">
+                    TikTok
+                  </option>
 
-  <div className="mt-6 space-y-4">
+                  <option value="Facebook">
+                    Facebook
+                  </option>
 
-    <div className="flex justify-between text-white">
-      <span>TikTok</span>
-      <span>
-        {
-          campaigns.filter(
-            c => c.channel === "TikTok"
-          ).length
-        }
-      </span>
-    </div>
+                  <option value="Instagram">
+                    Instagram
+                  </option>
 
-    <div className="flex justify-between text-white">
-      <span>Facebook</span>
-      <span>
-        {
-          campaigns.filter(
-            c => c.channel === "Facebook"
-          ).length
-        }
-      </span>
-    </div>
+                  <option value="Google Ads">
+                    Google Ads
+                  </option>
+                </select>
 
-    <div className="flex justify-between text-white">
-      <span>Instagram</span>
-      <span>
-        {
-          campaigns.filter(
-            c => c.channel === "Instagram"
-          ).length
-        }
-      </span>
-    </div>
+                <input
+                  value={campaignBudget}
+                  onChange={(e) =>
+                    setCampaignBudget(
+                      e.target.value
+                    )
+                  }
+                  placeholder="Presupuesto"
+                  className="
+                    w-full
+                    rounded-2xl
+                    border
+                    border-white/10
+                    bg-white/[0.03]
+                    p-4
+                    text-white
+                  "
+                />
 
-    <div className="flex justify-between text-white">
-      <span>Google Ads</span>
-      <span>
-        {
-          campaigns.filter(
-            c => c.channel === "Google Ads"
-          ).length
-        }
-      </span>
-    </div>
+              </div>
 
-  </div>
+              <div
+                className="
+                  mt-8
+                  flex
+                  justify-end
+                  gap-4
+                "
+              >
 
-</div>
+                <button
+                  onClick={() =>
+                    setShowCampaignModal(false)
+                  }
+                  className="
+                    rounded-2xl
+                    border
+                    border-white/10
+                    px-6
+                    py-3
+                    text-white
+                  "
+                >
+                  Cancelar
+                </button>
 
-      </div>
+                <button
+                  onClick={createCampaign}
+                  className="
+                    rounded-2xl
+                    bg-cyan-500
+                    px-6
+                    py-3
+                    font-bold
+                    text-black
+                  "
+                >
+                  Crear Campaña
+                </button>
 
-    </div>
+              </div>
 
-  )
-}
-                
+            </div>
 
+          </div>
 
-      </motion.div>
-     { 
-     
-  showCampaignModal && (
-
-    <div
-      className="
-        fixed
-        inset-0
-        z-[999]
-        flex
-        items-center
-        justify-center
-        bg-black/80
-        backdrop-blur-md
-      "
-    >
-
-      <div
-        className="
-          w-full
-          max-w-2xl
-          rounded-3xl
-          border
-          border-white/10
-          bg-[#050505]
-          p-8
-        "
-      >
-
-        <div
-          className="
-            flex
-            items-center
-            justify-between
-          "
-        >
-
-          <h2
-            className="
-              text-4xl
-              font-black
-              text-white
-            "
-          >
-            Nueva Campaña
-          </h2>
-
-          <button
-            onClick={() =>
-              setShowCampaignModal(false)
-            }
-            className="text-white"
-          >
-            ✕
-          </button>
-
-        </div>
-
-        <div
-  className="
-    mt-8
-    grid
-    gap-5
-  "
->
- <select
-  value={campaignType}
-  onChange={(e) =>
-    setCampaignType(
-      e.target.value
-    )
-  }
-  className="
-    w-full
-    rounded-2xl
-    border
-    border-white/10
-    bg-[#0b0b0b]
-    p-4
-    text-white
-  "
->
-  <option value="validation">
-    Validación
-  </option>
-
-  <option value="product">
-    Producto Existente
-  </option>
-</select>
-
-{campaignType === "validation" && (
-  <input
-    value={validationIdea}
-    onChange={(e) =>
-      setValidationIdea(
-        e.target.value
-      )
-    }
-    placeholder="Idea o producto a validar"
-    className="
-      w-full
-      rounded-2xl
-      border
-      border-white/10
-      bg-white/[0.03]
-      p-4
-      text-white
-    "
-  />
-)}
-  {campaignType === "product" && (
-    <select
-      value={campaignProduct}
-      onChange={(e) =>
-        setCampaignProduct(e.target.value)
+        )
       }
-      className="
-        w-full
-        rounded-2xl
-        border
-        border-white/10
-        bg-[#0b0b0b]
-        p-4
-        text-white
-      "
-    >
-      <option value="">
-        Seleccionar producto
-      </option>
-
-      {products.map((product) => (
-        <option
-          key={product.id}
-          value={product.name}
-        >
-          {product.name}
-        </option>
-      ))}
-    </select>
-  )}
-
-<select
-  value={campaignChannel}
-  onChange={(e) =>
-    setCampaignChannel(e.target.value)
-  }
-  className="
-    w-full
-    rounded-2xl
-    border
-    border-white/10
-    bg-[#0b0b0b]
-    p-4
-    text-white
-  "
->
-  <option value="TikTok">TikTok</option>
-  <option value="Facebook">Facebook</option>
-  <option value="Instagram">Instagram</option>
-  <option value="Google Ads">Google Ads</option>
-</select>
-
-<input
-  value={campaignBudget}
-  onChange={(e) =>
-    setCampaignBudget(e.target.value)
-  }
-  placeholder="Presupuesto"
-  className="
-    w-full
-    rounded-2xl
-    border
-    border-white/10
-    bg-white/[0.03]
-    p-4
-    text-white
-  "
-/>
-</div>
-
-<div
-  className="
-    mt-8
-    flex
-    justify-end
-    gap-4
-  "
->
-  <button
-    onClick={() =>
-      setShowCampaignModal(false)
-    }
-    className="
-      rounded-2xl
-      border
-      border-white/10
-      px-6
-      py-3
-      text-white
-    "
-  >
-    Cancelar
-  </button>
-
-  <button
-    onClick={createCampaign}
-    className="
-      rounded-2xl
-      bg-cyan-500
-      px-6
-      py-3
-      font-bold
-      text-black
-    "
-  >
-    Crear Campaña
-  </button>
-</div>
-
-      </div>
-    </div>
-  )
-}
 
     </main>
+
   )
+
 }
