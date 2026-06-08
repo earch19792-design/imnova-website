@@ -31,6 +31,26 @@ export default function ContactPage() {
               </p>
 
               <p>
+                <strong>Tipo de entidad:</strong><br />
+                Wyoming Limited Liability Company
+              </p>
+
+              <p>
+                <strong>ID estatal:</strong><br />
+                Wyoming Original ID 2025-001823496
+              </p>
+
+              <p>
+                <strong>Fecha de organizacion:</strong><br />
+                November 24, 2025
+              </p>
+
+              <p>
+                <strong>Agente registrado:</strong><br />
+                Northwest Registered Agent Service Inc
+              </p>
+
+              <p>
                 <strong>Correo:</strong><br />
                 ceo@vital4life-usa.com
               </p>

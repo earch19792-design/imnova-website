@@ -1,7 +1,22 @@
+const fallbackLaunchImageUrl =
+  "https://imnova-website-z1qh.vercel.app/images/mash-coffee.png"
+
+export function isValidAbsoluteUrl(
+  imageUrl?: string
+) {
+
+  return Boolean(
+    imageUrl &&
+    imageUrl.startsWith("https://")
+  )
+
+}
+
 export async function sendWhatsAppUpdate(
   product: string,
   status: string,
-  progress: string
+  progress: string,
+  imageUrl = ""
 ) {
 
   const token =
@@ -12,9 +27,6 @@ export async function sendWhatsAppUpdate(
 
   const phones = [
     "50558199840",
-    "50557812948",
-    "50586546986",
-    "50586268473",
   ]
 
   if (!token || !phoneId) {
@@ -42,6 +54,93 @@ export async function sendWhatsAppUpdate(
           setTimeout(resolve, 300)
       )
 
+      const selectedTemplate =
+        status === "Disponible"
+          ? "imnova_product_launch"
+          : "imnova_update"
+
+      const selectedImageUrl =
+        isValidAbsoluteUrl(imageUrl)
+          ? imageUrl
+          : fallbackLaunchImageUrl
+
+      const template =
+        selectedTemplate === "imnova_product_launch"
+          ? {
+              name:
+                selectedTemplate,
+
+              language: {
+                code:
+                  "es",
+              },
+
+              components: [
+                {
+                  type:
+                    "header",
+                  parameters: [
+                    {
+                      type:
+                        "image",
+                      image: {
+                        link:
+                          selectedImageUrl,
+                      },
+                    },
+                  ],
+                },
+                {
+                  type:
+                    "body",
+                  parameters: [
+                    {
+                      type:
+                        "text",
+                      text:
+                        product,
+                    },
+                  ],
+                },
+              ],
+            }
+          : {
+              name:
+                selectedTemplate,
+
+              language: {
+                code:
+                  "es",
+              },
+
+              components: [
+                {
+                  type:
+                    "body",
+                  parameters: [
+                    {
+                      type:
+                        "text",
+                      text:
+                        product,
+                    },
+                    {
+                      type:
+                        "text",
+                      text:
+                        status,
+                    },
+                    {
+                      type:
+                        "text",
+                      text:
+                        progress,
+                    },
+                  ],
+                },
+              ],
+            }
+
       const payload = {
         messaging_product:
           "whatsapp",
@@ -52,49 +151,21 @@ export async function sendWhatsAppUpdate(
         type:
           "template",
 
-        template: {
-          name:
-            "imnova_update",
-
-          language: {
-            code:
-              "es",
-          },
-
-          components: [
-            {
-              type:
-                "body",
-
-              parameters: [
-                {
-                  type:
-                    "text",
-
-                  text:
-                    product || "N/A",
-                },
-                {
-                  type:
-                    "text",
-
-                  text:
-                    status || "N/A",
-                },
-                {
-                  type:
-                    "text",
-
-                  text:
-                    String(
-                      progress || "0%"
-                    ),
-                },
-              ],
-            },
-          ],
-        },
+        template,
       }
+
+      console.log("WHATSAPP PRODUCT:", product)
+      console.log("WHATSAPP STATUS:", status)
+      console.log("WHATSAPP PROGRESS:", progress)
+      console.log(
+        "WHATSAPP TEMPLATE SELECTED:",
+        selectedTemplate
+      )
+
+      console.log(
+        "WHATSAPP PAYLOAD:",
+        JSON.stringify(payload, null, 2)
+      )
 
       const response =
         await fetch(
@@ -116,8 +187,36 @@ export async function sendWhatsAppUpdate(
           }
         )
 
-      const data =
-        await response.json()
+      const text =
+        await response.text()
+
+      let data
+
+      try {
+
+        data =
+          JSON.parse(text)
+
+      } catch {
+
+        data =
+          text
+
+      }
+
+      console.log(
+        "WAMID:",
+        data?.messages?.[0]?.id
+      )
+
+      console.log(
+        "META RESPONSE:",
+        JSON.stringify(
+          data,
+          null,
+          2
+        )
+      )
 
       console.log(
         "WHATSAPP META RESPONSE:",
@@ -130,6 +229,23 @@ export async function sendWhatsAppUpdate(
           data,
         }
       )
+
+      if (!response.ok) {
+
+        console.error(
+          "WHATSAPP META ERROR:",
+          {
+            status:
+              response.status,
+            ok:
+              response.ok,
+            phone,
+            responseBody:
+              data,
+          }
+        )
+
+      }
 
       results.push({
         phone,
@@ -176,6 +292,138 @@ export async function sendWhatsAppUpdate(
       phones.length -
       successful,
     results,
+  }
+
+}
+
+export async function auditWhatsAppTemplateDefinition() {
+
+  const token =
+    process.env.WHATSAPP_ACCESS_TOKEN?.trim()
+
+  const phoneId =
+    process.env.WHATSAPP_PHONE_NUMBER_ID?.trim()
+
+  const businessAccountId =
+    process.env.WHATSAPP_BUSINESS_ACCOUNT_ID?.trim()
+
+  if (!token || !phoneId || !businessAccountId) {
+
+    console.error(
+      "FALTAN VARIABLES DE ENTORNO WHATSAPP PARA AUDITAR TEMPLATE"
+    )
+
+    return {
+      success: false,
+      error:
+        "FALTAN VARIABLES DE ENTORNO WHATSAPP PARA AUDITAR TEMPLATE",
+      required:
+        [
+          "WHATSAPP_ACCESS_TOKEN",
+          "WHATSAPP_PHONE_NUMBER_ID",
+          "WHATSAPP_BUSINESS_ACCOUNT_ID",
+        ],
+    }
+
+  }
+
+  const fields =
+    [
+      "name",
+      "status",
+      "category",
+      "language",
+      "components",
+    ].join(",")
+
+  const params =
+    new URLSearchParams({
+      name:
+        "imnova_update",
+      fields,
+    })
+
+  const templateResponse =
+    await fetch(
+      `https://graph.facebook.com/v25.0/${businessAccountId}/message_templates?${params.toString()}`,
+      {
+        headers: {
+          Authorization:
+            `Bearer ${token}`,
+        },
+      }
+    )
+
+  const templateData =
+    await templateResponse.json()
+
+  const template =
+    templateData?.data?.[0]
+
+  const variables =
+    template?.components?.flatMap(
+      (component: any) => {
+        const text =
+          component.text || ""
+
+        const matches =
+          [...text.matchAll(/\{\{([^}]+)\}\}/g)]
+
+        return matches.map(
+          (match) => ({
+            component:
+              component.type,
+            variable:
+              match[1],
+            expectedType:
+              component.type === "HEADER" &&
+              component.format
+                ? String(component.format).toLowerCase()
+                : "text",
+          })
+        )
+      }
+    ) || []
+
+  console.log(
+    "WHATSAPP TEMPLATE STATUS:",
+    template?.status
+  )
+
+  console.log(
+    "WHATSAPP TEMPLATE CATEGORY:",
+    template?.category
+  )
+
+  console.log(
+    "WHATSAPP TEMPLATE LANGUAGE:",
+    template?.language
+  )
+
+  console.log(
+    "WHATSAPP TEMPLATE COMPONENTS:",
+    JSON.stringify(template?.components, null, 2)
+  )
+
+  console.log(
+    "WHATSAPP TEMPLATE VARIABLES:",
+    JSON.stringify(variables, null, 2)
+  )
+
+  return {
+    success:
+      templateResponse.ok,
+    status:
+      template?.status,
+    category:
+      template?.category,
+    language:
+      template?.language,
+    components:
+      template?.components,
+    variables,
+    raw:
+      templateData,
   }
 
 }

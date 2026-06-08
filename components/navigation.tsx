@@ -96,7 +96,7 @@ export function Navigation() {
         left-1/2
         z-50
         w-full
-        max-w-6xl
+        max-w-[1680px]
         -translate-x-1/2
         px-4
       "
@@ -165,6 +165,7 @@ export function Navigation() {
             flex
             items-center
             justify-between
+            gap-8
             px-4
             py-4
             md:px-6
@@ -176,7 +177,7 @@ export function Navigation() {
           LEFT
           ========================================= */}
 
-          <div className="flex items-center gap-5">
+          <div className="flex shrink-0 items-center gap-5">
 
             <Link
               href="#hero"
@@ -290,7 +291,7 @@ export function Navigation() {
           CENTER NAVIGATION
           ========================================= */}
 
-          <nav className="hidden md:flex items-center gap-6">
+          <nav className="hidden flex-1 items-center justify-center gap-4 md:flex xl:gap-7">
             {navItems.map((item) => (
               <Link
                 key={item.name}
@@ -298,14 +299,18 @@ export function Navigation() {
                 className="
                   text-sm
                   uppercase
-                  tracking-[0.18em]
+                  tracking-[0.14em]
                   text-white/70
                   transition-all
                   duration-300
                   hover:text-white
                 "
               >
-                {item.name}
+                {
+                  item.href === "#technology"
+                    ? "Tecnología"
+                    : item.name
+                }
               </Link>
             ))}
           </nav>
@@ -314,7 +319,7 @@ export function Navigation() {
           RIGHT
           ========================================= */}
 
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-3">
 
             {/* =========================================
             TIENDA BUTTON
@@ -546,7 +551,11 @@ export function Navigation() {
                         "
                       >
 
-                        {item.name}
+                        {
+                          item.href === "#technology"
+                            ? "Tecnología"
+                            : item.name
+                        }
 
                         <span
                           className="

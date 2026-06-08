@@ -163,6 +163,10 @@ export function Footer() {
             Todos los derechos reservados.
           </p>
 
+          <p className="text-xs text-muted-foreground">
+            Wyoming LLC - Original ID 2025-001823496
+          </p>
+
           {/* Social Links */}
           <div className="flex items-center gap-6">
 

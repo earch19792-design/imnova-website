@@ -211,6 +211,22 @@ export default function TermsPage() {
             <div className="mt-8 space-y-3 text-zinc-300 leading-relaxed">
 
               <p>
+                Limited Liability Company organized in the State of Wyoming.
+              </p>
+
+              <p>
+                Wyoming Original ID: 2025-001823496
+              </p>
+
+              <p>
+                Filed with the Wyoming Secretary of State on November 24, 2025.
+              </p>
+
+              <p>
+                Registered Agent: Northwest Registered Agent Service Inc
+              </p>
+
+              <p>
                 30 N Gould St Ste N
               </p>
 

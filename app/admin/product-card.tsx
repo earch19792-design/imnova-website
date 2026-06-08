@@ -256,6 +256,11 @@ export function ProductCard({
 
                 progress:
                   `${currentProgress}%`,
+
+                imageUrl:
+                  product.image_url ||
+                  product.image ||
+                  "",
               }),
             }
           )

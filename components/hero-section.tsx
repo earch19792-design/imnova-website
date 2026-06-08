@@ -566,6 +566,7 @@ export function HeroSection() {
 
             <span
               className="
+                hidden
                 text-[10px]
                 uppercase
                 tracking-[0.35em]
@@ -574,6 +575,19 @@ export function HeroSection() {
             >
 
               IMNOVAâ„¢ â€¢ AI WELLNESS SYSTEM
+
+            </span>
+
+            <span
+              className="
+                text-[10px]
+                uppercase
+                tracking-[0.35em]
+                text-white/70
+              "
+            >
+
+              IMNOVA™ • AI WELLNESS SYSTEM
 
             </span>
 
@@ -627,7 +641,7 @@ export function HeroSection() {
               "
             >
 
-              TecnologÃ­a Humana
+              Tecnología Humana
 
             </span>
 
@@ -675,7 +689,7 @@ export function HeroSection() {
           >
 
             Creamos ecosistemas inteligentes
-            donde tecnologÃ­a, nutriciÃ³n y
+            donde tecnología, nutrición y
             bienestar evolucionan juntos
             para redefinir la experiencia humana.
 
@@ -751,7 +765,7 @@ export function HeroSection() {
               "
             >
 
-              Ver TecnologÃ­a
+              Ver Tecnología
 
             </button>
 

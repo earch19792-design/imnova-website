@@ -563,11 +563,18 @@ const featuredProduct =
     <div>
 
       <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
-        🚀 Productos Disponibles
+        {
+          featuredProduct
+            ? "🚀 Productos Disponibles"
+            : "📦 Disponibilidad"
+        }
       </div>
 
       <div className="mt-1 text-sm font-semibold text-white">
-        {featuredProduct?.name || "Próximamente"}
+        {
+          featuredProduct?.name ||
+          "Sin productos disponibles"
+        }
       </div>
 
     </div>
@@ -622,7 +629,10 @@ const featuredProduct =
 </div>
 
                 <div className="mt-1 text-sm font-semibold text-white">
-  {featuredUpcoming?.name || "En desarrollo"}
+  {
+    featuredUpcoming?.name ||
+    "Sin lanzamientos programados"
+  }
 </div>
 
                   </div>

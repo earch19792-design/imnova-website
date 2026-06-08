@@ -138,6 +138,22 @@ export default function PrivacyPolicyPage() {
               <div className="mt-8 space-y-4 text-zinc-400 leading-relaxed">
 
                 <p>
+                  Legal Entity: IMNOVA GROUP LLC
+                </p>
+
+                <p>
+                  Entity Type: Wyoming Limited Liability Company
+                </p>
+
+                <p>
+                  Wyoming Original ID: 2025-001823496
+                </p>
+
+                <p>
+                  Registered Agent: Northwest Registered Agent Service Inc
+                </p>
+
+                <p>
                   ceo@vital4life-usa.com
                 </p>
 

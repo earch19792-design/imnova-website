@@ -272,7 +272,7 @@ export default function AboutPage() {
                 "
               >
 
-                Dirección Comercial
+                Direccion Legal y Principal
 
               </h3>
 
@@ -283,10 +283,59 @@ export default function AboutPage() {
                 "
               >
 
-                8534 NW 70th St
+                30 N Gould St Ste N
                 <br />
 
-                Miami, FL 33166
+                Sheridan, WY 82801
+                <br />
+
+                United States
+
+              </p>
+
+            </div>
+
+            <div
+              className="
+                border
+                border-zinc-800
+                rounded-3xl
+                p-8
+                bg-zinc-950/60
+                backdrop-blur
+                md:col-span-2
+              "
+            >
+
+              <h3
+                className="
+                  text-xl
+                  font-semibold
+                  mb-3
+                "
+              >
+
+                Registro Legal
+
+              </h3>
+
+              <p
+                className="
+                  text-zinc-400
+                  leading-relaxed
+                "
+              >
+
+                Wyoming Limited Liability Company
+                <br />
+
+                Original ID: 2025-001823496
+                <br />
+
+                Organized on November 24, 2025
+                <br />
+
+                Registered Agent: Northwest Registered Agent Service Inc
 
               </p>
 

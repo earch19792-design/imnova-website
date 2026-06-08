@@ -19,13 +19,15 @@ export async function POST(
       product,
       status,
       progress,
+      imageUrl,
     } = body
 
     const result =
       await sendWhatsAppUpdate(
         product,
         status,
-        progress
+        progress,
+        imageUrl
       )
 
     if (
@@ -42,7 +44,8 @@ export async function POST(
 
     return NextResponse.json({
 
-      success: true,
+      success:
+        result.success,
 
       result,
 

@@ -6,9 +6,12 @@ import {
   getProducts,
   getProductStates,
 } from "@/lib/products-service"
+
 import { motion } from "framer-motion"
 
 type Product = {
+  id?: string
+  name?: string
   state_id: string | null
 }
 
@@ -19,19 +22,20 @@ type ProductState = {
 
 export function PublicStatusStats() {
 
-  const [conceptCount, setConceptCount] =
-    useState(0)
-
-  
+  const [
+    conceptCount,
+    setConceptCount,
+  ] = useState(0)
 
   const [
-  developmentCount,
-  setDevelopmentCount,
-] = useState(0)
-const [
-  availableCount,
-  setAvailableCount,
-] = useState(0)
+    developmentCount,
+    setDevelopmentCount,
+  ] = useState(0)
+
+  const [
+    availableCount,
+    setAvailableCount,
+  ] = useState(0)
 
   /* =========================================
   LOAD PRODUCT STATES
@@ -46,6 +50,16 @@ const [
 
       const states =
         await getProductStates()
+
+      console.log(
+        "HOME PRODUCTS:",
+        products
+      )
+
+      console.log(
+        "HOME STATES:",
+        states
+      )
 
       const stateMap =
         new Map(
@@ -70,6 +84,22 @@ const [
                   product.state_id
                 )
               : null
+
+          console.log(
+            "PRODUCT STATE:",
+            {
+              productId:
+                product.id,
+
+              productName:
+                product.name,
+
+              stateId:
+                product.state_id,
+
+              stateName,
+            }
+          )
 
           /* =========================================
           PUBLIC STATUS MAPPING
@@ -110,11 +140,26 @@ const [
         }
       )
 
-      setConceptCount(concept)
+      console.log(
+        "FINAL COUNTS:",
+        {
+          concept,
+          development,
+          available,
+        }
+      )
 
-      setDevelopmentCount(development)
+      setConceptCount(
+        concept
+      )
 
-      setAvailableCount(available)
+      setDevelopmentCount(
+        development
+      )
+
+      setAvailableCount(
+        available
+      )
 
     }
 
@@ -129,22 +174,38 @@ const [
   const stats = [
 
     {
-      value: conceptCount,
-      label: "Concepto",
-      icon: "⚡",
+      value:
+        conceptCount,
+
+      label:
+        "Concepto",
+
+      icon:
+        "⚡",
     },
 
     {
-  value: developmentCount,
-  label: "Desarrollo",
-  icon: "🧪",
-},
+      value:
+        developmentCount,
+
+      label:
+        "Desarrollo",
+
+      icon:
+        "🧪",
+    },
 
     {
-      value: availableCount,
-      label: "Disponible",
-      icon: "🚀",
+      value:
+        availableCount,
+
+      label:
+        "Disponible",
+
+      icon:
+        "🚀",
     },
+
   ]
 
   return (
@@ -158,40 +219,43 @@ const [
       "
     >
 
-     {stats.map((stat) => (
+      {stats.map((stat) => (
 
-  <div
-    key={stat.label}
-    className="
-      rounded-[28px]
-      border
-      border-white/10
-      bg-white/[0.03]
-      p-6
-      text-center
-      backdrop-blur-2xl
-      transition-all
-      duration-300
-      hover:-translate-y-3
-      hover:scale-105
-      hover:border-cyan-400/30
-      hover:bg-white/[0.05]
-    "
-  >
+        <div
+          key={stat.label}
+          className="
+            rounded-[28px]
+            border
+            border-white/10
+            bg-white/[0.03]
+            p-6
+            text-center
+            backdrop-blur-2xl
+            transition-all
+            duration-300
+            hover:-translate-y-3
+            hover:scale-105
+            hover:border-cyan-400/30
+            hover:bg-white/[0.05]
+          "
+        >
 
           <motion.div
-  className="text-4xl"
-  animate={{
-    y: [0, -4, 0],
-  }}
-  transition={{
-    duration: 3,
-    repeat: Infinity,
-    ease: "easeInOut",
-  }}
->
-  {stat.icon}
-</motion.div>
+            className="text-4xl"
+            animate={{
+              y: [0, -4, 0],
+            }}
+            transition={{
+              duration: 3,
+              repeat: Infinity,
+              ease: "easeInOut",
+            }}
+          >
+
+            {stat.icon}
+
+          </motion.div>
+
           <div
             className="
               mt-4
@@ -224,5 +288,7 @@ const [
       ))}
 
     </div>
+
   )
+
 }
