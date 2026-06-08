@@ -380,11 +380,11 @@ export function Navigation() {
                 border
                 border-white/10
                 bg-white/[0.03]
-                px-4
+                px-3
                 py-3
                 text-[10px]
                 uppercase
-                tracking-[0.28em]
+                tracking-[0.18em]
                 font-medium
                 text-white/70
                 backdrop-blur-xl
@@ -394,12 +394,18 @@ export function Navigation() {
                 hover:bg-white/[0.06]
                 hover:text-white
                 whitespace-nowrap
+                xl:px-4
+                xl:tracking-[0.28em]
               "
             >
 
-              <Sparkles className="h-4 w-4" />
+              <Sparkles className="h-4 w-4 shrink-0" />
 
-              <span className="hidden sm:block">
+              <span className="hidden sm:block xl:hidden">
+                Labs
+              </span>
+
+              <span className="hidden xl:block">
                 IMNOVA LABS
               </span>
 
