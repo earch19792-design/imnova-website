@@ -10,14 +10,24 @@ import {
 import { supabase } from "@/lib/supabase"
 import { useRouter } from "next/navigation"
 
+export type InnovaSurveyIntent = {
+  productName: string
+  niches: string[]
+  problem: string
+  promise: string
+  source: "web" | "whatsapp" | "redes"
+}
+
 interface InnovaPopupProps {
   isOpen: boolean
   onClose: () => void
+  surveyIntent?: InnovaSurveyIntent | null
 }
 
 export default function InnovaPopup({
   isOpen,
   onClose,
+  surveyIntent,
 }: InnovaPopupProps) {
   const router = useRouter()
 
@@ -257,6 +267,41 @@ const [displayText, setDisplayText] =
 
 useEffect(() => {
 
+  if (
+    !isOpen ||
+    !surveyIntent
+  ) {
+    return
+  }
+
+  setSelectedNiches(prev => [
+    ...new Set([
+      ...prev,
+      ...surveyIntent.niches,
+    ]),
+  ])
+
+  const matchedNiche =
+    niches.find(niche =>
+      surveyIntent.niches.some(
+        intentNiche =>
+          niche.title.toLowerCase() ===
+          intentNiche.toLowerCase()
+      )
+    )
+
+  if (matchedNiche) {
+    setActiveNiche(matchedNiche)
+  }
+
+  setObjective(
+    `Validacion comunitaria: ${surveyIntent.productName}`
+  )
+
+}, [isOpen, surveyIntent])
+
+useEffect(() => {
+
   if (!isSwitching) return
 
   const text =
@@ -384,12 +429,28 @@ useEffect(() => {
         SIGNUP VALIDATION
         ========================================= */
 
+        const surveyRecord =
+          surveyIntent
+            ? [
+                "Encuesta de validacion",
+                `Canal: ${surveyIntent.source}`,
+                "Canales disponibles: web, WhatsApp, redes sociales",
+                `Producto: ${surveyIntent.productName}`,
+                `Nichos: ${surveyIntent.niches.join(", ")}`,
+                `Problema: ${surveyIntent.problem}`,
+              ].join(" | ")
+            : ""
+
+        const effectiveObjective =
+          surveyRecord ||
+          objective
+
        if (
   !fullName ||
   !phone ||
   !email ||
   !password ||
-  !objective
+  !effectiveObjective
 ) {
 
   alert(
@@ -468,7 +529,7 @@ console.log({
   authData.user?.id,
 
 objetivo_principal:
-  objective,
+  effectiveObjective,
             },
           ])
 
@@ -997,6 +1058,53 @@ objetivo_principal:
   </div>
 
 </div>
+
+{surveyIntent && !isLogin && (
+
+  <div
+    className="
+      mt-4
+      rounded-2xl
+      border
+      border-amber-200/20
+      bg-amber-200/[0.06]
+      p-5
+      text-sm
+      leading-6
+      text-amber-50/85
+    "
+  >
+
+    <p
+      className="
+        text-[10px]
+        font-semibold
+        uppercase
+        tracking-[0.22em]
+        text-amber-100/65
+      "
+    >
+
+      Encuesta vinculada
+
+    </p>
+
+    <p className="mt-3 font-semibold text-white">
+      {surveyIntent.productName}
+    </p>
+
+    <p className="mt-2 text-white/60">
+      {surveyIntent.promise}
+    </p>
+
+    <p className="mt-3 text-cyan-100/80">
+      Canal detectado: pagina web. Tu WhatsApp queda registrado para recibir
+      avances segun el nicho que elegiste.
+    </p>
+
+  </div>
+
+)}
                {/* FORM */}
 
 <div className="mt-6 space-y-4">
@@ -1146,6 +1254,14 @@ objetivo_principal:
     <option value="">
       🎯 ¿Cuál es tu objetivo principal?
     </option>
+
+    {surveyIntent && (
+
+      <option value={`Validacion comunitaria: ${surveyIntent.productName}`}>
+        Encuesta: {surveyIntent.productName}
+      </option>
+
+    )}
 
     <option value="fitness">
       🏋️ Mejorar mi físico

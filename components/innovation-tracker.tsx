@@ -3,6 +3,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react"
 
@@ -80,14 +81,22 @@ const fallbackStages: ProductState[] = [
   },
 ]
 
-const pipelineLabels =
-  fallbackStages.map(stage => stage.name)
-
 function normalizeText(value: string) {
   return value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
+}
+
+function getPublicStageLabel(stageName: string) {
+  const name =
+    normalizeText(stageName)
+
+  if (name.includes("comercial")) {
+    return "Listo para ser comercializado"
+  }
+
+  return stageName
 }
 
 function getOfficialStageKey(value: string) {
@@ -176,6 +185,9 @@ function isFinalStage(stageName: string) {
 }
 
 export function InnovationTracker() {
+  const stageRailRef =
+    useRef<HTMLDivElement>(null)
+
   const [
     products,
     setProducts,
@@ -295,8 +307,29 @@ export function InnovationTracker() {
     activeStages.length === 0
       ? "Sin iniciar"
       : activeStages.length === 1
-        ? activeStages[0].name
+        ? getPublicStageLabel(activeStages[0].name)
         : `${activeStages.length} etapas`
+
+  const scrollStageRail =
+    (index: number) => {
+
+      const rail =
+        stageRailRef.current
+
+      if (!rail) {
+        return
+      }
+
+      const target =
+        rail.children[index] as HTMLElement | undefined
+
+      target?.scrollIntoView({
+        behavior: "smooth",
+        inline: "center",
+        block: "nearest",
+      })
+
+    }
 
   return (
     <section
@@ -399,8 +432,8 @@ export function InnovationTracker() {
           </div>
         </div>
 
-        <div className="mt-8 overflow-x-auto pb-6 [scrollbar-width:none] [-ms-overflow-style:none] md:mt-20 [&::-webkit-scrollbar]:hidden">
-          <div className="min-w-[1260px]">
+        <div className="mt-8 overflow-x-auto px-2 pb-12 [scrollbar-width:thin] [scrollbar-color:rgba(103,232,249,0.5)_rgba(255,255,255,0.08)] md:mt-16">
+          <div className="min-w-[1080px] pr-24 xl:min-w-0 xl:pr-0">
             <div className="relative">
               <div className="pointer-events-none absolute left-0 right-0 top-7 h-px bg-gradient-to-r from-cyan-200/15 via-cyan-200/45 to-amber-200/25" />
               <motion.div
@@ -419,7 +452,7 @@ export function InnovationTracker() {
                 className="pointer-events-none absolute left-0 right-0 top-7 h-px origin-left bg-gradient-to-r from-cyan-300 to-amber-200 shadow-[0_0_30px_rgba(34,211,238,0.35)]"
               />
 
-              <div className="relative grid grid-cols-7 gap-4">
+              <div className="relative grid grid-cols-7 gap-3 lg:gap-4">
                 {stages.map(
                   (stage, index) => {
                     const Icon =
@@ -438,7 +471,7 @@ export function InnovationTracker() {
                         isFinalStage(stage.name))
 
                     const productPreview =
-                      stage.products.slice(0, 2)
+                      stage.products.slice(0, 1)
 
                     const remainingProducts =
                       Math.max(
@@ -471,8 +504,8 @@ export function InnovationTracker() {
                             relative
                             mx-auto
                             flex
-                            h-14
-                            w-14
+                            h-12
+                            w-12
                             items-center
                             justify-center
                             rounded-full
@@ -488,14 +521,14 @@ export function InnovationTracker() {
                           `}
                         >
                           {isComplete ? (
-                            <CheckCircle2 className="h-6 w-6" />
+                            <CheckCircle2 className="h-5 w-5" />
                           ) : (
-                            <Icon className="h-6 w-6" />
+                            <Icon className="h-5 w-5" />
                           )}
                         </div>
 
-                        <div className="mt-6 min-w-0">
-                          <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                        <div className="mt-5 min-w-0">
+                          <div className="text-[9px] uppercase tracking-[0.14em] text-zinc-500">
                             Etapa{" "}
                             {String(index + 1).padStart(
                               2,
@@ -503,37 +536,38 @@ export function InnovationTracker() {
                             )}
                           </div>
 
-                          <h3 className="mt-3 min-h-[2.25rem] break-words text-[14px] font-black uppercase leading-tight tracking-normal text-white">
-                            {stage.name}
+                          <h3 className="mt-2 min-h-[2rem] break-words text-[12px] font-black uppercase leading-tight tracking-normal text-white lg:text-[13px]">
+                            {getPublicStageLabel(stage.name)}
                           </h3>
 
-                          <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
-                            <span className="text-2xl font-black tracking-[-0.04em] text-cyan-100">
+                          <div className="mt-3 flex flex-col items-center justify-center gap-2 xl:flex-row">
+                            <span className="text-xl font-black tracking-[-0.04em] text-cyan-100 lg:text-2xl">
                               {stage.progress}%
                             </span>
-                            <span className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-zinc-400">
+                            <span className="rounded-full border border-white/10 bg-white/[0.035] px-2.5 py-1 text-[9px] uppercase tracking-[0.10em] text-zinc-400">
                               {stage.count} prod.
                             </span>
                           </div>
 
-                          <div className="mt-4 space-y-2">
+                          <div className="mx-auto mt-4 max-w-[150px] space-y-2">
                             {productPreview.map(product => (
                               <div
                                 key={product.id}
-                                className="truncate rounded-full border border-white/10 bg-white/[0.035] px-3 py-2 text-[10px] uppercase tracking-[0.12em] text-zinc-300"
+                                title={product.name}
+                                className="truncate rounded-full border border-white/10 bg-white/[0.035] px-3 py-2 text-[9px] uppercase tracking-[0.10em] text-zinc-300"
                               >
                                 {product.name}
                               </div>
                             ))}
 
                             {remainingProducts > 0 && (
-                              <div className="text-[10px] uppercase tracking-[0.18em] text-cyan-100/70">
-                                +{remainingProducts} mas
+                              <div className="text-[9px] uppercase tracking-[0.14em] text-cyan-100/70">
+                                +{remainingProducts} más
                               </div>
                             )}
 
                             {isEmpty && (
-                              <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-600">
+                              <div className="text-[9px] uppercase tracking-[0.14em] text-zinc-600">
                                 Sin productos
                               </div>
                             )}
@@ -547,7 +581,7 @@ export function InnovationTracker() {
             </div>
 
             <div className="mt-16">
-              <div className="h-2 overflow-hidden rounded-full bg-white/10">
+              <div className="relative h-2 overflow-hidden rounded-full bg-white/10">
                 <motion.div
                   initial={{
                     width: 0,
@@ -564,15 +598,59 @@ export function InnovationTracker() {
                 />
               </div>
 
-              <div className="mt-5 grid grid-cols-7 justify-items-center gap-4 text-center text-[10px] uppercase tracking-normal text-zinc-500">
-                {pipelineLabels.map(label => (
-                  <span
-                    key={label}
-                    className="min-w-0 break-words leading-5"
-                  >
-                    {label}
-                  </span>
-                ))}
+              <div className="mt-5 overflow-x-auto rounded-b-[28px] pb-6 [scrollbar-width:thin] [scrollbar-color:rgba(103,232,249,0.5)_rgba(255,255,255,0.08)]">
+                <div
+                  ref={stageRailRef}
+                  className="flex min-w-max items-center gap-3 px-2 pr-[48vw] md:pr-[34vw] xl:pr-10"
+                >
+                  {stages.map((stage, index) => {
+                    const isActive =
+                      stage.count > 0
+
+                    const isReached =
+                      stage.progress <=
+                        globalProgress ||
+                      isActive
+
+                    return (
+                      <button
+                        key={stage.id}
+                        type="button"
+                        onClick={() =>
+                          scrollStageRail(index)
+                        }
+                        className={`
+                          group
+                          inline-flex
+                          min-w-[230px]
+                          items-center
+                          justify-between
+                          gap-3
+                          rounded-full
+                          border
+                          px-4
+                          py-3
+                          text-left
+                          transition-all
+                          duration-300
+                          ${
+                            isReached
+                              ? "border-cyan-200/20 bg-cyan-300/[0.08] text-cyan-100"
+                              : "border-white/10 bg-white/[0.025] text-zinc-500 hover:border-white/20"
+                          }
+                        `}
+                      >
+                        <span className="min-w-0 truncate text-[10px] uppercase tracking-[0.16em]">
+                          {getPublicStageLabel(stage.name)}
+                        </span>
+
+                        <span className="shrink-0 text-[10px] font-black text-white/70">
+                          {stage.progress}%
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             </div>
           </div>

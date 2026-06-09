@@ -93,6 +93,8 @@ export async function updateProduct(
   productId: string,
   updates: {
     state_id?: string | null
+    nicho?: string | null
+    problema_resuelve?: string | null
     distribution_channels?: Array<{
       id: string
       country?: string

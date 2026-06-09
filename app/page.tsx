@@ -13,7 +13,9 @@ import { HeroSection } from "@/components/hero-section"
 import { ImnovaGuidesSection } from "@/components/imnova-guides-section"
 import { InnovationTracker } from "@/components/innovation-tracker"
 import { InnovationsSection } from "@/components/innovations-section"
-import InnovaPopup from "@/components/imnova-popup"
+import InnovaPopup, {
+  type InnovaSurveyIntent,
+} from "@/components/imnova-popup"
 import { Navigation } from "@/components/navigation"
 import { PromoBanner } from "@/components/promo-banner"
 import { WorkingSection } from "@/components/working-section"
@@ -24,6 +26,31 @@ export default function IMNOVAPage() {
     setShowPopup,
   ] = useState(false)
 
+  const [
+    surveyIntent,
+    setSurveyIntent,
+  ] = useState<InnovaSurveyIntent | null>(null)
+
+  const openCommunity =
+    () => {
+      setSurveyIntent(null)
+      setShowPopup(true)
+    }
+
+  const openSurvey =
+    (
+      intent: InnovaSurveyIntent
+    ) => {
+      setSurveyIntent(intent)
+      setShowPopup(true)
+    }
+
+  const closePopup =
+    () => {
+      setShowPopup(false)
+      setSurveyIntent(null)
+    }
+
   return (
     <main className="relative isolate overflow-hidden bg-gradient-to-b from-black via-[#050505] to-black text-white">
       <div className="pointer-events-none absolute left-1/2 top-0 h-[700px] w-[700px] -translate-x-1/2 rounded-full bg-cyan-400/10 blur-3xl" />
@@ -33,17 +60,15 @@ export default function IMNOVAPage() {
 
       <Navigation />
       <HeroSection
-        onJoinFamily={() =>
-          setShowPopup(true)
-        }
+        onJoinFamily={openCommunity}
       />
 
       <PromoBanner />
-      <InnovationsSection />
+      <InnovationsSection
+        onSurveyInterest={openSurvey}
+      />
       <ImnovaGuidesSection
-        onJoinFamily={() =>
-          setShowPopup(true)
-        }
+        onJoinFamily={openCommunity}
       />
       <InnovationTracker />
       <WorkingSection />
@@ -95,9 +120,7 @@ export default function IMNOVAPage() {
 
               <button
                 type="button"
-                onClick={() =>
-                  setShowPopup(true)
-                }
+                onClick={openCommunity}
                 className="group inline-flex items-center justify-center gap-3 rounded-3xl border border-cyan-200/25 bg-cyan-300/[0.10] px-7 py-5 text-xs font-black uppercase tracking-[0.18em] text-cyan-50 transition-all duration-500 hover:-translate-y-0.5 hover:border-cyan-200/45 hover:bg-cyan-300/[0.16]"
               >
                 Unirme a la comunidad
@@ -110,9 +133,8 @@ export default function IMNOVAPage() {
 
       <InnovaPopup
         isOpen={showPopup}
-        onClose={() =>
-          setShowPopup(false)
-        }
+        onClose={closePopup}
+        surveyIntent={surveyIntent}
       />
 
       <Footer />

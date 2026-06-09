@@ -29,6 +29,8 @@ type Product = {
   image_url?: string
   category: string
   description?: string
+  nicho?: string | null
+  problema_resuelve?: string | null
   distribution_channels?: DistributionChannel[]
 
   theme?: {
@@ -227,6 +229,20 @@ export function ProductCard({
     product.state_id || ""
   )
 
+  const [
+    niche,
+    setNiche,
+  ] = useState(
+    product.nicho || ""
+  )
+
+  const [
+    problemSolved,
+    setProblemSolved,
+  ] = useState(
+    product.problema_resuelve || ""
+  )
+
   const createDistributionChannel =
     (): DistributionChannel => ({
       id: `${Date.now()}-${Math.random()
@@ -256,6 +272,21 @@ export function ProductCard({
     )
 
   }, [product.state_id])
+
+  useEffect(() => {
+
+    setNiche(
+      product.nicho || ""
+    )
+
+    setProblemSolved(
+      product.problema_resuelve || ""
+    )
+
+  }, [
+    product.nicho,
+    product.problema_resuelve,
+  ])
 
   useEffect(() => {
 
@@ -353,6 +384,12 @@ export function ProductCard({
             {
               state_id:
                 selectedStateId,
+              nicho:
+                niche.trim() ||
+                null,
+              problema_resuelve:
+                problemSolved.trim() ||
+                null,
             }
           )
 
@@ -926,6 +963,94 @@ export function ProductCard({
               "
             />
 
+          </div>
+
+        </div>
+
+        <div
+          className="
+            mt-10
+            rounded-[28px]
+            border
+            border-amber-300/15
+            bg-amber-300/[0.035]
+            p-5
+          "
+        >
+
+          <div
+            className="
+              text-[10px]
+              uppercase
+              tracking-[0.30em]
+              text-amber-200/70
+            "
+          >
+            VALIDACION DE IDEA
+          </div>
+
+          <p className="mt-3 text-sm leading-6 text-white/50">
+            Estos campos alimentan la seccion de encuesta: nicho, problema
+            humano y necesidad que se quiere validar.
+          </p>
+
+          <div className="mt-5 space-y-4">
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.24em] text-white/35">
+                Nicho
+              </label>
+              <input
+                value={niche}
+                onChange={(event) =>
+                  setNiche(event.target.value)
+                }
+                placeholder="Ej: energia diaria, enfoque, rendimiento"
+                className="
+                  mt-2
+                  w-full
+                  rounded-2xl
+                  border
+                  border-white/10
+                  bg-black/35
+                  px-4
+                  py-3
+                  text-sm
+                  text-white
+                  outline-none
+                  placeholder:text-white/25
+                "
+              />
+            </div>
+
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.24em] text-white/35">
+                Problema que resuelve
+              </label>
+              <textarea
+                value={problemSolved}
+                onChange={(event) =>
+                  setProblemSolved(event.target.value)
+                }
+                placeholder="Describe la necesidad humana que esta idea busca resolver."
+                rows={4}
+                className="
+                  mt-2
+                  w-full
+                  resize-none
+                  rounded-2xl
+                  border
+                  border-white/10
+                  bg-black/35
+                  px-4
+                  py-3
+                  text-sm
+                  leading-6
+                  text-white
+                  outline-none
+                  placeholder:text-white/25
+                "
+              />
+            </div>
           </div>
 
         </div>

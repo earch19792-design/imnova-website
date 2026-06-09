@@ -69,10 +69,10 @@ const productViews = [
   },
   {
     key: "market",
-    label: "Ya comercializándose",
-    headline: "Productos disponibles en el mercado.",
+    label: "Listo para ser comercializado",
+    headline: "Productos listos para salir al mercado.",
     detail:
-      "Consulta los productos que ya se están comercializando y conectando con mercados, tiendas y plataformas.",
+      "Consulta los productos listos para conectar con mercados, tiendas y plataformas.",
     icon: Store,
     accent: "text-amber-200",
   },
@@ -369,7 +369,7 @@ export function TechnologySection() {
       icon: Boxes,
     },
     {
-      label: "Comercialización",
+      label: "Listo para ser comercializado",
       value:
         commercialProducts.length,
       icon: Rocket,
