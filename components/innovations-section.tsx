@@ -346,37 +346,47 @@ export function InnovationsSection() {
         >
           <div className="inline-flex items-center gap-3 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-5 py-3 text-[10px] uppercase tracking-[0.34em] text-cyan-100">
             <Clock3 className="h-4 w-4" />
-            Que viene pronto
+            Innovacion activa
           </div>
 
           <h2 className="mt-9 text-5xl font-black leading-[0.98] tracking-[-0.04em] text-white md:text-7xl">
-            Proximos lanzamientos
+            Comercializacion
             <span className="block bg-gradient-to-r from-cyan-200 via-white to-amber-200 bg-clip-text text-transparent">
-              en preparacion
+              y viene pronto
             </span>
           </h2>
 
           <p className="mx-auto mt-8 max-w-3xl text-lg leading-8 text-zinc-400">
-            Esta seccion maneja solo dos estados: desarrollo, cuando mantenemos
-            el producto en expectativa mostrando el beneficio que traera al
-            cliente, y comercializandose, cuando ya se revela el producto.
+            Una vista separada para productos ya revelados y desarrollos en
+            expectativa. Cada bloque responde una pregunta distinta sin mezclar
+            estados ni rutas de compra.
           </p>
         </motion.div>
 
-        <div className="mt-16 space-y-20">
+        <div className="mt-16 space-y-24">
 
-          <section aria-labelledby="commercialization-heading">
-            <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <section
+            aria-labelledby="commercialization-heading"
+            className="relative overflow-hidden rounded-[36px] border border-cyan-200/10 bg-white/[0.018] p-5 md:p-8 lg:p-10"
+          >
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-200/25 to-transparent" />
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.08),transparent_34%)]" />
+
+            <div className="relative mb-10 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.34em] text-cyan-100/60">
                   Comercialización
                 </p>
                 <h3
                   id="commercialization-heading"
-                  className="mt-3 text-3xl font-black tracking-[-0.04em] text-white md:text-4xl"
+                  className="mt-3 text-4xl font-black leading-tight tracking-[-0.04em] text-white md:text-5xl"
                 >
                   Productos ya revelados
                 </h3>
+                <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-400 md:text-base">
+                  Productos que ya pueden mostrarse con nombre, imagen real e
+                  informacion completa para evaluar su propuesta comercial.
+                </p>
               </div>
             </div>
 
@@ -561,19 +571,26 @@ export function InnovationsSection() {
 
           <section
             aria-labelledby="coming-soon-heading"
-            className="pt-6 md:pt-10"
+            className="relative overflow-hidden rounded-[36px] border border-cyan-200/10 bg-white/[0.018] p-5 md:p-8 lg:p-10"
           >
-            <div className="mb-10 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/25 to-transparent" />
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.07),transparent_34%)]" />
+
+            <div className="relative mb-10 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.34em] text-cyan-100/60">
                   Viene Pronto
                 </p>
                 <h3
                   id="coming-soon-heading"
-                  className="mt-3 text-2xl font-black leading-tight text-white md:text-3xl"
+                  className="mt-3 text-4xl font-black leading-tight tracking-[-0.04em] text-white md:text-5xl"
                 >
                   Productos en preparación
                 </h3>
+                <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-400 md:text-base">
+                  Desarrollos que permanecen en expectativa: no revelan imagen
+                  real, pero si comunican el resultado y beneficio esperado.
+                </p>
               </div>
             </div>
 

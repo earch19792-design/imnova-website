@@ -38,8 +38,8 @@ export default function IMNOVAPage() {
 
       <PromoBanner />
       <InnovationsSection />
-      <WorkingSection />
       <InnovationTracker />
+      <WorkingSection />
       <GlobalSection />
 
       <section className="relative z-20 flex justify-center bg-black px-6 py-16">
@@ -54,10 +54,13 @@ export default function IMNOVAPage() {
         </button>
       </section>
 
-      <MissionSection />
-      <FutureSection />
-      <PartnersSection />
-      <ContactSection />
+      {/*
+        HOME V2 - moved out of homepage
+        <MissionSection />
+        <FutureSection />
+        <PartnersSection />
+        <ContactSection />
+      */}
 
       <InnovaPopup
         isOpen={showPopup}
