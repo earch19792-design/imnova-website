@@ -82,6 +82,21 @@ function isAvailableNow(product: LiveProduct) {
   return status.includes("disponible")
 }
 
+function isComingSoon(product: LiveProduct) {
+  const status =
+    normalizeText(product.status)
+
+  return [
+    "idea",
+    "validacion",
+    "priorizado",
+    "testing",
+    "produccion",
+  ].some(
+    state => status.includes(state)
+  )
+}
+
 function getPublicState(product: LiveProduct) {
   const status =
     normalizeText(product.status)
@@ -235,13 +250,32 @@ export function InnovationsSection() {
     }
   }, [])
 
-  const upcomingProducts =
+  const commercializationProducts =
     useMemo(
       () =>
         products
           .filter(
             product =>
-              !isAvailableNow(product)
+              !isAvailableNow(product) &&
+              isCommercializing(product)
+          )
+          .sort(
+            (a, b) =>
+              b.progress - a.progress
+          ),
+      [
+        products,
+      ]
+    )
+
+  const comingSoonProducts =
+    useMemo(
+      () =>
+        products
+          .filter(
+            product =>
+              !isAvailableNow(product) &&
+              isComingSoon(product)
           )
           .sort(
             (a, b) => {
@@ -264,19 +298,26 @@ export function InnovationsSection() {
       ]
     )
 
-  const featuredProduct =
-    upcomingProducts[0]
+  const featuredCommercializationProduct =
+    commercializationProducts[0]
 
-  const previewProducts =
-    upcomingProducts.slice(
+  const secondaryCommercializationProducts =
+    commercializationProducts.slice(
+      1,
+      3
+    )
+
+  const hasSecondaryCommercializationProducts =
+    secondaryCommercializationProducts.length > 0
+
+  const featuredComingSoonProduct =
+    comingSoonProducts[0]
+
+  const previewComingSoonProducts =
+    comingSoonProducts.slice(
       1,
       4
     )
-
-  const featuredProductIsRevealed =
-    featuredProduct
-      ? isCommercializing(featuredProduct)
-      : false
 
   return (
     <section
@@ -322,72 +363,261 @@ export function InnovationsSection() {
           </p>
         </motion.div>
 
-        {featuredProduct ? (
-          <div className="mt-16 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(340px,0.78fr)]">
-            <motion.article
-              initial={{
-                opacity: 0,
-                y: 36,
-              }}
-              whileInView={{
-                opacity: 1,
-                y: 0,
-              }}
-              transition={{
-                duration: 0.85,
-              }}
-              viewport={{ once: true }}
-              className="relative overflow-hidden rounded-[30px] border border-cyan-200/15 bg-white/[0.035] p-6 backdrop-blur-2xl md:p-8"
-            >
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.15),transparent_36%)]" />
+        <div className="mt-16 space-y-20">
 
+          <section aria-labelledby="commercialization-heading">
+            <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.34em] text-cyan-100/60">
+                  Comercialización
+                </p>
+                <h3
+                  id="commercialization-heading"
+                  className="mt-3 text-3xl font-black tracking-[-0.04em] text-white md:text-4xl"
+                >
+                  Productos ya revelados
+                </h3>
+              </div>
+            </div>
+
+            {featuredCommercializationProduct ? (
               <div
-                className={`relative grid gap-8 ${
-                  featuredProductIsRevealed
-                    ? "md:grid-cols-[0.9fr_1.1fr] md:items-center"
-                    : ""
-                }`}
+                className={
+                  hasSecondaryCommercializationProducts
+                    ? "grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(340px,0.78fr)]"
+                    : "grid gap-6"
+                }
               >
-                {featuredProductIsRevealed && (
-                  <div className="relative min-h-[300px] overflow-hidden rounded-[26px] border border-white/10 bg-black/40 p-6">
-                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.10),transparent_62%)]" />
-                    <Image
-                      src={getProductImage(featuredProduct)}
-                      alt={featuredProduct.name}
-                      width={560}
-                      height={460}
-                      className="relative z-10 h-full min-h-[260px] w-full object-contain"
-                    />
+                <motion.article
+                  initial={{
+                    opacity: 0,
+                    y: 36,
+                  }}
+                  whileInView={{
+                    opacity: 1,
+                    y: 0,
+                  }}
+                  transition={{
+                    duration: 0.85,
+                  }}
+                  viewport={{ once: true }}
+                  className="relative overflow-hidden rounded-[30px] border border-cyan-200/15 bg-white/[0.035] p-6 backdrop-blur-2xl md:p-8"
+                >
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.15),transparent_36%)]" />
+
+                  <div className="relative grid gap-8 md:grid-cols-[0.9fr_1.1fr] md:items-center">
+                    <div className="relative min-h-[300px] overflow-hidden rounded-[26px] border border-white/10 bg-black/40 p-6">
+                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.10),transparent_62%)]" />
+                      <Image
+                        src={getProductImage(featuredCommercializationProduct)}
+                        alt={featuredCommercializationProduct.name}
+                        width={560}
+                        height={460}
+                        className="relative z-10 h-full min-h-[260px] w-full object-contain"
+                      />
+                    </div>
+
+                    <div className="relative z-10">
+                      <span className="inline-flex rounded-full border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-2 text-[10px] uppercase tracking-[0.24em] text-cyan-100">
+                        COMERCIALIZANDOSE
+                      </span>
+
+                      <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-cyan-100/55">
+                        {featuredCommercializationProduct.category ||
+                          "IMNOVA Launch"}
+                      </p>
+
+                      <h3 className="mt-4 max-w-3xl text-4xl font-black leading-tight tracking-[-0.035em] text-white md:text-5xl lg:text-6xl">
+                        {featuredCommercializationProduct.name}
+                      </h3>
+
+                      <p className="mt-6 max-w-3xl text-base leading-8 text-zinc-400 md:text-lg">
+                        {featuredCommercializationProduct.description ||
+                          "Producto en etapa de comercialización."}
+                      </p>
+
+                      {featuredCommercializationProduct.slug && (
+                        <Link
+                          href={`/store/${featuredCommercializationProduct.slug}`}
+                          className="mt-8 inline-flex items-center justify-center gap-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 transition hover:border-cyan-200/35 hover:bg-cyan-300/[0.13]"
+                        >
+                          Ver mas informacion
+                          <Info className="h-4 w-4" />
+                        </Link>
+                      )}
+
+                      <div className="mt-8">
+                        <div className="mb-3 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-zinc-500">
+                          <span>
+                            {featuredCommercializationProduct.status}
+                          </span>
+                          <span className="text-cyan-100">
+                            {featuredCommercializationProduct.progress}%
+                          </span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                          <motion.div
+                            initial={{
+                              width: 0,
+                            }}
+                            whileInView={{
+                              width:
+                                `${featuredCommercializationProduct.progress}%`,
+                            }}
+                            transition={{
+                              duration: 1,
+                            }}
+                            viewport={{ once: true }}
+                            className="h-full rounded-full bg-gradient-to-r from-cyan-300 to-amber-200"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </motion.article>
+
+                {hasSecondaryCommercializationProducts && (
+                  <div className="grid content-start gap-4">
+                    {secondaryCommercializationProducts.map(
+                      product => (
+                        <motion.article
+                          key={product.id}
+                          initial={{
+                            opacity: 0,
+                            x: 24,
+                          }}
+                          whileInView={{
+                            opacity: 1,
+                            x: 0,
+                          }}
+                          transition={{
+                            duration: 0.7,
+                          }}
+                          viewport={{ once: true }}
+                          className="grid grid-cols-[72px_minmax(0,1fr)] gap-4 rounded-[24px] border border-white/10 bg-white/[0.03] p-4 backdrop-blur-xl"
+                        >
+                          <div className="flex h-[72px] w-[72px] items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-black/35">
+                            <img
+                              src={getProductImage(product)}
+                              alt={product.name}
+                              className="h-full w-full object-contain p-2"
+                            />
+                          </div>
+
+                          <div className="min-w-0">
+                            <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">
+                              COMERCIALIZANDOSE
+                            </p>
+                            <h4 className="mt-2 truncate text-lg font-black leading-tight text-white">
+                              {product.name}
+                            </h4>
+                            {product.slug && (
+                              <Link
+                                href={`/store/${product.slug}`}
+                                className="mt-3 inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100"
+                              >
+                                Ver mas informacion
+                                <ArrowUpRight className="h-3 w-3" />
+                              </Link>
+                            )}
+                            <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/10">
+                              <div
+                                style={{
+                                  width: `${product.progress}%`,
+                                }}
+                                className="h-full rounded-full bg-cyan-200"
+                              />
+                            </div>
+                          </div>
+                        </motion.article>
+                      )
+                    )}
                   </div>
                 )}
+              </div>
+            ) : (
+              <motion.div
+                initial={{
+                  opacity: 0,
+                  y: 28,
+                }}
+                whileInView={{
+                  opacity: 1,
+                  y: 0,
+                }}
+                transition={{
+                  duration: 0.75,
+                }}
+                viewport={{ once: true }}
+                className="mx-auto rounded-[32px] border border-white/10 bg-white/[0.035] p-8 text-center backdrop-blur-xl"
+              >
+                <Rocket className="mx-auto h-8 w-8 text-cyan-100" />
+                <h3 className="mt-6 text-3xl font-black text-white">
+                  No hay productos en comercialización actualmente.
+                </h3>
+              </motion.div>
+            )}
+          </section>
 
-                <div className="relative z-10">
-                  <span className="inline-flex rounded-full border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-2 text-[10px] uppercase tracking-[0.24em] text-cyan-100">
-                    {getPublicState(featuredProduct)}
-                  </span>
+          <section
+            aria-labelledby="coming-soon-heading"
+            className="pt-6 md:pt-10"
+          >
+            <div className="mb-10 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.34em] text-cyan-100/60">
+                  Viene Pronto
+                </p>
+                <h3
+                  id="coming-soon-heading"
+                  className="mt-3 text-2xl font-black leading-tight text-white md:text-3xl"
+                >
+                  Productos en preparación
+                </h3>
+              </div>
+            </div>
 
-                  <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-cyan-100/55">
-                    {featuredProduct.category ||
-                      "IMNOVA Launch"}
-                  </p>
+            {featuredComingSoonProduct ? (
+              <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(340px,0.78fr)]">
+                <motion.article
+                  initial={{
+                    opacity: 0,
+                    y: 36,
+                  }}
+                  whileInView={{
+                    opacity: 1,
+                    y: 0,
+                  }}
+                  transition={{
+                    duration: 0.85,
+                  }}
+                  viewport={{ once: true }}
+                  className="relative overflow-hidden rounded-[30px] border border-cyan-200/15 bg-white/[0.035] p-6 backdrop-blur-2xl md:p-8"
+                >
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.15),transparent_36%)]" />
 
-                  <h3 className="mt-4 max-w-3xl text-4xl font-black leading-tight tracking-[-0.035em] text-white md:text-5xl lg:text-6xl">
-                    {featuredProductIsRevealed
-                      ? featuredProduct.name
-                      : "Proximamente"}
-                  </h3>
+                  <div className="relative z-10">
+                    <span className="inline-flex rounded-full border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-2 text-[10px] uppercase tracking-[0.24em] text-cyan-100">
+                      {featuredComingSoonProduct.status}
+                    </span>
 
-                  <p className="mt-6 max-w-3xl text-base leading-8 text-zinc-400 md:text-lg">
-                    {featuredProductIsRevealed
-                      ? featuredProduct.description ||
-                        "Producto en preparacion para su siguiente etapa de lanzamiento."
-                      : `Desarrollo de un producto que resolvera ${getCustomerOutcome(featuredProduct)}.`}
-                  </p>
+                    <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-cyan-100/55">
+                      {featuredComingSoonProduct.category ||
+                        "IMNOVA Launch"}
+                    </p>
 
-                  {!featuredProductIsRevealed && (
+                    <h3 className="mt-4 max-w-3xl text-4xl font-black leading-tight tracking-[-0.035em] text-white md:text-5xl lg:text-6xl">
+                      Proximamente
+                    </h3>
+
+                    <p className="mt-6 max-w-3xl text-base leading-8 text-zinc-400 md:text-lg">
+                      Desarrollo de un producto que resolvera{" "}
+                      {getCustomerOutcome(featuredComingSoonProduct)}.
+                    </p>
+
                     <div className="mt-7 grid gap-3 sm:grid-cols-3">
                       {getCustomerBenefits(
-                        featuredProduct
+                        featuredComingSoonProduct
                       ).map(benefit => (
                         <div
                           key={benefit}
@@ -397,147 +627,111 @@ export function InnovationsSection() {
                         </div>
                       ))}
                     </div>
-                  )}
 
-                  {featuredProductIsRevealed &&
-                    featuredProduct.slug && (
-                      <Link
-                        href={`/store/${featuredProduct.slug}`}
-                        className="mt-8 inline-flex items-center justify-center gap-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 transition hover:border-cyan-200/35 hover:bg-cyan-300/[0.13]"
-                      >
-                        Ver mas informacion
-                        <Info className="h-4 w-4" />
-                      </Link>
-                    )}
-
-                  <div className="mt-8">
-                    <div className="mb-3 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-zinc-500">
-                      <span>{featuredProduct.status}</span>
-                      <span className="text-cyan-100">
-                        {featuredProduct.progress}%
-                      </span>
-                    </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                      <motion.div
-                        initial={{
-                          width: 0,
-                        }}
-                        whileInView={{
-                          width: `${featuredProduct.progress}%`,
-                        }}
-                        transition={{
-                          duration: 1,
-                        }}
-                        viewport={{ once: true }}
-                        className="h-full rounded-full bg-gradient-to-r from-cyan-300 to-amber-200"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </motion.article>
-
-            <div className="grid content-start gap-4">
-              {previewProducts.map(
-                product => {
-                  const isRevealed =
-                    isCommercializing(product)
-
-                  return (
-                  <motion.article
-                    key={product.id}
-                    initial={{
-                      opacity: 0,
-                      x: 24,
-                    }}
-                    whileInView={{
-                      opacity: 1,
-                      x: 0,
-                    }}
-                    transition={{
-                      duration: 0.7,
-                    }}
-                    viewport={{ once: true }}
-                    className="grid grid-cols-[72px_minmax(0,1fr)] gap-4 rounded-[24px] border border-white/10 bg-white/[0.03] p-4 backdrop-blur-xl"
-                  >
-                    <div className="flex h-[72px] w-[72px] items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-black/35">
-                      {isRevealed ? (
-                        <img
-                          src={getProductImage(product)}
-                          alt={product.name}
-                          className="h-full w-full object-contain p-2"
-                        />
-                      ) : (
-                        <Rocket className="h-6 w-6 text-cyan-100/55" />
-                      )}
+                    <div className="mt-8 inline-flex rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100">
+                      Avisarme cuando salga
                     </div>
 
-                    <div className="min-w-0">
-                      <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">
-                        {getPublicState(product)}
-                      </p>
-                      <h4 className="mt-2 truncate text-lg font-black leading-tight text-white">
-                        {isRevealed
-                          ? product.name
-                          : "Proximamente"}
-                      </h4>
-                      {!isRevealed && (
-                        <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-500">
-                          Desarrollo de un producto que resolvera{" "}
-                          {getCustomerOutcome(product)}.
-                        </p>
-                      )}
-                      {isRevealed &&
-                        product.slug && (
-                          <Link
-                            href={`/store/${product.slug}`}
-                            className="mt-3 inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100"
-                          >
-                            Ver mas informacion
-                            <ArrowUpRight className="h-3 w-3" />
-                          </Link>
-                        )}
-                      <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/10">
-                        <div
-                          style={{
-                            width: `${product.progress}%`,
+                    <div className="mt-8">
+                      <div className="mb-3 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-zinc-500">
+                        <span>
+                          {featuredComingSoonProduct.status}
+                        </span>
+                        <span className="text-cyan-100">
+                          {featuredComingSoonProduct.progress}%
+                        </span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                        <motion.div
+                          initial={{
+                            width: 0,
                           }}
-                          className="h-full rounded-full bg-cyan-200"
+                          whileInView={{
+                            width:
+                              `${featuredComingSoonProduct.progress}%`,
+                          }}
+                          transition={{
+                            duration: 1,
+                          }}
+                          viewport={{ once: true }}
+                          className="h-full rounded-full bg-gradient-to-r from-cyan-300 to-amber-200"
                         />
                       </div>
                     </div>
-                  </motion.article>
-                  )
-                }
-              )}
-            </div>
-          </div>
-        ) : (
-          <motion.div
-            initial={{
-              opacity: 0,
-              y: 28,
-            }}
-            whileInView={{
-              opacity: 1,
-              y: 0,
-            }}
-            transition={{
-              duration: 0.75,
-            }}
-            viewport={{ once: true }}
-            className="mx-auto mt-16 max-w-2xl rounded-[32px] border border-white/10 bg-white/[0.035] p-8 text-center backdrop-blur-xl"
-          >
-            <Rocket className="mx-auto h-8 w-8 text-cyan-100" />
-            <h3 className="mt-6 text-3xl font-black text-white">
-              No hay lanzamientos proximos publicados
-            </h3>
-            <p className="mt-4 text-zinc-400">
-              Cuando un producto pase a preparacion de lanzamiento, aparecera
-              aqui sin mezclarse con los productos ya disponibles.
-            </p>
-          </motion.div>
-        )}
+                  </div>
+                </motion.article>
+
+                <div className="grid content-start gap-4">
+                  {previewComingSoonProducts.map(
+                    product => (
+                      <motion.article
+                        key={product.id}
+                        initial={{
+                          opacity: 0,
+                          x: 24,
+                        }}
+                        whileInView={{
+                          opacity: 1,
+                          x: 0,
+                        }}
+                        transition={{
+                          duration: 0.7,
+                        }}
+                        viewport={{ once: true }}
+                        className="grid grid-cols-[72px_minmax(0,1fr)] gap-4 rounded-[24px] border border-white/10 bg-white/[0.03] p-4 backdrop-blur-xl"
+                      >
+                        <div className="flex h-[72px] w-[72px] items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-black/35">
+                          <Rocket className="h-6 w-6 text-cyan-100/55" />
+                        </div>
+
+                        <div className="min-w-0">
+                          <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">
+                            {product.status}
+                          </p>
+                          <h4 className="mt-2 truncate text-lg font-black leading-tight text-white">
+                            Proximamente
+                          </h4>
+                          <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-500">
+                            {getCustomerOutcome(product)}.
+                          </p>
+                          <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/10">
+                            <div
+                              style={{
+                                width: `${product.progress}%`,
+                              }}
+                              className="h-full rounded-full bg-cyan-200"
+                            />
+                          </div>
+                        </div>
+                      </motion.article>
+                    )
+                  )}
+                </div>
+              </div>
+            ) : (
+              <motion.div
+                initial={{
+                  opacity: 0,
+                  y: 28,
+                }}
+                whileInView={{
+                  opacity: 1,
+                  y: 0,
+                }}
+                transition={{
+                  duration: 0.75,
+                }}
+                viewport={{ once: true }}
+                className="mx-auto rounded-[32px] border border-white/10 bg-white/[0.035] p-8 text-center backdrop-blur-xl"
+              >
+                <Rocket className="mx-auto h-8 w-8 text-cyan-100" />
+                <h3 className="mt-6 text-3xl font-black text-white">
+                  No hay próximos lanzamientos activos.
+                </h3>
+              </motion.div>
+            )}
+          </section>
+        </div>
       </div>
     </section>
   )

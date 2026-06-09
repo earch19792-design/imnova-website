@@ -38,6 +38,7 @@ type ProductState = {
 }
 
 type Stage = ProductState & {
+  products: Product[]
   count: number
 }
 
@@ -48,9 +49,14 @@ const fallbackStages: ProductState[] = [
     progress: 10,
   },
   {
-    id: "desarrollo",
-    name: "Desarrollo",
-    progress: 35,
+    id: "validacion",
+    name: "Validación",
+    progress: 25,
+  },
+  {
+    id: "priorizado",
+    name: "Priorizado",
+    progress: 40,
   },
   {
     id: "testing",
@@ -59,21 +65,67 @@ const fallbackStages: ProductState[] = [
   },
   {
     id: "produccion",
-    name: "Produccion",
-    progress: 82,
+    name: "Producción",
+    progress: 75,
   },
   {
     id: "comercializacion",
-    name: "Comercializacion",
+    name: "Comercialización",
+    progress: 90,
+  },
+  {
+    id: "disponible",
+    name: "Disponible",
     progress: 100,
   },
 ]
+
+const pipelineLabels =
+  fallbackStages.map(stage => stage.name)
 
 function normalizeText(value: string) {
   return value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
+}
+
+function getOfficialStageKey(value: string) {
+  const name =
+    normalizeText(value)
+
+  if (name.includes("dispon")) {
+    return "disponible"
+  }
+
+  if (name.includes("comercial")) {
+    return "comercializacion"
+  }
+
+  if (name.includes("produccion")) {
+    return "produccion"
+  }
+
+  if (name.includes("testing")) {
+    return "testing"
+  }
+
+  if (name.includes("prioriz")) {
+    return "priorizado"
+  }
+
+  if (name.includes("valid")) {
+    return "validacion"
+  }
+
+  if (
+    name.includes("idea") ||
+    name.includes("concepto")
+  ) {
+    return "idea"
+  }
+
+  return name
 }
 
 function getStageIcon(stageName: string) {
@@ -95,7 +147,10 @@ function getStageIcon(stageName: string) {
     return TestTube2
   }
 
-  if (name.includes("desarrollo")) {
+  if (
+    name.includes("priorizado") ||
+    name.includes("desarrollo")
+  ) {
     return FlaskConical
   }
 
@@ -152,39 +207,64 @@ export function InnovationTracker() {
 
   const stages =
     useMemo<Stage[]>(() => {
-      const source =
-        productStates.length > 0
-          ? productStates
-          : fallbackStages
+      const statesByOfficialKey =
+        new Map(
+          productStates.map(state => [
+            getOfficialStageKey(state.name),
+            state,
+          ])
+        )
 
-      return source.map(stage => ({
-        ...stage,
-        count:
-          products.filter(
-            product =>
-              product.state_id ===
-              stage.id
-          ).length,
-      }))
+      return fallbackStages.map(
+        fallbackStage => {
+          const officialKey =
+            getOfficialStageKey(
+              fallbackStage.name
+            )
+
+          const state =
+            statesByOfficialKey.get(
+              officialKey
+            ) || fallbackStage
+
+          const stageProducts =
+            products.filter(
+              product =>
+                product.state_id ===
+                state.id
+            )
+
+          return {
+            id: state.id,
+            name: fallbackStage.name,
+            progress:
+              state.progress ??
+              fallbackStage.progress,
+            products: stageProducts,
+            count: stageProducts.length,
+          }
+        }
+      )
     }, [productStates, products])
 
   const totalProducts =
-    products.length
+    useMemo(
+      () =>
+        stages.reduce(
+          (sum, stage) =>
+            sum + stage.count,
+          0
+        ),
+      [stages]
+    )
 
   const globalProgress =
     useMemo(() => {
-      if (stages.length === 0) {
+      if (
+        stages.length === 0 ||
+        totalProducts === 0
+      ) {
         return 0
-      }
-
-      if (totalProducts === 0) {
-        return Math.round(
-          stages.reduce(
-            (sum, stage) =>
-              sum + stage.progress,
-            0
-          ) / stages.length
-        )
       }
 
       const weightedProgress =
@@ -202,14 +282,21 @@ export function InnovationTracker() {
       )
     }, [stages, totalProducts])
 
-  const activeStage =
-    stages.find(
-      stage =>
-        stage.count > 0 &&
-        !isFinalStage(stage.name)
-    ) ||
-    stages.find(stage => stage.count > 0) ||
-    stages[0]
+  const activeStages =
+    useMemo(
+      () =>
+        stages.filter(
+          stage => stage.count > 0
+        ),
+      [stages]
+    )
+
+  const activeStageLabel =
+    activeStages.length === 0
+      ? "Sin iniciar"
+      : activeStages.length === 1
+        ? activeStages[0].name
+        : `${activeStages.length} etapas`
 
   return (
     <section
@@ -242,15 +329,15 @@ export function InnovationTracker() {
           </div>
 
           <h2 className="mt-9 text-5xl font-black leading-[0.98] tracking-[-0.04em] text-white md:text-7xl">
-            Desarrollo de
+            Pipeline Oficial
             <span className="block bg-gradient-to-r from-cyan-200 via-white to-amber-200 bg-clip-text text-transparent">
-              Innovaciones
+              IMNOVA
             </span>
           </h2>
 
           <p className="mx-auto mt-7 max-w-2xl text-base leading-8 text-zinc-400 md:text-lg">
-            Un flujo simple para ver como avanzan las ideas hasta convertirse
-            en productos listos para mercado.
+            Del concepto al mercado: cada producto avanza por etapas reales
+            conectadas a Supabase.
           </p>
         </motion.div>
 
@@ -266,9 +353,7 @@ export function InnovationTracker() {
             },
             {
               label: "Fase activa",
-              value:
-                activeStage?.name ||
-                "Sin iniciar",
+              value: activeStageLabel,
             },
           ].map(item => (
             <div
@@ -284,6 +369,29 @@ export function InnovationTracker() {
             </div>
           ))}
         </div>
+
+        {totalProducts === 0 && (
+          <motion.div
+            initial={{
+              opacity: 0,
+              y: 18,
+            }}
+            whileInView={{
+              opacity: 1,
+              y: 0,
+            }}
+            transition={{
+              duration: 0.65,
+            }}
+            viewport={{ once: true }}
+            className="mx-auto mt-12 max-w-2xl rounded-[28px] border border-white/10 bg-white/[0.035] px-6 py-8 text-center backdrop-blur-xl"
+          >
+            <CircleDot className="mx-auto h-7 w-7 text-cyan-100/70" />
+            <p className="mt-4 text-sm uppercase tracking-[0.2em] text-zinc-400">
+              No hay productos activos en el pipeline.
+            </p>
+          </motion.div>
+        )}
 
         <div className="relative mt-20">
           <div className="pointer-events-none absolute bottom-8 left-6 top-8 w-px bg-gradient-to-b from-cyan-200/15 via-cyan-200/45 to-amber-200/25 lg:left-0 lg:right-0 lg:top-[54px] lg:h-px lg:w-auto lg:bg-gradient-to-r" />
@@ -315,14 +423,27 @@ export function InnovationTracker() {
                 const Icon =
                   getStageIcon(stage.name)
 
+                const isEmpty =
+                  stage.count === 0
+
                 const isActive =
-                  activeStage?.id ===
-                  stage.id
+                  stage.count > 0
 
                 const isComplete =
-                  stage.progress <=
+                  stage.count > 0 &&
+                  (stage.progress <=
                     globalProgress ||
-                  isFinalStage(stage.name)
+                    isFinalStage(stage.name))
+
+                const productPreview =
+                  stage.products.slice(0, 2)
+
+                const remainingProducts =
+                  Math.max(
+                    stage.products.length -
+                      productPreview.length,
+                    0
+                  )
 
                 return (
                   <motion.div
@@ -356,10 +477,10 @@ export function InnovationTracker() {
                         backdrop-blur-xl
                         lg:mx-auto
                         ${
-                          isActive
-                            ? "border-cyan-200/60 bg-cyan-300/15 text-cyan-100 shadow-[0_0_48px_rgba(34,211,238,0.22)]"
-                            : isComplete
-                              ? "border-emerald-200/35 bg-emerald-300/[0.09] text-emerald-100"
+                          isComplete
+                            ? "border-emerald-200/35 bg-emerald-300/[0.09] text-emerald-100"
+                            : isActive
+                              ? "border-cyan-200/60 bg-cyan-300/15 text-cyan-100 shadow-[0_0_48px_rgba(34,211,238,0.22)]"
                               : "border-white/10 bg-white/[0.035] text-white/45"
                         }
                       `}
@@ -392,6 +513,29 @@ export function InnovationTracker() {
                           {stage.count} prod.
                         </span>
                       </div>
+
+                      <div className="mt-4 space-y-2">
+                        {productPreview.map(product => (
+                          <div
+                            key={product.id}
+                            className="truncate rounded-full border border-white/10 bg-white/[0.035] px-3 py-2 text-[10px] uppercase tracking-[0.12em] text-zinc-300"
+                          >
+                            {product.name}
+                          </div>
+                        ))}
+
+                        {remainingProducts > 0 && (
+                          <div className="text-[10px] uppercase tracking-[0.18em] text-cyan-100/70">
+                            +{remainingProducts} más
+                          </div>
+                        )}
+
+                        {isEmpty && (
+                          <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-600">
+                            Sin productos
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </motion.div>
                 )
@@ -418,11 +562,12 @@ export function InnovationTracker() {
             />
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-4 text-[10px] uppercase tracking-[0.24em] text-zinc-500">
-            <span>Idea</span>
-            <span>Desarrollo</span>
-            <span>Validacion</span>
-            <span>Mercado</span>
+          <div className="mt-5 grid grid-cols-2 gap-4 text-[10px] uppercase tracking-[0.24em] text-zinc-500 sm:grid-cols-4 lg:grid-cols-7">
+            {pipelineLabels.map(label => (
+              <span key={label}>
+                {label}
+              </span>
+            ))}
           </div>
         </div>
       </div>
