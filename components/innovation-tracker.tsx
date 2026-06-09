@@ -393,181 +393,182 @@ export function InnovationTracker() {
           </motion.div>
         )}
 
-        <div className="relative mt-20">
-          <div className="pointer-events-none absolute bottom-8 left-6 top-8 w-px bg-gradient-to-b from-cyan-200/15 via-cyan-200/45 to-amber-200/25 lg:left-0 lg:right-0 lg:top-[54px] lg:h-px lg:w-auto lg:bg-gradient-to-r" />
-          <motion.div
-            initial={{
-              scaleX: 0,
-            }}
-            whileInView={{
-              scaleX:
-                globalProgress / 100,
-            }}
-            transition={{
-              duration: 1.1,
-              ease: [0.22, 1, 0.36, 1],
-            }}
-            viewport={{ once: true }}
-            className="pointer-events-none absolute left-0 right-0 top-[54px] hidden h-px origin-left bg-gradient-to-r from-cyan-300 to-amber-200 shadow-[0_0_30px_rgba(34,211,238,0.35)] lg:block"
-          />
+        <div className="mt-20 overflow-x-auto pb-6 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          <div className="min-w-[1260px]">
+            <div className="relative">
+              <div className="pointer-events-none absolute left-0 right-0 top-7 h-px bg-gradient-to-r from-cyan-200/15 via-cyan-200/45 to-amber-200/25" />
+              <motion.div
+                initial={{
+                  scaleX: 0,
+                }}
+                whileInView={{
+                  scaleX:
+                    globalProgress / 100,
+                }}
+                transition={{
+                  duration: 1.1,
+                  ease: [0.22, 1, 0.36, 1],
+                }}
+                viewport={{ once: true }}
+                className="pointer-events-none absolute left-0 right-0 top-7 h-px origin-left bg-gradient-to-r from-cyan-300 to-amber-200 shadow-[0_0_30px_rgba(34,211,238,0.35)]"
+              />
 
-          <div
-            className="relative grid gap-9 lg:gap-5"
-            style={{
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(150px, 1fr))",
-            }}
-          >
-            {stages.map(
-              (stage, index) => {
-                const Icon =
-                  getStageIcon(stage.name)
+              <div className="relative grid grid-cols-7 gap-4">
+                {stages.map(
+                  (stage, index) => {
+                    const Icon =
+                      getStageIcon(stage.name)
 
-                const isEmpty =
-                  stage.count === 0
+                    const isEmpty =
+                      stage.count === 0
 
-                const isActive =
-                  stage.count > 0
+                    const isActive =
+                      stage.count > 0
 
-                const isComplete =
-                  stage.count > 0 &&
-                  (stage.progress <=
-                    globalProgress ||
-                    isFinalStage(stage.name))
+                    const isComplete =
+                      stage.count > 0 &&
+                      (stage.progress <=
+                        globalProgress ||
+                        isFinalStage(stage.name))
 
-                const productPreview =
-                  stage.products.slice(0, 2)
+                    const productPreview =
+                      stage.products.slice(0, 2)
 
-                const remainingProducts =
-                  Math.max(
-                    stage.products.length -
-                      productPreview.length,
-                    0
-                  )
+                    const remainingProducts =
+                      Math.max(
+                        stage.products.length -
+                          productPreview.length,
+                        0
+                      )
 
-                return (
-                  <motion.div
-                    key={stage.id}
-                    initial={{
-                      opacity: 0,
-                      y: 24,
-                    }}
-                    whileInView={{
-                      opacity: 1,
-                      y: 0,
-                    }}
-                    transition={{
-                      duration: 0.65,
-                      delay:
-                        index * 0.06,
-                    }}
-                    viewport={{ once: true }}
-                    className="relative z-10 grid grid-cols-[52px_minmax(0,1fr)] items-start gap-4 lg:block lg:text-center"
+                    return (
+                      <motion.div
+                        key={stage.id}
+                        initial={{
+                          opacity: 0,
+                          y: 24,
+                        }}
+                        whileInView={{
+                          opacity: 1,
+                          y: 0,
+                        }}
+                        transition={{
+                          duration: 0.65,
+                          delay:
+                            index * 0.06,
+                        }}
+                        viewport={{ once: true }}
+                        className="relative z-10 min-w-0 text-center"
+                      >
+                        <div
+                          className={`
+                            relative
+                            mx-auto
+                            flex
+                            h-14
+                            w-14
+                            items-center
+                            justify-center
+                            rounded-full
+                            border
+                            backdrop-blur-xl
+                            ${
+                              isComplete
+                                ? "border-emerald-200/35 bg-emerald-300/[0.09] text-emerald-100"
+                                : isActive
+                                  ? "border-cyan-200/60 bg-cyan-300/15 text-cyan-100 shadow-[0_0_48px_rgba(34,211,238,0.22)]"
+                                  : "border-white/10 bg-white/[0.035] text-white/45"
+                            }
+                          `}
+                        >
+                          {isComplete ? (
+                            <CheckCircle2 className="h-6 w-6" />
+                          ) : (
+                            <Icon className="h-6 w-6" />
+                          )}
+                        </div>
+
+                        <div className="mt-6 min-w-0">
+                          <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                            Etapa{" "}
+                            {String(index + 1).padStart(
+                              2,
+                              "0"
+                            )}
+                          </div>
+
+                          <h3 className="mt-3 min-h-[2.25rem] break-words text-[14px] font-black uppercase leading-tight tracking-normal text-white">
+                            {stage.name}
+                          </h3>
+
+                          <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+                            <span className="text-2xl font-black tracking-[-0.04em] text-cyan-100">
+                              {stage.progress}%
+                            </span>
+                            <span className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-zinc-400">
+                              {stage.count} prod.
+                            </span>
+                          </div>
+
+                          <div className="mt-4 space-y-2">
+                            {productPreview.map(product => (
+                              <div
+                                key={product.id}
+                                className="truncate rounded-full border border-white/10 bg-white/[0.035] px-3 py-2 text-[10px] uppercase tracking-[0.12em] text-zinc-300"
+                              >
+                                {product.name}
+                              </div>
+                            ))}
+
+                            {remainingProducts > 0 && (
+                              <div className="text-[10px] uppercase tracking-[0.18em] text-cyan-100/70">
+                                +{remainingProducts} mas
+                              </div>
+                            )}
+
+                            {isEmpty && (
+                              <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-600">
+                                Sin productos
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </motion.div>
+                    )
+                  }
+                )}
+              </div>
+            </div>
+
+            <div className="mt-16">
+              <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                <motion.div
+                  initial={{
+                    width: 0,
+                  }}
+                  whileInView={{
+                    width: `${globalProgress}%`,
+                  }}
+                  transition={{
+                    duration: 1,
+                    ease: [0.22, 1, 0.36, 1],
+                  }}
+                  viewport={{ once: true }}
+                  className="h-full rounded-full bg-gradient-to-r from-cyan-300 via-white to-amber-200"
+                />
+              </div>
+
+              <div className="mt-5 grid grid-cols-7 justify-items-center gap-4 text-center text-[10px] uppercase tracking-normal text-zinc-500">
+                {pipelineLabels.map(label => (
+                  <span
+                    key={label}
+                    className="min-w-0 break-words leading-5"
                   >
-                    <div
-                      className={`
-                        relative
-                        flex
-                        h-14
-                        w-14
-                        items-center
-                        justify-center
-                        rounded-full
-                        border
-                        backdrop-blur-xl
-                        lg:mx-auto
-                        ${
-                          isComplete
-                            ? "border-emerald-200/35 bg-emerald-300/[0.09] text-emerald-100"
-                            : isActive
-                              ? "border-cyan-200/60 bg-cyan-300/15 text-cyan-100 shadow-[0_0_48px_rgba(34,211,238,0.22)]"
-                              : "border-white/10 bg-white/[0.035] text-white/45"
-                        }
-                      `}
-                    >
-                      {isComplete ? (
-                        <CheckCircle2 className="h-6 w-6" />
-                      ) : (
-                        <Icon className="h-6 w-6" />
-                      )}
-                    </div>
-
-                    <div className="min-w-0 lg:mt-6">
-                      <div className="text-[10px] uppercase tracking-[0.28em] text-zinc-500">
-                        Etapa{" "}
-                        {String(index + 1).padStart(
-                          2,
-                          "0"
-                        )}
-                      </div>
-
-                      <h3 className="mt-3 truncate text-lg font-black uppercase tracking-[0.04em] text-white">
-                        {stage.name}
-                      </h3>
-
-                      <div className="mt-4 flex items-center gap-3 lg:justify-center">
-                        <span className="text-2xl font-black tracking-[-0.04em] text-cyan-100">
-                          {stage.progress}%
-                        </span>
-                        <span className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-zinc-400">
-                          {stage.count} prod.
-                        </span>
-                      </div>
-
-                      <div className="mt-4 space-y-2">
-                        {productPreview.map(product => (
-                          <div
-                            key={product.id}
-                            className="truncate rounded-full border border-white/10 bg-white/[0.035] px-3 py-2 text-[10px] uppercase tracking-[0.12em] text-zinc-300"
-                          >
-                            {product.name}
-                          </div>
-                        ))}
-
-                        {remainingProducts > 0 && (
-                          <div className="text-[10px] uppercase tracking-[0.18em] text-cyan-100/70">
-                            +{remainingProducts} más
-                          </div>
-                        )}
-
-                        {isEmpty && (
-                          <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-600">
-                            Sin productos
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </motion.div>
-                )
-              }
-            )}
-          </div>
-        </div>
-
-        <div className="mx-auto mt-16 max-w-5xl">
-          <div className="h-2 overflow-hidden rounded-full bg-white/10">
-            <motion.div
-              initial={{
-                width: 0,
-              }}
-              whileInView={{
-                width: `${globalProgress}%`,
-              }}
-              transition={{
-                duration: 1,
-                ease: [0.22, 1, 0.36, 1],
-              }}
-              viewport={{ once: true }}
-              className="h-full rounded-full bg-gradient-to-r from-cyan-300 via-white to-amber-200"
-            />
-          </div>
-
-          <div className="mt-5 grid grid-cols-2 gap-4 text-[10px] uppercase tracking-[0.24em] text-zinc-500 sm:grid-cols-4 lg:grid-cols-7">
-            {pipelineLabels.map(label => (
-              <span key={label}>
-                {label}
-              </span>
-            ))}
+                    {label}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>
