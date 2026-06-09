@@ -37,7 +37,13 @@ const heroImages = [
   "/hero/imnova-hero-03.webp",
 ]
 
-export function HeroSection() {
+type HeroSectionProps = {
+  onJoinFamily?: () => void
+}
+
+export function HeroSection({
+  onJoinFamily,
+}: HeroSectionProps) {
 
   const [
     currentImage,
@@ -721,51 +727,40 @@ export function HeroSection() {
           >
 
             <button
+              type="button"
+              onClick={onJoinFamily}
               className="
-                rounded-2xl
-                bg-white
-                px-8
-                py-4
-                text-sm
-                font-semibold
-                uppercase
-                tracking-[0.18em]
-                text-black
-                transition-all
-                duration-300
-                hover:scale-[1.02]
-                hover:bg-zinc-200
-                active:scale-[0.98]
-              "
-            >
-
-              Explorar Ecosistema
-
-            </button>
-
-            <button
-              className="
-                rounded-2xl
+                group
+                relative
+                overflow-hidden
+                rounded-[28px]
                 border
-                border-white/10
-                bg-white/[0.03]
-                px-8
-                py-4
+                border-cyan-200/30
+                bg-gradient-to-r
+                from-cyan-300
+                via-white
+                to-amber-200
+                px-10
+                py-5
                 text-sm
-                font-semibold
+                font-black
                 uppercase
-                tracking-[0.18em]
-                text-white
-                backdrop-blur-md
+                tracking-[0.22em]
+                text-black
+                shadow-[0_0_80px_rgba(34,211,238,0.25)]
                 transition-all
-                duration-300
-                hover:border-white/20
-                hover:bg-white/[0.06]
+                duration-500
+                hover:scale-[1.03]
+                hover:shadow-[0_0_120px_rgba(34,211,238,0.42)]
                 active:scale-[0.98]
               "
             >
 
-              Ver Tecnología
+              <span className="relative z-10">
+                UNETE A LA FAMILIA DE IMNOVA
+              </span>
+
+              <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/50 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
 
             </button>
 

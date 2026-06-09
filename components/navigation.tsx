@@ -1,49 +1,69 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import Link from "next/link"
+import {
+  useEffect,
+  useState,
+} from "react"
 
 import {
-  motion,
   AnimatePresence,
+  motion,
 } from "framer-motion"
 
 import {
   Menu,
   X,
-  ChevronDown,
 } from "lucide-react"
 
-import Link from "next/link"
-
 const navItems = [
-  { name: "Inicio", href: "#hero" },
-  { name: "Innovaciones", href: "#innovations" },
-  { name: "Tecnología", href: "#technology" },
-  { name: "Bienestar", href: "#about" },
-  { name: "Contacto", href: "#contact" },
+  {
+    name: "Inicio",
+    href: "#hero",
+  },
+  {
+    name: "Disponible ahora",
+    href: "#available-now",
+  },
+  {
+    name: "Viene pronto",
+    href: "#innovations",
+  },
+  {
+    name: "Ecosistema",
+    href: "#working",
+  },
+  {
+    name: "Fases",
+    href: "#pipeline",
+  },
+  {
+    name: "Donde comprar",
+    href: "#where-to-buy",
+  },
+  {
+    name: "Contacto",
+    href: "#contact",
+  },
 ]
 
-const categoryLinks = [
-  {
-    name: "Bebidas Nutricionales",
-    href: "/store#bebidas-nutricionales",
-  },
-  {
-    name: "Alimentos Nutricionales",
-    href: "/store#alimentos-nutricionales",
-  },
-]
+const desktopNavItems =
+  navItems.filter(
+    item => item.name !== "Contacto"
+  )
 
 export function Navigation() {
+  const [
+    isScrolled,
+    setIsScrolled,
+  ] = useState(false)
 
-  const [isScrolled, setIsScrolled] =
-    useState(false)
-
-  const [isMenuOpen, setIsMenuOpen] =
-    useState(false)
+  const [
+    isMenuOpen,
+    setIsMenuOpen,
+  ] = useState(false)
 
   useEffect(() => {
-
     const handleScroll = () => {
       setIsScrolled(window.scrollY > 40)
     }
@@ -60,20 +80,7 @@ export function Navigation() {
         "scroll",
         handleScroll
       )
-
   }, [])
-
-  /* =================================================
-  IMNOVA LABS
-  ================================================= */
-
-  const handleInnovaLabs =
-    () => {
-
-      window.location.href =
-        "/admin"
-
-    }
 
   return (
     <motion.header
@@ -86,584 +93,142 @@ export function Navigation() {
         opacity: 1,
       }}
       transition={{
-        duration: 1.2,
+        duration: 0.9,
         ease: [0.22, 1, 0.36, 1],
       }}
-      className="
-        fixed
-        top-4
-        left-1/2
-        z-50
-        w-full
-        max-w-[1440px]
-        -translate-x-1/2
-        px-6
-      "
+      className="fixed left-1/2 top-4 z-50 w-full max-w-[1440px] -translate-x-1/2 px-4 sm:px-6"
     >
-
       <div
         className={`
           relative
           overflow-hidden
-          rounded-[28px]
+          rounded-[26px]
           border
           border-white/10
           transition-all
           duration-500
-
           ${
             isScrolled
-              ? `
-                bg-black/72
-                backdrop-blur-2xl
-                shadow-[0_10px_60px_rgba(0,0,0,0.45)]
-              `
-              : `
-                bg-black/38
-                backdrop-blur-xl
-              `
+              ? "bg-black/78 shadow-[0_10px_60px_rgba(0,0,0,0.45)] backdrop-blur-2xl"
+              : "bg-black/42 backdrop-blur-xl"
           }
         `}
       >
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_60%)]" />
+        <div className="pointer-events-none absolute inset-0 opacity-[0.015] bg-[url('/noise.png')]" />
 
-        {/* =========================================
-        SOFT LIGHT
-        ========================================= */}
+        <div className="relative z-10 grid grid-cols-[auto_1fr_auto] items-center gap-4 px-4 py-3 lg:gap-6 lg:px-5">
+          <Link
+            href="#hero"
+            className="flex min-w-0 shrink-0 items-center gap-3"
+          >
+            <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.05]">
+              <span className="text-base font-black text-white">
+                I
+              </span>
+            </div>
 
-        <div
-          className="
-            pointer-events-none
-            absolute
-            inset-0
-            bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_60%)]
-          "
-        />
+            <div className="hidden min-w-0 sm:block">
+              <div className="text-[1.05rem] font-black tracking-[-0.035em] text-white">
+                IMNOVA
+              </div>
+              <div className="mt-1 max-w-[210px] truncate text-[8px] uppercase tracking-[0.28em] text-white/45">
+                Tecnologia · Nutricion · Bienestar
+              </div>
+            </div>
+          </Link>
 
-        {/* =========================================
-        NOISE
-        ========================================= */}
-
-        <div
-          className="
-            pointer-events-none
-            absolute
-            inset-0
-            opacity-[0.015]
-            bg-[url('/noise.png')]
-          "
-        />
-
-        {/* =========================================
-        MAIN NAV
-        ========================================= */}
-
-        <div
-          className="
-            relative
-            z-10
-            flex
-            items-center
-            justify-between
-            gap-6
-            px-4
-            py-3
-            md:px-5
-            lg:px-6
-          "
-        >
-
-          {/* =========================================
-          LEFT
-          ========================================= */}
-
-          <div className="flex shrink-0 items-center gap-5">
-
-            <Link
-              href="#hero"
-              className="relative z-20"
-            >
-
-              <motion.div
-                whileHover={{
-                  scale: 1.02,
-                }}
-                transition={{
-                  duration: 0.3,
-                }}
-                className="
-                  flex
-                  items-center
-                  gap-4
-                "
-              >
-
-                {/* =========================================
-                LOGO
-                ========================================= */}
-
-                <div className="relative">
-
-                  <div
-                    className="
-                      absolute
-                      inset-0
-                      rounded-2xl
-                      bg-white/[0.08]
-                      blur-xl
-                    "
-                  />
-
-                  <div
-                    className="
-                      relative
-                      flex
-                      h-10
-                      w-10
-                      items-center
-                      justify-center
-                      rounded-2xl
-                      border
-                      border-white/10
-                      bg-white/[0.05]
-                      backdrop-blur-xl
-                    "
-                  >
-
-                    <span
-                      className="
-                        text-base
-                        font-black
-                        text-white
-                      "
-                    >
-
-                      I
-
-                    </span>
-
-                  </div>
-
-                </div>
-
-                {/* =========================================
-                TEXT
-                ========================================= */}
-
-                <div className="hidden sm:block">
-
-                  <h1
-                    className="
-                      text-[1.05rem]
-                      font-black
-                      tracking-[-0.045em]
-                      text-white
-                    "
-                  >
-
-                    IMNOVA
-
-                  </h1>
-
-                  <p
-                    className="
-                      mt-1
-                      text-[8px]
-                      uppercase
-                      tracking-[0.30em]
-                      text-white/45
-                      xl:block
-                    "
-                  >
-
-                    TECNOLOGÍA · NUTRICIÓN · BIENESTAR
-
-                  </p>
-
-                </div>
-
-              </motion.div>
-
-            </Link>
-
-          </div>
-
-          {/* =========================================
-          CENTER NAVIGATION
-          ========================================= */}
-
-          <nav className="hidden min-w-0 flex-1 items-center justify-center gap-4 md:flex xl:gap-6">
-            {navItems.map((item) => (
+          <nav className="hidden min-w-0 items-center justify-center gap-1 overflow-hidden xl:flex 2xl:gap-2">
+            {desktopNavItems.map(item => (
               <Link
                 key={item.name}
                 href={item.href}
-                className="
-                  rounded-full
-                  px-2
-                  py-2
-                  text-xs
-                  uppercase
-                  tracking-[0.13em]
-                  text-white/70
-                  transition-all
-                  duration-300
-                  hover:bg-white/[0.04]
-                  hover:text-white
-                "
+                className="whitespace-nowrap rounded-full px-2.5 py-2 text-[9px] font-medium uppercase tracking-[0.14em] text-white/68 transition-all duration-300 hover:bg-white/[0.05] hover:text-white 2xl:px-3 2xl:text-[10px]"
               >
-                {
-                  item.href === "#technology"
-                    ? "Tecnología"
-                    : item.name
-                }
+                {item.name === "Disponible ahora"
+                  ? "Disponible"
+                  : item.name}
               </Link>
             ))}
           </nav>
 
-          {/* =========================================
-          RIGHT
-          ========================================= */}
-
-          <div className="flex shrink-0 items-center gap-2">
-
-            {/* =========================================
-            TIENDA BUTTON
-            ========================================= */}
-
+          <div className="flex shrink-0 items-center justify-end gap-2">
             <Link
               href="/store"
-              className="
-                relative
-                z-50
-                hidden
-                sm:inline-flex
-                items-center
-                justify-center
-                rounded-2xl
-                border
-                border-white/10
-                bg-cyan-400/10
-                px-4
-                py-3
-                text-[10px]
-                uppercase
-                tracking-[0.22em]
-                font-medium
-                text-cyan-100
-                backdrop-blur-xl
-                transition-all
-                duration-300
-                hover:border-white/20
-                hover:bg-cyan-400/20
-                hover:text-white
-                whitespace-nowrap
-              "
+              className="hidden whitespace-nowrap rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100 transition-all duration-300 hover:border-cyan-300/35 hover:bg-cyan-400/20 hover:text-white sm:inline-flex"
             >
               Tienda
             </Link>
 
-            {/* =========================================
-            IMNOVA LABS BUTTON
-            ========================================= */}
-
-            <motion.button
-              type="button"
-              aria-label="Abrir IMNOVA Labs"
-              whileHover={{
-                scale: 1.02,
-              }}
-              whileTap={{
-                scale: 0.98,
-              }}
-              onClick={handleInnovaLabs}
-              className="
-                relative
-                z-50
-                flex
-                items-center
-                gap-0
-                rounded-2xl
-                border
-                border-white/10
-                bg-white/[0.015]
-                px-3
-                py-3
-                text-[9px]
-                uppercase
-                tracking-[0.18em]
-                font-medium
-                text-white/45
-                backdrop-blur-xl
-                transition-all
-                duration-300
-                hover:border-white/20
-                hover:bg-white/[0.06]
-                hover:text-white
-                whitespace-nowrap
-              "
+            <Link
+              href="/admin"
+              className="hidden whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.015] px-4 py-3 text-[10px] font-medium uppercase tracking-[0.18em] text-white/45 transition-all duration-300 hover:border-white/20 hover:bg-white/[0.06] hover:text-white md:inline-flex"
             >
-
-              <span>
-                Admin
-              </span>
-
-            </motion.button>
-
-            {/* =========================================
-            MENU BUTTON
-            ========================================= */}
+              Admin
+            </Link>
 
             <motion.button
               type="button"
+              aria-label="Abrir menu"
               aria-expanded={isMenuOpen}
-              aria-label="Toggle navigation menu"
-              whileHover={{
-                scale: 1.03,
-              }}
               whileTap={{
-                scale: 0.97,
+                scale: 0.96,
               }}
               onClick={() =>
-                setIsMenuOpen(!isMenuOpen)
+                setIsMenuOpen(
+                  current => !current
+                )
               }
-              className="
-                flex
-                md:hidden
-                items-center
-                gap-3
-                rounded-2xl
-                border
-                border-white/10
-                bg-white/[0.03]
-                px-5
-                py-3
-                backdrop-blur-xl
-                transition-all
-                duration-300
-                hover:border-white/20
-                hover:bg-white/[0.06]
-              "
+              className="inline-flex items-center justify-center rounded-2xl border border-white/10 bg-white/[0.035] p-3 text-white transition hover:bg-white/[0.07] xl:hidden"
             >
-
-              <span
-                className="
-                  hidden
-                  sm:block
-                  text-[10px]
-                  uppercase
-                  tracking-[0.30em]
-                  text-white/70
-                "
-              >
-
-                MENU
-
-              </span>
-
               {isMenuOpen ? (
-                <X className="h-5 w-5 text-white" />
+                <X className="h-5 w-5" />
               ) : (
-                <Menu className="h-5 w-5 text-white" />
+                <Menu className="h-5 w-5" />
               )}
-
             </motion.button>
-
           </div>
-
         </div>
 
-        {/* =========================================
-        MOBILE MENU
-        ========================================= */}
-
         <AnimatePresence>
-
           {isMenuOpen && (
-
             <motion.div
               initial={{
                 opacity: 0,
-                y: -20,
-                filter: "blur(10px)",
+                y: -10,
               }}
               animate={{
                 opacity: 1,
                 y: 0,
-                filter: "blur(0px)",
               }}
               exit={{
                 opacity: 0,
-                y: -20,
-                filter: "blur(10px)",
+                y: -10,
               }}
               transition={{
-                duration: 0.45,
-                ease: [0.22, 1, 0.36, 1],
+                duration: 0.25,
               }}
-              className="
-                relative
-                z-[999]
-                border-t
-                border-white/10
-                px-6
-                py-8
-              "
+              className="relative z-20 border-t border-white/10 px-5 py-5 xl:hidden"
             >
-
-              <div className="grid gap-10 lg:grid-cols-2">
-
-                {/* =========================================
-                LINKS
-                ========================================= */}
-
-                <div className="flex flex-col gap-5">
-
-                  {navItems.map(
-                    (item, index) => (
-
-                    <motion.div
-                      key={item.name}
-                      initial={{
-                        opacity: 0,
-                        x: -20,
-                      }}
-                      animate={{
-                        opacity: 1,
-                        x: 0,
-                      }}
-                      transition={{
-                        delay:
-                          index * 0.05,
-                      }}
-                    >
-
-                      <Link
-                        href={item.href}
-                        onClick={() =>
-                          setIsMenuOpen(false)
-                        }
-                        className="
-                          group
-                          relative
-                          w-fit
-                          text-[13px]
-                          uppercase
-                          tracking-[0.30em]
-                          text-white/70
-                          transition-all
-                          duration-300
-                          hover:text-white
-                        "
-                      >
-
-                        {
-                          item.href === "#technology"
-                            ? "Tecnología"
-                            : item.name
-                        }
-
-                        <span
-                          className="
-                            absolute
-                            -bottom-1
-                            left-0
-                            h-px
-                            w-0
-                            bg-white/60
-                            transition-all
-                            duration-300
-                            group-hover:w-full
-                          "
-                        />
-
-                      </Link>
-
-                    </motion.div>
-
-                  ))}
-
-                </div>
-
-                {/* =========================================
-                STORE
-                ========================================= */}
-
-                <div className="flex flex-col gap-4">
-
-                  <div
-                    className="
-                      mb-2
-                      text-[10px]
-                      uppercase
-                      tracking-[0.35em]
-                      text-white/40
-                    "
+              <div className="grid gap-3 sm:grid-cols-2">
+                {navItems.map(item => (
+                  <Link
+                    key={item.name}
+                    href={item.href}
+                    onClick={() =>
+                      setIsMenuOpen(false)
+                    }
+                    className="rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-[11px] font-semibold uppercase tracking-[0.20em] text-white/75 transition hover:bg-white/[0.06] hover:text-white"
                   >
-
-                    TIENDA
-
-                  </div>
-
-                  {categoryLinks.map(
-                    (item) => (
-
-                    <Link
-                      key={item.name}
-                      href={item.href}
-                      onClick={() =>
-                        setIsMenuOpen(false)
-                      }
-                      className="
-                        group
-                        rounded-[24px]
-                        border
-                        border-white/10
-                        bg-white/[0.03]
-                        px-6
-                        py-5
-                        text-white
-                        transition-all
-                        duration-300
-                        hover:border-white/20
-                        hover:bg-white/[0.06]
-                      "
-                    >
-
-                      <div className="flex items-center justify-between">
-
-                        <span className="text-white/80">
-                          {item.name}
-                        </span>
-
-                        <ChevronDown
-                          className="
-                            h-4
-                            w-4
-                            rotate-[-90deg]
-                            text-white/50
-                            transition-transform
-                            duration-300
-                            group-hover:translate-x-1
-                          "
-                        />
-
-                      </div>
-
-                    </Link>
-
-                  ))}
-
-                </div>
+                    {item.name}
+                  </Link>
+                ))}
 
               </div>
-
             </motion.div>
-
           )}
-
         </AnimatePresence>
-
       </div>
-
     </motion.header>
   )
 }

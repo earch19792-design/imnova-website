@@ -1,31 +1,20 @@
 "use client"
 
-/* 
-================================================
-MENÚ PRINCIPAL
-SECCIÓN: INNOVACIONES
-COMPONENTE: InnovationsSection
-VERSIÓN: CINEMATIC PREMIUM AI
-================================================
-*/
-
 import Image from "next/image"
 import Link from "next/link"
 
-import {
-  motion,
-  useMotionValue,
-  useSpring,
-  useTransform,
-} from "framer-motion"
+import { motion } from "framer-motion"
 
 import {
-  Sparkles,
   ArrowUpRight,
+  Clock3,
+  Info,
+  Rocket,
 } from "lucide-react"
 
 import {
   useEffect,
+  useMemo,
   useState,
 } from "react"
 
@@ -40,272 +29,177 @@ type Product = {
   id: string
   state_id: string | null
   name: string
-  category?: string
-  description?: string
-  slug?: string
+  category?: string | null
+  description?: string | null
+  slug?: string | null
+  image?: string | null
   image_url?: string | null
+  problemSolved?: string | null
+  innovationSubtitle?: string | null
+  benefits?: string[] | null
+  featuredLaunch?: boolean | null
 }
 
 type ProductState = {
   id: string
   name: string
+  progress: number
 }
 
-const initialVisibleItems = 9
-const visibleItemsStep = 9
+type LiveProduct = Product & {
+  status: string
+  progress: number
+}
 
-function getDevelopmentBenefit(
-  product: Product
-) {
+function normalizeText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+}
+
+function getProductImage(product: Product) {
+  return (
+    product.image_url ||
+    product.image ||
+    "/placeholder.jpg"
+  )
+}
+
+function isCommercializing(product: LiveProduct) {
+  const status =
+    normalizeText(product.status)
+
+  return (
+    status.includes("comercial")
+  )
+}
+
+function isAvailableNow(product: LiveProduct) {
+  const status =
+    normalizeText(product.status)
+
+  return status.includes("disponible")
+}
+
+function getPublicState(product: LiveProduct) {
+  const status =
+    normalizeText(product.status)
+
+  if (status.includes("comercial")) {
+    return "COMERCIALIZANDOSE"
+  }
+
+  return "DESARROLLO"
+}
+
+function getCustomerOutcome(product: LiveProduct) {
+  return (
+    product.problemSolved ||
+    product.innovationSubtitle ||
+    product.description ||
+    "un resultado funcional pensado para mejorar energia, bienestar y rendimiento diario"
+  )
+}
+
+function getCustomerBenefits(product: LiveProduct) {
+  if (
+    product.benefits &&
+    product.benefits.length > 0
+  ) {
+    return product.benefits.slice(0, 3)
+  }
 
   const text =
     [
       product.name,
       product.category,
       product.description,
+      product.problemSolved,
     ]
       .filter(Boolean)
       .join(" ")
       .toLowerCase()
 
   if (
-    text.includes("coffee") ||
-    text.includes("café") ||
-    text.includes("cafe")
-  ) {
-
-    return "Creado para acompañar enfoque, energía limpia y rendimiento diario, integrando nutrición funcional en una experiencia práctica y moderna."
-
-  }
-
-  if (
     text.includes("pancake") ||
     text.includes("waffle") ||
-    text.includes("nutri") ||
     text.includes("prote")
   ) {
-
-    return "Pensado para nutrir mejor cada rutina, con una opción práctica que apoya saciedad, energía y bienestar sin complicar el día."
-
+    return [
+      "Nutricion practica para rutinas activas",
+      "Mayor saciedad y energia diaria",
+      "Formato pensado para habitos faciles de sostener",
+    ]
   }
 
   if (
-    text.includes("wellness") ||
-    text.includes("bienestar")
+    text.includes("coffee") ||
+    text.includes("cafe") ||
+    text.includes("cafe")
   ) {
-
-    return "Diseñado para elevar hábitos cotidianos con una experiencia premium enfocada en equilibrio, vitalidad y bienestar sostenible."
-
+    return [
+      "Energia limpia para el dia",
+      "Apoyo al enfoque mental",
+      "Experiencia funcional facil de integrar",
+    ]
   }
 
-  if (
-    text.includes("ai") ||
-    text.includes("ia") ||
-    text.includes("tech") ||
-    text.includes("tecnolog")
-  ) {
-
-    return "Desarrollado para simplificar decisiones, potenciar productividad y conectar tecnología inteligente con beneficios reales para la vida diaria."
-
-  }
-
-  return "Diseñado para aportar valor real al bienestar humano, combinando funcionalidad, experiencia premium e innovación lista para escalar."
-
+  return [
+    "Bienestar funcional para la vida diaria",
+    "Experiencia premium y practica",
+    "Valor real para mejorar habitos del cliente",
+  ]
 }
 
 export function InnovationsSection() {
-
   const [
-    commercialProducts,
-    setCommercialProducts,
-  ] = useState<Product[]>([])
-
-  const [
-    developmentProducts,
-    setDevelopmentProducts,
-  ] = useState<Product[]>([])
-
-  const [
-    upcomingSlots,
-    setUpcomingSlots,
-  ] = useState<number[]>([])
-
-  const [
-    visibleItems,
-    setVisibleItems,
-  ] = useState(initialVisibleItems)
-
-  /* =================================================
-  MOUSE REACTIVE LIGHTING
-  ================================================= */
-
-  const mouseX =
-    useMotionValue(0)
-
-  const mouseY =
-    useMotionValue(0)
-
-  const smoothMouseX =
-    useSpring(mouseX, {
-      stiffness: 120,
-      damping: 20,
-    })
-
-  const smoothMouseY =
-    useSpring(mouseY, {
-      stiffness: 120,
-      damping: 20,
-    })
-
-  const glowX =
-    useTransform(
-      smoothMouseX,
-      [-500, 500],
-      ["45%", "55%"]
-    )
-
-  const glowY =
-    useTransform(
-      smoothMouseY,
-      [-500, 500],
-      ["45%", "55%"]
-    )
-
-  const totalInnovationItems =
-    commercialProducts.length +
-    developmentProducts.length +
-    upcomingSlots.length
-
-  const visibleCommercialProducts =
-    commercialProducts.slice(
-      0,
-      visibleItems
-    )
-
-  const remainingAfterCommercial =
-    Math.max(
-      visibleItems -
-        visibleCommercialProducts.length,
-      0
-    )
-
-  const visibleDevelopmentProducts =
-    developmentProducts.slice(
-      0,
-      remainingAfterCommercial
-    )
-
-  const remainingAfterDevelopment =
-    Math.max(
-      remainingAfterCommercial -
-        visibleDevelopmentProducts.length,
-      0
-    )
-
-  const visibleUpcomingSlots =
-    upcomingSlots.slice(
-      0,
-      remainingAfterDevelopment
-    )
-
-  const hasMoreItems =
-    visibleItems < totalInnovationItems
-
-  /* =================================================
-  LOAD PRODUCTS
-  ================================================= */
+    products,
+    setProducts,
+  ] = useState<LiveProduct[]>([])
 
   useEffect(() => {
-
     async function loadProducts() {
-
-      const products =
-        await getProducts()
-
-      const states =
-        await getProductStates()
+      const [
+        productRows,
+        stateRows,
+      ] = await Promise.all([
+        getProducts(),
+        getProductStates(),
+      ])
 
       const stateMap =
         new Map(
-          (states as ProductState[]).map(
-            (state) => [
+          (stateRows as ProductState[]).map(
+            state => [
               state.id,
-              state.name,
+              state,
             ]
           )
         )
 
-      const getStateName =
-        (product: Product) =>
-          product.state_id
-            ? stateMap.get(
-                product.state_id
-              ) || ""
-            : ""
+      setProducts(
+        (productRows as Product[]).map(
+          product => {
+            const state =
+              product.state_id
+                ? stateMap.get(
+                    product.state_id
+                  )
+                : null
 
-      const commercial =
-        (products as Product[]).filter(
-          (product) =>
-            getStateName(product).includes(
-              "Comercialización"
-            )
-        )
-
-      const development =
-        (products as Product[]).filter(
-          (product) => {
-
-            const stateName =
-              getStateName(product)
-
-            return (
-              stateName.includes(
-                "Desarrollo"
-              ) ||
-              stateName.includes(
-                "Testing"
-              ) ||
-              stateName.includes(
-                "Producción"
-              )
-            )
-
+            return {
+              ...product,
+              status:
+                state?.name ||
+                "Proximamente",
+              progress:
+                state?.progress ||
+                0,
+            }
           }
         )
-
-      const pendingCount =
-        Math.max(
-          (products as Product[]).length -
-            commercial.length -
-            development.length,
-          commercial.length === 0 &&
-            development.length === 0
-            ? 3
-            : 0
-        )
-
-      setCommercialProducts(
-        commercial
       )
-
-      setDevelopmentProducts(
-        development
-      )
-
-      setVisibleItems(
-        initialVisibleItems
-      )
-
-      setUpcomingSlots(
-        Array.from(
-          {
-            length:
-              pendingCount,
-          },
-          (_, index) => index
-        )
-      )
-
     }
 
     loadProducts()
@@ -313,7 +207,7 @@ export function InnovationsSection() {
     const channel =
       supabase
         .channel(
-          "innovations-products"
+          "upcoming-products"
         )
         .on(
           "postgres_changes",
@@ -337,1149 +231,314 @@ export function InnovationsSection() {
         .subscribe()
 
     return () => {
-
       supabase.removeChannel(channel)
-
     }
-
   }, [])
 
-  /* =================================================
-  GLOBAL MOUSE TRACKING
-  ================================================= */
+  const upcomingProducts =
+    useMemo(
+      () =>
+        products
+          .filter(
+            product =>
+              !isAvailableNow(product)
+          )
+          .sort(
+            (a, b) => {
+              if (a.featuredLaunch) {
+                return -1
+              }
 
-  useEffect(() => {
+              if (b.featuredLaunch) {
+                return 1
+              }
 
-    const handleMouseMove =
-      (e: MouseEvent) => {
-
-        const centerX =
-          window.innerWidth / 2
-
-        const centerY =
-          window.innerHeight / 2
-
-        mouseX.set(
-          e.clientX - centerX
-        )
-
-        mouseY.set(
-          e.clientY - centerY
-        )
-
-      }
-
-    window.addEventListener(
-      "mousemove",
-      handleMouseMove
+              return (
+                b.progress -
+                a.progress
+              )
+            }
+          ),
+      [
+        products,
+      ]
     )
 
-    return () => {
+  const featuredProduct =
+    upcomingProducts[0]
 
-      window.removeEventListener(
-        "mousemove",
-        handleMouseMove
-      )
+  const previewProducts =
+    upcomingProducts.slice(
+      1,
+      4
+    )
 
-    }
-
-  }, [mouseX, mouseY])
+  const featuredProductIsRevealed =
+    featuredProduct
+      ? isCommercializing(featuredProduct)
+      : false
 
   return (
-
     <section
       id="innovations"
-      className="
-        relative
-        isolate
-        overflow-hidden
-        bg-black
-        py-44
-        md:py-52
-      "
+      className="relative isolate overflow-hidden bg-black py-36 md:py-44"
     >
-
-      {/* =================================================
-      BASE BACKGROUND
-      ================================================= */}
-
-      <div className="absolute inset-0 bg-black" />
-
-      {/* =================================================
-      MOUSE REACTIVE LIGHT
-      ================================================= */}
-
-      <motion.div
-        style={{
-          background:
-            `radial-gradient(circle at ${glowX} ${glowY},
-            rgba(255,255,255,0.05),
-            transparent 35%)`,
-        }}
-        className="
-          pointer-events-none
-          absolute
-          inset-0
-          opacity-80
-          blur-3xl
-        "
-      />
-
-      {/* =================================================
-      AMBIENT LIGHTING
-      ================================================= */}
-
-      <motion.div
-        animate={{
-          opacity: [0.3, 0.6, 0.3],
-          scale: [1, 1.08, 1],
-        }}
-        transition={{
-          duration: 12,
-          repeat: Infinity,
-          ease: "easeInOut",
-        }}
-        className="
-          pointer-events-none
-          absolute
-          left-1/2
-          top-0
-          h-[800px]
-          w-[800px]
-          -translate-x-1/2
-          rounded-full
-          bg-white/[0.03]
-          blur-[180px]
-        "
-      />
-
-      {/* =================================================
-      GRID
-      ================================================= */}
-
-      <div
-        className="
-          absolute
-          inset-0
-          opacity-[0.015]
-          bg-[linear-gradient(rgba(255,255,255,0.10)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.10)_1px,transparent_1px)]
-          bg-[size:120px_120px]
-        "
-      />
-
-      {/* =================================================
-      TOP DIVIDER
-      ================================================= */}
-
-      <div
-        className="
-          absolute
-          left-0
-          right-0
-          top-0
-          h-px
-          bg-gradient-to-r
-          from-transparent
-          via-white/10
-          to-transparent
-        "
-      />
-
-      {/* =================================================
-      CONTENT
-      ================================================= */}
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_20%,rgba(34,211,238,0.10),transparent_42%),linear-gradient(180deg,rgba(0,0,0,0.1),rgba(0,0,0,0.95))]" />
+      <div className="absolute inset-0 opacity-[0.025] bg-[linear-gradient(rgba(255,255,255,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.12)_1px,transparent_1px)] bg-[size:110px_110px]" />
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-200/20 to-transparent" />
 
       <div className="relative z-10 mx-auto max-w-7xl px-6">
-
-        {/* =================================================
-        HEADER
-        ================================================= */}
-
         <motion.div
           initial={{
             opacity: 0,
-            y: 40,
-            filter: "blur(10px)",
+            y: 32,
           }}
           whileInView={{
             opacity: 1,
             y: 0,
-            filter: "blur(0px)",
           }}
           transition={{
-            duration: 1,
-            ease: [0.22, 1, 0.36, 1],
+            duration: 0.85,
           }}
           viewport={{ once: true }}
-          className="mb-32 text-center"
+          className="mx-auto max-w-4xl text-center"
         >
-
-          {/* BADGE */}
-
-          <div
-            className="
-              inline-flex
-              items-center
-              gap-3
-              rounded-full
-              border
-              border-white/10
-              bg-white/[0.03]
-              px-6
-              py-3
-              backdrop-blur-md
-            "
-          >
-
-            <Sparkles
-              className="
-                h-4
-                w-4
-                text-white/60
-              "
-            />
-
-            <span
-              className="
-                text-[10px]
-                uppercase
-                tracking-[0.40em]
-                text-white/60
-              "
-            >
-
-              IMNOVA ECOSYSTEM
-
-            </span>
-
+          <div className="inline-flex items-center gap-3 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-5 py-3 text-[10px] uppercase tracking-[0.34em] text-cyan-100">
+            <Clock3 className="h-4 w-4" />
+            Que viene pronto
           </div>
 
-          {/* TITLE */}
-
-          <h2
-            className="
-              mx-auto
-              mt-12
-              max-w-6xl
-              text-5xl
-              font-black
-              leading-[0.95]
-              tracking-[-0.06em]
-              text-white
-              sm:text-6xl
-              lg:text-7xl
-            "
-          >
-
-            Diseñamos el Futuro
-
-            <span
-              className="
-                block
-                bg-gradient-to-r
-                from-white
-                via-zinc-200
-                to-zinc-500
-                bg-clip-text
-                text-transparent
-              "
-            >
-
-              mediante innovación real.
-
+          <h2 className="mt-9 text-5xl font-black leading-[0.98] tracking-[-0.04em] text-white md:text-7xl">
+            Proximos lanzamientos
+            <span className="block bg-gradient-to-r from-cyan-200 via-white to-amber-200 bg-clip-text text-transparent">
+              en preparacion
             </span>
-
           </h2>
 
-          {/* DIVIDER */}
-
-          <div
-            className="
-              mx-auto
-              mt-10
-              h-px
-              w-28
-              rounded-full
-              bg-gradient-to-r
-              from-transparent
-              via-white/20
-              to-transparent
-            "
-          />
-
-          {/* DESCRIPTION */}
-
-          <p
-            className="
-              mx-auto
-              mt-10
-              max-w-4xl
-              text-xl
-              leading-relaxed
-              text-white/50
-            "
-          >
-
-            Nutrición funcional, tecnología
-            inteligente y sistemas premium
-            desarrollados para redefinir la
-            evolución humana.
-
+          <p className="mx-auto mt-8 max-w-3xl text-lg leading-8 text-zinc-400">
+            Esta seccion maneja solo dos estados: desarrollo, cuando mantenemos
+            el producto en expectativa mostrando el beneficio que traera al
+            cliente, y comercializandose, cuando ya se revela el producto.
           </p>
-
         </motion.div>
 
-        {/* =================================================
-        PRODUCT GRID
-        ================================================= */}
-
-        <div
-          className="
-            grid
-            auto-rows-fr
-            gap-6
-            md:grid-cols-2
-            xl:grid-cols-3
-          "
-        >
-
-          {visibleCommercialProducts.map(
-            (
-              product,
-              index
-            ) => (
-
+        {featuredProduct ? (
+          <div className="mt-16 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(340px,0.78fr)]">
             <motion.article
-              key={product.id}
               initial={{
                 opacity: 0,
-                y: 60,
-                filter: "blur(12px)",
+                y: 36,
               }}
               whileInView={{
                 opacity: 1,
                 y: 0,
-                filter: "blur(0px)",
               }}
               transition={{
-                duration: 0.9,
-                delay:
-                  index * 0.08,
-                ease: [
-                  0.22,
-                  1,
-                  0.36,
-                  1,
-                ],
+                duration: 0.85,
               }}
               viewport={{ once: true }}
-              whileHover={{
-                y: -8,
-              }}
-              className="
-                group
-                relative
-                flex
-                min-h-[620px]
-                flex-col
-                overflow-hidden
-                rounded-[30px]
-                border
-                border-white/10
-                bg-white/[0.035]
-                p-6
-                backdrop-blur-md
-                transition-all
-                duration-500
-                hover:border-cyan-200/25
-                hover:bg-white/[0.055]
-              "
+              className="relative overflow-hidden rounded-[30px] border border-cyan-200/15 bg-white/[0.035] p-6 backdrop-blur-2xl md:p-8"
             >
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.15),transparent_36%)]" />
 
               <div
-                className="
-                  pointer-events-none
-                  absolute
-                  inset-0
-                  bg-[radial-gradient(circle_at_top,rgba(125,245,255,0.09),transparent_55%)]
-                  opacity-0
-                  transition-opacity
-                  duration-500
-                  group-hover:opacity-100
-                "
-              />
-
-              <div
-                className="
-                  relative
-                  z-10
-                  mb-5
-                  flex
-                  items-center
-                  justify-between
-                  gap-4
-                "
+                className={`relative grid gap-8 ${
+                  featuredProductIsRevealed
+                    ? "md:grid-cols-[0.9fr_1.1fr] md:items-center"
+                    : ""
+                }`}
               >
-
-                <span
-                  className="
-                    rounded-full
-                    border
-                    border-cyan-200/20
-                    bg-cyan-300/[0.08]
-                    px-4
-                    py-2
-                    text-[10px]
-                    uppercase
-                    tracking-[0.28em]
-                    text-cyan-100/80
-                    backdrop-blur-md
-                  "
-                >
-
-                  En comercialización
-
-                </span>
-
-                <span
-                  className="
-                    text-[10px]
-                    uppercase
-                    tracking-[0.28em]
-                    text-white/35
-                  "
-                >
-
-                  Live
-
-                </span>
-
-              </div>
-
-              <div
-                className="
-                  relative
-                  overflow-hidden
-                  rounded-[26px]
-                  border
-                  border-white/10
-                  bg-black/35
-                  p-6
-                "
-              >
-
-                <div
-                  className="
-                    absolute
-                    inset-0
-                    bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.08),transparent_62%)]
-                  "
-                />
-
-                <div
-                  className="
-                    relative
-                    flex
-                    aspect-[4/3]
-                    items-center
-                    justify-center
-                  "
-                >
-
-                  <Image
-                    src={product.image_url || "/placeholder.jpg"}
-                    alt={product.name}
-                    width={520}
-                    height={420}
-                    className="
-                      relative
-                      z-10
-                      h-full
-                      w-full
-                      object-contain
-                      transition-all
-                      duration-700
-                      group-hover:-translate-y-2
-                      group-hover:scale-105
-                    "
-                  />
-
-                </div>
-
-              </div>
-
-              <div
-                className="
-                  relative
-                  z-10
-                  mt-7
-                  flex
-                  flex-1
-                  flex-col
-                "
-              >
-
-                <p
-                  className="
-                    text-[10px]
-                    uppercase
-                    tracking-[0.32em]
-                    text-white/35
-                  "
-                >
-
-                  {product.category || "IMNOVA Product"}
-
-                </p>
-
-                <h3
-                  className="
-                    mt-4
-                    text-3xl
-                    font-black
-                    leading-tight
-                    tracking-[-0.04em]
-                    text-white
-                    md:text-4xl
-                  "
-                >
-
-                  {product.name}
-
-                </h3>
-
-                <p
-                  className="
-                    mt-5
-                    line-clamp-3
-                    leading-relaxed
-                    text-white/50
-                  "
-                >
-
-                  {product.description ||
-                    "Producto funcional IMNOVA en fase comercial."}
-
-                </p>
-
-                <Link
-                  href={
-                    product.slug
-                      ? `/store/${product.slug}`
-                      : "/store"
-                  }
-                  className="
-                    mt-auto
-                    inline-flex
-                    items-center
-                    justify-center
-                    gap-3
-                    rounded-2xl
-                    border
-                    border-white/10
-                    bg-white/[0.04]
-                    px-6
-                    py-4
-                    text-xs
-                    font-semibold
-                    uppercase
-                    tracking-[0.18em]
-                    text-white
-                    backdrop-blur-md
-                    transition-all
-                    duration-300
-                    hover:scale-[1.02]
-                    hover:border-cyan-200/25
-                    hover:bg-cyan-300/[0.08]
-                  "
-                >
-
-                  Ver producto
-
-                  <ArrowUpRight
-                    className="
-                      h-4
-                      w-4
-                      transition-transform
-                      duration-300
-                      group-hover:translate-x-1
-                      group-hover:-translate-y-1
-                    "
-                  />
-
-                </Link>
-
-              </div>
-
-            </motion.article>
-
-          ))}
-
-          {visibleDevelopmentProducts.map(
-            (
-              product,
-              index
-            ) => (
-
-            <motion.article
-              key={`development-${product.id}`}
-              initial={{
-                opacity: 0,
-                y: 60,
-                filter: "blur(12px)",
-              }}
-              whileInView={{
-                opacity: 1,
-                y: 0,
-                filter: "blur(0px)",
-              }}
-              transition={{
-                duration: 0.9,
-                delay:
-                  (visibleCommercialProducts.length + index) * 0.08,
-                ease: [
-                  0.22,
-                  1,
-                  0.36,
-                  1,
-                ],
-              }}
-              viewport={{ once: true }}
-              whileHover={{
-                y: -7,
-              }}
-              className="
-                group
-                relative
-                flex
-                min-h-[620px]
-                flex-col
-                overflow-hidden
-                rounded-[30px]
-                border
-                border-white/10
-                bg-white/[0.025]
-                p-6
-                backdrop-blur-md
-                transition-all
-                duration-500
-                hover:border-white/25
-                hover:bg-white/[0.045]
-              "
-            >
-
-              <div
-                className="
-                  pointer-events-none
-                  absolute
-                  inset-0
-                  bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.09),transparent_56%)]
-                  opacity-60
-                  transition-opacity
-                  duration-500
-                  group-hover:opacity-100
-                "
-              />
-
-              <div
-                className="
-                  relative
-                  z-10
-                  mb-5
-                  flex
-                  items-center
-                  justify-between
-                  gap-4
-                "
-              >
-
-                <span
-                  className="
-                    rounded-full
-                    border
-                    border-white/10
-                    bg-white/[0.045]
-                    px-4
-                    py-2
-                    text-[10px]
-                    uppercase
-                    tracking-[0.28em]
-                    text-white/70
-                    backdrop-blur-md
-                  "
-                >
-
-                  En desarrollo
-
-                </span>
-
-                <span
-                  className="
-                    text-[10px]
-                    uppercase
-                    tracking-[0.28em]
-                    text-white/35
-                  "
-                >
-
-                  Preview
-
-                </span>
-
-              </div>
-
-              <div
-                className="
-                  relative
-                  overflow-hidden
-                  rounded-[26px]
-                  border
-                  border-white/10
-                  bg-black/35
-                  p-6
-                "
-              >
-
-                <div
-                  className="
-                    absolute
-                    inset-0
-                    bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.10),transparent_62%)]
-                  "
-                />
-
-                <div
-                  className="
-                    relative
-                    flex
-                    aspect-[4/3]
-                    items-center
-                    justify-center
-                  "
-                >
-
-                  <Image
-                    src={product.image_url || "/placeholder.jpg"}
-                    alt={product.name}
-                    width={520}
-                    height={420}
-                    className="
-                      relative
-                      z-10
-                      h-full
-                      w-full
-                      object-contain
-                      opacity-90
-                      transition-all
-                      duration-700
-                      group-hover:-translate-y-2
-                      group-hover:scale-105
-                      group-hover:opacity-100
-                    "
-                  />
-
-                </div>
-
-              </div>
-
-              <div
-                className="
-                  relative
-                  z-10
-                  mt-7
-                  flex
-                  flex-1
-                  flex-col
-                "
-              >
-
-                <p
-                  className="
-                    text-[10px]
-                    uppercase
-                    tracking-[0.32em]
-                    text-white/35
-                  "
-                >
-
-                  {product.category || "IMNOVA Product"}
-
-                </p>
-
-                <h3
-                  className="
-                    mt-4
-                    text-3xl
-                    font-black
-                    leading-tight
-                    tracking-[-0.04em]
-                    text-white/90
-                    md:text-4xl
-                  "
-                >
-
-                  {product.name}
-
-                </h3>
-
-                <p
-                  className="
-                    mt-5
-                    leading-relaxed
-                    text-white/50
-                  "
-                >
-
-                  {getDevelopmentBenefit(
-                    product
-                  )}
-
-                </p>
-
-                <div
-                  className="
-                    mt-auto
-                    rounded-2xl
-                    border
-                    border-white/10
-                    bg-white/[0.025]
-                    px-6
-                    py-4
-                    text-center
-                    text-xs
-                    font-semibold
-                    uppercase
-                    tracking-[0.18em]
-                    text-white/55
-                    backdrop-blur-md
-                  "
-                >
-
-                  Lanzamiento en preparación
-
-                </div>
-
-              </div>
-
-            </motion.article>
-
-          ))}
-
-          {visibleUpcomingSlots.map(
-            (
-              slot,
-              index
-            ) => (
-
-            <motion.article
-              key={`upcoming-${slot}`}
-              initial={{
-                opacity: 0,
-                y: 60,
-                filter: "blur(12px)",
-              }}
-              whileInView={{
-                opacity: 1,
-                y: 0,
-                filter: "blur(0px)",
-              }}
-              transition={{
-                duration: 0.9,
-                delay:
-                  (
-                    visibleCommercialProducts.length +
-                    visibleDevelopmentProducts.length +
-                    index
-                  ) * 0.08,
-                ease: [
-                  0.22,
-                  1,
-                  0.36,
-                  1,
-                ],
-              }}
-              viewport={{ once: true }}
-              whileHover={{
-                y: -6,
-              }}
-              className="
-                group
-                relative
-                flex
-                min-h-[620px]
-                flex-col
-                overflow-hidden
-                rounded-[30px]
-                border
-                border-white/10
-                bg-white/[0.018]
-                p-6
-                backdrop-blur-md
-                transition-all
-                duration-500
-                hover:border-white/20
-                hover:bg-white/[0.035]
-              "
-            >
-
-              <div
-                className="
-                  pointer-events-none
-                  absolute
-                  inset-0
-                  bg-[linear-gradient(135deg,rgba(255,255,255,0.08),transparent_35%,rgba(125,245,255,0.05))]
-                  opacity-50
-                "
-              />
-
-              <div
-                className="
-                  relative
-                  z-10
-                  mb-5
-                  flex
-                  items-center
-                  justify-between
-                  gap-4
-                "
-              >
-
-                <span
-                  className="
-                    rounded-full
-                    border
-                    border-white/10
-                    bg-white/[0.03]
-                    px-4
-                    py-2
-                    text-[10px]
-                    uppercase
-                    tracking-[0.28em]
-                    text-white/45
-                    backdrop-blur-md
-                  "
-                >
-
-                  Próximamente
-
-                </span>
-
-                <Sparkles
-                  className="
-                    h-5
-                    w-5
-                    text-white/25
-                    transition-all
-                    duration-500
-                    group-hover:rotate-12
-                    group-hover:text-white/45
-                  "
-                />
-
-              </div>
-
-              <div
-                className="
-                  relative
-                  flex
-                  flex-1
-                  items-center
-                  justify-center
-                  overflow-hidden
-                  rounded-[26px]
-                  border
-                  border-dashed
-                  border-white/10
-                  bg-black/30
-                  p-8
-                "
-              >
-
-                <motion.div
-                  animate={{
-                    opacity: [0.28, 0.55, 0.28],
-                    scale: [1, 1.04, 1],
-                  }}
-                  transition={{
-                    duration: 5,
-                    repeat: Infinity,
-                    ease: "easeInOut",
-                  }}
-                  className="
-                    absolute
-                    h-56
-                    w-56
-                    rounded-full
-                    border
-                    border-white/10
-                    bg-white/[0.025]
-                    blur-sm
-                  "
-                />
-
-                <div
-                  className="
-                    relative
-                    z-10
-                    text-center
-                  "
-                >
-
-                  <div
-                    className="
-                      mx-auto
-                      flex
-                      h-16
-                      w-16
-                      items-center
-                      justify-center
-                      rounded-2xl
-                      border
-                      border-white/10
-                      bg-white/[0.04]
-                    "
-                  >
-
-                    <Sparkles className="h-6 w-6 text-white/40" />
-
+                {featuredProductIsRevealed && (
+                  <div className="relative min-h-[300px] overflow-hidden rounded-[26px] border border-white/10 bg-black/40 p-6">
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.10),transparent_62%)]" />
+                    <Image
+                      src={getProductImage(featuredProduct)}
+                      alt={featuredProduct.name}
+                      width={560}
+                      height={460}
+                      className="relative z-10 h-full min-h-[260px] w-full object-contain"
+                    />
                   </div>
+                )}
 
-                  <h3
-                    className="
-                      mt-8
-                      text-4xl
-                      font-black
-                      tracking-[-0.04em]
-                      text-white/85
-                    "
-                  >
+                <div className="relative z-10">
+                  <span className="inline-flex rounded-full border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-2 text-[10px] uppercase tracking-[0.24em] text-cyan-100">
+                    {getPublicState(featuredProduct)}
+                  </span>
 
-                    Próximamente
-
-                  </h3>
-
-                  <p
-                    className="
-                      mx-auto
-                      mt-5
-                      max-w-xs
-                      text-sm
-                      leading-relaxed
-                      text-white/45
-                    "
-                  >
-
-                    Una nueva pieza del ecosistema IMNOVA está por activarse.
-                    Pronto revelaremos lo que sigue.
-
+                  <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-cyan-100/55">
+                    {featuredProduct.category ||
+                      "IMNOVA Launch"}
                   </p>
 
+                  <h3 className="mt-4 max-w-3xl text-4xl font-black leading-tight tracking-[-0.035em] text-white md:text-5xl lg:text-6xl">
+                    {featuredProductIsRevealed
+                      ? featuredProduct.name
+                      : "Proximamente"}
+                  </h3>
+
+                  <p className="mt-6 max-w-3xl text-base leading-8 text-zinc-400 md:text-lg">
+                    {featuredProductIsRevealed
+                      ? featuredProduct.description ||
+                        "Producto en preparacion para su siguiente etapa de lanzamiento."
+                      : `Desarrollo de un producto que resolvera ${getCustomerOutcome(featuredProduct)}.`}
+                  </p>
+
+                  {!featuredProductIsRevealed && (
+                    <div className="mt-7 grid gap-3 sm:grid-cols-3">
+                      {getCustomerBenefits(
+                        featuredProduct
+                      ).map(benefit => (
+                        <div
+                          key={benefit}
+                          className="rounded-2xl border border-cyan-200/10 bg-cyan-300/[0.045] px-4 py-4 text-sm leading-6 text-cyan-50/80"
+                        >
+                          {benefit}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {featuredProductIsRevealed &&
+                    featuredProduct.slug && (
+                      <Link
+                        href={`/store/${featuredProduct.slug}`}
+                        className="mt-8 inline-flex items-center justify-center gap-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 transition hover:border-cyan-200/35 hover:bg-cyan-300/[0.13]"
+                      >
+                        Ver mas informacion
+                        <Info className="h-4 w-4" />
+                      </Link>
+                    )}
+
+                  <div className="mt-8">
+                    <div className="mb-3 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-zinc-500">
+                      <span>{featuredProduct.status}</span>
+                      <span className="text-cyan-100">
+                        {featuredProduct.progress}%
+                      </span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                      <motion.div
+                        initial={{
+                          width: 0,
+                        }}
+                        whileInView={{
+                          width: `${featuredProduct.progress}%`,
+                        }}
+                        transition={{
+                          duration: 1,
+                        }}
+                        viewport={{ once: true }}
+                        className="h-full rounded-full bg-gradient-to-r from-cyan-300 to-amber-200"
+                      />
+                    </div>
+                  </div>
                 </div>
-
               </div>
-
             </motion.article>
 
-          ))}
+            <div className="grid content-start gap-4">
+              {previewProducts.map(
+                product => {
+                  const isRevealed =
+                    isCommercializing(product)
 
-        </div>
+                  return (
+                  <motion.article
+                    key={product.id}
+                    initial={{
+                      opacity: 0,
+                      x: 24,
+                    }}
+                    whileInView={{
+                      opacity: 1,
+                      x: 0,
+                    }}
+                    transition={{
+                      duration: 0.7,
+                    }}
+                    viewport={{ once: true }}
+                    className="grid grid-cols-[72px_minmax(0,1fr)] gap-4 rounded-[24px] border border-white/10 bg-white/[0.03] p-4 backdrop-blur-xl"
+                  >
+                    <div className="flex h-[72px] w-[72px] items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-black/35">
+                      {isRevealed ? (
+                        <img
+                          src={getProductImage(product)}
+                          alt={product.name}
+                          className="h-full w-full object-contain p-2"
+                        />
+                      ) : (
+                        <Rocket className="h-6 w-6 text-cyan-100/55" />
+                      )}
+                    </div>
 
-        {hasMoreItems && (
-
-          <div
-            className="
-              mt-12
-              flex
-              justify-center
-            "
-          >
-
-            <button
-              type="button"
-              onClick={() =>
-                setVisibleItems(
-                  (current) =>
-                    current +
-                    visibleItemsStep
-                )
-              }
-              className="
-                rounded-2xl
-                border
-                border-white/10
-                bg-white/[0.035]
-                px-7
-                py-4
-                text-xs
-                font-semibold
-                uppercase
-                tracking-[0.18em]
-                text-white/75
-                backdrop-blur-md
-                transition-all
-                duration-300
-                hover:border-white/20
-                hover:bg-white/[0.06]
-                hover:text-white
-              "
-            >
-
-              Ver más innovaciones
-
-              <span
-                className="
-                  ml-3
-                  text-white/35
-                "
-              >
-                {Math.min(
-                  visibleItems,
-                  totalInnovationItems
-                )}
-                /{totalInnovationItems}
-              </span>
-
-            </button>
-
+                    <div className="min-w-0">
+                      <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">
+                        {getPublicState(product)}
+                      </p>
+                      <h4 className="mt-2 truncate text-lg font-black leading-tight text-white">
+                        {isRevealed
+                          ? product.name
+                          : "Proximamente"}
+                      </h4>
+                      {!isRevealed && (
+                        <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-500">
+                          Desarrollo de un producto que resolvera{" "}
+                          {getCustomerOutcome(product)}.
+                        </p>
+                      )}
+                      {isRevealed &&
+                        product.slug && (
+                          <Link
+                            href={`/store/${product.slug}`}
+                            className="mt-3 inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100"
+                          >
+                            Ver mas informacion
+                            <ArrowUpRight className="h-3 w-3" />
+                          </Link>
+                        )}
+                      <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/10">
+                        <div
+                          style={{
+                            width: `${product.progress}%`,
+                          }}
+                          className="h-full rounded-full bg-cyan-200"
+                        />
+                      </div>
+                    </div>
+                  </motion.article>
+                  )
+                }
+              )}
+            </div>
           </div>
-
+        ) : (
+          <motion.div
+            initial={{
+              opacity: 0,
+              y: 28,
+            }}
+            whileInView={{
+              opacity: 1,
+              y: 0,
+            }}
+            transition={{
+              duration: 0.75,
+            }}
+            viewport={{ once: true }}
+            className="mx-auto mt-16 max-w-2xl rounded-[32px] border border-white/10 bg-white/[0.035] p-8 text-center backdrop-blur-xl"
+          >
+            <Rocket className="mx-auto h-8 w-8 text-cyan-100" />
+            <h3 className="mt-6 text-3xl font-black text-white">
+              No hay lanzamientos proximos publicados
+            </h3>
+            <p className="mt-4 text-zinc-400">
+              Cuando un producto pase a preparacion de lanzamiento, aparecera
+              aqui sin mezclarse con los productos ya disponibles.
+            </p>
+          </motion.div>
         )}
-
-        {/* =================================================
-        BOTTOM INDICATORS
-        ================================================= */}
-
-        <div
-          className="
-            mt-28
-            flex
-            flex-wrap
-            items-center
-            justify-center
-            gap-6
-            text-center
-            text-[10px]
-            uppercase
-            tracking-[0.35em]
-            text-white/30
-          "
-        >
-
-          <span>Innovación</span>
-          <span>•</span>
-
-          <span>Wellness</span>
-          <span>•</span>
-
-          <span>AI Systems</span>
-          <span>•</span>
-
-          <span>Expansión Global</span>
-
-        </div>
-
       </div>
-
     </section>
   )
 }

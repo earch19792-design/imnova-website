@@ -60,13 +60,9 @@ function getPurchaseHref(
 ) {
 
   return (
-    product.direct_url ||
-    product.amazon_url ||
-    product.tiktok_url ||
-    product.ebay_url ||
     (
       product.slug
-        ? `/store/${product.slug}`
+        ? `/store#product-${product.slug}`
         : "/store"
     )
   )
@@ -295,7 +291,10 @@ export function PromoBanner() {
     formatPrice(activeProduct)
 
   return (
-    <section className="relative overflow-hidden py-36 md:py-44">
+    <section
+      id="available-now"
+      className="relative overflow-hidden py-36 md:py-44"
+    >
 
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-b from-black via-[#050505] to-black" />
@@ -347,7 +346,7 @@ export function PromoBanner() {
                 text-amber-300
               "
             >
-              Lanzamientos disponibles
+              Producto disponible
             </span>
 
           </div>
@@ -365,7 +364,7 @@ export function PromoBanner() {
           >
             Ya disponible
             <span className="block bg-gradient-to-r from-amber-300 via-orange-400 to-orange-500 bg-clip-text text-transparent">
-              promoción de lanzamiento
+              en el mercado
             </span>
           </h2>
 
@@ -378,8 +377,8 @@ export function PromoBanner() {
               text-zinc-300
             "
           >
-            Productos IMNOVA listos para comprar, con beneficios de lanzamiento
-            por tiempo limitado o hasta agotar existencias.
+            Productos IMNOVA que ya pasaron a etapa comercial. Esta seccion
+            resume disponibilidad, propuesta de valor y estado de lanzamiento.
           </p>
 
         </motion.div>
@@ -631,7 +630,7 @@ export function PromoBanner() {
                     hover:shadow-[0_0_90px_rgba(251,191,36,0.40)]
                   "
                 >
-                  Comprar ahora
+                  Ver en tienda
                   <ArrowUpRight className="h-4 w-4" />
                 </Link>
 

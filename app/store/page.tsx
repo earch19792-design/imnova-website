@@ -39,7 +39,7 @@ export default function StorePage() {
   const [products, setProducts] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [openCart, setOpenCart] = useState(false)
-    useEffect(() => {
+  useEffect(() => {
     async function loadProducts() {
       const data = await getProducts()
       console.log("STORE PRODUCTS:", data)
@@ -50,6 +50,26 @@ export default function StorePage() {
 
     loadProducts()
   }, [])
+
+  useEffect(() => {
+    if (
+      loading ||
+      typeof window === "undefined" ||
+      !window.location.hash
+    ) {
+      return
+    }
+
+    const target =
+      document.querySelector(
+        window.location.hash
+      )
+
+    target?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    })
+  }, [loading, products])
 
   /* =================================================
   CART FUNCTIONS
@@ -433,9 +453,15 @@ if (loading) {
 
           <div
             key={product.id}
+            id={
+              product.slug
+                ? `product-${product.slug}`
+                : `product-${product.id}`
+            }
             className="
               group
               relative
+              scroll-mt-28
               overflow-hidden
               rounded-[40px]
               border

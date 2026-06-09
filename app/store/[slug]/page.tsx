@@ -231,11 +231,57 @@ export default async function ProductPage({
   const experience =
     productExperiences[
       product.slug
-    ]
+    ] || {
+      badge:
+        product.category ||
+        "PRODUCTO IMNOVA",
 
-  if (!experience) {
-    notFound()
-  }
+      headline:
+        product.description ||
+        "Producto funcional IMNOVA disenado para bienestar, nutricion inteligente y rendimiento diario.",
+
+      whyTitle:
+        "Disenado para aportar valor real al cliente.",
+
+      whyText:
+        product.description ||
+        "Una experiencia premium creada para integrarse a rutinas modernas de bienestar y consumo inteligente.",
+
+      experienceTitle:
+        "Beneficios principales.",
+
+      cards:
+        product.bullets?.slice(0, 3).map(
+          (
+            bullet: string,
+            index: number
+          ) => ({
+            title:
+              `Beneficio ${index + 1}`,
+            text:
+              bullet,
+          })
+        ) || [
+          {
+            title:
+              "Bienestar",
+            text:
+              "Creado para apoyar habitos diarios mas inteligentes.",
+          },
+          {
+            title:
+              "Funcionalidad",
+            text:
+              "Pensado para entregar beneficios practicos al cliente.",
+          },
+          {
+            title:
+              "Experiencia premium",
+            text:
+              "Desarrollado bajo el ecosistema IMNOVA.",
+          },
+        ],
+    }
 
   return (
 

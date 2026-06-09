@@ -170,9 +170,9 @@ export function GlobalSection() {
         const commercialStateIds =
           (states as ProductState[])
             .filter((state) =>
-              state.name.includes(
-                "Comercialización"
-              )
+              state.name
+                .toLowerCase()
+                .includes("comercial")
             )
             .map(
               (state) =>
@@ -521,6 +521,7 @@ export function GlobalSection() {
 
   return (
     <section
+      id="where-to-buy"
       ref={ref}
       className="
         relative
@@ -560,20 +561,20 @@ export function GlobalSection() {
           <div className="inline-flex items-center gap-3 rounded-full border border-cyan-300/20 bg-cyan-300/[0.06] px-5 py-3 backdrop-blur-2xl">
             <Rocket className="h-4 w-4 text-cyan-300" />
             <span className="text-xs uppercase tracking-[0.35em] text-cyan-200">
-              Distribution command center
+              Canales de compra
             </span>
           </div>
 
           <h2 className="mx-auto mt-10 max-w-6xl text-5xl font-black leading-[1.02] tracking-[-0.04em] text-white sm:text-6xl lg:text-7xl">
-            Dónde se vende
+            Donde comprar
             <span className="block bg-gradient-to-r from-cyan-200 via-cyan-400 to-white bg-clip-text text-transparent">
-              cada producto IMNOVA
+              productos IMNOVA
             </span>
           </h2>
 
           <p className="mx-auto mt-9 max-w-4xl text-xl leading-9 text-zinc-300">
-            Un menú operativo para consultar por país, ciudad y canal comercial
-            los marketplaces, mercados y establecimientos activos.
+            Consulta la tienda oficial, marketplaces y puntos comerciales
+            configurados para cada producto disponible.
           </p>
 
         </motion.div>
@@ -612,7 +613,7 @@ export function GlobalSection() {
             <aside className="border-b border-cyan-300/10 bg-white/[0.025] p-6 lg:border-b-0 lg:border-r">
 
               <p className="text-[10px] uppercase tracking-[0.30em] text-cyan-200/60">
-                Navegación comercial
+                Menu de compra
               </p>
 
               <div className="mt-7 grid gap-4">
