@@ -11,7 +11,6 @@ import {
   Menu,
   X,
   ChevronDown,
-  Sparkles,
 } from "lucide-react"
 
 import Link from "next/link"
@@ -92,13 +91,13 @@ export function Navigation() {
       }}
       className="
         fixed
-        top-5
+        top-4
         left-1/2
         z-50
         w-full
-        max-w-[1680px]
+        max-w-[1440px]
         -translate-x-1/2
-        px-4
+        px-6
       "
     >
 
@@ -106,7 +105,7 @@ export function Navigation() {
         className={`
           relative
           overflow-hidden
-          rounded-[30px]
+          rounded-[28px]
           border
           border-white/10
           transition-all
@@ -165,11 +164,11 @@ export function Navigation() {
             flex
             items-center
             justify-between
-            gap-8
+            gap-6
             px-4
-            py-4
-            md:px-6
-            lg:px-8
+            py-3
+            md:px-5
+            lg:px-6
           "
         >
 
@@ -218,8 +217,8 @@ export function Navigation() {
                     className="
                       relative
                       flex
-                      h-11
-                      w-11
+                      h-10
+                      w-10
                       items-center
                       justify-center
                       rounded-2xl
@@ -232,7 +231,7 @@ export function Navigation() {
 
                     <span
                       className="
-                        text-lg
+                        text-base
                         font-black
                         text-white
                       "
@@ -254,7 +253,7 @@ export function Navigation() {
 
                   <h1
                     className="
-                      text-[1.15rem]
+                      text-[1.05rem]
                       font-black
                       tracking-[-0.045em]
                       text-white
@@ -272,10 +271,11 @@ export function Navigation() {
                       uppercase
                       tracking-[0.30em]
                       text-white/45
+                      xl:block
                     "
                   >
 
-                    TECNOLOGÍA • NUTRICIÓN • BIENESTAR
+                    TECNOLOGÍA · NUTRICIÓN · BIENESTAR
 
                   </p>
 
@@ -291,18 +291,22 @@ export function Navigation() {
           CENTER NAVIGATION
           ========================================= */}
 
-          <nav className="hidden flex-1 items-center justify-center gap-4 md:flex xl:gap-7">
+          <nav className="hidden min-w-0 flex-1 items-center justify-center gap-4 md:flex xl:gap-6">
             {navItems.map((item) => (
               <Link
                 key={item.name}
                 href={item.href}
                 className="
-                  text-sm
+                  rounded-full
+                  px-2
+                  py-2
+                  text-xs
                   uppercase
-                  tracking-[0.14em]
+                  tracking-[0.13em]
                   text-white/70
                   transition-all
                   duration-300
+                  hover:bg-white/[0.04]
                   hover:text-white
                 "
               >
@@ -319,7 +323,7 @@ export function Navigation() {
           RIGHT
           ========================================= */}
 
-          <div className="flex shrink-0 items-center gap-3">
+          <div className="flex shrink-0 items-center gap-2">
 
             {/* =========================================
             TIENDA BUTTON
@@ -342,7 +346,7 @@ export function Navigation() {
                 py-3
                 text-[10px]
                 uppercase
-                tracking-[0.28em]
+                tracking-[0.22em]
                 font-medium
                 text-cyan-100
                 backdrop-blur-xl
@@ -363,6 +367,7 @@ export function Navigation() {
 
             <motion.button
               type="button"
+              aria-label="Abrir IMNOVA Labs"
               whileHover={{
                 scale: 1.02,
               }}
@@ -375,18 +380,18 @@ export function Navigation() {
                 z-50
                 flex
                 items-center
-                gap-2
+                gap-0
                 rounded-2xl
                 border
                 border-white/10
-                bg-white/[0.03]
+                bg-white/[0.015]
                 px-3
                 py-3
-                text-[10px]
+                text-[9px]
                 uppercase
                 tracking-[0.18em]
                 font-medium
-                text-white/70
+                text-white/45
                 backdrop-blur-xl
                 transition-all
                 duration-300
@@ -394,19 +399,11 @@ export function Navigation() {
                 hover:bg-white/[0.06]
                 hover:text-white
                 whitespace-nowrap
-                xl:px-4
-                xl:tracking-[0.28em]
               "
             >
 
-              <Sparkles className="h-4 w-4 shrink-0" />
-
-              <span className="hidden sm:block xl:hidden">
-                Labs
-              </span>
-
-              <span className="hidden xl:block">
-                IMNOVA LABS
+              <span>
+                Admin
               </span>
 
             </motion.button>
@@ -430,6 +427,7 @@ export function Navigation() {
               }
               className="
                 flex
+                md:hidden
                 items-center
                 gap-3
                 rounded-2xl

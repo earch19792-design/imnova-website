@@ -29,12 +29,23 @@ type Product = {
   image_url?: string
   category: string
   description?: string
+  distribution_channels?: DistributionChannel[]
 
   theme?: {
     border: string
     text: string
     bg: string
   }
+}
+
+type DistributionChannel = {
+  id: string
+  type: string
+  name: string
+  location: string
+  status: string
+  url?: string
+  note?: string
 }
 
 type ProductState = {
@@ -115,6 +126,26 @@ export function ProductCard({
     product.state_id || ""
   )
 
+  const createDistributionChannel =
+    (): DistributionChannel => ({
+      id: `${Date.now()}-${Math.random()
+        .toString(16)
+        .slice(2)}`,
+      type: "Marketplace",
+      name: "",
+      location: "",
+      status: "Planificado",
+      url: "",
+      note: "",
+    })
+
+  const [
+    distributionChannels,
+    setDistributionChannels,
+  ] = useState<DistributionChannel[]>(
+    product.distribution_channels || []
+  )
+
   useEffect(() => {
 
     setSelectedStateId(
@@ -122,6 +153,14 @@ export function ProductCard({
     )
 
   }, [product.state_id])
+
+  useEffect(() => {
+
+    setDistributionChannels(
+      product.distribution_channels || []
+    )
+
+  }, [product.distribution_channels])
 
   const selectedState =
     states.find(
@@ -134,6 +173,11 @@ export function ProductCard({
 
   const currentStatus =
     selectedState?.name || "Sin estado"
+
+  const isCommercial =
+    currentStatus.includes(
+      "Comercialización"
+    )
 
   const handleMouseMove =
     (
@@ -296,6 +340,88 @@ export function ProductCard({
             "No se pudo guardar el cambio.",
         })
 
+      }
+
+    }
+
+  const updateDistributionChannel =
+    (
+      id: string,
+      field: keyof DistributionChannel,
+      value: string
+    ) => {
+
+      setDistributionChannels(
+        channels =>
+          channels.map(
+            channel =>
+              channel.id === id
+                ? {
+                    ...channel,
+                    [field]: value,
+                  }
+                : channel
+          )
+      )
+
+    }
+
+  const removeDistributionChannel =
+    (id: string) => {
+
+      setDistributionChannels(
+        channels =>
+          channels.filter(
+            channel =>
+              channel.id !== id
+          )
+      )
+
+    }
+
+  const saveDistributionChannels =
+    async () => {
+
+      const cleanedChannels =
+        distributionChannels.filter(
+          channel =>
+            channel.name.trim() ||
+            channel.location.trim()
+        )
+
+      const result =
+        await updateProduct(
+          product.id,
+          {
+            distribution_channels:
+              cleanedChannels,
+          }
+        )
+
+      if (!result) {
+
+        toast({
+          title: "❌ Error",
+          description:
+            "No se pudo guardar la distribución. Verifica que exista la columna distribution_channels en Supabase.",
+        })
+
+        return
+
+      }
+
+      setDistributionChannels(
+        cleanedChannels
+      )
+
+      toast({
+        title: "✅ Distribución actualizada",
+        description:
+          "Los canales comerciales ya pueden mostrarse en la web.",
+      })
+
+      if (onUpdate) {
+        onUpdate()
       }
 
     }
@@ -586,6 +712,243 @@ export function ProductCard({
           </div>
 
         </div>
+
+        {isCommercial && (
+          <div
+            className="
+              mt-10
+              rounded-[28px]
+              border
+              border-cyan-400/15
+              bg-cyan-400/[0.035]
+              p-5
+            "
+          >
+
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div
+                  className="
+                    text-[10px]
+                    uppercase
+                    tracking-[0.30em]
+                    text-cyan-300/70
+                  "
+                >
+                  DISTRIBUCIÓN
+                </div>
+
+                <p className="mt-3 text-sm leading-6 text-white/60">
+                  Define dónde se comercializa este producto: países, mercados,
+                  establecimientos o marketplaces.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setDistributionChannels(
+                    channels => [
+                      ...channels,
+                      createDistributionChannel(),
+                    ]
+                  )
+                }
+                className="
+                  rounded-2xl
+                  border
+                  border-cyan-400/20
+                  bg-cyan-400/10
+                  px-4
+                  py-3
+                  text-xs
+                  font-semibold
+                  uppercase
+                  tracking-[0.18em]
+                  text-cyan-200
+                  transition-all
+                  duration-300
+                  hover:bg-cyan-400/20
+                "
+              >
+                + Canal
+              </button>
+            </div>
+
+            <div className="mt-6 space-y-5">
+              {distributionChannels.length === 0 && (
+                <div
+                  className="
+                    rounded-2xl
+                    border
+                    border-white/10
+                    bg-black/20
+                    p-5
+                    text-sm
+                    leading-6
+                    text-white/45
+                  "
+                >
+                  Aún no hay canales definidos para este producto.
+                </div>
+              )}
+
+              {distributionChannels.map(
+                channel => (
+                  <div
+                    key={channel.id}
+                    className="
+                      rounded-2xl
+                      border
+                      border-white/10
+                      bg-black/25
+                      p-4
+                    "
+                  >
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <select
+                        value={channel.type}
+                        onChange={(event) =>
+                          updateDistributionChannel(
+                            channel.id,
+                            "type",
+                            event.target.value
+                          )
+                        }
+                        className="rounded-xl border border-white/10 bg-black/60 p-3 text-sm text-white outline-none"
+                      >
+                        <option value="País">
+                          País
+                        </option>
+                        <option value="Mercado">
+                          Mercado
+                        </option>
+                        <option value="Establecimiento">
+                          Establecimiento
+                        </option>
+                        <option value="Marketplace">
+                          Marketplace
+                        </option>
+                      </select>
+
+                      <select
+                        value={channel.status}
+                        onChange={(event) =>
+                          updateDistributionChannel(
+                            channel.id,
+                            "status",
+                            event.target.value
+                          )
+                        }
+                        className="rounded-xl border border-white/10 bg-black/60 p-3 text-sm text-white outline-none"
+                      >
+                        <option value="Planificado">
+                          Planificado
+                        </option>
+                        <option value="En negociación">
+                          En negociación
+                        </option>
+                        <option value="Activo">
+                          Activo
+                        </option>
+                      </select>
+
+                      <input
+                        value={channel.name}
+                        onChange={(event) =>
+                          updateDistributionChannel(
+                            channel.id,
+                            "name",
+                            event.target.value
+                          )
+                        }
+                        placeholder="Nombre del canal"
+                        className="rounded-xl border border-white/10 bg-black/60 p-3 text-sm text-white outline-none placeholder:text-white/30"
+                      />
+
+                      <input
+                        value={channel.location}
+                        onChange={(event) =>
+                          updateDistributionChannel(
+                            channel.id,
+                            "location",
+                            event.target.value
+                          )
+                        }
+                        placeholder="País, ciudad o mercado"
+                        className="rounded-xl border border-white/10 bg-black/60 p-3 text-sm text-white outline-none placeholder:text-white/30"
+                      />
+
+                      <input
+                        value={channel.url || ""}
+                        onChange={(event) =>
+                          updateDistributionChannel(
+                            channel.id,
+                            "url",
+                            event.target.value
+                          )
+                        }
+                        placeholder="URL opcional"
+                        className="rounded-xl border border-white/10 bg-black/60 p-3 text-sm text-white outline-none placeholder:text-white/30 md:col-span-2"
+                      />
+
+                      <textarea
+                        value={channel.note || ""}
+                        onChange={(event) =>
+                          updateDistributionChannel(
+                            channel.id,
+                            "note",
+                            event.target.value
+                          )
+                        }
+                        placeholder="Nota comercial opcional"
+                        className="min-h-24 rounded-xl border border-white/10 bg-black/60 p-3 text-sm text-white outline-none placeholder:text-white/30 md:col-span-2"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        removeDistributionChannel(
+                          channel.id
+                        )
+                      }
+                      className="mt-3 text-xs uppercase tracking-[0.18em] text-red-300/70 transition-colors hover:text-red-200"
+                    >
+                      Eliminar canal
+                    </button>
+                  </div>
+                )
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={saveDistributionChannels}
+              className="
+                mt-6
+                w-full
+                rounded-2xl
+                border
+                border-cyan-400/20
+                bg-cyan-400/15
+                px-5
+                py-4
+                text-xs
+                font-semibold
+                uppercase
+                tracking-[0.18em]
+                text-cyan-100
+                transition-all
+                duration-300
+                hover:bg-cyan-400/25
+              "
+            >
+              Guardar distribución
+            </button>
+
+          </div>
+        )}
 
         <button
           onClick={saveChanges}

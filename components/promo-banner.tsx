@@ -1,557 +1,760 @@
 "use client"
 
-/* 
-================================================
-MENÚ PRINCIPAL
-SECCIÓN: PROMO BANNER
-COMPONENTE: PromoBanner
-ESTILO: ULTRA PREMIUM · CINEMÁTICO · WELLNESS TECH
-================================================
-*/
-
 import Link from "next/link"
+
 import { motion } from "framer-motion"
 
-export function PromoBanner() {
-  return (
-    <section className="relative overflow-hidden py-44 md:py-52">
+import {
+  useEffect,
+  useState,
+} from "react"
 
-      {/* =================================================
-      BACKGROUND ATMOSPHERE
-      ================================================= */}
+import {
+  ArrowUpRight,
+  Sparkles,
+} from "lucide-react"
+
+import {
+  getProducts,
+  getProductStates,
+} from "@/lib/products-service"
+
+import { supabase } from "@/lib/supabase"
+
+type Product = {
+  id: string
+  state_id: string | null
+  name: string
+  category?: string
+  description?: string
+  slug?: string
+  image?: string | null
+  image_url?: string | null
+  price?: number | string | null
+  currency?: string | null
+  direct_url?: string | null
+  amazon_url?: string | null
+  ebay_url?: string | null
+  tiktok_url?: string | null
+}
+
+type ProductState = {
+  id: string
+  name: string
+}
+
+function getProductImage(
+  product: Product
+) {
+
+  return (
+    product.image_url ||
+    product.image ||
+    "/placeholder.jpg"
+  )
+
+}
+
+function getPurchaseHref(
+  product: Product
+) {
+
+  return (
+    product.direct_url ||
+    product.amazon_url ||
+    product.tiktok_url ||
+    product.ebay_url ||
+    (
+      product.slug
+        ? `/store/${product.slug}`
+        : "/store"
+    )
+  )
+
+}
+
+function isExternalUrl(
+  href: string
+) {
+
+  return href.startsWith("http")
+
+}
+
+function getLaunchBenefit(
+  product: Product
+) {
+
+  const text =
+    [
+      product.name,
+      product.category,
+      product.description,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+
+  if (
+    text.includes("coffee") ||
+    text.includes("café") ||
+    text.includes("cafe")
+  ) {
+
+    return "Energía limpia, enfoque mental y nutrición funcional para acompañar rutinas de alto rendimiento."
+
+  }
+
+  if (
+    text.includes("pancake") ||
+    text.includes("waffle") ||
+    text.includes("nutri") ||
+    text.includes("prote")
+  ) {
+
+    return "Nutrición práctica para apoyar saciedad, energía diaria y mejores hábitos desde la primera comida."
+
+  }
+
+  if (
+    text.includes("wellness") ||
+    text.includes("bienestar")
+  ) {
+
+    return "Una experiencia premium creada para elevar equilibrio, vitalidad y bienestar cotidiano."
+
+  }
+
+  return (
+    product.description ||
+    "Innovación funcional lista para integrarse a una rutina más inteligente, práctica y premium."
+  )
+
+}
+
+function formatPrice(
+  product: Product
+) {
+
+  if (
+    product.price === null ||
+    product.price === undefined ||
+    product.price === ""
+  ) {
+
+    return null
+
+  }
+
+  const currency =
+    product.currency || "$"
+
+  return `${currency}${product.price}`
+
+}
+
+export function PromoBanner() {
+
+  const [
+    products,
+    setProducts,
+  ] = useState<Product[]>([])
+
+  const [
+    activeIndex,
+    setActiveIndex,
+  ] = useState(0)
+
+  useEffect(() => {
+
+    async function loadProducts() {
+
+      const productData =
+        await getProducts()
+
+      const states =
+        await getProductStates()
+
+      const stateMap =
+        new Map(
+          (states as ProductState[]).map(
+            (state) => [
+              state.id,
+              state.name,
+            ]
+          )
+        )
+
+      const availableProducts =
+        (productData as Product[]).filter(
+          (product) => {
+
+            const stateName =
+              product.state_id
+                ? stateMap.get(
+                    product.state_id
+                  )
+                : ""
+
+            return Boolean(
+              stateName?.includes(
+                "Disponible"
+              )
+            )
+
+          }
+        )
+
+      setProducts(availableProducts)
+      setActiveIndex(0)
+
+    }
+
+    loadProducts()
+
+    const channel =
+      supabase
+        .channel(
+          "promo-available-products"
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "products",
+          },
+          loadProducts
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table:
+              "product_states",
+          },
+          loadProducts
+        )
+        .subscribe()
+
+    return () => {
+
+      supabase.removeChannel(channel)
+
+    }
+
+  }, [])
+
+  useEffect(() => {
+
+    if (products.length <= 1) {
+
+      return
+
+    }
+
+    const interval =
+      window.setInterval(
+        () => {
+
+          setActiveIndex(
+            (current) =>
+              (current + 1) %
+              products.length
+          )
+
+        },
+        3000
+      )
+
+    return () =>
+      window.clearInterval(interval)
+
+  }, [products.length])
+
+  if (products.length === 0) {
+
+    return null
+
+  }
+
+  const activeProduct =
+    products[
+      activeIndex %
+        products.length
+    ]
+
+  const purchaseHref =
+    getPurchaseHref(activeProduct)
+
+  const isExternal =
+    isExternalUrl(purchaseHref)
+
+  const activePrice =
+    formatPrice(activeProduct)
+
+  return (
+    <section className="relative overflow-hidden py-36 md:py-44">
 
       <div className="absolute inset-0 overflow-hidden">
-
-        {/* Main Gradient */}
         <div className="absolute inset-0 bg-gradient-to-b from-black via-[#050505] to-black" />
-
-        {/* Ambient Glow Left */}
-        <div className="absolute top-0 left-0 h-[700px] w-[700px] rounded-full bg-amber-500/10 blur-[180px]" />
-
-        {/* Ambient Glow Right */}
+        <div className="absolute left-0 top-0 h-[700px] w-[700px] rounded-full bg-amber-500/10 blur-[180px]" />
         <div className="absolute bottom-0 right-0 h-[700px] w-[700px] rounded-full bg-orange-500/10 blur-[180px]" />
-
-        {/* Center Glow */}
-        <div className="absolute left-1/2 top-1/2 h-[500px] w-[500px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-400/5 blur-[140px]" />
-
-        {/* Grid */}
         <div className="absolute inset-0 opacity-[0.02] bg-[linear-gradient(rgba(251,191,36,0.10)_1px,transparent_1px),linear-gradient(90deg,rgba(251,191,36,0.10)_1px,transparent_1px)] bg-[size:90px_90px]" />
-
       </div>
 
-      {/* =================================================
-      MAIN CONTAINER
-      ================================================= */}
+      <div className="relative z-10 mx-auto max-w-7xl px-6">
 
-      <div className="relative z-10 mx-6 overflow-hidden rounded-[52px] border border-white/10 bg-black/40 shadow-[0_30px_140px_rgba(0,0,0,0.45)] backdrop-blur-3xl">
+        <motion.div
+          initial={{
+            opacity: 0,
+            y: 36,
+          }}
+          whileInView={{
+            opacity: 1,
+            y: 0,
+          }}
+          transition={{
+            duration: 0.9,
+          }}
+          viewport={{ once: true }}
+          className="mb-14 max-w-4xl"
+        >
 
-        {/* Gradient Overlay */}
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.18),transparent_35%),radial-gradient(circle_at_bottom_right,rgba(249,115,22,0.14),transparent_40%)]" />
-
-        {/* Overlay */}
-        <div className="absolute inset-0 bg-gradient-to-r from-[#050505]/95 via-[#0a0704]/80 to-[#050505]/95" />
-
-        {/* Noise */}
-        <div className="absolute inset-0 opacity-[0.02] bg-[url('/noise.png')]" />
-
-        {/* Floating Glow */}
-        <div className="absolute top-10 left-10 h-72 w-72 rounded-full bg-amber-400/10 blur-[120px]" />
-
-        <div className="absolute bottom-10 right-10 h-72 w-72 rounded-full bg-orange-500/10 blur-[120px]" />
-
-        {/* =================================================
-        CONTENT
-        ================================================= */}
-
-        <div className="relative z-10 mx-auto flex max-w-7xl flex-col gap-16 p-8 md:p-12 lg:flex-row lg:items-center lg:justify-between">
-
-          {/* =================================================
-          LEFT SIDE
-          ================================================= */}
-
-          <motion.div
-            initial={{
-              opacity: 0,
-              y: 40,
-            }}
-            whileInView={{
-              opacity: 1,
-              y: 0,
-            }}
-            transition={{
-              duration: 0.9,
-            }}
-            viewport={{ once: true }}
-            className="max-w-3xl"
+          <div
+            className="
+              inline-flex
+              items-center
+              gap-3
+              rounded-full
+              border
+              border-amber-400/30
+              bg-amber-400/10
+              px-5
+              py-3
+              backdrop-blur-xl
+            "
           >
 
-            {/* Badge */}
-            <div
+            <Sparkles className="h-4 w-4 text-amber-300" />
+
+            <span
               className="
-                inline-flex
-                items-center
-                gap-3
-                rounded-full
-                border
-                border-amber-400/30
-                bg-amber-400/10
-                px-5
-                py-3
-                backdrop-blur-xl
+                text-xs
+                uppercase
+                tracking-[0.38em]
+                text-amber-300
               "
             >
+              Lanzamientos disponibles
+            </span>
 
-              <span className="text-amber-300">
-                ✦
-              </span>
+          </div>
 
-              <span
-                className="
-                  text-xs
-                  uppercase
-                  tracking-[0.45em]
-                  text-amber-300
-                "
-              >
+          <h2
+            className="
+              mt-10
+              text-5xl
+              font-black
+              leading-[0.95]
+              tracking-[-0.05em]
+              text-white
+              sm:text-7xl
+            "
+          >
+            Ya disponible
+            <span className="block bg-gradient-to-r from-amber-300 via-orange-400 to-orange-500 bg-clip-text text-transparent">
+              promoción de lanzamiento
+            </span>
+          </h2>
 
-                NUEVO LANZAMIENTO
+          <p
+            className="
+              mt-8
+              max-w-3xl
+              text-xl
+              leading-9
+              text-zinc-300
+            "
+          >
+            Productos IMNOVA listos para comprar, con beneficios de lanzamiento
+            por tiempo limitado o hasta agotar existencias.
+          </p>
 
-              </span>
+        </motion.div>
 
-            </div>
+        <motion.article
+          key={activeProduct.id}
+          initial={{
+            opacity: 0,
+            y: 36,
+            filter: "blur(12px)",
+          }}
+          animate={{
+            opacity: 1,
+            y: 0,
+            filter: "blur(0px)",
+          }}
+          transition={{
+            duration: 0.7,
+            ease: [0.22, 1, 0.36, 1],
+          }}
+          className="
+            group
+            relative
+            overflow-hidden
+            rounded-[42px]
+            border
+            border-amber-300/15
+            bg-black/45
+            p-6
+            shadow-[0_30px_140px_rgba(0,0,0,0.42)]
+            backdrop-blur-2xl
+            md:p-8
+          "
+        >
 
-            {/* Headline */}
-            <h2
-              className="
-                mt-10
-                text-5xl
-                font-black
-                leading-[0.95]
-                tracking-[-0.05em]
-                text-white
-                sm:text-7xl
-              "
-            >
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.18),transparent_36%),radial-gradient(circle_at_bottom_right,rgba(249,115,22,0.16),transparent_42%)]" />
+          <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/70 to-black/85" />
+          <div className="absolute inset-0 opacity-[0.02] bg-[url('/noise.png')]" />
 
-              Presentamos oficialmente{" "}
+          <div
+            className="
+              relative
+              z-10
+              grid
+              gap-10
+              lg:grid-cols-[1.05fr_0.95fr]
+              lg:items-center
+            "
+          >
 
-              <span className="block bg-gradient-to-r from-amber-300 via-orange-400 to-orange-500 bg-clip-text text-transparent">
+            <div>
 
-                MASH COFFEE+
+              <div className="flex flex-wrap items-center gap-3">
 
-              </span>
-
-            </h2>
-
-            {/* Description */}
-            <p
-              className="
-                mt-10
-                max-w-2xl
-                text-xl
-                leading-9
-                text-zinc-300
-              "
-            >
-
-              Una nueva generación de café funcional
-              diseñada para potenciar energía limpia,
-              enfoque mental y rendimiento moderno
-              mediante nutrición inteligente.
-
-            </p>
-
-            {/* =================================================
-            PROMO BOX
-            ================================================= */}
-
-            <motion.div
-              whileHover={{
-                y: -6,
-              }}
-              className="
-                mt-10
-                flex
-                flex-col
-                gap-6
-                rounded-[36px]
-                border
-                border-amber-400/20
-                bg-black/40
-                p-6
-                shadow-[0_0_80px_rgba(251,191,36,0.08)]
-                backdrop-blur-2xl
-                sm:flex-row
-                sm:items-center
-                sm:justify-between
-              "
-            >
-
-              {/* Left */}
-              <div>
-
-                <p
+                <span
                   className="
-                    text-xs
+                    rounded-full
+                    border
+                    border-amber-300/25
+                    bg-amber-300/10
+                    px-4
+                    py-2
+                    text-[10px]
                     uppercase
-                    tracking-[0.35em]
-                    text-amber-300
+                    tracking-[0.26em]
+                    text-amber-200
                   "
                 >
+                  Disponible ahora
+                </span>
 
-                  PROMOCIÓN DE LANZAMIENTO
-
-                </p>
-
-                <h3
+                <span
                   className="
-                    mt-3
-                    text-5xl
+                    rounded-full
+                    bg-gradient-to-r
+                    from-amber-300
+                    to-orange-500
+                    px-4
+                    py-2
+                    text-[10px]
                     font-black
-                    tracking-[-0.04em]
-                    text-white
+                    uppercase
+                    tracking-[0.16em]
+                    text-black
                   "
                 >
-
-                  10% · 15% OFF
-
-                </h3>
-
-                <p className="mt-2 text-sm text-zinc-400">
-
-                  Disponible por tiempo limitado
-                  o hasta agotar existencias.
-
-                </p>
+                  Launch offer
+                </span>
 
               </div>
 
-              {/* Price */}
+              <p
+                className="
+                  mt-8
+                  text-[10px]
+                  uppercase
+                  tracking-[0.34em]
+                  text-amber-200/60
+                "
+              >
+                {activeProduct.category || "IMNOVA Launch"}
+              </p>
+
+              <h3
+                className="
+                  mt-4
+                  text-5xl
+                  font-black
+                  leading-[0.92]
+                  tracking-[-0.055em]
+                  text-white
+                  md:text-7xl
+                "
+              >
+                {activeProduct.name}
+              </h3>
+
+              <p
+                className="
+                  mt-7
+                  max-w-2xl
+                  text-xl
+                  leading-9
+                  text-zinc-300
+                "
+              >
+                {getLaunchBenefit(activeProduct)}
+              </p>
+
               <div
                 className="
-                  rounded-[28px]
-                  border
-                  border-white/10
-                  bg-black/40
-                  px-6
-                  py-5
-                  text-center
-                  backdrop-blur-xl
+                  mt-9
+                  grid
+                  gap-4
+                  md:grid-cols-[1fr_auto]
+                  md:items-stretch
                 "
               >
 
-                <p className="text-sm text-zinc-400">
-                  Desde
-                </p>
-
-                <p
+                <div
                   className="
-                    mt-1
-                    text-5xl
-                    font-black
-                    tracking-[-0.04em]
-                    text-amber-300
+                    rounded-[30px]
+                    border
+                    border-amber-300/15
+                    bg-black/35
+                    p-6
                   "
                 >
 
-                  $17.98
+                  <p
+                    className="
+                      text-[10px]
+                      uppercase
+                      tracking-[0.30em]
+                      text-amber-300
+                    "
+                  >
+                    Promoción de lanzamiento
+                  </p>
 
-                </p>
+                  <p
+                    className="
+                      mt-3
+                      text-5xl
+                      font-black
+                      leading-none
+                      tracking-[-0.04em]
+                      text-white
+                    "
+                  >
+                    10% - 15% OFF
+                  </p>
 
-                <p className="mt-1 text-xs text-zinc-500">
+                  <p className="mt-4 text-sm leading-relaxed text-zinc-400">
+                    Oferta por tiempo limitado o hasta agotar existencias.
+                  </p>
 
-                  Pack de 6 latas
+                </div>
 
-                </p>
+                {activePrice && (
+                  <div
+                    className="
+                      flex
+                      min-w-[190px]
+                      flex-col
+                      justify-center
+                      rounded-[30px]
+                      border
+                      border-white/10
+                      bg-black/35
+                      p-6
+                      text-center
+                    "
+                  >
+                    <span className="text-sm text-zinc-400">
+                      Desde
+                    </span>
+                    <span className="mt-1 text-4xl font-black tracking-[-0.04em] text-amber-300">
+                      {activePrice}
+                    </span>
+                  </div>
+                )}
 
               </div>
 
-            </motion.div>
-
-            {/* =================================================
-            CTA BUTTONS
-            ================================================= */}
-
-            <div className="mt-10 flex flex-col gap-5 sm:flex-row">
-
-              {/* Primary CTA */}
-              <motion.div
-                whileHover={{
-                  scale: 1.03,
-                  y: -3,
-                }}
+              <div
+                className="
+                  mt-9
+                  flex
+                  flex-col
+                  gap-4
+                  sm:flex-row
+                  sm:items-center
+                "
               >
 
                 <Link
-                  href="/store"
+                  href={purchaseHref}
+                  target={
+                    isExternal
+                      ? "_blank"
+                      : undefined
+                  }
+                  rel={
+                    isExternal
+                      ? "noreferrer"
+                      : undefined
+                  }
                   className="
                     inline-flex
                     items-center
                     justify-center
+                    gap-3
                     rounded-3xl
                     bg-gradient-to-r
                     from-amber-400
                     to-orange-500
-                    px-9
+                    px-8
                     py-5
                     text-sm
                     font-black
                     uppercase
-                    tracking-[0.2em]
+                    tracking-[0.18em]
                     text-black
-                    shadow-[0_0_60px_rgba(251,191,36,0.30)]
+                    shadow-[0_0_60px_rgba(251,191,36,0.25)]
                     transition-all
                     duration-500
-                    hover:shadow-[0_0_90px_rgba(251,191,36,0.45)]
+                    hover:scale-[1.02]
+                    hover:shadow-[0_0_90px_rgba(251,191,36,0.40)]
                   "
                 >
-
-                  Ir a la Tienda →
-
+                  Comprar ahora
+                  <ArrowUpRight className="h-4 w-4" />
                 </Link>
 
-              </motion.div>
-
-              {/* Secondary CTA */}
-              <div
-                className="
-                  inline-flex
-                  items-center
-                  justify-center
-                  rounded-3xl
-                  border
-                  border-amber-400/20
-                  bg-black/30
-                  px-7
-                  py-5
-                  text-sm
-                  font-semibold
-                  uppercase
-                  tracking-[0.18em]
-                  text-amber-200
-                  backdrop-blur-xl
-                "
-              >
-
-                10% OFF 6 PACK · 15% OFF 12 PACK
+                <div
+                  className="
+                    rounded-3xl
+                    border
+                    border-amber-300/15
+                    bg-amber-300/[0.05]
+                    px-6
+                    py-4
+                    text-xs
+                    font-semibold
+                    uppercase
+                    tracking-[0.16em]
+                    text-amber-100/80
+                  "
+                >
+                  Lanzamiento activo
+                </div>
 
               </div>
 
             </div>
 
-            {/* =================================================
-            BENEFITS
-            ================================================= */}
+            <div
+              className="
+                relative
+                min-h-[420px]
+                overflow-hidden
+                rounded-[34px]
+                border
+                border-white/10
+                bg-black/45
+                p-8
+              "
+            >
 
-            <div className="mt-10 flex flex-wrap gap-4">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(251,191,36,0.18),transparent_62%)]" />
 
-              {[
-                "✓ Energía limpia",
-                "✓ Zero Azúcar",
-                "✓ Enfoque y rendimiento",
-                "✓ Colágeno Marino",
-                "✓ Vitaminas esenciales",
-              ].map((item) => (
+              <motion.img
+                key={getProductImage(activeProduct)}
+                src={getProductImage(activeProduct)}
+                alt={activeProduct.name}
+                initial={{
+                  opacity: 0,
+                  scale: 0.92,
+                  y: 18,
+                }}
+                animate={{
+                  opacity: 1,
+                  scale: 1,
+                  y: 0,
+                }}
+                transition={{
+                  duration: 0.7,
+                }}
+                className="
+                  relative
+                  z-10
+                  h-full
+                  min-h-[360px]
+                  w-full
+                  object-contain
+                  drop-shadow-[0_0_90px_rgba(255,140,0,0.32)]
+                "
+              />
 
-                <motion.span
-                  key={item}
-                  whileHover={{
-                    y: -3,
-                  }}
-                  className="
+            </div>
+
+          </div>
+
+          {products.length > 1 && (
+
+            <div
+              className="
+                relative
+                z-10
+                mt-8
+                flex
+                flex-wrap
+                items-center
+                justify-center
+                gap-3
+              "
+            >
+
+              {products.map(
+                (product, index) => (
+
+                <button
+                  key={product.id}
+                  type="button"
+                  onClick={() =>
+                    setActiveIndex(index)
+                  }
+                  aria-label={`Ver lanzamiento ${product.name}`}
+                  className={`
+                    h-2.5
                     rounded-full
-                    border
-                    border-white/10
-                    bg-white/[0.04]
-                    px-5
-                    py-3
-                    text-sm
-                    text-zinc-200
-                    backdrop-blur-xl
                     transition-all
                     duration-300
-                    hover:border-amber-400/20
-                  "
-                >
-
-                  {item}
-
-                </motion.span>
+                    ${
+                      index === activeIndex
+                        ? "w-10 bg-amber-300"
+                        : "w-2.5 bg-white/20 hover:bg-white/40"
+                    }
+                  `}
+                />
 
               ))}
 
             </div>
 
-            {/* =================================================
-            TRUST INDICATORS
-            ================================================= */}
+          )}
 
-            <div
-              className="
-                mt-10
-                flex
-                flex-wrap
-                gap-6
-                text-xs
-                uppercase
-                tracking-[0.3em]
-                text-zinc-500
-              "
-            >
-
-              <span>Envío Internacional</span>
-              <span>•</span>
-
-              <span>Stock Limitado</span>
-              <span>•</span>
-
-              <span>Lanzamiento Oficial</span>
-
-            </div>
-
-          </motion.div>
-
-          {/* =================================================
-          RIGHT SIDE MOCKUPS
-          ================================================= */}
-
-          <motion.div
-            initial={{
-              opacity: 0,
-              scale: 0.92,
-            }}
-            whileInView={{
-              opacity: 1,
-              scale: 1,
-            }}
-            transition={{
-              duration: 1,
-            }}
-            viewport={{ once: true }}
-            className="
-              relative
-              flex
-              items-end
-              justify-center
-              gap-6
-              lg:w-[55%]
-            "
-          >
-
-            {/* LEFT MOCKUP */}
-            <motion.div
-              whileHover={{
-                y: -8,
-                scale: 1.03,
-              }}
-              className="relative translate-y-4"
-            >
-
-              {/* Discount Badge */}
-              <div
-                className="
-                  absolute
-                  right-0
-                  top-4
-                  z-20
-                  rounded-full
-                  border
-                  border-white/10
-                  bg-amber-400
-                  px-5
-                  py-2
-                  text-sm
-                  font-black
-                  text-black
-                  backdrop-blur-xl
-                  shadow-[0_0_40px_rgba(251,191,36,0.35)]
-                "
-              >
-
-                10% OFF
-
-              </div>
-
-              {/* Glow */}
-              <div className="absolute inset-0 rounded-full bg-amber-400/10 blur-[80px]" />
-
-              {/* Image */}
-              <img
-                src="/images/mash-6pack.png"
-                alt="Mash Coffee 6 Pack"
-                className="
-                  relative
-                  z-10
-                  w-[270px]
-                  drop-shadow-[0_0_60px_rgba(255,140,0,0.30)]
-                  transition-all
-                  duration-700
-                "
-              />
-
-            </motion.div>
-
-            {/* RIGHT MOCKUP */}
-            <motion.div
-              whileHover={{
-                y: -8,
-                scale: 1.03,
-              }}
-              className="relative -translate-y-4"
-            >
-
-              {/* Discount Badge */}
-              <div
-                className="
-                  absolute
-                  right-0
-                  top-4
-                  z-20
-                  rounded-full
-                  border
-                  border-white/10
-                  bg-orange-500
-                  px-5
-                  py-2
-                  text-sm
-                  font-black
-                  text-black
-                  backdrop-blur-xl
-                  shadow-[0_0_40px_rgba(249,115,22,0.35)]
-                "
-              >
-
-                15% OFF
-
-              </div>
-
-              {/* Glow */}
-              <div className="absolute inset-0 rounded-full bg-orange-500/10 blur-[90px]" />
-
-              {/* Image */}
-              <img
-                src="/images/mash-12pack.png"
-                alt="Mash Coffee 12 Pack"
-                className="
-                  relative
-                  z-10
-                  w-[360px]
-                  drop-shadow-[0_0_80px_rgba(255,140,0,0.35)]
-                  transition-all
-                  duration-700
-                "
-              />
-
-            </motion.div>
-
-          </motion.div>
-
-        </div>
+        </motion.article>
 
       </div>
 
     </section>
   )
+
 }
 
 export default PromoBanner

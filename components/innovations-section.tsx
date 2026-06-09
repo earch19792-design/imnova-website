@@ -29,12 +29,111 @@ import {
   useState,
 } from "react"
 
-import { getProducts } from "@/lib/products-service"
+import {
+  getProducts,
+  getProductStates,
+} from "@/lib/products-service"
+
+import { supabase } from "@/lib/supabase"
+
+type Product = {
+  id: string
+  state_id: string | null
+  name: string
+  category?: string
+  description?: string
+  slug?: string
+  image_url?: string | null
+}
+
+type ProductState = {
+  id: string
+  name: string
+}
+
+const initialVisibleItems = 9
+const visibleItemsStep = 9
+
+function getDevelopmentBenefit(
+  product: Product
+) {
+
+  const text =
+    [
+      product.name,
+      product.category,
+      product.description,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+
+  if (
+    text.includes("coffee") ||
+    text.includes("café") ||
+    text.includes("cafe")
+  ) {
+
+    return "Creado para acompañar enfoque, energía limpia y rendimiento diario, integrando nutrición funcional en una experiencia práctica y moderna."
+
+  }
+
+  if (
+    text.includes("pancake") ||
+    text.includes("waffle") ||
+    text.includes("nutri") ||
+    text.includes("prote")
+  ) {
+
+    return "Pensado para nutrir mejor cada rutina, con una opción práctica que apoya saciedad, energía y bienestar sin complicar el día."
+
+  }
+
+  if (
+    text.includes("wellness") ||
+    text.includes("bienestar")
+  ) {
+
+    return "Diseñado para elevar hábitos cotidianos con una experiencia premium enfocada en equilibrio, vitalidad y bienestar sostenible."
+
+  }
+
+  if (
+    text.includes("ai") ||
+    text.includes("ia") ||
+    text.includes("tech") ||
+    text.includes("tecnolog")
+  ) {
+
+    return "Desarrollado para simplificar decisiones, potenciar productividad y conectar tecnología inteligente con beneficios reales para la vida diaria."
+
+  }
+
+  return "Diseñado para aportar valor real al bienestar humano, combinando funcionalidad, experiencia premium e innovación lista para escalar."
+
+}
 
 export function InnovationsSection() {
 
-  const [products, setProducts] =
-    useState<any[]>([])
+  const [
+    commercialProducts,
+    setCommercialProducts,
+  ] = useState<Product[]>([])
+
+  const [
+    developmentProducts,
+    setDevelopmentProducts,
+  ] = useState<Product[]>([])
+
+  const [
+    upcomingSlots,
+    setUpcomingSlots,
+  ] = useState<number[]>([])
+
+  const [
+    visibleItems,
+    setVisibleItems,
+  ] = useState(initialVisibleItems)
 
   /* =================================================
   MOUSE REACTIVE LIGHTING
@@ -72,6 +171,46 @@ export function InnovationsSection() {
       ["45%", "55%"]
     )
 
+  const totalInnovationItems =
+    commercialProducts.length +
+    developmentProducts.length +
+    upcomingSlots.length
+
+  const visibleCommercialProducts =
+    commercialProducts.slice(
+      0,
+      visibleItems
+    )
+
+  const remainingAfterCommercial =
+    Math.max(
+      visibleItems -
+        visibleCommercialProducts.length,
+      0
+    )
+
+  const visibleDevelopmentProducts =
+    developmentProducts.slice(
+      0,
+      remainingAfterCommercial
+    )
+
+  const remainingAfterDevelopment =
+    Math.max(
+      remainingAfterCommercial -
+        visibleDevelopmentProducts.length,
+      0
+    )
+
+  const visibleUpcomingSlots =
+    upcomingSlots.slice(
+      0,
+      remainingAfterDevelopment
+    )
+
+  const hasMoreItems =
+    visibleItems < totalInnovationItems
+
   /* =================================================
   LOAD PRODUCTS
   ================================================= */
@@ -80,14 +219,128 @@ export function InnovationsSection() {
 
     async function loadProducts() {
 
-      const data =
+      const products =
         await getProducts()
 
-      setProducts(data)
+      const states =
+        await getProductStates()
+
+      const stateMap =
+        new Map(
+          (states as ProductState[]).map(
+            (state) => [
+              state.id,
+              state.name,
+            ]
+          )
+        )
+
+      const getStateName =
+        (product: Product) =>
+          product.state_id
+            ? stateMap.get(
+                product.state_id
+              ) || ""
+            : ""
+
+      const commercial =
+        (products as Product[]).filter(
+          (product) =>
+            getStateName(product).includes(
+              "Comercialización"
+            )
+        )
+
+      const development =
+        (products as Product[]).filter(
+          (product) => {
+
+            const stateName =
+              getStateName(product)
+
+            return (
+              stateName.includes(
+                "Desarrollo"
+              ) ||
+              stateName.includes(
+                "Testing"
+              ) ||
+              stateName.includes(
+                "Producción"
+              )
+            )
+
+          }
+        )
+
+      const pendingCount =
+        Math.max(
+          (products as Product[]).length -
+            commercial.length -
+            development.length,
+          commercial.length === 0 &&
+            development.length === 0
+            ? 3
+            : 0
+        )
+
+      setCommercialProducts(
+        commercial
+      )
+
+      setDevelopmentProducts(
+        development
+      )
+
+      setVisibleItems(
+        initialVisibleItems
+      )
+
+      setUpcomingSlots(
+        Array.from(
+          {
+            length:
+              pendingCount,
+          },
+          (_, index) => index
+        )
+      )
 
     }
 
     loadProducts()
+
+    const channel =
+      supabase
+        .channel(
+          "innovations-products"
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "products",
+          },
+          loadProducts
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table:
+              "product_states",
+          },
+          loadProducts
+        )
+        .subscribe()
+
+    return () => {
+
+      supabase.removeChannel(channel)
+
+    }
 
   }, [])
 
@@ -383,12 +636,14 @@ export function InnovationsSection() {
         <div
           className="
             grid
-            gap-8
-            lg:grid-cols-3
+            auto-rows-fr
+            gap-6
+            md:grid-cols-2
+            xl:grid-cols-3
           "
         >
 
-          {products.slice(0, 3).map(
+          {visibleCommercialProducts.map(
             (
               product,
               index
@@ -424,146 +679,108 @@ export function InnovationsSection() {
               className="
                 group
                 relative
+                flex
+                min-h-[620px]
+                flex-col
                 overflow-hidden
-                rounded-[36px]
+                rounded-[30px]
                 border
                 border-white/10
-                bg-white/[0.03]
-                p-7
+                bg-white/[0.035]
+                p-6
                 backdrop-blur-md
                 transition-all
                 duration-500
-                hover:border-white/20
-                hover:bg-white/[0.05]
+                hover:border-cyan-200/25
+                hover:bg-white/[0.055]
               "
             >
-
-              {/* =========================================
-              CARD LIGHTING
-              ========================================= */}
 
               <div
                 className="
                   pointer-events-none
                   absolute
                   inset-0
-                  bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_60%)]
+                  bg-[radial-gradient(circle_at_top,rgba(125,245,255,0.09),transparent_55%)]
+                  opacity-0
+                  transition-opacity
+                  duration-500
+                  group-hover:opacity-100
                 "
               />
-
-              {/* =========================================
-              TOP BAR
-              ========================================= */}
 
               <div
                 className="
                   relative
                   z-10
-                  mb-6
+                  mb-5
                   flex
                   items-center
                   justify-between
+                  gap-4
                 "
               >
-
-                {/* CATEGORY */}
 
                 <span
                   className="
                     rounded-full
                     border
-                    border-white/10
-                    bg-white/[0.03]
+                    border-cyan-200/20
+                    bg-cyan-300/[0.08]
                     px-4
                     py-2
                     text-[10px]
                     uppercase
-                    tracking-[0.35em]
-                    text-white/55
+                    tracking-[0.28em]
+                    text-cyan-100/80
                     backdrop-blur-md
                   "
                 >
 
-                  {product.category}
+                  En comercialización
 
                 </span>
 
-                {/* ICON */}
-
-                <Sparkles
+                <span
                   className="
-                    h-5
-                    w-5
-                    text-white/40
-                    transition-all
-                    duration-500
-                    group-hover:rotate-12
-                    group-hover:scale-110
+                    text-[10px]
+                    uppercase
+                    tracking-[0.28em]
+                    text-white/35
                   "
-                />
+                >
+
+                  Live
+
+                </span>
 
               </div>
-
-              {/* =========================================
-              IMAGE CONTAINER
-              ========================================= */}
 
               <div
                 className="
                   relative
                   overflow-hidden
-                  rounded-[32px]
+                  rounded-[26px]
                   border
                   border-white/10
-                  bg-white/[0.03]
-                  p-8
-                  backdrop-blur-md
+                  bg-black/35
+                  p-6
                 "
               >
-
-                {/* AMBIENT LIGHT */}
 
                 <div
                   className="
                     absolute
                     inset-0
-                    bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.06),transparent_65%)]
+                    bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.08),transparent_62%)]
                   "
                 />
-
-                {/* FLOATING ORB */}
-
-                <motion.div
-                  animate={{
-                    scale: [1, 1.08, 1],
-                    opacity: [0.3, 0.5, 0.3],
-                  }}
-                  transition={{
-                    duration: 6,
-                    repeat: Infinity,
-                    ease: "easeInOut",
-                  }}
-                  className="
-                    absolute
-                    left-1/2
-                    top-1/2
-                    h-[260px]
-                    w-[260px]
-                    -translate-x-1/2
-                    -translate-y-1/2
-                    rounded-full
-                    bg-white/[0.04]
-                    blur-[100px]
-                  "
-                />
-
-                {/* IMAGE */}
 
                 <div
                   className="
                     relative
                     flex
-                    h-[360px]
+                    aspect-[4/3]
                     items-center
                     justify-center
                   "
@@ -572,52 +789,58 @@ export function InnovationsSection() {
                   <Image
                     src={product.image_url || "/placeholder.jpg"}
                     alt={product.name}
-                    width={420}
+                    width={520}
                     height={420}
-                    className={`
+                    className="
                       relative
                       z-10
                       h-full
-                      w-auto
+                      w-full
                       object-contain
                       transition-all
                       duration-700
                       group-hover:-translate-y-2
                       group-hover:scale-105
-                      ${
-                        product.slug === "mash-coffee"
-                          ? "scale-[1.45]"
-                          : "scale-100"
-                      }
-                    `}
+                    "
                   />
 
                 </div>
 
               </div>
 
-              {/* =========================================
-              CONTENT
-              ========================================= */}
-
               <div
                 className="
                   relative
                   z-10
-                  mt-8
+                  mt-7
                   flex
+                  flex-1
                   flex-col
                 "
               >
 
-                {/* PRODUCT NAME */}
+                <p
+                  className="
+                    text-[10px]
+                    uppercase
+                    tracking-[0.32em]
+                    text-white/35
+                  "
+                >
+
+                  {product.category || "IMNOVA Product"}
+
+                </p>
 
                 <h3
                   className="
-                    text-4xl
+                    mt-4
+                    text-3xl
                     font-black
-                    tracking-[-0.05em]
+                    leading-tight
+                    tracking-[-0.04em]
                     text-white
+                    md:text-4xl
                   "
                 >
 
@@ -625,26 +848,28 @@ export function InnovationsSection() {
 
                 </h3>
 
-                {/* DESCRIPTION */}
-
                 <p
                   className="
                     mt-5
+                    line-clamp-3
                     leading-relaxed
                     text-white/50
                   "
                 >
 
-                  {product.description}
+                  {product.description ||
+                    "Producto funcional IMNOVA en fase comercial."}
 
                 </p>
 
-                {/* CTA */}
-
                 <Link
-                  href={`/store/${product.slug}`}
+                  href={
+                    product.slug
+                      ? `/store/${product.slug}`
+                      : "/store"
+                  }
                   className="
-                    mt-8
+                    mt-auto
                     inline-flex
                     items-center
                     justify-center
@@ -652,10 +877,10 @@ export function InnovationsSection() {
                     rounded-2xl
                     border
                     border-white/10
-                    bg-white/[0.03]
+                    bg-white/[0.04]
                     px-6
                     py-4
-                    text-sm
+                    text-xs
                     font-semibold
                     uppercase
                     tracking-[0.18em]
@@ -664,12 +889,12 @@ export function InnovationsSection() {
                     transition-all
                     duration-300
                     hover:scale-[1.02]
-                    hover:border-white/20
-                    hover:bg-white/[0.06]
+                    hover:border-cyan-200/25
+                    hover:bg-cyan-300/[0.08]
                   "
                 >
 
-                  Explorar Innovación
+                  Ver producto
 
                   <ArrowUpRight
                     className="
@@ -690,7 +915,535 @@ export function InnovationsSection() {
 
           ))}
 
+          {visibleDevelopmentProducts.map(
+            (
+              product,
+              index
+            ) => (
+
+            <motion.article
+              key={`development-${product.id}`}
+              initial={{
+                opacity: 0,
+                y: 60,
+                filter: "blur(12px)",
+              }}
+              whileInView={{
+                opacity: 1,
+                y: 0,
+                filter: "blur(0px)",
+              }}
+              transition={{
+                duration: 0.9,
+                delay:
+                  (visibleCommercialProducts.length + index) * 0.08,
+                ease: [
+                  0.22,
+                  1,
+                  0.36,
+                  1,
+                ],
+              }}
+              viewport={{ once: true }}
+              whileHover={{
+                y: -7,
+              }}
+              className="
+                group
+                relative
+                flex
+                min-h-[620px]
+                flex-col
+                overflow-hidden
+                rounded-[30px]
+                border
+                border-white/10
+                bg-white/[0.025]
+                p-6
+                backdrop-blur-md
+                transition-all
+                duration-500
+                hover:border-white/25
+                hover:bg-white/[0.045]
+              "
+            >
+
+              <div
+                className="
+                  pointer-events-none
+                  absolute
+                  inset-0
+                  bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.09),transparent_56%)]
+                  opacity-60
+                  transition-opacity
+                  duration-500
+                  group-hover:opacity-100
+                "
+              />
+
+              <div
+                className="
+                  relative
+                  z-10
+                  mb-5
+                  flex
+                  items-center
+                  justify-between
+                  gap-4
+                "
+              >
+
+                <span
+                  className="
+                    rounded-full
+                    border
+                    border-white/10
+                    bg-white/[0.045]
+                    px-4
+                    py-2
+                    text-[10px]
+                    uppercase
+                    tracking-[0.28em]
+                    text-white/70
+                    backdrop-blur-md
+                  "
+                >
+
+                  En desarrollo
+
+                </span>
+
+                <span
+                  className="
+                    text-[10px]
+                    uppercase
+                    tracking-[0.28em]
+                    text-white/35
+                  "
+                >
+
+                  Preview
+
+                </span>
+
+              </div>
+
+              <div
+                className="
+                  relative
+                  overflow-hidden
+                  rounded-[26px]
+                  border
+                  border-white/10
+                  bg-black/35
+                  p-6
+                "
+              >
+
+                <div
+                  className="
+                    absolute
+                    inset-0
+                    bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.10),transparent_62%)]
+                  "
+                />
+
+                <div
+                  className="
+                    relative
+                    flex
+                    aspect-[4/3]
+                    items-center
+                    justify-center
+                  "
+                >
+
+                  <Image
+                    src={product.image_url || "/placeholder.jpg"}
+                    alt={product.name}
+                    width={520}
+                    height={420}
+                    className="
+                      relative
+                      z-10
+                      h-full
+                      w-full
+                      object-contain
+                      opacity-90
+                      transition-all
+                      duration-700
+                      group-hover:-translate-y-2
+                      group-hover:scale-105
+                      group-hover:opacity-100
+                    "
+                  />
+
+                </div>
+
+              </div>
+
+              <div
+                className="
+                  relative
+                  z-10
+                  mt-7
+                  flex
+                  flex-1
+                  flex-col
+                "
+              >
+
+                <p
+                  className="
+                    text-[10px]
+                    uppercase
+                    tracking-[0.32em]
+                    text-white/35
+                  "
+                >
+
+                  {product.category || "IMNOVA Product"}
+
+                </p>
+
+                <h3
+                  className="
+                    mt-4
+                    text-3xl
+                    font-black
+                    leading-tight
+                    tracking-[-0.04em]
+                    text-white/90
+                    md:text-4xl
+                  "
+                >
+
+                  {product.name}
+
+                </h3>
+
+                <p
+                  className="
+                    mt-5
+                    leading-relaxed
+                    text-white/50
+                  "
+                >
+
+                  {getDevelopmentBenefit(
+                    product
+                  )}
+
+                </p>
+
+                <div
+                  className="
+                    mt-auto
+                    rounded-2xl
+                    border
+                    border-white/10
+                    bg-white/[0.025]
+                    px-6
+                    py-4
+                    text-center
+                    text-xs
+                    font-semibold
+                    uppercase
+                    tracking-[0.18em]
+                    text-white/55
+                    backdrop-blur-md
+                  "
+                >
+
+                  Lanzamiento en preparación
+
+                </div>
+
+              </div>
+
+            </motion.article>
+
+          ))}
+
+          {visibleUpcomingSlots.map(
+            (
+              slot,
+              index
+            ) => (
+
+            <motion.article
+              key={`upcoming-${slot}`}
+              initial={{
+                opacity: 0,
+                y: 60,
+                filter: "blur(12px)",
+              }}
+              whileInView={{
+                opacity: 1,
+                y: 0,
+                filter: "blur(0px)",
+              }}
+              transition={{
+                duration: 0.9,
+                delay:
+                  (
+                    visibleCommercialProducts.length +
+                    visibleDevelopmentProducts.length +
+                    index
+                  ) * 0.08,
+                ease: [
+                  0.22,
+                  1,
+                  0.36,
+                  1,
+                ],
+              }}
+              viewport={{ once: true }}
+              whileHover={{
+                y: -6,
+              }}
+              className="
+                group
+                relative
+                flex
+                min-h-[620px]
+                flex-col
+                overflow-hidden
+                rounded-[30px]
+                border
+                border-white/10
+                bg-white/[0.018]
+                p-6
+                backdrop-blur-md
+                transition-all
+                duration-500
+                hover:border-white/20
+                hover:bg-white/[0.035]
+              "
+            >
+
+              <div
+                className="
+                  pointer-events-none
+                  absolute
+                  inset-0
+                  bg-[linear-gradient(135deg,rgba(255,255,255,0.08),transparent_35%,rgba(125,245,255,0.05))]
+                  opacity-50
+                "
+              />
+
+              <div
+                className="
+                  relative
+                  z-10
+                  mb-5
+                  flex
+                  items-center
+                  justify-between
+                  gap-4
+                "
+              >
+
+                <span
+                  className="
+                    rounded-full
+                    border
+                    border-white/10
+                    bg-white/[0.03]
+                    px-4
+                    py-2
+                    text-[10px]
+                    uppercase
+                    tracking-[0.28em]
+                    text-white/45
+                    backdrop-blur-md
+                  "
+                >
+
+                  Próximamente
+
+                </span>
+
+                <Sparkles
+                  className="
+                    h-5
+                    w-5
+                    text-white/25
+                    transition-all
+                    duration-500
+                    group-hover:rotate-12
+                    group-hover:text-white/45
+                  "
+                />
+
+              </div>
+
+              <div
+                className="
+                  relative
+                  flex
+                  flex-1
+                  items-center
+                  justify-center
+                  overflow-hidden
+                  rounded-[26px]
+                  border
+                  border-dashed
+                  border-white/10
+                  bg-black/30
+                  p-8
+                "
+              >
+
+                <motion.div
+                  animate={{
+                    opacity: [0.28, 0.55, 0.28],
+                    scale: [1, 1.04, 1],
+                  }}
+                  transition={{
+                    duration: 5,
+                    repeat: Infinity,
+                    ease: "easeInOut",
+                  }}
+                  className="
+                    absolute
+                    h-56
+                    w-56
+                    rounded-full
+                    border
+                    border-white/10
+                    bg-white/[0.025]
+                    blur-sm
+                  "
+                />
+
+                <div
+                  className="
+                    relative
+                    z-10
+                    text-center
+                  "
+                >
+
+                  <div
+                    className="
+                      mx-auto
+                      flex
+                      h-16
+                      w-16
+                      items-center
+                      justify-center
+                      rounded-2xl
+                      border
+                      border-white/10
+                      bg-white/[0.04]
+                    "
+                  >
+
+                    <Sparkles className="h-6 w-6 text-white/40" />
+
+                  </div>
+
+                  <h3
+                    className="
+                      mt-8
+                      text-4xl
+                      font-black
+                      tracking-[-0.04em]
+                      text-white/85
+                    "
+                  >
+
+                    Próximamente
+
+                  </h3>
+
+                  <p
+                    className="
+                      mx-auto
+                      mt-5
+                      max-w-xs
+                      text-sm
+                      leading-relaxed
+                      text-white/45
+                    "
+                  >
+
+                    Una nueva pieza del ecosistema IMNOVA está por activarse.
+                    Pronto revelaremos lo que sigue.
+
+                  </p>
+
+                </div>
+
+              </div>
+
+            </motion.article>
+
+          ))}
+
         </div>
+
+        {hasMoreItems && (
+
+          <div
+            className="
+              mt-12
+              flex
+              justify-center
+            "
+          >
+
+            <button
+              type="button"
+              onClick={() =>
+                setVisibleItems(
+                  (current) =>
+                    current +
+                    visibleItemsStep
+                )
+              }
+              className="
+                rounded-2xl
+                border
+                border-white/10
+                bg-white/[0.035]
+                px-7
+                py-4
+                text-xs
+                font-semibold
+                uppercase
+                tracking-[0.18em]
+                text-white/75
+                backdrop-blur-md
+                transition-all
+                duration-300
+                hover:border-white/20
+                hover:bg-white/[0.06]
+                hover:text-white
+              "
+            >
+
+              Ver más innovaciones
+
+              <span
+                className="
+                  ml-3
+                  text-white/35
+                "
+              >
+                {Math.min(
+                  visibleItems,
+                  totalInnovationItems
+                )}
+                /{totalInnovationItems}
+              </span>
+
+            </button>
+
+          </div>
+
+        )}
 
         {/* =================================================
         BOTTOM INDICATORS

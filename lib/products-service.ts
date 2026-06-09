@@ -93,6 +93,15 @@ export async function updateProduct(
   productId: string,
   updates: {
     state_id?: string | null
+    distribution_channels?: Array<{
+      id: string
+      type: string
+      name: string
+      location: string
+      status: string
+      url?: string
+      note?: string
+    }>
   }
 ) {
 
@@ -104,25 +113,40 @@ export async function updateProduct(
     }
   )
 
-  const { data, error } =
+  const { error, count } =
     await supabase
       .from("products")
-      .update(updates)
+      .update(
+        updates,
+        {
+          count: "exact",
+        }
+      )
       .eq(
         "id",
         productId
       )
-      .select("*")
 
   if (error) {
 
     console.error(
       "UPDATE PRODUCT ERROR:",
-      error
+      {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+      }
     )
 
     return null
 
+  }
+
+  const data = {
+    id: productId,
+    ...updates,
+    count,
   }
 
   console.log(
