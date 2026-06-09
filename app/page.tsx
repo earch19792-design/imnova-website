@@ -13,7 +13,6 @@ import { useState } from "react"
 import { Navigation } from "@/components/navigation"
 import { HeroSection } from "@/components/hero-section"
 import { PromoBanner } from "@/components/promo-banner"
-import { AboutSection } from "@/components/about-section"
 import { InnovationsSection } from "@/components/innovations-section"
 import { MissionSection } from "@/components/mission-section"
 import { TechnologySection } from "@/components/technology-section"
@@ -125,24 +124,19 @@ export default function IMNOVAPage() {
       <PromoBanner />
 
       {/* =================================================
-      ABOUT SECTION
-      ================================================= */}
-      <AboutSection />
-
-      {/* =================================================
       INNOVATIONS SECTION
       ================================================= */}
       <InnovationsSection />
 
       {/* =================================================
-      MISSION SECTION
-      ================================================= */}
-      <MissionSection />
-
-      {/* =================================================
       TECHNOLOGY SECTION
       ================================================= */}
       <TechnologySection />
+
+      {/* =================================================
+      MISSION SECTION
+      ================================================= */}
+      <MissionSection />
 
       {/* =================================================
       FUTURE SECTION

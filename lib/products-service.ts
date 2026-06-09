@@ -95,6 +95,8 @@ export async function updateProduct(
     state_id?: string | null
     distribution_channels?: Array<{
       id: string
+      country?: string
+      city?: string
       type: string
       name: string
       location: string

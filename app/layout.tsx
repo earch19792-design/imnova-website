@@ -7,6 +7,9 @@ import { Orbitron } from "next/font/google"
 
 import { Analytics } from "@vercel/analytics/next"
 
+import { ButtonClickNotifier } from "@/components/button-click-notifier"
+import { Toaster } from "@/components/ui/toaster"
+
 import "./globals.css"
 
 /* =================================================
@@ -295,6 +298,8 @@ export default function RootLayout({
         ================================================= */}
 
         <Analytics />
+        <ButtonClickNotifier />
+        <Toaster />
 
       </body>
 
