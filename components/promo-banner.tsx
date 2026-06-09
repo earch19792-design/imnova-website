@@ -630,7 +630,7 @@ export function PromoBanner() {
                     hover:shadow-[0_0_90px_rgba(251,191,36,0.40)]
                   "
                 >
-                  Ver en tienda
+                  Comprar / Ver producto
                   <ArrowUpRight className="h-4 w-4" />
                 </Link>
 

@@ -393,7 +393,13 @@ export function InnovationTracker() {
           </motion.div>
         )}
 
-        <div className="mt-20 overflow-x-auto pb-6 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+        <div className="mx-auto mt-12 flex justify-center md:hidden">
+          <div className="rounded-full border border-cyan-200/15 bg-cyan-300/[0.08] px-4 py-2 text-center text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100/75">
+            Desliza para ver todas las etapas
+          </div>
+        </div>
+
+        <div className="mt-8 overflow-x-auto pb-6 [scrollbar-width:none] [-ms-overflow-style:none] md:mt-20 [&::-webkit-scrollbar]:hidden">
           <div className="min-w-[1260px]">
             <div className="relative">
               <div className="pointer-events-none absolute left-0 right-0 top-7 h-px bg-gradient-to-r from-cyan-200/15 via-cyan-200/45 to-amber-200/25" />

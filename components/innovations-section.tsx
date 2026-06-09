@@ -342,14 +342,14 @@ export function InnovationsSection() {
             duration: 0.85,
           }}
           viewport={{ once: true }}
-          className="mx-auto max-w-4xl text-center"
+          className="mx-auto max-w-3xl text-center"
         >
           <div className="inline-flex items-center gap-3 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-5 py-3 text-[10px] uppercase tracking-[0.34em] text-cyan-100">
             <Clock3 className="h-4 w-4" />
-            Innovacion activa
+            Mapa comercial
           </div>
 
-          <h2 className="mt-9 text-5xl font-black leading-[0.98] tracking-[-0.04em] text-white md:text-7xl">
+          <h2 className="mt-9 text-4xl font-black leading-[0.98] tracking-[-0.04em] text-white md:text-6xl">
             Comercializacion
             <span className="block bg-gradient-to-r from-cyan-200 via-white to-amber-200 bg-clip-text text-transparent">
               y viene pronto
@@ -367,7 +367,7 @@ export function InnovationsSection() {
 
           <section
             aria-labelledby="commercialization-heading"
-            className="relative overflow-hidden rounded-[36px] border border-cyan-200/10 bg-white/[0.018] p-5 md:p-8 lg:p-10"
+            className="relative overflow-hidden rounded-[28px] border border-cyan-200/15 bg-white/[0.026] p-5 shadow-[0_30px_120px_rgba(34,211,238,0.08)] md:p-8 lg:p-10"
           >
             <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-200/25 to-transparent" />
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.08),transparent_34%)]" />
@@ -379,14 +379,34 @@ export function InnovationsSection() {
                 </p>
                 <h3
                   id="commercialization-heading"
-                  className="mt-3 text-4xl font-black leading-tight tracking-[-0.04em] text-white md:text-5xl"
+                  className="mt-3 text-4xl font-black leading-tight tracking-[-0.04em] text-white md:text-6xl"
                 >
-                  Productos ya revelados
+                  Comercialización activa
                 </h3>
                 <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-400 md:text-base">
                   Productos que ya pueden mostrarse con nombre, imagen real e
                   informacion completa para evaluar su propuesta comercial.
                 </p>
+              </div>
+
+              <div className="grid max-w-sm grid-cols-2 gap-3">
+                <div className="rounded-3xl border border-cyan-200/10 bg-black/35 px-5 py-4">
+                  <p className="text-[10px] uppercase tracking-[0.20em] text-cyan-100/45">
+                    Productos
+                  </p>
+                  <p className="mt-2 text-3xl font-black text-white">
+                    {commercializationProducts.length}
+                  </p>
+                </div>
+
+                <div className="rounded-3xl border border-cyan-200/10 bg-black/35 px-5 py-4">
+                  <p className="text-[10px] uppercase tracking-[0.20em] text-cyan-100/45">
+                    Avance
+                  </p>
+                  <p className="mt-2 text-3xl font-black text-cyan-100">
+                    {featuredCommercializationProduct?.progress || 0}%
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -451,7 +471,7 @@ export function InnovationsSection() {
                           href={`/store/${featuredCommercializationProduct.slug}`}
                           className="mt-8 inline-flex items-center justify-center gap-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 transition hover:border-cyan-200/35 hover:bg-cyan-300/[0.13]"
                         >
-                          Ver mas informacion
+                          Ver más información
                           <Info className="h-4 w-4" />
                         </Link>
                       )}
@@ -526,7 +546,7 @@ export function InnovationsSection() {
                                 href={`/store/${product.slug}`}
                                 className="mt-3 inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100"
                               >
-                                Ver mas informacion
+                                Ver más información
                                 <ArrowUpRight className="h-3 w-3" />
                               </Link>
                             )}
@@ -571,7 +591,7 @@ export function InnovationsSection() {
 
           <section
             aria-labelledby="coming-soon-heading"
-            className="relative overflow-hidden rounded-[36px] border border-cyan-200/10 bg-white/[0.018] p-5 md:p-8 lg:p-10"
+            className="relative overflow-hidden rounded-[28px] border border-amber-200/15 bg-white/[0.026] p-5 shadow-[0_30px_120px_rgba(251,191,36,0.07)] md:p-8 lg:p-10"
           >
             <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/25 to-transparent" />
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.07),transparent_34%)]" />
@@ -583,14 +603,34 @@ export function InnovationsSection() {
                 </p>
                 <h3
                   id="coming-soon-heading"
-                  className="mt-3 text-4xl font-black leading-tight tracking-[-0.04em] text-white md:text-5xl"
+                  className="mt-3 text-4xl font-black leading-tight tracking-[-0.04em] text-white md:text-6xl"
                 >
-                  Productos en preparación
+                  Innovaciones en preparación
                 </h3>
                 <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-400 md:text-base">
                   Desarrollos que permanecen en expectativa: no revelan imagen
                   real, pero si comunican el resultado y beneficio esperado.
                 </p>
+              </div>
+
+              <div className="grid max-w-sm grid-cols-2 gap-3">
+                <div className="rounded-3xl border border-amber-200/10 bg-black/35 px-5 py-4">
+                  <p className="text-[10px] uppercase tracking-[0.20em] text-amber-100/45">
+                    Proyectos
+                  </p>
+                  <p className="mt-2 text-3xl font-black text-white">
+                    {comingSoonProducts.length}
+                  </p>
+                </div>
+
+                <div className="rounded-3xl border border-amber-200/10 bg-black/35 px-5 py-4">
+                  <p className="text-[10px] uppercase tracking-[0.20em] text-amber-100/45">
+                    Avance
+                  </p>
+                  <p className="mt-2 text-3xl font-black text-amber-100">
+                    {featuredComingSoonProduct?.progress || 0}%
+                  </p>
+                </div>
               </div>
             </div>
 
