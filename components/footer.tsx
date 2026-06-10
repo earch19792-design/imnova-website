@@ -2,191 +2,180 @@
 
 import { motion } from "framer-motion"
 import Link from "next/link"
+import {
+  ArrowUpRight,
+} from "lucide-react"
 
 const footerLinks = {
-  products: [
-    { name: "Bebidas Funcionales", href: "#" },
-    { name: "Tecnología Inteligente", href: "#" },
-    { name: "Soluciones IA", href: "#" },
-    { name: "Bienestar", href: "#" },
+  explore: [
+    {
+      name: "Lanzamientos",
+      href: "#available-now",
+    },
+    {
+      name: "Innovaciones",
+      href: "#innovations",
+    },
+    {
+      name: "Ideas de Uso",
+      href: "#imnova-guides",
+    },
+    {
+      name: "Dónde comprar",
+      href: "#where-to-buy",
+    },
   ],
-  company: [
-    { name: "Sobre Nosotros", href: "/about" },
-    { name: "Innovaciones", href: "#innovations" },
-    { name: "Contacto", href: "/contact" },
-    { name: "Prensa", href: "#" },
+  ecosystem: [
+    {
+      name: "Proceso IMNOVA",
+      href: "#pipeline",
+    },
+    {
+      name: "Ecosistema",
+      href: "#working",
+    },
+    {
+      name: "Comunidad",
+      href: "#contact",
+    },
+    {
+      name: "Sobre Nosotros",
+      href: "/about",
+    },
   ],
-  resources: [
-    { name: "Blog", href: "#" },
-    { name: "Investigación", href: "#technology" },
-    { name: "Partners", href: "#" },
-    { name: "Soporte", href: "#" },
-  ],
-  legal: [
-    { name: "Privacidad", href: "/privacy-policy" },
-    { name: "Términos", href: "/terms" },
-    { name: "Cookies", href: "#" },
+  access: [
+    {
+      name: "Tienda",
+      href: "/store",
+    },
+    {
+      name: "Admin",
+      href: "/admin",
+    },
+    {
+      name: "Contacto",
+      href: "/contact",
+    },
+    {
+      name: "Privacidad",
+      href: "/privacy-policy",
+    },
   ],
 }
 
 export function Footer() {
+  const linkGroups = [
+    {
+      title: "Explorar",
+      links: footerLinks.explore,
+    },
+    {
+      title: "Ecosistema",
+      links: footerLinks.ecosystem,
+    },
+    {
+      title: "Accesos",
+      links: footerLinks.access,
+    },
+  ]
+
   return (
-    <footer className="relative py-20 border-t border-border/50">
+    <footer className="relative overflow-hidden border-t border-white/10 bg-black px-6 py-16 text-white md:py-20">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_0%,rgba(34,211,238,0.12),transparent_32%),radial-gradient(circle_at_90%_30%,rgba(251,191,36,0.08),transparent_30%)]" />
+      <div className="pointer-events-none absolute inset-0 opacity-[0.02] bg-[linear-gradient(rgba(255,255,255,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.18)_1px,transparent_1px)] bg-[size:88px_88px]" />
 
-      {/* Background */}
-      <div className="absolute inset-0 bg-gradient-to-b from-background to-secondary/20" />
-
-      <div className="relative z-10 mx-auto max-w-7xl px-6">
-
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-8 lg:gap-12 mb-16">
-
-         {/* Brand */}
-<div className="col-span-2 md:col-span-4 lg:col-span-1 mb-8 lg:mb-0">
-
-  <Link href="/">
-    <motion.div
-      whileHover={{ scale: 1.02 }}
-      className="flex items-center gap-3 mb-6"
-    >
-      <div className="relative">
-        <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-primary to-primary/50 flex items-center justify-center shadow-lg shadow-primary/20">
-          <span className="text-lg font-bold text-white">
-            I
-          </span>
-        </div>
-      </div>
-
-      <div>
-        <div className="text-xl font-bold tracking-tight">
-          IMNOVA
-        </div>
-
-        <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
-          Group LLC
-        </div>
-      </div>
-
-    </motion.div>
-  </Link>
-
-  <p className="text-sm text-muted-foreground leading-relaxed max-w-xs">
-    Global Ecommerce & Innovation
-  </p>
-
-</div>
+      <div className="relative z-10 mx-auto max-w-7xl">
+        <div className="grid gap-10 lg:grid-cols-[1.1fr_1.4fr] lg:items-start">
           <div>
-            <h4 className="font-semibold mb-4 text-sm">
-              Productos
-            </h4>
-
-            <ul className="space-y-3">
-              {footerLinks.products.map((link) => (
-                <li key={link.name}>
-                  <Link
-                    href={link.href}
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {link.name}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Company */}
-          <div>
-            <h4 className="font-semibold mb-4 text-sm">
-              Empresa
-            </h4>
-
-            <ul className="space-y-3">
-              {footerLinks.company.map((link) => (
-                <li key={link.name}>
-                  <Link
-                    href={link.href}
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {link.name}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Resources */}
-          <div>
-            <h4 className="font-semibold mb-4 text-sm">
-              Recursos
-            </h4>
-
-            <ul className="space-y-3">
-              {footerLinks.resources.map((link) => (
-                <li key={link.name}>
-                  <Link
-                    href={link.href}
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {link.name}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Legal */}
-          <div>
-            <h4 className="font-semibold mb-4 text-sm">
-              Legal
-            </h4>
-
-            <ul className="space-y-3">
-              {footerLinks.legal.map((link) => (
-                <li key={link.name}>
-                  <Link
-                    href={link.href}
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {link.name}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-        </div>
-
-        {/* Bottom Bar */}
-        <div className="pt-8 border-t border-border/50 flex flex-col sm:flex-row items-center justify-between gap-4">
-
-          <p className="text-sm text-muted-foreground">
-            © {new Date().getFullYear()} IMNOVA GROUP LLC.
-            Todos los derechos reservados.
-          </p>
-
-          <p className="text-xs text-muted-foreground">
-            Wyoming LLC - Original ID 2025-001823496
-          </p>
-
-          {/* Social Links */}
-          <div className="flex items-center gap-6">
-
-            {["LinkedIn", "Instagram", "YouTube"].map((social) => (
-              <motion.a
-                key={social}
-                href="#"
-                whileHover={{ y: -2 }}
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+            <Link href="/">
+              <motion.div
+                whileHover={{
+                  scale: 1.02,
+                }}
+                className="inline-flex items-center gap-4"
               >
-                {social}
-              </motion.a>
-            ))}
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-cyan-200/15 bg-cyan-300/[0.08] shadow-[0_0_45px_rgba(34,211,238,0.12)]">
+                  <span className="text-xl font-black text-white">
+                    I
+                  </span>
+                </div>
 
+                <div>
+                  <div className="text-2xl font-black tracking-[-0.04em]">
+                    IMNOVA
+                  </div>
+                  <div className="mt-1 text-[10px] uppercase tracking-[0.26em] text-cyan-100/55">
+                    Tecnología · Nutrición · Bienestar
+                  </div>
+                </div>
+              </motion.div>
+            </Link>
+
+            <p className="mt-8 max-w-xl text-base leading-8 text-zinc-400">
+              Creamos soluciones inteligentes para ayudar a las personas a
+              vivir mejor, rendir más y construir rutinas más simples,
+              saludables y equilibradas.
+            </p>
+
+            <div className="mt-8 flex flex-wrap gap-3">
+              <Link
+                href="/store"
+                className="inline-flex items-center gap-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.10] px-5 py-4 text-xs font-black uppercase tracking-[0.16em] text-cyan-50 transition hover:border-cyan-200/40 hover:bg-cyan-300/[0.16]"
+              >
+                Ir a la tienda
+                <ArrowUpRight className="h-4 w-4" />
+              </Link>
+
+              <Link
+                href="#contact"
+                className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.035] px-5 py-4 text-xs font-black uppercase tracking-[0.16em] text-white/70 transition hover:bg-white/[0.07] hover:text-white"
+              >
+                Comunidad
+              </Link>
+            </div>
           </div>
 
+          <div className="grid gap-5 sm:grid-cols-3">
+            {linkGroups.map(group => (
+              <div
+                key={group.title}
+                className="rounded-2xl border border-white/10 bg-white/[0.025] p-5 backdrop-blur-xl"
+              >
+                <h4 className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-100/60">
+                  {group.title}
+                </h4>
+
+                <ul className="mt-5 space-y-3">
+                  {group.links.map(link => (
+                    <li key={link.name}>
+                      <Link
+                        href={link.href}
+                        className="group inline-flex items-center gap-2 text-sm text-zinc-400 transition hover:text-white"
+                      >
+                        <span>{link.name}</span>
+                        <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition group-hover:opacity-100" />
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
         </div>
 
-      </div>
+        <div className="mt-12 flex flex-col gap-5 border-t border-white/10 pt-6 text-sm text-zinc-500 md:flex-row md:items-center md:justify-between">
+          <p>
+            © {new Date().getFullYear()} IMNOVA GROUP LLC. Todos los derechos
+            reservados.
+          </p>
 
+          <div className="flex flex-wrap gap-3 text-xs uppercase tracking-[0.16em]">
+            <span>Wyoming LLC</span>
+            <span className="text-zinc-700">/</span>
+            <span>Original ID 2025-001823496</span>
+          </div>
+        </div>
+      </div>
     </footer>
   )
 }

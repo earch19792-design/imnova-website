@@ -3,14 +3,12 @@
 import {
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react"
 
 import { motion } from "framer-motion"
 
 import {
-  CheckCircle2,
   CircleDot,
   Factory,
   FlaskConical,
@@ -174,20 +172,42 @@ function getStageIcon(stageName: string) {
   return CircleDot
 }
 
-function isFinalStage(stageName: string) {
+function getStageDescription(stageName: string) {
   const name =
     normalizeText(stageName)
 
-  return (
-    name.includes("comercial") ||
-    name.includes("disponible")
-  )
+  if (name.includes("idea")) {
+    return "Aquí nacen oportunidades detectadas por IMNOVA antes de convertirse en un producto visible."
+  }
+
+  if (name.includes("valid")) {
+    return "La comunidad ayuda a validar si la idea resuelve una necesidad real y merece avanzar."
+  }
+
+  if (name.includes("prioriz")) {
+    return "Las ideas con mayor señal se ordenan por potencial, urgencia y viabilidad."
+  }
+
+  if (name.includes("testing")) {
+    return "El producto se prueba, se ajusta y se prepara para demostrar valor en condiciones reales."
+  }
+
+  if (name.includes("produccion")) {
+    return "La propuesta pasa a una etapa tangible: formulación, empaque, mockups y preparación operativa."
+  }
+
+  if (name.includes("comercial")) {
+    return "El producto está listo para salir al mercado y conectar con canales de venta."
+  }
+
+  if (name.includes("disponible")) {
+    return "El producto ya puede comprarse o presentarse oficialmente como parte del ecosistema."
+  }
+
+  return "Etapa activa del sistema IMNOVA para ordenar productos, decisiones y próximos movimientos."
 }
 
 export function InnovationTracker() {
-  const stageRailRef =
-    useRef<HTMLDivElement>(null)
-
   const [
     products,
     setProducts,
@@ -197,6 +217,11 @@ export function InnovationTracker() {
     productStates,
     setProductStates,
   ] = useState<ProductState[]>([])
+
+  const [
+    selectedStageId,
+    setSelectedStageId,
+  ] = useState<string | null>(null)
 
   useEffect(() => {
     async function loadPipeline() {
@@ -310,26 +335,46 @@ export function InnovationTracker() {
         ? getPublicStageLabel(activeStages[0].name)
         : `${activeStages.length} etapas activas`
 
-  const scrollStageRail =
-    (index: number) => {
+  const selectedStage =
+    useMemo(
+      () =>
+        stages.find(
+          stage =>
+            stage.id === selectedStageId
+        ) ||
+        activeStages[0] ||
+        stages[0],
+      [
+        activeStages,
+        selectedStageId,
+        stages,
+      ]
+    )
 
-      const rail =
-        stageRailRef.current
-
-      if (!rail) {
-        return
-      }
-
-      const target =
-        rail.children[index] as HTMLElement | undefined
-
-      target?.scrollIntoView({
-        behavior: "smooth",
-        inline: "center",
-        block: "nearest",
-      })
-
+  useEffect(() => {
+    if (stages.length === 0) {
+      return
     }
+
+    const selectedExists =
+      stages.some(
+        stage =>
+          stage.id === selectedStageId
+      )
+
+    if (!selectedExists) {
+      setSelectedStageId(
+        (
+          activeStages[0] ||
+          stages[0]
+        ).id
+      )
+    }
+  }, [
+    activeStages,
+    selectedStageId,
+    stages,
+  ])
 
   return (
     <section
@@ -426,7 +471,7 @@ export function InnovationTracker() {
           </motion.div>
         )}
 
-        {totalProducts > 0 && (
+        {totalProducts > 0 && selectedStage && (
           <motion.div
             initial={{
               opacity: 0,
@@ -440,358 +485,195 @@ export function InnovationTracker() {
               duration: 0.75,
             }}
             viewport={{ once: true }}
-            className="mt-12 rounded-[32px] border border-white/10 bg-white/[0.035] p-4 backdrop-blur-2xl md:p-6"
+            className="mt-12 overflow-hidden rounded-[32px] border border-white/10 bg-white/[0.035] backdrop-blur-2xl"
           >
-            <div className="flex flex-col gap-3 border-b border-white/10 pb-5 md:flex-row md:items-end md:justify-between">
-              <div>
+            <div className="grid lg:grid-cols-[0.85fr_1.15fr]">
+              <div className="border-b border-white/10 p-5 md:p-7 lg:border-b-0 lg:border-r">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-cyan-100/70">
                   Etapas del producto
                 </p>
+
                 <h3 className="mt-3 text-2xl font-black leading-tight text-white md:text-4xl">
                   De idea a compra, sin complicarlo.
                 </h3>
+
+                <p className="mt-4 text-sm leading-7 text-zinc-400">
+                  Selecciona una etapa para ver qué significa y qué productos
+                  están avanzando ahí.
+                </p>
+
+                <div className="mt-6 grid gap-2">
+                  {stages.map(
+                    (stage, index) => {
+                      const isSelected =
+                        selectedStage.id ===
+                        stage.id
+
+                      const isActive =
+                        stage.count > 0
+
+                      return (
+                        <button
+                          key={stage.id}
+                          type="button"
+                          onClick={() =>
+                            setSelectedStageId(
+                              stage.id
+                            )
+                          }
+                          className={`group flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left transition ${
+                            isSelected
+                              ? "border-cyan-200/40 bg-cyan-300/[0.12] text-white shadow-[0_0_42px_rgba(34,211,238,0.12)]"
+                              : "border-white/10 bg-black/25 text-zinc-400 hover:border-white/20 hover:text-white"
+                          }`}
+                        >
+                          <span className="min-w-0">
+                            <span className="block text-[9px] uppercase tracking-[0.18em] text-zinc-500">
+                              Paso{" "}
+                              {String(index + 1).padStart(
+                                2,
+                                "0"
+                              )}
+                            </span>
+                            <span className="mt-1 block truncate text-xs font-black uppercase tracking-[0.12em]">
+                              {getPublicStageLabel(
+                                stage.name
+                              )}
+                            </span>
+                          </span>
+
+                          <span
+                            className={`shrink-0 rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] ${
+                              isActive
+                                ? "border-cyan-200/30 bg-cyan-300/[0.10] text-cyan-100"
+                                : "border-white/10 bg-white/[0.025] text-zinc-500"
+                            }`}
+                          >
+                            {stage.count}
+                          </span>
+                        </button>
+                      )
+                    }
+                  )}
+                </div>
               </div>
 
-              <p className="max-w-xl text-sm leading-7 text-zinc-400">
-                Cada tarjeta muestra cuántos productos hay en esa etapa y
-                cuáles son los primeros productos activos.
-              </p>
-            </div>
+              <div className="relative overflow-hidden p-6 md:p-9">
+                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_55%_15%,rgba(34,211,238,0.16),transparent_36%)]" />
 
-            <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-7">
-              {stages.map(
-                (stage, index) => {
-                  const Icon =
-                    getStageIcon(stage.name)
-
-                  const isActive =
-                    stage.count > 0
-
-                  return (
-                    <div
-                      key={stage.id}
-                      className={`
-                        min-h-[210px]
-                        rounded-[24px]
-                        border
-                        p-4
-                        text-left
-                        transition
-                        duration-300
-                        ${
-                          isActive
-                            ? "border-cyan-200/35 bg-cyan-300/[0.10] shadow-[0_0_48px_rgba(34,211,238,0.12)]"
-                            : "border-white/10 bg-black/25 opacity-70 hover:opacity-100"
-                        }
-                      `}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <span
-                          className={`
-                            flex
-                            h-11
-                            w-11
-                            items-center
-                            justify-center
-                            rounded-2xl
-                            border
-                            ${
-                              isActive
-                                ? "border-cyan-200/35 bg-cyan-300/[0.12] text-cyan-100"
-                                : "border-white/10 bg-white/[0.035] text-white/45"
-                            }
-                          `}
-                        >
-                          <Icon className="h-5 w-5" />
-                        </span>
-
-                        <span className="text-sm font-black text-cyan-100">
-                          {stage.progress}%
-                        </span>
-                      </div>
-
-                      <p className="mt-5 text-[9px] uppercase tracking-[0.18em] text-zinc-500">
-                        Paso {String(index + 1).padStart(2, "0")}
-                      </p>
-
-                      <h4 className="mt-2 text-base font-black leading-tight text-white">
-                        {getPublicStageLabel(stage.name)}
-                      </h4>
-
-                      <p className="mt-3 text-xs uppercase tracking-[0.14em] text-zinc-500">
-                        {stage.count === 0
-                          ? "Sin productos"
-                          : `${stage.count} ${
-                              stage.count === 1
-                                ? "producto"
-                                : "productos"
-                            }`}
-                      </p>
-
-                      {stage.products.length > 0 && (
-                        <div className="mt-4 space-y-2">
-                          {stage.products
-                            .slice(
-                              0,
-                              2
-                            )
-                            .map(product => (
-                              <div
-                                key={product.id}
-                                title={product.name}
-                                className="truncate rounded-full border border-white/10 bg-black/35 px-3 py-2 text-[10px] uppercase tracking-[0.10em] text-zinc-200"
-                              >
-                                {product.name}
-                              </div>
-                            ))}
-
-                          {stage.products.length > 2 && (
-                            <p className="text-[10px] uppercase tracking-[0.14em] text-cyan-100/70">
-                              +{stage.products.length - 2} más
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )
-                }
-              )}
-            </div>
-          </motion.div>
-        )}
-
-        <div className="hidden">
-          <div className="rounded-full border border-cyan-200/15 bg-cyan-300/[0.08] px-4 py-2 text-center text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100/75">
-            Desliza para ver todas las etapas
-          </div>
-        </div>
-
-        <div className="hidden">
-          <div className="min-w-[1080px] pr-24 xl:min-w-0 xl:pr-0">
-            <div className="relative">
-              <div className="pointer-events-none absolute left-0 right-0 top-7 h-px bg-gradient-to-r from-cyan-200/15 via-cyan-200/45 to-amber-200/25" />
-              <motion.div
-                initial={{
-                  scaleX: 0,
-                }}
-                whileInView={{
-                  scaleX:
-                    globalProgress / 100,
-                }}
-                transition={{
-                  duration: 1.1,
-                  ease: [0.22, 1, 0.36, 1],
-                }}
-                viewport={{ once: true }}
-                className="pointer-events-none absolute left-0 right-0 top-7 h-px origin-left bg-gradient-to-r from-cyan-300 to-amber-200 shadow-[0_0_30px_rgba(34,211,238,0.35)]"
-              />
-
-              <div className="relative grid grid-cols-7 gap-3 lg:gap-4">
-                {stages.map(
-                  (stage, index) => {
+                <div className="relative z-10">
+                  {(() => {
                     const Icon =
-                      getStageIcon(stage.name)
-
-                    const isEmpty =
-                      stage.count === 0
-
-                    const isActive =
-                      stage.count > 0
-
-                    const isComplete =
-                      stage.count > 0 &&
-                      (stage.progress <=
-                        globalProgress ||
-                        isFinalStage(stage.name))
-
-                    const productPreview =
-                      stage.products.slice(0, 1)
-
-                    const remainingProducts =
-                      Math.max(
-                        stage.products.length -
-                          productPreview.length,
-                        0
+                      getStageIcon(
+                        selectedStage.name
                       )
 
                     return (
-                      <motion.div
-                        key={stage.id}
-                        initial={{
-                          opacity: 0,
-                          y: 24,
-                        }}
-                        whileInView={{
-                          opacity: 1,
-                          y: 0,
-                        }}
-                        transition={{
-                          duration: 0.65,
-                          delay:
-                            index * 0.06,
-                        }}
-                        viewport={{ once: true }}
-                        className="relative z-10 min-w-0 text-center"
-                      >
-                        <div
-                          className={`
-                            relative
-                            mx-auto
-                            flex
-                            h-12
-                            w-12
-                            items-center
-                            justify-center
-                            rounded-full
-                            border
-                            backdrop-blur-xl
-                            ${
-                              isComplete
-                                ? "border-emerald-200/35 bg-emerald-300/[0.09] text-emerald-100"
-                                : isActive
-                                  ? "border-cyan-200/60 bg-cyan-300/15 text-cyan-100 shadow-[0_0_48px_rgba(34,211,238,0.22)]"
-                                  : "border-white/10 bg-white/[0.035] text-white/45"
-                            }
-                          `}
-                        >
-                          {isComplete ? (
-                            <CheckCircle2 className="h-5 w-5" />
-                          ) : (
-                            <Icon className="h-5 w-5" />
-                          )}
+                      <div className="flex flex-wrap items-start justify-between gap-5">
+                        <div className="flex items-center gap-4">
+                          <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-cyan-200/25 bg-cyan-300/[0.10] text-cyan-100 shadow-[0_0_55px_rgba(34,211,238,0.14)]">
+                            <Icon className="h-7 w-7" />
+                          </div>
+
+                          <div>
+                            <p className="text-[10px] uppercase tracking-[0.28em] text-cyan-100/60">
+                              Etapa seleccionada
+                            </p>
+                            <h4 className="mt-2 text-3xl font-black leading-tight text-white md:text-5xl">
+                              {getPublicStageLabel(
+                                selectedStage.name
+                              )}
+                            </h4>
+                          </div>
                         </div>
 
-                        <div className="mt-5 min-w-0">
-                          <div className="text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-                            Etapa{" "}
-                            {String(index + 1).padStart(
-                              2,
-                              "0"
-                            )}
-                          </div>
+                        <div className="rounded-2xl border border-white/10 bg-black/30 px-5 py-4 text-right">
+                          <p className="text-[10px] uppercase tracking-[0.22em] text-zinc-500">
+                            Avance
+                          </p>
+                          <p className="mt-1 text-3xl font-black text-cyan-100">
+                            {selectedStage.progress}%
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  })()}
 
-                          <h3 className="mt-2 min-h-[2rem] break-words text-[12px] font-black uppercase leading-tight tracking-normal text-white lg:text-[13px]">
-                            {getPublicStageLabel(stage.name)}
-                          </h3>
+                  <p className="mt-8 max-w-2xl text-base leading-8 text-zinc-300">
+                    {getStageDescription(
+                      selectedStage.name
+                    )}
+                  </p>
 
-                          <div className="mt-3 flex flex-col items-center justify-center gap-2 xl:flex-row">
-                            <span className="text-xl font-black tracking-[-0.04em] text-cyan-100 lg:text-2xl">
-                              {stage.progress}%
-                            </span>
-                            <span className="rounded-full border border-white/10 bg-white/[0.035] px-2.5 py-1 text-[9px] uppercase tracking-[0.10em] text-zinc-400">
-                              {stage.count}{" "}
-                              {stage.count === 1
-                                ? "producto"
-                                : "productos"}
-                            </span>
-                          </div>
+                  <div className="mt-8">
+                    <div className="flex items-center justify-between gap-4 text-[10px] uppercase tracking-[0.22em] text-zinc-500">
+                      <span>Productos en esta etapa</span>
+                      <span>
+                        {selectedStage.count}{" "}
+                        {selectedStage.count === 1
+                          ? "producto"
+                          : "productos"}
+                      </span>
+                    </div>
 
-                          <div className="mx-auto mt-4 max-w-[150px] space-y-2">
-                            {productPreview.map(product => (
-                              <div
-                                key={product.id}
-                                title={product.name}
-                                className="truncate rounded-full border border-white/10 bg-white/[0.035] px-3 py-2 text-[9px] uppercase tracking-[0.10em] text-zinc-300"
-                              >
+                    {selectedStage.products.length > 0 ? (
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        {selectedStage.products
+                          .slice(
+                            0,
+                            4
+                          )
+                          .map(product => (
+                            <div
+                              key={product.id}
+                              title={product.name}
+                              className="rounded-2xl border border-white/10 bg-black/35 px-4 py-4"
+                            >
+                              <p className="truncate text-sm font-black text-white">
                                 {product.name}
-                              </div>
-                            ))}
+                              </p>
+                              <p className="mt-2 truncate text-xs text-zinc-500">
+                                {product.category ||
+                                  "Producto IMNOVA"}
+                              </p>
+                            </div>
+                          ))}
+                      </div>
+                    ) : (
+                      <div className="mt-4 rounded-2xl border border-white/10 bg-black/25 px-5 py-6 text-sm text-zinc-500">
+                        Aún no hay productos en esta etapa.
+                      </div>
+                    )}
 
-                            {remainingProducts > 0 && (
-                              <div className="text-[9px] uppercase tracking-[0.14em] text-cyan-100/70">
-                                +{remainingProducts} más
-                              </div>
-                            )}
+                    {selectedStage.products.length > 4 && (
+                      <p className="mt-4 text-xs uppercase tracking-[0.16em] text-cyan-100/70">
+                        +{selectedStage.products.length - 4} productos más en
+                        esta etapa
+                      </p>
+                    )}
+                  </div>
 
-                            {isEmpty && (
-                              <div className="text-[9px] uppercase tracking-[0.14em] text-zinc-600">
-                                Sin productos
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </motion.div>
-                    )
-                  }
-                )}
-              </div>
-            </div>
-
-            <div className="mt-16">
-              <div className="relative h-2 overflow-hidden rounded-full bg-white/10">
-                <motion.div
-                  initial={{
-                    width: 0,
-                  }}
-                  whileInView={{
-                    width: `${globalProgress}%`,
-                  }}
-                  transition={{
-                    duration: 1,
-                    ease: [0.22, 1, 0.36, 1],
-                  }}
-                  viewport={{ once: true }}
-                  className="h-full rounded-full bg-gradient-to-r from-cyan-300 via-white to-amber-200"
-                />
-              </div>
-
-              <div className="mt-5 overflow-x-auto rounded-b-[28px] pb-6 [scrollbar-width:thin] [scrollbar-color:rgba(103,232,249,0.5)_rgba(255,255,255,0.08)]">
-                <div
-                  ref={stageRailRef}
-                  className="flex min-w-max items-center gap-3 px-2 pr-[48vw] md:pr-[34vw] xl:pr-10"
-                >
-                  {stages.map((stage, index) => {
-                    const isActive =
-                      stage.count > 0
-
-                    const isReached =
-                      stage.progress <=
-                        globalProgress ||
-                      isActive
-
-                    return (
-                      <button
-                        key={stage.id}
-                        type="button"
-                        onClick={() =>
-                          scrollStageRail(index)
-                        }
-                        className={`
-                          group
-                          inline-flex
-                          min-w-[230px]
-                          items-center
-                          justify-between
-                          gap-3
-                          rounded-full
-                          border
-                          px-4
-                          py-3
-                          text-left
-                          transition-all
-                          duration-300
-                          ${
-                            isReached
-                              ? "border-cyan-200/20 bg-cyan-300/[0.08] text-cyan-100"
-                              : "border-white/10 bg-white/[0.025] text-zinc-500 hover:border-white/20"
-                          }
-                        `}
-                      >
-                        <span className="min-w-0 truncate text-[10px] uppercase tracking-[0.16em]">
-                          {getPublicStageLabel(stage.name)}
-                        </span>
-
-                        <span className="shrink-0 text-[10px] font-black text-white/70">
-                          {stage.progress}%
-                        </span>
-                      </button>
-                    )
-                  })}
+                  <div className="mt-8 h-2 overflow-hidden rounded-full bg-white/10">
+                    <motion.div
+                      key={selectedStage.id}
+                      initial={{
+                        width: 0,
+                      }}
+                      animate={{
+                        width: `${selectedStage.progress}%`,
+                      }}
+                      transition={{
+                        duration: 0.65,
+                        ease: [0.22, 1, 0.36, 1],
+                      }}
+                      className="h-full rounded-full bg-gradient-to-r from-cyan-300 via-white to-amber-200"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
+          </motion.div>
+        )}
       </div>
     </section>
   )

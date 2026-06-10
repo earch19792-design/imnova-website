@@ -221,6 +221,27 @@ function isAvailableNow(product: LiveProduct) {
   return status.includes("disponible")
 }
 
+function getProductInformationHref(
+  product: LiveProduct
+) {
+  if (
+    isAvailableNow(product) &&
+    product.slug
+  ) {
+    return `/store/${product.slug}`
+  }
+
+  return "#imnova-guides"
+}
+
+function getProductInformationLabel(
+  product: LiveProduct
+) {
+  return isAvailableNow(product)
+    ? "Comprar ahora"
+    : "Ver ideas de uso"
+}
+
 function isComingSoon(product: LiveProduct) {
   const status =
     normalizeText(product.status)
@@ -619,7 +640,7 @@ export function InnovationsSection() {
               ...product,
               status:
                 state?.name ||
-                "Proximamente",
+                "Próximamente",
               progress:
                 state?.progress ||
                 0,
@@ -771,6 +792,12 @@ export function InnovationsSection() {
       4
     )
 
+  const hiddenComingSoonProductsCount =
+    Math.max(
+      comingSoonProducts.length - 4,
+      0
+    )
+
   return (
     <section
       id="innovations"
@@ -919,15 +946,17 @@ export function InnovationsSection() {
                           "Producto listo para ser comercializado."}
                       </p>
 
-                      {featuredCommercializationProduct.slug && (
-                        <Link
-                          href={`/store/${featuredCommercializationProduct.slug}`}
-                          className="mt-8 inline-flex items-center justify-center gap-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 transition hover:border-cyan-200/35 hover:bg-cyan-300/[0.13]"
-                        >
-                          Ver más información
-                          <Info className="h-4 w-4" />
-                        </Link>
-                      )}
+                      <Link
+                        href={getProductInformationHref(
+                          featuredCommercializationProduct
+                        )}
+                        className="mt-8 inline-flex items-center justify-center gap-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 transition hover:border-cyan-200/35 hover:bg-cyan-300/[0.13]"
+                      >
+                        {getProductInformationLabel(
+                          featuredCommercializationProduct
+                        )}
+                        <Info className="h-4 w-4" />
+                      </Link>
 
                       <div className="mt-8">
                         <div className="mb-3 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-zinc-500">
@@ -994,15 +1023,17 @@ export function InnovationsSection() {
                             <h4 className="mt-2 truncate text-lg font-black leading-tight text-white">
                               {product.name}
                             </h4>
-                            {product.slug && (
-                              <Link
-                                href={`/store/${product.slug}`}
-                                className="mt-3 inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100"
-                              >
-                                Ver más información
-                                <ArrowUpRight className="h-3 w-3" />
-                              </Link>
-                            )}
+                            <Link
+                              href={getProductInformationHref(
+                                product
+                              )}
+                              className="mt-3 inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100"
+                            >
+                              {getProductInformationLabel(
+                                product
+                              )}
+                              <ArrowUpRight className="h-3 w-3" />
+                            </Link>
                             <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/10">
                               <div
                                 style={{
@@ -1049,7 +1080,7 @@ export function InnovationsSection() {
             <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/25 to-transparent" />
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.07),transparent_34%)]" />
 
-            <div className="relative mb-10 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="relative mb-10 grid gap-6 lg:grid-cols-[minmax(0,1fr)_390px] lg:items-start">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.34em] text-cyan-100/60">
                   Viene Pronto
@@ -1061,49 +1092,101 @@ export function InnovationsSection() {
                   Ideas en validación comunitaria
                 </h3>
                 <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-400 md:text-base">
-                  Un contador público de ideas que la comunidad ayuda a
-                  evaluar. Cada idea muestra nicho, problema humano, señales de
-                  encuesta y actividad social; cuando la validación es positiva,
-                  puede avanzar hacia el Pipeline Oficial IMNOVA.
+                  Aquí no mostramos productos finales. Mostramos ideas
+                  tempranas que IMNOVA está midiendo con la comunidad: qué
+                  nicho atienden, qué problema humano buscan resolver y si el
+                  interés real justifica llevarlas a desarrollo.
                 </p>
+
+                <div className="mt-6 grid gap-3 md:grid-cols-3">
+                  <div className="rounded-3xl border border-cyan-200/10 bg-cyan-300/[0.045] p-4">
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-100">
+                      01 Detectar
+                    </p>
+                    <p className="mt-3 text-xs leading-5 text-zinc-400">
+                      Se define el nicho y la necesidad que vale la pena
+                      explorar.
+                    </p>
+                  </div>
+
+                  <div className="rounded-3xl border border-amber-200/10 bg-amber-200/[0.045] p-4">
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-amber-100">
+                      02 Validar
+                    </p>
+                    <p className="mt-3 text-xs leading-5 text-zinc-400">
+                      La comunidad responde encuestas y deja señales en los
+                      canales activos.
+                    </p>
+                  </div>
+
+                  <div className="rounded-3xl border border-emerald-200/10 bg-emerald-300/[0.045] p-4">
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-100">
+                      03 Decidir
+                    </p>
+                    <p className="mt-3 text-xs leading-5 text-zinc-400">
+                      Si hay interés suficiente, la idea avanza; si no, se
+                      ajusta o se pausa.
+                    </p>
+                  </div>
+                </div>
               </div>
 
-              <div className="grid max-w-2xl grid-cols-2 gap-3 sm:grid-cols-4">
-                <div className="rounded-3xl border border-amber-200/10 bg-black/35 px-5 py-4">
-                  <p className="text-[10px] uppercase tracking-[0.20em] text-amber-100/45">
-                    Ideas cargadas
-                  </p>
-                  <p className="mt-2 text-3xl font-black text-white">
-                    {comingSoonProducts.length}
-                  </p>
+              <div className="rounded-[28px] border border-white/10 bg-black/35 p-5 backdrop-blur-xl">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.26em] text-amber-100/50">
+                      Tablero vivo
+                    </p>
+                    <h4 className="mt-2 text-2xl font-black text-white">
+                      Señales de interés
+                    </h4>
+                  </div>
+                  <Signal className="h-6 w-6 text-cyan-100" />
                 </div>
 
-                <div className="rounded-3xl border border-amber-200/10 bg-black/35 px-5 py-4">
-                  <p className="text-[10px] uppercase tracking-[0.20em] text-amber-100/45">
-                    Con encuesta
-                  </p>
-                  <p className="mt-2 text-3xl font-black text-white">
-                    {surveyedComingSoonProducts.length}
-                  </p>
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3">
+                    <p className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">
+                      Ideas
+                    </p>
+                    <p className="mt-2 text-3xl font-black text-white">
+                      {comingSoonProducts.length}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3">
+                    <p className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">
+                      Encuestas
+                    </p>
+                    <p className="mt-2 text-3xl font-black text-white">
+                      {surveyedComingSoonProducts.length}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3">
+                    <p className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">
+                      Redes
+                    </p>
+                    <p className="mt-2 text-3xl font-black text-white">
+                      {socialSignalComingSoonProducts.length}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-amber-200/15 bg-amber-200/[0.055] px-4 py-3">
+                    <p className="text-[9px] uppercase tracking-[0.18em] text-amber-100/55">
+                      Aprobadas
+                    </p>
+                    <p className="mt-2 text-3xl font-black text-amber-100">
+                      {decisionRecordedProducts.length}
+                    </p>
+                  </div>
                 </div>
 
-                <div className="rounded-3xl border border-amber-200/10 bg-black/35 px-5 py-4">
-                  <p className="text-[10px] uppercase tracking-[0.20em] text-amber-100/45">
-                    Señales sociales
-                  </p>
-                  <p className="mt-2 text-3xl font-black text-white">
-                    {socialSignalComingSoonProducts.length}
-                  </p>
-                </div>
-
-                <div className="rounded-3xl border border-amber-200/10 bg-black/35 px-5 py-4">
-                  <p className="text-[10px] uppercase tracking-[0.20em] text-amber-100/45">
-                    Listas para avanzar
-                  </p>
-                  <p className="mt-2 text-3xl font-black text-amber-100">
-                    {decisionRecordedProducts.length}
-                  </p>
-                </div>
+                <p className="mt-4 text-xs leading-6 text-zinc-500">
+                  La web solo presenta la lectura pública; la encuesta y el
+                  registro de señales se alimentan desde los canales definidos
+                  por IMNOVA.
+                </p>
               </div>
             </div>
 
@@ -1127,122 +1210,142 @@ export function InnovationsSection() {
                   <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.15),transparent_36%)]" />
 
                   <div className="relative z-10">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span
-                        className={
-                          featuredHasPositiveValidation
-                            ? "inline-flex items-center gap-2 rounded-full border border-emerald-200/25 bg-emerald-300/[0.10] px-4 py-2 text-[10px] uppercase tracking-[0.24em] text-emerald-100"
-                            : "inline-flex items-center gap-2 rounded-full border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-2 text-[10px] uppercase tracking-[0.24em] text-cyan-100"
-                        }
-                      >
-                        {featuredHasPositiveValidation ? (
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                        ) : (
-                          <Signal className="h-3.5 w-3.5" />
-                        )}
-                        {getComingSoonBadgeLabel(
-                          featuredComingSoonProduct
-                        )}
-                      </span>
+                    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <span
+                            className={
+                              featuredHasPositiveValidation
+                                ? "inline-flex items-center gap-2 rounded-full border border-emerald-200/25 bg-emerald-300/[0.10] px-4 py-2 text-[10px] uppercase tracking-[0.24em] text-emerald-100"
+                                : "inline-flex items-center gap-2 rounded-full border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-2 text-[10px] uppercase tracking-[0.24em] text-cyan-100"
+                            }
+                          >
+                            {featuredHasPositiveValidation ? (
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                            ) : (
+                              <Signal className="h-3.5 w-3.5" />
+                            )}
+                            {getComingSoonBadgeLabel(
+                              featuredComingSoonProduct
+                            )}
+                          </span>
+                        </div>
 
-                      <span className="inline-flex rounded-full border border-amber-200/20 bg-amber-200/[0.08] px-4 py-2 text-[10px] uppercase tracking-[0.20em] text-amber-100">
-                        {getSurveySummary(
-                          featuredComingSoonProduct
-                        )}
-                      </span>
-
-                      <span className="inline-flex rounded-full border border-white/10 bg-white/[0.045] px-4 py-2 text-[10px] uppercase tracking-[0.20em] text-zinc-300">
-                        {getSocialSignalSummary(
-                          featuredComingSoonProduct
-                        )}
-                      </span>
-                    </div>
-
-                    <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-cyan-100/55">
-                      Idea en evaluación
-                    </p>
-                    <h3 className="mt-4 max-w-3xl text-4xl font-black leading-tight tracking-[-0.035em] text-white md:text-5xl">
-                      {featuredComingSoonProduct.name}
-                    </h3>
-
-                    <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-cyan-100/55">
-                      Nicho
-                    </p>
-
-                    <div className="mt-4 flex max-w-3xl flex-wrap gap-3">
-                      {getProductNiches(
-                        featuredComingSoonProduct
-                      ).map(niche => (
-                        <span
-                          key={niche}
-                          className="rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-5 py-3 text-sm font-black uppercase tracking-[0.16em] text-cyan-50"
-                        >
-                          {niche}
-                        </span>
-                      ))}
-                    </div>
-
-                    <div className="mt-6 grid gap-4 lg:grid-cols-4">
-                      <div className="rounded-3xl border border-amber-200/15 bg-amber-200/[0.055] p-5">
-                        <p className="text-[10px] uppercase tracking-[0.24em] text-amber-100/60">
-                          Problema que resuelve
+                        <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-cyan-100/55">
+                          Idea activa
                         </p>
-                        <p className="mt-4 text-sm leading-7 text-zinc-300">
-                          {getPopulationProblem(featuredComingSoonProduct)}
-                        </p>
+                        <h3 className="mt-4 max-w-3xl text-4xl font-black leading-tight tracking-[-0.035em] text-white md:text-5xl">
+                          {featuredComingSoonProduct.name}
+                        </h3>
+
+                        <div className="mt-7 grid gap-4 md:grid-cols-2">
+                          <div className="rounded-3xl border border-cyan-200/15 bg-cyan-300/[0.045] p-5">
+                            <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/60">
+                              Nicho
+                            </p>
+                            <div className="mt-4 flex flex-wrap gap-2">
+                              {getProductNiches(
+                                featuredComingSoonProduct
+                              ).map(niche => (
+                                <span
+                                  key={niche}
+                                  className="rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-2 text-xs font-black uppercase tracking-[0.14em] text-cyan-50"
+                                >
+                                  {niche}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="rounded-3xl border border-amber-200/15 bg-amber-200/[0.055] p-5">
+                            <p className="text-[10px] uppercase tracking-[0.24em] text-amber-100/60">
+                              Problema humano
+                            </p>
+                            <p className="mt-4 text-sm leading-7 text-zinc-300">
+                              {getPopulationProblem(
+                                featuredComingSoonProduct
+                              )}
+                            </p>
+                          </div>
+
+                          <div className="rounded-3xl border border-white/10 bg-black/25 p-5 md:col-span-2">
+                            <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-400">
+                              Promesa inicial
+                            </p>
+                            <p className="mt-4 max-w-3xl text-sm leading-7 text-zinc-300">
+                              {getExpectedBenefit(
+                                featuredComingSoonProduct
+                              )}
+                            </p>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="rounded-3xl border border-cyan-200/15 bg-cyan-300/[0.045] p-5">
-                        <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/60">
-                          Promesa funcional
+                      <aside className="rounded-[28px] border border-white/10 bg-black/30 p-5">
+                        <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">
+                          Lectura comunitaria
                         </p>
-                        <p className="mt-4 text-sm leading-7 text-zinc-300">
-                          {getExpectedBenefit(featuredComingSoonProduct)}
-                        </p>
-                      </div>
 
-                      <div className="rounded-3xl border border-white/10 bg-black/25 p-5">
-                        <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-400">
-                          Validación registrada
-                        </p>
-                        <p className="mt-4 text-sm leading-7 text-zinc-300">
-                          {getSurveyDetail(featuredComingSoonProduct)}
-                        </p>
-                      </div>
+                        <div className="mt-5 grid gap-3">
+                          <div className="rounded-2xl border border-amber-200/10 bg-amber-200/[0.045] p-4">
+                            <p className="text-[9px] uppercase tracking-[0.18em] text-amber-100/55">
+                              Encuesta
+                            </p>
+                            <p className="mt-2 text-sm font-black text-amber-50">
+                              {getSurveySummary(
+                                featuredComingSoonProduct
+                              )}
+                            </p>
+                            <p className="mt-2 text-xs leading-5 text-zinc-500">
+                              {getSurveyDetail(
+                                featuredComingSoonProduct
+                              )}
+                            </p>
+                          </div>
 
-                      <div className="rounded-3xl border border-white/10 bg-white/[0.025] p-5">
-                        <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-400">
-                          Señales sociales
-                        </p>
-                        <p className="mt-4 text-sm leading-7 text-zinc-300">
-                          {getSocialSignalDetail(featuredComingSoonProduct)}
-                        </p>
-                      </div>
-                    </div>
+                          <div className="rounded-2xl border border-cyan-200/10 bg-cyan-300/[0.045] p-4">
+                            <p className="text-[9px] uppercase tracking-[0.18em] text-cyan-100/55">
+                              Redes y canales
+                            </p>
+                            <p className="mt-2 text-sm font-black text-cyan-50">
+                              {getSocialSignalSummary(
+                                featuredComingSoonProduct
+                              )}
+                            </p>
+                            <p className="mt-2 text-xs leading-5 text-zinc-500">
+                              {getSocialSignalDetail(
+                                featuredComingSoonProduct
+                              )}
+                            </p>
+                          </div>
 
-                    <div className="mt-6 rounded-3xl border border-emerald-200/15 bg-emerald-300/[0.06] p-5">
-                      <p className="text-[10px] uppercase tracking-[0.24em] text-emerald-100/65">
-                        Siguiente decisión
-                      </p>
-                      <p className="mt-3 text-sm leading-7 text-emerald-50/85">
-                        {getDecisionText(featuredComingSoonProduct)}.
-                      </p>
+                          <div className="rounded-2xl border border-emerald-200/15 bg-emerald-300/[0.06] p-4">
+                            <p className="text-[9px] uppercase tracking-[0.18em] text-emerald-100/65">
+                              Decisión
+                            </p>
+                            <p className="mt-2 text-xs leading-6 text-emerald-50/85">
+                              {getDecisionText(
+                                featuredComingSoonProduct
+                              )}.
+                            </p>
+                          </div>
+                        </div>
+                      </aside>
                     </div>
 
                     <div className="mt-6 overflow-hidden rounded-3xl border border-white/10 bg-white/[0.025] p-5">
                       <p className="text-[10px] uppercase tracking-[0.24em] text-amber-100/65">
-                        Camino posible hacia producto oficial
+                        Si la comunidad la aprueba
                       </p>
                       <p className="mt-3 max-w-3xl text-sm leading-7 text-zinc-400">
-                        La activación de encuestas se gestiona desde IMNOVA. En
-                        Home solo mostramos señales y conteos públicos; si el
-                        promedio comunitario es alto, la idea puede avanzar por
-                        las etapas oficiales hasta convertirse en producto
-                        disponible.
+                        La idea entra al proceso oficial: validación, prioridad,
+                        testing, producción, listo para ser comercializado y
+                        disponible. Si no reúne interés suficiente, se ajusta o
+                        se pausa.
                       </p>
 
-                      <div className="relative mt-6 overflow-x-auto pb-3 [scrollbar-width:thin] [scrollbar-color:rgba(251,191,36,0.5)_rgba(255,255,255,0.08)]">
-                        <div className="relative min-w-[760px]">
+                      <div className="relative mt-6 overflow-x-auto pb-3 [scrollbar-width:thin] [scrollbar-color:rgba(251,191,36,0.45)_rgba(255,255,255,0.08)] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-amber-200/45 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-white/10">
+                        <div className="relative min-w-[1080px]">
                           <div className="absolute left-0 right-0 top-5 h-1 rounded-full bg-white/10" />
                           <motion.div
                             initial={{
@@ -1262,7 +1365,7 @@ export function InnovationsSection() {
                             className="absolute left-0 top-5 h-1 rounded-full bg-gradient-to-r from-amber-200 via-cyan-200 to-emerald-200"
                           />
 
-                          <div className="relative grid grid-cols-7 gap-3">
+                          <div className="relative grid grid-cols-7 gap-5">
                             {officialProductFlow.map(
                               (step, index) => {
                                 const activeFlowIndex =
@@ -1301,8 +1404,8 @@ export function InnovationsSection() {
                                     <p
                                       className={
                                         isCurrentStep
-                                          ? "mt-3 text-[10px] font-black uppercase tracking-[0.12em] text-cyan-100"
-                                          : "mt-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500"
+                                          ? "mt-3 whitespace-nowrap text-[9px] font-black uppercase tracking-[0.08em] text-cyan-100"
+                                          : "mt-3 whitespace-nowrap text-[9px] font-semibold uppercase tracking-[0.08em] text-zinc-500"
                                       }
                                     >
                                       {step}
@@ -1319,7 +1422,21 @@ export function InnovationsSection() {
                   </div>
                 </motion.article>
 
-                <div className="grid content-start gap-4">
+                <aside className="grid content-start gap-4">
+                  <div className="rounded-[24px] border border-white/10 bg-black/35 p-5 text-left backdrop-blur-xl">
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-amber-100/55">
+                      Cola de validación
+                    </p>
+                    <h4 className="mt-3 text-2xl font-black text-white">
+                      Ideas que esperan lectura comunitaria
+                    </h4>
+                    <p className="mt-3 text-xs leading-6 text-zinc-500">
+                      Se muestran pocas para mantener foco. El resto permanece
+                      conectado a la data y puede avanzar cuando sus señales lo
+                      justifiquen.
+                    </p>
+                  </div>
+
                   {previewComingSoonProducts.map(
                     product => (
                       <motion.article
@@ -1355,56 +1472,59 @@ export function InnovationsSection() {
                           </span>
                         </div>
 
-                        <div className="mt-4 space-y-3">
-                          <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">
-                            Nicho: {getProductNiches(product).join(", ")}
-                          </p>
-                          <h4 className="mt-2 text-lg font-black leading-tight text-white">
-                            {product.name}
-                          </h4>
-                          <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-500">
-                            Problema: {getPopulationProblem(product)}
-                          </p>
-                          <div className="rounded-2xl border border-cyan-200/10 bg-cyan-300/[0.045] px-4 py-3">
-                            <p className="text-[9px] uppercase tracking-[0.18em] text-cyan-100/55">
-                              Promesa funcional
-                            </p>
-                            <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-400">
-                              {getExpectedBenefit(product)}
-                            </p>
-                          </div>
+                        <h4 className="mt-4 text-lg font-black leading-tight text-white">
+                          {product.name}
+                        </h4>
 
-                          <div className="rounded-2xl border border-amber-200/10 bg-amber-200/[0.045] px-4 py-3">
-                            <p className="text-[9px] uppercase tracking-[0.18em] text-amber-100/55">
-                              Validación registrada
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {getProductNiches(product).map(niche => (
+                            <span
+                              key={niche}
+                              className="rounded-full border border-cyan-200/15 bg-cyan-300/[0.06] px-3 py-1.5 text-[9px] uppercase tracking-[0.16em] text-cyan-100"
+                            >
+                              {niche}
+                            </span>
+                          ))}
+                        </div>
+
+                        <p className="mt-4 line-clamp-2 text-xs leading-5 text-zinc-500">
+                          {getPopulationProblem(product)}
+                        </p>
+
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                          <div className="rounded-2xl border border-amber-200/10 bg-amber-200/[0.045] px-3 py-3">
+                            <p className="text-[9px] uppercase tracking-[0.16em] text-amber-100/55">
+                              Encuesta
                             </p>
-                            <p className="mt-2 text-xs leading-5 text-amber-50/80">
+                            <p className="mt-2 text-xs font-black text-amber-50">
                               {getSurveySummary(product)}
                             </p>
                           </div>
 
-                          <div className="rounded-2xl border border-white/10 bg-white/[0.025] px-4 py-3">
-                            <p className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">
-                              Señales sociales
+                          <div className="rounded-2xl border border-white/10 bg-white/[0.025] px-3 py-3">
+                            <p className="text-[9px] uppercase tracking-[0.16em] text-zinc-500">
+                              Canales
                             </p>
-                            <p className="mt-2 text-xs leading-5 text-zinc-400">
+                            <p className="mt-2 text-xs font-black text-zinc-300">
                               {getSocialSignalSummary(product)}
-                            </p>
-                          </div>
-
-                          <div className="rounded-2xl border border-white/10 bg-black/25 px-4 py-3">
-                            <p className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">
-                              Siguiente decisión
-                            </p>
-                            <p className="mt-2 text-xs leading-5 text-zinc-400">
-                              {getDecisionText(product)}
                             </p>
                           </div>
                         </div>
                       </motion.article>
                     )
                   )}
-                </div>
+
+                  {hiddenComingSoonProductsCount > 0 && (
+                    <div className="rounded-[24px] border border-cyan-200/15 bg-cyan-300/[0.045] p-5 text-center">
+                      <p className="text-3xl font-black text-cyan-50">
+                        +{hiddenComingSoonProductsCount}
+                      </p>
+                      <p className="mt-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100/65">
+                        ideas más en validación
+                      </p>
+                    </div>
+                  )}
+                </aside>
               </div>
             ) : (
               <motion.div

@@ -1438,9 +1438,11 @@ export function ImnovaGuidesSection({
           </h2>
 
           <p className="mx-auto mt-7 max-w-3xl text-lg leading-8 text-zinc-400">
-            Formas simples de integrar los productos IMNOVA en tu rutina
-            diaria, con momentos reales, beneficios claros y experiencias
-            fáciles de aplicar.
+            Descubre formas simples de preparar, combinar y disfrutar los
+            productos IMNOVA en tu rutina diaria. Cada idea está diseñada para
+            conectar el producto con momentos reales de tu día, mostrando cómo
+            usarlo fácilmente y qué beneficios puede aportar a tu estilo de
+            vida.
           </p>
         </motion.div>
 

@@ -1,50 +1,144 @@
 "use client"
 
-/* 
+/*
 ================================================
-MENÚ PRINCIPAL
-SECCIÓN: TIENDA
+SECCION: TIENDA
 COMPONENTE: StorePage
-VERSIÓN: PREMIUM STORE + CARRITO LATERAL
+OBJETIVO: MARKETPLACE CLARO
 ================================================
 */
 
 import Image from "next/image"
 import Link from "next/link"
-import { useEffect, useMemo, useState } from "react"
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react"
 
 import {
+  ArrowUpRight,
+  ArrowLeft,
+  BadgeCheck,
+  Minus,
+  Plus,
+  Search,
   ShoppingBag,
   X,
-  Plus,
-  Minus,
 } from "lucide-react"
-
 
 import { getProducts } from "@/lib/products-service"
 
+type Product = {
+  id: string
+  name: string
+  slug?: string | null
+  description?: string | null
+  image_url?: string | null
+  image?: string | null
+  price?: string | number | null
+  currency?: string | null
+  category?: string | null
+  bullets?: string[] | null
+}
+
+type CartItem = {
+  id: string
+  qty: number
+  product: Product
+}
+
+const storeImagesBySlug: Record<string, string> = {
+  "mash-coffee":
+    "/images/products/store/mash-coffee/mash-coffee-lata-250ml-frontal.webp",
+  "mash-coffee-6pack":
+    "/images/products/store/mash-coffee/mash-coffee-6-pack-frontal.webp",
+  "mash-coffee-12pack":
+    "/images/products/store/mash-coffee/mash-coffee-12-pack-frontal.webp",
+  "mash-nutri-pancake":
+    "/images/products/store/mash-nutri-pancake/mash-nutri-pancake-150g-frontal.webp",
+  "mash-nutri-pan":
+    "/images/products/store/mash-nutri-pan/mash-nutra-pan-proteinico-200g-frontal.webp",
+}
+
+function getStoreImage(product: Product) {
+  const slug =
+    product.slug || ""
+
+  return (
+    storeImagesBySlug[slug] ||
+    product.image_url ||
+    product.image ||
+    "/placeholder.jpg"
+  )
+}
+
 function formatPrice(
-  price: string,
+  price?: string | number | null,
   currency = "USD"
 ) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-  }).format(Number(price))
+  const amount =
+    Number(price || 0)
+
+  return new Intl.NumberFormat(
+    "en-US",
+    {
+      style: "currency",
+      currency:
+        currency || "USD",
+    }
+  ).format(
+    Number.isFinite(amount)
+      ? amount
+      : 0
+  )
 }
 
 export default function StorePage() {
+  const [
+    cart,
+    setCart,
+  ] = useState<CartItem[]>([])
 
-  const [cart, setCart] = useState<any[]>([])
-  const [products, setProducts] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-  const [openCart, setOpenCart] = useState(false)
+  const [
+    products,
+    setProducts,
+  ] = useState<Product[]>([])
+
+  const [
+    loading,
+    setLoading,
+  ] = useState(true)
+
+  const [
+    openCart,
+    setOpenCart,
+  ] = useState(false)
+
+  const [
+    activeCategory,
+    setActiveCategory,
+  ] = useState("Todos")
+
+  const [
+    searchTerm,
+    setSearchTerm,
+  ] = useState("")
+
   useEffect(() => {
     async function loadProducts() {
-      const data = await getProducts()
-      console.log("STORE PRODUCTS:", data)
+      const data =
+        await getProducts()
 
-      setProducts(data || [])
+      console.log(
+        "STORE PRODUCTS:",
+        data
+      )
+
+      setProducts(
+        (data || []) as Product[]
+      )
+
       setLoading(false)
     }
 
@@ -69,544 +163,515 @@ export default function StorePage() {
       behavior: "smooth",
       block: "start",
     })
-  }, [loading, products])
+  }, [
+    loading,
+    products,
+  ])
 
-  /* =================================================
-  CART FUNCTIONS
-  ================================================= */
-
-  function addToCart(product: any) {
-
-    const existing = cart.find(
-      (i) => i.id === product.id
-    )
+  function addToCart(product: Product) {
+    const existing =
+      cart.find(
+        item =>
+          item.id === product.id
+      )
 
     if (existing) {
-
-      setCart((prev) =>
-        prev.map((i) =>
-          i.id === product.id
-            ? {
-                ...i,
-                qty: i.qty + 1,
-              }
-            : i
-        )
+      setCart(
+        current =>
+          current.map(
+            item =>
+              item.id === product.id
+                ? {
+                    ...item,
+                    qty:
+                      item.qty + 1,
+                  }
+                : item
+          )
       )
-
     } else {
-
-      setCart((prev) => [
-        ...prev,
-        {
-          id: product.id,
-          qty: 1,
-          product,
-        },
-      ])
-
-    }
-  }
-
-  function increaseQty(id: number) {
-
-    setCart((prev) =>
-      prev.map((i) =>
-        i.id === id
-          ? {
-              ...i,
-              qty: i.qty + 1,
-            }
-          : i
+      setCart(
+        current => [
+          ...current,
+          {
+            id:
+              product.id,
+            qty:
+              1,
+            product,
+          },
+        ]
       )
-    )
+    }
+
+    setOpenCart(true)
   }
 
-  function decreaseQty(id: number) {
-
-    setCart((prev) =>
-      prev
-        .map((i) =>
-          i.id === id
-            ? {
-                ...i,
-                qty: i.qty - 1,
-              }
-            : i
+  function increaseQty(id: string) {
+    setCart(
+      current =>
+        current.map(
+          item =>
+            item.id === id
+              ? {
+                  ...item,
+                  qty:
+                    item.qty + 1,
+                }
+              : item
         )
-        .filter((i) => i.qty > 0)
     )
   }
 
-  /* =================================================
-  CALCULATIONS
-  ================================================= */
+  function decreaseQty(id: string) {
+    setCart(
+      current =>
+        current
+          .map(
+            item =>
+              item.id === id
+                ? {
+                    ...item,
+                    qty:
+                      item.qty - 1,
+                  }
+                : item
+          )
+          .filter(
+            item =>
+              item.qty > 0
+          )
+    )
+  }
 
-  const totalItems = useMemo(
-    () =>
-      cart.reduce(
-        (acc, item) => acc + item.qty,
-        0
-      ),
-    [cart]
-  )
+  const totalItems =
+    useMemo(
+      () =>
+        cart.reduce(
+          (
+            total,
+            item
+          ) =>
+            total + item.qty,
+          0
+        ),
+      [cart]
+    )
 
-  const subtotal = useMemo(
-    () =>
-      cart.reduce(
-        (acc, item) =>
-          acc +
-          Number(item.product.price) *
-            item.qty,
-        0
-      ),
-    [cart]
-  )
-if (loading) {
+  const subtotal =
+    useMemo(
+      () =>
+        cart.reduce(
+          (
+            total,
+            item
+          ) =>
+            total +
+            Number(
+              item.product.price || 0
+            ) *
+              item.qty,
+          0
+        ),
+      [cart]
+    )
+
+  const categories =
+    useMemo(
+      () => [
+        "Todos",
+        ...Array.from(
+          new Set(
+            products
+              .map(
+                product =>
+                  product.category?.trim()
+              )
+              .filter(
+                Boolean
+              ) as string[]
+          )
+        ),
+      ],
+      [products]
+    )
+
+  const visibleProducts =
+    useMemo(
+      () => {
+        const normalizedSearch =
+          searchTerm
+            .trim()
+            .toLowerCase()
+
+        return products.filter(
+          product => {
+            const matchesCategory =
+              activeCategory ===
+                "Todos" ||
+              product.category?.trim() ===
+                activeCategory
+
+            const searchableText = [
+              product.name,
+              product.description,
+              product.category,
+              ...(product.bullets || []),
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .toLowerCase()
+
+            const matchesSearch =
+              !normalizedSearch ||
+              searchableText.includes(
+                normalizedSearch
+              )
+
+            return (
+              matchesCategory &&
+              matchesSearch
+            )
+          }
+        )
+      },
+      [
+        activeCategory,
+        products,
+        searchTerm,
+      ]
+    )
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-[#f8f8f5] text-zinc-950">
+        <div className="mx-auto flex min-h-screen max-w-7xl items-center justify-center px-6">
+          <div className="rounded-[28px] border border-zinc-200 bg-white px-8 py-6 text-sm font-semibold text-zinc-600 shadow-sm">
+            Cargando tienda IMNOVA...
+          </div>
+        </div>
+      </main>
+    )
+  }
+
   return (
-    <div className="min-h-screen flex items-center justify-center text-white">
-      Cargando productos...
-    </div>
-  )
-}
-  return (
-    <div
-      className="
-        min-h-screen
-        overflow-hidden
-        bg-gradient-to-b
-        from-[#050505]
-        via-black
-        to-[#050505]
-        pb-32
-        text-white
-      "
-    >
+    <main className="min-h-screen bg-[#f8f8f5] text-zinc-950">
+      <section className="border-b border-zinc-200 bg-white">
+        <div className="mx-auto max-w-7xl px-6 py-10">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Volver
+            </Link>
 
-      {/* =================================================
-      BACK BUTTON
-      ================================================= */}
+            <button
+              type="button"
+              onClick={() =>
+                setOpenCart(true)
+              }
+              className="relative inline-flex items-center justify-center gap-3 rounded-full bg-zinc-950 px-7 py-4 text-sm font-black uppercase tracking-[0.2em] text-white shadow-[0_20px_60px_rgba(15,23,42,0.20)] transition hover:-translate-y-0.5 hover:bg-zinc-800"
+            >
+              <ShoppingBag className="h-5 w-5" />
+              Carrito
 
-      <button
-        onClick={() =>
-          window.history.back()
-        }
-        className="
-          fixed
-          left-5
-          top-6
-          z-50
-          rounded-full
-          border
-          border-white/10
-          bg-white/[0.05]
-          px-5
-          py-3
-          text-sm
-          font-semibold
-          text-white
-          backdrop-blur-2xl
-          transition-all
-          duration-500
-          hover:bg-white/[0.08]
-          hover:shadow-[0_0_40px_rgba(255,255,255,0.08)]
-        "
-      >
-        ← Regresar
-      </button>
+              {totalItems > 0 && (
+                <span className="absolute -right-2 -top-2 flex h-7 w-7 items-center justify-center rounded-full bg-cyan-400 text-xs text-zinc-950">
+                  {totalItems}
+                </span>
+              )}
+            </button>
+          </div>
 
-      {/* =================================================
-      CART BUTTON
-      ================================================= */}
+          <div className="mx-auto mt-12 max-w-5xl text-center">
+            <p className="text-xs font-black uppercase tracking-[0.34em] text-cyan-700">
+              Marketplace IMNOVA
+            </p>
 
-      <button
-        onClick={() =>
-          setOpenCart(true)
-        }
-        className="
-          group
-          fixed
-          right-5
-          top-6
-          z-50
-          overflow-hidden
-          rounded-full
-          border
-          border-white/10
-          bg-gradient-to-br
-          from-white/[0.10]
-          to-white/[0.03]
-          px-6
-          py-4
-          backdrop-blur-3xl
-          transition-all
-          duration-500
-          hover:scale-[1.03]
-          hover:border-amber-400/30
-          hover:shadow-[0_0_80px_rgba(251,191,36,0.18)]
-        "
-      >
+            <div className="relative mt-6 overflow-hidden rounded-[36px] border border-zinc-200 bg-[#f8f8f5] bg-[url('/images/store/imnova-concept-banner.svg')] bg-cover bg-center px-6 py-10 shadow-[0_24px_80px_rgba(15,23,42,0.08)] md:px-12 md:py-14">
+              <div className="absolute inset-0 bg-white/58 backdrop-blur-[1px]" />
+              <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-white/70 to-transparent" />
 
-        {/* Glow */}
-        <div className="absolute inset-0 bg-gradient-to-r from-amber-400/[0.06] via-transparent to-orange-500/[0.05] opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+              <div className="relative z-10">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-cyan-200 bg-white/85 text-cyan-700 shadow-sm backdrop-blur">
+                  <BadgeCheck className="h-7 w-7" />
+                </div>
 
-        {/* Content */}
-        <div className="relative z-10 flex items-center gap-4">
+                <h1 className="mx-auto mt-7 max-w-4xl text-4xl font-black leading-[1.02] tracking-[-0.035em] text-zinc-950 md:text-6xl">
+                  Soluciones inteligentes para vivir mejor.
+                </h1>
 
-          {/* Icon Container */}
-          <div
-            className="
-              relative
-              flex
-              h-12
-              w-12
-              items-center
-              justify-center
-              rounded-2xl
-              border
-              border-amber-400/20
-              bg-amber-400/[0.08]
-              transition-all
-              duration-500
-              group-hover:scale-110
-              group-hover:bg-amber-400/[0.14]
-            "
-          >
+                <p className="mx-auto mt-6 max-w-4xl text-lg leading-8 text-zinc-700 md:text-xl md:leading-9">
+                  Creamos soluciones inteligentes que integran tecnología,
+                  nutrición y bienestar para ayudar a las personas a vivir mejor,
+                  rendir más y construir una rutina diaria más simple, saludable y
+                  equilibrada.
+                </p>
 
-            {/* Glow */}
-            <div className="absolute inset-0 rounded-2xl bg-amber-400/20 blur-xl opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                <div className="mt-8 flex flex-wrap justify-center gap-3">
+                  {[
+                    "Tecnología",
+                    "Nutrición funcional",
+                    "Bienestar diario",
+                  ].map(label => (
+                    <span
+                      key={label}
+                      className="rounded-full border border-zinc-200 bg-white/85 px-5 py-3 text-xs font-black uppercase tracking-[0.18em] text-zinc-700 shadow-sm backdrop-blur"
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
-            {/* Counter */}
-            {totalItems > 0 && (
-              <div
-                className="
-                  absolute
-                  -right-1
-                  -top-1
-                  flex
-                  h-6
-                  w-6
-                  items-center
-                  justify-center
-                  rounded-full
-                  bg-amber-400
-                  text-[10px]
-                  font-black
-                  text-black
-                  shadow-[0_0_25px_rgba(251,191,36,0.6)]
-                "
-              >
-                {totalItems}
+      <section className="mx-auto max-w-7xl px-6 pb-28 pt-10">
+        {products.length === 0 ? (
+          <div className="rounded-[32px] border border-zinc-200 bg-white p-10 text-center shadow-sm">
+            <p className="text-sm font-black uppercase tracking-[0.24em] text-zinc-400">
+              Sin productos publicados
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="mb-8 overflow-hidden rounded-[32px] border border-zinc-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.07)]">
+              <div className="grid gap-6 p-6 md:grid-cols-[1fr_0.9fr] md:p-8">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.28em] text-cyan-700">
+                    Catálogo oficial
+                  </p>
+
+                  <h2 className="mt-3 text-3xl font-black leading-tight tracking-[-0.03em] text-zinc-950 md:text-5xl">
+                    Productos IMNOVA listos para comprar.
+                  </h2>
+
+                  <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-600 md:text-base">
+                    Explora productos disponibles, compara presentaciones y
+                    agrega al carrito sin perder claridad. La tienda queda
+                    preparada para crecer con nuevas líneas y categorías.
+                  </p>
+                </div>
+
+                <div className="flex flex-col justify-between gap-4">
+                  <label className="relative block">
+                    <Search className="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-zinc-400" />
+                    <input
+                      type="search"
+                      value={searchTerm}
+                      onChange={event =>
+                        setSearchTerm(
+                          event.target.value
+                        )
+                      }
+                      placeholder="Buscar producto, beneficio o categoría"
+                      className="h-14 w-full rounded-full border border-zinc-200 bg-[#f8f8f5] pl-14 pr-5 text-sm font-semibold text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100"
+                    />
+                  </label>
+
+                  <div className="flex flex-wrap gap-2">
+                    {categories.map(
+                      category => (
+                        <button
+                          key={category}
+                          type="button"
+                          onClick={() =>
+                            setActiveCategory(
+                              category
+                            )
+                          }
+                          className={`rounded-full border px-4 py-2 text-xs font-black uppercase tracking-[0.14em] transition ${
+                            activeCategory ===
+                            category
+                              ? "border-zinc-950 bg-zinc-950 text-white"
+                              : "border-zinc-200 bg-white text-zinc-600 hover:border-cyan-300 hover:text-zinc-950"
+                          }`}
+                        >
+                          {category}
+                        </button>
+                      )
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-3 overflow-hidden rounded-[24px] border border-zinc-200 bg-[#f8f8f5]">
+                    {[
+                      [
+                        products.length,
+                        "Productos",
+                      ],
+                      [
+                        categories.length - 1,
+                        "Categorías",
+                      ],
+                      [
+                        totalItems,
+                        "En carrito",
+                      ],
+                    ].map(
+                      item => (
+                        <div
+                          key={item[1]}
+                          className="border-r border-zinc-200 p-4 last:border-r-0"
+                        >
+                          <p className="text-2xl font-black text-zinc-950">
+                            {item[0]}
+                          </p>
+                          <p className="mt-1 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">
+                            {item[1]}
+                          </p>
+                        </div>
+                      )
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {visibleProducts.length === 0 ? (
+              <div className="rounded-[32px] border border-zinc-200 bg-white p-10 text-center shadow-sm">
+                <p className="text-sm font-black uppercase tracking-[0.24em] text-zinc-400">
+                  No encontramos productos con ese filtro
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+                {visibleProducts.map(
+              product => {
+                const image =
+                  getStoreImage(
+                    product
+                  )
+
+                return (
+                  <article
+                    key={product.id}
+                    id={
+                      product.slug
+                        ? `product-${product.slug}`
+                        : `product-${product.id}`
+                    }
+                    className="group flex scroll-mt-28 flex-col overflow-hidden rounded-[28px] border border-zinc-200 bg-white shadow-sm transition hover:-translate-y-1 hover:border-cyan-200 hover:shadow-[0_24px_80px_rgba(15,23,42,0.12)]"
+                  >
+                    <Link
+                      href={
+                        product.slug
+                          ? `/store/${product.slug}`
+                          : "/store"
+                      }
+                      className="relative flex aspect-[4/3] items-center justify-center bg-gradient-to-br from-white via-[#fbfbf7] to-[#eef6f3] p-8"
+                    >
+                      <div className="absolute left-5 top-5 rounded-full border border-white bg-white/90 px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-zinc-700 shadow-sm backdrop-blur">
+                        IMNOVA
+                      </div>
+
+                      <div className="absolute right-5 top-5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-emerald-700">
+                        Disponible
+                      </div>
+
+                      <Image
+                        src={image}
+                        alt={product.name}
+                        fill
+                        sizes="(min-width: 1280px) 33vw, (min-width: 640px) 50vw, 100vw"
+                        className="object-contain p-10 transition duration-500 group-hover:scale-[1.04]"
+                      />
+                    </Link>
+
+                    <div className="flex flex-1 flex-col p-6">
+                      <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-700">
+                        {product.category ||
+                          "Producto funcional"}
+                      </p>
+
+                      <h2 className="mt-3 text-2xl font-black leading-tight text-zinc-950">
+                        {product.name}
+                      </h2>
+
+                      <p className="mt-4 min-h-20 text-sm leading-6 text-zinc-600">
+                        {product.description ||
+                          "Producto IMNOVA diseñado para bienestar, nutrición inteligente y rendimiento diario."}
+                      </p>
+
+                      <div className="mt-5 flex flex-wrap gap-2">
+                        {(product.bullets || [])
+                          .slice(
+                            0,
+                            3
+                          )
+                          .map(
+                            bullet => (
+                              <span
+                                key={bullet}
+                                className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs font-semibold text-zinc-600"
+                              >
+                                {bullet}
+                              </span>
+                            )
+                          )}
+                      </div>
+
+                      <div className="mt-auto pt-7">
+                        <div className="flex items-end justify-between gap-4">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-400">
+                              Precio
+                            </p>
+                            <p className="mt-1 text-3xl font-black tracking-tight text-zinc-950">
+                              {formatPrice(
+                                product.price,
+                                product.currency ||
+                                  "USD"
+                              )}
+                            </p>
+                          </div>
+
+                          <BadgeCheck className="h-7 w-7 text-cyan-700" />
+                        </div>
+
+                        <div className="mt-6 grid gap-3">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              addToCart(
+                                product
+                              )
+                            }
+                            className="rounded-full bg-zinc-950 px-6 py-4 text-sm font-black uppercase tracking-[0.16em] text-white transition hover:bg-cyan-900"
+                          >
+                            Comprar ahora
+                          </button>
+
+                          <Link
+                            href={
+                              product.slug
+                                ? `/store/${product.slug}`
+                                : "/store"
+                            }
+                            className="inline-flex items-center justify-center gap-2 rounded-full border border-zinc-200 bg-white px-6 py-4 text-center text-sm font-black uppercase tracking-[0.16em] text-zinc-800 transition hover:border-zinc-300 hover:bg-zinc-50"
+                          >
+                            Ver detalle
+                            <ArrowUpRight className="h-4 w-4" />
+                          </Link>
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                )
+              }
+                )}
               </div>
             )}
-
-            {/* Icon */}
-            <ShoppingBag
-              className="
-                relative
-                z-10
-                h-6
-                w-6
-                text-white
-                transition-all
-                duration-500
-                group-hover:text-amber-200
-              "
-            />
-
-          </div>
-
-          {/* Text */}
-          <div className="flex flex-col items-start">
-
-            <span
-              className="
-                text-[10px]
-                uppercase
-                tracking-[0.35em]
-                text-amber-300
-              "
-            >
-              IMNOVA STORE
-            </span>
-
-            <span
-              className="
-                text-2xl
-                font-black
-                tracking-[-0.03em]
-                text-white
-              "
-            >
-              Carrito
-            </span>
-
-          </div>
-
-        </div>
-
-      </button>
-
-      {/* =================================================
-      HERO
-      ================================================= */}
-
-      <section
-        className="
-          relative
-          isolate
-          overflow-hidden
-          border-b
-          border-white/10
-          px-6
-          pb-32
-          pt-36
-        "
-      >
-
-        {/* Background */}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a0a] via-black to-black" />
-
-        {/* Glow */}
-        <div className="absolute left-1/2 top-0 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-amber-400/15 blur-3xl" />
-
-        <div className="relative z-10 mx-auto max-w-7xl text-center">
-
-          {/* Badge */}
-          <div className="inline-flex items-center rounded-full border border-amber-400/20 bg-amber-400/10 px-5 py-2 backdrop-blur-xl">
-
-            <span className="text-xs uppercase tracking-[0.35em] text-amber-300">
-
-              EXPERIENCIA PREMIUM · IMNOVA
-
-            </span>
-
-          </div>
-
-          {/* Title */}
-          <h1
-            className="
-              mt-10
-              text-5xl
-              font-black
-              leading-[0.92]
-              tracking-[-0.05em]
-              text-white
-              sm:text-6xl
-              md:text-7xl
-              lg:text-8xl
-            "
-          >
-
-            Bienvenido a
-
-            <span className="mt-3 block bg-gradient-to-r from-amber-300 to-orange-500 bg-clip-text text-transparent">
-
-              Tienda IMNOVA
-
-            </span>
-
-          </h1>
-
-          {/* Divider */}
-          <div className="mx-auto mt-10 h-[2px] w-28 rounded-full bg-white/10" />
-
-          {/* Description */}
-          <p
-            className="
-              mx-auto
-              mt-10
-              max-w-3xl
-              text-lg
-              leading-9
-              text-zinc-300
-              sm:text-xl
-            "
-          >
-
-            Descubre productos funcionales diseñados para energía limpia,
-            bienestar integral, nutrición inteligente y rendimiento diario.
-
-          </p>
-
-        </div>
-
+          </>
+        )}
       </section>
 
-      {/* =================================================
-      PRODUCTS
-      ================================================= */}
-
-      <section
-        className="
-          mx-auto
-          mt-24
-          grid
-          max-w-7xl
-          gap-10
-          px-6
-          lg:grid-cols-2
-        "
-      >
-
-        {products.map((product: any) => (
-
-          <div
-            key={product.id}
-            id={
-              product.slug
-                ? `product-${product.slug}`
-                : `product-${product.id}`
-            }
-            className="
-              group
-              relative
-              scroll-mt-28
-              overflow-hidden
-              rounded-[40px]
-              border
-              border-white/10
-              bg-white/[0.03]
-              backdrop-blur-2xl
-              transition-all
-              duration-500
-              hover:-translate-y-2
-              hover:border-amber-400/20
-              hover:bg-white/[0.04]
-              hover:shadow-[0_0_80px_rgba(251,191,36,0.08)]
-            "
-          >
-
-            {/* Glow */}
-            <div className="absolute inset-0 bg-gradient-to-br from-amber-400/[0.03] via-transparent to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
-
-            {/* IMAGE */}
-            <div className="relative z-0 h-[480px] overflow-hidden">
-
-              <div className="absolute inset-0 bg-amber-400/5 blur-3xl" />
-
-              <Image
-  src={product.image_url}
-  alt={product.name}
-  fill
-  className="
-    pointer-events-none
-    object-contain
-    p-10
-    transition-all
-    duration-700
-    group-hover:scale-105
-  "
-/>
-            </div>
-
-            {/* CONTENT */}
-            <div className="relative z-20 p-10">
-
-              <h2 className="text-4xl font-black tracking-[-0.03em] text-white">
-
-                {product.name}
-
-              </h2>
-
-              <p className="mt-5 text-lg leading-8 text-zinc-400">
-
-                {product.description}
-
-              </p>
-
-              <div className="mt-8 text-5xl font-black tracking-tight text-amber-300">
-
-                {formatPrice(
-                  product.price,
-                  product.currency
-                )}
-
-              </div>
-
-              {/* Buttons */}
-              <div className="relative z-50 mt-10 flex flex-wrap gap-4">
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    addToCart(product)
-                  }
-                  className="
-                    rounded-2xl
-                    bg-gradient-to-r
-                    from-amber-400
-                    to-orange-500
-                    px-7
-                    py-4
-                    text-base
-                    font-black
-                    text-black
-                    transition-all
-                    duration-500
-                    hover:scale-[1.03]
-                    hover:shadow-[0_0_60px_rgba(251,191,36,0.35)]
-                  "
-                >
-
-                  Añadir al carrito
-
-                </button>
-
-                <Link
-                  href={`/store/${product.slug}`}
-                  className="
-                    rounded-2xl
-                    border
-                    border-white/10
-                    bg-white/[0.04]
-                    px-7
-                    py-4
-                    text-base
-                    font-semibold
-                    text-white
-                    backdrop-blur-xl
-                    transition-all
-                    duration-500
-                    hover:bg-white/[0.08]
-                    hover:border-white/20
-                  "
-                >
-
-                  Ver Producto
-
-                </Link>
-
-              </div>
-
-            </div>
-
-          </div>
-
-        ))}
-
-      </section>
-
-      {/* =================================================
-      CART SIDEBAR
-      ================================================= */}
-
-      <div
+      <aside
         className={`
-          fixed
-          top-0
-          right-0
-          z-[100]
-          h-full
-          w-full
-          max-w-md
-          transform
-          border-l
-          border-white/10
-          bg-black/90
-          backdrop-blur-2xl
-          transition-transform
-          duration-500
+          fixed right-0 top-0 z-[100] h-full w-full max-w-md transform border-l border-zinc-200 bg-white shadow-2xl transition-transform duration-500
           ${
             openCart
               ? "translate-x-0"
@@ -614,239 +679,126 @@ if (loading) {
           }
         `}
       >
-
-        {/* HEADER */}
-        <div className="flex items-center justify-between border-b border-white/10 p-6">
-
+        <div className="flex items-center justify-between border-b border-zinc-200 p-6">
           <div>
-
-            <p className="text-xs uppercase tracking-[0.3em] text-amber-300">
-
-              Tu Selección
-
+            <p className="text-xs font-black uppercase tracking-[0.28em] text-cyan-700">
+              Tu selección
             </p>
-
-            <h2 className="mt-2 text-3xl font-black">
-
+            <h2 className="mt-2 text-3xl font-black text-zinc-950">
               Carrito
-
             </h2>
-
           </div>
 
           <button
+            type="button"
             onClick={() =>
               setOpenCart(false)
             }
-            className="
-              rounded-full
-              border
-              border-white/10
-              p-3
-              transition-all
-              duration-300
-              hover:bg-white/10
-            "
+            className="rounded-full border border-zinc-200 p-3 text-zinc-700 transition hover:bg-zinc-50"
           >
-
             <X className="h-5 w-5" />
-
           </button>
-
         </div>
 
-        {/* ITEMS */}
-        <div className="flex h-[calc(100%-220px)] flex-col gap-5 overflow-y-auto p-6">
-
+        <div className="flex h-[calc(100%-220px)] flex-col gap-4 overflow-y-auto p-6">
           {cart.length === 0 ? (
-
             <div className="mt-20 text-center">
-
-              <ShoppingBag className="mx-auto h-14 w-14 text-zinc-700" />
-
+              <ShoppingBag className="mx-auto h-14 w-14 text-zinc-300" />
               <p className="mt-6 text-zinc-500">
-
                 Tu carrito está vacío.
-
               </p>
-
             </div>
-
           ) : (
-
-            cart.map((item) => (
-
-              <div
-                key={item.id}
-                className="
-                  rounded-[28px]
-                  border
-                  border-white/10
-                  bg-white/[0.03]
-                  p-5
-                "
-              >
-
-                <div className="flex gap-4">
-
-                  <div className="relative h-24 w-24 overflow-hidden rounded-2xl bg-white/[0.03]">
-
-                    <Image
-  src={item.product.image_url}
-  alt={item.product.name}
-  fill
-  className="object-contain p-3"
-/>
-
-</div>
-
-<div className="flex flex-1 flex-col justify-between">
-                    <div>
-
-                      <h3 className="font-black">
-
-                        {item.product.name}
-
-                      </h3>
-
-                      <p className="mt-2 text-sm text-zinc-500">
-
-                        {formatPrice(
-                          item.product.price,
-                          item.product.currency
+            cart.map(
+              item => (
+                <div
+                  key={item.id}
+                  className="rounded-[24px] border border-zinc-200 bg-white p-4 shadow-sm"
+                >
+                  <div className="flex gap-4">
+                    <div className="relative h-24 w-24 overflow-hidden rounded-2xl bg-[#f8f8f5]">
+                      <Image
+                        src={getStoreImage(
+                          item.product
                         )}
-
-                      </p>
-
+                        alt={item.product.name}
+                        fill
+                        className="object-contain p-3"
+                      />
                     </div>
 
-                    {/* QTY */}
-                    <div className="mt-4 flex items-center gap-3">
+                    <div className="flex flex-1 flex-col justify-between">
+                      <div>
+                        <h3 className="font-black leading-tight text-zinc-950">
+                          {item.product.name}
+                        </h3>
+                        <p className="mt-2 text-sm text-zinc-500">
+                          {formatPrice(
+                            item.product.price,
+                            item.product.currency ||
+                              "USD"
+                          )}
+                        </p>
+                      </div>
 
-                      <button
-                        onClick={() =>
-                          decreaseQty(item.id)
-                        }
-                        className="
-                          rounded-full
-                          border
-                          border-white/10
-                          p-2
-                          hover:bg-white/10
-                        "
-                      >
+                      <div className="mt-4 flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            decreaseQty(
+                              item.id
+                            )
+                          }
+                          className="rounded-full border border-zinc-200 p-2 text-zinc-700 hover:bg-zinc-50"
+                        >
+                          <Minus className="h-4 w-4" />
+                        </button>
 
-                        <Minus className="h-4 w-4" />
+                        <span className="font-bold text-zinc-950">
+                          {item.qty}
+                        </span>
 
-                      </button>
-
-                      <span className="font-bold">
-
-                        {item.qty}
-
-                      </span>
-
-                      <button
-                        onClick={() =>
-                          increaseQty(item.id)
-                        }
-                        className="
-                          rounded-full
-                          border
-                          border-white/10
-                          p-2
-                          hover:bg-white/10
-                        "
-                      >
-
-                        <Plus className="h-4 w-4" />
-
-                      </button>
-
+                        <button
+                          type="button"
+                          onClick={() =>
+                            increaseQty(
+                              item.id
+                            )
+                          }
+                          className="rounded-full border border-zinc-200 p-2 text-zinc-700 hover:bg-zinc-50"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
-
                   </div>
-
                 </div>
-
-              </div>
-
-            ))
-
+              )
+            )
           )}
-
         </div>
 
-        {/* FOOTER */}
-        <div className="absolute bottom-0 left-0 w-full border-t border-white/10 bg-black/80 p-6 backdrop-blur-2xl">
-
+        <div className="absolute bottom-0 left-0 w-full border-t border-zinc-200 bg-white p-6">
           <div className="flex items-center justify-between">
-
-            <span className="text-zinc-400">
-
+            <span className="text-zinc-500">
               Subtotal
-
             </span>
-
-            <span className="text-3xl font-black text-amber-300">
-
-              {formatPrice(String(subtotal))}
-
+            <span className="text-3xl font-black text-zinc-950">
+              {formatPrice(
+                subtotal,
+                "USD"
+              )}
             </span>
-
           </div>
 
           <button
-            className="
-              mt-6
-              w-full
-              rounded-2xl
-              bg-gradient-to-r
-              from-amber-400
-              to-orange-500
-              px-6
-              py-4
-              text-lg
-              font-black
-              text-black
-              transition-all
-              duration-500
-              hover:scale-[1.02]
-              hover:shadow-[0_0_60px_rgba(251,191,36,0.35)]
-            "
+            type="button"
+            className="mt-6 w-full rounded-full bg-cyan-700 px-6 py-4 text-sm font-black uppercase tracking-[0.16em] text-white transition hover:bg-cyan-800"
           >
-
-            Finalizar Compra
-
+            Finalizar compra
           </button>
-
         </div>
-
-      </div>
-
-      {/* =================================================
-      BOTTOM INDICATORS
-      ================================================= */}
-
-      <section className="mt-24 px-6">
-
-        <div className="flex flex-wrap items-center justify-center gap-6 text-center text-xs uppercase tracking-[0.3em] text-zinc-600">
-
-          <span>Wellness</span>
-          <span>•</span>
-
-          <span>Nutrición Funcional</span>
-          <span>•</span>
-
-          <span>Innovación Global</span>
-          <span>•</span>
-
-          <span>Performance</span>
-
-        </div>
-
-      </section>
-
-    </div>
+      </aside>
+    </main>
   )
 }

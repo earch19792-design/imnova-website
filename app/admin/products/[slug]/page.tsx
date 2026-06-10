@@ -21,6 +21,12 @@ type Product = {
   state_id: string | null
   name: string
   category: string
+  commercial_category?: string | null
+  strategic_niche_id?: string | null
+  primary_subniche_id?: string | null
+  target_customer?: string | null
+  usage_moment?: string | null
+  main_benefit?: string | null
   description?: string
   image_url?: string
   price?: number
@@ -131,6 +137,54 @@ export default function ProductDetailPage() {
           <p className="mt-4 max-w-4xl text-white/60">
             {product.description || "Sin descripción registrada."}
           </p>
+        </div>
+
+        <div className="mt-10">
+          <h2 className="text-3xl font-bold">
+            Clasificación estratégica
+          </h2>
+
+          <div className="mt-6 grid gap-4 md:grid-cols-2">
+            <div className="rounded-3xl border border-white/10 p-6">
+              <p className="text-white/40">
+                Categoría comercial
+              </p>
+
+              <h3 className="mt-3 text-xl font-bold">
+                {product.commercial_category || product.category || "N/A"}
+              </h3>
+            </div>
+
+            <div className="rounded-3xl border border-white/10 p-6">
+              <p className="text-white/40">
+                Cliente objetivo
+              </p>
+
+              <h3 className="mt-3 text-lg text-white/70">
+                {product.target_customer || "N/A"}
+              </h3>
+            </div>
+
+            <div className="rounded-3xl border border-white/10 p-6">
+              <p className="text-white/40">
+                Momento de uso
+              </p>
+
+              <h3 className="mt-3 text-lg text-white/70">
+                {product.usage_moment || "N/A"}
+              </h3>
+            </div>
+
+            <div className="rounded-3xl border border-white/10 p-6">
+              <p className="text-white/40">
+                Beneficio principal
+              </p>
+
+              <h3 className="mt-3 text-lg text-white/70">
+                {product.main_benefit || "N/A"}
+              </h3>
+            </div>
+          </div>
         </div>
 
         <div className="mt-10 grid gap-4 md:grid-cols-2">

@@ -89,6 +89,78 @@ export async function getProductBySlug(
 
 }
 
+export async function getStrategicNiches() {
+
+  const { data, error } =
+    await supabase
+      .from("strategic_niches")
+      .select(`
+        *,
+        strategic_subniches (*)
+      `)
+      .eq(
+        "is_active",
+        true
+      )
+      .order(
+        "sort_order",
+        {
+          ascending: true,
+        }
+      )
+
+  if (error) {
+
+    console.error(
+      "GET STRATEGIC NICHES ERROR:",
+      error
+    )
+
+    return []
+
+  }
+
+  return data || []
+
+}
+
+export async function getProductSubniches(
+  productId: string
+) {
+
+  const { data, error } =
+    await supabase
+      .from("product_subniches")
+      .select(`
+        *,
+        strategic_subniches (*)
+      `)
+      .eq(
+        "product_id",
+        productId
+      )
+      .order(
+        "is_primary",
+        {
+          ascending: false,
+        }
+      )
+
+  if (error) {
+
+    console.error(
+      "GET PRODUCT SUBNICHES ERROR:",
+      error
+    )
+
+    return []
+
+  }
+
+  return data || []
+
+}
+
 function serializeSupabaseError(
   error: unknown
 ) {
@@ -141,6 +213,12 @@ export async function updateProduct(
     state_id?: string | null
     nicho?: string | null
     problema_resuelve?: string | null
+    commercial_category?: string | null
+    strategic_niche_id?: string | null
+    primary_subniche_id?: string | null
+    target_customer?: string | null
+    usage_moment?: string | null
+    main_benefit?: string | null
     lifestyle_image?: string | null
     lifestyle_images?: string[]
     distribution_channels?: Array<{

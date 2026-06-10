@@ -24,13 +24,7 @@ const heroImages = [
   "/hero/imnova-hero-03.webp",
 ]
 
-type HeroSectionProps = {
-  onJoinFamily?: () => void
-}
-
-export function HeroSection({
-  onJoinFamily,
-}: HeroSectionProps) {
+export function HeroSection() {
 
   const [
     currentImage,
@@ -501,71 +495,6 @@ export function HeroSection({
             saludable y equilibrada.
 
           </motion.p>
-
-          {/* =================================================
-          BUTTONS
-          ================================================= */}
-
-          <motion.div
-            initial={{
-              opacity: 0,
-              y: 20,
-            }}
-            animate={{
-              opacity: 1,
-              y: 0,
-            }}
-            transition={{
-              duration: 1,
-              delay: 0.4,
-            }}
-            className="
-              mt-12
-              flex
-              flex-wrap
-              gap-4
-            "
-          >
-
-            <button
-              type="button"
-              onClick={onJoinFamily}
-              className="
-                group
-                relative
-                overflow-hidden
-                rounded-[28px]
-                border
-                border-cyan-200/30
-                bg-gradient-to-r
-                from-cyan-300
-                via-white
-                to-amber-200
-                px-10
-                py-5
-                text-sm
-                font-black
-                uppercase
-                tracking-[0.22em]
-                text-black
-                shadow-[0_0_80px_rgba(34,211,238,0.25)]
-                transition-all
-                duration-500
-                hover:scale-[1.03]
-                hover:shadow-[0_0_120px_rgba(34,211,238,0.42)]
-                active:scale-[0.98]
-              "
-            >
-
-              <span className="relative z-10">
-                Únete a la familia IMNOVA
-              </span>
-
-              <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/50 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
-
-            </button>
-
-          </motion.div>
 
         </div>
 

@@ -16,41 +16,66 @@ import {
   X,
 } from "lucide-react"
 
-const navItems = [
+const primaryNavItems = [
   {
     name: "Inicio",
+    shortName: "Inicio",
     href: "#hero",
   },
   {
-    name: "Disponible ahora",
+    name: "Lanzamientos",
+    shortName: "Lanzamientos",
     href: "#available-now",
   },
   {
-    name: "Viene pronto",
+    name: "Innovaciones",
+    shortName: "Innovaciones",
     href: "#innovations",
   },
   {
+    name: "Ideas de Uso",
+    shortName: "Ideas de Uso",
+    href: "#imnova-guides",
+  },
+  {
+    name: "Dónde comprar",
+    shortName: "Dónde comprar",
+    href: "#where-to-buy",
+  },
+]
+
+const secondaryNavItems = [
+  {
     name: "Ecosistema",
+    shortName: "Ecosistema",
     href: "#working",
   },
   {
-    name: "Fases",
+    name: "Proceso",
+    shortName: "Proceso",
     href: "#pipeline",
   },
   {
-    name: "Donde comprar",
-    href: "#where-to-buy",
-  },
-  {
-    name: "Contacto",
+    name: "Comunidad",
+    shortName: "Comunidad",
     href: "#contact",
   },
 ]
 
-const desktopNavItems =
-  navItems.filter(
-    item => item.name !== "Contacto"
-  )
+const mobileNavItems = [
+  ...primaryNavItems,
+  ...secondaryNavItems,
+  {
+    name: "Tienda",
+    shortName: "Tienda",
+    href: "/store",
+  },
+  {
+    name: "Admin",
+    shortName: "Admin",
+    href: "/admin",
+  },
+]
 
 export function Navigation() {
   const [
@@ -133,21 +158,19 @@ export function Navigation() {
                 IMNOVA
               </div>
               <div className="mt-1 whitespace-nowrap text-[7px] uppercase tracking-[0.16em] text-white/45 md:text-[8px] md:tracking-[0.22em] lg:tracking-[0.28em]">
-                Tecnologia - Nutricion - Bienestar
+                Tecnología - Nutrición - Bienestar
               </div>
             </div>
           </Link>
 
           <nav className="hidden min-w-0 items-center justify-center gap-1 overflow-hidden xl:flex 2xl:gap-2">
-            {desktopNavItems.map(item => (
+            {primaryNavItems.map(item => (
               <Link
                 key={item.name}
                 href={item.href}
                 className="whitespace-nowrap rounded-full px-2.5 py-2 text-[9px] font-medium uppercase tracking-[0.14em] text-white/68 transition-all duration-300 hover:bg-white/[0.05] hover:text-white 2xl:px-3 2xl:text-[10px]"
               >
-                {item.name === "Disponible ahora"
-                  ? "Disponible"
-                  : item.name}
+                {item.shortName}
               </Link>
             ))}
           </nav>
@@ -169,7 +192,7 @@ export function Navigation() {
 
             <motion.button
               type="button"
-              aria-label="Abrir menu"
+              aria-label="Abrir menú"
               aria-expanded={isMenuOpen}
               whileTap={{
                 scale: 0.96,
@@ -179,7 +202,7 @@ export function Navigation() {
                   current => !current
                 )
               }
-              className="inline-flex items-center justify-center rounded-2xl border border-white/10 bg-white/[0.035] p-3 text-white transition hover:bg-white/[0.07] xl:hidden"
+              className="inline-flex items-center justify-center rounded-2xl border border-white/10 bg-white/[0.035] p-3 text-white transition hover:bg-white/[0.07]"
             >
               {isMenuOpen ? (
                 <X className="h-5 w-5" />
@@ -208,10 +231,10 @@ export function Navigation() {
               transition={{
                 duration: 0.25,
               }}
-              className="relative z-20 border-t border-white/10 px-5 py-5 xl:hidden"
+              className="relative z-20 border-t border-white/10 px-5 py-5"
             >
-              <div className="grid gap-3 sm:grid-cols-2">
-                {navItems.map(item => (
+              <div className="grid gap-3 sm:grid-cols-2 xl:hidden">
+                {mobileNavItems.map(item => (
                   <Link
                     key={item.name}
                     href={item.href}
@@ -223,7 +246,21 @@ export function Navigation() {
                     {item.name}
                   </Link>
                 ))}
+              </div>
 
+              <div className="hidden gap-3 xl:grid xl:grid-cols-3">
+                {secondaryNavItems.map(item => (
+                  <Link
+                    key={item.name}
+                    href={item.href}
+                    onClick={() =>
+                      setIsMenuOpen(false)
+                    }
+                    className="rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-[11px] font-semibold uppercase tracking-[0.20em] text-white/75 transition hover:bg-white/[0.06] hover:text-white"
+                  >
+                    {item.name}
+                  </Link>
+                ))}
               </div>
             </motion.div>
           )}

@@ -25,37 +25,37 @@ end $$;
 
 update public.products
 set lifestyle_images = '[
-  "/images/lifestyle/mash-coffee-01.webp",
-  "/images/lifestyle/mash-coffee-02.webp",
-  "/images/lifestyle/mash-coffee-03.webp"
+  "/images/products/usage/mash-coffee/mash-coffee-hielo-leche.webp",
+  "/images/products/usage/mash-coffee/mash-coffee-oficina-enfoque.webp",
+  "/images/products/usage/mash-coffee/mash-coffee-estudio-energia.webp"
 ]'::jsonb
 where slug = 'mash-coffee';
 
 update public.products
 set lifestyle_images = '[
-  "/images/lifestyle/mash-nutra-01.webp",
-  "/images/lifestyle/mash-nutra-02.webp",
-  "/images/lifestyle/mash-nutra-03.webp"
+  "/images/products/usage/mash-nutri-pan/pan-proteinico-tostadas.webp",
+  "/images/products/usage/mash-nutri-pan/pan-proteinico-sandwich.webp",
+  "/images/products/usage/mash-nutri-pan/pan-proteinico-cocina.webp"
 ]'::jsonb
 where slug = 'mash-nutri-pan';
 
 update public.products
 set lifestyle_images = '[
-  "/images/lifestyle/mash-pancake-01.webp",
-  "/images/lifestyle/mash-pancake-02.webp",
-  "/images/lifestyle/mash-pancake-03.webp"
+  "/images/products/usage/mash-nutri-pancake/pancake-desayuno-frutas.webp",
+  "/images/products/usage/mash-nutri-pancake/pancake-rutina-saludable.webp",
+  "/images/products/usage/mash-nutri-pancake/pancake-beneficios.webp"
 ]'::jsonb
 where slug = 'mash-nutri-pancake';
 
 update public.products
 set lifestyle_images = '[
-  "/images/lifestyle/mash-6pack.webp"
+  "/images/products/usage/mash-coffee/mash-coffee-6-pack-mercado.webp"
 ]'::jsonb
 where slug = 'mash-coffee-6pack';
 
 update public.products
 set lifestyle_images = '[
-  "/images/lifestyle/mash-12pack.webp"
+  "/images/products/usage/mash-coffee/mash-coffee-12-pack-mercado.webp"
 ]'::jsonb
 where slug = 'mash-coffee-12pack';
 

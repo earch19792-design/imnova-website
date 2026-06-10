@@ -26,6 +26,12 @@ type Product = {
   slug?: string
   name: string
   category: string
+  commercial_category?: string | null
+  strategic_niche_id?: string | null
+  primary_subniche_id?: string | null
+  target_customer?: string | null
+  usage_moment?: string | null
+  main_benefit?: string | null
   description?: string
   image_url?: string
   image?: string

@@ -949,26 +949,8 @@ objetivo_principal:
                   </div>
 
                   <button
-  onClick={async () => {
-
-    localStorage.setItem(
-      "innova-access",
-      "guest"
-    )
-
-    localStorage.setItem(
-      "innova-access-expiration",
-      String(
-        Date.now() +
-        24 * 60 * 60 * 1000
-      )
-    )
-
-    onClose()
-
-    router.push("/")
-
-  }}
+                    type="button"
+                    onClick={onClose}
                     className="
                       rounded-full
                       border
@@ -988,7 +970,7 @@ objetivo_principal:
                     "
                   >
 
-                    Continuar como invitado →
+                    Regresar a la página web
 
                   </button>
 
@@ -1098,8 +1080,8 @@ objetivo_principal:
     </p>
 
     <p className="mt-3 text-cyan-100/80">
-      Canal detectado: pagina web. Tu WhatsApp queda registrado para recibir
-      avances segun el nicho que elegiste.
+      Canal detectado: página web. Tu WhatsApp queda registrado para recibir
+      avances según el nicho que elegiste.
     </p>
 
   </div>

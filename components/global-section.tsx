@@ -8,12 +8,15 @@ import {
 } from "framer-motion"
 
 import {
+  ArrowUpRight,
   Building2,
+  ExternalLink,
   Globe2,
   MapPin,
   Rocket,
   Search,
   ShoppingBag,
+  SlidersHorizontal,
   Store,
 } from "lucide-react"
 
@@ -502,6 +505,74 @@ export function GlobalSection() {
       ]
     )
 
+  const groupedDistribution =
+    useMemo(
+      () => {
+
+        const groups =
+          new Map<
+            string,
+            {
+              key: string
+              country: string
+              city: string
+              items: DistributionItem[]
+            }
+          >()
+
+        filteredDistribution.forEach(
+          item => {
+
+            const country =
+              item.country ||
+              "País por definir"
+
+            const city =
+              item.city ||
+              item.location ||
+              "Ciudad por definir"
+
+            const key =
+              `${country}-${city}`
+
+            const group =
+              groups.get(key) || {
+                key,
+                country,
+                city,
+                items: [],
+              }
+
+            group.items.push(item)
+            groups.set(
+              key,
+              group
+            )
+
+          }
+        )
+
+        return Array.from(
+          groups.values()
+        )
+
+      },
+      [filteredDistribution]
+    )
+
+  const activeFilterPath =
+    [
+      activeCountry === "Todos"
+        ? "Todos los países"
+        : activeCountry,
+      activeCity === "Todas"
+        ? "Todas las ciudades"
+        : activeCity,
+      activeType === "Todos"
+        ? "Todos los canales"
+        : activeType,
+    ]
+
   const activeCountriesCount =
     countries.length > 1
       ? countries.length - 1
@@ -520,6 +591,15 @@ export function GlobalSection() {
         item.type === "Establecimiento" ||
         item.type === "Tienda de conveniencia"
     ).length
+
+  const featuredDistribution =
+    filteredDistribution[0] || null
+
+  const hasActiveFilters =
+    activeCountry !== "Todos" ||
+    activeCity !== "Todas" ||
+    activeType !== "Todos" ||
+    searchTerm.trim().length > 0
 
   return (
     <section
@@ -568,28 +648,63 @@ export function GlobalSection() {
           </div>
 
           <h2 className="mx-auto mt-10 max-w-6xl text-5xl font-black leading-[1.02] tracking-[-0.04em] text-white sm:text-6xl lg:text-7xl">
-            Dónde comprar
+            Encuentra dónde comprar
             <span className="block bg-gradient-to-r from-cyan-200 via-cyan-400 to-white bg-clip-text text-transparent">
               productos IMNOVA
             </span>
           </h2>
 
           <p className="mx-auto mt-9 max-w-4xl text-xl leading-9 text-zinc-300">
-            Compra desde la Store oficial o revisa los canales públicos donde
-            cada producto IMNOVA está disponible.
+            Selecciona país, ciudad y canal para encontrar marketplaces,
+            mercados o establecimientos donde ya se está comercializando cada
+            producto. La sección está preparada para crecer por mercado sin
+            perder orden.
           </p>
 
-          <Link
-            href="/store"
-            className="mt-8 inline-flex items-center justify-center gap-3 rounded-2xl border border-cyan-300/25 bg-cyan-300/[0.10] px-6 py-4 text-xs font-black uppercase tracking-[0.18em] text-cyan-100 transition hover:border-cyan-200/45 hover:bg-cyan-300/[0.16]"
-          >
-            <ShoppingBag className="h-4 w-4" />
-            Comprar en Store
-          </Link>
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <Link
+              href="/store"
+              className="inline-flex items-center justify-center gap-3 rounded-2xl border border-cyan-300/25 bg-cyan-300/[0.10] px-6 py-4 text-xs font-black uppercase tracking-[0.18em] text-cyan-100 transition hover:border-cyan-200/45 hover:bg-cyan-300/[0.16]"
+            >
+              <ShoppingBag className="h-4 w-4" />
+              Comprar en Store
+            </Link>
+
+            <a
+              href="#where-to-buy-map"
+              className="inline-flex items-center justify-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-6 py-4 text-xs font-black uppercase tracking-[0.18em] text-zinc-300 transition hover:border-white/20 hover:bg-white/[0.08]"
+            >
+              <MapPin className="h-4 w-4" />
+              Ver canales
+            </a>
+          </div>
+
+          <div className="mx-auto mt-8 grid max-w-3xl gap-3 text-left md:grid-cols-3">
+            {[
+              "Selecciona país",
+              "Elige ciudad",
+              "Compra online o encuentra punto físico",
+            ].map(
+              (step, index) => (
+                <div
+                  key={step}
+                  className="rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3"
+                >
+                  <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-100/50">
+                    Paso 0{index + 1}
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-white/85">
+                    {step}
+                  </p>
+                </div>
+              )
+            )}
+          </div>
 
         </motion.div>
 
         <motion.div
+          id="where-to-buy-map"
           initial={{
             opacity: 0,
             y: 32,
@@ -622,20 +737,30 @@ export function GlobalSection() {
 
             <aside className="border-b border-cyan-300/10 bg-white/[0.025] p-6 lg:border-b-0 lg:border-r">
 
-              <p className="text-[10px] uppercase tracking-[0.30em] text-cyan-200/60">
-                Explorar canales
-              </p>
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-cyan-300/20 bg-cyan-300/10">
+                  <SlidersHorizontal className="h-5 w-5 text-cyan-200" />
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.30em] text-cyan-200/60">
+                    Buscador
+                  </p>
+                  <h3 className="mt-1 text-2xl font-black text-white">
+                    Encuentra tu canal
+                  </h3>
+                </div>
+              </div>
 
               <p className="mt-3 text-sm leading-6 text-zinc-500">
-                Filtra solo si quieres encontrar una ubicación, marketplace o
-                canal específico.
+                Sigue el orden natural de compra. La lista se actualiza con los
+                canales comerciales registrados desde Admin.
               </p>
 
               <div className="mt-7 grid gap-4">
 
                 <label className="grid gap-2">
                   <span className="text-xs uppercase tracking-[0.22em] text-white/35">
-                    País
+                    1. País
                   </span>
                   <select
                     value={activeCountry}
@@ -662,7 +787,7 @@ export function GlobalSection() {
 
                 <label className="grid gap-2">
                   <span className="text-xs uppercase tracking-[0.22em] text-white/35">
-                    Ciudad
+                    2. Ciudad
                   </span>
                   <select
                     value={activeCity}
@@ -688,7 +813,7 @@ export function GlobalSection() {
 
                 <label className="grid gap-2">
                   <span className="text-xs uppercase tracking-[0.22em] text-white/35">
-                    Canal
+                    3. Canal
                   </span>
                   <select
                     value={activeType}
@@ -714,7 +839,7 @@ export function GlobalSection() {
 
                 <label className="grid gap-2">
                   <span className="text-xs uppercase tracking-[0.22em] text-white/35">
-                    Buscar
+                    4. Buscar
                   </span>
                   <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/60 px-4">
                     <Search className="h-4 w-4 text-cyan-200/70" />
@@ -731,6 +856,40 @@ export function GlobalSection() {
                   </div>
                 </label>
 
+              </div>
+
+              <div className="mt-6 rounded-[24px] border border-cyan-300/15 bg-cyan-300/[0.055] p-4">
+                <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-100/55">
+                  Ruta seleccionada
+                </p>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {activeFilterPath.map(
+                    item => (
+                      <span
+                        key={item}
+                        className="rounded-full border border-white/10 bg-black/35 px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-zinc-200"
+                      >
+                        {item}
+                      </span>
+                    )
+                  )}
+                </div>
+
+                {hasActiveFilters && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveCountry("Todos")
+                      setActiveCity("Todas")
+                      setActiveType("Todos")
+                      setSearchTerm("")
+                    }}
+                    className="mt-4 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-cyan-100 transition hover:bg-white/[0.08]"
+                  >
+                    Limpiar filtros
+                  </button>
+                )}
               </div>
 
               <div className="mt-8 grid grid-cols-2 gap-3">
@@ -768,118 +927,259 @@ export function GlobalSection() {
 
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_20%,rgba(34,211,238,0.10),transparent_32%)]" />
 
-              <div className="relative z-10 grid gap-5">
-                {filteredDistribution.length > 0 ? (
-                  filteredDistribution.map(
-                    (item, index) => {
+              <div className="relative z-10">
+                <div className="mb-6 rounded-[28px] border border-white/10 bg-black/35 p-5">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.28em] text-cyan-100/55">
+                        Canales disponibles
+                      </p>
+                      <h3 className="mt-2 text-3xl font-black text-white">
+                        {filteredDistribution.length} resultado
+                        {filteredDistribution.length === 1
+                          ? ""
+                          : "s"}
+                      </h3>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {activeFilterPath.map(
+                        item => (
+                          <span
+                            key={item}
+                            className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-zinc-300"
+                          >
+                            {item}
+                          </span>
+                        )
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {featuredDistribution && (
+                  <div className="mb-6 overflow-hidden rounded-[30px] border border-cyan-300/20 bg-gradient-to-br from-cyan-300/[0.12] via-white/[0.04] to-amber-300/[0.08] p-5">
+                    {(() => {
                       const Icon =
                         getChannelIcon(
-                          item.type
+                          featuredDistribution.type
                         )
 
                       return (
-                        <motion.article
-                          key={`${item.productId}-${item.id}`}
-                          initial={{
-                            opacity: 0,
-                            y: 18,
-                          }}
-                          animate={{
-                            opacity: 1,
-                            y: 0,
-                          }}
-                          transition={{
-                            duration: 0.45,
-                            delay:
-                              index * 0.035,
-                          }}
-                          className="
-                            group
-                            grid
-                            gap-5
-                            rounded-[28px]
-                            border
-                            border-white/10
-                            bg-white/[0.035]
-                            p-5
-                            backdrop-blur-2xl
-                            transition-all
-                            duration-500
-                            hover:-translate-y-1
-                            hover:border-cyan-300/25
-                            hover:bg-white/[0.055]
-                            md:grid-cols-[88px_1fr_auto]
-                            md:items-center
-                          "
-                        >
-
-                          <div className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-3xl border border-cyan-300/15 bg-cyan-300/[0.055]">
-                            {item.productImage ? (
+                        <div className="grid gap-5 md:grid-cols-[96px_1fr_auto] md:items-center">
+                          <div className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-3xl border border-cyan-200/20 bg-black/35">
+                            {featuredDistribution.productImage ? (
                               <img
-                                src={item.productImage}
-                                alt={item.productName}
+                                src={featuredDistribution.productImage}
+                                alt={featuredDistribution.productName}
                                 className="h-full w-full object-contain p-2"
                               />
                             ) : (
-                              <Rocket className="h-8 w-8 text-cyan-200" />
+                              <Icon className="h-9 w-9 text-cyan-100" />
                             )}
                           </div>
 
                           <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-3">
-                              <span className="inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-cyan-100">
+                            <div className="flex flex-wrap gap-2">
+                              <span className="inline-flex items-center gap-2 rounded-full border border-cyan-200/20 bg-cyan-300/[0.12] px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-cyan-100">
                                 <Icon className="h-3.5 w-3.5" />
-                                {item.type}
+                                Mejor coincidencia
                               </span>
-
-                              <span className="rounded-full border border-white/10 bg-black/30 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-white/55">
-                                {item.status}
-                              </span>
-                            </div>
-
-                            <h3 className="mt-4 truncate text-3xl font-black tracking-[-0.04em] text-white">
-                              {item.name}
-                            </h3>
-
-                            <div className="mt-3 flex flex-wrap gap-3 text-sm text-zinc-400">
-                              <span className="inline-flex items-center gap-2">
-                                <Globe2 className="h-4 w-4 text-cyan-300" />
-                                {item.country || "País por definir"}
-                              </span>
-                              <span className="inline-flex items-center gap-2">
-                                <MapPin className="h-4 w-4 text-cyan-300" />
-                                {item.city || getChannelLocation(item)}
+                              <span className="rounded-full border border-white/10 bg-black/25 px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-zinc-300">
+                                {featuredDistribution.type}
                               </span>
                             </div>
 
-                            <p className="mt-4 text-sm font-semibold text-white/80">
-                              {item.productName}
+                            <h4 className="mt-3 line-clamp-1 text-3xl font-black tracking-[-0.04em] text-white">
+                              {featuredDistribution.name}
+                            </h4>
+
+                            <p className="mt-2 text-sm font-semibold text-white/80">
+                              {featuredDistribution.productName}
                             </p>
 
-                            {item.note && (
-                              <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">
-                                {item.note}
-                              </p>
-                            )}
+                            <p className="mt-2 inline-flex items-center gap-2 text-sm text-zinc-400">
+                              <MapPin className="h-4 w-4 text-cyan-200" />
+                              {getChannelLocation(featuredDistribution)}
+                            </p>
                           </div>
 
-                          {item.type === "Marketplace" && item.url && (
-                            <div className="flex md:justify-end">
+                          <div className="flex md:justify-end">
+                            {featuredDistribution.type === "Marketplace" &&
+                            featuredDistribution.url ? (
                               <a
-                                href={item.url}
+                                href={featuredDistribution.url}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 transition-colors hover:bg-cyan-300/20"
+                                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-cyan-200/25 bg-cyan-300/[0.12] px-5 py-3 text-xs font-black uppercase tracking-[0.16em] text-cyan-50 transition hover:bg-cyan-300/[0.20]"
                               >
                                 Abrir canal
+                                <ExternalLink className="h-3.5 w-3.5" />
                               </a>
-                            </div>
-                          )}
-
-                        </motion.article>
+                            ) : (
+                              <span className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/25 px-5 py-3 text-xs font-black uppercase tracking-[0.16em] text-zinc-300">
+                                Punto físico
+                                <MapPin className="h-3.5 w-3.5" />
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       )
-                    }
-                  )
+                    })()}
+                  </div>
+                )}
+
+                {groupedDistribution.length > 0 ? (
+                  <div className="grid gap-6">
+                    {groupedDistribution.map(
+                      (group) => (
+                        <section
+                          key={group.key}
+                          className="rounded-[30px] border border-white/10 bg-white/[0.025] p-4 md:p-5"
+                        >
+                          <div className="flex flex-col gap-3 border-b border-white/10 pb-4 md:flex-row md:items-center md:justify-between">
+                            <div>
+                              <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">
+                                Ubicación
+                              </p>
+                              <h4 className="mt-2 text-2xl font-black text-white">
+                                {group.country}
+                              </h4>
+                              <p className="mt-2 inline-flex items-center gap-2 text-sm text-zinc-400">
+                                <MapPin className="h-4 w-4 text-cyan-300" />
+                                {group.city}
+                              </p>
+                            </div>
+
+                            <span className="rounded-full border border-cyan-300/15 bg-cyan-300/[0.07] px-4 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100">
+                              {group.items.length} canal
+                              {group.items.length === 1
+                                ? ""
+                                : "es"}
+                            </span>
+                          </div>
+
+                          <div className="mt-5 grid gap-4">
+                            {group.items.map(
+                              (item, index) => {
+                                const Icon =
+                                  getChannelIcon(
+                                    item.type
+                                  )
+
+                                return (
+                                  <motion.article
+                                    key={`${item.productId}-${item.id}`}
+                                    initial={{
+                                      opacity: 0,
+                                      y: 18,
+                                    }}
+                                    animate={{
+                                      opacity: 1,
+                                      y: 0,
+                                    }}
+                                    transition={{
+                                      duration: 0.45,
+                                      delay:
+                                        index *
+                                        0.025,
+                                    }}
+                                    className="
+                                      group
+                                      grid
+                                      gap-5
+                                      rounded-[26px]
+                                      border
+                                      border-white/10
+                                      bg-black/35
+                                      p-4
+                                      backdrop-blur-2xl
+                                      transition-all
+                                      duration-500
+                                      hover:-translate-y-1
+                                      hover:border-cyan-300/25
+                                      hover:bg-white/[0.05]
+                                      md:grid-cols-[82px_1fr_auto]
+                                      md:items-center
+                                    "
+                                  >
+                                    <div className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-3xl border border-cyan-300/15 bg-cyan-300/[0.055]">
+                                      {item.productImage ? (
+                                        <img
+                                          src={item.productImage}
+                                          alt={item.productName}
+                                          className="h-full w-full object-contain p-2"
+                                        />
+                                      ) : (
+                                        <Rocket className="h-8 w-8 text-cyan-200" />
+                                      )}
+                                    </div>
+
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-cyan-100">
+                                          <Icon className="h-3.5 w-3.5" />
+                                          {item.type}
+                                        </span>
+
+                                        <span className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-white/55">
+                                          {item.status}
+                                        </span>
+                                      </div>
+
+                                      <h5 className="mt-3 line-clamp-1 text-2xl font-black tracking-[-0.03em] text-white">
+                                        {item.name}
+                                      </h5>
+
+                                      <p className="mt-2 text-sm font-semibold text-white/80">
+                                        {item.productName}
+                                      </p>
+
+                                      <div className="mt-2 flex flex-wrap gap-3 text-sm text-zinc-500">
+                                        <span className="inline-flex items-center gap-2">
+                                          <Globe2 className="h-4 w-4 text-cyan-300" />
+                                          {item.country || "País por definir"}
+                                        </span>
+                                        <span className="inline-flex items-center gap-2">
+                                          <MapPin className="h-4 w-4 text-cyan-300" />
+                                          {item.city || getChannelLocation(item)}
+                                        </span>
+                                      </div>
+
+                                      {item.note && (
+                                        <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-500">
+                                          {item.note}
+                                        </p>
+                                      )}
+                                    </div>
+
+                                    <div className="flex md:justify-end">
+                                      {item.type === "Marketplace" && item.url ? (
+                                        <a
+                                          href={item.url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-5 py-3 text-xs font-black uppercase tracking-[0.16em] text-cyan-100 transition-colors hover:bg-cyan-300/20"
+                                        >
+                                          Abrir canal
+                                          <ExternalLink className="h-3.5 w-3.5" />
+                                        </a>
+                                      ) : (
+                                        <span className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.035] px-5 py-3 text-xs font-black uppercase tracking-[0.16em] text-zinc-400">
+                                          Punto físico
+                                          <ArrowUpRight className="h-3.5 w-3.5" />
+                                        </span>
+                                      )}
+                                    </div>
+                                  </motion.article>
+                                )
+                              }
+                            )}
+                          </div>
+                        </section>
+                      )
+                    )}
+                  </div>
                 ) : (
                   <div className="flex min-h-[420px] items-center justify-center text-center">
                     <div>

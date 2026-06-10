@@ -28,6 +28,12 @@ type Product = {
   image?: string
   image_url?: string
   category: string
+  commercial_category?: string | null
+  strategic_niche_id?: string | null
+  primary_subniche_id?: string | null
+  target_customer?: string | null
+  usage_moment?: string | null
+  main_benefit?: string | null
   description?: string
   nicho?: string | null
   problema_resuelve?: string | null

@@ -634,10 +634,23 @@ return (
         </motion.div>
 
         {/* =================================================
-        ACTION BUTTON
+        PIPELINE CARDS
         ================================================= */}
 
-        <motion.button
+        <div
+          className="
+            mt-16
+            grid
+            gap-6
+            md:grid-cols-2
+            xl:grid-cols-3
+          "
+        >
+
+        {pipelineSteps.map((step, index) => (
+
+        <motion.div
+          key={step.title}
           whileHover={{
           y: -8,
          scale: 1.015,
