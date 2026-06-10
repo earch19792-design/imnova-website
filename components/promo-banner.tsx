@@ -128,7 +128,7 @@ function getLaunchBenefit(
 
 }
 
-function formatPrice(
+function getPriceDisplay(
   product: Product
 ) {
 
@@ -142,10 +142,41 @@ function formatPrice(
 
   }
 
-  const currency =
-    product.currency || "$"
+  const rawPrice =
+    String(product.price).trim()
 
-  return `${currency}${product.price}`
+  const amount =
+    rawPrice
+      .replace(
+        /^(usd|us\$|\$)\s*/i,
+        ""
+      )
+      .trim()
+
+  const currency =
+    (
+      product.currency ||
+      "USD"
+    )
+      .trim()
+      .toUpperCase()
+
+  const isUsd =
+    currency === "USD" ||
+    currency === "$" ||
+    currency === "US$"
+
+  return {
+    amount,
+    currencyLabel:
+      isUsd
+        ? "USD"
+        : currency,
+    symbol:
+      isUsd
+        ? "$"
+        : "",
+  }
 
 }
 
@@ -261,7 +292,7 @@ export function PromoBanner() {
           )
 
         },
-        3000
+        6000
       )
 
     return () =>
@@ -288,7 +319,7 @@ export function PromoBanner() {
     isExternalUrl(purchaseHref)
 
   const activePrice =
-    formatPrice(activeProduct)
+    getPriceDisplay(activeProduct)
 
   return (
     <section
@@ -562,7 +593,7 @@ export function PromoBanner() {
                   <div
                     className="
                       flex
-                      min-w-[190px]
+                      min-w-[230px]
                       flex-col
                       justify-center
                       rounded-[30px]
@@ -576,9 +607,53 @@ export function PromoBanner() {
                     <span className="text-sm text-zinc-400">
                       Desde
                     </span>
-                    <span className="mt-1 text-4xl font-black tracking-[-0.04em] text-amber-300">
-                      {activePrice}
-                    </span>
+                    <div
+                      className="
+                        mt-3
+                        flex
+                        items-end
+                        justify-center
+                        gap-2
+                        text-amber-300
+                      "
+                    >
+                      <span
+                        className="
+                          pb-1.5
+                          text-sm
+                          font-black
+                          uppercase
+                          tracking-[0.18em]
+                          text-amber-200/80
+                        "
+                      >
+                        {activePrice.currencyLabel}
+                      </span>
+                      {activePrice.symbol && (
+                        <span
+                          className="
+                            text-4xl
+                            font-black
+                            leading-none
+                            tracking-[-0.02em]
+                            text-amber-300
+                          "
+                        >
+                          {activePrice.symbol}
+                        </span>
+                      )}
+                      <span
+                        className="
+                          text-5xl
+                          font-black
+                          leading-none
+                          tracking-[-0.04em]
+                          text-amber-300
+                        "
+                      >
+                        {activePrice.amount}
+                      </span>
+                    </div>
                   </div>
                 )}
 

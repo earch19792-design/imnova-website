@@ -132,8 +132,8 @@ export function Navigation() {
               <div className="text-[1.05rem] font-black tracking-[-0.035em] text-white">
                 IMNOVA
               </div>
-              <div className="mt-1 max-w-[210px] truncate text-[8px] uppercase tracking-[0.28em] text-white/45">
-                Tecnologia · Nutricion · Bienestar
+              <div className="mt-1 whitespace-nowrap text-[7px] uppercase tracking-[0.16em] text-white/45 md:text-[8px] md:tracking-[0.22em] lg:tracking-[0.28em]">
+                Tecnologia - Nutricion - Bienestar
               </div>
             </div>
           </Link>

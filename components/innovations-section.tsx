@@ -41,13 +41,32 @@ type Product = {
   nichos?: string[] | string | null
   niche?: string | null
   niches?: string[] | string | null
+  problem?: string | null
+  human_problem?: string | null
+  humanProblem?: string | null
   problemSolved?: string | null
   problem_solved?: string | null
   problema?: string | null
   problema_resuelve?: string | null
   problemaQueResuelve?: string | null
+  expected_benefit?: string | null
+  expectedBenefit?: string | null
   innovationSubtitle?: string | null
-  benefits?: string[] | null
+  benefits?: string[] | string | null
+  survey_score?: number | string | null
+  surveyScore?: number | string | null
+  survey_votes?: number | string | null
+  surveyVotes?: number | string | null
+  validation_status?: string | null
+  validationStatus?: string | null
+  social_interest?: string | null
+  socialInterest?: string | null
+  social_signals?: string[] | string | null
+  socialSignals?: string[] | string | null
+  social_interest_score?: number | string | null
+  socialInterestScore?: number | string | null
+  social_mentions?: number | string | null
+  socialMentions?: number | string | null
   featuredLaunch?: boolean | null
 }
 
@@ -76,7 +95,15 @@ type InnovationsSectionProps = {
   ) => void
 }
 
-const communityApprovalThreshold = 70
+const officialProductFlow = [
+  "Idea",
+  "Validacion",
+  "Priorizado",
+  "Testing",
+  "Produccion",
+  "Comercializacion",
+  "Disponible",
+]
 
 function normalizeText(value: string) {
   return value
@@ -91,6 +118,106 @@ function getProductImage(product: Product) {
     product.image ||
     "/placeholder.jpg"
   )
+}
+
+function getFirstText(
+  values: Array<string | null | undefined>
+) {
+  return (
+    values
+      .map(value => value?.trim())
+      .find(Boolean) || null
+  )
+}
+
+function parseNumericValue(
+  value?: number | string | null
+) {
+  if (value === null || value === undefined) {
+    return null
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value)
+      ? value
+      : null
+  }
+
+  const parsed =
+    Number.parseFloat(
+      value
+        .replace("%", "")
+        .replace(",", ".")
+        .trim()
+    )
+
+  return Number.isFinite(parsed)
+    ? parsed
+    : null
+}
+
+function formatSurveyScore(score: number) {
+  return `${Math.round(score)}%`
+}
+
+function getSurveyScore(product: Product) {
+  const parsedScore =
+    parseNumericValue(
+      product.survey_score ??
+        product.surveyScore
+    )
+
+  if (parsedScore === null) {
+    return null
+  }
+
+  const percentage =
+    parsedScore > 0 && parsedScore <= 1
+      ? parsedScore * 100
+      : parsedScore
+
+  return Math.max(
+    0,
+    Math.min(
+      100,
+      percentage
+    )
+  )
+}
+
+function getSurveyVotes(product: Product) {
+  const parsedVotes =
+    parseNumericValue(
+      product.survey_votes ??
+        product.surveyVotes
+    )
+
+  if (parsedVotes === null) {
+    return null
+  }
+
+  return Math.max(
+    0,
+    Math.round(parsedVotes)
+  )
+}
+
+function getValidationStatus(product: Product) {
+  return getFirstText([
+    product.validation_status,
+    product.validationStatus,
+  ])
+}
+
+function hasSurveyData(product: Product) {
+  return (
+    getSurveyScore(product) !== null ||
+    getSurveyVotes(product) !== null
+  )
+}
+
+function hasValidationDecisionData(product: Product) {
+  return Boolean(getValidationStatus(product))
 }
 
 function isCommercializing(product: LiveProduct) {
@@ -122,10 +249,43 @@ function isComingSoon(product: LiveProduct) {
   )
 }
 
-function isIdeaApproved(product: LiveProduct) {
+function hasOfficialValidationAdvance(
+  product: LiveProduct
+) {
+  const productStatus =
+    normalizeText(product.status)
+
   return (
-    product.progress >=
-    communityApprovalThreshold
+    productStatus.includes("priorizado") ||
+    productStatus.includes("testing") ||
+    productStatus.includes("produccion")
+  )
+}
+
+function hasRecordedValidationDecision(
+  product: LiveProduct
+) {
+  return (
+    hasValidationDecisionData(product) ||
+    hasOfficialValidationAdvance(product)
+  )
+}
+
+function hasRecordedPositiveValidation(
+  product: LiveProduct
+) {
+  const validationStatus =
+    normalizeText(
+      getValidationStatus(product) || ""
+    )
+
+  return (
+    validationStatus.includes("aprob") ||
+    validationStatus.includes("validado") ||
+    validationStatus.includes("validada") ||
+    validationStatus.includes("positivo") ||
+    validationStatus.includes("suficiente") ||
+    hasOfficialValidationAdvance(product)
   )
 }
 
@@ -138,19 +298,6 @@ function getPublicState(product: LiveProduct) {
   }
 
   return "DESARROLLO"
-}
-
-function getCustomerOutcome(product: LiveProduct) {
-  return (
-    product.problemSolved ||
-    product.problem_solved ||
-    product.problema ||
-    product.problema_resuelve ||
-    product.problemaQueResuelve ||
-    product.innovationSubtitle ||
-    product.description ||
-    "un resultado funcional pensado para mejorar energia, bienestar y rendimiento diario"
-  )
 }
 
 function normalizeStringList(
@@ -170,6 +317,135 @@ function normalizeStringList(
     .filter(Boolean)
 }
 
+function getSocialInterestScore(product: Product) {
+  const parsedScore =
+    parseNumericValue(
+      product.social_interest_score ??
+        product.socialInterestScore
+    )
+
+  if (parsedScore === null) {
+    return null
+  }
+
+  const percentage =
+    parsedScore > 0 && parsedScore <= 1
+      ? parsedScore * 100
+      : parsedScore
+
+  return Math.max(
+    0,
+    Math.min(
+      100,
+      percentage
+    )
+  )
+}
+
+function getSocialMentions(product: Product) {
+  const parsedMentions =
+    parseNumericValue(
+      product.social_mentions ??
+        product.socialMentions
+    )
+
+  if (parsedMentions === null) {
+    return null
+  }
+
+  return Math.max(
+    0,
+    Math.round(parsedMentions)
+  )
+}
+
+function getSocialSignals(product: Product) {
+  return [
+    ...normalizeStringList(
+      product.social_signals
+    ),
+    ...normalizeStringList(
+      product.socialSignals
+    ),
+    ...normalizeStringList(
+      product.social_interest
+    ),
+    ...normalizeStringList(
+      product.socialInterest
+    ),
+  ]
+}
+
+function hasSocialSignalData(product: Product) {
+  return (
+    getSocialInterestScore(product) !== null ||
+    getSocialMentions(product) !== null ||
+    getSocialSignals(product).length > 0
+  )
+}
+
+function hasCommunitySignalData(product: Product) {
+  return (
+    hasSurveyData(product) ||
+    hasSocialSignalData(product) ||
+    hasValidationDecisionData(product)
+  )
+}
+
+function getSocialSignalSummary(product: Product) {
+  const score =
+    getSocialInterestScore(product)
+
+  const mentions =
+    getSocialMentions(product)
+
+  if (score !== null) {
+    return `Interes en redes: ${formatSurveyScore(score)}`
+  }
+
+  if (mentions !== null) {
+    return `Menciones en redes: ${mentions}`
+  }
+
+  const signals =
+    getSocialSignals(product)
+
+  if (signals.length > 0) {
+    return signals[0]
+  }
+
+  return "Senales de redes pendientes"
+}
+
+function getSocialSignalDetail(product: Product) {
+  const score =
+    getSocialInterestScore(product)
+
+  const mentions =
+    getSocialMentions(product)
+
+  const signals =
+    getSocialSignals(product)
+
+  if (score !== null && mentions !== null) {
+    return `Interes en redes: ${formatSurveyScore(score)} con ${mentions} menciones registradas.`
+  }
+
+  if (score !== null) {
+    return `Interes en redes: ${formatSurveyScore(score)}.`
+  }
+
+  if (mentions !== null) {
+    return `Menciones en redes: ${mentions}.`
+  }
+
+  if (signals.length > 0) {
+    return signals.join(", ")
+  }
+
+  return "Senales de interes en redes pendientes de conectar desde Admin/Supabase."
+}
+
 function getProductNiches(product: LiveProduct) {
   const configuredNiches = [
     ...normalizeStringList(product.nichos),
@@ -183,12 +459,15 @@ function getProductNiches(product: LiveProduct) {
   }
 
   return [
-    "Nicho pendiente desde Admin",
+    "Nicho pendiente de definir",
   ]
 }
 
 function getPopulationProblem(product: LiveProduct) {
   const configuredProblem =
+    product.human_problem ||
+    product.humanProblem ||
+    product.problem ||
     product.problemSolved ||
     product.problem_solved ||
     product.problema ||
@@ -199,64 +478,84 @@ function getPopulationProblem(product: LiveProduct) {
     return configuredProblem
   }
 
-  return "problema humano pendiente desde Admin"
+  return "Problema en validacion con la comunidad"
 }
 
-function getCustomerBenefits(product: LiveProduct) {
-  if (
-    product.benefits &&
-    product.benefits.length > 0
-  ) {
-    return product.benefits.slice(0, 3)
-  }
-
-  const text =
-    [
-      product.name,
-      product.category,
+function getExpectedBenefit(product: LiveProduct) {
+  return (
+    getFirstText([
+      product.expected_benefit,
+      product.expectedBenefit,
+      product.innovationSubtitle,
+      ...normalizeStringList(product.benefits),
       product.description,
-      product.problemSolved,
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase()
-
-  if (
-    text.includes("pancake") ||
-    text.includes("waffle") ||
-    text.includes("prote")
-  ) {
-    return [
-      "Nutricion practica para rutinas activas",
-      "Mayor saciedad y energia diaria",
-      "Formato pensado para habitos faciles de sostener",
-    ]
-  }
-
-  if (
-    text.includes("coffee") ||
-    text.includes("cafe") ||
-    text.includes("cafe")
-  ) {
-    return [
-      "Energia limpia para el dia",
-      "Apoyo al enfoque mental",
-      "Experiencia funcional facil de integrar",
-    ]
-  }
-
-  return [
-    "Bienestar funcional para la vida diaria",
-    "Experiencia premium y practica",
-    "Valor real para mejorar habitos del cliente",
-  ]
+    ]) ||
+    "Beneficio esperado pendiente de validar"
+  )
 }
 
 function getValidationPromise(product: LiveProduct) {
-  const outcome =
-    getCustomerOutcome(product)
+  return getExpectedBenefit(product)
+}
 
-  return `Una posible solucion IMNOVA para ${outcome}. La comunidad decide si esta idea merece avanzar.`
+function getSurveySummary(product: LiveProduct) {
+  const score =
+    getSurveyScore(product)
+
+  const votes =
+    getSurveyVotes(product)
+
+  if (score !== null) {
+    return `Interes positivo: ${formatSurveyScore(score)}`
+  }
+
+  if (votes !== null) {
+    return `Votos recibidos: ${votes}`
+  }
+
+  return "Encuesta pendiente"
+}
+
+function getSurveyDetail(product: LiveProduct) {
+  const score =
+    getSurveyScore(product)
+
+  const votes =
+    getSurveyVotes(product)
+
+  if (score !== null && votes !== null) {
+    return `Interes positivo: ${formatSurveyScore(score)} con ${votes} votos recibidos.`
+  }
+
+  if (score !== null) {
+    return `Interes positivo: ${formatSurveyScore(score)}.`
+  }
+
+  if (votes !== null) {
+    return `Votos recibidos: ${votes}.`
+  }
+
+  return "Validacion comunitaria activa."
+}
+
+function getDecisionText(product: LiveProduct) {
+  if (hasRecordedPositiveValidation(product)) {
+    return "La validacion registrada indica que puede evaluarse para pasar al siguiente estado del proceso IMNOVA"
+  }
+
+  if (hasCommunitySignalData(product)) {
+    return "La decision de fabricar, ajustar o pausar dependera de encuestas reales y senales registradas desde Admin/Supabase"
+  }
+
+  return "La comunidad definira con encuestas reales y senales de redes si esta idea se fabrica, se ajusta o se pausa"
+}
+
+function getComingSoonBadgeLabel(product: LiveProduct) {
+  return (
+    getValidationStatus(product) ||
+    product.status ||
+    "Idea en validacion"
+  )
 }
 
 function getSurveyIntent(product: LiveProduct): SurveyIntent {
@@ -407,11 +706,33 @@ export function InnovationsSection({
       ]
     )
 
-  const approvedIdeaProducts =
+  const decisionRecordedProducts =
     useMemo(
       () =>
         comingSoonProducts.filter(
-          isIdeaApproved
+          hasRecordedValidationDecision
+        ),
+      [
+        comingSoonProducts,
+      ]
+    )
+
+  const surveyedComingSoonProducts =
+    useMemo(
+      () =>
+        comingSoonProducts.filter(
+          hasSurveyData
+        ),
+      [
+        comingSoonProducts,
+      ]
+    )
+
+  const socialSignalComingSoonProducts =
+    useMemo(
+      () =>
+        comingSoonProducts.filter(
+          hasSocialSignalData
         ),
       [
         comingSoonProducts,
@@ -433,9 +754,9 @@ export function InnovationsSection({
   const featuredComingSoonProduct =
     comingSoonProducts[0]
 
-  const featuredComingSoonApproved =
+  const featuredHasPositiveValidation =
     featuredComingSoonProduct
-      ? isIdeaApproved(
+      ? hasRecordedPositiveValidation(
           featuredComingSoonProduct
         )
       : false
@@ -473,20 +794,20 @@ export function InnovationsSection({
         >
           <div className="inline-flex items-center gap-3 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-5 py-3 text-[10px] uppercase tracking-[0.34em] text-cyan-100">
             <Clock3 className="h-4 w-4" />
-            Mapa comercial
+            Innovacion IMNOVA
           </div>
 
           <h2 className="mt-9 text-4xl font-black leading-[0.98] tracking-[-0.04em] text-white md:text-6xl">
-            Listo para ser comercializado
+            Comercializacion
             <span className="block bg-gradient-to-r from-cyan-200 via-white to-amber-200 bg-clip-text text-transparent">
-              y viene pronto
+              y Viene Pronto
             </span>
           </h2>
 
           <p className="mx-auto mt-8 max-w-3xl text-lg leading-8 text-zinc-400">
-            Una vista separada para productos ya revelados y desarrollos en
-            expectativa. Cada bloque responde una pregunta distinta sin mezclar
-            estados ni rutas de compra.
+            Una vista separada para productos que avanzan hacia
+            comercializacion e ideas que la comunidad ayuda a validar antes de
+            fabricar o desarrollar.
           </p>
         </motion.div>
 
@@ -726,25 +1047,24 @@ export function InnovationsSection({
             <div className="relative mb-10 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.34em] text-cyan-100/60">
-                  Validacion comunitaria
+                  Viene Pronto
                 </p>
                 <h3
                   id="coming-soon-heading"
                   className="mt-3 text-4xl font-black leading-tight tracking-[-0.04em] text-white md:text-6xl"
                 >
-                  Ideas que la comunidad ayuda a decidir
+                  Ideas en validacion comunitaria
                 </h3>
                 <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-400 md:text-base">
-                  IMNOVA detecta una oportunidad, define el nicho, identifica
-                  el problema humano y comparte una promesa inicial. La
-                  comunidad responde desde la web, WhatsApp o redes sociales.
-                  El objetivo es medir si esa idea realmente resuelve una
-                  necesidad humana y si existe interes suficiente para seguir
-                  investigandola.
+                  Ideas que la comunidad ayuda a validar. Cada idea muestra el
+                  nicho, el problema humano que busca resolver, encuestas
+                  reales y senales de interes en redes sociales. La decision
+                  de fabricar, ajustar o pausar debe venir de datos gestionados
+                  desde Admin/Supabase.
                 </p>
               </div>
 
-              <div className="grid max-w-xl grid-cols-3 gap-3">
+              <div className="grid max-w-2xl grid-cols-2 gap-3 sm:grid-cols-4">
                 <div className="rounded-3xl border border-amber-200/10 bg-black/35 px-5 py-4">
                   <p className="text-[10px] uppercase tracking-[0.20em] text-amber-100/45">
                     Ideas
@@ -756,19 +1076,28 @@ export function InnovationsSection({
 
                 <div className="rounded-3xl border border-amber-200/10 bg-black/35 px-5 py-4">
                   <p className="text-[10px] uppercase tracking-[0.20em] text-amber-100/45">
-                    Necesidad validada
+                    Encuestas
                   </p>
                   <p className="mt-2 text-3xl font-black text-white">
-                    {approvedIdeaProducts.length}
+                    {surveyedComingSoonProducts.length}
                   </p>
                 </div>
 
                 <div className="rounded-3xl border border-amber-200/10 bg-black/35 px-5 py-4">
                   <p className="text-[10px] uppercase tracking-[0.20em] text-amber-100/45">
-                    Canales
+                    Redes
+                  </p>
+                  <p className="mt-2 text-3xl font-black text-white">
+                    {socialSignalComingSoonProducts.length}
+                  </p>
+                </div>
+
+                <div className="rounded-3xl border border-amber-200/10 bg-black/35 px-5 py-4">
+                  <p className="text-[10px] uppercase tracking-[0.20em] text-amber-100/45">
+                    Decision
                   </p>
                   <p className="mt-2 text-3xl font-black text-amber-100">
-                    3
+                    {decisionRecordedProducts.length}
                   </p>
                 </div>
               </div>
@@ -794,22 +1123,43 @@ export function InnovationsSection({
                   <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.15),transparent_36%)]" />
 
                   <div className="relative z-10">
-                    <span
-                      className={
-                        featuredComingSoonApproved
-                          ? "inline-flex items-center gap-2 rounded-full border border-emerald-200/25 bg-emerald-300/[0.10] px-4 py-2 text-[10px] uppercase tracking-[0.24em] text-emerald-100"
-                          : "inline-flex items-center gap-2 rounded-full border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-2 text-[10px] uppercase tracking-[0.24em] text-cyan-100"
-                      }
-                    >
-                      {featuredComingSoonApproved ? (
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                      ) : (
-                        <Signal className="h-3.5 w-3.5" />
-                      )}
-                      {featuredComingSoonApproved
-                        ? "Necesidad validada"
-                        : "En encuesta"}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span
+                        className={
+                          featuredHasPositiveValidation
+                            ? "inline-flex items-center gap-2 rounded-full border border-emerald-200/25 bg-emerald-300/[0.10] px-4 py-2 text-[10px] uppercase tracking-[0.24em] text-emerald-100"
+                            : "inline-flex items-center gap-2 rounded-full border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-2 text-[10px] uppercase tracking-[0.24em] text-cyan-100"
+                        }
+                      >
+                        {featuredHasPositiveValidation ? (
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        ) : (
+                          <Signal className="h-3.5 w-3.5" />
+                        )}
+                        {getComingSoonBadgeLabel(
+                          featuredComingSoonProduct
+                        )}
+                      </span>
+
+                      <span className="inline-flex rounded-full border border-amber-200/20 bg-amber-200/[0.08] px-4 py-2 text-[10px] uppercase tracking-[0.20em] text-amber-100">
+                        {getSurveySummary(
+                          featuredComingSoonProduct
+                        )}
+                      </span>
+
+                      <span className="inline-flex rounded-full border border-white/10 bg-white/[0.045] px-4 py-2 text-[10px] uppercase tracking-[0.20em] text-zinc-300">
+                        {getSocialSignalSummary(
+                          featuredComingSoonProduct
+                        )}
+                      </span>
+                    </div>
+
+                    <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-cyan-100/55">
+                      Idea / producto
+                    </p>
+                    <h3 className="mt-4 max-w-3xl text-4xl font-black leading-tight tracking-[-0.035em] text-white md:text-5xl">
+                      {featuredComingSoonProduct.name}
+                    </h3>
 
                     <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-cyan-100/55">
                       Nicho
@@ -828,135 +1178,104 @@ export function InnovationsSection({
                       ))}
                     </div>
 
-                    <div className="mt-6 grid gap-4 md:grid-cols-[0.8fr_1.2fr]">
+                    <div className="mt-6 grid gap-4 lg:grid-cols-4">
                       <div className="rounded-3xl border border-amber-200/15 bg-amber-200/[0.055] p-5">
                         <p className="text-[10px] uppercase tracking-[0.24em] text-amber-100/60">
-                          Problema que resuelve
+                          Problema humano
                         </p>
                         <p className="mt-4 text-sm leading-7 text-zinc-300">
-                          {getPopulationProblem(featuredComingSoonProduct)}.
+                          {getPopulationProblem(featuredComingSoonProduct)}
                         </p>
                       </div>
 
                       <div className="rounded-3xl border border-cyan-200/15 bg-cyan-300/[0.045] p-5">
                         <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/60">
-                          Promesa inicial
+                          Beneficio esperado
                         </p>
                         <p className="mt-4 text-sm leading-7 text-zinc-300">
-                          {getValidationPromise(featuredComingSoonProduct)}
+                          {getExpectedBenefit(featuredComingSoonProduct)}
+                        </p>
+                      </div>
+
+                      <div className="rounded-3xl border border-white/10 bg-black/25 p-5">
+                        <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-400">
+                          Encuesta comunitaria
+                        </p>
+                        <p className="mt-4 text-sm leading-7 text-zinc-300">
+                          {getSurveyDetail(featuredComingSoonProduct)}
+                        </p>
+                      </div>
+
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.025] p-5">
+                        <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-400">
+                          Senales en redes
+                        </p>
+                        <p className="mt-4 text-sm leading-7 text-zinc-300">
+                          {getSocialSignalDetail(featuredComingSoonProduct)}
                         </p>
                       </div>
                     </div>
 
-                    <div className="mt-6 grid gap-3 md:grid-cols-3">
-                      {[
-                        "Idea detectada",
-                        "Problema humano definido",
-                        featuredComingSoonApproved
-                          ? "Interes validado"
-                          : "Midiendo interes",
-                      ].map(step => (
-                        <div
-                          key={step}
-                          className="rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-300"
-                        >
-                          {step}
-                        </div>
-                      ))}
+                    <div className="mt-6 rounded-3xl border border-emerald-200/15 bg-emerald-300/[0.06] p-5">
+                      <p className="text-[10px] uppercase tracking-[0.24em] text-emerald-100/65">
+                        Decision proxima
+                      </p>
+                      <p className="mt-3 text-sm leading-7 text-emerald-50/85">
+                        {getDecisionText(featuredComingSoonProduct)}.
+                      </p>
                     </div>
 
-                    {featuredComingSoonApproved && (
-                      <div className="mt-6 rounded-3xl border border-emerald-200/20 bg-emerald-300/[0.08] p-5">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-emerald-100/70">
-                          Notificacion de validacion
-                        </p>
-                        <p className="mt-3 text-sm leading-7 text-emerald-50/85">
-                          La comunidad confirma que esta idea toca una
-                          necesidad real. El interes recopilado por los canales
-                          disponibles indica que vale la pena seguir
-                          investigandola.
-                        </p>
-                      </div>
-                    )}
-
-                    <div className="mt-6 grid gap-3 md:grid-cols-3">
-                      {[
-                        {
-                          channel:
-                            "Web",
-                          detail:
-                            "Encuesta directa en la pagina",
-                        },
-                        {
-                          channel:
-                            "WhatsApp",
-                          detail:
-                            "Interes por mensajes y seguimiento",
-                        },
-                        {
-                          channel:
-                            "Redes sociales",
-                          detail:
-                            "Senales de comunidad y conversacion",
-                        },
-                      ].map(item => (
-                        <div
-                          key={item.channel}
-                          className="rounded-2xl border border-cyan-200/10 bg-cyan-300/[0.045] px-4 py-4"
-                        >
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100">
-                            {item.channel}
-                          </p>
-                          <p className="mt-2 text-xs leading-5 text-zinc-400">
-                            {item.detail}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="mt-7 grid gap-3 sm:grid-cols-3">
-                      {getCustomerBenefits(
-                        featuredComingSoonProduct
-                      ).map(benefit => (
-                        <div
-                          key={benefit}
-                          className="rounded-2xl border border-cyan-200/10 bg-cyan-300/[0.045] px-4 py-4 text-sm leading-6 text-cyan-50/80"
-                        >
-                          {benefit}
-                        </div>
-                      ))}
-                    </div>
-
-                    {featuredComingSoonApproved ? (
-                      <div
-                        className="mt-8 inline-flex items-center gap-3 rounded-2xl border border-emerald-200/25 bg-emerald-300/[0.10] px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-100 transition hover:border-emerald-200/40 hover:bg-emerald-300/[0.16]"
-                      >
-                        Necesidad validada
-                        <CheckCircle2 className="h-4 w-4" />
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onSurveyInterest?.(
-                            getSurveyIntent(
-                              featuredComingSoonProduct
+                    <div className="mt-6 rounded-3xl border border-white/10 bg-white/[0.025] p-5">
+                      <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">
+                        Flujo oficial si la validacion registrada es positiva
+                      </p>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {officialProductFlow.map(step => {
+                          const isCurrentStep =
+                            normalizeText(
+                              featuredComingSoonProduct.status
+                            ).includes(
+                              normalizeText(step)
                             )
+
+                          return (
+                            <span
+                              key={step}
+                              className={
+                                isCurrentStep
+                                  ? "rounded-full border border-cyan-200/25 bg-cyan-300/[0.10] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100"
+                                  : "rounded-full border border-white/10 bg-black/25 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500"
+                              }
+                            >
+                              {step}
+                            </span>
                           )
-                        }
-                        className="mt-8 inline-flex items-center gap-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 transition hover:border-cyan-200/35 hover:bg-cyan-300/[0.13]"
-                      >
-                        Responder encuesta
-                        <MessageCircle className="h-4 w-4" />
-                      </button>
-                    )}
+                        })}
+                      </div>
+                    </div>
+
+                    {/* TODO: conectar encuesta comunitaria y senales sociales desde Admin/Supabase cuando exista el modulo de validacion. */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onSurveyInterest?.(
+                          getSurveyIntent(
+                            featuredComingSoonProduct
+                          )
+                        )
+                      }
+                      className="mt-8 inline-flex items-center gap-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 transition hover:border-cyan-200/35 hover:bg-cyan-300/[0.13]"
+                    >
+                      {featuredHasPositiveValidation
+                        ? "Unirme a la comunidad"
+                        : "Participar en encuesta"}
+                      <MessageCircle className="h-4 w-4" />
+                    </button>
 
                     <div className="mt-8">
                       <div className="mb-3 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-zinc-500">
                         <span>
-                          {featuredComingSoonApproved
-                            ? "Interes validado por comunidad"
-                            : "Interes medido por canales"}
+                          Estado oficial
                         </span>
                         <span className="text-cyan-100">
                           {featuredComingSoonProduct.progress}%
@@ -985,14 +1304,8 @@ export function InnovationsSection({
                 <div className="grid content-start gap-4">
                   {previewComingSoonProducts.map(
                     product => (
-                      <motion.button
+                      <motion.article
                         key={product.id}
-                        type="button"
-                        onClick={() =>
-                          onSurveyInterest?.(
-                            getSurveyIntent(product)
-                          )
-                        }
                         initial={{
                           opacity: 0,
                           x: 24,
@@ -1005,25 +1318,34 @@ export function InnovationsSection({
                           duration: 0.7,
                         }}
                         viewport={{ once: true }}
-                        className="grid grid-cols-[72px_minmax(0,1fr)] gap-4 rounded-[24px] border border-white/10 bg-white/[0.03] p-4 text-left backdrop-blur-xl transition hover:border-cyan-200/25 hover:bg-cyan-300/[0.055]"
+                        className="rounded-[24px] border border-white/10 bg-white/[0.03] p-4 text-left backdrop-blur-xl"
                       >
-                        <div className="flex h-[72px] w-[72px] items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-black/35">
-                          <Rocket className="h-6 w-6 text-cyan-100/55" />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={
+                              hasRecordedPositiveValidation(product)
+                                ? "inline-flex items-center gap-2 rounded-full border border-emerald-200/20 bg-emerald-300/[0.08] px-3 py-2 text-[9px] uppercase tracking-[0.18em] text-emerald-100"
+                                : "inline-flex items-center gap-2 rounded-full border border-cyan-200/15 bg-cyan-300/[0.06] px-3 py-2 text-[9px] uppercase tracking-[0.18em] text-cyan-100"
+                            }
+                          >
+                            {hasRecordedPositiveValidation(product) ? (
+                              <CheckCircle2 className="h-3 w-3" />
+                            ) : (
+                              <Signal className="h-3 w-3" />
+                            )}
+                            {getComingSoonBadgeLabel(product)}
+                          </span>
                         </div>
 
-                        <div className="min-w-0">
+                        <div className="mt-4 space-y-3">
                           <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">
-                            {getProductNiches(product).join(" · ")}
+                            {getProductNiches(product).join(", ")}
                           </p>
-                          <h4 className="mt-2 truncate text-lg font-black leading-tight text-white">
-                            {isIdeaApproved(product)
-                              ? "Necesidad validada"
-                              : "Idea en validacion"}
+                          <h4 className="mt-2 text-lg font-black leading-tight text-white">
+                            {product.name}
                           </h4>
                           <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-500">
-                            {isIdeaApproved(product)
-                              ? "La comunidad muestra interes suficiente en esta necesidad."
-                              : `Midiendo si resuelve ${getPopulationProblem(product)}.`}
+                            {getPopulationProblem(product)}
                           </p>
                           <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/10">
                             <div
@@ -1033,8 +1355,59 @@ export function InnovationsSection({
                               className="h-full rounded-full bg-cyan-200"
                             />
                           </div>
+
+                          <div className="rounded-2xl border border-cyan-200/10 bg-cyan-300/[0.045] px-4 py-3">
+                            <p className="text-[9px] uppercase tracking-[0.18em] text-cyan-100/55">
+                              Beneficio esperado
+                            </p>
+                            <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-400">
+                              {getExpectedBenefit(product)}
+                            </p>
+                          </div>
+
+                          <div className="rounded-2xl border border-amber-200/10 bg-amber-200/[0.045] px-4 py-3">
+                            <p className="text-[9px] uppercase tracking-[0.18em] text-amber-100/55">
+                              Encuesta comunitaria
+                            </p>
+                            <p className="mt-2 text-xs leading-5 text-amber-50/80">
+                              {getSurveySummary(product)}
+                            </p>
+                          </div>
+
+                          <div className="rounded-2xl border border-white/10 bg-white/[0.025] px-4 py-3">
+                            <p className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">
+                              Senales en redes
+                            </p>
+                            <p className="mt-2 text-xs leading-5 text-zinc-400">
+                              {getSocialSignalSummary(product)}
+                            </p>
+                          </div>
+
+                          <div className="rounded-2xl border border-white/10 bg-black/25 px-4 py-3">
+                            <p className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">
+                              Decision proxima
+                            </p>
+                            <p className="mt-2 text-xs leading-5 text-zinc-400">
+                              {getDecisionText(product)}
+                            </p>
+                          </div>
                         </div>
-                      </motion.button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onSurveyInterest?.(
+                              getSurveyIntent(product)
+                            )
+                          }
+                          className="mt-4 inline-flex items-center gap-2 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100 transition hover:border-cyan-200/35 hover:bg-cyan-300/[0.13]"
+                        >
+                          {hasRecordedPositiveValidation(product)
+                            ? "Unirme a la comunidad"
+                            : "Participar en encuesta"}
+                          <MessageCircle className="h-3.5 w-3.5" />
+                        </button>
+                      </motion.article>
                     )
                   )}
                 </div>
