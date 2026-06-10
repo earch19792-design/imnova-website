@@ -21,7 +21,7 @@ export function ButtonClickNotifier() {
 
           const button =
             target?.closest(
-              "button, [role='button']"
+              "[data-click-notify], [data-toast-message]"
             ) as HTMLButtonElement | HTMLElement | null
 
           if (
@@ -34,7 +34,9 @@ export function ButtonClickNotifier() {
           }
 
           toast({
-            title: "Mensaje enviado",
+            title:
+              button.getAttribute("data-toast-message") ||
+              "Mensaje enviado",
           })
 
         }

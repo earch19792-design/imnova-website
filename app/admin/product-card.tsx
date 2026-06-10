@@ -31,6 +31,8 @@ type Product = {
   description?: string
   nicho?: string | null
   problema_resuelve?: string | null
+  lifestyle_image?: string | null
+  lifestyle_images?: string[] | string | null
   distribution_channels?: DistributionChannel[]
 
   theme?: {
@@ -128,6 +130,80 @@ const marketOptions = [
   "Distribuidor regional",
   "Mayorista autorizado",
 ]
+
+function normalizeImageList(
+  value?: string[] | string | null
+) {
+
+  if (!value) {
+    return []
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map(item => item.trim())
+      .filter(Boolean)
+  }
+
+  const trimmedValue =
+    value.trim()
+
+  if (!trimmedValue) {
+    return []
+  }
+
+  try {
+
+    const parsed =
+      JSON.parse(trimmedValue)
+
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map(item =>
+          String(item).trim()
+        )
+        .filter(Boolean)
+    }
+
+  } catch {
+    // Allows comma or line separated values while migrating older content.
+  }
+
+  return trimmedValue
+    .split(/,|\n/)
+    .map(item => item.trim())
+    .filter(Boolean)
+
+}
+
+function getInitialLifestyleImages(
+  product: Product
+) {
+
+  const images = [
+    ...normalizeImageList(
+      product.lifestyle_images
+    ),
+    ...normalizeImageList(
+      product.lifestyle_image
+    ),
+  ]
+
+  const uniqueImages =
+    Array.from(
+      new Set(images)
+    ).slice(
+      0,
+      3
+    )
+
+  return [
+    uniqueImages[0] || "",
+    uniqueImages[1] || "",
+    uniqueImages[2] || "",
+  ]
+
+}
 
 function getChannelNameOptions(
   type: string
@@ -243,6 +319,13 @@ export function ProductCard({
     product.problema_resuelve || ""
   )
 
+  const [
+    lifestyleImages,
+    setLifestyleImages,
+  ] = useState<string[]>(
+    getInitialLifestyleImages(product)
+  )
+
   const createDistributionChannel =
     (): DistributionChannel => ({
       id: `${Date.now()}-${Math.random()
@@ -286,6 +369,17 @@ export function ProductCard({
   }, [
     product.nicho,
     product.problema_resuelve,
+  ])
+
+  useEffect(() => {
+
+    setLifestyleImages(
+      getInitialLifestyleImages(product)
+    )
+
+  }, [
+    product.lifestyle_image,
+    product.lifestyle_images,
   ])
 
   useEffect(() => {
@@ -378,19 +472,29 @@ export function ProductCard({
           selectedState
         )
 
+        const updates: Parameters<
+          typeof updateProduct
+        >[1] = {
+          state_id:
+            selectedStateId,
+        }
+
+        if ("nicho" in product) {
+          updates.nicho =
+            niche.trim() ||
+            null
+        }
+
+        if ("problema_resuelve" in product) {
+          updates.problema_resuelve =
+            problemSolved.trim() ||
+            null
+        }
+
         const result =
           await updateProduct(
             product.id,
-            {
-              state_id:
-                selectedStateId,
-              nicho:
-                niche.trim() ||
-                null,
-              problema_resuelve:
-                problemSolved.trim() ||
-                null,
-            }
+            updates
           )
 
         console.log(
@@ -480,6 +584,104 @@ export function ProductCard({
             "No se pudo guardar el cambio.",
         })
 
+      }
+
+    }
+
+  const updateLifestyleImage =
+    (
+      index: number,
+      value: string
+    ) => {
+
+      setLifestyleImages(
+        currentImages => {
+          const nextImages = [
+            ...currentImages,
+          ]
+
+          nextImages[index] =
+            value
+
+          return [
+            nextImages[0] || "",
+            nextImages[1] || "",
+            nextImages[2] || "",
+          ]
+        }
+      )
+
+    }
+
+  const saveLifestyleImages =
+    async () => {
+
+      const canSaveLifestyleImages =
+        "lifestyle_images" in product ||
+        "lifestyle_image" in product
+
+      if (!canSaveLifestyleImages) {
+
+        toast({
+          title: "Migración requerida",
+          description:
+            "Agrega la columna lifestyle_images en Supabase antes de guardar estas imágenes.",
+        })
+
+        return
+
+      }
+
+      const cleanImages =
+        lifestyleImages
+          .map(image => image.trim())
+          .filter(Boolean)
+          .slice(
+            0,
+            3
+          )
+
+      const updates: Parameters<
+        typeof updateProduct
+      >[1] = {}
+
+      if ("lifestyle_images" in product) {
+        updates.lifestyle_images =
+          cleanImages
+      }
+
+      if ("lifestyle_image" in product) {
+        updates.lifestyle_image =
+          cleanImages[0] ||
+          null
+      }
+
+      const result =
+        await updateProduct(
+          product.id,
+          updates
+        )
+
+      if (!result) {
+
+        toast({
+          title: "Error",
+          description:
+            "No se pudieron guardar las imágenes lifestyle.",
+        })
+
+        return
+
+      }
+
+      toast({
+        title: "Lifestyle actualizado",
+        description:
+          "Las imágenes de uso quedaron guardadas para la Home pública.",
+      })
+
+      if (onUpdate) {
+        onUpdate()
       }
 
     }
@@ -668,6 +870,18 @@ export function ProductCard({
 
   const saveDistributionChannels =
     async () => {
+
+      if (!("distribution_channels" in product)) {
+
+        toast({
+          title: "⚠️ Columna no disponible",
+          description:
+            "No se puede guardar distribución porque la columna distribution_channels no está disponible en Supabase.",
+        })
+
+        return
+
+      }
 
       const cleanedChannels =
         distributionChannels
@@ -1052,6 +1266,117 @@ export function ProductCard({
               />
             </div>
           </div>
+
+        </div>
+
+        <div
+          className="
+            mt-10
+            rounded-[28px]
+            border
+            border-emerald-300/15
+            bg-emerald-300/[0.035]
+            p-5
+          "
+        >
+
+          <div
+            className="
+              text-[10px]
+              uppercase
+              tracking-[0.30em]
+              text-emerald-200/70
+            "
+          >
+            LIFESTYLE HOME
+          </div>
+
+          <p className="mt-3 text-sm leading-6 text-white/50">
+            Carga hasta 3 imágenes lifestyle para Ideas de Uso. La Home usa la
+            primera como escena principal y las otras como apoyo visual.
+          </p>
+
+          <div className="mt-5 grid gap-4">
+            {lifestyleImages.map(
+              (image, index) => (
+                <div
+                  key={index}
+                  className="grid gap-3 rounded-2xl border border-white/10 bg-black/25 p-4 md:grid-cols-[96px_1fr]"
+                >
+                  <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-black/45">
+                    {image.trim() ? (
+                      <img
+                        src={image}
+                        alt={`Lifestyle ${index + 1}`}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <span className="px-3 text-center text-[9px] uppercase tracking-[0.18em] text-white/30">
+                        Imagen {index + 1}
+                      </span>
+                    )}
+                  </div>
+
+                  <label className="grid content-center gap-2">
+                    <span className="text-[10px] uppercase tracking-[0.22em] text-white/35">
+                      URL lifestyle {index + 1}
+                    </span>
+                    <input
+                      value={image}
+                      onChange={(event) =>
+                        updateLifestyleImage(
+                          index,
+                          event.target.value
+                        )
+                      }
+                      placeholder={`/images/lifestyle/${product.name
+                        .toLowerCase()
+                        .replace(/[^a-z0-9]+/g, "-")
+                        .replace(/(^-|-$)/g, "")}-${index + 1}.webp`}
+                      className="
+                        w-full
+                        rounded-xl
+                        border
+                        border-white/10
+                        bg-black/60
+                        px-4
+                        py-3
+                        text-sm
+                        text-white
+                        outline-none
+                        placeholder:text-white/25
+                      "
+                    />
+                  </label>
+                </div>
+              )
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={saveLifestyleImages}
+            className="
+              mt-5
+              w-full
+              rounded-2xl
+              border
+              border-emerald-400/20
+              bg-emerald-400/15
+              px-5
+              py-4
+              text-xs
+              font-semibold
+              uppercase
+              tracking-[0.18em]
+              text-emerald-100
+              transition-all
+              duration-300
+              hover:bg-emerald-400/25
+            "
+          >
+            Guardar lifestyle
+          </button>
 
         </div>
 

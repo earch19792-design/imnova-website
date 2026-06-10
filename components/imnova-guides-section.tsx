@@ -1,5 +1,7 @@
 "use client"
 
+import Link from "next/link"
+
 import {
   useEffect,
   useMemo,
@@ -10,9 +12,12 @@ import { motion } from "framer-motion"
 
 import {
   ArrowUpRight,
-  Brain,
-  Search,
+  CheckCircle2,
+  Coffee,
+  Dumbbell,
+  Leaf,
   Sparkles,
+  SunMedium,
   type LucideIcon,
 } from "lucide-react"
 
@@ -27,8 +32,13 @@ type Product = {
   name: string
   category?: string | null
   description?: string | null
+  slug?: string | null
   image?: string | null
   image_url?: string | null
+  lifestyle_image?: string | null
+  lifestyle_images?: string[] | string | null
+  benefits?: string[] | string | null
+  bullets?: string[] | string | null
 }
 
 type ProductState = {
@@ -37,65 +47,1182 @@ type ProductState = {
   progress: number
 }
 
-type GuideCard = {
+type UsageGuide = {
   id: string
-  title: string
-  description: string
-  cta: string
-  stage: "all" | "ideas" | "development" | "market"
-  status?: string
-  image?: string | null
+  name: string
+  category: string
+  status: string
+  moment: string
+  howToUse: string
+  benefits: string[]
+  steps: string[]
+  image: string | null
+  productImage: string | null
+  imageIsLifestyle: boolean
+  sceneImage: string
+  sceneImages: string[]
+  sceneLabel: string
+  href: string
   icon: LucideIcon
+  accent: "cyan" | "amber" | "emerald"
 }
 
 type ImnovaGuidesSectionProps = {
   onJoinFamily?: () => void
 }
 
-const pageSize =
-  6
-
 function normalizeText(
   value: string
 ) {
-
   return value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-
 }
 
-function getGuideStage(
-  status: string
-): GuideCard["stage"] {
+function normalizeStringList(
+  value?: string[] | string | null
+) {
+  if (!value) {
+    return []
+  }
 
-  const normalized =
+  if (Array.isArray(value)) {
+    return value
+      .map(item => item.trim())
+      .filter(Boolean)
+  }
+
+  return value
+    .split(/,|\n/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function normalizeImageList(
+  value?: string[] | string | null
+) {
+  if (!value) {
+    return []
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map(item => item.trim())
+      .filter(Boolean)
+  }
+
+  const trimmedValue =
+    value.trim()
+
+  if (!trimmedValue) {
+    return []
+  }
+
+  try {
+    const parsed =
+      JSON.parse(trimmedValue)
+
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map(item =>
+          String(item).trim()
+        )
+        .filter(Boolean)
+    }
+  } catch {
+    // Allows comma or line separated URLs during content migration.
+  }
+
+  return trimmedValue
+    .split(/,|\n/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function getProductProfile(
+  product: Product
+) {
+  return normalizeText(
+    [
+      product.name,
+      product.category,
+      product.description,
+      ...normalizeStringList(product.benefits),
+      ...normalizeStringList(product.bullets),
+    ]
+      .filter(Boolean)
+      .join(" ")
+  )
+}
+
+function profileIncludes(
+  profile: string,
+  terms: string[]
+) {
+  return terms.some(
+    term =>
+      profile.includes(term)
+  )
+}
+
+function isAvailableStatus(
+  status: string
+) {
+  const normalizedStatus =
     normalizeText(status)
 
+  return (
+    normalizedStatus.includes("disponible") &&
+    !normalizedStatus.includes("no disponible") &&
+    !normalizedStatus.includes("comercial") &&
+    !normalizedStatus.includes("viene pronto") &&
+    !normalizedStatus.includes("idea") &&
+    !normalizedStatus.includes("validacion") &&
+    !normalizedStatus.includes("priorizado") &&
+    !normalizedStatus.includes("testing") &&
+    !normalizedStatus.includes("produccion")
+  )
+}
+
+function getUsageMoment(
+  product: Product
+) {
+  const profile =
+    getProductProfile(product)
+
   if (
-    normalized.includes("disponible") ||
-    normalized.includes("comercial")
+    profileIncludes(
+      profile,
+      [
+        "coffee",
+        "cafe",
+        "caf",
+        "espresso",
+      ]
+    )
   ) {
-    return "market"
+    return "Mañana, oficina o estudio"
   }
 
   if (
-    normalized.includes("desarrollo") ||
-    normalized.includes("testing") ||
-    normalized.includes("produccion")
+    profileIncludes(
+      profile,
+      [
+        "pancake",
+        "waffle",
+      ]
+    )
   ) {
-    return "development"
+    return "Desayuno, gym o snack saludable"
   }
 
-  return "ideas"
+  if (
+    profileIncludes(
+      profile,
+      [
+        "pancake",
+        "pan",
+        "bread",
+        "nutri",
+        "prote",
+        "konjac",
+        "carbo",
+      ]
+    )
+  ) {
+    return "Desayuno, comida o snack saludable"
+  }
 
+  if (
+    profileIncludes(
+      profile,
+      [
+        "fitness",
+        "entreno",
+        "training",
+        "workout",
+      ]
+    )
+  ) {
+    return "Rutina fitness"
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "focus",
+        "enfoque",
+        "mental",
+        "productividad",
+      ]
+    )
+  ) {
+    return "Enfoque mental"
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "snack",
+        "merienda",
+        "antojo",
+      ]
+    )
+  ) {
+    return "Merienda funcional"
+  }
+
+  return "Energía diaria"
+}
+
+function getHowToUse(
+  product: Product
+) {
+  const profile =
+    getProductProfile(product)
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "coffee",
+        "cafe",
+        "caf",
+      ]
+    )
+  ) {
+    return "Disfrútalo frío con hielo y leche. Agítalo, sírvelo sobre hielo y añade tu leche favorita. Ideal para empezar el día, trabajar con enfoque o estudiar con energía limpia."
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "pancake",
+        "waffle",
+      ]
+    )
+  ) {
+    return "Prepáralo como pancake o waffle. Mezcla con leche y huevo, cocina hasta que quede doradito y acompáñalo con frutas, yogurt o tu topping favorito."
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "pancake",
+        "pan",
+        "bread",
+        "nutri",
+        "prote",
+        "konjac",
+        "carbo",
+      ]
+    )
+  ) {
+    return "Prepáralo como pan casero. Mezcla con agua, levadura y un poco de mantequilla. Hornea hasta que quede suave y doradito. Disfrútalo como tostada, sándwich o acompañamiento."
+  }
+
+  return (
+    product.description ||
+    "Úsalo como parte de tu rutina diaria para apoyar energía, enfoque y bienestar de forma práctica."
+  )
+}
+
+function getRitualSteps(
+  product: Product
+) {
+  const profile =
+    getProductProfile(product)
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "coffee",
+        "cafe",
+        "caf",
+      ]
+    )
+  ) {
+    return [
+      "Agítalo bien antes de tomar.",
+      "Sírvelo frío sobre hielo.",
+      "Añade leche regular, almendra, avena o coco.",
+      "Disfrútalo en la mañana, oficina o estudio.",
+    ]
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "pancake",
+        "waffle",
+      ]
+    )
+  ) {
+    return [
+      "Mezcla con leche y huevo.",
+      "Revuelve hasta que quede suave.",
+      "Cocina como pancake o waffle.",
+      "Sirve con frutas o tu topping favorito.",
+    ]
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "pancake",
+        "pan",
+        "bread",
+        "nutri",
+        "prote",
+        "konjac",
+        "carbo",
+      ]
+    )
+  ) {
+    return [
+      "Mezcla con agua y levadura.",
+      "Agrega un poco de mantequilla.",
+      "Hornea hasta que quede doradito.",
+      "Disfrútalo como tostada o sándwich.",
+    ]
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "fitness",
+        "entreno",
+        "training",
+        "workout",
+      ]
+    )
+  ) {
+    return [
+      "Úsalo alrededor de una rutina activa.",
+      "Mantén una hidratación adecuada.",
+      "Ajusta el momento según tu día.",
+    ]
+  }
+
+  return [
+    "Elige un momento simple de tu día.",
+    "Integra el producto dentro de tu rutina.",
+    "Mantén el hábito de forma constante.",
+  ]
+}
+
+function getFallbackBenefits(
+  product: Product
+) {
+  const profile =
+    getProductProfile(product)
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "coffee",
+        "cafe",
+        "caf",
+      ]
+    )
+  ) {
+    return [
+      "Energía limpia para tu rutina diaria",
+      "Apoya concentración y enfoque",
+      "Colágeno marino, vitaminas y extractos herbales",
+      "Sin azúcar y bajo en calorías",
+    ]
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "pancake",
+        "waffle",
+      ]
+    )
+  ) {
+    return [
+      "Alto en proteína",
+      "Ayuda a sentirte satisfecho",
+      "Fácil de preparar",
+      "Ideal para después del gym",
+    ]
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "pancake",
+        "pan",
+        "bread",
+        "nutri",
+        "prote",
+        "konjac",
+        "carbo",
+      ]
+    )
+  ) {
+    return [
+      "Alto en proteína",
+      "Ayuda a sentirte satisfecho",
+      "Ideal para tostadas y sándwiches",
+      "Fácil de preparar en casa",
+    ]
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "fitness",
+        "entreno",
+        "training",
+        "workout",
+      ]
+    )
+  ) {
+    return [
+      "Apoyo para rutinas activas",
+      "Energía sostenida",
+      "Uso práctico diario",
+    ]
+  }
+
+  return [
+    "Bienestar diario",
+    "Fórmula funcional",
+    "Fácil de integrar",
+  ]
+}
+
+function getPracticalBenefits(
+  product: Product
+) {
+  const profile =
+    getProductProfile(product)
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "coffee",
+        "cafe",
+        "caf",
+      ]
+    )
+  ) {
+    return getFallbackBenefits(product)
+  }
+
+  const configuredBenefits = [
+    ...normalizeStringList(product.benefits),
+    ...normalizeStringList(product.bullets),
+  ]
+
+  const combinedBenefits = [
+    ...configuredBenefits,
+    ...getFallbackBenefits(product),
+  ]
+
+  return Array.from(
+    new Set(combinedBenefits)
+  ).slice(
+    0,
+    3
+  )
+}
+
+function getGuideIcon(
+  product: Product
+) {
+  const profile =
+    getProductProfile(product)
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "coffee",
+        "cafe",
+        "caf",
+      ]
+    )
+  ) {
+    return Coffee
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "fitness",
+        "entreno",
+        "training",
+        "workout",
+      ]
+    )
+  ) {
+    return Dumbbell
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "nutri",
+        "prote",
+        "konjac",
+        "wellness",
+        "bienestar",
+      ]
+    )
+  ) {
+    return Leaf
+  }
+
+  return SunMedium
+}
+
+function getGuideAccent(
+  product: Product
+): UsageGuide["accent"] {
+  const profile =
+    getProductProfile(product)
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "coffee",
+        "cafe",
+        "caf",
+      ]
+    )
+  ) {
+    return "amber"
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "nutri",
+        "prote",
+        "wellness",
+        "bienestar",
+      ]
+    )
+  ) {
+    return "emerald"
+  }
+
+  return "cyan"
+}
+
+function getLifestyleScene(
+  product: Product
+) {
+  const profile =
+    getProductProfile(product)
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "coffee",
+        "cafe",
+        "caf",
+        "focus",
+        "enfoque",
+        "productividad",
+      ]
+    )
+  ) {
+    return {
+      image:
+        "/images/imnova-focus.webp",
+      label:
+        "Café moderno",
+    }
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "pancake",
+        "pan",
+        "bread",
+        "nutri",
+        "prote",
+        "fitness",
+        "entreno",
+        "training",
+        "workout",
+      ]
+    )
+  ) {
+    return {
+      image:
+        "/images/imnova-fitness.webp",
+      label:
+        "Nutrición diaria",
+    }
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "skin",
+        "piel",
+        "beauty",
+        "belleza",
+        "skincare",
+      ]
+    )
+  ) {
+    return {
+      image:
+        "/images/imnova-skincare.webp",
+      label:
+        "Wellness diario",
+    }
+  }
+
+  return {
+    image:
+      "/images/imnova-lifestyle.webp",
+    label:
+      "Lifestyle IMNOVA",
+  }
+}
+
+function getGuideImage(
+  product: Product
+) {
+  const slug =
+    product.slug || ""
+
+  const fallbackLifestyleImages =
+    slug === "mash-coffee"
+      ? [
+          "/images/lifestyle/mash-coffee-01.webp",
+          "/images/lifestyle/mash-coffee-02.webp",
+          "/images/lifestyle/mash-coffee-03.webp",
+        ]
+      : slug === "mash-coffee-6pack"
+        ? [
+            "/images/lifestyle/mash-6pack.webp",
+          ]
+        : slug === "mash-coffee-12pack"
+          ? [
+              "/images/lifestyle/mash-12pack.webp",
+            ]
+          : slug === "mash-nutri-pan"
+            ? [
+                "/images/lifestyle/mash-nutra-01.webp",
+                "/images/lifestyle/mash-nutra-02.webp",
+                "/images/lifestyle/mash-nutra-03.webp",
+              ]
+            : slug === "mash-nutri-pancake"
+              ? [
+                  "/images/lifestyle/mash-pancake-01.webp",
+                  "/images/lifestyle/mash-pancake-02.webp",
+                  "/images/lifestyle/mash-pancake-03.webp",
+                ]
+              : []
+
+  const lifestyleImages =
+    Array.from(
+      new Set([
+        ...normalizeImageList(
+          product.lifestyle_images
+        ),
+        ...normalizeImageList(
+          product.lifestyle_image
+        ),
+        ...fallbackLifestyleImages,
+      ])
+    ).slice(
+      0,
+      3
+    )
+
+  const productImage =
+    product.image_url ||
+    product.image ||
+    null
+
+  const scene =
+    getLifestyleScene(product)
+
+  const sceneImages =
+    lifestyleImages.length > 0
+      ? lifestyleImages
+      : [
+          scene.image,
+        ]
+
+  return {
+    image:
+      lifestyleImages[0] ||
+      productImage,
+    productImage,
+    imageIsLifestyle:
+      lifestyleImages.length > 0,
+    sceneImage:
+      sceneImages[0],
+    sceneImages,
+    sceneLabel:
+      scene.label,
+  }
+}
+
+function getProductHref(
+  product: Product
+) {
+  return product.slug
+    ? `/store/${product.slug}`
+    : "/store"
+}
+
+function getAccentClasses(
+  accent: UsageGuide["accent"]
+) {
+  if (accent === "amber") {
+    return {
+      border:
+        "border-amber-300/20",
+      badge:
+        "border-amber-300/25 bg-amber-300/[0.10] text-amber-100",
+      glow:
+        "from-amber-300/20 via-transparent to-orange-400/10",
+      text:
+        "text-amber-100",
+      button:
+        "border-amber-300/25 bg-amber-300/[0.12] text-amber-50 hover:border-amber-200/45 hover:bg-amber-300/[0.18]",
+    }
+  }
+
+  if (accent === "emerald") {
+    return {
+      border:
+        "border-emerald-300/20",
+      badge:
+        "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100",
+      glow:
+        "from-emerald-300/20 via-transparent to-cyan-300/10",
+      text:
+        "text-emerald-100",
+      button:
+        "border-emerald-300/25 bg-emerald-300/[0.12] text-emerald-50 hover:border-emerald-200/45 hover:bg-emerald-300/[0.18]",
+    }
+  }
+
+  return {
+    border:
+      "border-cyan-300/20",
+    badge:
+      "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100",
+    glow:
+      "from-cyan-300/20 via-transparent to-amber-300/10",
+    text:
+      "text-cyan-100",
+    button:
+      "border-cyan-300/25 bg-cyan-300/[0.12] text-cyan-50 hover:border-cyan-200/45 hover:bg-cyan-300/[0.18]",
+  }
+}
+
+function LifestyleVisual({
+  guide,
+  priority = false,
+}: {
+  guide: UsageGuide
+  priority?: boolean
+}) {
+  const Icon =
+    guide.icon
+
+  const productImage =
+    guide.imageIsLifestyle
+      ? null
+      : guide.productImage ||
+        guide.image
+
+  const sceneImages =
+    guide.sceneImages.length > 0
+      ? guide.sceneImages
+      : [
+          guide.sceneImage,
+        ]
+
+  const primaryScene =
+    sceneImages[0] ||
+    guide.sceneImage
+
+  const [
+    activeScene,
+    setActiveScene,
+  ] = useState(primaryScene)
+
+  useEffect(
+    () => {
+      setActiveScene(primaryScene)
+    },
+    [
+      primaryScene,
+    ]
+  )
+
+  const selectedScene =
+    activeScene ||
+    primaryScene
+
+  const isLifestyleGallery =
+    !productImage &&
+    Boolean(selectedScene)
+
+  return (
+    <div
+      className={`relative overflow-hidden rounded-[28px] border border-white/10 bg-black/55 ${
+        isLifestyleGallery
+          ? "min-h-0 self-start"
+          : "min-h-[320px] md:min-h-[420px]"
+      }`}
+    >
+      {selectedScene ? (
+        <img
+          src={selectedScene}
+          alt={guide.sceneLabel}
+          loading={priority ? "eager" : "lazy"}
+          className="absolute inset-0 h-full w-full scale-110 object-cover object-center opacity-45 blur-xl"
+        />
+      ) : null}
+
+      <div
+        className={`absolute inset-0 bg-gradient-to-br ${getAccentClasses(guide.accent).glow}`}
+      />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_52%_36%,rgba(255,255,255,0.10),transparent_28%),linear-gradient(180deg,rgba(0,0,0,0.12),rgba(0,0,0,0.86))]" />
+      <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black via-black/40 to-transparent" />
+
+      <div className="absolute left-5 top-5 z-20 flex flex-wrap gap-2">
+        <span className="rounded-full border border-white/15 bg-black/45 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.20em] text-white/70 backdrop-blur-xl">
+          {guide.sceneLabel}
+        </span>
+        <span
+          className={`rounded-full border px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.20em] backdrop-blur-xl ${getAccentClasses(guide.accent).badge}`}
+        >
+          Lifestyle
+        </span>
+      </div>
+
+      <div
+        className={`relative z-10 flex items-center justify-center px-5 pt-20 md:px-10 ${
+          isLifestyleGallery
+            ? "min-h-0 pb-8"
+            : "min-h-[320px] pb-24 md:min-h-[420px]"
+        }`}
+      >
+        {productImage ? (
+          <div className="relative flex h-[230px] w-[230px] items-center justify-center rounded-[34px] border border-white/15 bg-black/35 p-7 shadow-[0_30px_110px_rgba(0,0,0,0.55)] backdrop-blur-2xl md:h-[300px] md:w-[300px]">
+            <div className="absolute inset-0 rounded-[34px] bg-gradient-to-br from-white/[0.12] to-transparent" />
+            <img
+              src={productImage}
+              alt={guide.name}
+              loading={priority ? "eager" : "lazy"}
+              className="relative z-10 max-h-full max-w-full object-contain drop-shadow-[0_28px_70px_rgba(0,0,0,0.50)]"
+            />
+          </div>
+        ) : selectedScene ? (
+          <div className="flex w-full flex-col items-center justify-center gap-5">
+            <img
+              src={selectedScene}
+              alt={guide.sceneLabel}
+              loading={priority ? "eager" : "lazy"}
+              className="max-h-[300px] w-full max-w-[94%] rounded-[26px] object-contain object-center shadow-[0_28px_90px_rgba(0,0,0,0.50)] md:max-h-[340px] md:max-w-[90%]"
+            />
+
+            {sceneImages.length > 1 && (
+              <div className="flex justify-center gap-2">
+                {sceneImages
+                  .slice(
+                    0,
+                    3
+                  )
+                  .map(
+                    image => (
+                      <button
+                        key={image}
+                        type="button"
+                        onClick={() =>
+                          setActiveScene(image)
+                        }
+                        aria-label={`Ver imagen de ${guide.name}`}
+                        className={`h-14 w-14 overflow-hidden rounded-2xl border bg-black/45 p-1 backdrop-blur-xl transition duration-300 hover:border-cyan-100/55 ${
+                          selectedScene === image
+                            ? "border-cyan-100/70 shadow-[0_0_24px_rgba(103,232,249,0.22)]"
+                            : "border-white/15"
+                        }`}
+                      >
+                        <img
+                          src={image}
+                          alt={guide.sceneLabel}
+                          loading="lazy"
+                          className="h-full w-full rounded-xl object-cover"
+                        />
+                      </button>
+                    )
+                  )}
+              </div>
+            )}
+
+            <div className="flex max-w-full flex-wrap items-center justify-center gap-2">
+              <span
+                className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.20em] ${getAccentClasses(guide.accent).badge}`}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Disponible
+              </span>
+              <span className="rounded-full border border-white/10 bg-black/55 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.20em] text-white/60 backdrop-blur-xl">
+                {guide.moment}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div
+            className={`flex h-24 w-24 items-center justify-center rounded-full border bg-black/45 backdrop-blur-2xl ${getAccentClasses(guide.accent).badge}`}
+          >
+            <Icon className="h-10 w-10" />
+          </div>
+        )}
+      </div>
+
+      {!isLifestyleGallery && (
+        <div className="absolute bottom-4 left-4 z-20 flex max-w-[calc(100%-2rem)] flex-wrap items-center gap-2 sm:max-w-[58%]">
+          <span
+            className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.20em] ${getAccentClasses(guide.accent).badge}`}
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Disponible
+          </span>
+          <span className="rounded-full border border-white/10 bg-black/55 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.20em] text-white/60 backdrop-blur-xl">
+            {guide.moment}
+          </span>
+        </div>
+      )}
+
+      {sceneImages.length > 1 && productImage && (
+        <div className="absolute bottom-4 right-4 z-20 flex gap-2">
+          {sceneImages
+            .slice(
+              0,
+              3
+            )
+            .map(
+              image => (
+                <button
+                  key={image}
+                  type="button"
+                  onClick={() =>
+                    setActiveScene(image)
+                  }
+                  aria-label={`Ver imagen de ${guide.name}`}
+                  className={`h-14 w-14 overflow-hidden rounded-2xl border bg-black/45 p-1 backdrop-blur-xl transition duration-300 hover:border-cyan-100/55 ${
+                    selectedScene === image
+                      ? "border-cyan-100/70 shadow-[0_0_24px_rgba(103,232,249,0.22)]"
+                      : "border-white/15"
+                  }`}
+                >
+                  <img
+                    src={image}
+                    alt={guide.sceneLabel}
+                    loading="lazy"
+                    className="h-full w-full rounded-xl object-cover"
+                  />
+                </button>
+              )
+            )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BenefitChips({
+  benefits,
+}: {
+  benefits: string[]
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {benefits.map(
+        benefit => (
+          <span
+            key={benefit}
+            className="rounded-full border border-white/10 bg-white/[0.045] px-4 py-2 text-xs font-semibold leading-5 text-zinc-200"
+          >
+            {benefit}
+          </span>
+        )
+      )}
+    </div>
+  )
+}
+
+function ProductGuideCard({
+  guide,
+  index,
+  onJoinFamily,
+}: {
+  guide: UsageGuide
+  index: number
+  onJoinFamily?: () => void
+}) {
+  return (
+    <motion.article
+      initial={{
+        opacity: 0,
+        y: 34,
+      }}
+      whileInView={{
+        opacity: 1,
+        y: 0,
+      }}
+      transition={{
+        duration: 0.82,
+        delay:
+          Math.min(
+            index,
+            4
+          ) * 0.04,
+      }}
+      viewport={{ once: true }}
+      className={`group relative overflow-hidden rounded-[32px] border bg-white/[0.035] p-5 shadow-[0_30px_120px_rgba(0,0,0,0.45)] backdrop-blur-2xl md:p-8 ${getAccentClasses(guide.accent).border}`}
+    >
+      <div
+        className={`absolute inset-0 bg-gradient-to-br ${getAccentClasses(guide.accent).glow}`}
+      />
+      <div className="absolute inset-0 bg-gradient-to-r from-black/88 via-black/70 to-black/82" />
+
+      <div className="relative z-10 grid gap-8 lg:grid-cols-[0.95fr_1.05fr] lg:items-stretch">
+        <LifestyleVisual
+          guide={guide}
+          priority={index === 0}
+        />
+
+        <div className="flex flex-col justify-center py-2 lg:py-8">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.30em] text-white/50">
+            {guide.category}
+          </p>
+
+          <h3 className="mt-4 text-4xl font-black leading-tight text-white md:text-6xl">
+            {guide.name}
+          </h3>
+
+          <div className="mt-7 grid gap-4 sm:grid-cols-2">
+            <div className="rounded-[24px] border border-white/10 bg-black/30 p-5">
+              <p
+                className={`text-[10px] font-semibold uppercase tracking-[0.24em] ${getAccentClasses(guide.accent).text}`}
+              >
+                Momento de uso
+              </p>
+              <p className="mt-3 text-xl font-black text-white">
+                {guide.moment}
+              </p>
+            </div>
+
+            <div className="rounded-[24px] border border-white/10 bg-black/30 p-5">
+              <p
+                className={`text-[10px] font-semibold uppercase tracking-[0.24em] ${getAccentClasses(guide.accent).text}`}
+              >
+                Cómo usarlo
+              </p>
+              <p className="mt-3 text-sm leading-7 text-zinc-300">
+                {guide.howToUse}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-7">
+            <p
+              className={`mb-3 text-[10px] font-semibold uppercase tracking-[0.24em] ${getAccentClasses(guide.accent).text}`}
+            >
+              Beneficios prácticos
+            </p>
+            <BenefitChips
+              benefits={guide.benefits}
+            />
+          </div>
+
+          <div className="mt-7 rounded-[26px] border border-white/10 bg-black/30 p-5">
+            <p
+              className={`text-[10px] font-semibold uppercase tracking-[0.24em] ${getAccentClasses(guide.accent).text}`}
+            >
+              Rutina sugerida
+            </p>
+
+            <div className="mt-4 grid gap-3">
+              {guide.steps.map(
+                (step, stepIndex) => (
+                  <div
+                    key={step}
+                    className="grid grid-cols-[auto_1fr] items-start gap-3 text-sm leading-6 text-zinc-300"
+                  >
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-white/[0.055] text-[10px] font-black text-white/70">
+                      {stepIndex + 1}
+                    </span>
+                    <span>
+                      {step}
+                    </span>
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+
+          <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
+            <Link
+              href={guide.href}
+              className={`inline-flex items-center justify-center gap-3 rounded-2xl border px-6 py-4 text-xs font-black uppercase tracking-[0.18em] transition ${getAccentClasses(guide.accent).button}`}
+            >
+              Comprar ahora
+              <ArrowUpRight className="h-4 w-4" />
+            </Link>
+
+            {onJoinFamily && (
+              <button
+                type="button"
+                onClick={onJoinFamily}
+                className="inline-flex items-center justify-center gap-3 rounded-2xl border border-white/10 bg-white/[0.045] px-6 py-4 text-xs font-black uppercase tracking-[0.18em] text-white/75 transition hover:border-white/20 hover:bg-white/[0.075]"
+              >
+                Unirme a la comunidad
+                <Sparkles className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </motion.article>
+  )
 }
 
 export function ImnovaGuidesSection({
-  onJoinFamily: _onJoinFamily,
+  onJoinFamily,
 }: ImnovaGuidesSectionProps) {
-
   const [
     products,
     setProducts,
@@ -107,47 +1234,40 @@ export function ImnovaGuidesSection({
   ] = useState<ProductState[]>([])
 
   const [
-    activeStage,
-    setActiveStage,
-  ] = useState<GuideCard["stage"]>("all")
-
-  const [
-    query,
-    setQuery,
-  ] = useState("")
-
-  const [
-    visibleCount,
-    setVisibleCount,
-  ] = useState(pageSize)
+    isLoading,
+    setIsLoading,
+  ] = useState(true)
 
   useEffect(
     () => {
-
       let mounted =
         true
 
       async function loadGuides() {
+        try {
+          const [
+            productRows,
+            stateRows,
+          ] = await Promise.all([
+            getProducts(),
+            getProductStates(),
+          ])
 
-        const [
-          productRows,
-          stateRows,
-        ] = await Promise.all([
-          getProducts(),
-          getProductStates(),
-        ])
+          if (!mounted) {
+            return
+          }
 
-        if (!mounted) {
-          return
+          setProducts(
+            productRows as Product[]
+          )
+          setStates(
+            stateRows as ProductState[]
+          )
+        } finally {
+          if (mounted) {
+            setIsLoading(false)
+          }
         }
-
-        setProducts(
-          productRows as Product[]
-        )
-        setStates(
-          stateRows as ProductState[]
-        )
-
       }
 
       loadGuides()
@@ -155,7 +1275,6 @@ export function ImnovaGuidesSection({
       return () => {
         mounted = false
       }
-
     },
     []
   )
@@ -177,12 +1296,11 @@ export function ImnovaGuidesSection({
     )
 
   const productGuides =
-    useMemo<GuideCard[]>(
+    useMemo<UsageGuide[]>(
       () =>
         products
           .map(
             product => {
-
               const state =
                 product.state_id
                   ? stateMap.get(
@@ -194,36 +1312,52 @@ export function ImnovaGuidesSection({
                 state?.name ||
                 "Idea"
 
-              const stage =
-                getGuideStage(status)
+              const guideImage =
+                getGuideImage(product)
 
               return {
                 id:
                   product.id,
-                title:
+                name:
                   product.name,
-                description:
-                  product.description ||
-                  `Guía rápida para entender cómo usar ${product.name} y aprovecharlo dentro de una rutina IMNOVA.`,
-                cta:
-                  "Ver producto",
-                stage,
+                category:
+                  product.category ||
+                  "Producto IMNOVA",
                 status,
+                moment:
+                  getUsageMoment(product),
+                howToUse:
+                  getHowToUse(product),
+                benefits:
+                  getPracticalBenefits(product),
+                steps:
+                  getRitualSteps(product),
                 image:
-                  product.image_url ||
-                  product.image ||
-                  null,
+                  guideImage.image,
+                productImage:
+                  guideImage.productImage,
+                imageIsLifestyle:
+                  guideImage.imageIsLifestyle,
+                sceneImage:
+                  guideImage.sceneImage,
+                sceneImages:
+                  guideImage.sceneImages,
+                sceneLabel:
+                  guideImage.sceneLabel,
+                href:
+                  getProductHref(product),
                 icon:
-                  Sparkles,
+                  getGuideIcon(product),
+                accent:
+                  getGuideAccent(product),
               }
-
             }
           )
           .filter(
             guide =>
-              normalizeText(
-                guide.status || ""
-              ).includes("disponible")
+              isAvailableStatus(
+                guide.status
+              )
           ),
       [
         products,
@@ -231,105 +1365,50 @@ export function ImnovaGuidesSection({
       ]
     )
 
-  const allGuides =
-    useMemo(
-      () => [
-        ...productGuides,
-      ],
-      [
-        productGuides,
-      ]
+  const featuredGuide =
+    productGuides[0]
+
+  const secondaryGuides =
+    productGuides.slice(
+      1,
+      4
     )
 
-  const stageOptions =
-    useMemo(
-      () => [
-        {
-          id: "all" as const,
-          label: "Todos",
-          count:
-            allGuides.length,
-        },
-        {
-          id: "market" as const,
-          label: "Disponibles",
-          count:
-            allGuides.filter(
-              guide =>
-                guide.stage === "market"
-            ).length,
-        },
-      ],
-      [
-        allGuides,
-      ]
+  if (
+    !isLoading &&
+    productGuides.length === 0
+  ) {
+    return (
+      <section
+        id="imnova-guides"
+        className="relative isolate overflow-hidden bg-black py-28 md:py-36"
+      >
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_15%,rgba(34,211,238,0.08),transparent_42%),linear-gradient(180deg,rgba(0,0,0,0.20),rgba(0,0,0,0.95))]" />
+        <div className="relative z-10 mx-auto max-w-4xl px-6 text-center">
+          <div className="inline-flex items-center gap-3 rounded-full border border-cyan-300/20 bg-cyan-300/[0.08] px-5 py-3 text-[10px] uppercase tracking-[0.34em] text-cyan-100">
+            <Sparkles className="h-4 w-4" />
+            Guías IMNOVA
+          </div>
+
+          <h2 className="mt-8 text-4xl font-black leading-tight text-white md:text-6xl">
+            Ideas de Uso
+          </h2>
+
+          <p className="mx-auto mt-6 max-w-2xl text-base leading-8 text-zinc-400">
+            Muy pronto compartiremos formas simples de integrar productos
+            IMNOVA disponibles en rutinas reales.
+          </p>
+        </div>
+      </section>
     )
-
-  const filteredGuides =
-    useMemo(
-      () => {
-
-        const normalizedQuery =
-          normalizeText(query)
-
-        return allGuides.filter(
-          guide => {
-
-            const matchesStage =
-              activeStage === "all" ||
-              guide.stage === activeStage
-
-            const searchable =
-              normalizeText(
-                [
-                  guide.title,
-                  guide.description,
-                  guide.status || "",
-                ].join(" ")
-              )
-
-            return (
-              matchesStage &&
-              searchable.includes(
-                normalizedQuery
-              )
-            )
-
-          }
-        )
-
-      },
-      [
-        activeStage,
-        allGuides,
-        query,
-      ]
-    )
-
-  const visibleGuides =
-    filteredGuides.slice(
-      0,
-      visibleCount
-    )
-
-  const hasMore =
-    filteredGuides.length >
-    visibleGuides.length
-
-  const selectStage =
-    (stage: GuideCard["stage"]) => {
-
-      setActiveStage(stage)
-      setVisibleCount(pageSize)
-
-    }
+  }
 
   return (
     <section
       id="imnova-guides"
       className="relative isolate overflow-hidden bg-black py-32 md:py-40"
     >
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(34,211,238,0.11),transparent_40%),radial-gradient(circle_at_80%_60%,rgba(251,191,36,0.08),transparent_34%)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(34,211,238,0.10),transparent_42%),radial-gradient(circle_at_85%_70%,rgba(251,191,36,0.08),transparent_36%)]" />
       <div className="absolute inset-0 opacity-[0.022] bg-[linear-gradient(rgba(255,255,255,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.12)_1px,transparent_1px)] bg-[size:92px_92px]" />
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-200/20 to-transparent" />
 
@@ -350,168 +1429,155 @@ export function ImnovaGuidesSection({
           className="mx-auto max-w-4xl text-center"
         >
           <div className="inline-flex items-center gap-3 rounded-full border border-cyan-300/20 bg-cyan-300/[0.08] px-5 py-3 text-[10px] uppercase tracking-[0.34em] text-cyan-100">
-            <Brain className="h-4 w-4" />
-            Centro de guías
+            <Sparkles className="h-4 w-4" />
+            Guías IMNOVA
           </div>
 
-          <h2 className="mt-9 text-5xl font-black leading-[0.98] tracking-[-0.04em] text-white md:text-7xl">
-            Guías IMNOVA
+          <h2 className="mt-9 text-5xl font-black leading-tight text-white md:text-7xl">
+            Ideas de Uso
           </h2>
 
-          <p className="mx-auto mt-8 max-w-3xl text-lg leading-8 text-zinc-400">
-            Explora únicamente productos disponibles y listos para uso. La
-            sección carga solo una parte visible para mantenerse rápida aunque
-            el ecosistema crezca.
+          <p className="mx-auto mt-7 max-w-3xl text-lg leading-8 text-zinc-400">
+            Formas simples de integrar los productos IMNOVA en tu rutina
+            diaria, con momentos reales, beneficios claros y experiencias
+            fáciles de aplicar.
           </p>
         </motion.div>
 
-        <div className="mt-12 grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
-          <div className="flex flex-wrap gap-3">
-            {stageOptions.map(
-              option => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() =>
-                    selectStage(option.id)
-                  }
-                  className={`
-                    rounded-2xl
-                    border
-                    px-4
-                    py-3
-                    text-xs
-                    font-black
-                    uppercase
-                    tracking-[0.16em]
-                    transition-all
-                    duration-300
-                    ${
-                      activeStage === option.id
-                        ? "border-cyan-200/40 bg-cyan-300/[0.14] text-cyan-50"
-                        : "border-white/10 bg-white/[0.035] text-white/55 hover:border-cyan-200/25 hover:text-cyan-100"
-                    }
-                  `}
-                >
-                  {option.label}
-                  <span className="ml-2 text-cyan-100/65">
-                    {option.count}
-                  </span>
-                </button>
-              )
-            )}
-          </div>
-
-          <label className="relative block lg:min-w-[360px]">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-cyan-100/45" />
-            <input
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value)
-                setVisibleCount(pageSize)
-              }}
-              placeholder="Buscar guía o producto"
-              className="w-full rounded-2xl border border-white/10 bg-black/45 py-4 pl-11 pr-4 text-sm text-white outline-none placeholder:text-white/30 focus:border-cyan-200/35"
+        {featuredGuide && (
+          <motion.article
+            initial={{
+              opacity: 0,
+              y: 34,
+            }}
+            whileInView={{
+              opacity: 1,
+              y: 0,
+            }}
+            transition={{
+              duration: 0.85,
+            }}
+            viewport={{ once: true }}
+            className={`group relative mt-16 overflow-hidden rounded-[32px] border bg-white/[0.035] p-5 shadow-[0_30px_120px_rgba(0,0,0,0.45)] backdrop-blur-2xl md:p-8 ${getAccentClasses(featuredGuide.accent).border}`}
+          >
+            <div
+              className={`absolute inset-0 bg-gradient-to-br ${getAccentClasses(featuredGuide.accent).glow}`}
             />
-          </label>
-        </div>
+            <div className="absolute inset-0 bg-gradient-to-r from-black/88 via-black/70 to-black/82" />
 
-        <div className="mt-8 flex items-center justify-between gap-4 text-[10px] uppercase tracking-[0.22em] text-zinc-500">
-          <span>
-            Mostrando {visibleGuides.length} de {filteredGuides.length}
-          </span>
-          <span>
-            Render escalable
-          </span>
-        </div>
+            <div className="relative z-10 grid gap-8 lg:grid-cols-[0.95fr_1.05fr] lg:items-stretch">
+              <LifestyleVisual
+                guide={featuredGuide}
+                priority
+              />
 
-        <div className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {visibleGuides.map(
-            (guide, index) => {
-              const Icon =
-                guide.icon
+              <div className="flex flex-col justify-center py-2 lg:py-8">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.30em] text-white/50">
+                  {featuredGuide.category}
+                </p>
 
-              return (
-                <motion.article
-                  key={guide.id}
-                  initial={{
-                    opacity: 0,
-                    y: 34,
-                  }}
-                  whileInView={{
-                    opacity: 1,
-                    y: 0,
-                  }}
-                  transition={{
-                    duration: 0.72,
-                    delay:
-                      index * 0.04,
-                  }}
-                  viewport={{ once: true }}
-                  className="group relative flex min-h-[330px] flex-col overflow-hidden rounded-[28px] border border-white/10 bg-white/[0.035] p-6 backdrop-blur-2xl transition duration-300 hover:-translate-y-1 hover:border-cyan-200/25 hover:bg-white/[0.055]"
-                >
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.12),transparent_42%)] opacity-0 transition duration-300 group-hover:opacity-100" />
+                <h3 className="mt-4 text-4xl font-black leading-tight text-white md:text-6xl">
+                  {featuredGuide.name}
+                </h3>
 
-                  <div className="relative z-10 flex flex-1 flex-col">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-3xl border border-cyan-200/15 bg-cyan-300/[0.08]">
-                        {guide.image ? (
-                          <img
-                            src={guide.image}
-                            alt={guide.title}
-                            className="h-full w-full object-contain p-1.5"
-                          />
-                        ) : (
-                          <Icon className="h-6 w-6 text-cyan-100" />
-                        )}
-                      </div>
-
-                      {guide.status && (
-                        <span className="rounded-full border border-white/10 bg-black/35 px-3 py-1.5 text-[9px] uppercase tracking-[0.14em] text-white/45">
-                          {guide.status}
-                        </span>
-                      )}
-                    </div>
-
-                    <h3 className="mt-8 text-2xl font-black leading-tight tracking-[-0.03em] text-white">
-                      {guide.title}
-                    </h3>
-
-                    <p className="mt-5 flex-1 text-sm leading-7 text-zinc-400">
-                      {guide.description}
+                <div className="mt-7 grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-[24px] border border-white/10 bg-black/30 p-5">
+                    <p
+                      className={`text-[10px] font-semibold uppercase tracking-[0.24em] ${getAccentClasses(featuredGuide.accent).text}`}
+                    >
+                      Momento de uso
                     </p>
-
-                    <span className="mt-8 inline-flex items-center gap-2 self-start rounded-3xl border border-white/10 bg-white/[0.035] px-5 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-white/65">
-                      {guide.cta}
-                      <ArrowUpRight className="h-3.5 w-3.5" />
-                    </span>
+                    <p className="mt-3 text-xl font-black text-white">
+                      {featuredGuide.moment}
+                    </p>
                   </div>
-                </motion.article>
-              )
-            }
-          )}
-        </div>
 
-        {filteredGuides.length === 0 && (
-          <div className="mt-10 rounded-[28px] border border-white/10 bg-white/[0.035] p-8 text-center text-sm leading-7 text-zinc-400">
-            No hay guías para esta búsqueda.
-          </div>
+                  <div className="rounded-[24px] border border-white/10 bg-black/30 p-5">
+                    <p
+                      className={`text-[10px] font-semibold uppercase tracking-[0.24em] ${getAccentClasses(featuredGuide.accent).text}`}
+                    >
+                      Cómo usarlo
+                    </p>
+                    <p className="mt-3 text-sm leading-7 text-zinc-300">
+                      {featuredGuide.howToUse}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-7">
+                  <p
+                    className={`mb-3 text-[10px] font-semibold uppercase tracking-[0.24em] ${getAccentClasses(featuredGuide.accent).text}`}
+                  >
+                    Beneficios prácticos
+                  </p>
+                  <BenefitChips
+                    benefits={featuredGuide.benefits}
+                  />
+                </div>
+
+                <div className="mt-7 rounded-[26px] border border-white/10 bg-black/30 p-5">
+                  <p
+                    className={`text-[10px] font-semibold uppercase tracking-[0.24em] ${getAccentClasses(featuredGuide.accent).text}`}
+                  >
+                    Rutina sugerida
+                  </p>
+
+                  <div className="mt-4 grid gap-3">
+                    {featuredGuide.steps.map(
+                      (step, index) => (
+                        <div
+                          key={step}
+                          className="grid grid-cols-[auto_1fr] items-start gap-3 text-sm leading-6 text-zinc-300"
+                        >
+                          <span className="flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-white/[0.055] text-[10px] font-black text-white/70">
+                            {index + 1}
+                          </span>
+                          <span>
+                            {step}
+                          </span>
+                        </div>
+                      )
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <Link
+                    href={featuredGuide.href}
+                    className={`inline-flex items-center justify-center gap-3 rounded-2xl border px-6 py-4 text-xs font-black uppercase tracking-[0.18em] transition ${getAccentClasses(featuredGuide.accent).button}`}
+                  >
+                    Comprar ahora
+                    <ArrowUpRight className="h-4 w-4" />
+                  </Link>
+
+                  {onJoinFamily && (
+                    <button
+                      type="button"
+                      onClick={onJoinFamily}
+                      className="inline-flex items-center justify-center gap-3 rounded-2xl border border-white/10 bg-white/[0.045] px-6 py-4 text-xs font-black uppercase tracking-[0.18em] text-white/75 transition hover:border-white/20 hover:bg-white/[0.075]"
+                    >
+                      Unirme a la comunidad
+                      <Sparkles className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </motion.article>
         )}
 
-        {hasMore && (
-          <div className="mt-10 flex justify-center">
-            <button
-              type="button"
-              onClick={() =>
-                setVisibleCount(
-                  count =>
-                    count + pageSize
-                )
-              }
-              className="rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-6 py-4 text-xs font-black uppercase tracking-[0.18em] text-cyan-100 transition-colors hover:border-cyan-200/35 hover:bg-cyan-300/[0.14]"
-            >
-              Ver más guías
-            </button>
+        {secondaryGuides.length > 0 && (
+          <div className="mt-6 grid gap-6">
+            {secondaryGuides.map(
+              (guide, index) => (
+                <ProductGuideCard
+                  key={guide.id}
+                  guide={guide}
+                  index={index + 1}
+                  onJoinFamily={onJoinFamily}
+                />
+              )
+            )}
           </div>
         )}
       </div>

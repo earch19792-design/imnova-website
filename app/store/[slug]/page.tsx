@@ -138,7 +138,7 @@ const productExperiences: Record<string, any> = {
       "Pan funcional diseñado para bienestar diario.",
 
     whyText:
-      "Mash Bread Flour+ combina los beneficios funcionales de la raíz Konjac con una experiencia moderna de panificación, ofreciendo una alternativa alta en fibra, low carb y diseñada para bienestar diario sin sacrificar sabor ni textura.",
+      "MASH NUTRA+ combina los beneficios funcionales de la raíz Konjac con una experiencia moderna de panificación, ofreciendo una alternativa alta en fibra, low carb y diseñada para bienestar diario sin sacrificar sabor ni textura.",
 
     experienceTitle:
       "Diseñado para alimentación funcional moderna.",

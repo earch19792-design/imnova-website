@@ -1,5 +1,7 @@
 "use client"
 
+import Link from "next/link"
+
 import {
   motion,
   useInView,
@@ -566,16 +568,24 @@ export function GlobalSection() {
           </div>
 
           <h2 className="mx-auto mt-10 max-w-6xl text-5xl font-black leading-[1.02] tracking-[-0.04em] text-white sm:text-6xl lg:text-7xl">
-            Donde comprar
+            Dónde comprar
             <span className="block bg-gradient-to-r from-cyan-200 via-cyan-400 to-white bg-clip-text text-transparent">
               productos IMNOVA
             </span>
           </h2>
 
           <p className="mx-auto mt-9 max-w-4xl text-xl leading-9 text-zinc-300">
-            Consulta la tienda oficial, marketplaces y puntos comerciales
-            configurados para cada producto disponible.
+            Compra desde la Store oficial o revisa los canales públicos donde
+            cada producto IMNOVA está disponible.
           </p>
+
+          <Link
+            href="/store"
+            className="mt-8 inline-flex items-center justify-center gap-3 rounded-2xl border border-cyan-300/25 bg-cyan-300/[0.10] px-6 py-4 text-xs font-black uppercase tracking-[0.18em] text-cyan-100 transition hover:border-cyan-200/45 hover:bg-cyan-300/[0.16]"
+          >
+            <ShoppingBag className="h-4 w-4" />
+            Comprar en Store
+          </Link>
 
         </motion.div>
 
@@ -613,7 +623,12 @@ export function GlobalSection() {
             <aside className="border-b border-cyan-300/10 bg-white/[0.025] p-6 lg:border-b-0 lg:border-r">
 
               <p className="text-[10px] uppercase tracking-[0.30em] text-cyan-200/60">
-                Menu de compra
+                Explorar canales
+              </p>
+
+              <p className="mt-3 text-sm leading-6 text-zinc-500">
+                Filtra solo si quieres encontrar una ubicación, marketplace o
+                canal específico.
               </p>
 
               <div className="mt-7 grid gap-4">
@@ -721,7 +736,7 @@ export function GlobalSection() {
               <div className="mt-8 grid grid-cols-2 gap-3">
                 <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
                   <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">
-                    Marketplaces
+                    Online
                   </p>
                   <p className="mt-3 text-3xl font-black text-white">
                     {marketplaceCount}
@@ -730,7 +745,7 @@ export function GlobalSection() {
 
                 <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
                   <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">
-                    Físicos
+                    Puntos físicos
                   </p>
                   <p className="mt-3 text-3xl font-black text-white">
                     {physicalCount}
@@ -740,7 +755,7 @@ export function GlobalSection() {
 
               <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.025] p-4">
                 <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">
-                  Países activos
+                  Países
                 </p>
                 <p className="mt-2 text-2xl font-black text-white">
                   {activeCountriesCount}
@@ -856,7 +871,7 @@ export function GlobalSection() {
                                 rel="noreferrer"
                                 className="rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 transition-colors hover:bg-cyan-300/20"
                               >
-                                Abrir
+                                Abrir canal
                               </a>
                             </div>
                           )}
@@ -875,8 +890,8 @@ export function GlobalSection() {
                         Sin resultados
                       </p>
                       <p className="mx-auto mt-4 max-w-xl text-lg leading-8 text-zinc-400">
-                        Ajusta país, ciudad, canal o búsqueda para ver puntos
-                        de venta configurados desde Admin.
+                        Ajusta país, ciudad, canal o búsqueda para encontrar el
+                        punto de compra disponible.
                       </p>
                     </div>
                   </div>
@@ -918,7 +933,7 @@ export function GlobalSection() {
             >
               {isLoading
                 ? "Cargando..."
-                : "Ver más distribución"}
+                : "Ver más canales"}
             </button>
           </div>
         )}

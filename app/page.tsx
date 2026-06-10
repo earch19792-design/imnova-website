@@ -13,9 +13,7 @@ import { HeroSection } from "@/components/hero-section"
 import { ImnovaGuidesSection } from "@/components/imnova-guides-section"
 import { InnovationTracker } from "@/components/innovation-tracker"
 import { InnovationsSection } from "@/components/innovations-section"
-import InnovaPopup, {
-  type InnovaSurveyIntent,
-} from "@/components/imnova-popup"
+import InnovaPopup from "@/components/imnova-popup"
 import { Navigation } from "@/components/navigation"
 import { PromoBanner } from "@/components/promo-banner"
 import { WorkingSection } from "@/components/working-section"
@@ -26,29 +24,14 @@ export default function IMNOVAPage() {
     setShowPopup,
   ] = useState(false)
 
-  const [
-    surveyIntent,
-    setSurveyIntent,
-  ] = useState<InnovaSurveyIntent | null>(null)
-
   const openCommunity =
     () => {
-      setSurveyIntent(null)
-      setShowPopup(true)
-    }
-
-  const openSurvey =
-    (
-      intent: InnovaSurveyIntent
-    ) => {
-      setSurveyIntent(intent)
       setShowPopup(true)
     }
 
   const closePopup =
     () => {
       setShowPopup(false)
-      setSurveyIntent(null)
     }
 
   return (
@@ -64,9 +47,7 @@ export default function IMNOVAPage() {
       />
 
       <PromoBanner />
-      <InnovationsSection
-        onSurveyInterest={openSurvey}
-      />
+      <InnovationsSection />
       <ImnovaGuidesSection
         onJoinFamily={openCommunity}
       />
@@ -107,7 +88,7 @@ export default function IMNOVAPage() {
                 {[
                   "Lanzamientos",
                   "Avances exclusivos",
-                  "Decisiones de producto",
+                  "Próximas ideas",
                 ].map(item => (
                   <div
                     key={item}
@@ -134,7 +115,6 @@ export default function IMNOVAPage() {
       <InnovaPopup
         isOpen={showPopup}
         onClose={closePopup}
-        surveyIntent={surveyIntent}
       />
 
       <Footer />

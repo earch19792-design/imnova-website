@@ -97,7 +97,7 @@ function getLaunchBenefit(
     text.includes("cafe")
   ) {
 
-    return "Energía limpia, enfoque mental y nutrición funcional para acompañar rutinas de alto rendimiento."
+    return "Café funcional premium con vitaminas, colágeno marino y extractos herbales, diseñado para apoyar energía natural del café, bienestar diario y una rutina sin azúcar."
 
   }
 
@@ -192,6 +192,11 @@ export function PromoBanner() {
     setActiveIndex,
   ] = useState(0)
 
+  const [
+    hasLoadedProducts,
+    setHasLoadedProducts,
+  ] = useState(false)
+
   useEffect(() => {
 
     async function loadProducts() {
@@ -234,6 +239,7 @@ export function PromoBanner() {
 
       setProducts(availableProducts)
       setActiveIndex(0)
+      setHasLoadedProducts(true)
 
     }
 
@@ -299,6 +305,43 @@ export function PromoBanner() {
       window.clearInterval(interval)
 
   }, [products.length])
+
+  if (!hasLoadedProducts) {
+
+    return (
+      <section
+        id="available-now"
+        className="relative overflow-hidden py-28 md:py-36"
+      >
+        <div className="absolute inset-0 overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-b from-black via-[#050505] to-black" />
+          <div className="absolute left-0 top-0 h-[560px] w-[560px] rounded-full bg-amber-500/10 blur-[160px]" />
+          <div className="absolute bottom-0 right-0 h-[560px] w-[560px] rounded-full bg-orange-500/10 blur-[160px]" />
+        </div>
+
+        <div className="relative z-10 mx-auto max-w-7xl px-6">
+          <div className="max-w-3xl rounded-[32px] border border-amber-300/15 bg-white/[0.035] p-8 backdrop-blur-2xl md:p-10">
+            <div className="inline-flex items-center gap-3 rounded-full border border-amber-400/25 bg-amber-400/10 px-5 py-3">
+              <Sparkles className="h-4 w-4 text-amber-300" />
+              <span className="text-xs uppercase tracking-[0.28em] text-amber-300">
+                Producto disponible
+              </span>
+            </div>
+
+            <h2 className="mt-8 text-4xl font-black leading-tight tracking-[-0.04em] text-white md:text-6xl">
+              Cargando disponibilidad
+            </h2>
+
+            <p className="mt-5 max-w-2xl text-base leading-8 text-zinc-400">
+              Estamos preparando el producto activo, su precio y el acceso a la
+              Store oficial.
+            </p>
+          </div>
+        </div>
+      </section>
+    )
+
+  }
 
   if (products.length === 0) {
 
@@ -408,8 +451,8 @@ export function PromoBanner() {
               text-zinc-300
             "
           >
-            Productos IMNOVA que ya pasaron a etapa comercial. Esta seccion
-            resume disponibilidad, propuesta de valor y estado de lanzamiento.
+            Producto IMNOVA disponible para compra. Revisa precio, beneficio
+            principal y acceso directo a la Store oficial.
           </p>
 
         </motion.div>
@@ -496,7 +539,7 @@ export function PromoBanner() {
                     text-black
                   "
                 >
-                  Launch offer
+                  Oferta de lanzamiento
                 </span>
 
               </div>
@@ -705,7 +748,7 @@ export function PromoBanner() {
                     hover:shadow-[0_0_90px_rgba(251,191,36,0.40)]
                   "
                 >
-                  Comprar / Ver producto
+                  Comprar ahora
                   <ArrowUpRight className="h-4 w-4" />
                 </Link>
 

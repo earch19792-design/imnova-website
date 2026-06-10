@@ -89,12 +89,60 @@ export async function getProductBySlug(
 
 }
 
+function serializeSupabaseError(
+  error: unknown
+) {
+
+  if (!error) {
+    return null
+  }
+
+  if (error instanceof Error) {
+    return {
+      name:
+        error.name,
+      message:
+        error.message,
+      stack:
+        error.stack,
+    }
+  }
+
+  if (
+    typeof error === "object" &&
+    error !== null
+  ) {
+    const entries =
+      Object.getOwnPropertyNames(error)
+        .map(
+          key => [
+            key,
+            (error as Record<string, unknown>)[key],
+          ]
+        )
+
+    return {
+      ...Object.fromEntries(entries),
+      raw:
+        error,
+    }
+  }
+
+  return {
+    message:
+      String(error),
+  }
+
+}
+
 export async function updateProduct(
   productId: string,
   updates: {
     state_id?: string | null
     nicho?: string | null
     problema_resuelve?: string | null
+    lifestyle_image?: string | null
+    lifestyle_images?: string[]
     distribution_channels?: Array<{
       id: string
       country?: string
@@ -135,12 +183,7 @@ export async function updateProduct(
 
     console.error(
       "UPDATE PRODUCT ERROR:",
-      {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code,
-      }
+      serializeSupabaseError(error)
     )
 
     return null

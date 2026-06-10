@@ -295,7 +295,7 @@ useEffect(() => {
   }
 
   setObjective(
-    `Validacion comunitaria: ${surveyIntent.productName}`
+    `Validación comunitaria: ${surveyIntent.productName}`
   )
 
 }, [isOpen, surveyIntent])
@@ -432,7 +432,7 @@ useEffect(() => {
         const surveyRecord =
           surveyIntent
             ? [
-                "Encuesta de validacion",
+                "Encuesta de validación",
                 `Canal: ${surveyIntent.source}`,
                 "Canales disponibles: web, WhatsApp, redes sociales",
                 `Producto: ${surveyIntent.productName}`,
@@ -1257,7 +1257,7 @@ objetivo_principal:
 
     {surveyIntent && (
 
-      <option value={`Validacion comunitaria: ${surveyIntent.productName}`}>
+      <option value={`Validación comunitaria: ${surveyIntent.productName}`}>
         Encuesta: {surveyIntent.productName}
       </option>
 

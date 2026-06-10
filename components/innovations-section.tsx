@@ -10,7 +10,6 @@ import {
   CheckCircle2,
   Clock3,
   Info,
-  MessageCircle,
   Rocket,
   Signal,
 } from "lucide-react"
@@ -81,27 +80,13 @@ type LiveProduct = Product & {
   progress: number
 }
 
-type SurveyIntent = {
-  productName: string
-  niches: string[]
-  problem: string
-  promise: string
-  source: "web"
-}
-
-type InnovationsSectionProps = {
-  onSurveyInterest?: (
-    intent: SurveyIntent
-  ) => void
-}
-
 const officialProductFlow = [
   "Idea",
-  "Validacion",
+  "Validación",
   "Priorizado",
   "Testing",
-  "Produccion",
-  "Comercializacion",
+  "Producción",
+  "Comercialización",
   "Disponible",
 ]
 
@@ -400,7 +385,7 @@ function getSocialSignalSummary(product: Product) {
     getSocialMentions(product)
 
   if (score !== null) {
-    return `Interes en redes: ${formatSurveyScore(score)}`
+    return `Interés en redes: ${formatSurveyScore(score)}`
   }
 
   if (mentions !== null) {
@@ -414,7 +399,7 @@ function getSocialSignalSummary(product: Product) {
     return signals[0]
   }
 
-  return "Senales de redes pendientes"
+  return "Señales de redes pendientes"
 }
 
 function getSocialSignalDetail(product: Product) {
@@ -428,11 +413,11 @@ function getSocialSignalDetail(product: Product) {
     getSocialSignals(product)
 
   if (score !== null && mentions !== null) {
-    return `Interes en redes: ${formatSurveyScore(score)} con ${mentions} menciones registradas.`
+    return `Interés en redes: ${formatSurveyScore(score)} con ${mentions} menciones registradas.`
   }
 
   if (score !== null) {
-    return `Interes en redes: ${formatSurveyScore(score)}.`
+    return `Interés en redes: ${formatSurveyScore(score)}.`
   }
 
   if (mentions !== null) {
@@ -443,7 +428,7 @@ function getSocialSignalDetail(product: Product) {
     return signals.join(", ")
   }
 
-  return "Senales de interes en redes pendientes de conectar desde Admin/Supabase."
+  return "Señales de interés en redes pendientes de la comunidad."
 }
 
 function getProductNiches(product: LiveProduct) {
@@ -478,7 +463,7 @@ function getPopulationProblem(product: LiveProduct) {
     return configuredProblem
   }
 
-  return "Problema en validacion con la comunidad"
+  return "Problema en validación con la comunidad"
 }
 
 function getExpectedBenefit(product: LiveProduct) {
@@ -494,10 +479,6 @@ function getExpectedBenefit(product: LiveProduct) {
   )
 }
 
-function getValidationPromise(product: LiveProduct) {
-  return getExpectedBenefit(product)
-}
-
 function getSurveySummary(product: LiveProduct) {
   const score =
     getSurveyScore(product)
@@ -506,7 +487,7 @@ function getSurveySummary(product: LiveProduct) {
     getSurveyVotes(product)
 
   if (score !== null) {
-    return `Interes positivo: ${formatSurveyScore(score)}`
+    return `Interés positivo: ${formatSurveyScore(score)}`
   }
 
   if (votes !== null) {
@@ -524,58 +505,81 @@ function getSurveyDetail(product: LiveProduct) {
     getSurveyVotes(product)
 
   if (score !== null && votes !== null) {
-    return `Interes positivo: ${formatSurveyScore(score)} con ${votes} votos recibidos.`
+    return `Interés positivo: ${formatSurveyScore(score)} con ${votes} votos recibidos.`
   }
 
   if (score !== null) {
-    return `Interes positivo: ${formatSurveyScore(score)}.`
+    return `Interés positivo: ${formatSurveyScore(score)}.`
   }
 
   if (votes !== null) {
     return `Votos recibidos: ${votes}.`
   }
 
-  return "Validacion comunitaria activa."
+  return "Validación comunitaria activa."
 }
 
 function getDecisionText(product: LiveProduct) {
   if (hasRecordedPositiveValidation(product)) {
-    return "La validacion registrada indica que puede evaluarse para pasar al siguiente estado del proceso IMNOVA"
+    return "La validación registrada indica que puede evaluarse para pasar al siguiente estado del proceso IMNOVA"
   }
 
   if (hasCommunitySignalData(product)) {
-    return "La decision de fabricar, ajustar o pausar dependera de encuestas reales y senales registradas desde Admin/Supabase"
+    return "La decisión de fabricar, ajustar o pausar dependerá de encuestas reales de la comunidad IMNOVA y señales registradas en redes sociales"
   }
 
-  return "La comunidad definira con encuestas reales y senales de redes si esta idea se fabrica, se ajusta o se pausa"
+  return "La comunidad IMNOVA definirá con encuestas reales y señales de redes si esta idea se fabrica, se ajusta o se pausa"
 }
 
 function getComingSoonBadgeLabel(product: LiveProduct) {
   return (
     getValidationStatus(product) ||
     product.status ||
-    "Idea en validacion"
+    "Idea en validación"
   )
 }
 
-function getSurveyIntent(product: LiveProduct): SurveyIntent {
-  return {
-    productName:
-      product.name,
-    niches:
-      getProductNiches(product),
-    problem:
-      getPopulationProblem(product),
-    promise:
-      getValidationPromise(product),
-    source:
-      "web",
-  }
+function getOfficialFlowIndex(
+  status: string
+) {
+  const normalizedStatus =
+    normalizeText(status)
+
+  const index =
+    officialProductFlow.findIndex(
+      step =>
+        normalizedStatus.includes(
+          normalizeText(step)
+        )
+    )
+
+  return index >= 0
+    ? index
+    : 0
 }
 
-export function InnovationsSection({
-  onSurveyInterest,
-}: InnovationsSectionProps) {
+function getOfficialFlowPercent(
+  status: string
+) {
+  const flowIndex =
+    getOfficialFlowIndex(status)
+
+  const maxIndex =
+    Math.max(
+      officialProductFlow.length - 1,
+      1
+    )
+
+  return `${Math.max(
+    8,
+    Math.round(
+      (flowIndex / maxIndex) *
+        100
+    )
+  )}%`
+}
+
+export function InnovationsSection() {
   const [
     products,
     setProducts,
@@ -794,11 +798,11 @@ export function InnovationsSection({
         >
           <div className="inline-flex items-center gap-3 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-5 py-3 text-[10px] uppercase tracking-[0.34em] text-cyan-100">
             <Clock3 className="h-4 w-4" />
-            Innovacion IMNOVA
+            Innovación IMNOVA
           </div>
 
           <h2 className="mt-9 text-4xl font-black leading-[0.98] tracking-[-0.04em] text-white md:text-6xl">
-            Comercializacion
+            Comercialización
             <span className="block bg-gradient-to-r from-cyan-200 via-white to-amber-200 bg-clip-text text-transparent">
               y Viene Pronto
             </span>
@@ -806,7 +810,7 @@ export function InnovationsSection({
 
           <p className="mx-auto mt-8 max-w-3xl text-lg leading-8 text-zinc-400">
             Una vista separada para productos que avanzan hacia
-            comercializacion e ideas que la comunidad ayuda a validar antes de
+            comercialización e ideas que la comunidad ayuda a validar antes de
             fabricar o desarrollar.
           </p>
         </motion.div>
@@ -823,17 +827,18 @@ export function InnovationsSection({
             <div className="relative mb-10 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.34em] text-cyan-100/60">
-                  Listo para vender
+                  Cercano al mercado
                 </p>
                 <h3
                   id="commercialization-heading"
                   className="mt-3 text-4xl font-black leading-tight tracking-[-0.04em] text-white md:text-6xl"
                 >
-                  Listo para ser comercializado
+                  En preparación comercial
                 </h3>
                 <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-400 md:text-base">
-                  Productos que ya pueden mostrarse con nombre, imagen real e
-                  informacion completa para evaluar su propuesta comercial.
+                  Productos cercanos al mercado que ya pueden explicarse con
+                  imagen, contexto e información clara, sin presentarse como
+                  disponibles para compra.
                 </p>
               </div>
 
@@ -1053,21 +1058,20 @@ export function InnovationsSection({
                   id="coming-soon-heading"
                   className="mt-3 text-4xl font-black leading-tight tracking-[-0.04em] text-white md:text-6xl"
                 >
-                  Ideas en validacion comunitaria
+                  Ideas en validación comunitaria
                 </h3>
                 <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-400 md:text-base">
-                  Ideas que la comunidad ayuda a validar. Cada idea muestra el
-                  nicho, el problema humano que busca resolver, encuestas
-                  reales y senales de interes en redes sociales. La decision
-                  de fabricar, ajustar o pausar debe venir de datos gestionados
-                  desde Admin/Supabase.
+                  Un contador público de ideas que la comunidad ayuda a
+                  evaluar. Cada idea muestra nicho, problema humano, señales de
+                  encuesta y actividad social; cuando la validación es positiva,
+                  puede avanzar hacia el Pipeline Oficial IMNOVA.
                 </p>
               </div>
 
               <div className="grid max-w-2xl grid-cols-2 gap-3 sm:grid-cols-4">
                 <div className="rounded-3xl border border-amber-200/10 bg-black/35 px-5 py-4">
                   <p className="text-[10px] uppercase tracking-[0.20em] text-amber-100/45">
-                    Ideas
+                    Ideas cargadas
                   </p>
                   <p className="mt-2 text-3xl font-black text-white">
                     {comingSoonProducts.length}
@@ -1076,7 +1080,7 @@ export function InnovationsSection({
 
                 <div className="rounded-3xl border border-amber-200/10 bg-black/35 px-5 py-4">
                   <p className="text-[10px] uppercase tracking-[0.20em] text-amber-100/45">
-                    Encuestas
+                    Con encuesta
                   </p>
                   <p className="mt-2 text-3xl font-black text-white">
                     {surveyedComingSoonProducts.length}
@@ -1085,7 +1089,7 @@ export function InnovationsSection({
 
                 <div className="rounded-3xl border border-amber-200/10 bg-black/35 px-5 py-4">
                   <p className="text-[10px] uppercase tracking-[0.20em] text-amber-100/45">
-                    Redes
+                    Señales sociales
                   </p>
                   <p className="mt-2 text-3xl font-black text-white">
                     {socialSignalComingSoonProducts.length}
@@ -1094,7 +1098,7 @@ export function InnovationsSection({
 
                 <div className="rounded-3xl border border-amber-200/10 bg-black/35 px-5 py-4">
                   <p className="text-[10px] uppercase tracking-[0.20em] text-amber-100/45">
-                    Decision
+                    Listas para avanzar
                   </p>
                   <p className="mt-2 text-3xl font-black text-amber-100">
                     {decisionRecordedProducts.length}
@@ -1155,7 +1159,7 @@ export function InnovationsSection({
                     </div>
 
                     <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-cyan-100/55">
-                      Idea / producto
+                      Idea en evaluación
                     </p>
                     <h3 className="mt-4 max-w-3xl text-4xl font-black leading-tight tracking-[-0.035em] text-white md:text-5xl">
                       {featuredComingSoonProduct.name}
@@ -1181,7 +1185,7 @@ export function InnovationsSection({
                     <div className="mt-6 grid gap-4 lg:grid-cols-4">
                       <div className="rounded-3xl border border-amber-200/15 bg-amber-200/[0.055] p-5">
                         <p className="text-[10px] uppercase tracking-[0.24em] text-amber-100/60">
-                          Problema humano
+                          Problema que resuelve
                         </p>
                         <p className="mt-4 text-sm leading-7 text-zinc-300">
                           {getPopulationProblem(featuredComingSoonProduct)}
@@ -1190,7 +1194,7 @@ export function InnovationsSection({
 
                       <div className="rounded-3xl border border-cyan-200/15 bg-cyan-300/[0.045] p-5">
                         <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/60">
-                          Beneficio esperado
+                          Promesa funcional
                         </p>
                         <p className="mt-4 text-sm leading-7 text-zinc-300">
                           {getExpectedBenefit(featuredComingSoonProduct)}
@@ -1199,7 +1203,7 @@ export function InnovationsSection({
 
                       <div className="rounded-3xl border border-white/10 bg-black/25 p-5">
                         <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-400">
-                          Encuesta comunitaria
+                          Validación registrada
                         </p>
                         <p className="mt-4 text-sm leading-7 text-zinc-300">
                           {getSurveyDetail(featuredComingSoonProduct)}
@@ -1208,7 +1212,7 @@ export function InnovationsSection({
 
                       <div className="rounded-3xl border border-white/10 bg-white/[0.025] p-5">
                         <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-400">
-                          Senales en redes
+                          Señales sociales
                         </p>
                         <p className="mt-4 text-sm leading-7 text-zinc-300">
                           {getSocialSignalDetail(featuredComingSoonProduct)}
@@ -1218,86 +1222,100 @@ export function InnovationsSection({
 
                     <div className="mt-6 rounded-3xl border border-emerald-200/15 bg-emerald-300/[0.06] p-5">
                       <p className="text-[10px] uppercase tracking-[0.24em] text-emerald-100/65">
-                        Decision proxima
+                        Siguiente decisión
                       </p>
                       <p className="mt-3 text-sm leading-7 text-emerald-50/85">
                         {getDecisionText(featuredComingSoonProduct)}.
                       </p>
                     </div>
 
-                    <div className="mt-6 rounded-3xl border border-white/10 bg-white/[0.025] p-5">
-                      <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">
-                        Flujo oficial si la validacion registrada es positiva
+                    <div className="mt-6 overflow-hidden rounded-3xl border border-white/10 bg-white/[0.025] p-5">
+                      <p className="text-[10px] uppercase tracking-[0.24em] text-amber-100/65">
+                        Camino posible hacia producto oficial
                       </p>
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {officialProductFlow.map(step => {
-                          const isCurrentStep =
-                            normalizeText(
-                              featuredComingSoonProduct.status
-                            ).includes(
-                              normalizeText(step)
-                            )
+                      <p className="mt-3 max-w-3xl text-sm leading-7 text-zinc-400">
+                        La activación de encuestas se gestiona desde IMNOVA. En
+                        Home solo mostramos señales y conteos públicos; si el
+                        promedio comunitario es alto, la idea puede avanzar por
+                        las etapas oficiales hasta convertirse en producto
+                        disponible.
+                      </p>
 
-                          return (
-                            <span
-                              key={step}
-                              className={
-                                isCurrentStep
-                                  ? "rounded-full border border-cyan-200/25 bg-cyan-300/[0.10] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100"
-                                  : "rounded-full border border-white/10 bg-black/25 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500"
+                      <div className="relative mt-6 overflow-x-auto pb-3 [scrollbar-width:thin] [scrollbar-color:rgba(251,191,36,0.5)_rgba(255,255,255,0.08)]">
+                        <div className="relative min-w-[760px]">
+                          <div className="absolute left-0 right-0 top-5 h-1 rounded-full bg-white/10" />
+                          <motion.div
+                            initial={{
+                              width: 0,
+                            }}
+                            whileInView={{
+                              width:
+                                getOfficialFlowPercent(
+                                  featuredComingSoonProduct.status
+                                ),
+                            }}
+                            transition={{
+                              duration: 1,
+                              ease: [0.22, 1, 0.36, 1],
+                            }}
+                            viewport={{ once: true }}
+                            className="absolute left-0 top-5 h-1 rounded-full bg-gradient-to-r from-amber-200 via-cyan-200 to-emerald-200"
+                          />
+
+                          <div className="relative grid grid-cols-7 gap-3">
+                            {officialProductFlow.map(
+                              (step, index) => {
+                                const activeFlowIndex =
+                                  getOfficialFlowIndex(
+                                    featuredComingSoonProduct.status
+                                  )
+
+                                const isReached =
+                                  index <= activeFlowIndex
+
+                                const isCurrentStep =
+                                  index === activeFlowIndex
+
+                                return (
+                                  <div
+                                    key={step}
+                                    className="text-center"
+                                  >
+                                    <div
+                                      className={
+                                        isCurrentStep
+                                          ? "mx-auto flex h-11 w-11 items-center justify-center rounded-full border border-cyan-200/50 bg-cyan-300/[0.16] text-cyan-50 shadow-[0_0_34px_rgba(34,211,238,0.22)]"
+                                          : isReached
+                                            ? "mx-auto flex h-11 w-11 items-center justify-center rounded-full border border-emerald-200/35 bg-emerald-300/[0.10] text-emerald-100"
+                                            : "mx-auto flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/40 text-zinc-500"
+                                      }
+                                    >
+                                      {isReached ? (
+                                        <CheckCircle2 className="h-4 w-4" />
+                                      ) : (
+                                        <span className="text-[10px] font-black">
+                                          {index + 1}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p
+                                      className={
+                                        isCurrentStep
+                                          ? "mt-3 text-[10px] font-black uppercase tracking-[0.12em] text-cyan-100"
+                                          : "mt-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500"
+                                      }
+                                    >
+                                      {step}
+                                    </p>
+                                  </div>
+                                )
                               }
-                            >
-                              {step}
-                            </span>
-                          )
-                        })}
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
 
-                    {/* TODO: conectar encuesta comunitaria y senales sociales desde Admin/Supabase cuando exista el modulo de validacion. */}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onSurveyInterest?.(
-                          getSurveyIntent(
-                            featuredComingSoonProduct
-                          )
-                        )
-                      }
-                      className="mt-8 inline-flex items-center gap-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 transition hover:border-cyan-200/35 hover:bg-cyan-300/[0.13]"
-                    >
-                      {featuredHasPositiveValidation
-                        ? "Unirme a la comunidad"
-                        : "Participar en encuesta"}
-                      <MessageCircle className="h-4 w-4" />
-                    </button>
-
-                    <div className="mt-8">
-                      <div className="mb-3 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-zinc-500">
-                        <span>
-                          Estado oficial
-                        </span>
-                        <span className="text-cyan-100">
-                          {featuredComingSoonProduct.progress}%
-                        </span>
-                      </div>
-                      <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                        <motion.div
-                          initial={{
-                            width: 0,
-                          }}
-                          whileInView={{
-                            width:
-                              `${featuredComingSoonProduct.progress}%`,
-                          }}
-                          transition={{
-                            duration: 1,
-                          }}
-                          viewport={{ once: true }}
-                          className="h-full rounded-full bg-gradient-to-r from-cyan-300 to-amber-200"
-                        />
-                      </div>
-                    </div>
                   </div>
                 </motion.article>
 
@@ -1339,26 +1357,17 @@ export function InnovationsSection({
 
                         <div className="mt-4 space-y-3">
                           <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">
-                            {getProductNiches(product).join(", ")}
+                            Nicho: {getProductNiches(product).join(", ")}
                           </p>
                           <h4 className="mt-2 text-lg font-black leading-tight text-white">
                             {product.name}
                           </h4>
                           <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-500">
-                            {getPopulationProblem(product)}
+                            Problema: {getPopulationProblem(product)}
                           </p>
-                          <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/10">
-                            <div
-                              style={{
-                                width: `${product.progress}%`,
-                              }}
-                              className="h-full rounded-full bg-cyan-200"
-                            />
-                          </div>
-
                           <div className="rounded-2xl border border-cyan-200/10 bg-cyan-300/[0.045] px-4 py-3">
                             <p className="text-[9px] uppercase tracking-[0.18em] text-cyan-100/55">
-                              Beneficio esperado
+                              Promesa funcional
                             </p>
                             <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-400">
                               {getExpectedBenefit(product)}
@@ -1367,7 +1376,7 @@ export function InnovationsSection({
 
                           <div className="rounded-2xl border border-amber-200/10 bg-amber-200/[0.045] px-4 py-3">
                             <p className="text-[9px] uppercase tracking-[0.18em] text-amber-100/55">
-                              Encuesta comunitaria
+                              Validación registrada
                             </p>
                             <p className="mt-2 text-xs leading-5 text-amber-50/80">
                               {getSurveySummary(product)}
@@ -1376,7 +1385,7 @@ export function InnovationsSection({
 
                           <div className="rounded-2xl border border-white/10 bg-white/[0.025] px-4 py-3">
                             <p className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">
-                              Senales en redes
+                              Señales sociales
                             </p>
                             <p className="mt-2 text-xs leading-5 text-zinc-400">
                               {getSocialSignalSummary(product)}
@@ -1385,28 +1394,13 @@ export function InnovationsSection({
 
                           <div className="rounded-2xl border border-white/10 bg-black/25 px-4 py-3">
                             <p className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">
-                              Decision proxima
+                              Siguiente decisión
                             </p>
                             <p className="mt-2 text-xs leading-5 text-zinc-400">
                               {getDecisionText(product)}
                             </p>
                           </div>
                         </div>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onSurveyInterest?.(
-                              getSurveyIntent(product)
-                            )
-                          }
-                          className="mt-4 inline-flex items-center gap-2 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100 transition hover:border-cyan-200/35 hover:bg-cyan-300/[0.13]"
-                        >
-                          {hasRecordedPositiveValidation(product)
-                            ? "Unirme a la comunidad"
-                            : "Participar en encuesta"}
-                          <MessageCircle className="h-3.5 w-3.5" />
-                        </button>
                       </motion.article>
                     )
                   )}
@@ -1430,7 +1424,7 @@ export function InnovationsSection({
               >
                 <Rocket className="mx-auto h-8 w-8 text-cyan-100" />
                 <h3 className="mt-6 text-3xl font-black text-white">
-                  No hay ideas en validacion comunitaria por ahora.
+                  No hay ideas en validación comunitaria por ahora.
                 </h3>
               </motion.div>
             )}

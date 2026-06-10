@@ -494,10 +494,11 @@ export function HeroSection({
             "
           >
 
-            Creamos ecosistemas inteligentes
-            donde tecnología, nutrición y
-            bienestar evolucionan juntos
-            para redefinir la experiencia humana.
+            Creamos soluciones inteligentes que integran
+            tecnología, nutrición y bienestar para ayudar
+            a las personas a vivir mejor, rendir más y
+            construir una rutina diaria más simple,
+            saludable y equilibrada.
 
           </motion.p>
 
@@ -557,7 +558,7 @@ export function HeroSection({
             >
 
               <span className="relative z-10">
-                UNETE A LA FAMILIA DE IMNOVA
+                Únete a la familia IMNOVA
               </span>
 
               <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/50 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
