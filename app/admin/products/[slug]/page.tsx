@@ -50,6 +50,9 @@ export default function ProductDetailPage() {
 
   const slug = String(params.slug || "")
 
+  const [isAuthenticated, setIsAuthenticated] =
+    useState(false)
+
   const [product, setProduct] =
     useState<Product | null>(null)
 
@@ -57,6 +60,27 @@ export default function ProductDetailPage() {
     useState<ProductState[]>([])
 
   useEffect(() => {
+    const auth =
+      localStorage.getItem(
+        "imnova-admin"
+      )
+
+    if (
+      auth !== "authenticated"
+    ) {
+      router.push(
+        "/admin/login"
+      )
+
+      return
+    }
+
+    setIsAuthenticated(true)
+  }, [router])
+
+  useEffect(() => {
+    if (!isAuthenticated) return
+
     async function loadData() {
       const productData =
         await getProductBySlug(slug)
@@ -69,7 +93,13 @@ export default function ProductDetailPage() {
     }
 
     loadData()
-  }, [slug])
+  }, [isAuthenticated, slug])
+
+  if (!isAuthenticated) {
+    return (
+      <main className="min-h-screen bg-black" />
+    )
+  }
 
   if (!product) {
     return (

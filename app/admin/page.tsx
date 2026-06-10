@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useMemo,
   useState,
 } from "react"
 
@@ -18,7 +19,6 @@ import {
 
 import { Sidebar } from "@/app/admin/sidebar"
 import { Metrics } from "@/app/admin/metrics"
-import { ProductCard } from "@/app/admin/product-card"
 
 type Product = {
   id: string
@@ -284,6 +284,159 @@ export default function AdminPage() {
 
     }
 
+  const stateById =
+    useMemo(
+      () =>
+        new Map<string, ProductState>(
+          productStates.map(
+            (state) => [
+              state.id,
+              state,
+            ]
+          )
+        ),
+      [productStates]
+    )
+
+  const stateCounts =
+    useMemo(
+      () =>
+        liveProducts.reduce<Record<string, number>>(
+          (
+            counts,
+            product
+          ) => {
+
+            if (!product.state_id) {
+              return counts
+            }
+
+            counts[product.state_id] =
+              (
+                counts[product.state_id] ||
+                0
+              ) + 1
+
+            return counts
+
+          },
+          {}
+        ),
+      [liveProducts]
+    )
+
+  const stateSummaries =
+    useMemo(
+      () =>
+        productStates.map(
+          (state) => {
+
+            const count =
+              stateCounts[state.id] ||
+              0
+
+            const share =
+              liveProducts.length > 0
+                ? Math.round(
+                    (
+                      count /
+                      liveProducts.length
+                    ) * 100
+                  )
+                : 0
+
+            return {
+              ...state,
+              count,
+              share,
+            }
+
+          }
+        ),
+      [
+        liveProducts.length,
+        productStates,
+        stateCounts,
+      ]
+    )
+
+  const dashboardProducts =
+    useMemo(
+      () =>
+        [...liveProducts]
+          .sort(
+            (
+              productA,
+              productB
+            ) => {
+
+              const featuredScore =
+                Number(
+                  Boolean(
+                    productB.featured
+                  )
+                ) -
+                Number(
+                  Boolean(
+                    productA.featured
+                  )
+                )
+
+              if (featuredScore !== 0) {
+                return featuredScore
+              }
+
+              const progressA =
+                stateById.get(
+                  productA.state_id ||
+                    ""
+                )?.progress || 0
+
+              const progressB =
+                stateById.get(
+                  productB.state_id ||
+                    ""
+                )?.progress || 0
+
+              return (
+                progressB -
+                  progressA ||
+                productA.name.localeCompare(
+                  productB.name
+                )
+              )
+
+            }
+          )
+          .slice(
+            0,
+            6
+          ),
+      [
+        liveProducts,
+        stateById,
+      ]
+    )
+
+  const productsWithoutState =
+    liveProducts.filter(
+      (product) =>
+        !product.state_id
+    ).length
+
+  const productsWithoutSlug =
+    liveProducts.filter(
+      (product) =>
+        !product.slug
+    ).length
+
+  const activeCampaigns =
+    campaigns.filter(
+      (campaign) =>
+        campaign.status ===
+        "Active"
+    ).length
+
   if (!isAuthenticated) {
 
     return (
@@ -425,7 +578,7 @@ export default function AdminPage() {
             >
               {
                 selectedMenu === "dashboard"
-                  ? "Dashboard"
+                  ? "IMNOVA Admin"
                   : selectedMenu === "products"
                   ? "Productos"
                   : selectedMenu === "campaigns"
@@ -446,7 +599,7 @@ export default function AdminPage() {
             >
               {
                 selectedMenu === "dashboard"
-                  ? "Sistema operativo inteligente diseñado para monitorear, desarrollar y expandir el ecosistema IMNOVA."
+                  ? "Centro de control para productos, estados, validación y comercialización."
                   : selectedMenu === "products"
                   ? "Gestión centralizada de productos y proyectos."
                   : selectedMenu === "campaigns"
@@ -607,131 +760,757 @@ export default function AdminPage() {
                    />
               </div>
 
-              <div className="mt-16">
+              {
+                liveProducts.length === 0 ? (
 
-                <div
-                  className="
-                    mb-10
-                    flex
-                    items-end
-                    justify-between
-                  "
-                >
-
-                  <div>
+                  <div
+                    className="
+                      mt-12
+                      rounded-[34px]
+                      border
+                      border-white/10
+                      bg-white/[0.03]
+                      p-8
+                      backdrop-blur-md
+                    "
+                  >
 
                     <p
                       className="
                         text-[10px]
                         uppercase
                         tracking-[0.35em]
-                        text-white/35
+                        text-cyan-300/60
                       "
                     >
-                      LIVE PRODUCTS
+                      Ecosistema
                     </p>
 
                     <h2
                       className="
                         mt-4
-                        text-5xl
+                        text-4xl
                         font-black
-                        tracking-[-0.05em]
+                        tracking-[-0.04em]
                         text-white
                       "
                     >
-                      Ecosistema IMNOVA
+                      Todavía no hay productos registrados.
                     </h2>
+
+                    <p
+                      className="
+                        mt-4
+                        max-w-3xl
+                        text-lg
+                        leading-8
+                        text-white/50
+                      "
+                    >
+                      Cuando agregues productos, aparecerán aquí organizados por estado.
+                    </p>
 
                   </div>
 
-                </div>
+                ) : (
 
-                <div
-                  className="
-                    grid
-                    grid-cols-1
-                    gap-8
-                    xl:grid-cols-2
-                  "
-                >
+                  <>
 
-                  {
-                    liveProducts.map(
-                      (product) => (
+                    <section
+                      className="
+                        mt-12
+                        grid
+                        gap-8
+                        xl:grid-cols-[1.35fr_0.65fr]
+                      "
+                    >
 
-                        <motion.div
-                          key={product.id}
-                          initial={{
-                            opacity: 0,
-                            y: 40,
-                          }}
-                          animate={{
-                            opacity: 1,
-                            y: 0,
-                          }}
-                          transition={{
-                            duration: 0.7,
-                          }}
+                      <div
+                        className="
+                          rounded-[34px]
+                          border
+                          border-white/10
+                          bg-white/[0.03]
+                          p-8
+                          backdrop-blur-md
+                        "
+                      >
+
+                        <div
                           className="
-                            rounded-[36px]
-                            border
-                            border-white/10
-                            bg-white/[0.03]
-                            p-2
-                            backdrop-blur-md
-                            transition-all
-                            duration-500
-                            hover:-translate-y-1
-                            hover:border-white/20
-                            hover:bg-white/[0.04]
+                            flex
+                            flex-col
+                            gap-4
+                            sm:flex-row
+                            sm:items-end
+                            sm:justify-between
                           "
                         >
 
-                          <ProductCard
-                            product={product}
-                            states={productStates}
-                            onUpdate={handleProductUpdate}
-                          />
+                          <div>
 
-                        </motion.div>
+                            <p
+                              className="
+                                text-[10px]
+                                uppercase
+                                tracking-[0.35em]
+                                text-cyan-300/60
+                              "
+                            >
+                              Resumen por estados
+                            </p>
 
-                      )
-                    )
-                  }
+                            <h2
+                              className="
+                                mt-4
+                                text-4xl
+                                font-black
+                                tracking-[-0.04em]
+                                text-white
+                              "
+                            >
+                              Ruta operativa
+                            </h2>
 
-                </div>
+                          </div>
 
-              </div>
+                          <p
+                            className="
+                              text-sm
+                              uppercase
+                              tracking-[0.22em]
+                              text-white/35
+                            "
+                          >
+                            {liveProducts.length} productos
+                          </p>
 
-              <div className="mt-16 pb-20">
+                        </div>
 
-                <div
-                  className="
-                    relative
-                    overflow-hidden
-                    rounded-[36px]
-                    border
-                    border-white/10
-                    bg-white/[0.03]
-                    p-8
-                    backdrop-blur-md
-                  "
-                >
+                        <div className="mt-8 space-y-5">
 
-                  <div
-                    className="
-                      absolute
-                      inset-0
-                      bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_60%)]
-                    "
-                  />
+                          {
+                            stateSummaries.map(
+                              (state) => (
 
-                  <div className="relative z-10" />
+                                <div
+                                  key={state.id}
+                                  className="
+                                    border-b
+                                    border-white/10
+                                    pb-5
+                                    last:border-b-0
+                                    last:pb-0
+                                  "
+                                >
 
-                </div>
+                                  <div
+                                    className="
+                                      flex
+                                      items-center
+                                      justify-between
+                                      gap-4
+                                    "
+                                  >
 
-              </div>
+                                    <div>
+
+                                      <h3
+                                        className="
+                                          text-lg
+                                          font-semibold
+                                          text-white
+                                        "
+                                      >
+                                        {state.name}
+                                      </h3>
+
+                                      <p
+                                        className="
+                                          mt-1
+                                          text-xs
+                                          uppercase
+                                          tracking-[0.22em]
+                                          text-white/35
+                                        "
+                                      >
+                                        {state.share}% del ecosistema
+                                      </p>
+
+                                    </div>
+
+                                    <div className="text-right">
+
+                                      <p
+                                        className="
+                                          text-3xl
+                                          font-black
+                                          text-cyan-200
+                                        "
+                                      >
+                                        {state.count}
+                                      </p>
+
+                                      <p
+                                        className="
+                                          text-[10px]
+                                          uppercase
+                                          tracking-[0.22em]
+                                          text-white/35
+                                        "
+                                      >
+                                        prod.
+                                      </p>
+
+                                    </div>
+
+                                  </div>
+
+                                  <div
+                                    className="
+                                      mt-4
+                                      h-[6px]
+                                      overflow-hidden
+                                      rounded-full
+                                      bg-white/5
+                                    "
+                                  >
+
+                                    <div
+                                      className="
+                                        h-full
+                                        rounded-full
+                                        bg-cyan-300
+                                      "
+                                      style={{
+                                        width:
+                                          `${state.progress}%`,
+                                      }}
+                                    />
+
+                                  </div>
+
+                                </div>
+
+                              )
+                            )
+                          }
+
+                        </div>
+
+                      </div>
+
+                      <div className="space-y-8">
+
+                        <div
+                          className="
+                            rounded-[34px]
+                            border
+                            border-white/10
+                            bg-white/[0.03]
+                            p-8
+                            backdrop-blur-md
+                          "
+                        >
+
+                          <p
+                            className="
+                              text-[10px]
+                              uppercase
+                              tracking-[0.35em]
+                              text-cyan-300/60
+                            "
+                          >
+                            Accesos rápidos
+                          </p>
+
+                          <div className="mt-6 grid gap-3">
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSelectedMenu("products")
+                              }
+                              className="
+                                rounded-2xl
+                                border
+                                border-white/10
+                                bg-white
+                                px-5
+                                py-4
+                                text-left
+                                text-sm
+                                font-semibold
+                                text-black
+                                transition-all
+                                duration-300
+                                hover:scale-[1.01]
+                                hover:bg-zinc-200
+                              "
+                            >
+                              Ver productos
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedMenu("campaigns")
+                                setShowCampaignModal(true)
+                              }}
+                              className="
+                                rounded-2xl
+                                border
+                                border-cyan-400/20
+                                bg-cyan-400/10
+                                px-5
+                                py-4
+                                text-left
+                                text-sm
+                                font-semibold
+                                text-cyan-200
+                                transition-all
+                                duration-300
+                                hover:bg-cyan-400/20
+                              "
+                            >
+                              Crear campaña
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                router.push("/store")
+                              }
+                              className="
+                                rounded-2xl
+                                border
+                                border-white/10
+                                bg-white/[0.04]
+                                px-5
+                                py-4
+                                text-left
+                                text-sm
+                                font-semibold
+                                text-white
+                                transition-all
+                                duration-300
+                                hover:bg-white/[0.07]
+                              "
+                            >
+                              Ver tienda
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled
+                              className="
+                                cursor-not-allowed
+                                rounded-2xl
+                                border
+                                border-white/5
+                                bg-white/[0.02]
+                                px-5
+                                py-4
+                                text-left
+                                text-sm
+                                font-semibold
+                                text-white/30
+                              "
+                            >
+                              Revisar comunidad · Próximamente
+                            </button>
+
+                          </div>
+
+                        </div>
+
+                        <div
+                          className="
+                            rounded-[34px]
+                            border
+                            border-white/10
+                            bg-white/[0.03]
+                            p-8
+                            backdrop-blur-md
+                          "
+                        >
+
+                          <p
+                            className="
+                              text-[10px]
+                              uppercase
+                              tracking-[0.35em]
+                              text-amber-200/60
+                            "
+                          >
+                            Alertas o pendientes
+                          </p>
+
+                          <div className="mt-6 space-y-4">
+
+                            {[
+                              {
+                                label:
+                                  "Productos sin estado",
+                                value:
+                                  productsWithoutState,
+                              },
+                              {
+                                label:
+                                  "Productos sin ruta",
+                                value:
+                                  productsWithoutSlug,
+                              },
+                              {
+                                label:
+                                  "Campañas activas",
+                                value:
+                                  activeCampaigns,
+                              },
+                            ].map(
+                              (item) => (
+
+                                <div
+                                  key={item.label}
+                                  className="
+                                    flex
+                                    items-center
+                                    justify-between
+                                    gap-4
+                                    border-b
+                                    border-white/10
+                                    pb-4
+                                    last:border-b-0
+                                    last:pb-0
+                                  "
+                                >
+
+                                  <span className="text-sm text-white/50">
+                                    {item.label}
+                                  </span>
+
+                                  <span
+                                    className="
+                                      text-2xl
+                                      font-black
+                                      text-white
+                                    "
+                                  >
+                                    {item.value}
+                                  </span>
+
+                                </div>
+
+                              )
+                            )}
+
+                          </div>
+
+                        </div>
+
+                      </div>
+
+                    </section>
+
+                    <section className="mt-12 pb-20">
+
+                      <div
+                        className="
+                          mb-8
+                          flex
+                          flex-col
+                          gap-4
+                          sm:flex-row
+                          sm:items-end
+                          sm:justify-between
+                        "
+                      >
+
+                        <div>
+
+                          <p
+                            className="
+                              text-[10px]
+                              uppercase
+                              tracking-[0.35em]
+                              text-white/35
+                            "
+                          >
+                            Productos recientes / prioritarios
+                          </p>
+
+                          <h2
+                            className="
+                              mt-4
+                              text-4xl
+                              font-black
+                              tracking-[-0.04em]
+                              text-white
+                            "
+                          >
+                            Vista rápida
+                          </h2>
+
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSelectedMenu("products")
+                          }
+                          className="
+                            rounded-2xl
+                            border
+                            border-white/10
+                            bg-white/[0.04]
+                            px-5
+                            py-3
+                            text-sm
+                            font-semibold
+                            text-white
+                            transition-all
+                            duration-300
+                            hover:bg-white/[0.07]
+                          "
+                        >
+                          Ver todos
+                        </button>
+
+                      </div>
+
+                      <div
+                        className="
+                          grid
+                          grid-cols-1
+                          gap-6
+                          lg:grid-cols-2
+                          2xl:grid-cols-3
+                        "
+                      >
+
+                        {
+                          dashboardProducts.map(
+                            (product) => {
+
+                              const state =
+                                stateById.get(
+                                  product.state_id ||
+                                    ""
+                                )
+
+                              const image =
+                                product.image_url ||
+                                product.image ||
+                                ""
+
+                              return (
+
+                                <motion.div
+                                  key={product.id}
+                                  initial={{
+                                    opacity: 0,
+                                    y: 20,
+                                  }}
+                                  animate={{
+                                    opacity: 1,
+                                    y: 0,
+                                  }}
+                                  transition={{
+                                    duration: 0.45,
+                                  }}
+                                  className="
+                                    rounded-[28px]
+                                    border
+                                    border-white/10
+                                    bg-white/[0.03]
+                                    p-5
+                                    backdrop-blur-md
+                                  "
+                                >
+
+                                  <div
+                                    className="
+                                      flex
+                                      gap-4
+                                    "
+                                  >
+
+                                    <div
+                                      className="
+                                        flex
+                                        h-20
+                                        w-20
+                                        shrink-0
+                                        items-center
+                                        justify-center
+                                        overflow-hidden
+                                        rounded-2xl
+                                        border
+                                        border-white/10
+                                        bg-black/35
+                                      "
+                                    >
+                                      {
+                                        image ? (
+                                          <img
+                                            src={image}
+                                            alt={product.name}
+                                            className="
+                                              h-full
+                                              w-full
+                                              object-cover
+                                            "
+                                          />
+                                        ) : (
+                                          <span
+                                            className="
+                                              text-xs
+                                              font-black
+                                              text-cyan-200
+                                            "
+                                          >
+                                            IM
+                                          </span>
+                                        )
+                                      }
+                                    </div>
+
+                                    <div className="min-w-0 flex-1">
+
+                                      <p
+                                        className="
+                                          text-[10px]
+                                          uppercase
+                                          tracking-[0.25em]
+                                          text-cyan-300/60
+                                        "
+                                      >
+                                        {state?.name || "Sin estado"}
+                                      </p>
+
+                                      <h3
+                                        className="
+                                          mt-2
+                                          truncate
+                                          text-2xl
+                                          font-black
+                                          tracking-[-0.03em]
+                                          text-white
+                                        "
+                                      >
+                                        {product.name}
+                                      </h3>
+
+                                      <p
+                                        className="
+                                          mt-2
+                                          truncate
+                                          text-sm
+                                          text-white/40
+                                        "
+                                      >
+                                        {product.category}
+                                      </p>
+
+                                    </div>
+
+                                  </div>
+
+                                  <div
+                                    className="
+                                      mt-5
+                                      h-[6px]
+                                      overflow-hidden
+                                      rounded-full
+                                      bg-white/5
+                                    "
+                                  >
+
+                                    <div
+                                      className="
+                                        h-full
+                                        rounded-full
+                                        bg-white/70
+                                      "
+                                      style={{
+                                        width:
+                                          `${state?.progress || 0}%`,
+                                      }}
+                                    />
+
+                                  </div>
+
+                                  <div
+                                    className="
+                                      mt-5
+                                      flex
+                                      items-center
+                                      justify-between
+                                      gap-4
+                                    "
+                                  >
+
+                                    <span
+                                      className="
+                                        text-xs
+                                        uppercase
+                                        tracking-[0.22em]
+                                        text-white/35
+                                      "
+                                    >
+                                      {state?.progress || 0}% avance
+                                    </span>
+
+                                    <button
+                                      type="button"
+                                      disabled={!product.slug}
+                                      onClick={() => {
+                                        if (!product.slug) return
+
+                                        router.push(
+                                          `/admin/products/${product.slug}`
+                                        )
+                                      }}
+                                      className="
+                                        rounded-xl
+                                        border
+                                        border-cyan-400/20
+                                        bg-cyan-400/10
+                                        px-4
+                                        py-2
+                                        text-xs
+                                        font-semibold
+                                        text-cyan-200
+                                        transition-all
+                                        duration-300
+                                        hover:bg-cyan-400/20
+                                        disabled:cursor-not-allowed
+                                        disabled:border-white/5
+                                        disabled:bg-white/[0.02]
+                                        disabled:text-white/25
+                                      "
+                                    >
+                                      Ver detalle
+                                    </button>
+
+                                  </div>
+
+                                </motion.div>
+
+                              )
+
+                            }
+                          )
+                        }
+
+                      </div>
+
+                    </section>
+
+                  </>
+
+                )
+              }
 
             </>
 

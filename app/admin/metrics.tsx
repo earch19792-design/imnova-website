@@ -3,8 +3,8 @@
 import {
   Package,
   Rocket,
-  Activity,
   FlaskConical,
+  Store,
 } from "lucide-react"
 
 type Product = {
@@ -23,6 +23,21 @@ type MetricsProps = {
   states: ProductState[]
 }
 
+function normalizeStateName(
+  name?: string
+) {
+  return (
+    name || ""
+  )
+    .normalize("NFD")
+    .replace(
+      /[\u0300-\u036f]/g,
+      ""
+    )
+    .toLowerCase()
+    .trim()
+}
+
 export function Metrics({
   products,
   states,
@@ -35,70 +50,86 @@ export function Metrics({
           state.id === stateId
       )
 
-  const totalProducts =
-    products.length
+  const countByStateNames =
+    (
+      stateNames: string[]
+    ) => {
 
-  const launchReady =
-    products.filter(
-      (product) =>
-        getState(product.state_id)?.name ===
-        "Comercialización"
-    ).length
-
-  const testing =
-    products.filter(
-      (product) =>
-        getState(product.state_id)?.name ===
-        "Testing"
-    ).length
-
-  const avgProgress =
-    products.length > 0
-      ? Math.round(
-          products.reduce(
-            (acc, product) =>
-              acc +
-              (
-                getState(product.state_id)
-                  ?.progress || 0
-              ),
-            0
-          ) / products.length
+      const normalizedNames =
+        new Set(
+          stateNames.map(
+            normalizeStateName
+          )
         )
-      : 0
+
+      return products.filter(
+        (product) =>
+          normalizedNames.has(
+            normalizeStateName(
+              getState(
+                product.state_id
+              )?.name
+            )
+          )
+      ).length
+
+    }
+
+  const earlyStageProducts =
+    countByStateNames([
+      "Idea",
+      "Validación",
+      "Priorizado",
+    ])
+
+  const developmentProducts =
+    countByStateNames([
+      "Testing",
+      "Producción",
+    ])
+
+  const commercializationProducts =
+    countByStateNames([
+      "Comercialización",
+    ])
+
+  const availableProducts =
+    countByStateNames([
+      "Disponible",
+    ])
 
   const metrics = [
     {
       label:
-        "Innovaciones Activas",
+        "Ideas / Validación",
       value:
-        totalProducts,
+        earlyStageProducts,
       icon:
         Package,
     },
     {
       label:
-        "Próximos Lanzamientos",
+        "Desarrollo",
       value:
-        launchReady,
-      icon:
-        Rocket,
-    },
-    {
-      label:
-        "En Laboratorio",
-      value:
-        testing,
+        developmentProducts,
       icon:
         FlaskConical,
     },
     {
       label:
-        "Desarrollo Global",
+        "Comercialización",
       value:
-        `${avgProgress}%`,
+        commercializationProducts,
       icon:
-        Activity,
+        Rocket,
+    },
+    {
+      label:
+        "Disponibles",
+      value:
+        availableProducts,
+      icon:
+        Store,
     },
   ]
 

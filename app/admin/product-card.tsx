@@ -71,7 +71,7 @@ type ProductState = {
 type Props = {
   product: Product
   states: ProductState[]
-  onUpdate?: () => void
+  onUpdate?: () => void | Promise<void>
 }
 
 const countryOptions = [
@@ -258,6 +258,12 @@ export function ProductCard({
   const cardRef =
     useRef<HTMLDivElement>(null)
 
+  const isSavingRef =
+    useRef(false)
+
+  const isSendingWhatsAppRef =
+    useRef(false)
+
   const mouseX =
     useMotionValue(0)
 
@@ -310,6 +316,16 @@ export function ProductCard({
   ] = useState(
     product.state_id || ""
   )
+
+  const [
+    isSaving,
+    setIsSaving,
+  ] = useState(false)
+
+  const [
+    isSendingWhatsApp,
+    setIsSendingWhatsApp,
+  ] = useState(false)
 
   const [
     niche,
@@ -446,89 +462,26 @@ export function ProductCard({
 
     }
 
-  const saveChanges =
+  const sendWhatsAppNotification =
     async () => {
 
+      if (isSendingWhatsAppRef.current) {
+        return false
+      }
+
+      isSendingWhatsAppRef.current =
+        true
+
+      setIsSendingWhatsApp(true)
+
+      toast({
+        title:
+          "Enviando WhatsApp...",
+        description:
+          `${product.name} cambio a ${currentStatus}.`,
+      })
+
       try {
-
-        if (!selectedStateId) {
-
-          toast({
-            title: "⚠️ Estado requerido",
-            description:
-              "Selecciona un estado antes de guardar.",
-          })
-
-          return
-
-        }
-
-        console.log(
-          "PRODUCT ID:",
-          product.id
-        )
-
-        console.log(
-          "SELECTED STATE ID:",
-          selectedStateId
-        )
-
-        console.log(
-          "SELECTED STATE:",
-          selectedState
-        )
-
-        const updates: Parameters<
-          typeof updateProduct
-        >[1] = {
-          state_id:
-            selectedStateId,
-        }
-
-        if ("nicho" in product) {
-          updates.nicho =
-            niche.trim() ||
-            null
-        }
-
-        if ("problema_resuelve" in product) {
-          updates.problema_resuelve =
-            problemSolved.trim() ||
-            null
-        }
-
-        const result =
-          await updateProduct(
-            product.id,
-            updates
-          )
-
-        console.log(
-          "PRODUCT UPDATED:",
-          result
-        )
-
-        if (!result) {
-
-          toast({
-            title: "❌ Error",
-            description:
-              "No se pudo actualizar el producto en Supabase.",
-          })
-
-          return
-
-        }
-
-        toast({
-          title: "Mensaje enviado",
-          description:
-            `${product.name} cambió a ${currentStatus}`,
-        })
-
-        if (onUpdate) {
-          onUpdate()
-        }
 
         const response =
           await fetch(
@@ -577,6 +530,190 @@ export function ProductCard({
           text
         )
 
+        let payload:
+          | {
+              success?: boolean
+              error?: string
+            }
+          | null = null
+
+        if (text) {
+
+          try {
+            payload =
+              JSON.parse(text)
+          } catch (error) {
+            console.error(
+              "WHATSAPP RESPONSE PARSE ERROR:",
+              error
+            )
+          }
+
+        }
+
+        if (
+          !response.ok ||
+          payload?.success !== true
+        ) {
+
+          console.error(
+            "WHATSAPP SEND ERROR:",
+            payload || text
+          )
+
+          toast({
+            title:
+              "Error al enviar WhatsApp",
+            description:
+              "No se pudo enviar la notificacion WhatsApp.",
+          })
+
+          return false
+        }
+
+        toast({
+          title:
+            "WhatsApp enviado",
+          description:
+            `${product.name} fue notificado como ${currentStatus}.`,
+        })
+
+        return true
+      } catch (error) {
+
+        console.error(
+          "WHATSAPP SEND ERROR:",
+          error
+        )
+
+        toast({
+          title:
+            "Error al enviar WhatsApp",
+          description:
+            "No se pudo enviar la notificacion WhatsApp.",
+        })
+
+        return false
+      } finally {
+
+        setIsSendingWhatsApp(false)
+
+        isSendingWhatsAppRef.current =
+          false
+
+      }
+
+    }
+
+  const saveChanges =
+    async () => {
+
+      if (
+        isSavingRef.current ||
+        isSendingWhatsAppRef.current
+      ) {
+        return
+      }
+
+      isSavingRef.current =
+        true
+
+      setIsSaving(true)
+
+      try {
+
+        if (!selectedStateId) {
+
+          toast({
+            title: "⚠️ Estado requerido",
+            description:
+              "Selecciona un estado antes de guardar.",
+          })
+
+          return
+
+        }
+
+        console.log(
+          "PRODUCT ID:",
+          product.id
+        )
+
+        console.log(
+          "SELECTED STATE ID:",
+          selectedStateId
+        )
+
+        console.log(
+          "SELECTED STATE:",
+          selectedState
+        )
+
+        const stateChanged =
+          (
+            product.state_id || ""
+          ) !== selectedStateId
+
+        const updates: Parameters<
+          typeof updateProduct
+        >[1] = {
+          state_id:
+            selectedStateId,
+        }
+
+        if ("nicho" in product) {
+          updates.nicho =
+            niche.trim() ||
+            null
+        }
+
+        if ("problema_resuelve" in product) {
+          updates.problema_resuelve =
+            problemSolved.trim() ||
+            null
+        }
+
+        const result =
+          await updateProduct(
+            product.id,
+            updates
+          )
+
+        console.log(
+          "PRODUCT UPDATED:",
+          result
+        )
+
+        if (!result) {
+
+          toast({
+            title: "❌ Error",
+            description:
+              "No se pudo actualizar el producto en Supabase.",
+          })
+
+          return
+
+        }
+
+        setIsSaving(false)
+
+        toast({
+          title:
+            "Guardado correctamente",
+          description: stateChanged
+            ? `${product.name} cambio a ${currentStatus}.`
+            : "Cambios guardados sin enviar WhatsApp.",
+        })
+
+        if (stateChanged) {
+          await sendWhatsAppNotification()
+        }
+
+        if (onUpdate) {
+          await onUpdate()
+        }
+
       } catch (error) {
 
         console.error(
@@ -585,10 +722,18 @@ export function ProductCard({
         )
 
         toast({
-          title: "❌ Error",
+          title:
+            "Error",
           description:
             "No se pudo guardar el cambio.",
         })
+
+      } finally {
+
+        setIsSaving(false)
+
+        isSavingRef.current =
+          false
 
       }
 
@@ -2033,7 +2178,12 @@ export function ProductCard({
         )}
 
         <button
+          type="button"
           onClick={saveChanges}
+          disabled={
+            isSaving ||
+            isSendingWhatsApp
+          }
           className="
             mt-12
             w-full
@@ -2053,9 +2203,18 @@ export function ProductCard({
             hover:scale-[1.01]
             hover:bg-zinc-200
             active:scale-[0.98]
+            disabled:cursor-not-allowed
+            disabled:opacity-60
+            disabled:hover:scale-100
           "
         >
-          Guardar Cambios
+          {
+            isSendingWhatsApp
+              ? "Enviando WhatsApp..."
+              : isSaving
+              ? "Guardando..."
+              : "Guardar Cambios"
+          }
         </button>
 
       </div>
