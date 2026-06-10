@@ -1,17 +1,19 @@
 "use client"
 
 import Image from "next/image"
-import Link from "next/link"
 
 import { motion } from "framer-motion"
 
 import {
-  ArrowUpRight,
+  Activity,
   CheckCircle2,
   Clock3,
-  Info,
+  MessageCircle,
+  Radio,
   Rocket,
   Signal,
+  Target,
+  Vote,
 } from "lucide-react"
 
 import {
@@ -84,6 +86,7 @@ const officialProductFlow = [
   "Idea",
   "Validación",
   "Priorizado",
+  "Desarrollo",
   "Testing",
   "Producción",
   "Comercialización",
@@ -205,12 +208,12 @@ function hasValidationDecisionData(product: Product) {
   return Boolean(getValidationStatus(product))
 }
 
-function isCommercializing(product: LiveProduct) {
+function isInProductionStage(product: LiveProduct) {
   const status =
     normalizeText(product.status)
 
   return (
-    status.includes("comercial")
+    status.includes("produccion")
   )
 }
 
@@ -219,27 +222,6 @@ function isAvailableNow(product: LiveProduct) {
     normalizeText(product.status)
 
   return status.includes("disponible")
-}
-
-function getProductInformationHref(
-  product: LiveProduct
-) {
-  if (
-    isAvailableNow(product) &&
-    product.slug
-  ) {
-    return `/store/${product.slug}`
-  }
-
-  return "#imnova-guides"
-}
-
-function getProductInformationLabel(
-  product: LiveProduct
-) {
-  return isAvailableNow(product)
-    ? "Comprar ahora"
-    : "Ver ideas de uso"
 }
 
 function isComingSoon(product: LiveProduct) {
@@ -263,6 +245,7 @@ function hasOfficialValidationAdvance(
 
   return (
     productStatus.includes("priorizado") ||
+    productStatus.includes("desarrollo") ||
     productStatus.includes("testing") ||
     productStatus.includes("produccion")
   )
@@ -295,15 +278,24 @@ function hasRecordedPositiveValidation(
   )
 }
 
-function getPublicState(product: LiveProduct) {
-  const status =
-    normalizeText(product.status)
+function hasRecordedNegativeValidation(
+  product: LiveProduct
+) {
+  const validationStatus =
+    normalizeText(
+      getValidationStatus(product) || ""
+    )
 
-  if (status.includes("comercial")) {
-    return "LISTO PARA SER COMERCIALIZADO"
-  }
-
-  return "DESARROLLO"
+  return (
+    validationStatus.includes("rechaz") ||
+    validationStatus.includes("descart") ||
+    validationStatus.includes("paus") ||
+    validationStatus.includes("negativ") ||
+    validationStatus.includes("insuficiente") ||
+    validationStatus.includes("no prosper") ||
+    validationStatus.includes("deten") ||
+    validationStatus.includes("ajust")
+  )
 }
 
 function normalizeStringList(
@@ -552,6 +544,85 @@ function getDecisionText(product: LiveProduct) {
   return "La comunidad IMNOVA definirá con encuestas reales y señales de redes si esta idea se fabrica, se ajusta o se pausa"
 }
 
+function isCommunityValidationLive(
+  product: LiveProduct
+) {
+  const status =
+    normalizeText(product.status)
+
+  return (
+    status.includes("validacion") ||
+    hasSurveyData(product) ||
+    hasSocialSignalData(product)
+  )
+}
+
+function getCommunityPulseScore(
+  product: LiveProduct
+) {
+  const scores = [
+    getSurveyScore(product),
+    getSocialInterestScore(product),
+  ].filter(
+    (score): score is number =>
+      score !== null
+  )
+
+  if (scores.length > 0) {
+    return Math.round(
+      scores.reduce(
+        (total, score) =>
+          total + score,
+        0
+      ) / scores.length
+    )
+  }
+
+  return Math.min(
+    100,
+    Math.max(
+      8,
+      product.progress
+    )
+  )
+}
+
+function getCommunityPulseLabel(
+  product: LiveProduct
+) {
+  if (hasRecordedNegativeValidation(product)) {
+    return "Idea en ajuste"
+  }
+
+  if (hasRecordedPositiveValidation(product)) {
+    return "Interés suficiente"
+  }
+
+  if (isCommunityValidationLive(product)) {
+    return "Encuesta activa"
+  }
+
+  return "Preparando validación"
+}
+
+function getRouteProgressLabel(
+  product: LiveProduct
+) {
+  if (hasRecordedNegativeValidation(product)) {
+    return "No prosperó todavía: se ajusta o pausa"
+  }
+
+  if (hasRecordedPositiveValidation(product)) {
+    return "Validación positiva: lista para avanzar"
+  }
+
+  if (isCommunityValidationLive(product)) {
+    return "Idea avanzando con señales activas"
+  }
+
+  return "Esperando señales de la comunidad"
+}
+
 function getComingSoonBadgeLabel(product: LiveProduct) {
   return (
     getValidationStatus(product) ||
@@ -683,14 +754,14 @@ export function InnovationsSection() {
     }
   }, [])
 
-  const commercializationProducts =
+  const productionProducts =
     useMemo(
       () =>
         products
           .filter(
             product =>
               !isAvailableNow(product) &&
-              isCommercializing(product)
+              isInProductionStage(product)
           )
           .sort(
             (a, b) =>
@@ -764,17 +835,17 @@ export function InnovationsSection() {
       ]
     )
 
-  const featuredCommercializationProduct =
-    commercializationProducts[0]
+  const featuredProductionProduct =
+    productionProducts[0]
 
-  const secondaryCommercializationProducts =
-    commercializationProducts.slice(
+  const secondaryProductionProducts =
+    productionProducts.slice(
       1,
       3
     )
 
-  const hasSecondaryCommercializationProducts =
-    secondaryCommercializationProducts.length > 0
+  const hasSecondaryProductionProducts =
+    secondaryProductionProducts.length > 0
 
   const featuredComingSoonProduct =
     comingSoonProducts[0]
@@ -785,6 +856,41 @@ export function InnovationsSection() {
           featuredComingSoonProduct
         )
       : false
+
+  const featuredCommunityPulseScore =
+    featuredComingSoonProduct
+      ? getCommunityPulseScore(
+          featuredComingSoonProduct
+        )
+      : 0
+
+  const featuredCommunityPulseLabel =
+    featuredComingSoonProduct
+      ? getCommunityPulseLabel(
+          featuredComingSoonProduct
+        )
+      : "Sin encuesta activa"
+
+  const featuredValidationIsLive =
+    featuredComingSoonProduct
+      ? isCommunityValidationLive(
+          featuredComingSoonProduct
+        )
+      : false
+
+  const featuredValidationDidNotProsper =
+    featuredComingSoonProduct
+      ? hasRecordedNegativeValidation(
+          featuredComingSoonProduct
+        )
+      : false
+
+  const featuredRouteProgressLabel =
+    featuredComingSoonProduct
+      ? getRouteProgressLabel(
+          featuredComingSoonProduct
+        )
+      : "Esperando señales de la comunidad"
 
   const previewComingSoonProducts =
     comingSoonProducts.slice(
@@ -829,23 +935,22 @@ export function InnovationsSection() {
           </div>
 
           <h2 className="mt-9 text-4xl font-black leading-[0.98] tracking-[-0.04em] text-white md:text-6xl">
-            Comercialización
+            Producción
             <span className="block bg-gradient-to-r from-cyan-200 via-white to-amber-200 bg-clip-text text-transparent">
               y Viene Pronto
             </span>
           </h2>
 
           <p className="mx-auto mt-8 max-w-3xl text-lg leading-8 text-zinc-400">
-            Una vista separada para productos que avanzan hacia
-            comercialización e ideas que la comunidad ayuda a validar antes de
-            fabricar o desarrollar.
+            Una vista separada para productos que ya están en producción e
+            ideas que la comunidad ayuda a validar antes de fabricar o lanzar.
           </p>
         </motion.div>
 
         <div className="mt-16 space-y-24">
 
           <section
-            aria-labelledby="commercialization-heading"
+            aria-labelledby="production-heading"
             className="relative overflow-hidden rounded-[28px] border border-cyan-200/15 bg-white/[0.026] p-5 shadow-[0_30px_120px_rgba(34,211,238,0.08)] md:p-8 lg:p-10"
           >
             <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-200/25 to-transparent" />
@@ -854,18 +959,18 @@ export function InnovationsSection() {
             <div className="relative mb-10 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.34em] text-cyan-100/60">
-                  Cercano al mercado
+                  Estado del producto
                 </p>
                 <h3
-                  id="commercialization-heading"
+                  id="production-heading"
                   className="mt-3 text-4xl font-black leading-tight tracking-[-0.04em] text-white md:text-6xl"
                 >
-                  En preparación comercial
+                  En producción
                 </h3>
                 <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-400 md:text-base">
-                  Productos cercanos al mercado que ya pueden explicarse con
-                  imagen, contexto e información clara, sin presentarse como
-                  disponibles para compra.
+                  Productos que dejaron la etapa de idea y están tomando forma
+                  como propuesta física, con imagen, empaque y contexto, sin
+                  presentarse todavía como disponibles para compra.
                 </p>
               </div>
 
@@ -875,7 +980,7 @@ export function InnovationsSection() {
                     Productos
                   </p>
                   <p className="mt-2 text-3xl font-black text-white">
-                    {commercializationProducts.length}
+                    {productionProducts.length}
                   </p>
                 </div>
 
@@ -884,17 +989,17 @@ export function InnovationsSection() {
                     Avance
                   </p>
                   <p className="mt-2 text-3xl font-black text-cyan-100">
-                    {featuredCommercializationProduct?.progress || 0}%
+                    {featuredProductionProduct?.progress || 0}%
                   </p>
                 </div>
               </div>
             </div>
 
-            {featuredCommercializationProduct ? (
+            {featuredProductionProduct ? (
               <div
                 className={
-                  hasSecondaryCommercializationProducts
-                    ? "grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(340px,0.78fr)]"
+                  hasSecondaryProductionProducts
+                    ? "grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.82fr)]"
                     : "grid gap-6"
                 }
               >
@@ -911,60 +1016,48 @@ export function InnovationsSection() {
                     duration: 0.85,
                   }}
                   viewport={{ once: true }}
-                  className="relative overflow-hidden rounded-[30px] border border-cyan-200/15 bg-white/[0.035] p-6 backdrop-blur-2xl md:p-8"
+                  className="relative overflow-hidden rounded-[30px] border border-cyan-200/15 bg-white/[0.035] p-5 backdrop-blur-2xl md:p-6"
                 >
                   <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.15),transparent_36%)]" />
 
-                  <div className="relative grid gap-8 md:grid-cols-[0.9fr_1.1fr] md:items-center">
-                    <div className="relative min-h-[300px] overflow-hidden rounded-[26px] border border-white/10 bg-black/40 p-6">
+                  <div className="relative grid gap-6 md:grid-cols-[240px_minmax(0,1fr)] md:items-center">
+                    <div className="relative flex min-h-[240px] items-center justify-center overflow-hidden rounded-[24px] border border-white/10 bg-black/40 p-4">
                       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.10),transparent_62%)]" />
                       <Image
-                        src={getProductImage(featuredCommercializationProduct)}
-                        alt={featuredCommercializationProduct.name}
+                        src={getProductImage(featuredProductionProduct)}
+                        alt={featuredProductionProduct.name}
                         width={560}
                         height={460}
-                        className="relative z-10 h-full min-h-[260px] w-full object-contain"
+                        className="relative z-10 max-h-[220px] w-full object-contain"
                       />
                     </div>
 
                     <div className="relative z-10">
                       <span className="inline-flex rounded-full border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-2 text-[10px] uppercase tracking-[0.24em] text-cyan-100">
-                        LISTO PARA SER COMERCIALIZADO
+                        EN PRODUCCIÓN
                       </span>
 
                       <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-cyan-100/55">
-                        {featuredCommercializationProduct.category ||
+                        {featuredProductionProduct.category ||
                           "IMNOVA Launch"}
                       </p>
 
-                      <h3 className="mt-4 max-w-3xl text-4xl font-black leading-tight tracking-[-0.035em] text-white md:text-5xl lg:text-6xl">
-                        {featuredCommercializationProduct.name}
+                      <h3 className="mt-4 max-w-3xl text-3xl font-black leading-tight tracking-[-0.035em] text-white md:text-4xl lg:text-5xl">
+                        {featuredProductionProduct.name}
                       </h3>
 
-                      <p className="mt-6 max-w-3xl text-base leading-8 text-zinc-400 md:text-lg">
-                        {featuredCommercializationProduct.description ||
-                          "Producto listo para ser comercializado."}
+                      <p className="mt-4 max-w-3xl text-sm leading-7 text-zinc-400 md:text-base">
+                        {featuredProductionProduct.description ||
+                          "Producto en producción y preparación de lanzamiento."}
                       </p>
 
-                      <Link
-                        href={getProductInformationHref(
-                          featuredCommercializationProduct
-                        )}
-                        className="mt-8 inline-flex items-center justify-center gap-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 transition hover:border-cyan-200/35 hover:bg-cyan-300/[0.13]"
-                      >
-                        {getProductInformationLabel(
-                          featuredCommercializationProduct
-                        )}
-                        <Info className="h-4 w-4" />
-                      </Link>
-
-                      <div className="mt-8">
+                      <div className="mt-6">
                         <div className="mb-3 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-zinc-500">
                           <span>
-                            {featuredCommercializationProduct.status}
+                            {featuredProductionProduct.status}
                           </span>
                           <span className="text-cyan-100">
-                            {featuredCommercializationProduct.progress}%
+                            {featuredProductionProduct.progress}%
                           </span>
                         </div>
                         <div className="h-2 overflow-hidden rounded-full bg-white/10">
@@ -974,7 +1067,7 @@ export function InnovationsSection() {
                             }}
                             whileInView={{
                               width:
-                                `${featuredCommercializationProduct.progress}%`,
+                                `${featuredProductionProduct.progress}%`,
                             }}
                             transition={{
                               duration: 1,
@@ -988,9 +1081,19 @@ export function InnovationsSection() {
                   </div>
                 </motion.article>
 
-                {hasSecondaryCommercializationProducts && (
+                {hasSecondaryProductionProducts && (
                   <div className="grid content-start gap-4">
-                    {secondaryCommercializationProducts.map(
+                    <div className="rounded-[24px] border border-cyan-200/10 bg-cyan-300/[0.045] px-5 py-4">
+                      <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">
+                        También en producción
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-zinc-400">
+                        Otros productos que están avanzando antes de pasar a
+                        disponibilidad.
+                      </p>
+                    </div>
+
+                    {secondaryProductionProducts.map(
                       product => (
                         <motion.article
                           key={product.id}
@@ -1006,9 +1109,9 @@ export function InnovationsSection() {
                             duration: 0.7,
                           }}
                           viewport={{ once: true }}
-                          className="grid grid-cols-[72px_minmax(0,1fr)] gap-4 rounded-[24px] border border-white/10 bg-white/[0.03] p-4 backdrop-blur-xl"
+                          className="grid grid-cols-[76px_minmax(0,1fr)] gap-4 rounded-[24px] border border-white/10 bg-white/[0.03] p-4 backdrop-blur-xl"
                         >
-                          <div className="flex h-[72px] w-[72px] items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-black/35">
+                          <div className="flex h-[76px] w-[76px] items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-black/35">
                             <img
                               src={getProductImage(product)}
                               alt={product.name}
@@ -1018,22 +1121,11 @@ export function InnovationsSection() {
 
                           <div className="min-w-0">
                             <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">
-                              LISTO PARA SER COMERCIALIZADO
+                              EN PRODUCCIÓN
                             </p>
                             <h4 className="mt-2 truncate text-lg font-black leading-tight text-white">
                               {product.name}
                             </h4>
-                            <Link
-                              href={getProductInformationHref(
-                                product
-                              )}
-                              className="mt-3 inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100"
-                            >
-                              {getProductInformationLabel(
-                                product
-                              )}
-                              <ArrowUpRight className="h-3 w-3" />
-                            </Link>
                             <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/10">
                               <div
                                 style={{
@@ -1067,7 +1159,7 @@ export function InnovationsSection() {
               >
                 <Rocket className="mx-auto h-8 w-8 text-cyan-100" />
                 <h3 className="mt-6 text-3xl font-black text-white">
-                  No hay productos listos para ser comercializados actualmente.
+                  No hay productos en producción actualmente.
                 </h3>
               </motion.div>
             )}
@@ -1075,76 +1167,135 @@ export function InnovationsSection() {
 
           <section
             aria-labelledby="coming-soon-heading"
-            className="relative overflow-hidden rounded-[28px] border border-amber-200/15 bg-white/[0.026] p-5 shadow-[0_30px_120px_rgba(251,191,36,0.07)] md:p-8 lg:p-10"
+            className="relative overflow-hidden rounded-[36px] border border-cyan-200/25 bg-[linear-gradient(135deg,rgba(6,182,212,0.12),rgba(0,0,0,0.88)_42%,rgba(251,191,36,0.10))] p-5 shadow-[0_34px_150px_rgba(34,211,238,0.13)] md:p-8 lg:p-10"
           >
-            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/25 to-transparent" />
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.07),transparent_34%)]" />
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-200/45 to-transparent" />
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_18%,rgba(34,211,238,0.18),transparent_32%),radial-gradient(circle_at_78%_18%,rgba(251,191,36,0.14),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.045),transparent_44%)]" />
+            <div className="absolute inset-0 opacity-[0.045] bg-[linear-gradient(rgba(103,232,249,0.16)_1px,transparent_1px),linear-gradient(90deg,rgba(103,232,249,0.16)_1px,transparent_1px)] bg-[size:72px_72px]" />
 
-            <div className="relative mb-10 grid gap-6 lg:grid-cols-[minmax(0,1fr)_390px] lg:items-start">
+            <div className="relative mb-10 grid gap-6 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-start">
               <div>
-                <p className="text-[10px] uppercase tracking-[0.34em] text-cyan-100/60">
-                  Viene Pronto
-                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-cyan-200/25 bg-cyan-300/[0.10] px-4 py-2 text-[10px] font-black uppercase tracking-[0.24em] text-cyan-50">
+                    <Activity className="h-3.5 w-3.5" />
+                    ADN IMNOVA
+                  </span>
+                  <span
+                    className={
+                      featuredValidationIsLive
+                        ? "inline-flex items-center gap-2 rounded-full border border-amber-200/35 bg-amber-200/[0.14] px-4 py-2 text-[10px] font-black uppercase tracking-[0.24em] text-amber-50 shadow-[0_0_34px_rgba(251,191,36,0.18)]"
+                        : "inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.055] px-4 py-2 text-[10px] font-black uppercase tracking-[0.24em] text-white/55"
+                    }
+                  >
+                    <Radio className="h-3.5 w-3.5" />
+                    {featuredCommunityPulseLabel}
+                  </span>
+                </div>
                 <h3
                   id="coming-soon-heading"
-                  className="mt-3 text-4xl font-black leading-tight tracking-[-0.04em] text-white md:text-6xl"
+                  className="mt-6 max-w-4xl text-4xl font-black leading-[0.98] tracking-[-0.045em] text-white md:text-6xl lg:text-7xl"
                 >
-                  Ideas en validación comunitaria
+                  Viene Pronto
+                  <span className="block bg-gradient-to-r from-cyan-100 via-white to-amber-100 bg-clip-text text-transparent">
+                    decidido por la comunidad.
+                  </span>
                 </h3>
-                <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-400 md:text-base">
-                  Aquí no mostramos productos finales. Mostramos ideas
-                  tempranas que IMNOVA está midiendo con la comunidad: qué
-                  nicho atienden, qué problema humano buscan resolver y si el
-                  interés real justifica llevarlas a desarrollo.
+                <p className="mt-6 max-w-3xl text-base leading-8 text-zinc-300 md:text-lg">
+                  Esta es la zona viva donde una idea demuestra si realmente
+                  resuelve una necesidad humana. La comunidad responde,
+                  IMNOVA mide señales y solo las ideas con interés real avanzan
+                  hacia desarrollo.
                 </p>
 
-                <div className="mt-6 grid gap-3 md:grid-cols-3">
-                  <div className="rounded-3xl border border-cyan-200/10 bg-cyan-300/[0.045] p-4">
-                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-100">
-                      01 Detectar
-                    </p>
-                    <p className="mt-3 text-xs leading-5 text-zinc-400">
-                      Se define el nicho y la necesidad que vale la pena
-                      explorar.
-                    </p>
-                  </div>
-
-                  <div className="rounded-3xl border border-amber-200/10 bg-amber-200/[0.045] p-4">
-                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-amber-100">
-                      02 Validar
-                    </p>
-                    <p className="mt-3 text-xs leading-5 text-zinc-400">
-                      La comunidad responde encuestas y deja señales en los
-                      canales activos.
-                    </p>
-                  </div>
-
-                  <div className="rounded-3xl border border-emerald-200/10 bg-emerald-300/[0.045] p-4">
-                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-100">
-                      03 Decidir
-                    </p>
-                    <p className="mt-3 text-xs leading-5 text-zinc-400">
-                      Si hay interés suficiente, la idea avanza; si no, se
-                      ajusta o se pausa.
-                    </p>
-                  </div>
+                <div className="mt-7 grid gap-3 md:grid-cols-3">
+                  {[
+                    {
+                      icon: Target,
+                      label: "Nicho",
+                      text: "Definimos a quién ayuda y qué tensión real existe.",
+                    },
+                    {
+                      icon: Vote,
+                      label: "Encuesta",
+                      text: "La comunidad valida interés desde web, WhatsApp y redes.",
+                    },
+                    {
+                      icon: Rocket,
+                      label: "Decisión",
+                      text: "Si las señales son fuertes, la idea pasa al proceso oficial.",
+                    },
+                  ].map(item => (
+                    <div
+                      key={item.label}
+                      className="rounded-3xl border border-white/10 bg-black/35 p-4 backdrop-blur-xl"
+                    >
+                      <item.icon className="h-5 w-5 text-cyan-100" />
+                      <p className="mt-4 text-[10px] font-black uppercase tracking-[0.22em] text-white">
+                        {item.label}
+                      </p>
+                      <p className="mt-3 text-xs leading-5 text-zinc-400">
+                        {item.text}
+                      </p>
+                    </div>
+                  ))}
                 </div>
               </div>
 
-              <div className="rounded-[28px] border border-white/10 bg-black/35 p-5 backdrop-blur-xl">
+              <div className="relative overflow-hidden rounded-[30px] border border-cyan-200/20 bg-black/55 p-5 shadow-[inset_0_0_45px_rgba(34,211,238,0.08)] backdrop-blur-xl">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_10%,rgba(34,211,238,0.16),transparent_28%)]" />
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <p className="text-[10px] uppercase tracking-[0.26em] text-amber-100/50">
-                      Tablero vivo
+                    <p className="relative text-[10px] uppercase tracking-[0.26em] text-cyan-100/55">
+                      Pantalla viva
                     </p>
-                    <h4 className="mt-2 text-2xl font-black text-white">
+                    <h4 className="relative mt-2 text-2xl font-black text-white">
                       Señales de interés
                     </h4>
                   </div>
-                  <Signal className="h-6 w-6 text-cyan-100" />
+                  <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08]">
+                    <Signal className="h-6 w-6 text-cyan-100" />
+                  </div>
                 </div>
 
-                <div className="mt-5 grid grid-cols-2 gap-3">
+                <div className="relative mt-5 rounded-[24px] border border-cyan-200/15 bg-cyan-300/[0.055] p-4">
+                  <div className="flex items-end justify-between gap-4">
+                    <div>
+                      <p className="text-[9px] uppercase tracking-[0.20em] text-cyan-100/60">
+                        Pulso comunitario
+                      </p>
+                      <p className="mt-2 text-5xl font-black text-cyan-50">
+                        {featuredCommunityPulseScore}%
+                      </p>
+                    </div>
+                    <div className="flex items-end gap-1.5">
+                      {[34, 48, 62, 76, 90].map(height => (
+                        <span
+                          key={height}
+                          className="w-2 rounded-full bg-gradient-to-t from-cyan-400 to-amber-100"
+                          style={{
+                            height:
+                              `${height}px`,
+                            opacity:
+                              featuredValidationIsLive
+                                ? 1
+                                : 0.34,
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-cyan-300 via-white to-amber-200"
+                      style={{
+                        width:
+                          `${featuredCommunityPulseScore}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className="relative mt-4 grid grid-cols-2 gap-3">
                   <div className="rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3">
                     <p className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">
                       Ideas
@@ -1182,10 +1333,17 @@ export function InnovationsSection() {
                   </div>
                 </div>
 
-                <p className="mt-4 text-xs leading-6 text-zinc-500">
-                  La web solo presenta la lectura pública; la encuesta y el
-                  registro de señales se alimentan desde los canales definidos
-                  por IMNOVA.
+                <a
+                  href="#contact"
+                  className="relative mt-5 inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-amber-200/25 bg-amber-200/[0.10] px-5 py-4 text-[10px] font-black uppercase tracking-[0.18em] text-amber-50 transition hover:border-amber-100/45 hover:bg-amber-200/[0.16]"
+                >
+                  Participar en la validación
+                  <MessageCircle className="h-4 w-4" />
+                </a>
+
+                <p className="relative mt-4 text-xs leading-6 text-zinc-500">
+                  La encuesta y el registro de señales se alimentan desde los
+                  canales definidos por IMNOVA: web, WhatsApp y redes sociales.
                 </p>
               </div>
             </div>
@@ -1205,11 +1363,44 @@ export function InnovationsSection() {
                     duration: 0.85,
                   }}
                   viewport={{ once: true }}
-                  className="relative overflow-hidden rounded-[30px] border border-cyan-200/15 bg-white/[0.035] p-6 backdrop-blur-2xl md:p-8"
+                  className="relative overflow-hidden rounded-[34px] border border-amber-200/20 bg-black/45 p-6 shadow-[0_28px_120px_rgba(251,191,36,0.08)] backdrop-blur-2xl md:p-8"
                 >
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.15),transparent_36%)]" />
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.16),transparent_36%),radial-gradient(circle_at_82%_8%,rgba(251,191,36,0.14),transparent_30%)]" />
 
                   <div className="relative z-10">
+                    <div className="mb-6 flex flex-col gap-3 rounded-[26px] border border-amber-200/15 bg-amber-200/[0.055] p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={
+                            featuredValidationIsLive
+                              ? "relative flex h-11 w-11 items-center justify-center rounded-2xl border border-amber-100/35 bg-amber-200/[0.14] text-amber-50 shadow-[0_0_30px_rgba(251,191,36,0.20)]"
+                              : "relative flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.06] text-white/50"
+                          }
+                        >
+                          <Radio className="h-5 w-5" />
+                          {featuredValidationIsLive && (
+                            <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-amber-200 shadow-[0_0_18px_rgba(251,191,36,0.75)]" />
+                          )}
+                        </span>
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-amber-100/70">
+                            Hipótesis en validación
+                          </p>
+                          <p className="mt-1 text-sm leading-6 text-zinc-300">
+                            La comunidad decide si esta idea merece avanzar.
+                          </p>
+                        </div>
+                      </div>
+
+                      <a
+                        href="#contact"
+                        className="inline-flex items-center justify-center gap-2 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-cyan-50 transition hover:border-cyan-100/40 hover:bg-cyan-300/[0.13]"
+                      >
+                        Votar interés
+                        <Vote className="h-4 w-4" />
+                      </a>
+                    </div>
+
                     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
                       <div>
                         <div className="flex flex-wrap items-center gap-3">
@@ -1339,14 +1530,29 @@ export function InnovationsSection() {
                       </p>
                       <p className="mt-3 max-w-3xl text-sm leading-7 text-zinc-400">
                         La idea entra al proceso oficial: validación, prioridad,
-                        testing, producción, listo para ser comercializado y
-                        disponible. Si no reúne interés suficiente, se ajusta o
-                        se pausa.
+                        desarrollo, testing, producción, comercialización y
+                        disponible. Si no reúne interés suficiente, se ajusta
+                        o se pausa.
                       </p>
 
+                      <div
+                        className={
+                          featuredValidationDidNotProsper
+                            ? "mt-4 inline-flex items-center gap-3 rounded-2xl border border-amber-200/20 bg-amber-200/[0.08] px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-amber-100"
+                            : "mt-4 inline-flex items-center gap-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-cyan-100"
+                        }
+                      >
+                        {featuredValidationDidNotProsper ? (
+                          <Clock3 className="h-4 w-4" />
+                        ) : (
+                          <Rocket className="h-4 w-4" />
+                        )}
+                        {featuredRouteProgressLabel}
+                      </div>
+
                       <div className="relative mt-6 overflow-x-auto pb-3 [scrollbar-width:thin] [scrollbar-color:rgba(251,191,36,0.45)_rgba(255,255,255,0.08)] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-amber-200/45 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-white/10">
-                        <div className="relative min-w-[1080px]">
-                          <div className="absolute left-0 right-0 top-5 h-1 rounded-full bg-white/10" />
+                        <div className="relative min-w-[1220px] pt-12">
+                          <div className="absolute left-0 right-0 top-[68px] h-1 rounded-full bg-white/10" />
                           <motion.div
                             initial={{
                               width: 0,
@@ -1362,10 +1568,85 @@ export function InnovationsSection() {
                               ease: [0.22, 1, 0.36, 1],
                             }}
                             viewport={{ once: true }}
-                            className="absolute left-0 top-5 h-1 rounded-full bg-gradient-to-r from-amber-200 via-cyan-200 to-emerald-200"
+                            className={
+                              featuredValidationDidNotProsper
+                                ? "absolute left-0 top-[68px] h-1 rounded-full bg-gradient-to-r from-amber-200 via-orange-300 to-red-300"
+                                : "absolute left-0 top-[68px] h-1 rounded-full bg-gradient-to-r from-amber-200 via-cyan-200 to-emerald-200"
+                            }
                           />
 
-                          <div className="relative grid grid-cols-7 gap-5">
+                          <motion.div
+                            initial={{
+                              left: "0%",
+                              opacity: 0,
+                              scale: 0.82,
+                            }}
+                            whileInView={{
+                              left:
+                                `calc(${getOfficialFlowPercent(
+                                  featuredComingSoonProduct.status
+                                )} - 22px)`,
+                              opacity: 1,
+                              scale: 1,
+                            }}
+                            transition={{
+                              duration: 1.25,
+                              ease: [0.22, 1, 0.36, 1],
+                            }}
+                            viewport={{ once: true }}
+                            className={
+                              featuredValidationDidNotProsper
+                                ? "absolute top-[43px] z-20 flex h-11 w-11 items-center justify-center rounded-full border border-amber-200/50 bg-amber-200/[0.14] text-amber-50 shadow-[0_0_34px_rgba(251,191,36,0.24)]"
+                                : "absolute top-[43px] z-20 flex h-11 w-11 items-center justify-center rounded-full border border-cyan-100/60 bg-cyan-300/[0.16] text-cyan-50 shadow-[0_0_38px_rgba(34,211,238,0.34)]"
+                            }
+                            aria-label={featuredRouteProgressLabel}
+                          >
+                            {!featuredValidationDidNotProsper && (
+                              <span className="absolute inset-[-10px] rounded-full border border-cyan-200/25 opacity-60 animate-ping" />
+                            )}
+                            <span className="absolute inset-0 rounded-full bg-white/[0.06]" />
+                            <motion.span
+                              animate={
+                                featuredValidationDidNotProsper
+                                  ? {
+                                      rotate: [
+                                        -4,
+                                        4,
+                                        -4,
+                                      ],
+                                    }
+                                  : {
+                                      x: [
+                                        -1,
+                                        3,
+                                        -1,
+                                      ],
+                                      y: [
+                                        0,
+                                        -2,
+                                        0,
+                                      ],
+                                    }
+                              }
+                              transition={{
+                                duration:
+                                  featuredValidationDidNotProsper
+                                    ? 1.4
+                                    : 1.8,
+                                repeat: Infinity,
+                                ease: "easeInOut",
+                              }}
+                              className="relative z-10"
+                            >
+                              {featuredValidationDidNotProsper ? (
+                                <Clock3 className="h-5 w-5" />
+                              ) : (
+                                <Rocket className="h-5 w-5 rotate-45" />
+                              )}
+                            </motion.span>
+                          </motion.div>
+
+                          <div className="relative grid grid-cols-8 gap-5">
                             {officialProductFlow.map(
                               (step, index) => {
                                 const activeFlowIndex =

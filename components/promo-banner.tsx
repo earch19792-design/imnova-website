@@ -43,6 +43,8 @@ type ProductState = {
   name: string
 }
 
+const MAX_LAUNCH_PRODUCTS = 12
+
 function getProductImage(
   product: Product
 ) {
@@ -237,7 +239,12 @@ export function PromoBanner() {
           }
         )
 
-      setProducts(availableProducts)
+      setProducts(
+        availableProducts.slice(
+          0,
+          MAX_LAUNCH_PRODUCTS
+        )
+      )
       setActiveIndex(0)
       setHasLoadedProducts(true)
 

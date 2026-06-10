@@ -71,6 +71,8 @@ type ImnovaGuidesSectionProps = {
   onJoinFamily?: () => void
 }
 
+const GUIDE_SELECTOR_BATCH_SIZE = 12
+
 function normalizeText(
   value: string
 ) {
@@ -1238,6 +1240,16 @@ export function ImnovaGuidesSection({
     setIsLoading,
   ] = useState(true)
 
+  const [
+    selectedGuideId,
+    setSelectedGuideId,
+  ] = useState<string | null>(null)
+
+  const [
+    visibleGuideCount,
+    setVisibleGuideCount,
+  ] = useState(GUIDE_SELECTOR_BATCH_SIZE)
+
   useEffect(
     () => {
       let mounted =
@@ -1366,13 +1378,48 @@ export function ImnovaGuidesSection({
     )
 
   const featuredGuide =
+    productGuides.find(
+      guide =>
+        guide.id === selectedGuideId
+    ) ||
     productGuides[0]
 
-  const secondaryGuides =
+  useEffect(
+    () => {
+      if (productGuides.length === 0) {
+        setSelectedGuideId(null)
+        return
+      }
+
+      const selectedGuideExists =
+        selectedGuideId
+          ? productGuides.some(
+              guide =>
+                guide.id === selectedGuideId
+            )
+          : false
+
+      if (!selectedGuideExists) {
+        setSelectedGuideId(
+          productGuides[0].id
+        )
+      }
+    },
+    [
+      productGuides,
+      selectedGuideId,
+    ]
+  )
+
+  const visibleGuideOptions =
     productGuides.slice(
-      1,
-      4
+      0,
+      visibleGuideCount
     )
+
+  const hasMoreGuides =
+    visibleGuideCount <
+    productGuides.length
 
   if (
     !isLoading &&
@@ -1445,6 +1492,100 @@ export function ImnovaGuidesSection({
             vida.
           </p>
         </motion.div>
+
+        {productGuides.length > 1 && (
+          <div className="mt-12 rounded-[30px] border border-white/10 bg-white/[0.035] p-4 shadow-[0_24px_90px_rgba(0,0,0,0.35)] backdrop-blur-2xl md:p-5">
+            <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.30em] text-cyan-100/75">
+                  Productos disponibles
+                </p>
+                <p className="mt-2 text-sm leading-6 text-zinc-400">
+                  Selecciona un producto para ver su forma de uso, rutina y
+                  beneficios antes de comprar.
+                </p>
+              </div>
+
+              <span className="w-fit rounded-full border border-cyan-200/15 bg-cyan-300/[0.07] px-4 py-2 text-[10px] font-black uppercase tracking-[0.22em] text-cyan-100">
+                {productGuides.length} disponibles
+              </span>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {visibleGuideOptions.map(
+                guide => {
+                  const isSelected =
+                    featuredGuide?.id === guide.id
+                  const Icon =
+                    guide.icon
+
+                  return (
+                    <button
+                      key={guide.id}
+                      type="button"
+                      onClick={() =>
+                        setSelectedGuideId(
+                          guide.id
+                        )
+                      }
+                      className={`group flex min-h-[92px] items-center gap-4 rounded-[24px] border p-3 text-left transition duration-300 ${
+                        isSelected
+                          ? "border-cyan-200/45 bg-cyan-300/[0.10] shadow-[0_0_36px_rgba(34,211,238,0.13)]"
+                          : "border-white/10 bg-black/25 hover:border-white/20 hover:bg-white/[0.045]"
+                      }`}
+                    >
+                      <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-[18px] border border-white/10 bg-black/40">
+                        {guide.image ? (
+                          <img
+                            src={guide.image}
+                            alt={guide.name}
+                            loading="lazy"
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <Icon className="h-7 w-7 text-cyan-100" />
+                        )}
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-black leading-5 text-white">
+                          {guide.name}
+                        </p>
+                        <p className="mt-1 truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-white/40">
+                          {guide.category}
+                        </p>
+                        <p className="mt-2 inline-flex rounded-full border border-emerald-200/15 bg-emerald-300/[0.08] px-3 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-emerald-100">
+                          Disponible
+                        </p>
+                      </div>
+                    </button>
+                  )
+                }
+              )}
+            </div>
+
+            {hasMoreGuides && (
+              <div className="mt-5 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setVisibleGuideCount(
+                      currentCount =>
+                        Math.min(
+                          currentCount +
+                            GUIDE_SELECTOR_BATCH_SIZE,
+                          productGuides.length
+                        )
+                    )
+                  }
+                  className="rounded-2xl border border-white/10 bg-white/[0.045] px-6 py-3 text-[10px] font-black uppercase tracking-[0.20em] text-white/70 transition hover:border-cyan-200/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
+                >
+                  Ver más productos disponibles
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {featuredGuide && (
           <motion.article
@@ -1568,20 +1709,6 @@ export function ImnovaGuidesSection({
           </motion.article>
         )}
 
-        {secondaryGuides.length > 0 && (
-          <div className="mt-6 grid gap-6">
-            {secondaryGuides.map(
-              (guide, index) => (
-                <ProductGuideCard
-                  key={guide.id}
-                  guide={guide}
-                  index={index + 1}
-                  onJoinFamily={onJoinFamily}
-                />
-              )
-            )}
-          </div>
-        )}
       </div>
     </section>
   )

@@ -24,6 +24,24 @@ const heroImages = [
   "/hero/imnova-hero-03.webp",
 ]
 
+const officialPillars = [
+  {
+    label: "Quiénes somos",
+    text:
+      "IMNOVA es un ecosistema de tecnología, nutrición funcional y bienestar creado para desarrollar soluciones útiles para la vida diaria.",
+  },
+  {
+    label: "Nuestro objetivo",
+    text:
+      "Ayudar a las personas a vivir mejor, rendir más y construir una rutina simple, saludable y equilibrada.",
+  },
+  {
+    label: "Cómo evoluciona",
+    text:
+      "Cada producto avanza por estados definidos: idea, producción, disponibilidad, canales de compra y experiencia de uso.",
+  },
+]
+
 export function HeroSection() {
 
   const [
@@ -49,7 +67,7 @@ export function HeroSection() {
     useTransform(
       scrollY,
       [0, 400],
-      [1, 0.4]
+      [1, 0.94]
     )
 
   /* =================================================
@@ -213,9 +231,9 @@ export function HeroSection() {
             absolute
             inset-0
             bg-gradient-to-r
-            from-black/88
-            via-black/58
-            to-black/20
+            from-black/82
+            via-black/52
+            to-black/16
           "
         />
 
@@ -223,7 +241,7 @@ export function HeroSection() {
           className="
             absolute
             inset-0
-            bg-[radial-gradient(circle_at_left,rgba(0,0,0,0.96),transparent_50%)]
+            bg-[radial-gradient(circle_at_left,rgba(0,0,0,0.88),transparent_54%)]
           "
         />
 
@@ -384,117 +402,224 @@ export function HeroSection() {
           max-w-7xl
           items-center
           px-6
-          pt-32
-          pb-24
+          pt-36
+          pb-20
           sm:px-8
           lg:px-12
         "
       >
 
-        <div className="max-w-5xl">
+        <div className="grid w-full gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(340px,0.58fr)] lg:items-center">
 
-          {/* =================================================
-          TITLE
-          ================================================= */}
+          <div>
 
-          <motion.h1
-            initial={{
-              opacity: 0,
-              y: 50,
-              filter: "blur(12px)",
-            }}
-            animate={{
-              opacity: 1,
-              y: 0,
-              filter: "blur(0px)",
-            }}
-            transition={{
-              duration: 1.2,
-              delay: 0.1,
-              ease: [0.22, 1, 0.36, 1],
-            }}
-            className="
-              max-w-6xl
-              text-5xl
-              font-black
-              leading-[0.88]
-              tracking-[-0.06em]
-              text-white
-              sm:text-6xl
-              md:text-7xl
-              lg:text-[5.4rem]
-              xl:text-[6.4rem]
-            "
-          >
-
-            Construimos
-
-            <span
+            <motion.div
+              initial={{
+                opacity: 0,
+                y: 24,
+                filter: "blur(8px)",
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+                filter: "blur(0px)",
+              }}
+              transition={{
+                duration: 1,
+                ease: [0.22, 1, 0.36, 1],
+              }}
               className="
-                block
-                bg-gradient-to-r
-                from-white
-                via-zinc-200
-                to-zinc-500
-                bg-clip-text
-                text-transparent
+                mb-6
+                inline-flex
+                rounded-full
+                border
+                border-cyan-200/25
+                bg-cyan-300/[0.10]
+                px-5
+                py-3
+                text-[10px]
+                font-semibold
+                uppercase
+                tracking-[0.26em]
+                text-cyan-50
+                backdrop-blur-xl
+              "
+            >
+              IMNOVA · Tecnología · Nutrición · Bienestar
+            </motion.div>
+
+            {/* =================================================
+            TITLE
+            ================================================= */}
+
+            <motion.h1
+              initial={{
+                opacity: 0,
+                y: 50,
+                filter: "blur(12px)",
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+                filter: "blur(0px)",
+              }}
+              transition={{
+                duration: 1.2,
+                delay: 0.1,
+                ease: [0.22, 1, 0.36, 1],
+              }}
+              className="
+                max-w-5xl
+                text-5xl
+                font-black
+                leading-[0.92]
+                tracking-[-0.05em]
+                text-white
+                sm:text-6xl
+                md:text-7xl
+                lg:text-[5.3rem]
               "
             >
 
-              Tecnología Humana
+              IMNOVA
 
-            </span>
+              <span
+                className="
+                  block
+                  max-w-4xl
+                  bg-gradient-to-r
+                  from-white
+                  via-cyan-100
+                  to-zinc-300
+                  bg-clip-text
+                  pt-3
+                  text-4xl
+                  leading-[1.02]
+                  tracking-[-0.035em]
+                  text-transparent
+                  sm:text-5xl
+                  md:text-6xl
+                "
+              >
 
-            <span
+                Tecnología, nutrición y bienestar para vivir mejor.
+
+              </span>
+
+            </motion.h1>
+
+            {/* =================================================
+            DESCRIPTION
+            ================================================= */}
+
+            <motion.p
+              initial={{
+                opacity: 0,
+                y: 30,
+                filter: "blur(10px)",
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+                filter: "blur(0px)",
+              }}
+              transition={{
+                duration: 1.2,
+                delay: 0.25,
+                ease: [0.22, 1, 0.36, 1],
+              }}
               className="
-                block
-                text-zinc-300
+                mt-7
+                max-w-2xl
+                text-base
+                leading-8
+                text-white/78
+                sm:text-lg
               "
             >
 
-              del Futuro.
+              Creamos soluciones inteligentes que integran
+              tecnología, nutrición y bienestar para ayudar
+              a las personas a vivir mejor, rendir más y
+              construir una rutina diaria más simple,
+              saludable y equilibrada.
 
-            </span>
+            </motion.p>
 
-          </motion.h1>
+            <motion.div
+              initial={{
+                opacity: 0,
+                y: 18,
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+              }}
+              transition={{
+                duration: 1,
+                delay: 0.52,
+              }}
+              className="mt-8 flex flex-wrap gap-3"
+            >
+              <a
+                href="#available-now"
+                className="inline-flex items-center justify-center rounded-2xl border border-cyan-200/25 bg-cyan-300/[0.14] px-6 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-50 transition hover:border-cyan-200/45 hover:bg-cyan-300/[0.20]"
+              >
+                Ver productos
+              </a>
 
-          {/* =================================================
-          DESCRIPTION
-          ================================================= */}
+              <a
+                href="#imnova-guides"
+                className="inline-flex items-center justify-center rounded-2xl border border-white/15 bg-white/[0.06] px-6 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-white/82 transition hover:border-white/25 hover:bg-white/[0.09] hover:text-white"
+              >
+                Ideas de uso
+              </a>
+            </motion.div>
 
-          <motion.p
+          </div>
+
+          <motion.div
             initial={{
               opacity: 0,
-              y: 30,
+              x: 34,
               filter: "blur(10px)",
             }}
             animate={{
               opacity: 1,
-              y: 0,
+              x: 0,
               filter: "blur(0px)",
             }}
             transition={{
-              duration: 1.2,
-              delay: 0.25,
+              duration: 1.1,
+              delay: 0.38,
               ease: [0.22, 1, 0.36, 1],
             }}
-            className="
-              mt-10
-              max-w-2xl
-              text-lg
-              leading-8
-              text-white/60
-              sm:text-xl
-            "
+            className="grid gap-3"
           >
-
-            Creamos soluciones inteligentes que integran
-            tecnología, nutrición y bienestar para ayudar
-            a las personas a vivir mejor, rendir más y
-            construir una rutina diaria más simple,
-            saludable y equilibrada.
-
-          </motion.p>
+            {officialPillars.map(
+              pillar => (
+                <div
+                  key={pillar.label}
+                  className="
+                    rounded-[26px]
+                    border
+                    border-white/12
+                    bg-black/55
+                    p-5
+                    shadow-[0_24px_90px_rgba(0,0,0,0.28)]
+                    backdrop-blur-2xl
+                  "
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-100">
+                    {pillar.label}
+                  </p>
+                  <p className="mt-4 text-sm leading-7 text-white/74">
+                    {pillar.text}
+                  </p>
+                </div>
+              )
+            )}
+          </motion.div>
 
         </div>
 

@@ -18,19 +18,14 @@ import {
 
 const primaryNavItems = [
   {
-    name: "Inicio",
-    shortName: "Inicio",
+    name: "Quiénes somos",
+    shortName: "IMNOVA",
     href: "#hero",
   },
   {
     name: "Lanzamientos",
     shortName: "Lanzamientos",
     href: "#available-now",
-  },
-  {
-    name: "Innovaciones",
-    shortName: "Innovaciones",
-    href: "#innovations",
   },
   {
     name: "Ideas de Uso",
@@ -42,6 +37,11 @@ const primaryNavItems = [
     shortName: "Dónde comprar",
     href: "#where-to-buy",
   },
+  {
+    name: "Innovaciones",
+    shortName: "Innovaciones",
+    href: "#innovations",
+  },
 ]
 
 const secondaryNavItems = [
@@ -49,11 +49,6 @@ const secondaryNavItems = [
     name: "Ecosistema",
     shortName: "Ecosistema",
     href: "#working",
-  },
-  {
-    name: "Proceso",
-    shortName: "Proceso",
-    href: "#pipeline",
   },
   {
     name: "Comunidad",

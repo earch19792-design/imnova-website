@@ -14,7 +14,6 @@ import { Footer } from "@/components/footer"
 import { GlobalSection } from "@/components/global-section"
 import { HeroSection } from "@/components/hero-section"
 import { ImnovaGuidesSection } from "@/components/imnova-guides-section"
-import { InnovationTracker } from "@/components/innovation-tracker"
 import { InnovationsSection } from "@/components/innovations-section"
 import InnovaPopup from "@/components/imnova-popup"
 import { Navigation } from "@/components/navigation"
@@ -48,13 +47,12 @@ export default function IMNOVAPage() {
       <HeroSection />
 
       <PromoBanner />
-      <InnovationsSection />
       <ImnovaGuidesSection
         onJoinFamily={openCommunity}
       />
-      <InnovationTracker />
-      <WorkingSection />
       <GlobalSection />
+      <InnovationsSection />
+      <WorkingSection />
 
       <section
         id="contact"
