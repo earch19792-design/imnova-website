@@ -402,9 +402,11 @@ export function HeroSection() {
           max-w-7xl
           items-center
           px-6
-          pt-36
-          pb-20
+          pt-28
+          pb-36
           sm:px-8
+          sm:pt-36
+          sm:pb-24
           lg:px-12
         "
       >
@@ -470,11 +472,12 @@ export function HeroSection() {
               }}
               className="
                 max-w-5xl
-                text-5xl
+                text-4xl
                 font-black
-                leading-[0.92]
+                leading-[0.96]
                 tracking-[-0.05em]
                 text-white
+                min-[390px]:text-5xl
                 sm:text-6xl
                 md:text-7xl
                 lg:text-[5.3rem]
@@ -493,10 +496,11 @@ export function HeroSection() {
                   to-zinc-300
                   bg-clip-text
                   pt-3
-                  text-4xl
+                  text-[2.35rem]
                   leading-[1.02]
                   tracking-[-0.035em]
                   text-transparent
+                  min-[390px]:text-4xl
                   sm:text-5xl
                   md:text-6xl
                 "
@@ -559,7 +563,7 @@ export function HeroSection() {
                 duration: 1,
                 delay: 0.52,
               }}
-              className="mt-8 flex flex-wrap gap-3"
+              className="relative z-30 mt-8 flex flex-wrap gap-3 pb-2"
             >
               <a
                 href="#available-now"

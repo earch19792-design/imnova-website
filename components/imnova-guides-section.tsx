@@ -977,8 +977,21 @@ function LifestyleVisual({
     activeScene ||
     primaryScene
 
+  const shouldUseSceneAsMain =
+    guide.imageIsLifestyle ||
+    sceneImages.length > 1
+
+  const mainVisualImage =
+    shouldUseSceneAsMain
+      ? selectedScene ||
+        productImage ||
+        null
+      : productImage ||
+        selectedScene ||
+        null
+
   const isLifestyleGallery =
-    !productImage &&
+    shouldUseSceneAsMain &&
     Boolean(selectedScene)
 
   return (
@@ -989,9 +1002,10 @@ function LifestyleVisual({
           : "min-h-[320px] md:min-h-[420px]"
       }`}
     >
-      {selectedScene ? (
+      {mainVisualImage ? (
         <img
-          src={selectedScene}
+          key={`background-${mainVisualImage}`}
+          src={mainVisualImage}
           alt={guide.sceneLabel}
           loading={priority ? "eager" : "lazy"}
           className="absolute inset-0 h-full w-full scale-110 object-cover object-center opacity-45 blur-xl"
@@ -1022,7 +1036,7 @@ function LifestyleVisual({
             : "min-h-[320px] pb-24 md:min-h-[420px]"
         }`}
       >
-        {productImage ? (
+        {productImage && !shouldUseSceneAsMain ? (
           <div className="relative flex h-[230px] w-[230px] items-center justify-center rounded-[34px] border border-white/15 bg-black/35 p-7 shadow-[0_30px_110px_rgba(0,0,0,0.55)] backdrop-blur-2xl md:h-[300px] md:w-[300px]">
             <div className="absolute inset-0 rounded-[34px] bg-gradient-to-br from-white/[0.12] to-transparent" />
             <img
@@ -1032,10 +1046,11 @@ function LifestyleVisual({
               className="relative z-10 max-h-full max-w-full object-contain drop-shadow-[0_28px_70px_rgba(0,0,0,0.50)]"
             />
           </div>
-        ) : selectedScene ? (
+        ) : mainVisualImage ? (
           <div className="flex w-full flex-col items-center justify-center gap-5">
             <img
-              src={selectedScene}
+              key={`main-${mainVisualImage}`}
+              src={mainVisualImage}
               alt={guide.sceneLabel}
               loading={priority ? "eager" : "lazy"}
               className="max-h-[300px] w-full max-w-[94%] rounded-[26px] object-contain object-center shadow-[0_28px_90px_rgba(0,0,0,0.50)] md:max-h-[340px] md:max-w-[90%]"
@@ -1110,7 +1125,7 @@ function LifestyleVisual({
         </div>
       )}
 
-      {sceneImages.length > 1 && productImage && (
+      {sceneImages.length > 1 && productImage && !shouldUseSceneAsMain && (
         <div className="absolute bottom-4 right-4 z-20 flex gap-2">
           {sceneImages
             .slice(
