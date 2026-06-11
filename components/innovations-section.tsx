@@ -287,11 +287,15 @@ function hasValidationDecisionData(product: Product) {
   )
 }
 
-function isInProductionStage(product: LiveProduct) {
+function isApprovedDevelopmentStage(
+  product: LiveProduct
+) {
   const status =
     normalizeText(product.status)
 
   return (
+    status.includes("desarrollo") ||
+    status.includes("testing") ||
     status.includes("produccion")
   )
 }
@@ -303,7 +307,9 @@ function isAvailableNow(product: LiveProduct) {
   return status.includes("disponible")
 }
 
-function isComingSoon(product: LiveProduct) {
+function isCommunityValidationStage(
+  product: LiveProduct
+) {
   const status =
     normalizeText(product.status)
 
@@ -618,6 +624,62 @@ function getDecisionText(product: LiveProduct) {
   return "Decisión pendiente."
 }
 
+function getDecisionCardClassName(
+  product: LiveProduct
+) {
+  if (hasRecordedNegativeValidation(product)) {
+    return "rounded-2xl border border-amber-200/15 bg-amber-200/[0.055] p-4"
+  }
+
+  if (hasRecordedPositiveValidation(product)) {
+    return "rounded-2xl border border-emerald-200/15 bg-emerald-300/[0.06] p-4"
+  }
+
+  return "rounded-2xl border border-white/10 bg-white/[0.035] p-4"
+}
+
+function getDecisionTitleClassName(
+  product: LiveProduct
+) {
+  if (hasRecordedNegativeValidation(product)) {
+    return "text-[9px] uppercase tracking-[0.18em] text-amber-100/65"
+  }
+
+  if (hasRecordedPositiveValidation(product)) {
+    return "text-[9px] uppercase tracking-[0.18em] text-emerald-100/65"
+  }
+
+  return "text-[9px] uppercase tracking-[0.18em] text-zinc-500"
+}
+
+function getDecisionTextClassName(
+  product: LiveProduct
+) {
+  if (hasRecordedNegativeValidation(product)) {
+    return "mt-2 text-xs leading-6 text-amber-50/85"
+  }
+
+  if (hasRecordedPositiveValidation(product)) {
+    return "mt-2 text-xs leading-6 text-emerald-50/85"
+  }
+
+  return "mt-2 text-xs leading-6 text-zinc-400"
+}
+
+function getDecisionBadgeClassName(
+  product: LiveProduct
+) {
+  if (hasRecordedNegativeValidation(product)) {
+    return "mt-3 inline-flex rounded-full border border-amber-200/15 bg-black/25 px-3 py-1.5 text-[9px] uppercase tracking-[0.14em] text-amber-100/75"
+  }
+
+  if (hasRecordedPositiveValidation(product)) {
+    return "mt-3 inline-flex rounded-full border border-emerald-200/15 bg-black/25 px-3 py-1.5 text-[9px] uppercase tracking-[0.14em] text-emerald-100/75"
+  }
+
+  return "mt-3 inline-flex rounded-full border border-white/10 bg-black/25 px-3 py-1.5 text-[9px] uppercase tracking-[0.14em] text-zinc-400"
+}
+
 function isCommunityValidationLive(
   product: LiveProduct
 ) {
@@ -823,14 +885,14 @@ export function InnovationsSection() {
     }
   }, [])
 
-  const productionProducts =
+  const approvedDevelopmentProducts =
     useMemo(
       () =>
         products
           .filter(
             product =>
               !isAvailableNow(product) &&
-              isInProductionStage(product)
+              isApprovedDevelopmentStage(product)
           )
           .sort(
             (a, b) =>
@@ -848,7 +910,7 @@ export function InnovationsSection() {
           .filter(
             product =>
               !isAvailableNow(product) &&
-              isComingSoon(product)
+              isCommunityValidationStage(product)
           )
           .sort(
             (a, b) => {
@@ -904,17 +966,17 @@ export function InnovationsSection() {
       ]
     )
 
-  const featuredProductionProduct =
-    productionProducts[0]
+  const featuredApprovedDevelopmentProduct =
+    approvedDevelopmentProducts[0]
 
-  const secondaryProductionProducts =
-    productionProducts.slice(
+  const secondaryApprovedDevelopmentProducts =
+    approvedDevelopmentProducts.slice(
       1,
       3
     )
 
-  const hasSecondaryProductionProducts =
-    secondaryProductionProducts.length > 0
+  const hasSecondaryApprovedDevelopmentProducts =
+    secondaryApprovedDevelopmentProducts.length > 0
 
   const featuredComingSoonProduct =
     comingSoonProducts[0]
@@ -931,7 +993,7 @@ export function InnovationsSection() {
       ? getCommunityPulseScore(
           featuredComingSoonProduct
         )
-      : 0
+      : null
 
   const featuredCommunityPulseLabel =
     featuredComingSoonProduct
@@ -1000,19 +1062,20 @@ export function InnovationsSection() {
         >
           <div className="inline-flex items-center gap-3 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-5 py-3 text-[10px] uppercase tracking-[0.34em] text-cyan-100">
             <Clock3 className="h-4 w-4" />
-            Innovación IMNOVA
+            Laboratorio IMNOVA
           </div>
 
           <h2 className="mt-9 text-4xl font-black leading-[0.98] tracking-[-0.04em] text-white md:text-6xl">
-            Producción
+            Donde nacen
             <span className="block bg-gradient-to-r from-cyan-200 via-white to-amber-200 bg-clip-text text-transparent">
-              y Viene Pronto
+              los próximos productos
             </span>
           </h2>
 
           <p className="mx-auto mt-8 max-w-3xl text-lg leading-8 text-zinc-400">
-            Una vista separada para productos que ya están en producción e
-            ideas que la comunidad ayuda a validar antes de fabricar o lanzar.
+            Aquí una necesidad se convierte en idea, la comunidad decide si
+            vale la pena construirla y solo lo que demuestra interés real
+            avanza hacia desarrollo.
           </p>
         </motion.div>
 
@@ -1028,18 +1091,18 @@ export function InnovationsSection() {
             <div className="relative mb-10 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.34em] text-cyan-100/60">
-                  Estado del producto
+                  Aprobado por la comunidad
                 </p>
                 <h3
                   id="production-heading"
                   className="mt-3 text-4xl font-black leading-tight tracking-[-0.04em] text-white md:text-6xl"
                 >
-                  En producción
+                  En desarrollo activo
                 </h3>
                 <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-400 md:text-base">
-                  Productos que dejaron la etapa de idea y están tomando forma
-                  como propuesta física, con imagen, empaque y contexto, sin
-                  presentarse todavía como disponibles para compra.
+                  La idea ya pasó el filtro de validación. Ahora IMNOVA la
+                  está convirtiendo en una solución real: desarrollo, testing,
+                  producción y preparación antes de estar disponible.
                 </p>
               </div>
 
@@ -1049,7 +1112,7 @@ export function InnovationsSection() {
                     Productos
                   </p>
                   <p className="mt-2 text-3xl font-black text-white">
-                    {productionProducts.length}
+                    {approvedDevelopmentProducts.length}
                   </p>
                 </div>
 
@@ -1058,16 +1121,16 @@ export function InnovationsSection() {
                     Avance
                   </p>
                   <p className="mt-2 text-3xl font-black text-cyan-100">
-                    {featuredProductionProduct?.progress || 0}%
+                    {featuredApprovedDevelopmentProduct?.progress || 0}%
                   </p>
                 </div>
               </div>
             </div>
 
-            {featuredProductionProduct ? (
+            {featuredApprovedDevelopmentProduct ? (
               <div
                 className={
-                  hasSecondaryProductionProducts
+                  hasSecondaryApprovedDevelopmentProducts
                     ? "grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.82fr)]"
                     : "grid gap-6"
                 }
@@ -1093,8 +1156,8 @@ export function InnovationsSection() {
                     <div className="relative flex min-h-[240px] items-center justify-center overflow-hidden rounded-[24px] border border-white/10 bg-black/40 p-4">
                       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.10),transparent_62%)]" />
                       <Image
-                        src={getProductImage(featuredProductionProduct)}
-                        alt={featuredProductionProduct.name}
+                        src={getProductImage(featuredApprovedDevelopmentProduct)}
+                        alt={featuredApprovedDevelopmentProduct.name}
                         width={560}
                         height={460}
                         className="relative z-10 max-h-[220px] w-full object-contain"
@@ -1103,30 +1166,30 @@ export function InnovationsSection() {
 
                     <div className="relative z-10">
                       <span className="inline-flex rounded-full border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-2 text-[10px] uppercase tracking-[0.24em] text-cyan-100">
-                        EN PRODUCCIÓN
+                        {featuredApprovedDevelopmentProduct.status}
                       </span>
 
                       <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-cyan-100/55">
-                        {featuredProductionProduct.category ||
+                        {featuredApprovedDevelopmentProduct.category ||
                           "IMNOVA Launch"}
                       </p>
 
                       <h3 className="mt-4 max-w-3xl text-3xl font-black leading-tight tracking-[-0.035em] text-white md:text-4xl lg:text-5xl">
-                        {featuredProductionProduct.name}
+                        {featuredApprovedDevelopmentProduct.name}
                       </h3>
 
                       <p className="mt-4 max-w-3xl text-sm leading-7 text-zinc-400 md:text-base">
-                        {featuredProductionProduct.description ||
-                          "Producto en producción y preparación de lanzamiento."}
+                        {featuredApprovedDevelopmentProduct.description ||
+                          "Producto aprobado, en desarrollo activo y preparación de lanzamiento."}
                       </p>
 
                       <div className="mt-6">
                         <div className="mb-3 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-zinc-500">
                           <span>
-                            {featuredProductionProduct.status}
+                            {featuredApprovedDevelopmentProduct.status}
                           </span>
                           <span className="text-cyan-100">
-                            {featuredProductionProduct.progress}%
+                            {featuredApprovedDevelopmentProduct.progress}%
                           </span>
                         </div>
                         <div className="h-2 overflow-hidden rounded-full bg-white/10">
@@ -1136,7 +1199,7 @@ export function InnovationsSection() {
                             }}
                             whileInView={{
                               width:
-                                `${featuredProductionProduct.progress}%`,
+                                `${featuredApprovedDevelopmentProduct.progress}%`,
                             }}
                             transition={{
                               duration: 1,
@@ -1150,19 +1213,19 @@ export function InnovationsSection() {
                   </div>
                 </motion.article>
 
-                {hasSecondaryProductionProducts && (
+                {hasSecondaryApprovedDevelopmentProducts && (
                   <div className="grid content-start gap-4">
                     <div className="rounded-[24px] border border-cyan-200/10 bg-cyan-300/[0.045] px-5 py-4">
                       <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">
-                        También en producción
+                        También avanzando
                       </p>
                       <p className="mt-2 text-sm leading-6 text-zinc-400">
-                        Otros productos que están avanzando antes de pasar a
-                        disponibilidad.
+                        Otros productos aprobados que siguen su ruta antes de
+                        estar disponibles.
                       </p>
                     </div>
 
-                    {secondaryProductionProducts.map(
+                    {secondaryApprovedDevelopmentProducts.map(
                       product => (
                         <motion.article
                           key={product.id}
@@ -1190,7 +1253,7 @@ export function InnovationsSection() {
 
                           <div className="min-w-0">
                             <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">
-                              EN PRODUCCIÓN
+                              {product.status}
                             </p>
                             <h4 className="mt-2 truncate text-lg font-black leading-tight text-white">
                               {product.name}
@@ -1228,7 +1291,7 @@ export function InnovationsSection() {
               >
                 <Rocket className="mx-auto h-8 w-8 text-cyan-100" />
                 <h3 className="mt-6 text-3xl font-black text-white">
-                  No hay productos en producción actualmente.
+                  No hay productos aprobados en desarrollo actualmente.
                 </h3>
               </motion.div>
             )}
@@ -1247,7 +1310,7 @@ export function InnovationsSection() {
                 <div className="flex flex-wrap items-center gap-3">
                   <span className="inline-flex items-center gap-2 rounded-full border border-cyan-200/25 bg-cyan-300/[0.10] px-4 py-2 text-[10px] font-black uppercase tracking-[0.24em] text-cyan-50">
                     <Activity className="h-3.5 w-3.5" />
-                    ADN IMNOVA
+                  Laboratorio de ideas
                   </span>
                   <span
                     className={
@@ -1266,32 +1329,32 @@ export function InnovationsSection() {
                 >
                   Viene Pronto
                   <span className="block bg-gradient-to-r from-cyan-100 via-white to-amber-100 bg-clip-text text-transparent">
-                    decidido por la comunidad.
+                    lo decide la comunidad.
                   </span>
                 </h3>
                 <p className="mt-6 max-w-3xl text-base leading-8 text-zinc-300 md:text-lg">
-                  Esta es la zona viva donde una idea demuestra si realmente
-                  resuelve una necesidad humana. La comunidad responde,
-                  IMNOVA mide señales y solo las ideas con interés real avanzan
-                  hacia desarrollo.
+                  Este es el ADN de IMNOVA: detectar una necesidad humana,
+                  convertirla en una hipótesis atractiva y dejar que la
+                  comunidad, WhatsApp y redes indiquen si esa idea debe
+                  avanzar o quedarse en pausa.
                 </p>
 
                 <div className="mt-7 grid gap-3 md:grid-cols-3">
                   {[
                     {
                       icon: Target,
-                      label: "Nicho",
-                      text: "Definimos a quién ayuda y qué tensión real existe.",
+                      label: "Necesidad",
+                      text: "Detectamos qué desea mejorar la persona y por qué importa.",
                     },
                     {
                       icon: Vote,
-                      label: "Encuesta",
-                      text: "La comunidad valida interés desde web, WhatsApp y redes.",
+                      label: "Deseo real",
+                      text: "La comunidad responde si lo compraría, probaría o esperaría.",
                     },
                     {
                       icon: Rocket,
-                      label: "Decisión",
-                      text: "Si las señales son fuertes, la idea pasa al proceso oficial.",
+                      label: "Avance",
+                      text: "Solo las ideas con señales claras pasan al proceso oficial.",
                     },
                   ].map(item => (
                     <div
@@ -1315,10 +1378,10 @@ export function InnovationsSection() {
                 <div className="flex items-center justify-between gap-4">
                   <div>
                     <p className="relative text-[10px] uppercase tracking-[0.26em] text-cyan-100/55">
-                      Pantalla viva
+                      Radar comunitario
                     </p>
                     <h4 className="relative mt-2 text-2xl font-black text-white">
-                      Señales de interés
+                      Deseo de mercado
                     </h4>
                   </div>
                   <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08]">
@@ -1330,7 +1393,7 @@ export function InnovationsSection() {
                   <div className="flex items-end justify-between gap-4">
                     <div>
                       <p className="text-[9px] uppercase tracking-[0.20em] text-cyan-100/60">
-                        Pulso comunitario
+                        Señal acumulada
                       </p>
                       <p className="mt-2 text-5xl font-black text-cyan-50">
                         {featuredCommunityPulseScore !== null
@@ -1410,13 +1473,13 @@ export function InnovationsSection() {
                   href="#contact"
                   className="relative mt-5 inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-amber-200/25 bg-amber-200/[0.10] px-5 py-4 text-[10px] font-black uppercase tracking-[0.18em] text-amber-50 transition hover:border-amber-100/45 hover:bg-amber-200/[0.16]"
                 >
-                  Participar en encuesta
+                  Participar en la validación
                   <MessageCircle className="h-4 w-4" />
                 </a>
 
                 <p className="relative mt-4 text-xs leading-6 text-zinc-500">
-                  La encuesta y el registro de señales se alimentan desde los
-                  canales definidos por IMNOVA: web, WhatsApp y redes sociales.
+                  No revelamos todo desde el inicio. Primero medimos si la
+                  necesidad también vive en la comunidad.
                 </p>
               </div>
             </div>
@@ -1457,10 +1520,10 @@ export function InnovationsSection() {
                         </span>
                         <div>
                           <p className="text-[10px] font-black uppercase tracking-[0.22em] text-amber-100/70">
-                            Hipótesis en validación
+                            Idea bajo prueba real
                           </p>
                           <p className="mt-1 text-sm leading-6 text-zinc-300">
-                            La comunidad decide si esta idea merece avanzar.
+                            Tu respuesta puede decidir si esta idea se desarrolla.
                           </p>
                         </div>
                       </div>
@@ -1469,7 +1532,7 @@ export function InnovationsSection() {
                         href="#contact"
                         className="inline-flex items-center justify-center gap-2 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-cyan-50 transition hover:border-cyan-100/40 hover:bg-cyan-300/[0.13]"
                       >
-                        Unirme a la comunidad
+                        Participar ahora
                         <Vote className="h-4 w-4" />
                       </a>
                     </div>
@@ -1496,7 +1559,7 @@ export function InnovationsSection() {
                         </div>
 
                         <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-cyan-100/55">
-                          Idea activa
+                          Idea que puede convertirse en producto
                         </p>
                         <h3 className="mt-4 max-w-3xl text-4xl font-black leading-tight tracking-[-0.035em] text-white md:text-5xl">
                           {featuredComingSoonProduct.name}
@@ -1534,7 +1597,7 @@ export function InnovationsSection() {
 
                           <div className="rounded-3xl border border-white/10 bg-black/25 p-5 md:col-span-2">
                             <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-400">
-                              Beneficio esperado
+                              Promesa inicial
                             </p>
                             <p className="mt-4 max-w-3xl text-sm leading-7 text-zinc-300">
                               {getExpectedBenefit(
@@ -1542,12 +1605,24 @@ export function InnovationsSection() {
                               )}
                             </p>
                           </div>
+
+                          <div className="rounded-3xl border border-amber-200/15 bg-gradient-to-br from-amber-200/[0.10] to-cyan-300/[0.045] p-5 md:col-span-2">
+                            <p className="text-[10px] uppercase tracking-[0.24em] text-amber-100/65">
+                              Suspenso intencional
+                            </p>
+                            <p className="mt-4 max-w-3xl text-sm leading-7 text-zinc-300">
+                              La idea aún no se muestra completa porque primero
+                              queremos saber si esta necesidad también es tuya.
+                              Si la comunidad responde, IMNOVA la convierte en
+                              desarrollo real.
+                            </p>
+                          </div>
                         </div>
                       </div>
 
                       <aside className="rounded-[28px] border border-white/10 bg-black/30 p-5">
                         <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">
-                          Lectura comunitaria
+                          Evidencia en tiempo real
                         </p>
 
                         <div className="mt-5 grid gap-3">
@@ -1612,16 +1687,32 @@ export function InnovationsSection() {
                             </p>
                           </div>
 
-                          <div className="rounded-2xl border border-emerald-200/15 bg-emerald-300/[0.06] p-4">
-                            <p className="text-[9px] uppercase tracking-[0.18em] text-emerald-100/65">
-                              Decisión
+                          <div
+                            className={getDecisionCardClassName(
+                              featuredComingSoonProduct
+                            )}
+                          >
+                            <p
+                              className={getDecisionTitleClassName(
+                                featuredComingSoonProduct
+                              )}
+                            >
+                              Decisión comunitaria
                             </p>
-                            <p className="mt-2 text-xs leading-6 text-emerald-50/85">
+                            <p
+                              className={getDecisionTextClassName(
+                                featuredComingSoonProduct
+                              )}
+                            >
                               {getDecisionText(
                                 featuredComingSoonProduct
                               )}
                             </p>
-                            <p className="mt-3 inline-flex rounded-full border border-emerald-200/15 bg-black/25 px-3 py-1.5 text-[9px] uppercase tracking-[0.14em] text-emerald-100/75">
+                            <p
+                              className={getDecisionBadgeClassName(
+                                featuredComingSoonProduct
+                              )}
+                            >
                               {getValidationStatusLabel(
                                 featuredComingSoonProduct
                               )}
@@ -1633,13 +1724,13 @@ export function InnovationsSection() {
 
                     <div className="mt-6 overflow-hidden rounded-3xl border border-white/10 bg-white/[0.025] p-5">
                       <p className="text-[10px] uppercase tracking-[0.24em] text-amber-100/65">
-                        Si la comunidad la aprueba
+                        Qué pasa después de participar
                       </p>
                       <p className="mt-3 max-w-3xl text-sm leading-7 text-zinc-400">
-                        La idea entra al proceso oficial: validación, prioridad,
-                        desarrollo, testing, producción, comercialización y
-                        disponible. Si no reúne interés suficiente, se ajusta
-                        o se pausa.
+                        Si la necesidad conecta con suficientes personas, la
+                        idea entra al proceso oficial de IMNOVA. Si las señales
+                        son débiles, se ajusta, se pausa o se descarta antes de
+                        invertir en desarrollo.
                       </p>
 
                       <div
@@ -1813,15 +1904,15 @@ export function InnovationsSection() {
                 <aside className="grid content-start gap-4">
                   <div className="rounded-[24px] border border-white/10 bg-black/35 p-5 text-left backdrop-blur-xl">
                     <p className="text-[10px] uppercase tracking-[0.24em] text-amber-100/55">
-                      Cola de validación
+                      Backlog de ideas vivas
                     </p>
                     <h4 className="mt-3 text-2xl font-black text-white">
-                      Ideas que esperan lectura comunitaria
+                      Otras hipótesis en observación
                     </h4>
                     <p className="mt-3 text-xs leading-6 text-zinc-500">
-                      Se muestran pocas para mantener foco. El resto permanece
-                      conectado a la data y puede avanzar cuando sus señales lo
-                      justifiquen.
+                      Mostramos pocas para mantener foco. El resto permanece
+                      conectado a la data y puede avanzar cuando la comunidad
+                      muestre interés real.
                     </p>
                   </div>
 
@@ -1908,7 +1999,7 @@ export function InnovationsSection() {
                         +{hiddenComingSoonProductsCount}
                       </p>
                       <p className="mt-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100/65">
-                        ideas más en validación
+                        ideas más bajo lectura comunitaria
                       </p>
                     </div>
                   )}

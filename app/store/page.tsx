@@ -20,26 +20,40 @@ import {
   ArrowUpRight,
   ArrowLeft,
   BadgeCheck,
+  MapPin,
   Minus,
+  PackageCheck,
   Plus,
   Search,
+  ShieldCheck,
   ShoppingBag,
   X,
 } from "lucide-react"
 
-import { getProducts } from "@/lib/products-service"
+import {
+  getProducts,
+  getProductStates,
+} from "@/lib/products-service"
 
 type Product = {
   id: string
   name: string
   slug?: string | null
+  state_id?: string | null
+  status?: string | null
   description?: string | null
   image_url?: string | null
   image?: string | null
   price?: string | number | null
   currency?: string | null
   category?: string | null
+  main_benefit?: string | null
   bullets?: string[] | null
+}
+
+type ProductState = {
+  id: string
+  name: string
 }
 
 type CartItem = {
@@ -94,6 +108,48 @@ function formatPrice(
   )
 }
 
+function normalizeText(value?: string | null) {
+  return (value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+}
+
+function getProductStateName(
+  product: Product,
+  statesById: Map<string, string>
+) {
+  if (
+    product.state_id &&
+    statesById.has(product.state_id)
+  ) {
+    return statesById.get(product.state_id) || ""
+  }
+
+  return product.status || ""
+}
+
+const trustCards = [
+  {
+    icon: ShieldCheck,
+    title: "Compra clara",
+    text:
+      "Precio, presentación y beneficios visibles antes de agregar al carrito.",
+  },
+  {
+    icon: PackageCheck,
+    title: "Lanzamiento curado",
+    text:
+      "Cada producto disponible pasa por el flujo IMNOVA antes de llegar a tienda.",
+  },
+  {
+    icon: MapPin,
+    title: "Canales autorizados",
+    text:
+      "La compra puede conectar con store, marketplace o distribución física.",
+  },
+]
+
 export default function StorePage() {
   const [
     cart,
@@ -104,6 +160,11 @@ export default function StorePage() {
     products,
     setProducts,
   ] = useState<Product[]>([])
+
+  const [
+    productStates,
+    setProductStates,
+  ] = useState<ProductState[]>([])
 
   const [
     loading,
@@ -127,8 +188,14 @@ export default function StorePage() {
 
   useEffect(() => {
     async function loadProducts() {
-      const data =
-        await getProducts()
+      const [
+        data,
+        states,
+      ] =
+        await Promise.all([
+          getProducts(),
+          getProductStates(),
+        ])
 
       console.log(
         "STORE PRODUCTS:",
@@ -137,6 +204,10 @@ export default function StorePage() {
 
       setProducts(
         (data || []) as Product[]
+      )
+
+      setProductStates(
+        (states || []) as ProductState[]
       )
 
       setLoading(false)
@@ -276,13 +347,39 @@ export default function StorePage() {
       [cart]
     )
 
+  const availableProducts =
+    useMemo(
+      () => {
+        const statesById =
+          new Map(
+            productStates.map(state => [
+              state.id,
+              state.name,
+            ])
+          )
+
+        return products.filter(product =>
+          normalizeText(
+            getProductStateName(
+              product,
+              statesById
+            )
+          ).includes("disponible")
+        )
+      },
+      [
+        productStates,
+        products,
+      ]
+    )
+
   const categories =
     useMemo(
       () => [
         "Todos",
         ...Array.from(
           new Set(
-            products
+            availableProducts
               .map(
                 product =>
                   product.category?.trim()
@@ -293,7 +390,7 @@ export default function StorePage() {
           )
         ),
       ],
-      [products]
+      [availableProducts]
     )
 
   const visibleProducts =
@@ -304,7 +401,7 @@ export default function StorePage() {
             .trim()
             .toLowerCase()
 
-        return products.filter(
+        return availableProducts.filter(
           product => {
             const matchesCategory =
               activeCategory ===
@@ -337,8 +434,20 @@ export default function StorePage() {
       },
       [
         activeCategory,
-        products,
+        availableProducts,
         searchTerm,
+      ]
+    )
+
+  const featuredProduct =
+    useMemo(
+      () =>
+        visibleProducts[0] ||
+        availableProducts[0] ||
+        null,
+      [
+        availableProducts,
+        visibleProducts,
       ]
     )
 
@@ -431,14 +540,129 @@ export default function StorePage() {
       </section>
 
       <section className="mx-auto max-w-7xl px-6 pb-28 pt-10">
-        {products.length === 0 ? (
+        {availableProducts.length === 0 ? (
           <div className="rounded-[32px] border border-zinc-200 bg-white p-10 text-center shadow-sm">
             <p className="text-sm font-black uppercase tracking-[0.24em] text-zinc-400">
-              Sin productos publicados
+              Todavía no hay productos disponibles
+            </p>
+            <p className="mx-auto mt-4 max-w-xl text-sm leading-7 text-zinc-600">
+              La tienda solo muestra productos listos para comprar. Las ideas,
+              productos en producción y validaciones comunitarias permanecen en
+              la web principal hasta entrar en estado Disponible.
             </p>
           </div>
         ) : (
           <>
+            {featuredProduct && (
+              <section className="mb-8 overflow-hidden rounded-[36px] border border-zinc-200 bg-white shadow-[0_30px_100px_rgba(15,23,42,0.10)]">
+                <div className="grid gap-0 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+                  <div className="relative flex min-h-[420px] items-center justify-center overflow-hidden bg-gradient-to-br from-[#fbfbf7] via-white to-[#edf7f4] p-8 md:p-12">
+                    <div className="absolute left-6 top-6 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-emerald-700">
+                      Disponible
+                    </div>
+
+                    <div className="absolute bottom-6 left-6 right-6 rounded-[24px] border border-white bg-white/82 p-4 shadow-sm backdrop-blur">
+                      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-zinc-500">
+                        Lanzamiento oficial
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-zinc-700">
+                        Presentación lista para compra directa y canales
+                        autorizados.
+                      </p>
+                    </div>
+
+                    <div className="relative h-[320px] w-full max-w-[460px]">
+                      <Image
+                        src={getStoreImage(featuredProduct)}
+                        alt={featuredProduct.name}
+                        fill
+                        priority
+                        sizes="(min-width: 1024px) 45vw, 100vw"
+                        className="object-contain drop-shadow-[0_28px_50px_rgba(15,23,42,0.18)]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col justify-center p-7 md:p-10 lg:p-12">
+                    <p className="text-xs font-black uppercase tracking-[0.30em] text-cyan-700">
+                      Producto protagonista
+                    </p>
+
+                    <h2 className="mt-4 max-w-2xl text-4xl font-black leading-[1.02] tracking-[-0.035em] text-zinc-950 md:text-6xl">
+                      {featuredProduct.name}
+                    </h2>
+
+                    <p className="mt-6 max-w-2xl text-base leading-8 text-zinc-600 md:text-lg">
+                      {featuredProduct.main_benefit ||
+                        featuredProduct.description ||
+                        "Producto IMNOVA disponible para apoyar una rutina diaria más simple, saludable y equilibrada."}
+                    </p>
+
+                    <div className="mt-8 grid gap-3 sm:grid-cols-3">
+                      {trustCards.map(card => {
+                        const Icon =
+                          card.icon
+
+                        return (
+                          <div
+                            key={card.title}
+                            className="rounded-[22px] border border-zinc-200 bg-[#f8f8f5] p-4"
+                          >
+                            <Icon className="h-5 w-5 text-cyan-700" />
+                            <p className="mt-4 text-sm font-black text-zinc-950">
+                              {card.title}
+                            </p>
+                            <p className="mt-2 text-xs leading-5 text-zinc-500">
+                              {card.text}
+                            </p>
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    <div className="mt-9 flex flex-col gap-4 border-t border-zinc-200 pt-8 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-400">
+                          Desde
+                        </p>
+                        <p className="mt-1 text-5xl font-black tracking-tight text-zinc-950">
+                          {formatPrice(
+                            featuredProduct.price,
+                            featuredProduct.currency ||
+                              "USD"
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-col gap-3 sm:min-w-56">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            addToCart(featuredProduct)
+                          }
+                          className="rounded-full bg-zinc-950 px-7 py-4 text-sm font-black uppercase tracking-[0.16em] text-white transition hover:-translate-y-0.5 hover:bg-cyan-900"
+                        >
+                          Comprar ahora
+                        </button>
+
+                        <Link
+                          href={
+                            featuredProduct.slug
+                              ? `/store/${featuredProduct.slug}`
+                              : "/store"
+                          }
+                          className="inline-flex items-center justify-center gap-2 rounded-full border border-zinc-200 bg-white px-7 py-4 text-sm font-black uppercase tracking-[0.16em] text-zinc-800 transition hover:border-zinc-300 hover:bg-zinc-50"
+                        >
+                          Ver detalle
+                          <ArrowUpRight className="h-4 w-4" />
+                        </Link>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
+
             <div className="mb-8 overflow-hidden rounded-[32px] border border-zinc-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.07)]">
               <div className="grid gap-6 p-6 md:grid-cols-[1fr_0.9fr] md:p-8">
                 <div>
@@ -500,7 +724,7 @@ export default function StorePage() {
                   <div className="grid grid-cols-3 overflow-hidden rounded-[24px] border border-zinc-200 bg-[#f8f8f5]">
                     {[
                       [
-                        products.length,
+                        availableProducts.length,
                         "Productos",
                       ],
                       [

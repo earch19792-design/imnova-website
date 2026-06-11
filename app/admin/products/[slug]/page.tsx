@@ -90,6 +90,129 @@ type ProductState = {
   progress: number
 }
 
+const officialStateFlow = [
+  "Idea",
+  "Validación",
+  "Priorizado",
+  "Testing",
+  "Producción",
+  "Comercialización",
+  "Disponible",
+]
+
+type StateRecommendation = {
+  currentStateName: string
+  decision: string
+  recommendedStateName: string
+  recommendationTitle: string
+  recommendationDescription: string
+  riskLevel: "success" | "warning" | "danger" | "neutral"
+}
+
+function getNextStateRecommendation({
+  currentStateName,
+  decision,
+}: {
+  currentStateName: string
+  decision: string
+}): StateRecommendation {
+  const normalizedDecision =
+    decision || "pendiente"
+
+  if (normalizedDecision === "avanzar") {
+    const currentIndex =
+      officialStateFlow.indexOf(
+        currentStateName
+      )
+
+    const nextState =
+      currentIndex >= 0
+        ? officialStateFlow[
+            currentIndex + 1
+          ]
+        : officialStateFlow[0]
+
+    if (!nextState) {
+      return {
+        currentStateName,
+        decision: normalizedDecision,
+        recommendedStateName:
+          "Sin siguiente estado",
+        recommendationTitle:
+          "Producto ya esta en etapa final",
+        recommendationDescription:
+          "Este producto ya esta en Disponible. No hay un siguiente estado dentro del flujo oficial.",
+        riskLevel: "success",
+      }
+    }
+
+    return {
+      currentStateName,
+      decision: normalizedDecision,
+      recommendedStateName: nextState,
+      recommendationTitle:
+        "Puede avanzar",
+      recommendationDescription:
+        "Los datos de validacion sugieren que este producto puede avanzar al siguiente estado.",
+      riskLevel: "success",
+    }
+  }
+
+  if (normalizedDecision === "ajustar") {
+    return {
+      currentStateName,
+      decision: normalizedDecision,
+      recommendedStateName:
+        "Mantener en validacion",
+      recommendationTitle:
+        "Requiere ajustes",
+      recommendationDescription:
+        "La idea requiere ajustes antes de avanzar. Revisa nicho, problema humano, beneficio esperado o respuesta de comunidad.",
+      riskLevel: "warning",
+    }
+  }
+
+  if (normalizedDecision === "pausar") {
+    return {
+      currentStateName,
+      decision: normalizedDecision,
+      recommendedStateName:
+        "No avanzar por ahora",
+      recommendationTitle:
+        "Pausar avance",
+      recommendationDescription:
+        "La validacion sugiere pausar este producto hasta obtener mayor interes o nueva evidencia.",
+      riskLevel: "neutral",
+    }
+  }
+
+  if (normalizedDecision === "descartar") {
+    return {
+      currentStateName,
+      decision: normalizedDecision,
+      recommendedStateName:
+        "No avanzar",
+      recommendationTitle:
+        "No continuar por ahora",
+      recommendationDescription:
+        "La validacion indica que esta idea no deberia avanzar por ahora.",
+      riskLevel: "danger",
+    }
+  }
+
+  return {
+    currentStateName,
+    decision: "pendiente",
+    recommendedStateName:
+      "Sin recomendacion",
+    recommendationTitle:
+      "Decision pendiente",
+    recommendationDescription:
+      "Aun no hay decision suficiente para recomendar avance.",
+    riskLevel: "neutral",
+  }
+}
+
 type FormData = {
   name: string
   category: string
@@ -1921,6 +2044,43 @@ export default function ProductDetailPage() {
     formData.state_id !==
     (product.state_id || "")
 
+  const currentValidationDecision =
+    (
+      formData.validation_decision ||
+      product.validation_decision ||
+      "pendiente"
+    ).toLowerCase()
+
+  const stateRecommendation =
+    getNextStateRecommendation({
+      currentStateName:
+        savedState?.name ||
+        "Sin estado",
+      decision:
+        currentValidationDecision,
+    })
+
+  const recommendationVariantClassName =
+    stateRecommendation.riskLevel ===
+    "success"
+      ? "border-emerald-200/20 bg-emerald-200/[0.055] text-emerald-50"
+      : stateRecommendation.riskLevel ===
+          "warning"
+        ? "border-amber-200/20 bg-amber-200/[0.055] text-amber-50"
+        : stateRecommendation.riskLevel ===
+            "danger"
+          ? "border-red-200/20 bg-red-200/[0.055] text-red-50"
+          : "border-cyan-200/15 bg-cyan-200/[0.04] text-cyan-50"
+
+  const shouldWarnStateChange =
+    hasUnsavedStateChange &&
+    [
+      "pendiente",
+      "ajustar",
+      "pausar",
+      "descartar",
+    ].includes(currentValidationDecision)
+
   const suggestedTemplate =
     savedStatusName === "Disponible"
       ? "imnova_product_launch"
@@ -2208,6 +2368,13 @@ export default function ProductDetailPage() {
                     )
                   )}
                 </select>
+
+                {shouldWarnStateChange && (
+                  <p className="mt-4 rounded-2xl border border-amber-200/20 bg-amber-200/[0.06] p-4 text-sm leading-6 text-amber-100">
+                    Revisa la decision de validacion antes de avanzar este
+                    producto.
+                  </p>
+                )}
               </label>
 
               <div className="rounded-3xl border border-cyan-300/15 bg-cyan-300/[0.04] p-5">
@@ -2270,6 +2437,79 @@ export default function ProductDetailPage() {
                   </span>
                 )
               )}
+            </div>
+
+            <div className={`mt-8 rounded-[32px] border p-6 ${recommendationVariantClassName}`}>
+              <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.30em] opacity-70">
+                    Recomendacion de avance
+                  </p>
+                  <h3 className="mt-3 text-2xl font-black text-white">
+                    {stateRecommendation.recommendationTitle}
+                  </h3>
+                  <p className="mt-3 max-w-3xl text-sm leading-6 text-white/65">
+                    {stateRecommendation.recommendationDescription}
+                  </p>
+                </div>
+
+                <div className="rounded-3xl border border-white/10 bg-black/25 p-5">
+                  <p className="text-[10px] uppercase tracking-[0.22em] text-white/40">
+                    Proximo estado sugerido
+                  </p>
+                  <p className="mt-3 text-2xl font-black text-white">
+                    {stateRecommendation.recommendedStateName}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-4 md:grid-cols-5">
+                {[
+                  [
+                    "Decision",
+                    stateRecommendation.decision,
+                  ],
+                  [
+                    "Estado actual",
+                    stateRecommendation.currentStateName,
+                  ],
+                  [
+                    "Interes encuesta",
+                    formData.survey_score
+                      ? `${formData.survey_score}%`
+                      : "Pendiente",
+                  ],
+                  [
+                    "Respuestas",
+                    formData.survey_votes || "0",
+                  ],
+                  [
+                    "Senal social",
+                    formData.social_interest_score
+                      ? `${formData.social_interest_score}%`
+                      : "Pendiente",
+                  ],
+                ].map(
+                  ([label, value]) => (
+                    <div
+                      key={label}
+                      className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                    >
+                      <p className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                        {label}
+                      </p>
+                      <p className="mt-2 text-sm font-bold uppercase tracking-[0.12em] text-white">
+                        {value}
+                      </p>
+                    </div>
+                  )
+                )}
+              </div>
+
+              <p className="mt-5 rounded-2xl border border-white/10 bg-black/25 p-4 text-sm leading-6 text-white/60">
+                El cambio de estado sigue siendo manual. Esta recomendacion no
+                modifica el pipeline.
+              </p>
             </div>
 
             <div className="mt-8 grid gap-5 lg:grid-cols-2">

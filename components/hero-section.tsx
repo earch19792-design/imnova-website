@@ -16,6 +16,10 @@ import {
 
 import {
   ChevronDown,
+  MapPin,
+  ShoppingBag,
+  Sparkles,
+  UsersRound,
 } from "lucide-react"
 
 const heroImages = [
@@ -38,7 +42,38 @@ const officialPillars = [
   {
     label: "Cómo evoluciona",
     text:
-      "Cada producto avanza por estados definidos: idea, producción, disponibilidad, canales de compra y experiencia de uso.",
+      "Cada producto avanza por validación comunitaria, producción, disponibilidad, canales de compra y experiencia de uso.",
+  },
+]
+
+const heroJourney = [
+  {
+    label: "Quiénes somos",
+    title: "IMNOVA",
+    text: "Tecnología, nutrición y bienestar aplicados a soluciones reales para la rutina diaria.",
+    href: "#hero",
+    icon: Sparkles,
+  },
+  {
+    label: "Compra hoy",
+    title: "Lanzamientos",
+    text: "Productos disponibles con presentación clara, precio y acceso directo a compra.",
+    href: "#available-now",
+    icon: ShoppingBag,
+  },
+  {
+    label: "Dónde comprar",
+    title: "Canales",
+    text: "Encuentra store, marketplaces o distribuidores autorizados cerca de ti.",
+    href: "#where-to-buy",
+    icon: MapPin,
+  },
+  {
+    label: "Lo que viene",
+    title: "Comunidad",
+    text: "Participa en ideas que se validan antes de convertirse en productos IMNOVA.",
+    href: "#innovations",
+    icon: UsersRound,
   },
 ]
 
@@ -578,6 +613,58 @@ export function HeroSection() {
               >
                 Ideas de uso
               </a>
+
+              <a
+                href="#innovations"
+                className="inline-flex items-center justify-center rounded-2xl border border-amber-200/20 bg-amber-200/[0.10] px-6 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-amber-50 transition hover:border-amber-200/40 hover:bg-amber-200/[0.16]"
+              >
+                Participar
+              </a>
+            </motion.div>
+
+            <motion.div
+              initial={{
+                opacity: 0,
+                y: 24,
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+              }}
+              transition={{
+                duration: 1,
+                delay: 0.64,
+              }}
+              className="mt-7 grid max-w-5xl gap-3 sm:grid-cols-2 xl:grid-cols-4"
+            >
+              {heroJourney.map(item => {
+                const Icon =
+                  item.icon
+
+                return (
+                  <a
+                    key={item.title}
+                    href={item.href}
+                    className="group rounded-[22px] border border-white/10 bg-black/48 p-4 text-left shadow-[0_22px_80px_rgba(0,0,0,0.22)] backdrop-blur-2xl transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-white/[0.055]"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan-200/15 bg-cyan-300/[0.10] text-cyan-100 transition group-hover:border-cyan-200/35 group-hover:bg-cyan-300/[0.16]">
+                        <Icon className="h-4 w-4" />
+                      </span>
+                      <span className="text-[9px] font-black uppercase tracking-[0.24em] text-cyan-100/65">
+                        {item.label}
+                      </span>
+                    </div>
+
+                    <p className="mt-4 text-sm font-black uppercase tracking-[0.12em] text-white">
+                      {item.title}
+                    </p>
+                    <p className="mt-2 text-xs leading-5 text-white/58">
+                      {item.text}
+                    </p>
+                  </a>
+                )
+              })}
             </motion.div>
 
           </div>

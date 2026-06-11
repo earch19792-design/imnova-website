@@ -4,10 +4,13 @@ import { useState } from "react"
 
 import {
   ArrowUpRight,
+  Gift,
   CheckCircle2,
   MessageCircle,
+  Radio,
   Sparkles,
   UsersRound,
+  Vote,
 } from "lucide-react"
 
 import { Footer } from "@/components/footer"
@@ -76,51 +79,71 @@ export default function IMNOVAPage() {
               </div>
 
               <h2 className="mt-8 max-w-4xl text-4xl font-black leading-[1.02] tracking-[-0.045em] text-white md:text-6xl lg:text-7xl">
-                Sé parte de lo que IMNOVA construye antes de que llegue al
-                mercado.
+                La comunidad que ayuda a decidir lo próximo.
               </h2>
 
               <p className="mt-7 max-w-3xl text-base leading-8 text-zinc-400 md:text-lg">
-                Recibe avances, responde ideas en validación y ayuda a decidir
-                qué soluciones realmente merecen convertirse en productos para
-                la rutina diaria.
+                En IMNOVA las ideas no avanzan por intuición: se validan con
+                personas reales. Elegí tus intereses, respondé encuestas y ayudá
+                a decidir qué productos merecen pasar de idea a desarrollo.
               </p>
 
               <div className="mt-9 grid gap-3 sm:grid-cols-3">
                 {[
                   {
-                    icon: Sparkles,
-                    label: "Ideas antes del lanzamiento",
+                    icon: Vote,
+                    label: "Votá ideas antes del mercado",
+                    text: "Tu respuesta puede impulsar una solución al siguiente estado.",
                   },
                   {
                     icon: MessageCircle,
-                    label: "Encuestas por web y WhatsApp",
+                    label: "Web, WhatsApp y redes",
+                    text: "Recibí encuestas y avances según los temas que elegís.",
                   },
                   {
-                    icon: CheckCircle2,
-                    label: "Participa en la validación",
+                    icon: Gift,
+                    label: "Acceso de miembro",
+                    text: "Enterate primero de pruebas, lanzamientos y beneficios.",
                   },
                 ].map(item => (
                   <div
                     key={item.label}
-                    className="rounded-3xl border border-white/10 bg-black/35 p-5"
+                    className="rounded-3xl border border-white/10 bg-black/35 p-5 transition-all duration-300 hover:border-cyan-200/25 hover:bg-cyan-300/[0.06]"
                   >
                     <item.icon className="h-5 w-5 text-cyan-100" />
                     <p className="mt-4 text-xs font-semibold uppercase leading-6 tracking-[0.14em] text-white/70">
                       {item.label}
                     </p>
+                    <p className="mt-3 text-sm leading-6 text-zinc-500">
+                      {item.text}
+                    </p>
                   </div>
                 ))}
               </div>
 
-              <button
-                type="button"
-                onClick={openCommunity}
-                className="group mt-10 inline-flex items-center justify-center gap-3 rounded-3xl border border-cyan-200/25 bg-cyan-300/[0.12] px-8 py-5 text-xs font-black uppercase tracking-[0.18em] text-cyan-50 transition-all duration-500 hover:-translate-y-0.5 hover:border-cyan-200/45 hover:bg-cyan-300/[0.18]"
-              >
-                Quiero participar
-                <ArrowUpRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
-              </button>
+              <div className="mt-10 flex flex-col gap-3 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={openCommunity}
+                  className="group inline-flex items-center justify-center gap-3 rounded-3xl border border-cyan-200/25 bg-cyan-300/[0.14] px-8 py-5 text-xs font-black uppercase tracking-[0.18em] text-cyan-50 transition-all duration-500 hover:-translate-y-0.5 hover:border-cyan-200/45 hover:bg-cyan-300/[0.20]"
+                >
+                  Entrar a la comunidad
+                  <ArrowUpRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                </button>
+
+                <a
+                  href="#innovations"
+                  className="inline-flex items-center justify-center gap-3 rounded-3xl border border-white/10 bg-white/[0.035] px-8 py-5 text-xs font-black uppercase tracking-[0.18em] text-white/70 transition-all duration-500 hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/[0.07] hover:text-white"
+                >
+                  Ver ideas activas
+                  <Sparkles className="h-4 w-4" />
+                </a>
+              </div>
+
+              <p className="mt-5 max-w-2xl text-xs uppercase leading-6 tracking-[0.18em] text-zinc-600">
+                Sin spam. Solo avances, encuestas y oportunidades conectadas a
+                tus intereses.
+              </p>
             </div>
 
             <div className="relative border-t border-white/10 bg-black/25 p-8 md:p-12 lg:border-l lg:border-t-0">
@@ -129,14 +152,14 @@ export default function IMNOVAPage() {
               <div className="relative z-10 grid h-full content-center gap-5">
                 <div className="rounded-[28px] border border-cyan-200/15 bg-cyan-300/[0.07] p-6">
                   <p className="text-[10px] uppercase tracking-[0.28em] text-cyan-100/60">
-                    Cómo funciona
+                    Cómo participa la comunidad
                   </p>
 
                   <div className="mt-6 grid gap-4">
                     {[
-                      "Elige los nichos que te interesan.",
-                      "Recibe ideas y avances relevantes.",
-                      "Tu respuesta ayuda a decidir qué sigue.",
+                      "Elegís los nichos y problemas que más te importan.",
+                      "IMNOVA te muestra ideas, prototipos y encuestas reales.",
+                      "La señal de la comunidad ayuda a decidir si avanza, se ajusta o se pausa.",
                     ].map((item, index) => (
                       <div
                         key={item}
@@ -154,16 +177,54 @@ export default function IMNOVAPage() {
                 </div>
 
                 <div className="rounded-[28px] border border-white/10 bg-black/35 p-6">
-                  <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">
-                    Canal de participación
+                  <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">
+                    Intereses que podés elegir
                   </p>
-                  <p className="mt-3 text-2xl font-black text-white">
-                    Web + WhatsApp
-                  </p>
-                  <p className="mt-3 text-sm leading-6 text-zinc-500">
-                    La comunidad puede responder desde la página o recibir
-                    actualizaciones según el nicho elegido.
-                  </p>
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    {[
+                      "Energía y enfoque",
+                      "Fitness",
+                      "Nutrición inteligente",
+                      "Belleza funcional",
+                      "Bienestar diario",
+                      "Innovación",
+                    ].map(item => (
+                      <span
+                        key={item}
+                        className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60"
+                      >
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {[
+                    {
+                      icon: Radio,
+                      label: "Señales reales",
+                      value: "Encuestas + redes",
+                    },
+                    {
+                      icon: CheckCircle2,
+                      label: "Decisión IMNOVA",
+                      value: "Avanzar o ajustar",
+                    },
+                  ].map(item => (
+                    <div
+                      key={item.label}
+                      className="rounded-[26px] border border-white/10 bg-black/35 p-5"
+                    >
+                      <item.icon className="h-5 w-5 text-cyan-100" />
+                      <p className="mt-5 text-[10px] uppercase tracking-[0.22em] text-zinc-500">
+                        {item.label}
+                      </p>
+                      <p className="mt-2 text-lg font-black text-white">
+                        {item.value}
+                      </p>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>

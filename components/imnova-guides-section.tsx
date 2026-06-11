@@ -59,6 +59,9 @@ type UsageGuide = {
   name: string
   category: string
   status: string
+  storyTitle: string
+  storyDescription: string
+  desireLine: string
   moment: string
   howToUse: string
   benefits: string[]
@@ -73,6 +76,7 @@ type UsageGuide = {
   href: string
   icon: LucideIcon
   accent: "cyan" | "amber" | "emerald"
+  ctaMicrocopy: string
 }
 
 type ImnovaGuidesSectionProps = {
@@ -623,6 +627,149 @@ function getPracticalBenefits(
   )
 }
 
+function getGuideStory(
+  product: Product
+) {
+  const profile =
+    getProductProfile(product)
+
+  const mainBenefit =
+    getFirstText([
+      product.main_benefit,
+      product.description,
+    ])
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "coffee",
+        "cafe",
+        "caf",
+      ]
+    )
+  ) {
+    const isSixPack =
+      profileIncludes(
+        profile,
+        [
+          "6 pack",
+          "6pack",
+          "6 latas",
+        ]
+      )
+
+    const isTwelvePack =
+      profileIncludes(
+        profile,
+        [
+          "12 pack",
+          "12pack",
+          "12 latas",
+        ]
+      )
+
+    if (isTwelvePack) {
+      return {
+        storyTitle:
+          "Tu ritual funcional listo para varios días.",
+        storyDescription:
+          mainBenefit ||
+          "Abastece tu rutina con café funcional, colágeno marino, vitaminas y cero azúcar para acompañar tus mañanas de enfoque.",
+        desireLine:
+          "Pensado para quienes ya integraron MASH Coffee+ a su día y quieren tenerlo siempre a mano.",
+        ctaMicrocopy:
+          "Abastece tu rutina funcional.",
+      }
+    }
+
+    if (isSixPack) {
+      return {
+        storyTitle:
+          "Una semana de café funcional sin complicarte.",
+        storyDescription:
+          mainBenefit ||
+          "Seis latas listas para acompañar mañanas de oficina, estudio o rutina activa con café, colágeno marino y vitaminas.",
+        desireLine:
+          "Ideal para probar el hábito y convertir tu café en un momento más inteligente del día.",
+        ctaMicrocopy:
+          "Empieza tu semana funcional.",
+      }
+    }
+
+    return {
+      storyTitle:
+        "Convierte tu café diario en un ritual funcional.",
+      storyDescription:
+        mainBenefit ||
+        "Café latte listo con 10g de colágeno marino, vitaminas B6, B12 y D3, extractos botánicos y cero azúcar.",
+      desireLine:
+        "Para quienes quieren café, enfoque y cuidado diario sin convertir su rutina en algo complicado.",
+      ctaMicrocopy:
+        "Empieza con MASH Coffee+ hoy.",
+    }
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "pancake",
+        "waffle",
+      ]
+    )
+  ) {
+    return {
+      storyTitle:
+        "Un desayuno alto en proteína que se siente como premio.",
+      storyDescription:
+        mainBenefit ||
+        "Prepara pancakes o waffles suaves, ricos y funcionales para desayunar mejor sin renunciar al sabor.",
+      desireLine:
+        "Para quienes quieren cuidarse, rendir mejor y seguir disfrutando un desayuno que provoca.",
+      ctaMicrocopy:
+        "Prepara tu próximo desayuno IMNOVA.",
+    }
+  }
+
+  if (
+    profileIncludes(
+      profile,
+      [
+        "pan",
+        "bread",
+        "nutra",
+        "konjac",
+        "carbo",
+      ]
+    )
+  ) {
+    return {
+      storyTitle:
+        "El pan vuelve a encajar en tu rutina.",
+      storyDescription:
+        mainBenefit ||
+        "Pan casero alto en proteína, alto en fibra y bajo en carbohidratos para tostadas, sándwiches y comidas simples.",
+      desireLine:
+        "Para quienes extrañan el pan, pero quieren una opción más alineada con una rutina inteligente.",
+      ctaMicrocopy:
+        "Vuelve a disfrutar pan funcional.",
+    }
+  }
+
+  return {
+    storyTitle:
+      "Integra bienestar real a tu rutina diaria.",
+    storyDescription:
+      mainBenefit ||
+      "Una solución IMNOVA diseñada para acompañar momentos reales con uso simple y beneficios claros.",
+    desireLine:
+      "Para personas que buscan productos prácticos, modernos y fáciles de adoptar.",
+    ctaMicrocopy:
+      "Empieza tu rutina IMNOVA.",
+  }
+}
+
 function getGuideIcon(
   product: Product
 ) {
@@ -998,7 +1145,7 @@ function LifestyleVisual({
     <div
       className={`relative overflow-hidden rounded-[28px] border border-white/10 bg-black/55 ${
         isLifestyleGallery
-          ? "min-h-0 self-start"
+          ? "h-fit min-h-0 self-start lg:sticky lg:top-28"
           : "min-h-[320px] md:min-h-[420px]"
       }`}
     >
@@ -1032,7 +1179,7 @@ function LifestyleVisual({
       <div
         className={`relative z-10 flex items-center justify-center px-5 pt-20 md:px-10 ${
           isLifestyleGallery
-            ? "min-h-0 pb-8"
+            ? "min-h-0 pb-6"
             : "min-h-[320px] pb-24 md:min-h-[420px]"
         }`}
       >
@@ -1053,7 +1200,7 @@ function LifestyleVisual({
               src={mainVisualImage}
               alt={guide.sceneLabel}
               loading={priority ? "eager" : "lazy"}
-              className="max-h-[300px] w-full max-w-[94%] rounded-[26px] object-contain object-center shadow-[0_28px_90px_rgba(0,0,0,0.50)] md:max-h-[340px] md:max-w-[90%]"
+              className="max-h-[260px] w-full max-w-[94%] rounded-[26px] object-contain object-center shadow-[0_28px_90px_rgba(0,0,0,0.50)] md:max-h-[320px] md:max-w-[90%]"
             />
 
             {sceneImages.length > 1 && (
@@ -1218,7 +1365,7 @@ function ProductGuideCard({
       />
       <div className="absolute inset-0 bg-gradient-to-r from-black/88 via-black/70 to-black/82" />
 
-      <div className="relative z-10 grid gap-8 lg:grid-cols-[0.95fr_1.05fr] lg:items-stretch">
+      <div className="relative z-10 grid gap-8 lg:grid-cols-[0.95fr_1.05fr] lg:items-start">
         <LifestyleVisual
           guide={guide}
           priority={index === 0}
@@ -1438,6 +1585,9 @@ export function ImnovaGuidesSection({
               const guideImage =
                 getGuideImage(product)
 
+              const guideStory =
+                getGuideStory(product)
+
               return {
                 id:
                   product.id,
@@ -1447,6 +1597,12 @@ export function ImnovaGuidesSection({
                   product.category ||
                   "Producto IMNOVA",
                 status,
+                storyTitle:
+                  guideStory.storyTitle,
+                storyDescription:
+                  guideStory.storyDescription,
+                desireLine:
+                  guideStory.desireLine,
                 moment:
                   getUsageMoment(product),
                 howToUse:
@@ -1477,6 +1633,8 @@ export function ImnovaGuidesSection({
                   getGuideIcon(product),
                 accent:
                   getGuideAccent(product),
+                ctaMicrocopy:
+                  guideStory.ctaMicrocopy,
               }
             }
           )
@@ -1557,8 +1715,8 @@ export function ImnovaGuidesSection({
           </h2>
 
           <p className="mx-auto mt-6 max-w-2xl text-base leading-8 text-zinc-400">
-            Muy pronto compartiremos formas simples de integrar productos
-            IMNOVA disponibles en rutinas reales.
+            Cuando un producto esté disponible, aquí verás cómo entra en una
+            rutina real y por qué puede valer la pena comprarlo.
           </p>
         </div>
       </section>
@@ -1600,13 +1758,48 @@ export function ImnovaGuidesSection({
           </h2>
 
           <p className="mx-auto mt-7 max-w-3xl text-lg leading-8 text-zinc-400">
-            Descubre formas simples de preparar, combinar y disfrutar los
-            productos IMNOVA en tu rutina diaria. Cada idea está diseñada para
-            conectar el producto con momentos reales de tu día, mostrando cómo
-            usarlo fácilmente y qué beneficios puede aportar a tu estilo de
-            vida.
+            Mira cómo cada producto disponible puede entrar en tu día: qué
+            problema resuelve, cómo se prepara, qué aporta a tu rutina y por
+            qué puede convertirse en una compra útil desde el primer uso.
           </p>
         </motion.div>
+
+        <div className="mx-auto mt-10 grid max-w-5xl gap-3 sm:grid-cols-3">
+          {[
+            [
+              "01",
+              "Elige tu momento",
+              "Mañana, oficina, gym, desayuno o snack.",
+            ],
+            [
+              "02",
+              "Úsalo fácil",
+              "Preparaciones simples, claras y repetibles.",
+            ],
+            [
+              "03",
+              "Compra con intención",
+              "Beneficios visibles antes de ir a la tienda.",
+            ],
+          ].map(
+            item => (
+              <div
+                key={item[0]}
+                className="rounded-[24px] border border-white/10 bg-white/[0.035] p-5 text-left backdrop-blur-xl"
+              >
+                <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/70">
+                  {item[0]}
+                </p>
+                <p className="mt-3 text-lg font-black text-white">
+                  {item[1]}
+                </p>
+                <p className="mt-2 text-sm leading-6 text-zinc-400">
+                  {item[2]}
+                </p>
+              </div>
+            )
+          )}
+        </div>
 
         {productGuides.length > 1 && (
           <div className="mt-12 rounded-[30px] border border-white/10 bg-white/[0.035] p-4 shadow-[0_24px_90px_rgba(0,0,0,0.35)] backdrop-blur-2xl md:p-5">
@@ -1616,8 +1809,8 @@ export function ImnovaGuidesSection({
                   Productos disponibles
                 </p>
                 <p className="mt-2 text-sm leading-6 text-zinc-400">
-                  Selecciona un producto para ver su forma de uso, rutina y
-                  beneficios antes de comprar.
+                  Selecciona un producto y mira su historia de uso: momento,
+                  beneficio, preparación y compra directa.
                 </p>
               </div>
 
@@ -1723,20 +1916,46 @@ export function ImnovaGuidesSection({
             />
             <div className="absolute inset-0 bg-gradient-to-r from-black/88 via-black/70 to-black/82" />
 
-            <div className="relative z-10 grid gap-8 lg:grid-cols-[0.95fr_1.05fr] lg:items-stretch">
+            <div className="relative z-10 grid gap-8 lg:grid-cols-[0.95fr_1.05fr] lg:items-start">
               <LifestyleVisual
                 guide={featuredGuide}
                 priority
               />
 
               <div className="flex flex-col justify-center py-2 lg:py-8">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.30em] text-white/50">
-                  {featuredGuide.category}
-                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <p className="rounded-full border border-white/10 bg-white/[0.045] px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-white/55">
+                    {featuredGuide.category}
+                  </p>
+                  <p
+                    className={`rounded-full border px-4 py-2 text-[10px] font-black uppercase tracking-[0.22em] ${getAccentClasses(featuredGuide.accent).badge}`}
+                  >
+                    Disponible para comprar
+                  </p>
+                </div>
 
                 <h3 className="mt-4 text-4xl font-black leading-tight text-white md:text-6xl">
                   {featuredGuide.name}
                 </h3>
+
+                <p
+                  className={`mt-5 text-2xl font-black leading-tight md:text-4xl ${getAccentClasses(featuredGuide.accent).text}`}
+                >
+                  {featuredGuide.storyTitle}
+                </p>
+
+                <p className="mt-5 max-w-3xl text-base leading-8 text-zinc-300 md:text-lg">
+                  {featuredGuide.storyDescription}
+                </p>
+
+                <div className="mt-6 rounded-[24px] border border-white/10 bg-white/[0.045] p-5">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/45">
+                    Por qué puede gustarte
+                  </p>
+                  <p className="mt-3 text-base leading-7 text-white/85">
+                    {featuredGuide.desireLine}
+                  </p>
+                </div>
 
                 <div className="mt-7 grid gap-4 sm:grid-cols-2">
                   <div className="rounded-[24px] border border-white/10 bg-black/30 p-5">
@@ -1766,7 +1985,7 @@ export function ImnovaGuidesSection({
                   <p
                     className={`mb-3 text-[10px] font-semibold uppercase tracking-[0.24em] ${getAccentClasses(featuredGuide.accent).text}`}
                   >
-                    Beneficios prácticos
+                    Lo que suma a tu rutina
                   </p>
                   <BenefitChips
                     benefits={featuredGuide.benefits}
@@ -1815,9 +2034,16 @@ export function ImnovaGuidesSection({
                 <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
                   <Link
                     href={featuredGuide.href}
-                    className={`inline-flex items-center justify-center gap-3 rounded-2xl border px-6 py-4 text-xs font-black uppercase tracking-[0.18em] transition ${getAccentClasses(featuredGuide.accent).button}`}
+                    className={`inline-flex items-center justify-center gap-3 rounded-2xl border px-6 py-4 text-left transition ${getAccentClasses(featuredGuide.accent).button}`}
                   >
-                    Comprar ahora
+                    <span className="flex flex-col">
+                      <span className="text-xs font-black uppercase tracking-[0.18em]">
+                        Comprar ahora
+                      </span>
+                      <span className="mt-1 text-[11px] font-semibold normal-case tracking-normal opacity-75">
+                        {featuredGuide.ctaMicrocopy}
+                      </span>
+                    </span>
                     <ArrowUpRight className="h-4 w-4" />
                   </Link>
 

@@ -782,7 +782,7 @@ objetivo_principal:
                     "
                   >
 
-                    IMNOVA ACCESS
+                    COMUNIDAD IMNOVA
 
                   </span>
 
@@ -800,7 +800,7 @@ objetivo_principal:
                   "
                 >
 
-                  Entrá al Futuro
+                  Decidí lo próximo
 
                   <span
                     className="
@@ -923,7 +923,7 @@ objetivo_principal:
                       "
                     >
 
-                      ¿Ya sos parte de IMNOVA™?
+                      ¿Ya sos parte de la comunidad IMNOVA™?
 
                     </p>
 
@@ -988,7 +988,7 @@ objetivo_principal:
                   {
                     isLogin
                       ? "Bienvenido de nuevo"
-                      : "Activá tu acceso IMNOVA™"
+                      : "Elegí tus intereses IMNOVA™"
                   }
 
                 </h3>
@@ -1081,7 +1081,7 @@ objetivo_principal:
 
     <p className="mt-3 text-cyan-100/80">
       Canal detectado: página web. Tu WhatsApp queda registrado para recibir
-      avances según el nicho que elegiste.
+      encuestas y avances según el nicho que elegiste.
     </p>
 
   </div>
@@ -1234,7 +1234,7 @@ objetivo_principal:
   >
 
     <option value="">
-      🎯 ¿Cuál es tu objetivo principal?
+      🎯 ¿Qué querés mejorar o descubrir primero?
     </option>
 
     {surveyIntent && (
@@ -1467,7 +1467,7 @@ setTimeout(() => {
       ? "PROCESANDO..."
       : isLogin
         ? "INICIAR SESIÓN"
-        : "ACTIVAR MI ACCESO"
+        : "UNIRME A LA COMUNIDAD"
   }
 
 </button>               {/* SUCCESS */}
@@ -1494,7 +1494,7 @@ setTimeout(() => {
                     "
                   >
 
-                    ✓ Acceso activado correctamente.
+                    ✓ Ya sos parte de la comunidad IMNOVA.
 
                   </motion.div>
 

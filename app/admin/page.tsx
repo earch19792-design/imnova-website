@@ -40,6 +40,12 @@ type Product = {
   direct_url?: string
   bullets?: string[]
   featured?: boolean
+  survey_score?: number | null
+  survey_votes?: number | null
+  social_interest_score?: number | null
+  survey_status?: string | null
+  validation_status?: string | null
+  validation_decision?: string | null
 
   theme?: {
     border: string
@@ -63,6 +69,50 @@ type Campaign = {
   channel: string
   status: string
   leads: number
+}
+
+function normalizeValidationValue(
+  value?: string | null
+) {
+  return (
+    value || "pendiente"
+  )
+    .toLowerCase()
+    .trim()
+}
+
+function getValidNumber(
+  value?: number | null
+) {
+  return typeof value === "number" &&
+    Number.isFinite(value)
+    ? value
+    : null
+}
+
+function getAverage(
+  values: Array<number | null>
+) {
+  const validValues =
+    values.filter(
+      (value): value is number =>
+        value !== null
+    )
+
+  if (validValues.length === 0) {
+    return null
+  }
+
+  const total =
+    validValues.reduce(
+      (sum, value) =>
+        sum + value,
+      0
+    )
+
+  return Math.round(
+    total / validValues.length
+  )
 }
 
 export default function AdminPage() {
@@ -358,6 +408,280 @@ export default function AdminPage() {
         productStates,
         stateCounts,
       ]
+    )
+
+  const validationSummary =
+    useMemo(
+      () => {
+        const surveyScores =
+          liveProducts.map(
+            (product) =>
+              getValidNumber(
+                product.survey_score
+              )
+          )
+
+        const socialScores =
+          liveProducts.map(
+            (product) =>
+              getValidNumber(
+                product.social_interest_score
+              )
+          )
+
+        const totalVotes =
+          liveProducts.reduce(
+            (total, product) => {
+              const votes =
+                getValidNumber(
+                  product.survey_votes
+                )
+
+              return total + (votes || 0)
+            },
+            0
+          )
+
+        const hasValidationData =
+          liveProducts.some(
+            (product) => {
+              const decision =
+                normalizeValidationValue(
+                  product.validation_decision
+                )
+
+              const status =
+                normalizeValidationValue(
+                  product.validation_status
+                )
+
+              const surveyStatus =
+                normalizeValidationValue(
+                  product.survey_status
+                )
+
+              return (
+                decision !== "pendiente" ||
+                status !== "pendiente" ||
+                surveyStatus !== "pendiente" ||
+                getValidNumber(
+                  product.survey_score
+                ) !== null ||
+                getValidNumber(
+                  product.social_interest_score
+                ) !== null ||
+                (getValidNumber(
+                  product.survey_votes
+                ) || 0) > 0
+              )
+            }
+          )
+
+        return {
+          pendingDecision:
+            liveProducts.filter(
+              (product) =>
+                normalizeValidationValue(
+                  product.validation_decision
+                ) === "pendiente"
+            ).length,
+          readyToAdvance:
+            liveProducts.filter(
+              (product) =>
+                normalizeValidationValue(
+                  product.validation_decision
+                ) === "avanzar"
+            ).length,
+          needsAdjustment:
+            liveProducts.filter(
+              (product) =>
+                normalizeValidationValue(
+                  product.validation_decision
+                ) === "ajustar"
+            ).length,
+          paused:
+            liveProducts.filter(
+              (product) =>
+                normalizeValidationValue(
+                  product.validation_decision
+                ) === "pausar"
+            ).length,
+          discarded:
+            liveProducts.filter(
+              (product) =>
+                normalizeValidationValue(
+                  product.validation_decision
+                ) === "descartar"
+            ).length,
+          highInterest:
+            liveProducts.filter(
+              (product) =>
+                normalizeValidationValue(
+                  product.validation_status
+                ) === "interes_alto"
+            ).length,
+          activeSurveys:
+            liveProducts.filter(
+              (product) =>
+                normalizeValidationValue(
+                  product.survey_status
+                ) === "activa"
+            ).length,
+          averageSurveyScore:
+            getAverage(surveyScores),
+          averageSocialScore:
+            getAverage(socialScores),
+          totalVotes,
+          hasValidationData,
+        }
+      },
+      [liveProducts]
+    )
+
+  const validationCards =
+    [
+      {
+        label: "Pendientes",
+        value:
+          validationSummary.pendingDecision,
+      },
+      {
+        label: "Avanzar",
+        value:
+          validationSummary.readyToAdvance,
+      },
+      {
+        label: "Ajustar",
+        value:
+          validationSummary.needsAdjustment,
+      },
+      {
+        label: "Pausadas",
+        value:
+          validationSummary.paused,
+      },
+      {
+        label: "Interes alto",
+        value:
+          validationSummary.highInterest,
+      },
+      {
+        label: "Encuestas activas",
+        value:
+          validationSummary.activeSurveys,
+      },
+      {
+        label: "Interes promedio",
+        value:
+          validationSummary.averageSurveyScore ===
+          null
+            ? "N/A"
+            : `${validationSummary.averageSurveyScore}%`,
+      },
+      {
+        label: "Respuestas",
+        value:
+          validationSummary.totalVotes,
+      },
+    ]
+
+  const validationActionGroups =
+    useMemo(
+      () => {
+        const sortActionProducts =
+          (products: Product[]) =>
+            [...products]
+              .sort(
+                (
+                  productA,
+                  productB
+                ) => {
+                  const scoreA =
+                    getValidNumber(
+                      productA.survey_score
+                    ) || 0
+
+                  const scoreB =
+                    getValidNumber(
+                      productB.survey_score
+                    ) || 0
+
+                  const votesA =
+                    getValidNumber(
+                      productA.survey_votes
+                    ) || 0
+
+                  const votesB =
+                    getValidNumber(
+                      productB.survey_votes
+                    ) || 0
+
+                  return (
+                    scoreB - scoreA ||
+                    votesB - votesA ||
+                    productA.name.localeCompare(
+                      productB.name
+                    )
+                  )
+                }
+              )
+              .slice(0, 3)
+
+        return [
+          {
+            title:
+              "Listos para avanzar",
+            description:
+              "Revisar siguiente etapa operativa.",
+            accentClassName:
+              "border-emerald-200/20 bg-emerald-200/[0.045]",
+            products:
+              sortActionProducts(
+                liveProducts.filter(
+                  (product) =>
+                    normalizeValidationValue(
+                      product.validation_decision
+                    ) === "avanzar"
+                )
+              ),
+          },
+          {
+            title:
+              "Pendientes de decision",
+            description:
+              "Necesitan lectura o cierre estrategico.",
+            accentClassName:
+              "border-amber-200/20 bg-amber-200/[0.045]",
+            products:
+              sortActionProducts(
+                liveProducts.filter(
+                  (product) =>
+                    normalizeValidationValue(
+                      product.validation_decision
+                    ) === "pendiente"
+                )
+              ),
+          },
+          {
+            title:
+              "Requieren ajuste",
+            description:
+              "Revisar propuesta antes de avanzar.",
+            accentClassName:
+              "border-cyan-200/20 bg-cyan-200/[0.04]",
+            products:
+              sortActionProducts(
+                liveProducts.filter(
+                  (product) =>
+                    normalizeValidationValue(
+                      product.validation_decision
+                    ) === "ajustar"
+                )
+              ),
+          },
+        ]
+      },
+      [liveProducts]
     )
 
   const dashboardProducts =
@@ -759,6 +1083,513 @@ export default function AdminPage() {
                 states={productStates}
                    />
               </div>
+
+              <section
+                className="
+                  mt-8
+                  rounded-[34px]
+                  border
+                  border-white/10
+                  bg-white/[0.03]
+                  p-8
+                  backdrop-blur-md
+                "
+              >
+
+                <div
+                  className="
+                    flex
+                    flex-col
+                    gap-4
+                    lg:flex-row
+                    lg:items-start
+                    lg:justify-between
+                  "
+                >
+
+                  <div>
+
+                    <p
+                      className="
+                        text-[10px]
+                        uppercase
+                        tracking-[0.35em]
+                        text-amber-200/60
+                      "
+                    >
+                      Validacion comunitaria
+                    </p>
+
+                    <h2
+                      className="
+                        mt-4
+                        text-4xl
+                        font-black
+                        tracking-[-0.04em]
+                        text-white
+                      "
+                    >
+                      Senales antes de avanzar
+                    </h2>
+
+                    <p
+                      className="
+                        mt-4
+                        max-w-3xl
+                        text-sm
+                        leading-6
+                        text-white/50
+                      "
+                    >
+                      Resumen de decisiones, encuestas y senales de interes
+                      antes de avanzar productos.
+                    </p>
+
+                  </div>
+
+                  <div
+                    className="
+                      rounded-2xl
+                      border
+                      border-cyan-300/15
+                      bg-cyan-300/[0.05]
+                      px-5
+                      py-4
+                      text-right
+                    "
+                  >
+                    <p
+                      className="
+                        text-[10px]
+                        uppercase
+                        tracking-[0.25em]
+                        text-cyan-100/60
+                      "
+                    >
+                      Senal social promedio
+                    </p>
+
+                    <p
+                      className="
+                        mt-2
+                        text-3xl
+                        font-black
+                        text-cyan-100
+                      "
+                    >
+                      {
+                        validationSummary.averageSocialScore ===
+                        null
+                          ? "N/A"
+                          : `${validationSummary.averageSocialScore}%`
+                      }
+                    </p>
+                  </div>
+
+                </div>
+
+                {
+                  liveProducts.length === 0 ? (
+
+                    <p
+                      className="
+                        mt-6
+                        rounded-2xl
+                        border
+                        border-white/10
+                        bg-black/20
+                        p-5
+                        text-sm
+                        leading-6
+                        text-white/50
+                      "
+                    >
+                      No hay datos de validacion comunitaria todavia.
+                    </p>
+
+                  ) : (
+
+                    <>
+
+                      {
+                        !validationSummary.hasValidationData && (
+
+                          <p
+                            className="
+                              mt-6
+                              rounded-2xl
+                              border
+                              border-white/10
+                              bg-black/20
+                              p-5
+                              text-sm
+                              leading-6
+                              text-white/50
+                            "
+                          >
+                            Cuando registres encuestas, respuestas o senales
+                            sociales, el resumen aparecera aqui.
+                          </p>
+
+                        )
+                      }
+
+                      <div
+                        className="
+                          mt-6
+                          grid
+                          gap-4
+                          sm:grid-cols-2
+                          lg:grid-cols-4
+                        "
+                      >
+
+                        {
+                          validationCards.map(
+                            (item) => (
+
+                              <div
+                                key={item.label}
+                                className="
+                                  rounded-2xl
+                                  border
+                                  border-white/10
+                                  bg-black/20
+                                  p-5
+                                "
+                              >
+                                <p
+                                  className="
+                                    text-[10px]
+                                    uppercase
+                                    tracking-[0.22em]
+                                    text-white/35
+                                  "
+                                >
+                                  {item.label}
+                                </p>
+
+                                <p
+                                  className="
+                                    mt-3
+                                    text-3xl
+                                    font-black
+                                    text-white
+                                  "
+                                >
+                                  {item.value}
+                                </p>
+                              </div>
+
+                            )
+                          )
+                        }
+
+                      </div>
+
+                      <div
+                        className="
+                          mt-6
+                          grid
+                          gap-4
+                          lg:grid-cols-3
+                        "
+                      >
+
+                        {
+                          validationSummary.readyToAdvance > 0 && (
+
+                            <p
+                              className="
+                                rounded-2xl
+                                border
+                                border-emerald-200/20
+                                bg-emerald-200/[0.06]
+                                p-4
+                                text-sm
+                                leading-6
+                                text-emerald-100
+                              "
+                            >
+                              Hay productos listos para revision de avance.
+                            </p>
+
+                          )
+                        }
+
+                        {
+                          validationSummary.pendingDecision > 0 && (
+
+                            <p
+                              className="
+                                rounded-2xl
+                                border
+                                border-amber-200/20
+                                bg-amber-200/[0.06]
+                                p-4
+                                text-sm
+                                leading-6
+                                text-amber-100
+                              "
+                            >
+                              Hay productos pendientes de decision.
+                            </p>
+
+                          )
+                        }
+
+                        <p
+                          className="
+                            rounded-2xl
+                            border
+                            border-white/10
+                            bg-black/20
+                            p-4
+                            text-sm
+                            leading-6
+                            text-white/45
+                          "
+                        >
+                          Descartadas: {validationSummary.discarded}
+                        </p>
+
+                      </div>
+
+                      <div
+                        className="
+                          mt-6
+                          grid
+                          gap-5
+                          xl:grid-cols-3
+                        "
+                      >
+
+                        {
+                          validationActionGroups.map(
+                            (group) => (
+
+                              <div
+                                key={group.title}
+                                className={`
+                                  rounded-[28px]
+                                  border
+                                  p-5
+                                  ${group.accentClassName}
+                                `}
+                              >
+
+                                <p
+                                  className="
+                                    text-[10px]
+                                    uppercase
+                                    tracking-[0.24em]
+                                    text-white/40
+                                  "
+                                >
+                                  Accion
+                                </p>
+
+                                <h3
+                                  className="
+                                    mt-3
+                                    text-2xl
+                                    font-black
+                                    tracking-[-0.03em]
+                                    text-white
+                                  "
+                                >
+                                  {group.title}
+                                </h3>
+
+                                <p
+                                  className="
+                                    mt-2
+                                    text-sm
+                                    leading-6
+                                    text-white/45
+                                  "
+                                >
+                                  {group.description}
+                                </p>
+
+                                <div className="mt-5 space-y-3">
+
+                                  {
+                                    group.products.length === 0 ? (
+
+                                      <p
+                                        className="
+                                          rounded-2xl
+                                          border
+                                          border-white/10
+                                          bg-black/20
+                                          p-4
+                                          text-sm
+                                          text-white/40
+                                        "
+                                      >
+                                        Sin productos en este grupo.
+                                      </p>
+
+                                    ) : (
+
+                                      group.products.map(
+                                        (product) => {
+                                          const state =
+                                            stateById.get(
+                                              product.state_id ||
+                                                ""
+                                            )
+
+                                          const score =
+                                            getValidNumber(
+                                              product.survey_score
+                                            )
+
+                                          const votes =
+                                            getValidNumber(
+                                              product.survey_votes
+                                            ) || 0
+
+                                          const decision =
+                                            normalizeValidationValue(
+                                              product.validation_decision
+                                            )
+
+                                          return (
+
+                                            <div
+                                              key={product.id}
+                                              className="
+                                                rounded-2xl
+                                                border
+                                                border-white/10
+                                                bg-black/25
+                                                p-4
+                                              "
+                                            >
+
+                                              <div
+                                                className="
+                                                  flex
+                                                  items-start
+                                                  justify-between
+                                                  gap-4
+                                                "
+                                              >
+
+                                                <div className="min-w-0">
+                                                  <h4
+                                                    className="
+                                                      truncate
+                                                      text-lg
+                                                      font-black
+                                                      text-white
+                                                    "
+                                                  >
+                                                    {product.name}
+                                                  </h4>
+
+                                                  <p
+                                                    className="
+                                                      mt-2
+                                                      text-[10px]
+                                                      uppercase
+                                                      tracking-[0.20em]
+                                                      text-white/35
+                                                    "
+                                                  >
+                                                    {state?.name || "Sin estado"}
+                                                  </p>
+                                                </div>
+
+                                                <span
+                                                  className="
+                                                    rounded-full
+                                                    border
+                                                    border-white/10
+                                                    px-3
+                                                    py-1
+                                                    text-[10px]
+                                                    uppercase
+                                                    tracking-[0.16em]
+                                                    text-white/50
+                                                  "
+                                                >
+                                                  {decision}
+                                                </span>
+
+                                              </div>
+
+                                              <p
+                                                className="
+                                                  mt-3
+                                                  text-sm
+                                                  leading-6
+                                                  text-white/50
+                                                "
+                                              >
+                                                Interes {score === null ? "N/A" : `${score}%`} · {votes} respuestas
+                                              </p>
+
+                                              <button
+                                                type="button"
+                                                disabled={!product.slug}
+                                                onClick={() => {
+                                                  if (!product.slug) return
+
+                                                  router.push(
+                                                    `/admin/products/${product.slug}`
+                                                  )
+                                                }}
+                                                className="
+                                                  mt-4
+                                                  rounded-xl
+                                                  border
+                                                  border-cyan-400/20
+                                                  bg-cyan-400/10
+                                                  px-4
+                                                  py-2
+                                                  text-xs
+                                                  font-semibold
+                                                  text-cyan-200
+                                                  transition-all
+                                                  duration-300
+                                                  hover:bg-cyan-400/20
+                                                  disabled:cursor-not-allowed
+                                                  disabled:border-white/5
+                                                  disabled:bg-white/[0.02]
+                                                  disabled:text-white/25
+                                                "
+                                              >
+                                                Ver detalle
+                                              </button>
+
+                                            </div>
+
+                                          )
+                                        }
+                                      )
+
+                                    )
+                                  }
+
+                                </div>
+
+                              </div>
+
+                            )
+                          )
+                        }
+
+                      </div>
+
+                    </>
+
+                  )
+                }
+
+              </section>
 
               {
                 liveProducts.length === 0 ? (
