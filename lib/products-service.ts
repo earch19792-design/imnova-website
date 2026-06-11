@@ -8,6 +8,111 @@ type ProductsQueryOptions = {
   ascending?: boolean
 }
 
+type AdminProductPageOptions = {
+  search?: string
+  stateId?: string
+  limit?: number
+  page?: number
+}
+
+const ADMIN_PRODUCT_SUMMARY_SELECT = `
+  id,
+  state_id,
+  slug,
+  name,
+  category,
+  image_url,
+  image,
+  direct_url,
+  featured,
+  survey_score,
+  survey_votes,
+  social_interest_score,
+  survey_status,
+  validation_status,
+  validation_decision
+`
+
+function getValidMetricNumber(
+  value: unknown
+) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return null
+  }
+
+  const numericValue =
+    typeof value === "number"
+      ? value
+      : Number(value)
+
+  return Number.isFinite(numericValue)
+    ? numericValue
+    : null
+}
+
+function getMetricAverage(
+  values: Array<number | null>
+) {
+  const validValues =
+    values.filter(
+      (value): value is number =>
+        value !== null
+    )
+
+  if (validValues.length === 0) {
+    return null
+  }
+
+  const total =
+    validValues.reduce(
+      (sum, value) =>
+        sum + value,
+      0
+    )
+
+  return Math.round(
+    total / validValues.length
+  )
+}
+
+async function getProductsCount(
+  applyFilters?: (query: any) => any
+) {
+  let query =
+    supabase
+      .from("products")
+      .select(
+        "id",
+        {
+          count: "exact",
+          head: true,
+        }
+      )
+
+  if (applyFilters) {
+    query =
+      applyFilters(query)
+  }
+
+  const { count, error } =
+    await query
+
+  if (error) {
+    console.error(
+      "GET PRODUCTS COUNT ERROR:",
+      error
+    )
+
+    return 0
+  }
+
+  return count || 0
+}
+
 function normalizeStateName(
   name: string
 ) {
@@ -83,6 +188,478 @@ export async function getProducts() {
   }
 
   return data || []
+
+}
+
+export async function getAdminProductPage(
+  options: AdminProductPageOptions = {}
+) {
+
+  const limit =
+    options.limit || 24
+
+  const page =
+    options.page || 0
+
+  const from =
+    page * limit
+
+  const to =
+    from + limit - 1
+
+  let query =
+    supabase
+      .from("products")
+      .select(
+        ADMIN_PRODUCT_SUMMARY_SELECT,
+        {
+          count: "exact",
+        }
+      )
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
+
+  if (
+    options.stateId &&
+    options.stateId !== "all"
+  ) {
+    query =
+      options.stateId === "no-state"
+        ? query.is(
+            "state_id",
+            null
+          )
+        : query.eq(
+            "state_id",
+            options.stateId
+          )
+  }
+
+  const search =
+    options.search
+      ?.trim()
+      .replace(
+        /[%_,]/g,
+        " "
+      )
+
+  if (search) {
+    const pattern =
+      `%${search}%`
+
+    query =
+      query.or(
+        [
+          `name.ilike.${pattern}`,
+          `category.ilike.${pattern}`,
+          `slug.ilike.${pattern}`,
+          `direct_url.ilike.${pattern}`,
+        ].join(",")
+      )
+  }
+
+  const {
+    data,
+    error,
+    count,
+  } =
+    await query.range(
+      from,
+      to
+    )
+
+  if (error) {
+
+    console.error(
+      "GET ADMIN PRODUCT PAGE ERROR:",
+      error
+    )
+
+    return {
+      products: [],
+      count: 0,
+    }
+
+  }
+
+  return {
+    products: data || [],
+    count: count || 0,
+  }
+
+}
+
+export async function getAdminProductSuggestions(
+  search = "",
+  limit = 20
+) {
+
+  let query =
+    supabase
+      .from("products")
+      .select(
+        ADMIN_PRODUCT_SUMMARY_SELECT
+      )
+      .order(
+        "name",
+        {
+          ascending: true,
+        }
+      )
+      .limit(limit)
+
+  const normalizedSearch =
+    search
+      .trim()
+      .replace(
+        /[%_,]/g,
+        " "
+      )
+
+  if (normalizedSearch) {
+    const pattern =
+      `%${normalizedSearch}%`
+
+    query =
+      query.or(
+        [
+          `name.ilike.${pattern}`,
+          `category.ilike.${pattern}`,
+          `slug.ilike.${pattern}`,
+        ].join(",")
+      )
+  }
+
+  const { data, error } =
+    await query
+
+  if (error) {
+    console.error(
+      "GET ADMIN PRODUCT SUGGESTIONS ERROR:",
+      error
+    )
+
+    return []
+  }
+
+  return data || []
+
+}
+
+export async function getAdminPriorityProducts(
+  limit = 6
+) {
+
+  const { data, error } =
+    await supabase
+      .from("products")
+      .select(
+        ADMIN_PRODUCT_SUMMARY_SELECT
+      )
+      .order(
+        "featured",
+        {
+          ascending: false,
+          nullsFirst: false,
+        }
+      )
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
+      .limit(limit)
+
+  if (error) {
+
+    console.error(
+      "GET ADMIN PRIORITY PRODUCTS ERROR:",
+      error
+    )
+
+    return []
+
+  }
+
+  return data || []
+
+}
+
+export async function getAdminValidationActionProducts() {
+
+  const getProductsByDecision =
+    async (
+      decision: string,
+      includePendingNull = false
+    ) => {
+      let query =
+        supabase
+          .from("products")
+          .select(
+            ADMIN_PRODUCT_SUMMARY_SELECT
+          )
+          .order(
+            "survey_score",
+            {
+              ascending: false,
+              nullsFirst: false,
+            }
+          )
+          .order(
+            "survey_votes",
+            {
+              ascending: false,
+              nullsFirst: false,
+            }
+          )
+          .order(
+            "name",
+            {
+              ascending: true,
+            }
+          )
+          .limit(3)
+
+      query =
+        includePendingNull
+          ? query.or(
+              "validation_decision.is.null,validation_decision.eq.pendiente,validation_decision.eq."
+            )
+          : query.eq(
+              "validation_decision",
+              decision
+            )
+
+      const { data, error } =
+        await query
+
+      if (error) {
+        console.error(
+          "GET ADMIN VALIDATION ACTION PRODUCTS ERROR:",
+          error
+        )
+
+        return []
+      }
+
+      return data || []
+    }
+
+  const [
+    readyToAdvance,
+    pendingDecision,
+    needsAdjustment,
+  ] =
+    await Promise.all([
+      getProductsByDecision("avanzar"),
+      getProductsByDecision(
+        "pendiente",
+        true
+      ),
+      getProductsByDecision("ajustar"),
+    ])
+
+  return {
+    readyToAdvance,
+    pendingDecision,
+    needsAdjustment,
+  }
+
+}
+
+export async function getAdminDashboardMetrics(
+  states: Array<{
+    id: string
+    name: string
+  }>
+) {
+
+  const stateCountEntries =
+    await Promise.all(
+      states.map(
+        async (state) => [
+          state.id,
+          await getProductsCount(
+            (query) =>
+              query.eq(
+                "state_id",
+                state.id
+              )
+          ),
+        ] as const
+      )
+    )
+
+  const stateCounts =
+    Object.fromEntries(
+      stateCountEntries
+    )
+
+  const [
+    totalProducts,
+    productsWithoutState,
+    productsWithoutSlug,
+    pendingDecision,
+    readyToAdvance,
+    needsAdjustment,
+    paused,
+    discarded,
+    highInterest,
+    activeSurveys,
+  ] =
+    await Promise.all([
+      getProductsCount(),
+      getProductsCount(
+        (query) =>
+          query.is(
+            "state_id",
+            null
+          )
+      ),
+      getProductsCount(
+        (query) =>
+          query.or(
+            "slug.is.null,slug.eq."
+          )
+      ),
+      getProductsCount(
+        (query) =>
+          query.or(
+            "validation_decision.is.null,validation_decision.eq.pendiente,validation_decision.eq."
+          )
+      ),
+      getProductsCount(
+        (query) =>
+          query.eq(
+            "validation_decision",
+            "avanzar"
+          )
+      ),
+      getProductsCount(
+        (query) =>
+          query.eq(
+            "validation_decision",
+            "ajustar"
+          )
+      ),
+      getProductsCount(
+        (query) =>
+          query.eq(
+            "validation_decision",
+            "pausar"
+          )
+      ),
+      getProductsCount(
+        (query) =>
+          query.eq(
+            "validation_decision",
+            "descartar"
+          )
+      ),
+      getProductsCount(
+        (query) =>
+          query.eq(
+            "validation_status",
+            "interes_alto"
+          )
+      ),
+      getProductsCount(
+        (query) =>
+          query.eq(
+            "survey_status",
+            "activa"
+          )
+      ),
+    ])
+
+  const {
+    data: metricRows,
+    error: metricError,
+  } =
+    await supabase
+      .from("products")
+      .select(
+        "survey_score,survey_votes,social_interest_score"
+      )
+
+  if (metricError) {
+    console.error(
+      "GET ADMIN DASHBOARD METRICS VALUES ERROR:",
+      metricError
+    )
+  }
+
+  const safeMetricRows =
+    metricRows || []
+
+  const surveyScores =
+    safeMetricRows.map(
+      (row: any) =>
+        getValidMetricNumber(
+          row.survey_score
+        )
+    )
+
+  const socialScores =
+    safeMetricRows.map(
+      (row: any) =>
+        getValidMetricNumber(
+          row.social_interest_score
+        )
+    )
+
+  const totalVotes =
+    safeMetricRows.reduce(
+      (total: number, row: any) => {
+        const votes =
+          getValidMetricNumber(
+            row.survey_votes
+          )
+
+        return total + (votes || 0)
+      },
+      0
+    )
+
+  const averageSurveyScore =
+    getMetricAverage(surveyScores)
+
+  const averageSocialScore =
+    getMetricAverage(socialScores)
+
+  return {
+    totalProducts,
+    productsWithoutState,
+    productsWithoutSlug,
+    stateCounts,
+    validationSummary: {
+      pendingDecision,
+      readyToAdvance,
+      needsAdjustment,
+      paused,
+      discarded,
+      highInterest,
+      activeSurveys,
+      averageSurveyScore,
+      averageSocialScore,
+      totalVotes,
+      hasValidationData:
+        readyToAdvance > 0 ||
+        needsAdjustment > 0 ||
+        paused > 0 ||
+        discarded > 0 ||
+        highInterest > 0 ||
+        activeSurveys > 0 ||
+        averageSurveyScore !== null ||
+        averageSocialScore !== null ||
+        totalVotes > 0,
+    },
+  }
 
 }
 

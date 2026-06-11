@@ -13,7 +13,11 @@ import {
 } from "framer-motion"
 
 import {
-  getProducts,
+  getAdminDashboardMetrics,
+  getAdminProductPage,
+  getAdminPriorityProducts,
+  getAdminProductSuggestions,
+  getAdminValidationActionProducts,
   getProductStates,
 } from "@/lib/products-service"
 
@@ -71,6 +75,63 @@ type Campaign = {
   leads: number
 }
 
+type ValidationSummary = {
+  pendingDecision: number
+  readyToAdvance: number
+  needsAdjustment: number
+  paused: number
+  discarded: number
+  highInterest: number
+  activeSurveys: number
+  averageSurveyScore: number | null
+  averageSocialScore: number | null
+  totalVotes: number
+  hasValidationData: boolean
+}
+
+type AdminDashboardMetrics = {
+  totalProducts: number
+  productsWithoutState: number
+  productsWithoutSlug: number
+  stateCounts: Record<string, number>
+  validationSummary: ValidationSummary
+}
+
+type ValidationActionProducts = {
+  readyToAdvance: Product[]
+  pendingDecision: Product[]
+  needsAdjustment: Product[]
+}
+
+const EMPTY_VALIDATION_SUMMARY: ValidationSummary = {
+  pendingDecision: 0,
+  readyToAdvance: 0,
+  needsAdjustment: 0,
+  paused: 0,
+  discarded: 0,
+  highInterest: 0,
+  activeSurveys: 0,
+  averageSurveyScore: null,
+  averageSocialScore: null,
+  totalVotes: 0,
+  hasValidationData: false,
+}
+
+const EMPTY_DASHBOARD_METRICS: AdminDashboardMetrics = {
+  totalProducts: 0,
+  productsWithoutState: 0,
+  productsWithoutSlug: 0,
+  stateCounts: {},
+  validationSummary:
+    EMPTY_VALIDATION_SUMMARY,
+}
+
+const EMPTY_VALIDATION_ACTION_PRODUCTS: ValidationActionProducts = {
+  readyToAdvance: [],
+  pendingDecision: [],
+  needsAdjustment: [],
+}
+
 function normalizeValidationValue(
   value?: string | null
 ) {
@@ -82,37 +143,24 @@ function normalizeValidationValue(
 }
 
 function getValidNumber(
-  value?: number | null
+  value?: number | string | null
 ) {
-  return typeof value === "number" &&
-    Number.isFinite(value)
-    ? value
-    : null
-}
-
-function getAverage(
-  values: Array<number | null>
-) {
-  const validValues =
-    values.filter(
-      (value): value is number =>
-        value !== null
-    )
-
-  if (validValues.length === 0) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
     return null
   }
 
-  const total =
-    validValues.reduce(
-      (sum, value) =>
-        sum + value,
-      0
-    )
+  const numericValue =
+    typeof value === "number"
+      ? value
+      : Number(value)
 
-  return Math.round(
-    total / validValues.length
-  )
+  return Number.isFinite(numericValue)
+    ? numericValue
+    : null
 }
 
 const ADMIN_PRODUCT_LIST_BATCH_SIZE =
@@ -138,16 +186,58 @@ export default function AdminPage() {
   ] = useState<ProductState[]>([])
 
   const [
+    dashboardMetrics,
+    setDashboardMetrics,
+  ] = useState<AdminDashboardMetrics>(
+    EMPTY_DASHBOARD_METRICS
+  )
+
+  const [
+    validationActionProducts,
+    setValidationActionProducts,
+  ] = useState<ValidationActionProducts>(
+    EMPTY_VALIDATION_ACTION_PRODUCTS
+  )
+
+  const [
     selectedMenu,
     setSelectedMenu,
   ] = useState("dashboard")
 
   const [
-    visibleProductCount,
-    setVisibleProductCount,
-  ] = useState(
-    ADMIN_PRODUCT_LIST_BATCH_SIZE
-  )
+    productSearchTerm,
+    setProductSearchTerm,
+  ] = useState("")
+
+  const [
+    productStateFilter,
+    setProductStateFilter,
+  ] = useState("all")
+
+  const [
+    adminProducts,
+    setAdminProducts,
+  ] = useState<Product[]>([])
+
+  const [
+    adminProductsTotal,
+    setAdminProductsTotal,
+  ] = useState(0)
+
+  const [
+    adminProductPage,
+    setAdminProductPage,
+  ] = useState(0)
+
+  const [
+    isLoadingAdminProducts,
+    setIsLoadingAdminProducts,
+  ] = useState(false)
+
+  const [
+    adminProductsError,
+    setAdminProductsError,
+  ] = useState("")
 
   const [
     showCampaignModal,
@@ -185,6 +275,16 @@ export default function AdminPage() {
     campaignProduct,
     setCampaignProduct,
   ] = useState("")
+
+  const [
+    campaignProductSuggestions,
+    setCampaignProductSuggestions,
+  ] = useState<Product[]>([])
+
+  const [
+    isLoadingCampaignProductSuggestions,
+    setIsLoadingCampaignProductSuggestions,
+  ] = useState(false)
 
   const [
     campaignChannel,
@@ -225,25 +325,57 @@ export default function AdminPage() {
   const loadAdminData =
     async () => {
 
-      const products =
-        await getProducts()
-
       const states =
         await getProductStates()
 
+      const [
+        metrics,
+        priorityProducts,
+        actionProducts,
+      ] =
+        await Promise.all([
+          getAdminDashboardMetrics(
+            states || []
+          ),
+          getAdminPriorityProducts(6),
+          getAdminValidationActionProducts(),
+        ])
+
       setLiveProducts(
-        (products || []).map(
+        (priorityProducts || []).map(
           normalizeProduct
         )
       )
+
+      setDashboardMetrics(
+        metrics as AdminDashboardMetrics
+      )
+
+      setValidationActionProducts({
+        readyToAdvance:
+          (
+            actionProducts.readyToAdvance ||
+            []
+          ).map(normalizeProduct),
+        pendingDecision:
+          (
+            actionProducts.pendingDecision ||
+            []
+          ).map(normalizeProduct),
+        needsAdjustment:
+          (
+            actionProducts.needsAdjustment ||
+            []
+          ).map(normalizeProduct),
+      })
 
       setProductStates(
         states || []
       )
 
       console.log(
-        "ADMIN PRODUCTS:",
-        products
+        "ADMIN DASHBOARD METRICS:",
+        metrics
       )
 
       console.log(
@@ -253,10 +385,79 @@ export default function AdminPage() {
 
     }
 
+  const loadAdminProductPage =
+    async (
+      page = 0,
+      mode: "replace" | "append" =
+        "replace"
+    ) => {
+
+      setIsLoadingAdminProducts(true)
+      setAdminProductsError("")
+
+      try {
+
+        const result =
+          await getAdminProductPage({
+            search:
+              productSearchTerm,
+            stateId:
+              productStateFilter,
+            limit:
+              ADMIN_PRODUCT_LIST_BATCH_SIZE,
+            page,
+          })
+
+        const normalizedProducts =
+          (result.products || []).map(
+            normalizeProduct
+          )
+
+        setAdminProducts(
+          (currentProducts) =>
+            mode === "append"
+              ? [
+                  ...currentProducts,
+                  ...normalizedProducts,
+                ]
+              : normalizedProducts
+        )
+
+        setAdminProductsTotal(
+          result.count || 0
+        )
+
+        setAdminProductPage(page)
+
+      } catch (error) {
+
+        console.error(
+          "LOAD ADMIN PRODUCT PAGE ERROR:",
+          error
+        )
+
+        setAdminProductsError(
+          "No se pudieron cargar los productos."
+        )
+
+      } finally {
+
+        setIsLoadingAdminProducts(false)
+
+      }
+
+    }
+
   const handleProductUpdate =
     async () => {
 
       await loadAdminData()
+
+      if (
+        selectedMenu === "products"
+      ) {
+        await loadAdminProductPage()
+      }
 
     }
 
@@ -333,13 +534,80 @@ export default function AdminPage() {
 
   useEffect(() => {
 
-    setVisibleProductCount(
-      ADMIN_PRODUCT_LIST_BATCH_SIZE
-    )
+    if (
+      !isAuthenticated ||
+      selectedMenu !== "products"
+    ) {
+      return
+    }
+
+    const timeout =
+      window.setTimeout(
+        () => {
+          loadAdminProductPage()
+        },
+        250
+      )
+
+    return () =>
+      window.clearTimeout(timeout)
 
   }, [
+    isAuthenticated,
     selectedMenu,
-    liveProducts.length,
+    productSearchTerm,
+    productStateFilter,
+  ])
+
+  useEffect(() => {
+
+    if (
+      !isAuthenticated ||
+      !showCampaignModal ||
+      campaignType !== "product"
+    ) {
+      return
+    }
+
+    const timeout =
+      window.setTimeout(
+        async () => {
+          setIsLoadingCampaignProductSuggestions(true)
+
+          try {
+            const products =
+              await getAdminProductSuggestions(
+                campaignProduct,
+                20
+              )
+
+            setCampaignProductSuggestions(
+              (products || []).map(
+                normalizeProduct
+              )
+            )
+          } catch (error) {
+            console.error(
+              "LOAD CAMPAIGN PRODUCT SUGGESTIONS ERROR:",
+              error
+            )
+
+            setCampaignProductSuggestions([])
+          } finally {
+            setIsLoadingCampaignProductSuggestions(false)
+          }
+        },
+        250
+      )
+
+    return () =>
+      window.clearTimeout(timeout)
+
+  }, [
+    isAuthenticated,
+    showCampaignModal,
+    campaignType,
+    campaignProduct,
   ])
 
   const handleLogout =
@@ -372,28 +640,9 @@ export default function AdminPage() {
   const stateCounts =
     useMemo(
       () =>
-        liveProducts.reduce<Record<string, number>>(
-          (
-            counts,
-            product
-          ) => {
-
-            if (!product.state_id) {
-              return counts
-            }
-
-            counts[product.state_id] =
-              (
-                counts[product.state_id] ||
-                0
-              ) + 1
-
-            return counts
-
-          },
-          {}
-        ),
-      [liveProducts]
+        dashboardMetrics.stateCounts ||
+        {},
+      [dashboardMetrics.stateCounts]
     )
 
   const stateSummaries =
@@ -407,11 +656,11 @@ export default function AdminPage() {
               0
 
             const share =
-              liveProducts.length > 0
+              dashboardMetrics.totalProducts > 0
                 ? Math.round(
                     (
                       count /
-                      liveProducts.length
+                      dashboardMetrics.totalProducts
                     ) * 100
                   )
                 : 0
@@ -425,139 +674,15 @@ export default function AdminPage() {
           }
         ),
       [
-        liveProducts.length,
+        dashboardMetrics.totalProducts,
         productStates,
         stateCounts,
       ]
     )
 
   const validationSummary =
-    useMemo(
-      () => {
-        const surveyScores =
-          liveProducts.map(
-            (product) =>
-              getValidNumber(
-                product.survey_score
-              )
-          )
-
-        const socialScores =
-          liveProducts.map(
-            (product) =>
-              getValidNumber(
-                product.social_interest_score
-              )
-          )
-
-        const totalVotes =
-          liveProducts.reduce(
-            (total, product) => {
-              const votes =
-                getValidNumber(
-                  product.survey_votes
-                )
-
-              return total + (votes || 0)
-            },
-            0
-          )
-
-        const hasValidationData =
-          liveProducts.some(
-            (product) => {
-              const decision =
-                normalizeValidationValue(
-                  product.validation_decision
-                )
-
-              const status =
-                normalizeValidationValue(
-                  product.validation_status
-                )
-
-              const surveyStatus =
-                normalizeValidationValue(
-                  product.survey_status
-                )
-
-              return (
-                decision !== "pendiente" ||
-                status !== "pendiente" ||
-                surveyStatus !== "pendiente" ||
-                getValidNumber(
-                  product.survey_score
-                ) !== null ||
-                getValidNumber(
-                  product.social_interest_score
-                ) !== null ||
-                (getValidNumber(
-                  product.survey_votes
-                ) || 0) > 0
-              )
-            }
-          )
-
-        return {
-          pendingDecision:
-            liveProducts.filter(
-              (product) =>
-                normalizeValidationValue(
-                  product.validation_decision
-                ) === "pendiente"
-            ).length,
-          readyToAdvance:
-            liveProducts.filter(
-              (product) =>
-                normalizeValidationValue(
-                  product.validation_decision
-                ) === "avanzar"
-            ).length,
-          needsAdjustment:
-            liveProducts.filter(
-              (product) =>
-                normalizeValidationValue(
-                  product.validation_decision
-                ) === "ajustar"
-            ).length,
-          paused:
-            liveProducts.filter(
-              (product) =>
-                normalizeValidationValue(
-                  product.validation_decision
-                ) === "pausar"
-            ).length,
-          discarded:
-            liveProducts.filter(
-              (product) =>
-                normalizeValidationValue(
-                  product.validation_decision
-                ) === "descartar"
-            ).length,
-          highInterest:
-            liveProducts.filter(
-              (product) =>
-                normalizeValidationValue(
-                  product.validation_status
-                ) === "interes_alto"
-            ).length,
-          activeSurveys:
-            liveProducts.filter(
-              (product) =>
-                normalizeValidationValue(
-                  product.survey_status
-                ) === "activa"
-            ).length,
-          averageSurveyScore:
-            getAverage(surveyScores),
-          averageSocialScore:
-            getAverage(socialScores),
-          totalVotes,
-          hasValidationData,
-        }
-      },
-      [liveProducts]
-    )
+    dashboardMetrics.validationSummary ||
+    EMPTY_VALIDATION_SUMMARY
 
   const validationCards =
     [
@@ -609,45 +734,6 @@ export default function AdminPage() {
   const validationActionGroups =
     useMemo(
       () => {
-        const sortActionProducts =
-          (products: Product[]) =>
-            [...products]
-              .sort(
-                (
-                  productA,
-                  productB
-                ) => {
-                  const scoreA =
-                    getValidNumber(
-                      productA.survey_score
-                    ) || 0
-
-                  const scoreB =
-                    getValidNumber(
-                      productB.survey_score
-                    ) || 0
-
-                  const votesA =
-                    getValidNumber(
-                      productA.survey_votes
-                    ) || 0
-
-                  const votesB =
-                    getValidNumber(
-                      productB.survey_votes
-                    ) || 0
-
-                  return (
-                    scoreB - scoreA ||
-                    votesB - votesA ||
-                    productA.name.localeCompare(
-                      productB.name
-                    )
-                  )
-                }
-              )
-              .slice(0, 3)
-
         return [
           {
             title:
@@ -657,14 +743,7 @@ export default function AdminPage() {
             accentClassName:
               "border-emerald-200/20 bg-emerald-200/[0.045]",
             products:
-              sortActionProducts(
-                liveProducts.filter(
-                  (product) =>
-                    normalizeValidationValue(
-                      product.validation_decision
-                    ) === "avanzar"
-                )
-              ),
+              validationActionProducts.readyToAdvance,
           },
           {
             title:
@@ -674,14 +753,7 @@ export default function AdminPage() {
             accentClassName:
               "border-amber-200/20 bg-amber-200/[0.045]",
             products:
-              sortActionProducts(
-                liveProducts.filter(
-                  (product) =>
-                    normalizeValidationValue(
-                      product.validation_decision
-                    ) === "pendiente"
-                )
-              ),
+              validationActionProducts.pendingDecision,
           },
           {
             title:
@@ -691,36 +763,16 @@ export default function AdminPage() {
             accentClassName:
               "border-cyan-200/20 bg-cyan-200/[0.04]",
             products:
-              sortActionProducts(
-                liveProducts.filter(
-                  (product) =>
-                    normalizeValidationValue(
-                      product.validation_decision
-                    ) === "ajustar"
-                )
-              ),
+              validationActionProducts.needsAdjustment,
           },
         ]
       },
-      [liveProducts]
-    )
-
-  const visibleAdminProducts =
-    useMemo(
-      () =>
-        liveProducts.slice(
-          0,
-          visibleProductCount
-        ),
-      [
-        liveProducts,
-        visibleProductCount,
-      ]
+      [validationActionProducts]
     )
 
   const hasMoreAdminProducts =
-    visibleProductCount <
-    liveProducts.length
+    adminProducts.length <
+    adminProductsTotal
 
   const dashboardProducts =
     useMemo(
@@ -781,16 +833,10 @@ export default function AdminPage() {
     )
 
   const productsWithoutState =
-    liveProducts.filter(
-      (product) =>
-        !product.state_id
-    ).length
+    dashboardMetrics.productsWithoutState
 
   const productsWithoutSlug =
-    liveProducts.filter(
-      (product) =>
-        !product.slug
-    ).length
+    dashboardMetrics.productsWithoutSlug
 
   const activeCampaigns =
     campaigns.filter(
@@ -1117,9 +1163,9 @@ export default function AdminPage() {
 
               <div className="mt-16">
                 <Metrics
-                 products={liveProducts}
-                states={productStates}
-                   />
+                  stateCounts={stateCounts}
+                  states={productStates}
+                />
               </div>
 
               <section
@@ -1227,7 +1273,7 @@ export default function AdminPage() {
                 </div>
 
                 {
-                  liveProducts.length === 0 ? (
+                  dashboardMetrics.totalProducts === 0 ? (
 
                     <p
                       className="
@@ -1630,7 +1676,7 @@ export default function AdminPage() {
               </section>
 
               {
-                liveProducts.length === 0 ? (
+                dashboardMetrics.totalProducts === 0 ? (
 
                   <div
                     className="
@@ -1751,7 +1797,7 @@ export default function AdminPage() {
                               text-white/35
                             "
                           >
-                            {liveProducts.length} productos
+                            {dashboardMetrics.totalProducts} productos
                           </p>
 
                         </div>
@@ -2414,6 +2460,230 @@ export default function AdminPage() {
 
               <div
                 className="
+                  mt-8
+                  rounded-[28px]
+                  border
+                  border-white/10
+                  bg-white/[0.03]
+                  p-5
+                  backdrop-blur-md
+                "
+              >
+                <div
+                  className="
+                    grid
+                    gap-4
+                    lg:grid-cols-[1fr_260px_auto]
+                    lg:items-center
+                  "
+                >
+                  <input
+                    type="search"
+                    value={productSearchTerm}
+                    onChange={(event) =>
+                      setProductSearchTerm(
+                        event.target.value
+                      )
+                    }
+                    placeholder="Buscar por nombre, categoria o ruta"
+                    className="
+                      w-full
+                      rounded-2xl
+                      border
+                      border-white/10
+                      bg-black/35
+                      px-5
+                      py-4
+                      text-sm
+                      text-white
+                      outline-none
+                      transition-all
+                      duration-300
+                      placeholder:text-white/30
+                      focus:border-cyan-300/40
+                      focus:bg-black/50
+                    "
+                  />
+
+                  <select
+                    value={productStateFilter}
+                    onChange={(event) =>
+                      setProductStateFilter(
+                        event.target.value
+                      )
+                    }
+                    className="
+                      w-full
+                      rounded-2xl
+                      border
+                      border-white/10
+                      bg-[#0b0b0b]
+                      px-5
+                      py-4
+                      text-sm
+                      text-white
+                      outline-none
+                      transition-all
+                      duration-300
+                      focus:border-cyan-300/40
+                    "
+                  >
+                    <option value="all">
+                      Todos los estados
+                    </option>
+
+                    <option value="no-state">
+                      Sin estado
+                    </option>
+
+                    {
+                      productStates.map(
+                        (state) => (
+
+                          <option
+                            key={state.id}
+                            value={state.id}
+                          >
+                            {state.name}
+                          </option>
+
+                        )
+                      )
+                    }
+                  </select>
+
+                  <div
+                    className="
+                      flex
+                      items-center
+                      justify-between
+                      gap-4
+                      lg:justify-end
+                    "
+                  >
+                    <span
+                      className="
+                        whitespace-nowrap
+                        text-xs
+                        uppercase
+                        tracking-[0.22em]
+                        text-white/35
+                      "
+                    >
+                      {adminProductsTotal} resultados
+                    </span>
+
+                    {
+                      (
+                        productSearchTerm ||
+                        productStateFilter !==
+                          "all"
+                      ) && (
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProductSearchTerm("")
+                            setProductStateFilter("all")
+                          }}
+                          className="
+                            rounded-2xl
+                            border
+                            border-white/10
+                            bg-white/[0.04]
+                            px-4
+                            py-3
+                            text-xs
+                            font-semibold
+                            uppercase
+                            tracking-[0.18em]
+                            text-white/70
+                            transition-all
+                            duration-300
+                            hover:bg-white/[0.08]
+                            hover:text-white
+                          "
+                        >
+                          Limpiar
+                        </button>
+
+                      )
+                    }
+                  </div>
+                </div>
+              </div>
+
+              {
+                adminProductsError && (
+
+                  <div
+                    className="
+                      mt-8
+                      rounded-[28px]
+                      border
+                      border-white/10
+                      bg-black/25
+                      p-8
+                      text-sm
+                      leading-6
+                      text-white/50
+                    "
+                  >
+                    {adminProductsError}
+                  </div>
+
+                )
+              }
+
+              {
+                !adminProductsError &&
+                  !isLoadingAdminProducts &&
+                  adminProductsTotal === 0 && (
+
+                  <div
+                    className="
+                      mt-8
+                      rounded-[28px]
+                      border
+                      border-white/10
+                      bg-black/25
+                      p-8
+                      text-sm
+                      leading-6
+                      text-white/50
+                    "
+                  >
+                    No hay productos que coincidan con estos filtros.
+                  </div>
+
+                )
+              }
+
+              {
+                isLoadingAdminProducts &&
+                  adminProducts.length === 0 && (
+
+                  <div
+                    className="
+                      mt-8
+                      rounded-[28px]
+                      border
+                      border-cyan-300/15
+                      bg-cyan-300/[0.04]
+                      p-8
+                      text-sm
+                      leading-6
+                      text-cyan-100/70
+                    "
+                  >
+                    Cargando productos...
+                  </div>
+
+                )
+              }
+
+              <div
+                className="
                   mt-10
                   grid
                   grid-cols-1
@@ -2423,7 +2693,7 @@ export default function AdminPage() {
               >
 
                 {
-                  visibleAdminProducts.map(
+                  adminProducts.map(
                     (product) => {
 
                       const state =
@@ -2638,11 +2908,13 @@ export default function AdminPage() {
                   >
                     <button
                       type="button"
+                      disabled={
+                        isLoadingAdminProducts
+                      }
                       onClick={() =>
-                        setVisibleProductCount(
-                          (currentCount) =>
-                            currentCount +
-                            ADMIN_PRODUCT_LIST_BATCH_SIZE
+                        loadAdminProductPage(
+                          adminProductPage + 1,
+                          "append"
                         )
                       }
                       className="
@@ -2660,6 +2932,8 @@ export default function AdminPage() {
                         transition-all
                         duration-300
                         hover:bg-cyan-400/20
+                        disabled:cursor-not-allowed
+                        disabled:opacity-50
                       "
                     >
                       Ver más productos
@@ -2989,7 +3263,7 @@ export default function AdminPage() {
                   <h3>Productos</h3>
 
                   <p className="mt-3 text-4xl font-bold">
-                    {liveProducts.length}
+                    {dashboardMetrics.totalProducts}
                   </p>
                 </div>
 
@@ -3194,43 +3468,65 @@ export default function AdminPage() {
                 {
                   campaignType === "product" && (
 
-                    <select
-                      value={campaignProduct}
-                      onChange={(e) =>
-                        setCampaignProduct(
-                          e.target.value
-                        )
-                      }
-                      className="
-                        w-full
-                        rounded-2xl
-                        border
-                        border-white/10
-                        bg-[#0b0b0b]
-                        p-4
-                        text-white
-                      "
-                    >
-                      <option value="">
-                        Seleccionar producto
-                      </option>
+                    <div>
 
-                      {
-                        liveProducts.map(
-                          (product) => (
-
-                            <option
-                              key={product.id}
-                              value={product.name}
-                            >
-                              {product.name}
-                            </option>
-
+                      <input
+                        value={campaignProduct}
+                        onChange={(e) =>
+                          setCampaignProduct(
+                            e.target.value
                           )
-                        )
-                      }
+                        }
+                        list="campaign-product-options"
+                        placeholder="Buscar producto existente"
+                        className="
+                          w-full
+                          rounded-2xl
+                          border
+                          border-white/10
+                          bg-white/[0.03]
+                          p-4
+                          text-white
+                          outline-none
+                          transition-all
+                          duration-300
+                          placeholder:text-white/30
+                          focus:border-cyan-300/40
+                        "
+                      />
 
-                    </select>
+                      <datalist id="campaign-product-options">
+                        {
+                          campaignProductSuggestions.map(
+                            (product) => (
+
+                              <option
+                                key={product.id}
+                                value={product.name}
+                              />
+
+                            )
+                          )
+                        }
+                      </datalist>
+
+                      <p
+                        className="
+                          mt-2
+                          text-xs
+                          uppercase
+                          tracking-[0.18em]
+                          text-white/35
+                        "
+                      >
+                        {
+                          isLoadingCampaignProductSuggestions
+                            ? "Buscando productos..."
+                            : `${campaignProductSuggestions.length} sugerencias`
+                        }
+                      </p>
+
+                    </div>
 
                   )
                 }

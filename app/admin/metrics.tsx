@@ -19,8 +19,9 @@ type ProductState = {
 }
 
 type MetricsProps = {
-  products: Product[]
+  products?: Product[]
   states: ProductState[]
+  stateCounts?: Record<string, number>
 }
 
 function normalizeStateName(
@@ -39,8 +40,9 @@ function normalizeStateName(
 }
 
 export function Metrics({
-  products,
   states,
+  products = [],
+  stateCounts,
 }: MetricsProps) {
 
   const getState =
@@ -62,6 +64,29 @@ export function Metrics({
           )
         )
 
+      if (stateCounts) {
+        return states.reduce(
+          (total, state) => {
+            if (
+              !normalizedNames.has(
+                normalizeStateName(
+                  state.name
+                )
+              )
+            ) {
+              return total
+            }
+
+            return total +
+              (
+                stateCounts[state.id] ||
+                0
+              )
+          },
+          0
+        )
+      }
+
       return products.filter(
         (product) =>
           normalizedNames.has(
@@ -78,19 +103,19 @@ export function Metrics({
   const earlyStageProducts =
     countByStateNames([
       "Idea",
-      "Validación",
+      "Validacion",
       "Priorizado",
     ])
 
   const developmentProducts =
     countByStateNames([
       "Testing",
-      "Producción",
+      "Produccion",
     ])
 
   const commercializationProducts =
     countByStateNames([
-      "Comercialización",
+      "Comercializacion",
     ])
 
   const availableProducts =
@@ -101,7 +126,7 @@ export function Metrics({
   const metrics = [
     {
       label:
-        "Ideas / Validación",
+        "Ideas / Validacion",
       value:
         earlyStageProducts,
       icon:
@@ -117,7 +142,7 @@ export function Metrics({
     },
     {
       label:
-        "Comercialización",
+        "Comercializacion",
       value:
         commercializationProducts,
       icon:
