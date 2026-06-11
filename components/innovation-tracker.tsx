@@ -19,8 +19,7 @@ import {
 } from "lucide-react"
 
 import {
-  getProducts,
-  getProductStates,
+  getProductsWithStatesByStateNames,
 } from "@/lib/products-service"
 
 type Product = {
@@ -225,13 +224,23 @@ export function InnovationTracker() {
 
   useEffect(() => {
     async function loadPipeline() {
-      const [
-        productRows,
-        stateRows,
-      ] = await Promise.all([
-        getProducts(),
-        getProductStates(),
-      ])
+      const {
+        products:
+          productRows,
+        states:
+          stateRows,
+      } =
+        await getProductsWithStatesByStateNames(
+          [
+            "Idea",
+            "Validación",
+            "Priorizado",
+            "Testing",
+            "Producción",
+            "Comercialización",
+            "Disponible",
+          ]
+        )
 
       setProducts(productRows as Product[])
       setProductStates(

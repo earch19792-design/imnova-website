@@ -23,8 +23,7 @@ import {
 } from "react"
 
 import {
-  getProducts,
-  getProductStates,
+  getProductsWithStatesByStateNames,
 } from "@/lib/products-service"
 
 import { supabase } from "@/lib/supabase"
@@ -810,13 +809,22 @@ export function InnovationsSection() {
 
   useEffect(() => {
     async function loadProducts() {
-      const [
-        productRows,
-        stateRows,
-      ] = await Promise.all([
-        getProducts(),
-        getProductStates(),
-      ])
+      const {
+        products:
+          productRows,
+        states:
+          stateRows,
+      } =
+        await getProductsWithStatesByStateNames(
+          [
+            "Idea",
+            "Validación",
+            "Priorizado",
+            "Desarrollo",
+            "Testing",
+            "Producción",
+          ]
+        )
 
       const stateMap =
         new Map(

@@ -115,6 +115,9 @@ function getAverage(
   )
 }
 
+const ADMIN_PRODUCT_LIST_BATCH_SIZE =
+  24
+
 export default function AdminPage() {
 
   const router = useRouter()
@@ -138,6 +141,13 @@ export default function AdminPage() {
     selectedMenu,
     setSelectedMenu,
   ] = useState("dashboard")
+
+  const [
+    visibleProductCount,
+    setVisibleProductCount,
+  ] = useState(
+    ADMIN_PRODUCT_LIST_BATCH_SIZE
+  )
 
   const [
     showCampaignModal,
@@ -320,6 +330,17 @@ export default function AdminPage() {
     loadAdminData()
 
   }, [isAuthenticated])
+
+  useEffect(() => {
+
+    setVisibleProductCount(
+      ADMIN_PRODUCT_LIST_BATCH_SIZE
+    )
+
+  }, [
+    selectedMenu,
+    liveProducts.length,
+  ])
 
   const handleLogout =
     () => {
@@ -683,6 +704,23 @@ export default function AdminPage() {
       },
       [liveProducts]
     )
+
+  const visibleAdminProducts =
+    useMemo(
+      () =>
+        liveProducts.slice(
+          0,
+          visibleProductCount
+        ),
+      [
+        liveProducts,
+        visibleProductCount,
+      ]
+    )
+
+  const hasMoreAdminProducts =
+    visibleProductCount <
+    liveProducts.length
 
   const dashboardProducts =
     useMemo(
@@ -2385,7 +2423,7 @@ export default function AdminPage() {
               >
 
                 {
-                  liveProducts.map(
+                  visibleAdminProducts.map(
                     (product) => {
 
                       const state =
@@ -2587,6 +2625,49 @@ export default function AdminPage() {
                 }
 
               </div>
+
+              {
+                hasMoreAdminProducts && (
+
+                  <div
+                    className="
+                      mt-10
+                      flex
+                      justify-center
+                    "
+                  >
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setVisibleProductCount(
+                          (currentCount) =>
+                            currentCount +
+                            ADMIN_PRODUCT_LIST_BATCH_SIZE
+                        )
+                      }
+                      className="
+                        rounded-2xl
+                        border
+                        border-cyan-400/25
+                        bg-cyan-400/10
+                        px-6
+                        py-3
+                        text-sm
+                        font-semibold
+                        uppercase
+                        tracking-[0.18em]
+                        text-cyan-200
+                        transition-all
+                        duration-300
+                        hover:bg-cyan-400/20
+                      "
+                    >
+                      Ver más productos
+                    </button>
+                  </div>
+
+                )
+              }
 
             </div>
 

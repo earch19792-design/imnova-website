@@ -15,8 +15,7 @@ import {
 } from "lucide-react"
 
 import {
-  getProducts,
-  getProductStates,
+  getAvailableProducts,
 } from "@/lib/products-service"
 
 import { supabase } from "@/lib/supabase"
@@ -36,11 +35,6 @@ type Product = {
   amazon_url?: string | null
   ebay_url?: string | null
   tiktok_url?: string | null
-}
-
-type ProductState = {
-  id: string
-  name: string
 }
 
 const MAX_LAUNCH_PRODUCTS = 12
@@ -203,47 +197,16 @@ export function PromoBanner() {
 
     async function loadProducts() {
 
-      const productData =
-        await getProducts()
-
-      const states =
-        await getProductStates()
-
-      const stateMap =
-        new Map(
-          (states as ProductState[]).map(
-            (state) => [
-              state.id,
-              state.name,
-            ]
-          )
-        )
-
       const availableProducts =
-        (productData as Product[]).filter(
-          (product) => {
-
-            const stateName =
-              product.state_id
-                ? stateMap.get(
-                    product.state_id
-                  )
-                : ""
-
-            return Boolean(
-              stateName?.includes(
-                "Disponible"
-              )
-            )
-
+        await getAvailableProducts(
+          {
+            limit:
+              MAX_LAUNCH_PRODUCTS,
           }
         )
 
       setProducts(
-        availableProducts.slice(
-          0,
-          MAX_LAUNCH_PRODUCTS
-        )
+        availableProducts as Product[]
       )
       setActiveIndex(0)
       setHasLoadedProducts(true)

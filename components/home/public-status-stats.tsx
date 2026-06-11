@@ -3,8 +3,7 @@
 import { useEffect, useState } from "react"
 
 import {
-  getProducts,
-  getProductStates,
+  getProductsWithStatesByStateNames,
 } from "@/lib/products-service"
 
 import { motion } from "framer-motion"
@@ -45,11 +44,22 @@ export function PublicStatusStats() {
 
     async function loadProductStates() {
 
-      const products =
-        await getProducts()
-
-      const states =
-        await getProductStates()
+      const {
+        products,
+        states,
+      } =
+        await getProductsWithStatesByStateNames(
+          [
+            "Idea",
+            "Validación",
+            "Priorizado",
+            "Desarrollo",
+            "Testing",
+            "Producción",
+            "Comercialización",
+            "Disponible",
+          ]
+        )
 
       console.log(
         "HOME PRODUCTS:",

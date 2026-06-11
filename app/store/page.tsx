@@ -31,8 +31,7 @@ import {
 } from "lucide-react"
 
 import {
-  getProducts,
-  getProductStates,
+  getProductsWithStatesByStateNames,
 } from "@/lib/products-service"
 
 type Product = {
@@ -188,14 +187,16 @@ export default function StorePage() {
 
   useEffect(() => {
     async function loadProducts() {
-      const [
-        data,
+      const {
+        products:
+          data,
         states,
-      ] =
-        await Promise.all([
-          getProducts(),
-          getProductStates(),
-        ])
+      } =
+        await getProductsWithStatesByStateNames(
+          [
+            "Disponible",
+          ]
+        )
 
       console.log(
         "STORE PRODUCTS:",

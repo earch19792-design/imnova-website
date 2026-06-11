@@ -1,5 +1,63 @@
 import { supabase } from "./supabase"
 
+type ProductsQueryOptions = {
+  limit?: number
+  from?: number
+  to?: number
+  orderBy?: string
+  ascending?: boolean
+}
+
+function normalizeStateName(
+  name: string
+) {
+  return name
+    .normalize("NFD")
+    .replace(
+      /[\u0300-\u036f]/g,
+      ""
+    )
+    .toLowerCase()
+    .trim()
+}
+
+function getStateIdsByNames(
+  states: Array<{
+    id: string
+    name: string
+  }>,
+  stateNames: string[]
+) {
+  const normalizedNames =
+    new Set(
+      stateNames.map(
+        normalizeStateName
+      )
+    )
+
+  return states
+    .filter(
+      state => {
+        const normalizedState =
+          normalizeStateName(
+            state.name
+          )
+
+        return Array.from(
+          normalizedNames
+        ).some(
+          normalizedName =>
+            normalizedState ===
+              normalizedName ||
+            normalizedState.includes(
+              normalizedName
+            )
+        )
+      }
+    )
+    .map(state => state.id)
+}
+
 export async function getProducts() {
 
   const { data, error } =
@@ -26,6 +84,176 @@ export async function getProducts() {
 
   return data || []
 
+}
+
+export async function getProductsByStateNames(
+  stateNames: string[],
+  options: ProductsQueryOptions = {}
+) {
+
+  const states =
+    await getProductStates()
+
+  const stateIds =
+    getStateIdsByNames(
+      states as Array<{
+        id: string
+        name: string
+      }>,
+      stateNames
+    )
+
+  if (stateIds.length === 0) {
+    return []
+  }
+
+  let query =
+    supabase
+      .from("products")
+      .select("*")
+      .in(
+        "state_id",
+        stateIds
+      )
+      .order(
+        options.orderBy ||
+          "created_at",
+        {
+          ascending:
+            options.ascending ??
+            false,
+        }
+      )
+
+  if (
+    typeof options.from === "number" &&
+    typeof options.to === "number"
+  ) {
+    query =
+      query.range(
+        options.from,
+        options.to
+      )
+  } else if (
+    typeof options.limit === "number"
+  ) {
+    query =
+      query.limit(
+        options.limit
+      )
+  }
+
+  const { data, error } =
+    await query
+
+  if (error) {
+
+    console.error(
+      "GET PRODUCTS BY STATE NAMES ERROR:",
+      error
+    )
+
+    return []
+
+  }
+
+  return data || []
+
+}
+
+export async function getProductsWithStatesByStateNames(
+  stateNames: string[],
+  options: ProductsQueryOptions = {}
+) {
+
+  const states =
+    await getProductStates()
+
+  const stateIds =
+    getStateIdsByNames(
+      states as Array<{
+        id: string
+        name: string
+      }>,
+      stateNames
+    )
+
+  if (stateIds.length === 0) {
+    return {
+      products: [],
+      states,
+    }
+  }
+
+  let query =
+    supabase
+      .from("products")
+      .select("*")
+      .in(
+        "state_id",
+        stateIds
+      )
+      .order(
+        options.orderBy ||
+          "created_at",
+        {
+          ascending:
+            options.ascending ??
+            false,
+        }
+      )
+
+  if (
+    typeof options.from === "number" &&
+    typeof options.to === "number"
+  ) {
+    query =
+      query.range(
+        options.from,
+        options.to
+      )
+  } else if (
+    typeof options.limit === "number"
+  ) {
+    query =
+      query.limit(
+        options.limit
+      )
+  }
+
+  const { data, error } =
+    await query
+
+  if (error) {
+
+    console.error(
+      "GET PRODUCTS WITH STATES BY STATE NAMES ERROR:",
+      error
+    )
+
+    return {
+      products: [],
+      states,
+    }
+
+  }
+
+  return {
+    products: data || [],
+    states,
+  }
+
+}
+
+export async function getAvailableProducts(
+  options: ProductsQueryOptions = {}
+) {
+  return getProductsByStateNames(
+    [
+      "Disponible",
+    ],
+    options
+  )
 }
 
 export async function getProductStates() {

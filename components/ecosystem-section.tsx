@@ -24,8 +24,7 @@ import {
 } from "react"
 
 import {
-  getProducts,
-  getProductStates,
+  getProductsWithStatesByStateNames,
 } from "@/lib/products-service"
 
 /* =================================================
@@ -115,11 +114,22 @@ export function EcosystemSection() {
 
     async function loadProducts() {
 
-      const products =
-        await getProducts()
-
-      const states =
-        await getProductStates()
+      const {
+        products,
+        states,
+      } =
+        await getProductsWithStatesByStateNames(
+          [
+            "Idea",
+            "Validación",
+            "Priorizado",
+            "Desarrollo",
+            "Testing",
+            "Producción",
+            "Comercialización",
+            "Disponible",
+          ]
+        )
 
       const stateMap =
         new Map(

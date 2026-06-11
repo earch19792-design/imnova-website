@@ -22,8 +22,7 @@ import {
 } from "lucide-react"
 
 import {
-  getProducts,
-  getProductStates,
+  getProductsWithStatesByStateNames,
 } from "@/lib/products-service"
 
 type Product = {
@@ -1515,13 +1514,17 @@ export function ImnovaGuidesSection({
 
       async function loadGuides() {
         try {
-          const [
-            productRows,
-            stateRows,
-          ] = await Promise.all([
-            getProducts(),
-            getProductStates(),
-          ])
+          const {
+            products:
+              productRows,
+            states:
+              stateRows,
+          } =
+            await getProductsWithStatesByStateNames(
+              [
+                "Disponible",
+              ]
+            )
 
           if (!mounted) {
             return
