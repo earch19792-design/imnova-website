@@ -8,11 +8,12 @@ import {
 } from "framer-motion"
 
 import {
-  ArrowUpRight,
   Building2,
   ExternalLink,
   Globe2,
+  LocateFixed,
   MapPin,
+  Navigation,
   Rocket,
   Search,
   ShoppingBag,
@@ -44,6 +45,13 @@ type DistributionChannel = {
   status: string
   url?: string
   note?: string
+  address?: string
+  latitude?: number | string
+  longitude?: number | string
+  lat?: number | string
+  lng?: number | string
+  maps_url?: string
+  google_maps_url?: string
 }
 
 type Product = {
@@ -66,6 +74,11 @@ type DistributionItem = DistributionChannel & {
   productName: string
   productCategory?: string
   productImage?: string | null
+}
+
+type UserLocation = {
+  latitude: number
+  longitude: number
 }
 
 const distributionPageSize = 12
@@ -93,6 +106,7 @@ function getChannelLocation(
     city?: string
     country?: string
     location?: string
+    address?: string
   }
 ) {
 
@@ -105,10 +119,178 @@ function getChannelLocation(
       .join(", ")
 
   return (
+    item.address ||
     structured ||
     item.location ||
     "Ubicación en preparación"
   )
+
+}
+
+function parseCoordinate(
+  value?: number | string | null
+) {
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return null
+  }
+
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number.parseFloat(
+          value
+            .replace(",", ".")
+            .trim()
+        )
+
+  return Number.isFinite(parsed)
+    ? parsed
+    : null
+
+}
+
+function getChannelCoordinates(
+  item: DistributionItem
+) {
+
+  const latitude =
+    parseCoordinate(
+      item.latitude ?? item.lat
+    )
+
+  const longitude =
+    parseCoordinate(
+      item.longitude ?? item.lng
+    )
+
+  if (
+    latitude === null ||
+    longitude === null ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    return null
+  }
+
+  return {
+    latitude,
+    longitude,
+  }
+
+}
+
+function calculateDistanceKm(
+  from: UserLocation,
+  to: UserLocation
+) {
+
+  const earthRadiusKm = 6371
+  const toRadians =
+    (degrees: number) =>
+      degrees * (Math.PI / 180)
+
+  const deltaLatitude =
+    toRadians(
+      to.latitude - from.latitude
+    )
+
+  const deltaLongitude =
+    toRadians(
+      to.longitude - from.longitude
+    )
+
+  const originLatitude =
+    toRadians(from.latitude)
+
+  const destinationLatitude =
+    toRadians(to.latitude)
+
+  const a =
+    Math.sin(deltaLatitude / 2) ** 2 +
+    Math.cos(originLatitude) *
+      Math.cos(destinationLatitude) *
+      Math.sin(deltaLongitude / 2) ** 2
+
+  const c =
+    2 *
+    Math.atan2(
+      Math.sqrt(a),
+      Math.sqrt(1 - a)
+    )
+
+  return earthRadiusKm * c
+
+}
+
+function formatDistance(
+  distanceKm: number
+) {
+
+  if (distanceKm < 1) {
+    return `${Math.round(
+      distanceKm * 1000
+    )} m`
+  }
+
+  return `${distanceKm.toFixed(
+    distanceKm < 10
+      ? 1
+      : 0
+  )} km`
+
+}
+
+function isPhysicalChannel(
+  item: DistributionItem
+) {
+
+  const type =
+    item.type.toLowerCase()
+
+  return (
+    !type.includes("marketplace") &&
+    !type.includes("online")
+  )
+
+}
+
+function getDirectionsUrl(
+  item: DistributionItem
+) {
+
+  if (item.maps_url) {
+    return item.maps_url
+  }
+
+  if (item.google_maps_url) {
+    return item.google_maps_url
+  }
+
+  const coordinates =
+    getChannelCoordinates(item)
+
+  const query =
+    coordinates
+      ? `${coordinates.latitude},${coordinates.longitude}`
+      : [
+          item.name,
+          item.address,
+          item.location,
+          item.city,
+          item.country,
+        ]
+          .filter(Boolean)
+          .join(" ")
+
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+    query
+  )}`
 
 }
 
@@ -160,6 +342,73 @@ export function GlobalSection() {
     searchTerm,
     setSearchTerm,
   ] = useState("")
+
+  const [
+    userLocation,
+    setUserLocation,
+  ] = useState<UserLocation | null>(null)
+
+  const [
+    locationStatus,
+    setLocationStatus,
+  ] = useState<
+    | "idle"
+    | "loading"
+    | "ready"
+    | "unsupported"
+    | "error"
+  >("idle")
+
+  const [
+    locationMessage,
+    setLocationMessage,
+  ] = useState(
+    "Activa tu ubicacion para encontrar el distribuidor fisico mas cercano."
+  )
+
+  const requestUserLocation =
+    useCallback(() => {
+
+      if (!("geolocation" in navigator)) {
+        setLocationStatus("unsupported")
+        setLocationMessage(
+          "Tu navegador no permite usar ubicacion. Puedes buscar manualmente por pais y ciudad."
+        )
+        return
+      }
+
+      setLocationStatus("loading")
+      setLocationMessage(
+        "Buscando el canal mas cercano..."
+      )
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setUserLocation({
+            latitude:
+              position.coords.latitude,
+            longitude:
+              position.coords.longitude,
+          })
+          setLocationStatus("ready")
+          setLocationMessage(
+            "Ubicacion detectada. Calculamos el distribuidor mas cercano con coordenadas registradas."
+          )
+        },
+        () => {
+          setLocationStatus("error")
+          setLocationMessage(
+            "No pudimos acceder a tu ubicacion. Usa los filtros para buscar por pais, ciudad o canal."
+          )
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 60000,
+        }
+      )
+
+    }, [])
 
   const loadDistribution =
     useCallback(
@@ -505,6 +754,54 @@ export function GlobalSection() {
       ]
     )
 
+  const nearestDistribution =
+    useMemo(
+      () => {
+
+        if (!userLocation) {
+          return null
+        }
+
+        return filteredDistribution
+          .filter(isPhysicalChannel)
+          .map(item => {
+            const coordinates =
+              getChannelCoordinates(item)
+
+            if (!coordinates) {
+              return null
+            }
+
+            return {
+              item,
+              distanceKm:
+                calculateDistanceKm(
+                  userLocation,
+                  coordinates
+                ),
+            }
+          })
+          .filter(
+            (
+              result
+            ): result is {
+              item: DistributionItem
+              distanceKm: number
+            } => Boolean(result)
+          )
+          .sort(
+            (first, second) =>
+              first.distanceKm -
+              second.distanceKm
+          )[0] || null
+
+      },
+      [
+        filteredDistribution,
+        userLocation,
+      ]
+    )
+
   const groupedDistribution =
     useMemo(
       () => {
@@ -593,7 +890,19 @@ export function GlobalSection() {
     ).length
 
   const featuredDistribution =
-    filteredDistribution[0] || null
+    nearestDistribution?.item ||
+    filteredDistribution[0] ||
+    null
+
+  const featuredDistance =
+    nearestDistribution &&
+    featuredDistribution &&
+    featuredDistribution.id ===
+      nearestDistribution.item.id &&
+    featuredDistribution.productId ===
+      nearestDistribution.item.productId
+      ? nearestDistribution.distanceKm
+      : null
 
   const hasActiveFilters =
     activeCountry !== "Todos" ||
@@ -755,6 +1064,75 @@ export function GlobalSection() {
                 Sigue el orden natural de compra. La lista se actualiza con los
                 canales comerciales registrados desde Admin.
               </p>
+
+              <div className="mt-6 rounded-[24px] border border-cyan-300/20 bg-cyan-300/[0.06] p-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-cyan-200/20 bg-cyan-300/10">
+                    <LocateFixed className="h-5 w-5 text-cyan-100" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-100/65">
+                      Distribuidor cercano
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-zinc-400">
+                      {locationMessage}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={requestUserLocation}
+                  disabled={locationStatus === "loading"}
+                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-cyan-200/25 bg-cyan-300/[0.12] px-5 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-cyan-50 transition hover:border-cyan-100/45 hover:bg-cyan-300/[0.18] disabled:cursor-not-allowed disabled:opacity-55"
+                >
+                  <Navigation className="h-4 w-4" />
+                  {locationStatus === "loading"
+                    ? "Detectando..."
+                    : "Usar mi ubicacion"}
+                </button>
+
+                {locationStatus === "ready" &&
+                  nearestDistribution && (
+                    <div className="mt-4 rounded-2xl border border-emerald-200/20 bg-emerald-300/[0.08] p-4">
+                      <p className="text-[10px] uppercase tracking-[0.18em] text-emerald-100/70">
+                        Mas cercano
+                      </p>
+                      <p className="mt-2 line-clamp-1 text-lg font-black text-white">
+                        {nearestDistribution.item.name}
+                      </p>
+                      <p className="mt-1 text-xs text-zinc-400">
+                        {nearestDistribution.item.productName}
+                      </p>
+                      <p className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-emerald-100">
+                        <MapPin className="h-4 w-4" />
+                        {formatDistance(
+                          nearestDistribution.distanceKm
+                        )}{" "}
+                        aprox.
+                      </p>
+                      <a
+                        href={getDirectionsUrl(
+                          nearestDistribution.item
+                        )}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-100 px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-black transition hover:bg-white"
+                      >
+                        Como llegar
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    </div>
+                  )}
+
+                {locationStatus === "ready" &&
+                  !nearestDistribution && (
+                    <p className="mt-4 rounded-2xl border border-amber-200/15 bg-amber-200/[0.06] p-3 text-xs leading-5 text-amber-100/75">
+                      Todavia no hay puntos fisicos con coordenadas para este
+                      filtro. Puedes buscar manualmente por pais y ciudad.
+                    </p>
+                  )}
+              </div>
 
               <div className="mt-7 grid gap-4">
 
@@ -983,11 +1361,21 @@ export function GlobalSection() {
                             <div className="flex flex-wrap gap-2">
                               <span className="inline-flex items-center gap-2 rounded-full border border-cyan-200/20 bg-cyan-300/[0.12] px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-cyan-100">
                                 <Icon className="h-3.5 w-3.5" />
-                                Mejor coincidencia
+                                {featuredDistance !== null
+                                  ? "Distribuidor mas cercano"
+                                  : "Mejor coincidencia"}
                               </span>
                               <span className="rounded-full border border-white/10 bg-black/25 px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-zinc-300">
                                 {featuredDistribution.type}
                               </span>
+                              {featuredDistance !== null && (
+                                <span className="rounded-full border border-emerald-200/20 bg-emerald-300/[0.08] px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-emerald-100">
+                                  {formatDistance(
+                                    featuredDistance
+                                  )}{" "}
+                                  aprox.
+                                </span>
+                              )}
                             </div>
 
                             <h4 className="mt-3 line-clamp-1 text-3xl font-black tracking-[-0.04em] text-white">
@@ -1017,10 +1405,15 @@ export function GlobalSection() {
                                 <ExternalLink className="h-3.5 w-3.5" />
                               </a>
                             ) : (
-                              <span className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/25 px-5 py-3 text-xs font-black uppercase tracking-[0.16em] text-zinc-300">
-                                Punto físico
+                              <a
+                                href={getDirectionsUrl(featuredDistribution)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/25 px-5 py-3 text-xs font-black uppercase tracking-[0.16em] text-cyan-50 transition hover:border-cyan-200/25 hover:bg-cyan-300/[0.10]"
+                              >
+                                Como llegar
                                 <MapPin className="h-3.5 w-3.5" />
-                              </span>
+                              </a>
                             )}
                           </div>
                         </div>
@@ -1066,6 +1459,16 @@ export function GlobalSection() {
                                   getChannelIcon(
                                     item.type
                                   )
+                                const itemCoordinates =
+                                  getChannelCoordinates(item)
+                                const itemDistance =
+                                  userLocation &&
+                                  itemCoordinates
+                                    ? calculateDistanceKm(
+                                        userLocation,
+                                        itemCoordinates
+                                      )
+                                    : null
 
                                 return (
                                   <motion.article
@@ -1125,6 +1528,12 @@ export function GlobalSection() {
                                         <span className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-white/55">
                                           {item.status}
                                         </span>
+
+                                        {itemDistance !== null && (
+                                          <span className="rounded-full border border-emerald-200/20 bg-emerald-300/[0.08] px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-emerald-100">
+                                            {formatDistance(itemDistance)}
+                                          </span>
+                                        )}
                                       </div>
 
                                       <h5 className="mt-3 line-clamp-1 text-2xl font-black tracking-[-0.03em] text-white">
@@ -1165,10 +1574,15 @@ export function GlobalSection() {
                                           <ExternalLink className="h-3.5 w-3.5" />
                                         </a>
                                       ) : (
-                                        <span className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.035] px-5 py-3 text-xs font-black uppercase tracking-[0.16em] text-zinc-400">
-                                          Punto físico
-                                          <ArrowUpRight className="h-3.5 w-3.5" />
-                                        </span>
+                                        <a
+                                          href={getDirectionsUrl(item)}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.035] px-5 py-3 text-xs font-black uppercase tracking-[0.16em] text-cyan-100 transition-colors hover:border-cyan-300/25 hover:bg-cyan-300/10"
+                                        >
+                                          Como llegar
+                                          <MapPin className="h-3.5 w-3.5" />
+                                        </a>
                                       )}
                                     </div>
                                   </motion.article>
