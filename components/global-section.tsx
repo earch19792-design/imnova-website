@@ -421,20 +421,21 @@ export function GlobalSection() {
         const states =
           await getProductStates()
 
-        const commercialStateIds =
+        const availableStateIds =
           (states as ProductState[])
-            .filter((state) =>
-              state.name
-                .toLowerCase()
-                .includes("comercial")
-            )
+            .filter((state) => {
+              const stateName =
+                state.name.toLowerCase()
+
+              return stateName.includes("disponible")
+            })
             .map(
               (state) =>
                 state.id
             )
 
         if (
-          commercialStateIds.length === 0
+          availableStateIds.length === 0
         ) {
 
           productsCountRef.current = 0
@@ -471,7 +472,7 @@ export function GlobalSection() {
             )
             .in(
               "state_id",
-              commercialStateIds
+              availableStateIds
             )
             .order(
               "created_at",
@@ -591,7 +592,7 @@ export function GlobalSection() {
                   type: "Producto",
                   name: "Canales en preparación",
                   location:
-                    "Activación comercial pendiente",
+                    "Punto de compra pendiente",
                   status: "Configurando",
                   productName:
                     product.name,
@@ -965,8 +966,8 @@ export function GlobalSection() {
 
           <p className="mx-auto mt-9 max-w-4xl text-xl leading-9 text-zinc-300">
             Selecciona país, ciudad y canal para encontrar marketplaces,
-            mercados o establecimientos donde ya se está comercializando cada
-            producto. La sección está preparada para crecer por mercado sin
+            mercados o establecimientos donde ya puedes comprar productos
+            disponibles. La sección está preparada para crecer por mercado sin
             perder orden.
           </p>
 
@@ -1062,7 +1063,7 @@ export function GlobalSection() {
 
               <p className="mt-3 text-sm leading-6 text-zinc-500">
                 Sigue el orden natural de compra. La lista se actualiza con los
-                canales comerciales registrados desde Admin.
+                canales disponibles registrados desde Admin.
               </p>
 
               <div className="mt-6 rounded-[24px] border border-cyan-300/20 bg-cyan-300/[0.06] p-4">
