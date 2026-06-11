@@ -23,6 +23,7 @@ import {
 
 type Product = {
   id: string
+  slug?: string
   state_id: string | null
   name: string
   image?: string
@@ -702,13 +703,9 @@ export function ProductCard({
           title:
             "Guardado correctamente",
           description: stateChanged
-            ? `${product.name} cambio a ${currentStatus}.`
+            ? "Estado guardado. Envía la notificación desde el detalle del producto."
             : "Cambios guardados sin enviar WhatsApp.",
         })
-
-        if (stateChanged) {
-          await sendWhatsAppNotification()
-        }
 
         if (onUpdate) {
           await onUpdate()
@@ -1185,152 +1182,285 @@ export function ProductCard({
         }}
       >
 
-        <select
-          value={selectedStateId}
-          onChange={(e) =>
-            setSelectedStateId(
-              e.target.value
-            )
-          }
+        <section
           className="
-            mb-8
-            w-full
-            rounded-2xl
+            rounded-[28px]
             border
             border-white/10
-            bg-white/[0.03]
-            p-4
-            text-sm
-            text-white/80
-            backdrop-blur-md
-            outline-none
-            transition-all
-            duration-300
-            hover:border-white/20
+            bg-black/20
+            p-5
           "
         >
 
-          <option value="">
-            Seleccionar estado
-          </option>
-
-          {
-            states.map(
-              (state) => (
-
-                <option
-                  key={state.id}
-                  value={state.id}
-                >
-                  {state.name}
-                </option>
-
-              )
-            )
-          }
-
-        </select>
-
-        <h2
-          className="
-            text-3xl
-            font-black
-            tracking-[-0.04em]
-            text-white
-          "
-        >
-          {product.name}
-        </h2>
-
-        <p
-          className="
-            mt-3
-            text-sm
-            uppercase
-            tracking-[0.25em]
-            text-white/35
-          "
-        >
-          {product.category}
-        </p>
-
-        <div className="mt-10">
-
-          <div
-            className="
-              text-[10px]
-              uppercase
-              tracking-[0.35em]
-              text-white/40
-            "
-          >
-            PROGRESO
+          <div className="text-[10px] uppercase tracking-[0.30em] text-cyan-200/70">
+            Identidad del producto
           </div>
 
-          <div
+          <div className="mt-5 grid gap-5 md:grid-cols-[112px_1fr] md:items-center">
+            <div className="flex h-28 w-28 items-center justify-center overflow-hidden rounded-3xl border border-white/10 bg-white/[0.04]">
+              {(product.image_url || product.image) ? (
+                <img
+                  src={product.image_url || product.image}
+                  alt={product.name}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span className="px-3 text-center text-[9px] uppercase tracking-[0.18em] text-white/30">
+                  Imagen
+                </span>
+              )}
+            </div>
+
+            <div>
+              <div className="inline-flex rounded-full border border-cyan-300/20 bg-cyan-300/10 px-4 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100">
+                {currentStatus}
+              </div>
+
+              <h2
+                className="
+                  mt-4
+                  text-3xl
+                  font-black
+                  tracking-[-0.04em]
+                  text-white
+                "
+              >
+                {product.name}
+              </h2>
+
+              <p
+                className="
+                  mt-3
+                  text-sm
+                  uppercase
+                  tracking-[0.25em]
+                  text-white/35
+                "
+              >
+                {product.category}
+              </p>
+
+              {product.description && (
+                <p className="mt-4 text-sm leading-6 text-white/55">
+                  {product.description}
+                </p>
+              )}
+            </div>
+          </div>
+
+        </section>
+
+        <section
+          className="
+            mt-6
+            rounded-[28px]
+            border
+            border-white/10
+            bg-white/[0.025]
+            p-5
+          "
+        >
+
+          <div className="text-[10px] uppercase tracking-[0.30em] text-white/45">
+            Estado y progreso
+          </div>
+
+          <p className="mt-3 text-sm leading-6 text-white/50">
+            {(selectedStateId && (product.state_id || "") !== selectedStateId)
+              ? "Al guardar este cambio de estado, el flujo actual puede enviar WhatsApp despues de confirmar el guardado."
+              : "Actualiza el estado oficial del producto y revisa el avance dentro del flujo IMNOVA."}
+          </p>
+
+          <select
+            value={selectedStateId}
+            onChange={(e) =>
+              setSelectedStateId(
+                e.target.value
+              )
+            }
             className="
-              mt-4
-              flex
-              items-end
-              gap-3
+              mt-5
+              w-full
+              rounded-2xl
+              border
+              border-white/10
+              bg-white/[0.03]
+              p-4
+              text-sm
+              text-white/80
+              backdrop-blur-md
+              outline-none
+              transition-all
+              duration-300
+              hover:border-white/20
             "
           >
 
-            <div
-              className="
-                text-5xl
-                font-black
-                tracking-[-0.05em]
-                text-white
-              "
-            >
-              {currentProgress}
-            </div>
+            <option value="">
+              Seleccionar estado
+            </option>
+
+            {
+              states.map(
+                (state) => (
+
+                  <option
+                    key={state.id}
+                    value={state.id}
+                  >
+                    {state.name}
+                  </option>
+
+                )
+              )
+            }
+
+          </select>
+
+          <div className="mt-8">
 
             <div
               className="
-                mb-1
-                text-lg
+                text-[10px]
+                uppercase
+                tracking-[0.35em]
                 text-white/40
               "
             >
-              %
+              PROGRESO
+            </div>
+
+            <div
+              className="
+                mt-4
+                flex
+                items-end
+                gap-3
+              "
+            >
+
+              <div
+                className="
+                  text-5xl
+                  font-black
+                  tracking-[-0.05em]
+                  text-white
+                "
+              >
+                {currentProgress}
+              </div>
+
+              <div
+                className="
+                  mb-1
+                  text-lg
+                  text-white/40
+                "
+              >
+                %
+              </div>
+
+            </div>
+
+            <div
+              className="
+                mt-6
+                h-[6px]
+                w-full
+                overflow-hidden
+                rounded-full
+                bg-white/5
+              "
+            >
+
+              <motion.div
+                initial={{
+                  width: 0,
+                }}
+                animate={{
+                  width:
+                    `${currentProgress}%`,
+                }}
+                transition={{
+                  duration: 1,
+                }}
+                className="
+                  h-full
+                  rounded-full
+                  bg-white/70
+                "
+              />
+
             </div>
 
           </div>
 
           <div
             className="
-              mt-6
-              h-[6px]
-              w-full
-              overflow-hidden
-              rounded-full
-              bg-white/5
+              mt-8
+              grid
+              gap-4
+              md:grid-cols-2
             "
           >
 
-            <motion.div
-              initial={{
-                width: 0,
-              }}
-              animate={{
-                width:
-                  `${currentProgress}%`,
-              }}
-              transition={{
-                duration: 1,
-              }}
-              className="
-                h-full
-                rounded-full
-                bg-white/70
-              "
-            />
+            <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
+
+              <div
+                className="
+                  text-[10px]
+                  uppercase
+                  tracking-[0.30em]
+                  text-white/35
+                "
+              >
+                ESTADO
+              </div>
+
+              <p
+                className="
+                  mt-3
+                  text-white/75
+                  leading-relaxed
+                "
+              >
+                {currentStatus}
+              </p>
+
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
+
+              <div
+                className="
+                  text-[10px]
+                  uppercase
+                  tracking-[0.30em]
+                  text-white/35
+                "
+              >
+                PROXIMA ETAPA
+              </div>
+
+              <p
+                className="
+                  mt-3
+                  text-white/75
+                  leading-relaxed
+                "
+              >
+                {
+                  currentStatus === "Disponible"
+                    ? "Producto listo para comercializacion"
+                    : "Continuar avance dentro del flujo IMNOVA"
+                }
+              </p>
+
+            </div>
 
           </div>
 
-        </div>
+        </section>
 
         <div
           className="
@@ -1351,12 +1481,12 @@ export function ProductCard({
               text-amber-200/70
             "
           >
-            VALIDACION DE IDEA
+            Validacion comunitaria
           </div>
 
           <p className="mt-3 text-sm leading-6 text-white/50">
-            Estos campos alimentan la seccion de encuesta: nicho, problema
-            humano y necesidad que se quiere validar.
+            El nicho, el problema humano y el interes de la comunidad ayudan
+            a decidir si la idea avanza.
           </p>
 
           <div className="mt-5 space-y-4">
@@ -1439,12 +1569,12 @@ export function ProductCard({
               text-emerald-200/70
             "
           >
-            LIFESTYLE HOME
+            Contenido y lifestyle
           </div>
 
           <p className="mt-3 text-sm leading-6 text-white/50">
-            Carga hasta 3 imágenes lifestyle para Ideas de Uso. La Home usa la
-            primera como escena principal y las otras como apoyo visual.
+            Organiza las imagenes lifestyle, beneficios y uso sugerido que
+            alimentan la experiencia publica.
           </p>
 
           <div className="mt-5 grid gap-4">
@@ -1531,69 +1661,6 @@ export function ProductCard({
 
         </div>
 
-        <div
-          className="
-            mt-10
-            space-y-6
-          "
-        >
-
-          <div>
-
-            <div
-              className="
-                text-[10px]
-                uppercase
-                tracking-[0.30em]
-                text-white/35
-              "
-            >
-              ESTADO
-            </div>
-
-            <p
-              className="
-                mt-3
-                text-white/75
-                leading-relaxed
-              "
-            >
-              {currentStatus}
-            </p>
-
-          </div>
-
-          <div>
-
-            <div
-              className="
-                text-[10px]
-                uppercase
-                tracking-[0.30em]
-                text-white/35
-              "
-            >
-              PRÓXIMA ETAPA
-            </div>
-
-            <p
-              className="
-                mt-3
-                text-white/75
-                leading-relaxed
-              "
-            >
-              {
-                currentStatus === "Disponible"
-                  ? "Producto listo para comercialización"
-                  : "Continuar avance dentro del flujo IMNOVA"
-              }
-            </p>
-
-          </div>
-
-        </div>
-
         {isCommercial && (
           <div
             className="
@@ -1616,12 +1683,12 @@ export function ProductCard({
                     text-cyan-300/70
                   "
                 >
-                  DISTRIBUCIÓN
+                  Comercializacion y distribucion
                 </div>
 
                 <p className="mt-3 text-sm leading-6 text-white/60">
-                  Define dónde se comercializa este producto: países, mercados,
-                  establecimientos o marketplaces.
+                  Organiza marketplaces, paises, ciudades, canales y links
+                  comerciales sin cambiar la estructura actual.
                 </p>
               </div>
 
@@ -2177,45 +2244,98 @@ export function ProductCard({
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={saveChanges}
-          disabled={
-            isSaving ||
-            isSendingWhatsApp
-          }
+        <section
           className="
-            mt-12
-            w-full
-            rounded-[24px]
+            mt-10
+            rounded-[28px]
             border
-            border-white/10
-            bg-white
-            px-6
-            py-4
-            text-sm
-            font-semibold
-            uppercase
-            tracking-[0.18em]
-            text-black
-            transition-all
-            duration-300
-            hover:scale-[1.01]
-            hover:bg-zinc-200
-            active:scale-[0.98]
-            disabled:cursor-not-allowed
-            disabled:opacity-60
-            disabled:hover:scale-100
+            border-sky-300/15
+            bg-sky-300/[0.035]
+            p-5
           "
         >
-          {
-            isSendingWhatsApp
-              ? "Enviando WhatsApp..."
-              : isSaving
-              ? "Guardando..."
-              : "Guardar Cambios"
-          }
-        </button>
+
+          <div className="text-[10px] uppercase tracking-[0.30em] text-sky-200/70">
+            Notificaciones
+          </div>
+
+          <p className="mt-3 text-sm leading-6 text-white/50">
+            Las notificaciones manuales se envían desde el detalle del producto.
+          </p>
+
+          <div className="mt-5 rounded-2xl border border-white/10 bg-black/25 p-4 text-sm leading-6 text-white/60">
+            ProductCard solo guarda cambios. Para notificar, revisa el preview
+            y envía WhatsApp desde el detalle.
+          </div>
+
+          {product.slug && (
+            <a
+              href={`/admin/products/${product.slug}`}
+              className="mt-4 inline-flex rounded-2xl border border-sky-200/20 px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-sky-100 transition-colors hover:border-sky-200/45 hover:bg-sky-200/10"
+            >
+              Ver detalle
+            </a>
+          )}
+
+        </section>
+
+        <section
+          className="
+            mt-10
+            rounded-[28px]
+            border
+            border-white/10
+            bg-white/[0.025]
+            p-5
+          "
+        >
+
+          <div className="text-[10px] uppercase tracking-[0.30em] text-white/45">
+            Acciones
+          </div>
+
+          <p className="mt-3 text-sm leading-6 text-white/50">
+            Guarda los cambios del producto usando el flujo actual.
+          </p>
+
+          <button
+            type="button"
+            onClick={saveChanges}
+            disabled={
+              isSaving
+            }
+            className="
+              mt-5
+              w-full
+              rounded-[24px]
+              border
+              border-white/10
+              bg-white
+              px-6
+              py-4
+              text-sm
+              font-semibold
+              uppercase
+              tracking-[0.18em]
+              text-black
+              transition-all
+              duration-300
+              hover:scale-[1.01]
+              hover:bg-zinc-200
+              active:scale-[0.98]
+              disabled:cursor-not-allowed
+              disabled:opacity-60
+              disabled:hover:scale-100
+            "
+          >
+            {
+              isSaving
+                ? "Guardando..."
+                : "Guardar cambios"
+            }
+          </button>
+
+        </section>
 
       </div>
 

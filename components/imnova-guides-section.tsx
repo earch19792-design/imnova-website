@@ -37,8 +37,15 @@ type Product = {
   image_url?: string | null
   lifestyle_image?: string | null
   lifestyle_images?: string[] | string | null
+  usage_moment?: string | null
+  main_benefit?: string | null
+  how_to_use?: string | null
+  usage_description?: string | null
+  routine_suggestion?: string[] | string | null
   benefits?: string[] | string | null
   bullets?: string[] | string | null
+  functional_claims?: string[] | string | null
+  ingredients_summary?: string | null
 }
 
 type ProductState = {
@@ -56,6 +63,7 @@ type UsageGuide = {
   howToUse: string
   benefits: string[]
   steps: string[]
+  ingredientsSummary: string | null
   image: string | null
   productImage: string | null
   imageIsLifestyle: boolean
@@ -95,7 +103,29 @@ function normalizeStringList(
       .filter(Boolean)
   }
 
-  return value
+  const trimmedValue =
+    value.trim()
+
+  if (!trimmedValue) {
+    return []
+  }
+
+  try {
+    const parsed =
+      JSON.parse(trimmedValue)
+
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map(item =>
+          String(item).trim()
+        )
+        .filter(Boolean)
+    }
+  } catch {
+    // Allows comma or line separated values during migration.
+  }
+
+  return trimmedValue
     .split(/,|\n/)
     .map(item => item.trim())
     .filter(Boolean)
@@ -150,8 +180,15 @@ function getProductProfile(
       product.name,
       product.category,
       product.description,
+      product.usage_moment,
+      product.main_benefit,
+      product.how_to_use,
+      product.usage_description,
+      product.ingredients_summary,
+      ...normalizeStringList(product.routine_suggestion),
       ...normalizeStringList(product.benefits),
       ...normalizeStringList(product.bullets),
+      ...normalizeStringList(product.functional_claims),
     ]
       .filter(Boolean)
       .join(" ")
@@ -165,6 +202,16 @@ function profileIncludes(
   return terms.some(
     term =>
       profile.includes(term)
+  )
+}
+
+function getFirstText(
+  values: Array<string | null | undefined>
+) {
+  return (
+    values
+      .map(value => value?.trim())
+      .find(Boolean) || null
   )
 }
 
@@ -190,6 +237,15 @@ function isAvailableStatus(
 function getUsageMoment(
   product: Product
 ) {
+  const configuredMoment =
+    getFirstText([
+      product.usage_moment,
+    ])
+
+  if (configuredMoment) {
+    return configuredMoment
+  }
+
   const profile =
     getProductProfile(product)
 
@@ -277,12 +333,23 @@ function getUsageMoment(
     return "Merienda funcional"
   }
 
-  return "Energía diaria"
+  return "Rutina diaria"
 }
 
 function getHowToUse(
   product: Product
 ) {
+  const configuredUsage =
+    getFirstText([
+      product.how_to_use,
+      product.usage_description,
+      product.main_benefit,
+    ])
+
+  if (configuredUsage) {
+    return configuredUsage
+  }
+
   const profile =
     getProductProfile(product)
 
@@ -296,7 +363,7 @@ function getHowToUse(
       ]
     )
   ) {
-    return "Disfrútalo frío con hielo y leche. Agítalo, sírvelo sobre hielo y añade tu leche favorita. Ideal para empezar el día, trabajar con enfoque o estudiar con energía limpia."
+    return "Café funcional con vitaminas, colágeno marino y extractos herbales para apoyar bienestar diario."
   }
 
   if (
@@ -330,13 +397,22 @@ function getHowToUse(
 
   return (
     product.description ||
-    "Úsalo como parte de tu rutina diaria para apoyar energía, enfoque y bienestar de forma práctica."
+    "Úsalo como parte de tu rutina diaria para apoyar bienestar de forma práctica."
   )
 }
 
 function getRitualSteps(
   product: Product
 ) {
+  const configuredSteps =
+    normalizeStringList(
+      product.routine_suggestion
+    )
+
+  if (configuredSteps.length > 0) {
+    return configuredSteps
+  }
+
   const profile =
     getProductProfile(product)
 
@@ -439,9 +515,9 @@ function getFallbackBenefits(
     )
   ) {
     return [
-      "Energía limpia para tu rutina diaria",
-      "Apoya concentración y enfoque",
-      "Colágeno marino, vitaminas y extractos herbales",
+      "Café funcional para bienestar diario",
+      "Vitaminas, colágeno marino y extractos herbales",
+      "Energía natural del café",
       "Sin azúcar y bajo en calorías",
     ]
   }
@@ -513,29 +589,29 @@ function getFallbackBenefits(
 function getPracticalBenefits(
   product: Product
 ) {
-  const profile =
-    getProductProfile(product)
+  const configuredBenefits = [
+    ...normalizeStringList(product.benefits),
+    ...normalizeStringList(
+      product.functional_claims
+    ),
+    ...normalizeStringList(product.bullets),
+    ...normalizeStringList(product.main_benefit),
+  ]
 
-  if (
-    profileIncludes(
-      profile,
-      [
-        "coffee",
-        "cafe",
-        "caf",
-      ]
+  if (configuredBenefits.length > 0) {
+    return configuredBenefits.slice(
+      0,
+      4
     )
-  ) {
-    return getFallbackBenefits(product)
   }
 
-  const configuredBenefits = [
+  const configuredFallbacks = [
     ...normalizeStringList(product.benefits),
     ...normalizeStringList(product.bullets),
   ]
 
   const combinedBenefits = [
-    ...configuredBenefits,
+    ...configuredFallbacks,
     ...getFallbackBenefits(product),
   ]
 
@@ -543,7 +619,7 @@ function getPracticalBenefits(
     new Set(combinedBenefits)
   ).slice(
     0,
-    3
+    4
   )
 }
 
@@ -748,7 +824,7 @@ function getGuideImage(
                 ]
               : []
 
-  const lifestyleImages =
+  const configuredLifestyleImages =
     Array.from(
       new Set([
         ...normalizeImageList(
@@ -757,7 +833,6 @@ function getGuideImage(
         ...normalizeImageList(
           product.lifestyle_image
         ),
-        ...fallbackLifestyleImages,
       ])
     ).slice(
       0,
@@ -772,20 +847,28 @@ function getGuideImage(
   const scene =
     getLifestyleScene(product)
 
-  const sceneImages =
-    lifestyleImages.length > 0
-      ? lifestyleImages
+  const fallbackImages =
+    fallbackLifestyleImages.length > 0
+      ? fallbackLifestyleImages
       : [
           scene.image,
         ]
 
+  const sceneImages =
+    configuredLifestyleImages.length > 0
+      ? configuredLifestyleImages
+      : fallbackImages
+
   return {
     image:
-      lifestyleImages[0] ||
-      productImage,
+      configuredLifestyleImages[0] ||
+      productImage ||
+      fallbackImages[0],
     productImage,
     imageIsLifestyle:
-      lifestyleImages.length > 0,
+      configuredLifestyleImages.length > 0 ||
+      (!productImage &&
+        fallbackLifestyleImages.length > 0),
     sceneImage:
       sceneImages[0],
     sceneImages,
@@ -1170,6 +1253,19 @@ function ProductGuideCard({
             />
           </div>
 
+          {guide.ingredientsSummary && (
+            <div className="mt-7 rounded-[24px] border border-white/10 bg-black/30 p-5">
+              <p
+                className={`text-[10px] font-semibold uppercase tracking-[0.24em] ${getAccentClasses(guide.accent).text}`}
+              >
+                Ingredientes funcionales
+              </p>
+              <p className="mt-3 text-sm leading-7 text-zinc-300">
+                {guide.ingredientsSummary}
+              </p>
+            </div>
+          )}
+
           <div className="mt-7 rounded-[26px] border border-white/10 bg-black/30 p-5">
             <p
               className={`text-[10px] font-semibold uppercase tracking-[0.24em] ${getAccentClasses(guide.accent).text}`}
@@ -1344,6 +1440,10 @@ export function ImnovaGuidesSection({
                   getPracticalBenefits(product),
                 steps:
                   getRitualSteps(product),
+                ingredientsSummary:
+                  getFirstText([
+                    product.ingredients_summary,
+                  ]),
                 image:
                   guideImage.image,
                 productImage:
@@ -1657,6 +1757,19 @@ export function ImnovaGuidesSection({
                     benefits={featuredGuide.benefits}
                   />
                 </div>
+
+                {featuredGuide.ingredientsSummary && (
+                  <div className="mt-7 rounded-[24px] border border-white/10 bg-black/30 p-5">
+                    <p
+                      className={`text-[10px] font-semibold uppercase tracking-[0.24em] ${getAccentClasses(featuredGuide.accent).text}`}
+                    >
+                      Ingredientes funcionales
+                    </p>
+                    <p className="mt-3 text-sm leading-7 text-zinc-300">
+                      {featuredGuide.ingredientsSummary}
+                    </p>
+                  </div>
+                )}
 
                 <div className="mt-7 rounded-[26px] border border-white/10 bg-black/30 p-5">
                   <p

@@ -56,10 +56,14 @@ type Product = {
   benefits?: string[] | string | null
   survey_score?: number | string | null
   surveyScore?: number | string | null
+  survey_status?: string | null
+  surveyStatus?: string | null
   survey_votes?: number | string | null
   surveyVotes?: number | string | null
   validation_status?: string | null
   validationStatus?: string | null
+  validation_decision?: string | null
+  validationDecision?: string | null
   social_interest?: string | null
   socialInterest?: string | null
   social_signals?: string[] | string | null
@@ -190,6 +194,59 @@ function getSurveyVotes(product: Product) {
   )
 }
 
+function getSurveyStatus(product: Product) {
+  return getFirstText([
+    product.survey_status,
+    product.surveyStatus,
+  ])
+}
+
+function getSurveyStatusLabel(product: Product) {
+  const status =
+    getSurveyStatus(product)
+
+  if (!status) {
+    return "Encuesta pendiente"
+  }
+
+  const normalizedStatus =
+    normalizeText(status)
+
+  if (
+    normalizedStatus.includes("activa") ||
+    normalizedStatus.includes("active")
+  ) {
+    return "Encuesta activa"
+  }
+
+  if (
+    normalizedStatus.includes("cerrada") ||
+    normalizedStatus.includes("closed")
+  ) {
+    return "Encuesta cerrada"
+  }
+
+  if (
+    normalizedStatus.includes("pendiente") ||
+    normalizedStatus.includes("draft") ||
+    normalizedStatus.includes("pending")
+  ) {
+    return "Encuesta pendiente"
+  }
+
+  return `Encuesta: ${status.replace(/_/g, " ")}`
+}
+
+function isSurveyActive(product: Product) {
+  const status =
+    getSurveyStatus(product)
+
+  return status
+    ? normalizeText(status).includes("activa") ||
+        normalizeText(status).includes("active")
+    : false
+}
+
 function getValidationStatus(product: Product) {
   return getFirstText([
     product.validation_status,
@@ -197,15 +254,37 @@ function getValidationStatus(product: Product) {
   ])
 }
 
+function getValidationDecision(product: Product) {
+  return getFirstText([
+    product.validation_decision,
+    product.validationDecision,
+  ])
+}
+
+function getValidationStatusLabel(product: Product) {
+  const status =
+    getValidationStatus(product)
+
+  if (!status) {
+    return "Validación pendiente"
+  }
+
+  return status.replace(/_/g, " ")
+}
+
 function hasSurveyData(product: Product) {
   return (
+    Boolean(getSurveyStatus(product)) ||
     getSurveyScore(product) !== null ||
     getSurveyVotes(product) !== null
   )
 }
 
 function hasValidationDecisionData(product: Product) {
-  return Boolean(getValidationStatus(product))
+  return Boolean(
+    getValidationDecision(product) ||
+      getValidationStatus(product)
+  )
 }
 
 function isInProductionStage(product: LiveProduct) {
@@ -263,13 +342,22 @@ function hasRecordedValidationDecision(
 function hasRecordedPositiveValidation(
   product: LiveProduct
 ) {
+  const validationDecision =
+    normalizeText(
+      getValidationDecision(product) ||
+        ""
+    )
+
   const validationStatus =
     normalizeText(
       getValidationStatus(product) || ""
     )
 
   return (
+    validationDecision.includes("avanzar") ||
     validationStatus.includes("aprob") ||
+    validationStatus.includes("interes alto") ||
+    validationStatus.includes("interes_alto") ||
     validationStatus.includes("validado") ||
     validationStatus.includes("validada") ||
     validationStatus.includes("positivo") ||
@@ -281,12 +369,21 @@ function hasRecordedPositiveValidation(
 function hasRecordedNegativeValidation(
   product: LiveProduct
 ) {
+  const validationDecision =
+    normalizeText(
+      getValidationDecision(product) ||
+        ""
+    )
+
   const validationStatus =
     normalizeText(
       getValidationStatus(product) || ""
     )
 
   return (
+    validationDecision.includes("ajustar") ||
+    validationDecision.includes("pausar") ||
+    validationDecision.includes("descartar") ||
     validationStatus.includes("rechaz") ||
     validationStatus.includes("descart") ||
     validationStatus.includes("paus") ||
@@ -376,9 +473,7 @@ function getSocialSignals(product: Product) {
 
 function hasSocialSignalData(product: Product) {
   return (
-    getSocialInterestScore(product) !== null ||
-    getSocialMentions(product) !== null ||
-    getSocialSignals(product).length > 0
+    getSocialInterestScore(product) !== null
   )
 }
 
@@ -394,62 +489,27 @@ function getSocialSignalSummary(product: Product) {
   const score =
     getSocialInterestScore(product)
 
-  const mentions =
-    getSocialMentions(product)
-
   if (score !== null) {
-    return `Interés en redes: ${formatSurveyScore(score)}`
+    return `Señal social: ${formatSurveyScore(score)}`
   }
 
-  if (mentions !== null) {
-    return `Menciones en redes: ${mentions}`
-  }
-
-  const signals =
-    getSocialSignals(product)
-
-  if (signals.length > 0) {
-    return signals[0]
-  }
-
-  return "Señales de redes pendientes"
+  return "Señales sociales pendientes"
 }
 
 function getSocialSignalDetail(product: Product) {
   const score =
     getSocialInterestScore(product)
 
-  const mentions =
-    getSocialMentions(product)
-
-  const signals =
-    getSocialSignals(product)
-
-  if (score !== null && mentions !== null) {
-    return `Interés en redes: ${formatSurveyScore(score)} con ${mentions} menciones registradas.`
-  }
-
   if (score !== null) {
-    return `Interés en redes: ${formatSurveyScore(score)}.`
+    return `Señal social registrada: ${formatSurveyScore(score)}.`
   }
 
-  if (mentions !== null) {
-    return `Menciones en redes: ${mentions}.`
-  }
-
-  if (signals.length > 0) {
-    return signals.join(", ")
-  }
-
-  return "Señales de interés en redes pendientes de la comunidad."
+  return "Señales sociales pendientes"
 }
 
 function getProductNiches(product: LiveProduct) {
   const configuredNiches = [
-    ...normalizeStringList(product.nichos),
-    ...normalizeStringList(product.niches),
     ...normalizeStringList(product.nicho),
-    ...normalizeStringList(product.niche),
   ]
 
   if (configuredNiches.length > 0) {
@@ -457,20 +517,13 @@ function getProductNiches(product: LiveProduct) {
   }
 
   return [
-    "Nicho pendiente de definir",
+    "Nicho en validación",
   ]
 }
 
 function getPopulationProblem(product: LiveProduct) {
   const configuredProblem =
-    product.human_problem ||
-    product.humanProblem ||
-    product.problem ||
-    product.problemSolved ||
-    product.problem_solved ||
-    product.problema ||
-    product.problema_resuelve ||
-    product.problemaQueResuelve
+    product.problema_resuelve
 
   if (configuredProblem) {
     return configuredProblem
@@ -483,65 +536,86 @@ function getExpectedBenefit(product: LiveProduct) {
   return (
     getFirstText([
       product.expected_benefit,
-      product.expectedBenefit,
-      product.innovationSubtitle,
-      ...normalizeStringList(product.benefits),
       product.description,
     ]) ||
-    "Beneficio esperado pendiente de validar"
+    "Beneficio en evaluación"
   )
 }
 
 function getSurveySummary(product: LiveProduct) {
-  const score =
+  const realStatusLabel =
+    getSurveyStatusLabel(product)
+
+  const realScore =
     getSurveyScore(product)
 
-  const votes =
+  const realVotes =
     getSurveyVotes(product)
 
-  if (score !== null) {
-    return `Interés positivo: ${formatSurveyScore(score)}`
+  if (realScore !== null) {
+    return `Interés positivo: ${formatSurveyScore(realScore)}`
   }
 
-  if (votes !== null) {
-    return `Votos recibidos: ${votes}`
+  if (realVotes !== null) {
+    return `${realVotes} respuestas registradas`
   }
 
-  return "Encuesta pendiente"
+  return realStatusLabel
 }
 
 function getSurveyDetail(product: LiveProduct) {
-  const score =
+  const hasRealStatus =
+    Boolean(getSurveyStatus(product))
+
+  const realScore =
     getSurveyScore(product)
 
-  const votes =
+  const realVotes =
     getSurveyVotes(product)
 
-  if (score !== null && votes !== null) {
-    return `Interés positivo: ${formatSurveyScore(score)} con ${votes} votos recibidos.`
+  if (realScore !== null && realVotes !== null) {
+    return `Interés positivo: ${formatSurveyScore(realScore)} con ${realVotes} respuestas registradas.`
   }
 
-  if (score !== null) {
-    return `Interés positivo: ${formatSurveyScore(score)}.`
+  if (realScore !== null) {
+    return `Interés positivo: ${formatSurveyScore(realScore)}.`
   }
 
-  if (votes !== null) {
-    return `Votos recibidos: ${votes}.`
+  if (realVotes !== null) {
+    return `${realVotes} respuestas registradas.`
   }
 
-  return "Validación comunitaria activa."
+  if (hasRealStatus) {
+    return getSurveyStatusLabel(product)
+  }
+
+  return "Encuesta pendiente."
 }
 
 function getDecisionText(product: LiveProduct) {
-  if (hasRecordedPositiveValidation(product)) {
-    return "La validación registrada indica que puede evaluarse para pasar al siguiente estado del proceso IMNOVA"
+  const realDecision =
+    normalizeText(
+      getValidationDecision(product) ||
+        ""
+    )
+
+  if (realDecision.includes("avanzar")) {
+    return "La idea muestra señales para avanzar."
   }
 
-  if (hasCommunitySignalData(product)) {
-    return "La decisión de fabricar, ajustar o pausar dependerá de encuestas reales de la comunidad IMNOVA y señales registradas en redes sociales"
+  if (realDecision.includes("ajustar")) {
+    return "La idea requiere ajustes antes de avanzar."
   }
 
-  return "La comunidad IMNOVA definirá con encuestas reales y señales de redes si esta idea se fabrica, se ajusta o se pausa"
+  if (realDecision.includes("pausar")) {
+    return "La idea queda pausada hasta obtener mayor interés."
+  }
+
+  if (realDecision.includes("descartar")) {
+    return "La idea no avanza por ahora."
+  }
+
+  return "Decisión pendiente."
 }
 
 function isCommunityValidationLive(
@@ -552,7 +626,8 @@ function isCommunityValidationLive(
 
   return (
     status.includes("validacion") ||
-    hasSurveyData(product) ||
+    isSurveyActive(product) ||
+    getSurveyScore(product) !== null ||
     hasSocialSignalData(product)
   )
 }
@@ -578,13 +653,7 @@ function getCommunityPulseScore(
     )
   }
 
-  return Math.min(
-    100,
-    Math.max(
-      8,
-      product.progress
-    )
-  )
+  return null
 }
 
 function getCommunityPulseLabel(
@@ -1264,7 +1333,9 @@ export function InnovationsSection() {
                         Pulso comunitario
                       </p>
                       <p className="mt-2 text-5xl font-black text-cyan-50">
-                        {featuredCommunityPulseScore}%
+                        {featuredCommunityPulseScore !== null
+                          ? `${featuredCommunityPulseScore}%`
+                          : "Pendiente"}
                       </p>
                     </div>
                     <div className="flex items-end gap-1.5">
@@ -1276,7 +1347,7 @@ export function InnovationsSection() {
                             height:
                               `${height}px`,
                             opacity:
-                              featuredValidationIsLive
+                              featuredCommunityPulseScore !== null
                                 ? 1
                                 : 0.34,
                           }}
@@ -1289,7 +1360,9 @@ export function InnovationsSection() {
                       className="h-full rounded-full bg-gradient-to-r from-cyan-300 via-white to-amber-200"
                       style={{
                         width:
-                          `${featuredCommunityPulseScore}%`,
+                          featuredCommunityPulseScore !== null
+                            ? `${featuredCommunityPulseScore}%`
+                            : "0%",
                       }}
                     />
                   </div>
@@ -1325,7 +1398,7 @@ export function InnovationsSection() {
 
                   <div className="rounded-2xl border border-amber-200/15 bg-amber-200/[0.055] px-4 py-3">
                     <p className="text-[9px] uppercase tracking-[0.18em] text-amber-100/55">
-                      Aprobadas
+                      Decisiones
                     </p>
                     <p className="mt-2 text-3xl font-black text-amber-100">
                       {decisionRecordedProducts.length}
@@ -1337,7 +1410,7 @@ export function InnovationsSection() {
                   href="#contact"
                   className="relative mt-5 inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-amber-200/25 bg-amber-200/[0.10] px-5 py-4 text-[10px] font-black uppercase tracking-[0.18em] text-amber-50 transition hover:border-amber-100/45 hover:bg-amber-200/[0.16]"
                 >
-                  Participar en la validación
+                  Participar en encuesta
                   <MessageCircle className="h-4 w-4" />
                 </a>
 
@@ -1396,7 +1469,7 @@ export function InnovationsSection() {
                         href="#contact"
                         className="inline-flex items-center justify-center gap-2 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-cyan-50 transition hover:border-cyan-100/40 hover:bg-cyan-300/[0.13]"
                       >
-                        Votar interés
+                        Unirme a la comunidad
                         <Vote className="h-4 w-4" />
                       </a>
                     </div>
@@ -1461,7 +1534,7 @@ export function InnovationsSection() {
 
                           <div className="rounded-3xl border border-white/10 bg-black/25 p-5 md:col-span-2">
                             <p className="text-[10px] uppercase tracking-[0.24em] text-zinc-400">
-                              Promesa inicial
+                              Beneficio esperado
                             </p>
                             <p className="mt-4 max-w-3xl text-sm leading-7 text-zinc-300">
                               {getExpectedBenefit(
@@ -1492,6 +1565,35 @@ export function InnovationsSection() {
                                 featuredComingSoonProduct
                               )}
                             </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <span className="rounded-full border border-amber-200/15 bg-black/25 px-3 py-1.5 text-[9px] uppercase tracking-[0.14em] text-amber-100/75">
+                                {getSurveyStatusLabel(
+                                  featuredComingSoonProduct
+                                )}
+                              </span>
+                              {getSurveyScore(
+                                featuredComingSoonProduct
+                              ) !== null && (
+                                <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[9px] uppercase tracking-[0.14em] text-zinc-300">
+                                  {formatSurveyScore(
+                                    getSurveyScore(
+                                      featuredComingSoonProduct
+                                    ) || 0
+                                  )}{" "}
+                                  interés positivo
+                                </span>
+                              )}
+                              {getSurveyVotes(
+                                featuredComingSoonProduct
+                              ) !== null && (
+                                <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[9px] uppercase tracking-[0.14em] text-zinc-300">
+                                  {getSurveyVotes(
+                                    featuredComingSoonProduct
+                                  )}{" "}
+                                  respuestas registradas
+                                </span>
+                              )}
+                            </div>
                           </div>
 
                           <div className="rounded-2xl border border-cyan-200/10 bg-cyan-300/[0.045] p-4">
@@ -1517,7 +1619,12 @@ export function InnovationsSection() {
                             <p className="mt-2 text-xs leading-6 text-emerald-50/85">
                               {getDecisionText(
                                 featuredComingSoonProduct
-                              )}.
+                              )}
+                            </p>
+                            <p className="mt-3 inline-flex rounded-full border border-emerald-200/15 bg-black/25 px-3 py-1.5 text-[9px] uppercase tracking-[0.14em] text-emerald-100/75">
+                              {getValidationStatusLabel(
+                                featuredComingSoonProduct
+                              )}
                             </p>
                           </div>
                         </div>
@@ -1784,7 +1891,7 @@ export function InnovationsSection() {
 
                           <div className="rounded-2xl border border-white/10 bg-white/[0.025] px-3 py-3">
                             <p className="text-[9px] uppercase tracking-[0.16em] text-zinc-500">
-                              Canales
+                              Señales sociales
                             </p>
                             <p className="mt-2 text-xs font-black text-zinc-300">
                               {getSocialSignalSummary(product)}

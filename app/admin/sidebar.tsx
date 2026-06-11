@@ -5,7 +5,6 @@ import {
   Activity,
   Package,
   BarChart3,
-  Settings,
 } from "lucide-react"
 
 type SidebarProps = {
@@ -39,11 +38,6 @@ export function Sidebar({
       label: "Analytics",
       icon: BarChart3,
       value: "analytics",
-    },
-    {
-      label: "Configuración",
-      icon: Settings,
-      value: "settings",
     },
   ]
 
