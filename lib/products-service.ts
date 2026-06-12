@@ -1549,6 +1549,152 @@ export async function getNotificationLogsByProduct(
 
 }
 
+export type CommunitySubscriber = {
+  id: string
+  nombre: string | null
+  telefono: string | null
+  email: string | null
+  nichos: string[] | string | null
+  objetivo_principal: string | null
+  created_at: string | null
+}
+
+export type ManualCommunitySubscriberInput = {
+  nombre: string
+  telefono: string
+  email?: string | null
+  nichos?: string[] | null
+  objetivo_principal?: string | null
+}
+
+function normalizeCommunityPhone(
+  phone: string
+) {
+  const digits =
+    phone.replace(/\D/g, "")
+
+  if (!digits) {
+    return ""
+  }
+
+  if (digits.length === 8) {
+    return `505${digits}`
+  }
+
+  return digits
+}
+
+export async function getRecentCommunitySubscribers(
+  limit = 8
+): Promise<CommunitySubscriber[]> {
+
+  const { data, error } =
+    await supabase
+      .from("subscribers")
+      .select(`
+        id,
+        nombre,
+        telefono,
+        email,
+        nichos,
+        objetivo_principal,
+        created_at
+      `)
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
+      .limit(limit)
+
+  if (error) {
+    console.error(
+      "GET COMMUNITY SUBSCRIBERS ERROR:",
+      error
+    )
+
+    return []
+  }
+
+  return (data || []) as CommunitySubscriber[]
+
+}
+
+export async function createManualCommunitySubscriber(
+  input: ManualCommunitySubscriberInput
+): Promise<{
+  subscriber: CommunitySubscriber | null
+  error: string | null
+}> {
+
+  const phone =
+    normalizeCommunityPhone(
+      input.telefono
+    )
+
+  if (!phone) {
+    return {
+      subscriber: null,
+      error:
+        "El numero WhatsApp es obligatorio.",
+    }
+  }
+
+  const payload = {
+    nombre:
+      input.nombre.trim(),
+    telefono:
+      phone,
+    email:
+      input.email?.trim() || null,
+    nichos:
+      input.nichos || [],
+    objetivo_principal:
+      input.objetivo_principal?.trim() ||
+      "Registro manual desde Admin para comunidad WhatsApp.",
+  }
+
+  const { data, error } =
+    await supabase
+      .from("subscribers")
+      .insert(payload)
+      .select(`
+        id,
+        nombre,
+        telefono,
+        email,
+        nichos,
+        objetivo_principal,
+        created_at
+      `)
+      .single()
+
+  if (error) {
+    console.error(
+      "CREATE MANUAL COMMUNITY SUBSCRIBER ERROR:",
+      {
+        error,
+        payload,
+      }
+    )
+
+    return {
+      subscriber: null,
+      error:
+        formatSupabaseErrorMessage(error) ||
+        "No se pudo registrar el numero WhatsApp.",
+    }
+  }
+
+  return {
+    subscriber:
+      data as CommunitySubscriber,
+    error: null,
+  }
+
+}
+
 export type CommunitySurvey = {
   id: string
   product_id: string

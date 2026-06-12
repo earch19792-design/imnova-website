@@ -1,6 +1,69 @@
 const fallbackLaunchImageUrl =
   "https://imnova-website-z1qh.vercel.app/images/mash-coffee.png"
 
+const fallbackRecipientPhones = [
+  "50558199840",
+]
+
+export function normalizeWhatsAppPhone(
+  phone: string
+) {
+
+  const digits =
+    phone.replace(/\D/g, "")
+
+  if (!digits) {
+    return null
+  }
+
+  if (digits.length === 8) {
+    return `505${digits}`
+  }
+
+  return digits
+
+}
+
+function getWhatsAppRecipientPhones(
+  additionalPhones: string[] = []
+) {
+
+  const configuredPhones =
+    process.env.WHATSAPP_RECIPIENT_PHONES
+      ?.split(",")
+      .map((phone) =>
+        normalizeWhatsAppPhone(phone)
+      )
+      .filter(
+        (phone): phone is string =>
+          Boolean(phone)
+      ) || []
+
+  const communityPhones =
+    additionalPhones
+      .map((phone) =>
+        normalizeWhatsAppPhone(phone)
+      )
+      .filter(
+        (phone): phone is string =>
+          Boolean(phone)
+      )
+
+  const phones =
+    configuredPhones.length > 0
+      ? [
+          ...configuredPhones,
+          ...communityPhones,
+        ]
+      : [
+          ...fallbackRecipientPhones,
+          ...communityPhones,
+        ]
+
+  return Array.from(new Set(phones))
+
+}
+
 export function isValidAbsoluteUrl(
   imageUrl?: string
 ) {
@@ -16,7 +79,8 @@ export async function sendWhatsAppUpdate(
   product: string,
   status: string,
   progress: string,
-  imageUrl = ""
+  imageUrl = "",
+  recipientPhones: string[] = []
 ) {
 
   const token =
@@ -25,9 +89,10 @@ export async function sendWhatsAppUpdate(
   const phoneId =
     process.env.WHATSAPP_PHONE_NUMBER_ID?.trim()
 
-  const phones = [
-    "50558199840",
-  ]
+  const phones =
+    getWhatsAppRecipientPhones(
+      recipientPhones
+    )
 
   if (!token || !phoneId) {
 

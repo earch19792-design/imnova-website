@@ -5,6 +5,7 @@ import {
   Activity,
   Package,
   BarChart3,
+  UsersRound,
 } from "lucide-react"
 
 type SidebarProps = {
@@ -44,10 +45,18 @@ export function Sidebar({
       value: "campaigns",
     },
     {
+      label: "Comunidad",
+      description:
+        "Agrega contactos WhatsApp y crecimiento manual.",
+      step: "04",
+      icon: UsersRound,
+      value: "community",
+    },
+    {
       label: "Analytics",
       description:
         "Lee senales, rendimiento y aprendizaje operativo.",
-      step: "04",
+      step: "05",
       icon: BarChart3,
       value: "analytics",
     },

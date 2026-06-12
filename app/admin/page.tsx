@@ -13,12 +13,15 @@ import {
 } from "framer-motion"
 
 import {
+  createManualCommunitySubscriber,
   getAdminDashboardMetrics,
   getAdminProductPage,
   getAdminPriorityProducts,
   getAdminProductSuggestions,
+  getRecentCommunitySubscribers,
   getAdminValidationActionProducts,
   getProductStates,
+  type CommunitySubscriber,
   updateProduct,
 } from "@/lib/products-service"
 
@@ -108,6 +111,14 @@ type ValidationActionProducts = {
   needsAdjustment: Product[]
 }
 
+type ManualSubscriberFormData = {
+  nombre: string
+  telefono: string
+  email: string
+  nichos: string
+  objetivo_principal: string
+}
+
 const EMPTY_VALIDATION_SUMMARY: ValidationSummary = {
   pendingDecision: 0,
   readyToAdvance: 0,
@@ -168,6 +179,58 @@ function getValidNumber(
     : null
 }
 
+function getAdminMenuTitle(
+  selectedMenu: string
+) {
+  if (selectedMenu === "dashboard") {
+    return "IMNOVA Admin"
+  }
+
+  if (selectedMenu === "products") {
+    return "Productos"
+  }
+
+  if (selectedMenu === "campaigns") {
+    return "Campanas"
+  }
+
+  if (selectedMenu === "community") {
+    return "Comunidad"
+  }
+
+  if (selectedMenu === "analytics") {
+    return "Analytics"
+  }
+
+  return "IMNOVA"
+}
+
+function getAdminMenuSubtitle(
+  selectedMenu: string
+) {
+  if (selectedMenu === "dashboard") {
+    return "Centro de control para productos, estados, validacion y comercializacion."
+  }
+
+  if (selectedMenu === "products") {
+    return "Gestion centralizada de productos y proyectos."
+  }
+
+  if (selectedMenu === "campaigns") {
+    return "Centro de gestion de campanas y generacion de leads."
+  }
+
+  if (selectedMenu === "community") {
+    return "Registro manual de contactos WhatsApp para crecer la comunidad IMNOVA."
+  }
+
+  if (selectedMenu === "analytics") {
+    return "Metricas, rendimiento y crecimiento del ecosistema."
+  }
+
+  return "IMNOVA OS"
+}
+
 const ADMIN_PRODUCT_LIST_BATCH_SIZE =
   24
 
@@ -210,6 +273,19 @@ const adminMenuGuides = {
     ],
     reminder:
       "Las campanas ayudan a generar senales, pero no mueven estados automaticamente.",
+  },
+  community: {
+    title:
+      "Crece la comunidad con registros ordenados.",
+    description:
+      "Agrega contactos WhatsApp manuales cuando el cliente dio permiso fuera de la web.",
+    steps: [
+      "Registra nombre y WhatsApp en formato nacional o internacional.",
+      "Agrega nichos o interes para segmentar mejor la comunidad.",
+      "Usa estos contactos en notificaciones manuales y futuras campanas.",
+    ],
+    reminder:
+      "Solo agrega contactos con consentimiento. La comunidad debe crecer con confianza.",
   },
   analytics: {
     title:
@@ -340,6 +416,43 @@ export default function AdminPage() {
       leads: 0,
     },
   ])
+
+  const [
+    communitySubscribers,
+    setCommunitySubscribers,
+  ] = useState<CommunitySubscriber[]>([])
+
+  const [
+    manualSubscriberForm,
+    setManualSubscriberForm,
+  ] = useState<ManualSubscriberFormData>({
+    nombre: "",
+    telefono: "",
+    email: "",
+    nichos: "",
+    objetivo_principal:
+      "Registro manual para comunidad WhatsApp IMNOVA.",
+  })
+
+  const [
+    isLoadingCommunity,
+    setIsLoadingCommunity,
+  ] = useState(false)
+
+  const [
+    isSavingCommunitySubscriber,
+    setIsSavingCommunitySubscriber,
+  ] = useState(false)
+
+  const [
+    communityMessage,
+    setCommunityMessage,
+  ] = useState("")
+
+  const [
+    communityError,
+    setCommunityError,
+  ] = useState("")
 
   const [
     validationIdea,
@@ -532,6 +645,123 @@ export default function AdminPage() {
         selectedMenu === "products"
       ) {
         await loadAdminProductPage()
+      }
+
+    }
+
+  const loadCommunitySubscribers =
+    async () => {
+
+      setIsLoadingCommunity(true)
+
+      try {
+        const subscribers =
+          await getRecentCommunitySubscribers(10)
+
+        setCommunitySubscribers(
+          subscribers || []
+        )
+      } catch (error) {
+        console.error(
+          "LOAD COMMUNITY SUBSCRIBERS ERROR:",
+          error
+        )
+
+        setCommunitySubscribers([])
+      } finally {
+        setIsLoadingCommunity(false)
+      }
+
+    }
+
+  const updateManualSubscriberField =
+    (
+      field: keyof ManualSubscriberFormData,
+      value: string
+    ) => {
+      setManualSubscriberForm(
+        currentForm => ({
+          ...currentForm,
+          [field]: value,
+        })
+      )
+    }
+
+  const handleCreateManualSubscriber =
+    async () => {
+
+      setCommunityMessage("")
+      setCommunityError("")
+
+      const name =
+        manualSubscriberForm.nombre.trim()
+
+      const phone =
+        manualSubscriberForm.telefono.trim()
+
+      if (!name || !phone) {
+        setCommunityError(
+          "Nombre y WhatsApp son obligatorios."
+        )
+        return
+      }
+
+      setIsSavingCommunitySubscriber(true)
+
+      try {
+        const niches =
+          manualSubscriberForm.nichos
+            .split(",")
+            .map((niche) =>
+              niche.trim()
+            )
+            .filter(Boolean)
+
+        const result =
+          await createManualCommunitySubscriber({
+            nombre: name,
+            telefono: phone,
+            email:
+              manualSubscriberForm.email,
+            nichos: niches,
+            objetivo_principal:
+              manualSubscriberForm.objetivo_principal,
+          })
+
+        if (!result.subscriber) {
+          throw new Error(
+            result.error ||
+              "No se pudo registrar el numero WhatsApp."
+          )
+        }
+
+        setCommunityMessage(
+          "Contacto WhatsApp agregado a la comunidad."
+        )
+
+        setManualSubscriberForm({
+          nombre: "",
+          telefono: "",
+          email: "",
+          nichos: "",
+          objetivo_principal:
+            "Registro manual para comunidad WhatsApp IMNOVA.",
+        })
+
+        await loadCommunitySubscribers()
+      } catch (error) {
+        console.error(
+          "CREATE MANUAL COMMUNITY SUBSCRIBER UI ERROR:",
+          error
+        )
+
+        setCommunityError(
+          error instanceof Error
+            ? error.message
+            : "No se pudo registrar el contacto."
+        )
+      } finally {
+        setIsSavingCommunitySubscriber(false)
       }
 
     }
@@ -736,6 +966,22 @@ export default function AdminPage() {
     selectedMenu,
     productSearchTerm,
     productStateFilter,
+  ])
+
+  useEffect(() => {
+
+    if (
+      !isAuthenticated ||
+      selectedMenu !== "community"
+    ) {
+      return
+    }
+
+    loadCommunitySubscribers()
+
+  }, [
+    isAuthenticated,
+    selectedMenu,
   ])
 
   useEffect(() => {
@@ -1182,6 +1428,8 @@ export default function AdminPage() {
                   ? "Productos"
                   : selectedMenu === "campaigns"
                   ? "Campañas"
+                  : selectedMenu === "community"
+                  ? "Comunidad"
                   : selectedMenu === "analytics"
                   ? "Analytics"
                   : "IMNOVA"

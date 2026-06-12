@@ -334,6 +334,36 @@ async function saveNotificationLog(
 
 }
 
+async function getCommunityRecipientPhones(
+  supabaseClient: SupabaseClient
+) {
+
+  const { data, error } =
+    await supabaseClient
+      .from("subscribers")
+      .select("telefono")
+      .not("telefono", "is", null)
+      .limit(500)
+
+  if (error) {
+    console.error(
+      "GET COMMUNITY WHATSAPP RECIPIENTS ERROR:",
+      error
+    )
+
+    return []
+  }
+
+  return (data || [])
+    .map((subscriber) =>
+      typeof subscriber.telefono === "string"
+        ? subscriber.telefono
+        : ""
+    )
+    .filter(Boolean)
+
+}
+
 export async function POST(
   req: Request
 ) {
@@ -378,6 +408,11 @@ export async function POST(
       triggeredBy ||
       "admin"
 
+    const communityRecipientPhones =
+      await getCommunityRecipientPhones(
+        adminAuth.supabaseClient
+      )
+
     let result: WhatsAppResult
 
     try {
@@ -387,7 +422,8 @@ export async function POST(
           product || "",
           status || "",
           progress || "",
-          imageUrl || ""
+          imageUrl || "",
+          communityRecipientPhones
         )
 
     } catch (error) {
