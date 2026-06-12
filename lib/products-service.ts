@@ -1223,16 +1223,10 @@ export async function getAvailableDistributionLocationsPage(
     count,
   } =
     await supabase
-      .from("distribution_locations")
+      .from("public_distribution_locations")
       .select("*", {
         count: "exact",
       })
-      .eq("is_active", true)
-      .eq("is_authorized", true)
-      .eq(
-        "availability_status",
-        "activo"
-      )
       .order(
         "priority",
         {
@@ -1578,6 +1572,36 @@ export type CreateCommunitySurveyInput = {
   target_audience?: string | null
 }
 
+export type CreateCommunitySurveyResult = {
+  survey: CommunitySurvey | null
+  error: string | null
+  errorCode: string | null
+}
+
+function formatSupabaseErrorMessage(
+  error: {
+    code?: string
+    message?: string
+    details?: string
+    hint?: string
+  }
+) {
+  return [
+    error.code
+      ? `[${error.code}]`
+      : null,
+    error.message,
+    error.details
+      ? `Details: ${error.details}`
+      : null,
+    error.hint
+      ? `Hint: ${error.hint}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" ")
+}
+
 export async function getCommunitySurveysByProduct(
   productId: string
 ): Promise<CommunitySurvey[]> {
@@ -1614,42 +1638,60 @@ export async function getCommunitySurveysByProduct(
 
 export async function createCommunitySurvey(
   input: CreateCommunitySurveyInput
-): Promise<CommunitySurvey | null> {
+): Promise<CreateCommunitySurveyResult> {
+
+  const payload = {
+    product_id:
+      input.product_id,
+    title:
+      input.title,
+    question:
+      input.question,
+    description:
+      input.description || null,
+    channel:
+      input.channel || null,
+    status:
+      input.status || null,
+    target_audience:
+      input.target_audience || null,
+  }
 
   const { data, error } =
     await supabase
       .from("community_surveys")
-      .insert({
-        product_id:
-          input.product_id,
-        title:
-          input.title,
-        question:
-          input.question,
-        description:
-          input.description || null,
-        channel:
-          input.channel || null,
-        status:
-          input.status || null,
-        target_audience:
-          input.target_audience || null,
-      })
+      .insert(payload)
       .select("*")
       .single()
 
   if (error) {
 
     console.error(
-      "CREATE COMMUNITY SURVEY ERROR:",
-      error
+      "CREATE SURVEY ERROR:",
+      {
+        error,
+        payload,
+      }
     )
 
-    return null
+    return {
+      survey: null,
+      error:
+        formatSupabaseErrorMessage(
+          error
+        ) ||
+        "No se pudo crear la encuesta.",
+      errorCode:
+        error.code || null,
+    }
 
   }
 
-  return data
+  return {
+    survey: data,
+    error: null,
+    errorCode: null,
+  }
 
 }
 

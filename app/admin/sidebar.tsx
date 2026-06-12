@@ -21,21 +21,33 @@ export function Sidebar({
   const items = [
     {
       label: "Dashboard",
+      description:
+        "Resumen ejecutivo, alertas y acciones prioritarias.",
+      step: "01",
       icon: LayoutDashboard,
       value: "dashboard",
     },
     {
       label: "Productos",
+      description:
+        "Orquesta estados y abre el detalle para configurar.",
+      step: "02",
       icon: Package,
       value: "products",
     },
     {
-      label: "Campañas",
+      label: "Campanas",
+      description:
+        "Gestiona acciones de validacion y crecimiento.",
+      step: "03",
       icon: Activity,
       value: "campaigns",
     },
     {
       label: "Analytics",
+      description:
+        "Lee senales, rendimiento y aprendizaje operativo.",
+      step: "04",
       icon: BarChart3,
       value: "analytics",
     },
@@ -59,7 +71,6 @@ export function Sidebar({
         backdrop-blur-3xl
       "
     >
-      {/* LOGO */}
       <div
         className="
           flex
@@ -104,7 +115,7 @@ export function Sidebar({
               text-white
             "
           >
-            IMNOVA LABS™
+            IMNOVA LABS
           </h1>
 
           <p
@@ -121,7 +132,6 @@ export function Sidebar({
         </div>
       </div>
 
-      {/* MENU */}
       <div
         className="
           flex
@@ -180,20 +190,57 @@ export function Sidebar({
               />
             </div>
 
-            <span
-              className="
-                text-sm
-                font-medium
-                text-white
-              "
-            >
-              {item.label}
-            </span>
+            <div className="min-w-0 flex-1">
+              <div
+                className="
+                  flex
+                  items-center
+                  justify-between
+                  gap-3
+                "
+              >
+                <span
+                  className="
+                    text-sm
+                    font-medium
+                    text-white
+                  "
+                >
+                  {item.label}
+                </span>
+
+                <span
+                  className="
+                    rounded-full
+                    border
+                    border-white/10
+                    px-2
+                    py-1
+                    text-[9px]
+                    uppercase
+                    tracking-[0.18em]
+                    text-cyan-100/50
+                  "
+                >
+                  {item.step}
+                </span>
+              </div>
+
+              <p
+                className="
+                  mt-2
+                  text-xs
+                  leading-5
+                  text-white/40
+                "
+              >
+                {item.description}
+              </p>
+            </div>
           </button>
         ))}
       </div>
 
-      {/* FOOTER */}
       <div
         className="
           border-t
@@ -218,7 +265,7 @@ export function Sidebar({
               text-cyan-300
             "
           >
-            Sistema Operativo
+            Guia operativa
           </p>
 
           <h3
@@ -229,8 +276,56 @@ export function Sidebar({
               text-white
             "
           >
-            IMNOVA ECOSYSTEM™
+            Flujo Admin
           </h3>
+
+          <div
+            className="
+              mt-5
+              space-y-3
+              border-t
+              border-cyan-100/10
+              pt-5
+            "
+          >
+            {[
+              "Revisar senales",
+              "Ordenar productos",
+              "Completar detalle",
+              "Notificar manual",
+            ].map((step, index) => (
+              <div
+                key={step}
+                className="
+                  flex
+                  items-center
+                  gap-3
+                  text-[11px]
+                  uppercase
+                  tracking-[0.18em]
+                  text-cyan-100/55
+                "
+              >
+                <span
+                  className="
+                    flex
+                    h-6
+                    w-6
+                    items-center
+                    justify-center
+                    rounded-full
+                    border
+                    border-cyan-100/15
+                    text-[10px]
+                    text-cyan-100/70
+                  "
+                >
+                  {index + 1}
+                </span>
+                {step}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </aside>

@@ -383,12 +383,12 @@ const sections = [
     label: "Validacion",
   },
   {
-    id: "comercializacion",
-    label: "Comercializacion",
-  },
-  {
     id: "contenido",
     label: "Contenido",
+  },
+  {
+    id: "comercializacion",
+    label: "Comercializacion",
   },
   {
     id: "notificaciones",
@@ -396,8 +396,68 @@ const sections = [
   },
 ]
 
+const productDetailFlowSteps = [
+  {
+    label: "General",
+    description:
+      "Define nombre, categoria, descripcion, imagen principal, precio y moneda.",
+  },
+  {
+    label: "Estado",
+    description:
+      "Ubica el producto en el flujo oficial sin enviar notificaciones automaticas.",
+  },
+  {
+    label: "Validacion",
+    description:
+      "Registra nicho, problema humano, encuestas, senales y decision estrategica.",
+  },
+  {
+    label: "Contenido",
+    description:
+      "Completa uso, beneficios, rutina, lifestyle e ingredientes para vender mejor.",
+  },
+  {
+    label: "Comercializacion",
+    description:
+      "Configura precio, links, promocion y canales autorizados cuando aplique.",
+  },
+  {
+    label: "Notificaciones",
+    description:
+      "Envia WhatsApp manualmente solo despues de revisar y guardar cambios.",
+  },
+]
+
+const productSectionGuides = {
+  general:
+    "Empieza aqui. Sin identidad clara, las secciones publicas y la tienda se sienten incompletas.",
+  estado:
+    "Cambia etapa solo cuando la informacion del producto acompane ese avance.",
+  validacion:
+    "Esta seccion decide si una idea merece avanzar, ajustarse, pausarse o descartarse.",
+  comercializacion:
+    "Completa canales y promocion antes de que un producto Disponible sea protagonista en tienda.",
+  contenido:
+    "Aqui se construye el deseo de compra: momento de uso, beneficios, rutina e imagenes lifestyle.",
+  notificaciones:
+    "Las notificaciones son manuales. Revisa estado guardado, plantilla e historial antes de enviar.",
+}
+
 const inputClassName =
   "mt-2 w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none transition-colors placeholder:text-white/25 focus:border-cyan-300/50"
+
+function FieldGuide({
+  children,
+}: {
+  children: string
+}) {
+  return (
+    <p className="mt-2 text-xs leading-5 text-white/35">
+      {children}
+    </p>
+  )
+}
 
 const MAX_LIFESTYLE_IMAGES = 3
 
@@ -1018,6 +1078,11 @@ export default function ProductDetailPage() {
   const [activeSection, setActiveSection] =
     useState("general")
 
+  const activeSectionGuide =
+    productSectionGuides[
+      activeSection as keyof typeof productSectionGuides
+    ] || productSectionGuides.general
+
   const [formData, setFormData] =
     useState<FormData>({
       name: "",
@@ -1506,6 +1571,17 @@ export default function ProductDetailPage() {
     async () => {
       if (!product || isCreatingSurvey) return
 
+      const productId =
+        product.id?.trim()
+
+      if (!productId) {
+        setValidationActionMessage("")
+        setValidationDataError(
+          "No se pudo crear la encuesta: falta el product_id del producto."
+        )
+        return
+      }
+
       const title =
         surveyFormData.title.trim()
 
@@ -1525,10 +1601,10 @@ export default function ProductDetailPage() {
       setValidationActionMessage("")
 
       try {
-        const createdSurvey =
+        const createdSurveyResult =
           await createCommunitySurvey({
             product_id:
-              product.id,
+              productId,
             title,
             question,
             description:
@@ -1543,9 +1619,10 @@ export default function ProductDetailPage() {
               null,
           })
 
-        if (!createdSurvey) {
+        if (!createdSurveyResult.survey) {
           setValidationDataError(
-            "No se pudo crear la encuesta."
+            createdSurveyResult.error ||
+              "No se pudo crear la encuesta."
           )
           return
         }
@@ -1556,14 +1633,16 @@ export default function ProductDetailPage() {
         setValidationActionMessage(
           "Encuesta creada correctamente."
         )
-        await loadValidationData(product.id)
+        await loadValidationData(productId)
       } catch (error) {
         console.error(
           "CREATE SURVEY ACTION ERROR:",
           error
         )
         setValidationDataError(
-          "Error al crear la encuesta."
+          error instanceof Error
+            ? error.message
+            : "Error al crear la encuesta."
         )
       } finally {
         setIsCreatingSurvey(false)
@@ -2961,6 +3040,64 @@ export default function ProductDetailPage() {
               )
             )}
           </div>
+
+          <div className="mt-8 rounded-[30px] border border-cyan-300/15 bg-cyan-300/[0.04] p-5">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl">
+                <p className="text-[10px] uppercase tracking-[0.30em] text-cyan-100/70">
+                  Guia de configuracion
+                </p>
+                <p className="mt-3 text-sm leading-6 text-white/55">
+                  {activeSectionGuide}
+                </p>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-2 lg:min-w-[520px] lg:grid-cols-3">
+                {productDetailFlowSteps.map((step, index) => (
+                  <button
+                    key={step.label}
+                    type="button"
+                    onClick={() => {
+                      const targetSection =
+                        sections.find(
+                          section =>
+                            section.label === step.label
+                        )
+
+                      if (targetSection) {
+                        setActiveSection(targetSection.id)
+                      }
+                    }}
+                    className={`
+                      rounded-2xl
+                      border
+                      p-4
+                      text-left
+                      transition-all
+                      ${
+                        sections.find(
+                          section =>
+                            section.label === step.label
+                        )?.id === activeSection
+                          ? "border-cyan-300/35 bg-cyan-300/[0.08]"
+                          : "border-white/10 bg-black/25 hover:border-white/20"
+                      }
+                    `}
+                  >
+                    <span className="text-[10px] uppercase tracking-[0.22em] text-cyan-100/45">
+                      Paso {index + 1}
+                    </span>
+                    <p className="mt-2 text-sm font-semibold text-white">
+                      {step.label}
+                    </p>
+                    <p className="mt-2 text-xs leading-5 text-white/45">
+                      {step.description}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         </section>
 
         {activeSection === "general" && (
@@ -3001,6 +3138,9 @@ export default function ProductDetailPage() {
                   <span className="text-[10px] uppercase tracking-[0.24em] text-white/40">
                     Nombre
                   </span>
+                  <FieldGuide>
+                    Formato: marca + producto + presentacion clara.
+                  </FieldGuide>
                   <input
                     value={formData.name}
                     onChange={(event) =>
@@ -3017,6 +3157,9 @@ export default function ProductDetailPage() {
                   <span className="text-[10px] uppercase tracking-[0.24em] text-white/40">
                     Categoria
                   </span>
+                  <FieldGuide>
+                    Formato: familia comercial o tipo de solucion.
+                  </FieldGuide>
                   <input
                     value={formData.category}
                     onChange={(event) =>
@@ -3033,6 +3176,9 @@ export default function ProductDetailPage() {
                   <span className="text-[10px] uppercase tracking-[0.24em] text-white/40">
                     Descripcion
                   </span>
+                  <FieldGuide>
+                    Estructura: que es, para quien es y que beneficio aporta.
+                  </FieldGuide>
                   <textarea
                     value={formData.description}
                     onChange={(event) =>
@@ -3050,6 +3196,10 @@ export default function ProductDetailPage() {
                   <span className="text-[10px] uppercase tracking-[0.24em] text-white/40">
                     Image URL
                   </span>
+                  <FieldGuide>
+                    Usa una URL publica absoluta de la imagen principal del
+                    producto.
+                  </FieldGuide>
                   <input
                     value={formData.image_url}
                     onChange={(event) =>
@@ -3067,6 +3217,10 @@ export default function ProductDetailPage() {
                   <span className="text-[10px] uppercase tracking-[0.24em] text-white/40">
                     Precio
                   </span>
+                  <FieldGuide>
+                    Solo numero. Ejemplo visual: 12.99, 24.50 o 0 si aun no
+                    aplica.
+                  </FieldGuide>
                   <input
                     value={formData.price}
                     onChange={(event) =>
@@ -3085,6 +3239,9 @@ export default function ProductDetailPage() {
                   <span className="text-[10px] uppercase tracking-[0.24em] text-white/40">
                     Moneda
                   </span>
+                  <FieldGuide>
+                    Codigo corto de moneda. Ejemplo: USD, NIO, EUR.
+                  </FieldGuide>
                   <input
                     value={formData.currency}
                     onChange={(event) =>
@@ -3118,6 +3275,10 @@ export default function ProductDetailPage() {
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/40">
                   Estado del producto
                 </span>
+                <FieldGuide>
+                  Selecciona la etapa real del flujo. El estado controla donde
+                  aparece el producto en la web.
+                </FieldGuide>
                 <select
                   value={formData.state_id}
                   onChange={(event) =>
@@ -3295,6 +3456,9 @@ export default function ProductDetailPage() {
                 <p className="mt-3 text-sm leading-6 text-white/50">
                   Segmento o mercado al que responde esta idea.
                 </p>
+                <FieldGuide>
+                  Ejemplo abstracto: necesidad principal + contexto de usuario.
+                </FieldGuide>
                 {"nicho" in product ? (
                   <input
                     value={formData.nicho}
@@ -3321,6 +3485,10 @@ export default function ProductDetailPage() {
                 <p className="mt-3 text-sm leading-6 text-white/50">
                   Necesidad real que el producto busca resolver.
                 </p>
+                <FieldGuide>
+                  Estructura: dolor humano + momento donde ocurre + resultado
+                  deseado.
+                </FieldGuide>
                 {"problema_resuelve" in product ? (
                   <textarea
                     value={formData.problema_resuelve}
@@ -3349,6 +3517,10 @@ export default function ProductDetailPage() {
                   Promesa humana inicial que la comunidad debe validar antes de
                   avanzar.
                 </p>
+                <FieldGuide>
+                  Redacta como beneficio esperado, sin prometer curas ni
+                  resultados garantizados.
+                </FieldGuide>
                 <textarea
                   value={formData.expected_benefit}
                   onChange={(event) =>
@@ -3375,6 +3547,10 @@ export default function ProductDetailPage() {
                   <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                     Estado de encuesta
                   </span>
+                  <FieldGuide>
+                    Usa pendiente, activa o cerrada segun el momento real de la
+                    encuesta.
+                  </FieldGuide>
                   <select
                     value={formData.survey_status}
                     onChange={(event) =>
@@ -3402,6 +3578,9 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Puntaje 0-100
                     </span>
+                    <FieldGuide>
+                      Promedio de interes positivo. 0 es bajo, 100 es muy alto.
+                    </FieldGuide>
                     <input
                       type="number"
                       min="0"
@@ -3421,6 +3600,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Votos
                     </span>
+                    <FieldGuide>
+                      Total de respuestas registradas para esta idea o
+                      producto.
+                    </FieldGuide>
                     <input
                       type="number"
                       min="0"
@@ -3451,6 +3634,10 @@ export default function ProductDetailPage() {
                   <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                     Interes social 0-100
                   </span>
+                  <FieldGuide>
+                    Senal resumida de redes o comunidad externa. Mantener en
+                    escala 0-100.
+                  </FieldGuide>
                   <input
                     type="number"
                     min="0"
@@ -3486,6 +3673,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Estado de validacion
                     </span>
+                    <FieldGuide>
+                      Lectura operativa del interes: pendiente, en validacion,
+                      interes alto, ajuste o pausa.
+                    </FieldGuide>
                     <select
                       value={formData.validation_status}
                       onChange={(event) =>
@@ -3518,6 +3709,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Decision
                     </span>
+                    <FieldGuide>
+                      Decision estrategica manual: avanzar, ajustar, pausar o
+                      descartar.
+                    </FieldGuide>
                     <select
                       value={formData.validation_decision}
                       onChange={(event) =>
@@ -3550,6 +3745,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Notas de validacion
                     </span>
+                    <FieldGuide>
+                      Resume evidencia, aprendizaje y proximo paso. No usar
+                      texto publico aqui.
+                    </FieldGuide>
                     <textarea
                       value={formData.validation_notes}
                       onChange={(event) =>
@@ -3685,6 +3884,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                       Titulo
                     </span>
+                    <FieldGuide>
+                      Nombre corto de la prueba. Ejemplo: validacion de
+                      necesidad + nicho.
+                    </FieldGuide>
                     <input
                       value={surveyFormData.title}
                       onChange={(event) =>
@@ -3701,6 +3904,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                       Pregunta
                     </span>
+                    <FieldGuide>
+                      Haz una pregunta clara que mida interes real, no solo
+                      gusto visual.
+                    </FieldGuide>
                     <textarea
                       value={surveyFormData.question}
                       onChange={(event) =>
@@ -3718,6 +3925,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                       Descripcion
                     </span>
+                    <FieldGuide>
+                      Explica contexto, beneficio esperado y lo que se quiere
+                      validar.
+                    </FieldGuide>
                     <textarea
                       value={surveyFormData.description}
                       onChange={(event) =>
@@ -3736,6 +3947,9 @@ export default function ProductDetailPage() {
                       <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                         Canal
                       </span>
+                      <FieldGuide>
+                        Canal donde se enviara o registrara la encuesta.
+                      </FieldGuide>
                       <select
                         value={surveyFormData.channel}
                         onChange={(event) =>
@@ -3763,6 +3977,10 @@ export default function ProductDetailPage() {
                       <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                         Estado
                       </span>
+                      <FieldGuide>
+                        Usa draft antes de lanzar, active cuando esta en vivo y
+                        closed al cerrar.
+                      </FieldGuide>
                       <select
                         value={surveyFormData.status}
                         onChange={(event) =>
@@ -3791,6 +4009,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                       Audiencia objetivo
                     </span>
+                    <FieldGuide>
+                      Describe el grupo a validar: perfil, necesidad o contexto
+                      de uso.
+                    </FieldGuide>
                     <input
                       value={surveyFormData.target_audience}
                       onChange={(event) =>
@@ -3821,10 +4043,14 @@ export default function ProductDetailPage() {
                   </p>
 
                   <label className="mt-5 block">
-                    <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
-                      Encuesta
-                    </span>
-                    <select
+                      <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
+                        Encuesta
+                      </span>
+                      <FieldGuide>
+                        Selecciona la encuesta a la que pertenece esta
+                        respuesta.
+                      </FieldGuide>
+                      <select
                       value={responseFormData.survey_id}
                       onChange={(event) =>
                         updateResponseFormField(
@@ -3855,6 +4081,9 @@ export default function ProductDetailPage() {
                       <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                         Canal
                       </span>
+                      <FieldGuide>
+                        Canal donde se obtuvo la respuesta.
+                      </FieldGuide>
                       <select
                         value={responseFormData.channel}
                         onChange={(event) =>
@@ -3882,6 +4111,9 @@ export default function ProductDetailPage() {
                       <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                         Score 0-100
                       </span>
+                      <FieldGuide>
+                        Mide interes o afinidad. Mantener escala 0-100.
+                      </FieldGuide>
                       <input
                         type="number"
                         min="0"
@@ -3903,6 +4135,9 @@ export default function ProductDetailPage() {
                       <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                         Nombre
                       </span>
+                      <FieldGuide>
+                        Opcional. Usa nombre o referencia interna si aplica.
+                      </FieldGuide>
                       <input
                         value={responseFormData.respondent_name}
                         onChange={(event) =>
@@ -3919,6 +4154,10 @@ export default function ProductDetailPage() {
                       <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                         Fuente
                       </span>
+                      <FieldGuide>
+                        Ejemplo abstracto: admin_manual, whatsapp, evento o
+                        red_social.
+                      </FieldGuide>
                       <input
                         value={responseFormData.source}
                         onChange={(event) =>
@@ -3937,6 +4176,10 @@ export default function ProductDetailPage() {
                       <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                         Telefono
                       </span>
+                      <FieldGuide>
+                        Dato sensible. Completar solo si fue autorizado o
+                        necesario.
+                      </FieldGuide>
                       <input
                         value={responseFormData.respondent_phone}
                         onChange={(event) =>
@@ -3953,6 +4196,10 @@ export default function ProductDetailPage() {
                       <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                         Email
                       </span>
+                      <FieldGuide>
+                        Dato sensible. Completar solo si fue autorizado o
+                        necesario.
+                      </FieldGuide>
                       <input
                         value={responseFormData.respondent_email}
                         onChange={(event) =>
@@ -3971,6 +4218,9 @@ export default function ProductDetailPage() {
                       <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                         Valor
                       </span>
+                      <FieldGuide>
+                        Respuesta cruda o seleccion elegida por la persona.
+                      </FieldGuide>
                       <input
                         value={responseFormData.response_value}
                         onChange={(event) =>
@@ -3987,6 +4237,10 @@ export default function ProductDetailPage() {
                       <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                         Etiqueta
                       </span>
+                      <FieldGuide>
+                        Traduce el valor a una etiqueta legible: interesado,
+                        neutral o no interesado.
+                      </FieldGuide>
                       <input
                         value={responseFormData.response_label}
                         onChange={(event) =>
@@ -4004,6 +4258,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                       Comentario
                     </span>
+                    <FieldGuide>
+                      Resume objeciones, motivaciones o frases relevantes de la
+                      persona.
+                    </FieldGuide>
                     <textarea
                       value={responseFormData.comment}
                       onChange={(event) =>
@@ -4042,6 +4300,9 @@ export default function ProductDetailPage() {
                       <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                         Plataforma
                       </span>
+                      <FieldGuide>
+                        Red o canal donde se observo la senal.
+                      </FieldGuide>
                       <select
                         value={socialSignalFormData.platform}
                         onChange={(event) =>
@@ -4069,6 +4330,10 @@ export default function ProductDetailPage() {
                       <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                         Sentimiento
                       </span>
+                      <FieldGuide>
+                        Lectura cualitativa: positive, neutral, negative o
+                        mixed.
+                      </FieldGuide>
                       <select
                         value={socialSignalFormData.sentiment}
                         onChange={(event) =>
@@ -4097,6 +4362,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                       Metrica
                     </span>
+                    <FieldGuide>
+                      Nombre de la senal medida: likes, comentarios, clicks o
+                      interesados.
+                    </FieldGuide>
                     <input
                       value={socialSignalFormData.metric_name}
                       onChange={(event) =>
@@ -4114,6 +4383,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                       Valor
                     </span>
+                    <FieldGuide>
+                      Numero observado. Si se usa como score, mantener escala
+                      0-100.
+                    </FieldGuide>
                     <input
                       type="number"
                       value={socialSignalFormData.metric_value}
@@ -4131,6 +4404,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
                       Notas
                     </span>
+                    <FieldGuide>
+                      Contexto de la senal: origen, fecha, aprendizaje o
+                      siguiente paso.
+                    </FieldGuide>
                     <textarea
                       value={socialSignalFormData.notes}
                       onChange={(event) =>
@@ -4344,6 +4621,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       IMNOVA Store / direct_url
                     </span>
+                    <FieldGuide>
+                      URL principal de compra. Debe llevar al producto exacto,
+                      no solo a la tienda general.
+                    </FieldGuide>
                     <input
                       value={formData.direct_url}
                       onChange={(event) =>
@@ -4361,6 +4642,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Amazon
                     </span>
+                    <FieldGuide>
+                      Link directo al listing del producto cuando exista en
+                      Amazon.
+                    </FieldGuide>
                     <input
                       value={formData.amazon_url}
                       onChange={(event) =>
@@ -4378,6 +4663,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       eBay
                     </span>
+                    <FieldGuide>
+                      Link directo al listing del producto cuando exista en
+                      eBay.
+                    </FieldGuide>
                     <input
                       value={formData.ebay_url}
                       onChange={(event) =>
@@ -4395,6 +4684,9 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       TikTok Shop
                     </span>
+                    <FieldGuide>
+                      Link directo al producto o campana activa en TikTok Shop.
+                    </FieldGuide>
                     <input
                       value={formData.tiktok_url}
                       onChange={(event) =>
@@ -4419,6 +4711,9 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Price
                     </span>
+                    <FieldGuide>
+                      Precio comercial visible. Solo numero, sin simbolo.
+                    </FieldGuide>
                     <input
                       value={formData.price}
                       onChange={(event) =>
@@ -4437,6 +4732,9 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Currency
                     </span>
+                    <FieldGuide>
+                      Codigo de moneda para tienda y tarjetas comerciales.
+                    </FieldGuide>
                     <input
                       value={formData.currency}
                       onChange={(event) =>
@@ -4486,10 +4784,14 @@ export default function ProductDetailPage() {
 
                 <div className="mt-5 grid gap-4 sm:grid-cols-2">
                   <label>
-                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
-                      Descuento %
-                    </span>
-                    <input
+                      <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                        Descuento %
+                      </span>
+                      <FieldGuide>
+                        Porcentaje de lanzamiento. Ejemplo visual: 10, 15 o
+                        20.
+                      </FieldGuide>
+                      <input
                       value={formData.launch_discount_percent}
                       onChange={(event) =>
                         updateField(
@@ -4504,10 +4806,13 @@ export default function ProductDetailPage() {
                   </label>
 
                   <label>
-                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
-                      Tiempo de promocion
-                    </span>
-                    <select
+                      <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                        Tiempo de promocion
+                      </span>
+                      <FieldGuide>
+                        Duracion publica del lanzamiento con cuenta regresiva.
+                      </FieldGuide>
+                      <select
                       value={formData.launch_promo_duration_days}
                       onChange={(event) =>
                         updateField(
@@ -4540,6 +4845,9 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Cuando inicia la promocion
                     </span>
+                    <FieldGuide>
+                      Fecha y hora inicial. Si queda vacio, inicia al guardar.
+                    </FieldGuide>
                     <input
                       type="datetime-local"
                       value={formData.launch_promo_start_at}
@@ -4618,6 +4926,9 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Categoria
                     </span>
+                    <FieldGuide>
+                      Define si el canal es fisico, digital o mixto.
+                    </FieldGuide>
                     <select
                       value={
                         distributionLocationFormData.channel_category
@@ -4647,6 +4958,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Tipo de canal
                     </span>
+                    <FieldGuide>
+                      Clasifica el punto de venta: marketplace, mercado,
+                      establecimiento o tienda.
+                    </FieldGuide>
                     <select
                       value={
                         distributionLocationFormData.channel_type
@@ -4676,6 +4991,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Plataforma
                     </span>
+                    <FieldGuide>
+                      Solo aplica para canales digitales como Amazon, eBay,
+                      Facebook o TikTok.
+                    </FieldGuide>
                     <select
                       value={
                         distributionLocationFormData.platform
@@ -4708,6 +5027,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Nombre del canal
                     </span>
+                    <FieldGuide>
+                      Nombre reconocible para el cliente. Ejemplo: tienda,
+                      mercado o centro comercial.
+                    </FieldGuide>
                     <input
                       value={
                         distributionLocationFormData.name
@@ -4727,6 +5050,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Estado
                     </span>
+                    <FieldGuide>
+                      Activo si el producto ya se vende ahi; pendiente si aun
+                      se esta habilitando.
+                    </FieldGuide>
                     <select
                       value={
                         distributionLocationFormData.availability_status
@@ -4756,6 +5083,9 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Pais
                     </span>
+                    <FieldGuide>
+                      Pais visible para busqueda y localizacion.
+                    </FieldGuide>
                     <input
                       value={
                         distributionLocationFormData.country
@@ -4774,6 +5104,9 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Codigo pais
                     </span>
+                    <FieldGuide>
+                      Codigo corto del pais. Ejemplo: NI, CR, US.
+                    </FieldGuide>
                     <input
                       value={
                         distributionLocationFormData.country_code
@@ -4792,6 +5125,9 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Ciudad
                     </span>
+                    <FieldGuide>
+                      Ciudad donde el cliente puede encontrar el producto.
+                    </FieldGuide>
                     <input
                       value={
                         distributionLocationFormData.city
@@ -4810,6 +5146,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Zona
                     </span>
+                    <FieldGuide>
+                      Area o referencia comercial para orientar mejor al
+                      cliente.
+                    </FieldGuide>
                     <input
                       value={
                         distributionLocationFormData.area
@@ -4829,6 +5169,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Direccion
                     </span>
+                    <FieldGuide>
+                      Direccion o referencia publica. Debe ser entendible para
+                      visitar.
+                    </FieldGuide>
                     <input
                       value={
                         distributionLocationFormData.address
@@ -4848,6 +5192,9 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Latitud
                     </span>
+                    <FieldGuide>
+                      Coordenada geografica para calcular el canal mas cercano.
+                    </FieldGuide>
                     <input
                       value={
                         distributionLocationFormData.latitude
@@ -4868,6 +5215,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Longitud
                     </span>
+                    <FieldGuide>
+                      Coordenada geografica en negativo si corresponde al
+                      oeste.
+                    </FieldGuide>
                     <input
                       value={
                         distributionLocationFormData.longitude
@@ -4888,6 +5239,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Prioridad
                     </span>
+                    <FieldGuide>
+                      Numero para ordenar canales destacados. Mayor prioridad
+                      puede aparecer primero.
+                    </FieldGuide>
                     <input
                       value={
                         distributionLocationFormData.priority
@@ -4907,6 +5262,9 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       URL de compra
                     </span>
+                    <FieldGuide>
+                      Link directo de compra para marketplace o canal digital.
+                    </FieldGuide>
                     <input
                       value={
                         distributionLocationFormData.product_url
@@ -4926,6 +5284,9 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       URL de mapa
                     </span>
+                    <FieldGuide>
+                      Link publico de Google Maps o ubicacion equivalente.
+                    </FieldGuide>
                     <input
                       value={
                         distributionLocationFormData.map_url
@@ -4945,6 +5306,10 @@ export default function ProductDetailPage() {
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Descripcion
                     </span>
+                    <FieldGuide>
+                      Comentario claro del canal: donde esta, que vende o que
+                      debe saber el cliente.
+                    </FieldGuide>
                     <textarea
                       value={
                         distributionLocationFormData.description
@@ -5081,6 +5446,10 @@ export default function ProductDetailPage() {
                 <p className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Canales de distribucion legacy
                 </p>
+                <FieldGuide>
+                  Solo compatibilidad. Los canales escalables deben agregarse en
+                  distribution_locations.
+                </FieldGuide>
 
                 {"distribution_channels" in product ? (
                   <>
@@ -5112,6 +5481,10 @@ export default function ProductDetailPage() {
                 <p className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Notas comerciales
                 </p>
+                <FieldGuide>
+                  Notas internas para administracion. No escribir copy publico
+                  aqui.
+                </FieldGuide>
 
                 {"commercial_notes" in product ? (
                   <textarea
@@ -5191,6 +5564,9 @@ export default function ProductDetailPage() {
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Momento de uso
                 </span>
+                <FieldGuide>
+                  Formato: momento real del dia + contexto de uso.
+                </FieldGuide>
                 <input
                   value={formData.usage_moment}
                   onChange={(event) =>
@@ -5208,6 +5584,10 @@ export default function ProductDetailPage() {
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Beneficio principal
                 </span>
+                <FieldGuide>
+                  Una frase clara: producto funcional + beneficio humano
+                  principal.
+                </FieldGuide>
                 <input
                   value={formData.main_benefit}
                   onChange={(event) =>
@@ -5225,6 +5605,10 @@ export default function ProductDetailPage() {
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Como usarlo
                 </span>
+                <FieldGuide>
+                  Explica la forma de uso en lenguaje simple, accionable y
+                  cotidiano.
+                </FieldGuide>
                 <textarea
                   value={formData.how_to_use}
                   onChange={(event) =>
@@ -5243,6 +5627,10 @@ export default function ProductDetailPage() {
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Descripcion lifestyle
                 </span>
+                <FieldGuide>
+                  Conecta el producto con una escena real de vida, rutina o
+                  habito.
+                </FieldGuide>
                 <textarea
                   value={formData.usage_description}
                   onChange={(event) =>
@@ -5261,6 +5649,9 @@ export default function ProductDetailPage() {
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Rutina sugerida
                 </span>
+                <FieldGuide>
+                  Una linea por paso. Estructura: accion breve + momento.
+                </FieldGuide>
                 <textarea
                   value={formData.routine_suggestion}
                   onChange={(event) =>
@@ -5279,6 +5670,10 @@ export default function ProductDetailPage() {
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Beneficios
                 </span>
+                <FieldGuide>
+                  Una linea por beneficio. Usar lenguaje atractivo pero seguro:
+                  apoya, ayuda, contribuye.
+                </FieldGuide>
                 <textarea
                   value={formData.benefits}
                   onChange={(event) =>
@@ -5297,6 +5692,9 @@ export default function ProductDetailPage() {
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Bullets comerciales
                 </span>
+                <FieldGuide>
+                  Frases cortas para escanear rapido: atributo + ventaja.
+                </FieldGuide>
                 <textarea
                   value={formData.bullets}
                   onChange={(event) =>
@@ -5315,6 +5713,10 @@ export default function ProductDetailPage() {
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Claims funcionales
                 </span>
+                <FieldGuide>
+                  Claims prudentes y verificables. Evita curas, tratamientos o
+                  promesas absolutas.
+                </FieldGuide>
                 <textarea
                   value={formData.functional_claims}
                   onChange={(event) =>
@@ -5333,6 +5735,10 @@ export default function ProductDetailPage() {
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Resumen de ingredientes
                 </span>
+                <FieldGuide>
+                  Resume ingredientes clave y su rol funcional sin sonar a
+                  medicamento.
+                </FieldGuide>
                 <textarea
                   value={formData.ingredients_summary}
                   onChange={(event) =>
@@ -5352,6 +5758,10 @@ export default function ProductDetailPage() {
                   <span className="text-[10px] uppercase tracking-[0.24em] text-violet-100/65">
                     Imagenes lifestyle
                   </span>
+                  <FieldGuide>
+                    Maximo 3 URLs, una por linea. Usar imagenes de uso real,
+                    no solo mockups.
+                  </FieldGuide>
                   <textarea
                     value={formData.lifestyle_images}
                     onChange={(event) =>

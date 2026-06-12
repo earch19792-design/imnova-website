@@ -4,11 +4,8 @@ import { NextResponse } from "next/server"
 
 import {
   createClient,
+  type SupabaseClient,
 } from "@supabase/supabase-js"
-
-import {
-  supabase,
-} from "../../../lib/supabase"
 
 import {
   sendWhatsAppUpdate,
@@ -34,6 +31,7 @@ type AdminAuthResult =
   | {
       ok: true
       triggeredBy: string
+      supabaseClient: SupabaseClient
     }
   | {
       ok: false
@@ -251,11 +249,14 @@ async function validateAdminRequest(
     triggeredBy:
       userData.user.email ||
       userData.user.id,
+    supabaseClient:
+      authenticatedSupabase,
   }
 
 }
 
 async function saveNotificationLog(
+  supabaseClient: SupabaseClient,
   body: InnovaLabRequestBody,
   result: WhatsAppResult
 ) {
@@ -269,7 +270,7 @@ async function saveNotificationLog(
   try {
 
     const { error } =
-      await supabase
+      await supabaseClient
         .from("notification_logs")
         .insert({
           product_id:
@@ -403,6 +404,7 @@ export async function POST(
 
       const logError =
         await saveNotificationLog(
+          adminAuth.supabaseClient,
           {
             productId,
             product,
@@ -444,6 +446,7 @@ export async function POST(
 
     const logError =
       await saveNotificationLog(
+        adminAuth.supabaseClient,
         {
           productId,
           product,
@@ -491,6 +494,7 @@ export async function POST(
 
     if (body) {
       await saveNotificationLog(
+        adminAuth.supabaseClient,
         {
           ...body,
           triggeredBy:

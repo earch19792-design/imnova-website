@@ -171,6 +171,61 @@ function getValidNumber(
 const ADMIN_PRODUCT_LIST_BATCH_SIZE =
   24
 
+const adminMenuGuides = {
+  dashboard: {
+    title:
+      "Empieza por las senales y la prioridad.",
+    description:
+      "Usa esta vista para decidir que requiere atencion hoy antes de entrar a editar productos.",
+    steps: [
+      "Revisa metricas generales y validacion comunitaria.",
+      "Abre los productos listos para avanzar, pendientes o en ajuste.",
+      "Despues entra al detalle para completar informacion y tomar accion.",
+    ],
+    reminder:
+      "El dashboard orienta decisiones; la edicion profunda vive en el detalle del producto.",
+  },
+  products: {
+    title:
+      "Ordena el pipeline sin disparar notificaciones.",
+    description:
+      "Esta lista sirve para encontrar productos, asignar estado y entrar al detalle cuando toque configurar informacion.",
+    steps: [
+      "Filtra por estado o busqueda para ubicar el producto.",
+      "Cambia estado solo cuando la informacion este revisada.",
+      "Usa Ver detalle para configurar validacion, contenido, comercializacion y notificaciones.",
+    ],
+    reminder:
+      "Guardar estado desde Productos no envia WhatsApp. Las notificaciones son manuales desde el detalle.",
+  },
+  campaigns: {
+    title:
+      "Activa campanas con una intencion clara.",
+    description:
+      "Usa Campanas para registrar esfuerzos de validacion, comunidad o crecimiento ligados a ideas y productos.",
+    steps: [
+      "Define si la campana valida una idea o impulsa un producto.",
+      "Registra canal, estado y leads para mantener lectura operativa.",
+      "Cruza los resultados con validacion comunitaria antes de avanzar etapas.",
+    ],
+    reminder:
+      "Las campanas ayudan a generar senales, pero no mueven estados automaticamente.",
+  },
+  analytics: {
+    title:
+      "Lee aprendizaje antes de escalar.",
+    description:
+      "Analytics resume rendimiento por canal y volumen para detectar que merece mas atencion.",
+    steps: [
+      "Compara canales activos y senales generadas.",
+      "Identifica donde hay traccion real antes de invertir mas.",
+      "Vuelve a Productos o Detalle para tomar accion operativa.",
+    ],
+    reminder:
+      "Los numeros deben apoyar decisiones, no reemplazar la revision estrategica.",
+  },
+}
+
 export default function AdminPage() {
 
   const router = useRouter()
@@ -921,6 +976,11 @@ export default function AdminPage() {
       ]
     )
 
+  const activeAdminGuide =
+    adminMenuGuides[
+      selectedMenu as keyof typeof adminMenuGuides
+    ] || adminMenuGuides.dashboard
+
   const dashboardProducts =
     useMemo(
       () =>
@@ -1286,6 +1346,125 @@ export default function AdminPage() {
           </motion.div>
 
         </div>
+
+        <section
+          className="
+            mt-10
+            rounded-[34px]
+            border
+            border-cyan-300/15
+            bg-cyan-300/[0.04]
+            p-6
+            backdrop-blur-md
+          "
+        >
+          <div
+            className="
+              flex
+              flex-col
+              gap-6
+              xl:flex-row
+              xl:items-start
+              xl:justify-between
+            "
+          >
+            <div className="max-w-3xl">
+              <p
+                className="
+                  text-[10px]
+                  uppercase
+                  tracking-[0.35em]
+                  text-cyan-100/65
+                "
+              >
+                Guia de administracion
+              </p>
+
+              <h2
+                className="
+                  mt-4
+                  text-3xl
+                  font-black
+                  tracking-[-0.04em]
+                  text-white
+                "
+              >
+                {activeAdminGuide.title}
+              </h2>
+
+              <p
+                className="
+                  mt-3
+                  text-sm
+                  leading-6
+                  text-white/55
+                "
+              >
+                {activeAdminGuide.description}
+              </p>
+            </div>
+
+            <div
+              className="
+                grid
+                gap-3
+                md:grid-cols-3
+                xl:min-w-[560px]
+              "
+            >
+              {activeAdminGuide.steps.map((step, index) => (
+                <div
+                  key={step}
+                  className="
+                    rounded-2xl
+                    border
+                    border-white/10
+                    bg-black/25
+                    p-4
+                  "
+                >
+                  <span
+                    className="
+                      text-[10px]
+                      uppercase
+                      tracking-[0.24em]
+                      text-cyan-100/45
+                    "
+                  >
+                    Paso {index + 1}
+                  </span>
+
+                  <p
+                    className="
+                      mt-3
+                      text-sm
+                      leading-6
+                      text-white/65
+                    "
+                  >
+                    {step}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <p
+            className="
+              mt-5
+              rounded-2xl
+              border
+              border-white/10
+              bg-black/25
+              p-4
+              text-sm
+              leading-6
+              text-white/50
+            "
+          >
+            {activeAdminGuide.reminder}
+          </p>
+        </section>
 
         {
           selectedMenu === "dashboard" && (
