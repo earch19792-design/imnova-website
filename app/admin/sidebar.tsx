@@ -74,6 +74,7 @@ export function Sidebar({
         h-screen
         w-[280px]
         flex-col
+        overflow-hidden
         border-r
         border-white/10
         bg-black/70
@@ -85,6 +86,7 @@ export function Sidebar({
           flex
           items-center
           gap-4
+          shrink-0
           border-b
           border-white/10
           px-8
@@ -147,8 +149,12 @@ export function Sidebar({
           flex-1
           flex-col
           gap-3
-          px-5
+          overflow-y-auto
+          overscroll-contain
+          pl-5
+          pr-3
           py-8
+          [scrollbar-width:thin]
         "
       >
         {items.map((item) => (
@@ -252,6 +258,7 @@ export function Sidebar({
 
       <div
         className="
+          shrink-0
           border-t
           border-white/10
           p-6

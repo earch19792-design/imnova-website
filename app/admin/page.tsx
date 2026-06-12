@@ -179,58 +179,6 @@ function getValidNumber(
     : null
 }
 
-function getAdminMenuTitle(
-  selectedMenu: string
-) {
-  if (selectedMenu === "dashboard") {
-    return "IMNOVA Admin"
-  }
-
-  if (selectedMenu === "products") {
-    return "Productos"
-  }
-
-  if (selectedMenu === "campaigns") {
-    return "Campanas"
-  }
-
-  if (selectedMenu === "community") {
-    return "Comunidad"
-  }
-
-  if (selectedMenu === "analytics") {
-    return "Analytics"
-  }
-
-  return "IMNOVA"
-}
-
-function getAdminMenuSubtitle(
-  selectedMenu: string
-) {
-  if (selectedMenu === "dashboard") {
-    return "Centro de control para productos, estados, validacion y comercializacion."
-  }
-
-  if (selectedMenu === "products") {
-    return "Gestion centralizada de productos y proyectos."
-  }
-
-  if (selectedMenu === "campaigns") {
-    return "Centro de gestion de campanas y generacion de leads."
-  }
-
-  if (selectedMenu === "community") {
-    return "Registro manual de contactos WhatsApp para crecer la comunidad IMNOVA."
-  }
-
-  if (selectedMenu === "analytics") {
-    return "Metricas, rendimiento y crecimiento del ecosistema."
-  }
-
-  return "IMNOVA OS"
-}
-
 const ADMIN_PRODUCT_LIST_BATCH_SIZE =
   24
 
@@ -1453,6 +1401,8 @@ export default function AdminPage() {
                   ? "Centro de gestión de campañas y generación de leads."
                   : selectedMenu === "analytics"
                   ? "Métricas, rendimiento y crecimiento del ecosistema."
+                  : selectedMenu === "community"
+                  ? "Registro manual de contactos WhatsApp para crecer la comunidad IMNOVA."
                   : "IMNOVA OS"
               }
             </p>
@@ -4304,6 +4254,400 @@ export default function AdminPage() {
                   </tbody>
 
                 </table>
+
+              </div>
+
+            </div>
+
+          )
+        }
+
+        {
+          selectedMenu === "community" && (
+
+            <div className="mt-16">
+
+              <div
+                className="
+                  grid
+                  grid-cols-1
+                  gap-6
+                  xl:grid-cols-[1.1fr_0.9fr]
+                "
+              >
+
+                <div
+                  className="
+                    rounded-3xl
+                    border
+                    border-cyan-400/20
+                    bg-cyan-400/[0.05]
+                    p-8
+                  "
+                >
+                  <p
+                    className="
+                      text-xs
+                      uppercase
+                      tracking-[0.3em]
+                      text-cyan-200/70
+                    "
+                  >
+                    Comunidad WhatsApp
+                  </p>
+
+                  <h2
+                    className="
+                      mt-4
+                      text-4xl
+                      font-black
+                      text-white
+                    "
+                  >
+                    Agregar contacto manual
+                  </h2>
+
+                  <p
+                    className="
+                      mt-4
+                      max-w-2xl
+                      text-sm
+                      leading-7
+                      text-white/50
+                    "
+                  >
+                    Usa este modulo cuando una persona autorizo ser parte de la comunidad por llamada, evento, tienda fisica, redes sociales o WhatsApp.
+                  </p>
+
+                  <div
+                    className="
+                      mt-8
+                      grid
+                      grid-cols-1
+                      gap-5
+                      md:grid-cols-2
+                    "
+                  >
+                    <label className="space-y-2">
+                      <span className="text-xs uppercase tracking-[0.25em] text-white/45">
+                        Nombre
+                      </span>
+                      <input
+                        value={manualSubscriberForm.nombre}
+                        onChange={(event) =>
+                          updateManualSubscriberField(
+                            "nombre",
+                            event.target.value
+                          )
+                        }
+                        placeholder="Ej: Maria Lopez"
+                        className="
+                          w-full
+                          rounded-2xl
+                          border
+                          border-white/10
+                          bg-black/40
+                          px-5
+                          py-4
+                          text-white
+                          outline-none
+                        "
+                      />
+                      <p className="text-xs leading-5 text-white/35">
+                        Identifica a la persona de forma humana y clara.
+                      </p>
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-xs uppercase tracking-[0.25em] text-white/45">
+                        WhatsApp
+                      </span>
+                      <input
+                        value={manualSubscriberForm.telefono}
+                        onChange={(event) =>
+                          updateManualSubscriberField(
+                            "telefono",
+                            event.target.value
+                          )
+                        }
+                        placeholder="86546986 o 50586546986"
+                        className="
+                          w-full
+                          rounded-2xl
+                          border
+                          border-white/10
+                          bg-black/40
+                          px-5
+                          py-4
+                          text-white
+                          outline-none
+                        "
+                      />
+                      <p className="text-xs leading-5 text-white/35">
+                        Puede ser numero nacional de 8 digitos o formato internacional.
+                      </p>
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-xs uppercase tracking-[0.25em] text-white/45">
+                        Email opcional
+                      </span>
+                      <input
+                        value={manualSubscriberForm.email}
+                        onChange={(event) =>
+                          updateManualSubscriberField(
+                            "email",
+                            event.target.value
+                          )
+                        }
+                        placeholder="cliente@correo.com"
+                        className="
+                          w-full
+                          rounded-2xl
+                          border
+                          border-white/10
+                          bg-black/40
+                          px-5
+                          py-4
+                          text-white
+                          outline-none
+                        "
+                      />
+                      <p className="text-xs leading-5 text-white/35">
+                        Si no existe email, deja este campo vacio.
+                      </p>
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-xs uppercase tracking-[0.25em] text-white/45">
+                        Nichos de interes
+                      </span>
+                      <input
+                        value={manualSubscriberForm.nichos}
+                        onChange={(event) =>
+                          updateManualSubscriberField(
+                            "nichos",
+                            event.target.value
+                          )
+                        }
+                        placeholder="energia, bienestar, fitness"
+                        className="
+                          w-full
+                          rounded-2xl
+                          border
+                          border-white/10
+                          bg-black/40
+                          px-5
+                          py-4
+                          text-white
+                          outline-none
+                        "
+                      />
+                      <p className="text-xs leading-5 text-white/35">
+                        Separa intereses por coma para futuras segmentaciones.
+                      </p>
+                    </label>
+
+                    <label className="space-y-2 md:col-span-2">
+                      <span className="text-xs uppercase tracking-[0.25em] text-white/45">
+                        Contexto / consentimiento
+                      </span>
+                      <textarea
+                        value={manualSubscriberForm.objetivo_principal}
+                        onChange={(event) =>
+                          updateManualSubscriberField(
+                            "objetivo_principal",
+                            event.target.value
+                          )
+                        }
+                        rows={4}
+                        placeholder="Ej: Cliente dio autorizacion en tienda fisica para recibir novedades IMNOVA."
+                        className="
+                          w-full
+                          rounded-2xl
+                          border
+                          border-white/10
+                          bg-black/40
+                          px-5
+                          py-4
+                          text-white
+                          outline-none
+                        "
+                      />
+                      <p className="text-xs leading-5 text-white/35">
+                        Deja claro de donde viene el contacto y por que se agrega.
+                      </p>
+                    </label>
+                  </div>
+
+                  {(communityMessage || communityError) && (
+                    <div
+                      className={`
+                        mt-6
+                        rounded-2xl
+                        border
+                        px-5
+                        py-4
+                        text-sm
+                        ${
+                          communityError
+                            ? "border-red-400/20 bg-red-500/10 text-red-200"
+                            : "border-cyan-400/20 bg-cyan-400/10 text-cyan-100"
+                        }
+                      `}
+                    >
+                      {communityError || communityMessage}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={isSavingCommunitySubscriber}
+                    onClick={handleCreateManualSubscriber}
+                    className="
+                      mt-8
+                      rounded-2xl
+                      border
+                      border-cyan-300/30
+                      bg-cyan-300
+                      px-7
+                      py-4
+                      text-sm
+                      font-bold
+                      uppercase
+                      tracking-[0.22em]
+                      text-black
+                      transition-all
+                      duration-300
+                      hover:scale-[1.02]
+                      disabled:cursor-not-allowed
+                      disabled:opacity-60
+                    "
+                  >
+                    {isSavingCommunitySubscriber
+                      ? "Guardando..."
+                      : "Agregar a comunidad"}
+                  </button>
+                </div>
+
+                <div className="space-y-6">
+                  <div
+                    className="
+                      rounded-3xl
+                      border
+                      border-white/10
+                      bg-white/[0.03]
+                      p-7
+                    "
+                  >
+                    <p className="text-xs uppercase tracking-[0.28em] text-white/45">
+                      Como usarlo
+                    </p>
+                    <h3 className="mt-4 text-2xl font-bold text-white">
+                      Registro manual, no improvisado
+                    </h3>
+                    <p className="mt-4 text-sm leading-7 text-white/50">
+                      Este modulo complementa los registros que llegan desde la web. Sirve para crecer mas rapido cuando el contacto viene desde tienda, evento, llamada o redes.
+                    </p>
+                    <div className="mt-6 space-y-3 text-sm text-white/55">
+                      <p>1. Confirma permiso para recibir mensajes.</p>
+                      <p>2. Registra WhatsApp y nicho de interes.</p>
+                      <p>3. Usa el detalle del producto para notificaciones manuales.</p>
+                    </div>
+                  </div>
+
+                  <div
+                    className="
+                      rounded-3xl
+                      border
+                      border-white/10
+                      bg-white/[0.03]
+                      p-7
+                    "
+                  >
+                    <div
+                      className="
+                        flex
+                        items-center
+                        justify-between
+                        gap-4
+                      "
+                    >
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.28em] text-white/45">
+                          Comunidad reciente
+                        </p>
+                        <h3 className="mt-3 text-2xl font-bold text-white">
+                          Ultimos contactos
+                        </h3>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={loadCommunitySubscribers}
+                        disabled={isLoadingCommunity}
+                        className="
+                          rounded-xl
+                          border
+                          border-white/10
+                          px-4
+                          py-2
+                          text-xs
+                          uppercase
+                          tracking-[0.18em]
+                          text-white/60
+                          disabled:opacity-50
+                        "
+                      >
+                        {isLoadingCommunity
+                          ? "Cargando"
+                          : "Actualizar"}
+                      </button>
+                    </div>
+
+                    <div className="mt-6 space-y-3">
+                      {communitySubscribers.length === 0 ? (
+                        <p className="rounded-2xl border border-white/10 bg-black/30 p-5 text-sm text-white/45">
+                          Aun no hay contactos recientes o no se pudieron leer por politicas RLS.
+                        </p>
+                      ) : (
+                        communitySubscribers.map(
+                          (subscriber) => (
+                            <div
+                              key={subscriber.id}
+                              className="
+                                rounded-2xl
+                                border
+                                border-white/10
+                                bg-black/30
+                                p-5
+                              "
+                            >
+                              <div className="flex items-start justify-between gap-4">
+                                <div>
+                                  <h4 className="font-bold text-white">
+                                    {subscriber.nombre || "Contacto IMNOVA"}
+                                  </h4>
+                                  <p className="mt-2 text-sm text-cyan-100/70">
+                                    {subscriber.telefono || "Sin telefono"}
+                                  </p>
+                                </div>
+                                <span className="rounded-full border border-cyan-300/20 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-cyan-100/60">
+                                  WhatsApp
+                                </span>
+                              </div>
+                              {subscriber.objetivo_principal && (
+                                <p className="mt-4 text-xs leading-5 text-white/40">
+                                  {subscriber.objetivo_principal}
+                                </p>
+                              )}
+                            </div>
+                          )
+                        )
+                      )}
+                    </div>
+                  </div>
+                </div>
 
               </div>
 

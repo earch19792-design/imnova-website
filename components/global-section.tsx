@@ -31,7 +31,6 @@ import {
 
 import {
   getAvailableDistributionLocationsPage,
-  getPublicProductsWithStatesByStateNames,
   type DistributionLocation,
 } from "@/lib/products-service"
 
@@ -55,16 +54,6 @@ type DistributionChannel = {
   map_url?: string
   maps_url?: string
   google_maps_url?: string
-}
-
-type Product = {
-  id: string
-  state_id: string | null
-  name: string
-  category?: string
-  image?: string | null
-  image_url?: string | null
-  distribution_channels?: DistributionChannel[]
 }
 
 type DistributionItem = DistributionChannel & {
@@ -351,11 +340,6 @@ export function GlobalSection() {
     })
 
   const [
-    products,
-    setProducts,
-  ] = useState<Product[]>([])
-
-  const [
     distributionLocations,
     setDistributionLocations,
   ] = useState<DistributionLocation[]>([])
@@ -483,89 +467,32 @@ export function GlobalSection() {
               locationPage,
           })
 
-        if (
-          !locationsResult.error &&
-          locationsResult.locations.length >
-            0
-        ) {
-          const nextLocations =
-            locationsResult.locations
-
-          productsCountRef.current =
-            reset
-              ? nextLocations.length
-              : productsCountRef.current +
-                nextLocations.length
-
-          setDistributionLocations(
-            currentLocations =>
-              reset
-                ? nextLocations
-                : [
-                    ...currentLocations,
-                    ...nextLocations,
-                  ]
-          )
-
-          setProducts([])
-          setHasMore(
-            from +
-              nextLocations.length <
-              locationsResult.count
-          )
-          setIsLoading(false)
-
-          return
-        }
-
-        const to =
-          from +
-          distributionPageSize
-
-        const {
-          products:
-            fallbackProducts,
-        } =
-          await getPublicProductsWithStatesByStateNames(
-            [
-              "Disponible",
-            ],
-            {
-              from,
-              to,
-            }
-          )
-
-        const rawProducts =
-          (fallbackProducts || []) as Product[]
-
-        const nextProducts =
-          rawProducts.slice(
-            0,
-            distributionPageSize
-          )
-
-        setDistributionLocations([])
+        const nextLocations =
+          locationsResult.error
+            ? []
+            : locationsResult.locations
 
         productsCountRef.current =
           reset
-            ? nextProducts.length
+            ? nextLocations.length
             : productsCountRef.current +
-              nextProducts.length
+              nextLocations.length
 
-        setProducts(
-          currentProducts =>
+        setDistributionLocations(
+          currentLocations =>
             reset
-              ? nextProducts
+              ? nextLocations
               : [
-                  ...currentProducts,
-                  ...nextProducts,
+                  ...currentLocations,
+                  ...nextLocations,
                 ]
         )
 
         setHasMore(
-          rawProducts.length >
-            distributionPageSize
+          !locationsResult.error &&
+            from +
+              nextLocations.length <
+              locationsResult.count
         )
 
         setIsLoading(false)
@@ -704,59 +631,10 @@ export function GlobalSection() {
           )
         }
 
-        return products.flatMap(
-          (product) => {
-
-            const channels =
-              product.distribution_channels ||
-              []
-
-            if (channels.length === 0) {
-
-              return [
-                {
-                  id: product.id,
-                  productId: product.id,
-                  type: "Producto",
-                  name: "Canales en preparación",
-                  location:
-                    "Punto de compra pendiente",
-                  status: "Configurando",
-                  productName:
-                    product.name,
-                  productCategory:
-                    product.category,
-                  productImage:
-                    product.image_url ||
-                    product.image ||
-                    null,
-                },
-              ]
-
-            }
-
-            return channels.map(
-              (channel) => ({
-                ...channel,
-                productId:
-                  product.id,
-                productName:
-                  product.name,
-                productCategory:
-                  product.category,
-                productImage:
-                  product.image_url ||
-                  product.image ||
-                  null,
-              })
-            )
-
-          }
-        )
+        return []
       },
       [
         distributionLocations,
-        products,
       ]
     )
 
