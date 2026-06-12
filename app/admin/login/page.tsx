@@ -3,11 +3,15 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 
+import {
+  signInAdmin,
+} from "@/lib/admin-auth"
+
 export default function AdminLoginPage() {
 
   const router = useRouter()
 
-  const [user, setUser] =
+  const [email, setEmail] =
     useState("")
 
   const [password, setPassword] =
@@ -16,36 +20,34 @@ export default function AdminLoginPage() {
   const [error, setError] =
     useState("")
 
-  const handleLogin = (
+  const [isLoading, setIsLoading] =
+    useState(false)
+
+  const handleLogin = async (
     e: React.FormEvent
   ) => {
 
     e.preventDefault()
 
-    /* LOGIN SIMPLE */
+    setError("")
+    setIsLoading(true)
 
-    if (
-
-      user === "imnova" &&
-
-      password === "123456"
-
-    ) {
-
-      localStorage.setItem(
-        "imnova-admin",
-        "authenticated"
+    const result =
+      await signInAdmin(
+        email.trim(),
+        password
       )
 
-      router.push("/admin")
-
-    } else {
-
+    if (!result.isAdmin) {
       setError(
-        "Credenciales incorrectas"
+        result.error ||
+          "Credenciales incorrectas"
       )
-
+      setIsLoading(false)
+      return
     }
+
+    router.push("/admin")
 
   }
 
@@ -123,11 +125,11 @@ export default function AdminLoginPage() {
         >
 
           <input
-            type="text"
-            placeholder="Usuario"
-            value={user}
+            type="email"
+            placeholder="Email"
+            value={email}
             onChange={(e) =>
-              setUser(e.target.value)
+              setEmail(e.target.value)
             }
             className="
               w-full
@@ -179,6 +181,7 @@ export default function AdminLoginPage() {
 
           <button
             type="submit"
+            disabled={isLoading}
             className="
               w-full
               rounded-2xl
@@ -190,10 +193,14 @@ export default function AdminLoginPage() {
               transition-all
               duration-300
               hover:scale-[1.02]
+              disabled:cursor-not-allowed
+              disabled:opacity-60
             "
           >
 
-            Entrar al sistema
+            {isLoading
+              ? "Validando..."
+              : "Entrar al sistema"}
 
           </button>
 

@@ -32,6 +32,14 @@ import {
   updateProduct,
 } from "@/lib/products-service"
 
+import {
+  validateAdminSession,
+} from "@/lib/admin-auth"
+
+import {
+  supabase,
+} from "@/lib/supabase"
+
 type DistributionChannel = {
   id: string
   country?: string
@@ -73,6 +81,11 @@ type Product = {
   amazon_url?: string | null
   ebay_url?: string | null
   tiktok_url?: string | null
+  launch_promo_enabled?: boolean | null
+  launch_discount_percent?: number | string | null
+  launch_promo_start_at?: string | null
+  launch_promo_end_at?: string | null
+  launch_promo_duration_days?: number | string | null
   distribution_channels?: DistributionChannel[] | string | null
   commercial_notes?: string | null
   nicho?: string | null
@@ -102,6 +115,13 @@ const officialStateFlow = [
   "Producción",
   "Comercialización",
   "Disponible",
+]
+
+const launchPromoDurationOptions = [
+  "0",
+  "30",
+  "60",
+  "90",
 ]
 
 type StateRecommendation = {
@@ -249,6 +269,10 @@ type FormData = {
   amazon_url: string
   ebay_url: string
   tiktok_url: string
+  launch_promo_enabled: boolean
+  launch_discount_percent: string
+  launch_promo_start_at: string
+  launch_promo_duration_days: string
   distribution_channels: string
   commercial_notes: string
 }
@@ -286,6 +310,11 @@ type ProductUpdateData = {
   amazon_url?: string | null
   ebay_url?: string | null
   tiktok_url?: string | null
+  launch_promo_enabled?: boolean | null
+  launch_discount_percent?: number | null
+  launch_promo_start_at?: string | null
+  launch_promo_end_at?: string | null
+  launch_promo_duration_days?: number | null
   distribution_channels?: DistributionChannel[]
   commercial_notes?: string | null
 }
@@ -766,6 +795,28 @@ function getInitialFormData(
       product.ebay_url || "",
     tiktok_url:
       product.tiktok_url || "",
+    launch_promo_enabled:
+      Boolean(
+        product.launch_promo_enabled
+      ),
+    launch_discount_percent:
+      product.launch_discount_percent === null ||
+      product.launch_discount_percent === undefined
+        ? ""
+        : String(
+            product.launch_discount_percent
+          ),
+    launch_promo_start_at:
+      formatDateTimeLocal(
+        product.launch_promo_start_at
+      ),
+    launch_promo_duration_days:
+      product.launch_promo_duration_days === null ||
+      product.launch_promo_duration_days === undefined
+        ? "0"
+        : String(
+            product.launch_promo_duration_days
+          ),
     distribution_channels:
       distributionChannelsToText(
         product.distribution_channels
@@ -837,6 +888,118 @@ function getAverageValue(
 
 }
 
+function formatDateTimeLocal(
+  value?: string | null
+) {
+
+  if (!value) {
+    return ""
+  }
+
+  const date =
+    new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return ""
+  }
+
+  const localDate =
+    new Date(
+      date.getTime() -
+        date.getTimezoneOffset() *
+          60 *
+          1000
+    )
+
+  return localDate
+    .toISOString()
+    .slice(0, 16)
+
+}
+
+function getIsoDateFromLocalInput(
+  value: string
+) {
+
+  if (!value.trim()) {
+    return null
+  }
+
+  const date =
+    new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return null
+  }
+
+  return date.toISOString()
+
+}
+
+function getLaunchPromoEndAt(
+  startAt: string | null,
+  durationDays: number
+) {
+
+  if (!startAt || durationDays <= 0) {
+    return null
+  }
+
+  const startDate =
+    new Date(startAt)
+
+  if (Number.isNaN(startDate.getTime())) {
+    return null
+  }
+
+  const endDate =
+    new Date(startDate)
+
+  endDate.setDate(
+    endDate.getDate() +
+      durationDays
+  )
+
+  return endDate.toISOString()
+
+}
+
+function hasPromotionInput(
+  product: Product,
+  formData: FormData
+) {
+
+  return (
+    "launch_promo_enabled" in product ||
+    "launch_discount_percent" in product ||
+    "launch_promo_start_at" in product ||
+    "launch_promo_duration_days" in product ||
+    formData.launch_promo_enabled ||
+    Boolean(
+      formData.launch_discount_percent.trim()
+    ) ||
+    Boolean(
+      formData.launch_promo_start_at.trim()
+    ) ||
+    formData.launch_promo_duration_days !== "0"
+  )
+
+}
+
+function normalizeLabel(
+  value: string
+) {
+
+  return value
+    .normalize("NFD")
+    .replace(
+      /[\u0300-\u036f]/g,
+      ""
+    )
+    .toLowerCase()
+
+}
+
 export default function ProductDetailPage() {
   const router = useRouter()
   const params = useParams()
@@ -888,6 +1051,10 @@ export default function ProductDetailPage() {
       amazon_url: "",
       ebay_url: "",
       tiktok_url: "",
+      launch_promo_enabled: false,
+      launch_discount_percent: "",
+      launch_promo_start_at: "",
+      launch_promo_duration_days: "0",
       distribution_channels: "",
       commercial_notes: "",
     })
@@ -1130,22 +1297,32 @@ export default function ProductDetailPage() {
     )
 
   useEffect(() => {
-    const auth =
-      localStorage.getItem(
-        "imnova-admin"
-      )
+    let isMounted = true
 
-    if (
-      auth !== "authenticated"
-    ) {
-      router.push(
-        "/admin/login"
-      )
+    async function validateAccess() {
+      const result =
+        await validateAdminSession()
 
-      return
+      if (!isMounted) {
+        return
+      }
+
+      if (!result.isAdmin) {
+        router.replace(
+          "/admin/login"
+        )
+
+        return
+      }
+
+      setIsAuthenticated(true)
     }
 
-    setIsAuthenticated(true)
+    validateAccess()
+
+    return () => {
+      isMounted = false
+    }
   }, [router])
 
   useEffect(() => {
@@ -2025,6 +2202,39 @@ export default function ProductDetailPage() {
           ? Number(formData.price)
           : null
 
+      const launchDiscountValue =
+        formData.launch_discount_percent.trim()
+          ? Number(
+              formData.launch_discount_percent
+            )
+          : null
+
+      const launchDurationDaysValue =
+        formData.launch_promo_duration_days.trim()
+          ? Number(
+              formData.launch_promo_duration_days
+            )
+          : 0
+
+      let launchPromoStartAtValue =
+        getIsoDateFromLocalInput(
+          formData.launch_promo_start_at
+        )
+
+      if (
+        formData.launch_promo_enabled &&
+        !launchPromoStartAtValue
+      ) {
+        launchPromoStartAtValue =
+          new Date().toISOString()
+      }
+
+      const launchPromoEndAtValue =
+        getLaunchPromoEndAt(
+          launchPromoStartAtValue,
+          launchDurationDaysValue
+        )
+
       const surveyScoreValue =
         formData.survey_score.trim()
           ? Number(formData.survey_score)
@@ -2089,6 +2299,56 @@ export default function ProductDetailPage() {
       }
 
       if (
+        launchDiscountValue !== null &&
+        (
+          Number.isNaN(launchDiscountValue) ||
+          launchDiscountValue <= 0 ||
+          launchDiscountValue > 100
+        )
+      ) {
+        setSaveMessage("")
+        setSaveError(
+          "El descuento de lanzamiento debe estar entre 1 y 100."
+        )
+        return
+      }
+
+      if (
+        !Number.isInteger(launchDurationDaysValue) ||
+        !launchPromoDurationOptions.includes(
+          String(launchDurationDaysValue)
+        )
+      ) {
+        setSaveMessage("")
+        setSaveError(
+          "El tiempo de promocion debe ser sin fecha de cierre, 30, 60 o 90 dias."
+        )
+        return
+      }
+
+      if (
+        formData.launch_promo_start_at.trim() &&
+        !launchPromoStartAtValue
+      ) {
+        setSaveMessage("")
+        setSaveError(
+          "La fecha de inicio de promocion no es valida."
+        )
+        return
+      }
+
+      if (
+        formData.launch_promo_enabled &&
+        !launchDiscountValue
+      ) {
+        setSaveMessage("")
+        setSaveError(
+          "Activa un porcentaje de descuento para la promocion de lanzamiento."
+        )
+        return
+      }
+
+      if (
         surveyScoreValue !== null &&
         (
           Number.isNaN(surveyScoreValue) ||
@@ -2139,6 +2399,84 @@ export default function ProductDetailPage() {
           distributionChannelsResult.error
         )
         return
+      }
+
+      const selectedStateName =
+        states.find(
+          state =>
+            state.id ===
+            formData.state_id
+        )?.name || ""
+
+      if (
+        normalizeLabel(
+          selectedStateName
+        ).includes("disponible")
+      ) {
+        const missingFields: string[] =
+          []
+
+        if (
+          !formData.description.trim()
+        ) {
+          missingFields.push(
+            "descripcion"
+          )
+        }
+
+        if (
+          !formData.image_url.trim() &&
+          !product.image
+        ) {
+          missingFields.push(
+            "imagen principal"
+          )
+        }
+
+        if (priceValue === null) {
+          missingFields.push(
+            "precio"
+          )
+        }
+
+        if (
+          !formData.usage_moment.trim()
+        ) {
+          missingFields.push(
+            "momento de uso"
+          )
+        }
+
+        if (
+          !formData.main_benefit.trim()
+        ) {
+          missingFields.push(
+            "beneficio principal"
+          )
+        }
+
+        if (
+          !formData.how_to_use.trim() &&
+          !formData.usage_description.trim()
+        ) {
+          missingFields.push(
+            "como usarlo"
+          )
+        }
+
+        if (!benefitsValue.length) {
+          missingFields.push(
+            "beneficios"
+          )
+        }
+
+        if (missingFields.length) {
+          setSaveMessage("")
+          setSaveError(
+            `Antes de publicar este producto como Disponible completa: ${missingFields.join(", ")}.`
+          )
+          return
+        }
       }
 
       setIsSaving(true)
@@ -2240,6 +2578,24 @@ export default function ProductDetailPage() {
           null
       }
 
+      if (
+        hasPromotionInput(
+          product,
+          formData
+        )
+      ) {
+        updates.launch_promo_enabled =
+          formData.launch_promo_enabled
+        updates.launch_discount_percent =
+          launchDiscountValue
+        updates.launch_promo_start_at =
+          launchPromoStartAtValue
+        updates.launch_promo_end_at =
+          launchPromoEndAtValue
+        updates.launch_promo_duration_days =
+          launchDurationDaysValue
+      }
+
       try {
         const result =
           await updateProduct(
@@ -2323,6 +2679,25 @@ export default function ProductDetailPage() {
         }
 
       try {
+        const {
+          data: sessionData,
+          error: sessionError,
+        } =
+          await supabase.auth.getSession()
+
+        const accessToken =
+          sessionData.session?.access_token
+
+        if (
+          sessionError ||
+          !accessToken
+        ) {
+          setNotificationError(
+            "Tu sesion Admin expiro. Inicia sesion nuevamente."
+          )
+          return
+        }
+
         const response =
           await fetch(
             "/api/innova-lab",
@@ -2332,6 +2707,8 @@ export default function ProductDetailPage() {
               headers: {
                 "Content-Type":
                   "application/json",
+                Authorization:
+                  `Bearer ${accessToken}`,
               },
               body:
                 JSON.stringify({
@@ -4073,6 +4450,120 @@ export default function ProductDetailPage() {
                     />
                   </label>
                 </div>
+              </div>
+
+              <div className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-amber-100/70">
+                      Promocion de lanzamiento
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-white/55">
+                      Cuando el producto este Disponible, esta configuracion lo
+                      destaca en la promocion publica y en la tienda como
+                      lanzamiento principal.
+                    </p>
+                  </div>
+
+                  <label className="inline-flex items-center gap-3 rounded-2xl border border-amber-200/15 bg-black/30 px-4 py-3 text-xs font-bold uppercase tracking-[0.18em] text-amber-100/80">
+                    <input
+                      type="checkbox"
+                      checked={formData.launch_promo_enabled}
+                      onChange={(event) =>
+                        setFormData(
+                          current => ({
+                            ...current,
+                            launch_promo_enabled:
+                              event.target.checked,
+                          })
+                        )
+                      }
+                      className="h-4 w-4 accent-amber-300"
+                    />
+                    Activa
+                  </label>
+                </div>
+
+                <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Descuento %
+                    </span>
+                    <input
+                      value={formData.launch_discount_percent}
+                      onChange={(event) =>
+                        updateField(
+                          "launch_discount_percent",
+                          event.target.value
+                        )
+                      }
+                      inputMode="decimal"
+                      placeholder="15"
+                      className={inputClassName}
+                    />
+                  </label>
+
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Tiempo de promocion
+                    </span>
+                    <select
+                      value={formData.launch_promo_duration_days}
+                      onChange={(event) =>
+                        updateField(
+                          "launch_promo_duration_days",
+                          event.target.value
+                        )
+                      }
+                      className={inputClassName}
+                    >
+                      <option value="0">
+                        Sin fecha de cierre
+                      </option>
+                      <option value="30">
+                        30 dias de promocion
+                      </option>
+                      <option value="60">
+                        60 dias de promocion
+                      </option>
+                      <option value="90">
+                        90 dias de promocion
+                      </option>
+                    </select>
+                    <p className="mt-2 text-xs leading-5 text-white/45">
+                      Define cuanto tiempo aparecera el descuento con cuenta
+                      regresiva en la web y la tienda.
+                    </p>
+                  </label>
+
+                  <label className="sm:col-span-2">
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Cuando inicia la promocion
+                    </span>
+                    <input
+                      type="datetime-local"
+                      value={formData.launch_promo_start_at}
+                      onChange={(event) =>
+                        updateField(
+                          "launch_promo_start_at",
+                          event.target.value
+                        )
+                      }
+                      className={inputClassName}
+                    />
+                    <p className="mt-2 text-xs leading-5 text-white/45">
+                      Si lo dejas vacio, la promocion inicia en el momento en
+                      que guardas los cambios.
+                    </p>
+                  </label>
+                </div>
+
+                <p className="mt-4 rounded-2xl border border-amber-200/15 bg-black/25 p-4 text-xs leading-6 text-white/50">
+                  Resumen: si eliges 30, 60 o 90 dias, la tienda mostrara un
+                  temporizador claro hasta que termine la promocion. Si eliges
+                  sin fecha de cierre, se vera como promocion activa sin cuenta
+                  regresiva.
+                </p>
               </div>
 
               <div className="rounded-3xl border border-emerald-200/15 bg-emerald-200/[0.04] p-5">

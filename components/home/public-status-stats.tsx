@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 
 import {
-  getProductsWithStatesByStateNames,
+  getPublicProductsWithStatesByStateNames,
 } from "@/lib/products-service"
 
 import { motion } from "framer-motion"
@@ -48,7 +48,7 @@ export function PublicStatusStats() {
         products,
         states,
       } =
-        await getProductsWithStatesByStateNames(
+        await getPublicProductsWithStatesByStateNames(
           [
             "Idea",
             "Validación",

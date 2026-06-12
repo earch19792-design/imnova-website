@@ -15,6 +15,49 @@ type AdminProductPageOptions = {
   page?: number
 }
 
+const publicProductSelect = `
+  id,
+  slug,
+  name,
+  category,
+  description,
+  image_url,
+  image,
+  price,
+  currency,
+  state_id,
+  direct_url,
+  amazon_url,
+  ebay_url,
+  tiktok_url,
+  launch_promo_enabled,
+  launch_discount_percent,
+  launch_promo_start_at,
+  launch_promo_end_at,
+  launch_promo_duration_days,
+  usage_moment,
+  main_benefit,
+  how_to_use,
+  usage_description,
+  routine_suggestion,
+  benefits,
+  bullets,
+  functional_claims,
+  ingredients_summary,
+  lifestyle_image,
+  lifestyle_images,
+  nicho,
+  problema_resuelve,
+  expected_benefit,
+  survey_status,
+  survey_score,
+  survey_votes,
+  social_interest_score,
+  validation_status,
+  validation_decision,
+  created_at
+`
+
 function getValidMetricNumber(
   value: unknown
 ) {
@@ -143,6 +186,191 @@ function getStateIdsByNames(
       }
     )
     .map(state => state.id)
+}
+
+export async function getPublicProducts(
+  options: ProductsQueryOptions = {}
+) {
+
+  let query =
+    supabase
+      .from("public_products")
+      .select(publicProductSelect)
+      .order(
+        options.orderBy ||
+          "created_at",
+        {
+          ascending:
+            options.ascending ??
+            false,
+        }
+      )
+
+  if (
+    typeof options.from === "number" &&
+    typeof options.to === "number"
+  ) {
+    query =
+      query.range(
+        options.from,
+        options.to
+      )
+  } else if (
+    typeof options.limit === "number"
+  ) {
+    query =
+      query.limit(
+        options.limit
+      )
+  }
+
+  const { data, error } =
+    await query
+
+  if (error) {
+
+    console.error(
+      "GET PUBLIC PRODUCTS ERROR:",
+      error
+    )
+
+    return []
+
+  }
+
+  return data || []
+
+}
+
+export async function getPublicProductBySlug(
+  slug: string
+) {
+
+  const { data, error } =
+    await supabase
+      .from("public_products")
+      .select(publicProductSelect)
+      .eq(
+        "slug",
+        slug
+      )
+      .single()
+
+  if (error) {
+
+    console.error(
+      "GET PUBLIC PRODUCT BY SLUG ERROR:",
+      error
+    )
+
+    return null
+
+  }
+
+  return data
+
+}
+
+export async function getPublicProductsWithStatesByStateNames(
+  stateNames: string[],
+  options: ProductsQueryOptions = {}
+) {
+
+  const states =
+    await getProductStates()
+
+  const stateIds =
+    getStateIdsByNames(
+      states as Array<{
+        id: string
+        name: string
+      }>,
+      stateNames
+    )
+
+  if (stateIds.length === 0) {
+    return {
+      products: [],
+      states,
+    }
+  }
+
+  let query =
+    supabase
+      .from("public_products")
+      .select(publicProductSelect)
+      .in(
+        "state_id",
+        stateIds
+      )
+      .order(
+        options.orderBy ||
+          "created_at",
+        {
+          ascending:
+            options.ascending ??
+            false,
+        }
+      )
+
+  if (
+    typeof options.from === "number" &&
+    typeof options.to === "number"
+  ) {
+    query =
+      query.range(
+        options.from,
+        options.to
+      )
+  } else if (
+    typeof options.limit === "number"
+  ) {
+    query =
+      query.limit(
+        options.limit
+      )
+  }
+
+  const { data, error } =
+    await query
+
+  if (error) {
+
+    console.error(
+      "GET PUBLIC PRODUCTS WITH STATES BY STATE NAMES ERROR:",
+      error
+    )
+
+    return {
+      products: [],
+      states,
+    }
+
+  }
+
+  return {
+    products: data || [],
+    states,
+  }
+
+}
+
+export async function getPublicAvailableProducts(
+  options: ProductsQueryOptions = {}
+) {
+
+  const {
+    products,
+  } =
+    await getPublicProductsWithStatesByStateNames(
+      [
+        "Disponible",
+      ],
+      options
+    )
+
+  return products
+
 }
 
 export async function getProducts() {
@@ -996,31 +1224,14 @@ export async function getAvailableDistributionLocationsPage(
   } =
     await supabase
       .from("distribution_locations")
-      .select(
-        `
-          *,
-          products!inner (
-            id,
-            name,
-            category,
-            image_url,
-            image,
-            state_id
-          )
-        `,
-        {
-          count: "exact",
-        }
-      )
+      .select("*", {
+        count: "exact",
+      })
       .eq("is_active", true)
       .eq("is_authorized", true)
       .eq(
         "availability_status",
         "activo"
-      )
-      .in(
-        "products.state_id",
-        availableStateIds
       )
       .order(
         "priority",
@@ -1049,10 +1260,97 @@ export async function getAvailableDistributionLocationsPage(
     }
   }
 
+  const locationRows =
+    (data || []) as DistributionLocation[]
+
+  const productIds =
+    Array.from(
+      new Set(
+        locationRows
+          .map((location) =>
+            location.product_id
+          )
+          .filter(Boolean)
+      )
+    )
+
+  if (productIds.length === 0) {
+    return {
+      locations: [],
+      count: 0,
+      error: false,
+    }
+  }
+
+  const {
+    data: products,
+    error: productsError,
+  } =
+    await supabase
+      .from("public_products")
+      .select(
+        "id,name,category,image_url,image,state_id"
+      )
+      .in("id", productIds)
+      .in(
+        "state_id",
+        availableStateIds
+      )
+
+  if (productsError) {
+    console.error(
+      "GET AVAILABLE DISTRIBUTION LOCATION PRODUCTS ERROR:",
+      productsError
+    )
+
+    return {
+      locations: [],
+      count: 0,
+      error: true,
+    }
+  }
+
+  const productsById =
+    new Map(
+      (
+        (products ||
+          []) as DistributionLocationProduct[]
+      ).map((product) => [
+        product.id,
+        product,
+      ])
+    )
+
+  const availableLocations =
+    locationRows
+      .map((location) => {
+        const product =
+          productsById.get(
+            location.product_id
+          )
+
+        if (!product) {
+          return null
+        }
+
+        return {
+          ...location,
+          products:
+            product,
+        }
+      })
+      .filter(
+        Boolean
+      ) as DistributionLocation[]
+
   return {
     locations:
-      (data || []) as DistributionLocation[],
-    count: count || 0,
+      availableLocations,
+    count:
+      Math.min(
+        count || availableLocations.length,
+        availableLocations.length
+      ),
     error: false,
   }
 
@@ -1693,6 +1991,11 @@ export async function updateProduct(
     amazon_url?: string | null
     ebay_url?: string | null
     tiktok_url?: string | null
+    launch_promo_enabled?: boolean | null
+    launch_discount_percent?: number | null
+    launch_promo_start_at?: string | null
+    launch_promo_end_at?: string | null
+    launch_promo_duration_days?: number | null
     state_id?: string | null
     nicho?: string | null
     problema_resuelve?: string | null

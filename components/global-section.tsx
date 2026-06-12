@@ -31,7 +31,7 @@ import {
 
 import {
   getAvailableDistributionLocationsPage,
-  getProductStates,
+  getPublicProductsWithStatesByStateNames,
   type DistributionLocation,
 } from "@/lib/products-service"
 
@@ -65,11 +65,6 @@ type Product = {
   image?: string | null
   image_url?: string | null
   distribution_channels?: DistributionChannel[]
-}
-
-type ProductState = {
-  id: string
-  name: string
 }
 
 type DistributionItem = DistributionChannel & {
@@ -490,11 +485,8 @@ export function GlobalSection() {
 
         if (
           !locationsResult.error &&
-          (
-            locationsResult.count > 0 ||
-            locationsResult.locations.length >
-              0
-          )
+          locationsResult.locations.length >
+            0
         ) {
           const nextLocations =
             locationsResult.locations
@@ -526,88 +518,32 @@ export function GlobalSection() {
           return
         }
 
-        const states =
-          await getProductStates()
-
-        const availableStateIds =
-          (states as ProductState[])
-            .filter((state) => {
-              const stateName =
-                state.name.toLowerCase()
-
-              return stateName.includes("disponible")
-            })
-            .map(
-              (state) =>
-                state.id
-            )
-
-        if (
-          availableStateIds.length === 0
-        ) {
-
-          productsCountRef.current = 0
-          setProducts([])
-          setHasMore(false)
-          setIsLoading(false)
-
-          return
-
-        }
-
         const to =
           from +
-          distributionPageSize -
-          1
+          distributionPageSize
 
         const {
-          data,
-          error,
-          count,
+          products:
+            fallbackProducts,
         } =
-          await supabase
-            .from("products")
-            .select(
-              "*",
-              {
-                count: "exact",
-              }
-            )
-            .in(
-              "state_id",
-              availableStateIds
-            )
-            .order(
-              "created_at",
-              {
-                ascending: false,
-              }
-            )
-            .range(
-              from,
-              to
-            )
-
-        if (error) {
-
-          console.error(
-            "GET DISTRIBUTION PRODUCTS ERROR:",
+          await getPublicProductsWithStatesByStateNames(
+            [
+              "Disponible",
+            ],
             {
-              message: error.message,
-              details: error.details,
-              hint: error.hint,
-              code: error.code,
+              from,
+              to,
             }
           )
 
-          setIsLoading(false)
-
-          return
-
-        }
+        const rawProducts =
+          (fallbackProducts || []) as Product[]
 
         const nextProducts =
-          (data || []) as Product[]
+          rawProducts.slice(
+            0,
+            distributionPageSize
+          )
 
         setDistributionLocations([])
 
@@ -628,9 +564,8 @@ export function GlobalSection() {
         )
 
         setHasMore(
-          from +
-            nextProducts.length <
-            (count || 0)
+          rawProducts.length >
+            distributionPageSize
         )
 
         setIsLoading(false)
@@ -1115,9 +1050,11 @@ export function GlobalSection() {
       className="
         relative
         isolate
+        scroll-mt-28
         overflow-hidden
         bg-black
         py-36
+        md:scroll-mt-32
         md:py-44
       "
     >
@@ -1229,6 +1166,7 @@ export function GlobalSection() {
             delay: 0.1,
           }}
           className="
+            scroll-mt-32
             mt-20
             overflow-hidden
             rounded-[42px]

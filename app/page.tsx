@@ -1,6 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import {
+  useEffect,
+  useState,
+} from "react"
 
 import {
   ArrowUpRight,
@@ -38,6 +41,73 @@ export default function IMNOVAPage() {
     () => {
       setShowPopup(false)
     }
+
+  useEffect(
+    () => {
+      const timeouts: number[] = []
+
+      const scrollToHash =
+        () => {
+          const targetId =
+            window.location.hash.replace(
+              "#",
+              ""
+            )
+
+          if (!targetId) {
+            return
+          }
+
+          const target =
+            document.getElementById(targetId)
+
+          if (!target) {
+            return
+          }
+
+          target.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          })
+        }
+
+      const scheduleHashScroll =
+        () => {
+          ;[
+            80,
+            350,
+            900,
+          ].forEach(delay => {
+            const timeout =
+              window.setTimeout(
+                scrollToHash,
+                delay
+              )
+
+            timeouts.push(timeout)
+          })
+        }
+
+      scheduleHashScroll()
+
+      window.addEventListener(
+        "hashchange",
+        scheduleHashScroll
+      )
+
+      return () => {
+        timeouts.forEach(timeout => {
+          window.clearTimeout(timeout)
+        })
+
+        window.removeEventListener(
+          "hashchange",
+          scheduleHashScroll
+        )
+      }
+    },
+    []
+  )
 
   return (
     <main className="relative isolate overflow-hidden bg-gradient-to-b from-black via-[#050505] to-black text-white">

@@ -3,6 +3,10 @@ export const runtime = "nodejs"
 import { NextResponse } from "next/server"
 
 import {
+  createClient,
+} from "@supabase/supabase-js"
+
+import {
   supabase,
 } from "../../../lib/supabase"
 
@@ -25,6 +29,17 @@ type WhatsAppResult =
 
 type JsonRecord =
   Record<string, unknown>
+
+type AdminAuthResult =
+  | {
+      ok: true
+      triggeredBy: string
+    }
+  | {
+      ok: false
+      status: 401 | 403
+      error: string
+    }
 
 function getTemplateName(
   status?: string
@@ -135,6 +150,111 @@ function getSafeErrorMessage(
 
 }
 
+function getBearerToken(
+  req: Request
+) {
+
+  const authorization =
+    req.headers.get("authorization") ||
+    ""
+
+  if (
+    !authorization.startsWith(
+      "Bearer "
+    )
+  ) {
+    return null
+  }
+
+  const token =
+    authorization
+      .slice("Bearer ".length)
+      .trim()
+
+  return token || null
+
+}
+
+async function validateAdminRequest(
+  req: Request
+): Promise<AdminAuthResult> {
+
+  const token =
+    getBearerToken(req)
+
+  if (!token) {
+    return {
+      ok: false,
+      status: 401,
+      error: "Unauthorized",
+    }
+  }
+
+  const authenticatedSupabase =
+    createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+        global: {
+          headers: {
+            Authorization:
+              `Bearer ${token}`,
+          },
+        },
+      }
+    )
+
+  const {
+    data: userData,
+    error: userError,
+  } =
+    await authenticatedSupabase.auth.getUser(
+      token
+    )
+
+  if (
+    userError ||
+    !userData.user
+  ) {
+    return {
+      ok: false,
+      status: 401,
+      error: "Unauthorized",
+    }
+  }
+
+  const {
+    data: isAdmin,
+    error: adminError,
+  } =
+    await authenticatedSupabase.rpc(
+      "is_admin"
+    )
+
+  if (
+    adminError ||
+    isAdmin !== true
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      error: "Forbidden",
+    }
+  }
+
+  return {
+    ok: true,
+    triggeredBy:
+      userData.user.email ||
+      userData.user.id,
+  }
+
+}
+
 async function saveNotificationLog(
   body: InnovaLabRequestBody,
   result: WhatsAppResult
@@ -217,6 +337,23 @@ export async function POST(
   req: Request
 ) {
 
+  const adminAuth =
+    await validateAdminRequest(req)
+
+  if (!adminAuth.ok) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          adminAuth.error,
+      },
+      {
+        status:
+          adminAuth.status,
+      }
+    )
+  }
+
   let body:
     InnovaLabRequestBody | null = null
 
@@ -234,6 +371,11 @@ export async function POST(
       source,
       triggeredBy,
     } = body
+
+    const authenticatedTriggeredBy =
+      adminAuth.triggeredBy ||
+      triggeredBy ||
+      "admin"
 
     let result: WhatsAppResult
 
@@ -268,7 +410,8 @@ export async function POST(
             progress,
             imageUrl,
             source,
-            triggeredBy,
+            triggeredBy:
+              authenticatedTriggeredBy,
           },
           result
         )
@@ -308,7 +451,8 @@ export async function POST(
           progress,
           imageUrl,
           source,
-          triggeredBy,
+          triggeredBy:
+            authenticatedTriggeredBy,
         },
         result
       )
@@ -347,7 +491,12 @@ export async function POST(
 
     if (body) {
       await saveNotificationLog(
-        body,
+        {
+          ...body,
+          triggeredBy:
+            adminAuth.triggeredBy ||
+            body.triggeredBy,
+        },
         {
           success: false,
           error:

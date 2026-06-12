@@ -19,7 +19,7 @@ import {
 } from "lucide-react"
 
 import {
-  getProductsWithStatesByStateNames,
+  getPublicProductsWithStatesByStateNames,
 } from "@/lib/products-service"
 
 type Product = {
@@ -230,7 +230,7 @@ export function InnovationTracker() {
         states:
           stateRows,
       } =
-        await getProductsWithStatesByStateNames(
+        await getPublicProductsWithStatesByStateNames(
           [
             "Idea",
             "Validación",

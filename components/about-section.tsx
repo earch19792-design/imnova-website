@@ -18,7 +18,7 @@ import {
 } from "react"
 
 import {
-  getProductsWithStatesByStateNames,
+  getPublicProductsWithStatesByStateNames,
 } from "@/lib/products-service"
 
 import {
@@ -75,7 +75,7 @@ useEffect(() => {
       products,
       states,
     } =
-      await getProductsWithStatesByStateNames(
+      await getPublicProductsWithStatesByStateNames(
         [
           "Idea",
           "Validación",

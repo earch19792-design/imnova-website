@@ -19,7 +19,7 @@ import {
   Truck,
 } from "lucide-react"
 
-import { getProductBySlug } from "@/lib/products-service"
+import { getPublicProductBySlug } from "@/lib/products-service"
 
 type Product = {
   id: string
@@ -32,15 +32,22 @@ type Product = {
   currency?: string | null
   category?: string | null
   bullets?: string[] | null
+  launch_promo_enabled?: boolean | null
+  launch_discount_percent?: number | string | null
+  launch_promo_start_at?: string | null
+  launch_promo_end_at?: string | null
+  launch_promo_duration_days?: number | string | null
 }
 
 type ProductExperience = {
   badge: string
   headline: string
+  why: string
   moment: string
   howTitle: string
   howText: string
   benefits: string[]
+  chips: string[]
 }
 
 const storeImagesBySlug: Record<string, string> = {
@@ -60,18 +67,26 @@ const coffeeExperience = {
   badge:
     "Café funcional",
   headline:
-    "Energía limpia, enfoque mental y nutrición funcional para acompañar rutinas de alto rendimiento.",
+    "Café funcional con 10 g de colágeno marino, vitaminas B6, B12 y D3, y extractos herbales para apoyar bienestar diario.",
+  why:
+    "Para quienes quieren elevar su café diario con una experiencia funcional: café, colágeno marino y vitaminas en una bebida lista para disfrutar.",
   moment:
     "Mañana, oficina o estudio",
   howTitle:
-    "Disfrútalo frío con hielo y leche.",
+    "Tómalo frío, fácil y sin complicarte.",
   howText:
-    "Agítalo, sírvelo sobre hielo y añade tu leche favorita. Ideal para empezar el día, trabajar con enfoque o estudiar con energía limpia.",
+    "Agítalo, sírvelo sobre hielo y añade tu leche favorita. La energía natural del café acompaña enfoque y rutina diaria sin convertirlo en una bebida energética.",
   benefits: [
-    "Energía limpia para tu rutina diaria",
-    "Apoya concentración y enfoque",
-    "Colágeno marino, vitaminas y extractos herbales",
+    "10 g de colágeno marino por lata",
+    "Vitaminas B6, B12 y D3",
+    "Extractos herbales funcionales",
     "Sin azúcar y bajo en calorías",
+  ],
+  chips: [
+    "Café funcional",
+    "Colágeno marino",
+    "Vitaminas B",
+    "Sin azúcar",
   ],
 }
 
@@ -86,7 +101,9 @@ const productExperiences: Record<string, ProductExperience> = {
     badge:
       "Nutrición diaria",
     headline:
-      "Pancakes o waffles altos en proteína, fáciles de preparar y pensados para una rutina más saludable.",
+      "Pancakes o waffles altos en proteína para desayunos ricos, prácticos y más saciantes.",
+    why:
+      "Una forma fácil de convertir el desayuno o snack en un momento funcional sin perder sabor ni practicidad.",
     moment:
       "Desayuno, gym o snack saludable",
     howTitle:
@@ -99,12 +116,20 @@ const productExperiences: Record<string, ProductExperience> = {
       "Fácil de preparar",
       "Ideal para después del gym",
     ],
+    chips: [
+      "Alto en proteína",
+      "Alto en fibra",
+      "Bajo en azúcar",
+      "Pancake o waffle",
+    ],
   },
   "mash-nutri-pan": {
     badge:
       "Nutrición inteligente",
     headline:
-      "Pan proteico bajo en carbohidratos diseñado para nutrición inteligente y energía sostenida.",
+      "Pan proteico bajo en carbohidratos para tostadas, sándwiches y comidas más inteligentes.",
+    why:
+      "Diseñado para quienes quieren una alternativa de pan más funcional, saciante y fácil de integrar en casa.",
     moment:
       "Desayuno, comida o snack saludable",
     howTitle:
@@ -117,6 +142,12 @@ const productExperiences: Record<string, ProductExperience> = {
       "Ideal para tostadas y sándwiches",
       "Fácil de preparar en casa",
     ],
+    chips: [
+      "Pan proteico",
+      "Low carb",
+      "Con fibra",
+      "Hecho en casa",
+    ],
   },
 }
 
@@ -127,6 +158,78 @@ function getStoreImage(product: Product) {
     product.image ||
     "/placeholder.jpg"
   )
+}
+
+function getLaunchPromotion(
+  product: Product
+) {
+  const discount =
+    Number(
+      product.launch_discount_percent
+    )
+
+  const now =
+    new Date()
+
+  const startDate =
+    product.launch_promo_start_at
+      ? new Date(
+          product.launch_promo_start_at
+        )
+      : null
+
+  const endDate =
+    product.launch_promo_end_at
+      ? new Date(
+          product.launch_promo_end_at
+        )
+      : null
+
+  const startsAtValid =
+    !startDate ||
+    (
+      !Number.isNaN(
+        startDate.getTime()
+      ) &&
+      startDate.getTime() <=
+        now.getTime()
+    )
+
+  const endsAtValid =
+    !endDate ||
+    (
+      !Number.isNaN(
+        endDate.getTime()
+      ) &&
+      endDate.getTime() >
+        now.getTime()
+    )
+
+  const isActive =
+    product.launch_promo_enabled === true &&
+    Number.isFinite(discount) &&
+    discount > 0 &&
+    startsAtValid &&
+    endsAtValid
+
+  const remainingMs =
+    isActive && endDate
+      ? Math.max(
+          0,
+          endDate.getTime() -
+            now.getTime()
+        )
+      : 0
+
+  return {
+    isActive,
+    discount,
+    days:
+      Math.floor(
+        remainingMs /
+          (1000 * 60 * 60 * 24)
+      ),
+  }
 }
 
 function formatPrice(
@@ -159,7 +262,7 @@ export default async function ProductPage({
     await params
 
   const product =
-    (await getProductBySlug(
+    (await getPublicProductBySlug(
       slug
     )) as Product | null
 
@@ -177,6 +280,8 @@ export default async function ProductPage({
       headline:
         product.description ||
         "Producto funcional IMNOVA diseñado para bienestar, nutrición inteligente y rendimiento diario.",
+      why:
+        "Creado para sumar valor real a rutinas modernas con una experiencia clara, práctica y funcional.",
       moment:
         "Rutina diaria",
       howTitle:
@@ -193,12 +298,24 @@ export default async function ProductPage({
           "Nutrición funcional",
           "Experiencia premium",
         ],
+      chips:
+        product.bullets?.slice(
+          0,
+          4
+        ) || [
+          "IMNOVA",
+          "Funcional",
+          "Disponible",
+        ],
     }
 
   const image =
     getStoreImage(
       product
     )
+
+  const promotion =
+    getLaunchPromotion(product)
 
   return (
     <main className="min-h-screen bg-[#f8f8f5] text-zinc-950">
@@ -245,6 +362,28 @@ export default async function ProductPage({
             {experience.headline}
           </p>
 
+          <div className="mt-7 rounded-[26px] border border-cyan-100 bg-cyan-50/70 p-6">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-800">
+              Por qué puede gustarte
+            </p>
+            <p className="mt-3 text-base font-semibold leading-7 text-zinc-800">
+              {experience.why}
+            </p>
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-2">
+            {experience.chips.map(
+              chip => (
+                <span
+                  key={chip}
+                  className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-black uppercase tracking-[0.12em] text-zinc-700"
+                >
+                  {chip}
+                </span>
+              )
+            )}
+          </div>
+
           <div className="mt-8 rounded-[28px] border border-zinc-200 bg-[#f8f8f5] p-6">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
               Precio
@@ -253,9 +392,25 @@ export default async function ProductPage({
               {formatPrice(
                 product.price,
                 product.currency ||
-                  "USD"
+                "USD"
               )}
             </p>
+
+            {promotion.isActive && (
+              <div className="mt-5 rounded-[22px] border border-amber-200 bg-amber-50 p-4">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-800">
+                  Promocion de lanzamiento
+                </p>
+                <p className="mt-2 text-2xl font-black text-zinc-950">
+                  {promotion.discount}% OFF
+                </p>
+                <p className="mt-1 text-sm font-semibold text-zinc-600">
+                  {promotion.days > 0
+                    ? `Termina en ${promotion.days} dias.`
+                    : "Promocion activa sin fecha de cierre."}
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="mt-7 grid gap-3 sm:grid-cols-2">

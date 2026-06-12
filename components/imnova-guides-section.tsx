@@ -22,7 +22,7 @@ import {
 } from "lucide-react"
 
 import {
-  getProductsWithStatesByStateNames,
+  getPublicProductsWithStatesByStateNames,
 } from "@/lib/products-service"
 
 type Product = {
@@ -1520,7 +1520,7 @@ export function ImnovaGuidesSection({
             states:
               stateRows,
           } =
-            await getProductsWithStatesByStateNames(
+            await getPublicProductsWithStatesByStateNames(
               [
                 "Disponible",
               ]

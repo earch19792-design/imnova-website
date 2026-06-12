@@ -22,6 +22,11 @@ import {
   updateProduct,
 } from "@/lib/products-service"
 
+import {
+  signOutAdmin,
+  validateAdminSession,
+} from "@/lib/admin-auth"
+
 import { Sidebar } from "@/app/admin/sidebar"
 import { Metrics } from "@/app/admin/metrics"
 
@@ -614,24 +619,32 @@ export default function AdminPage() {
 
   useEffect(() => {
 
-    const auth =
-      localStorage.getItem(
-        "imnova-admin"
-      )
+    let isMounted = true
 
-    if (
-      auth !== "authenticated"
-    ) {
+    async function validateAccess() {
+      const result =
+        await validateAdminSession()
 
-      router.push(
-        "/admin/login"
-      )
+      if (!isMounted) {
+        return
+      }
 
-      return
+      if (!result.isAdmin) {
+        router.replace(
+          "/admin/login"
+        )
 
+        return
+      }
+
+      setIsAuthenticated(true)
     }
 
-    setIsAuthenticated(true)
+    validateAccess()
+
+    return () => {
+      isMounted = false
+    }
 
   }, [router])
 
@@ -722,11 +735,10 @@ export default function AdminPage() {
   ])
 
   const handleLogout =
-    () => {
+    async () => {
 
-      localStorage.removeItem(
-        "imnova-admin"
-      )
+      await signOutAdmin()
+      setIsAuthenticated(false)
 
       router.push(
         "/admin/login"
@@ -850,7 +862,7 @@ export default function AdminPage() {
             title:
               "Listos para avanzar",
             description:
-              "Revisar siguiente etapa operativa.",
+              "Productos con validacion positiva listos para revision de etapa.",
             accentClassName:
               "border-emerald-200/20 bg-emerald-200/[0.045]",
             products:
@@ -860,7 +872,7 @@ export default function AdminPage() {
             title:
               "Pendientes de decision",
             description:
-              "Necesitan lectura o cierre estrategico.",
+              "Productos con datos o encuestas pendientes de decision estrategica.",
             accentClassName:
               "border-amber-200/20 bg-amber-200/[0.045]",
             products:
@@ -870,7 +882,7 @@ export default function AdminPage() {
             title:
               "Requieren ajuste",
             description:
-              "Revisar propuesta antes de avanzar.",
+              "Productos que necesitan revisar propuesta, nicho o beneficio antes de avanzar.",
             accentClassName:
               "border-cyan-200/20 bg-cyan-200/[0.04]",
             products:
@@ -1560,6 +1572,48 @@ export default function AdminPage() {
 
                       <div
                         className="
+                          mt-8
+                          flex
+                          flex-col
+                          gap-3
+                          border-t
+                          border-white/10
+                          pt-7
+                          lg:flex-row
+                          lg:items-end
+                          lg:justify-between
+                        "
+                      >
+                        <div>
+                          <p
+                            className="
+                              text-[10px]
+                              uppercase
+                              tracking-[0.30em]
+                              text-cyan-100/60
+                            "
+                          >
+                            Acciones recomendadas
+                          </p>
+
+                          <p
+                            className="
+                              mt-3
+                              max-w-2xl
+                              text-sm
+                              leading-6
+                              text-white/45
+                            "
+                          >
+                            Productos que requieren lectura operativa segun la
+                            validacion comunitaria. El estado no cambia desde
+                            aqui.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div
+                        className="
                           mt-6
                           grid
                           gap-5
@@ -1636,8 +1690,13 @@ export default function AdminPage() {
 
                                     ) : (
 
-                                      group.products.map(
-                                        (product) => {
+                                      group.products
+                                        .slice(
+                                          0,
+                                          3
+                                        )
+                                        .map(
+                                          (product) => {
                                           const state =
                                             stateById.get(
                                               product.state_id ||
@@ -1732,47 +1791,59 @@ export default function AdminPage() {
                                                   text-white/50
                                                 "
                                               >
-                                                Interes {score === null ? "N/A" : `${score}%`} · {votes} respuestas
+                                                Interes {score === null ? "N/A" : `${score}%`} - {votes} respuestas
                                               </p>
 
-                                              <button
-                                                type="button"
-                                                disabled={!product.slug}
-                                                onClick={() => {
-                                                  if (!product.slug) return
+                                              {
+                                                product.slug ? (
 
-                                                  router.push(
-                                                    `/admin/products/${product.slug}`
-                                                  )
-                                                }}
-                                                className="
-                                                  mt-4
-                                                  rounded-xl
-                                                  border
-                                                  border-cyan-400/20
-                                                  bg-cyan-400/10
-                                                  px-4
-                                                  py-2
-                                                  text-xs
-                                                  font-semibold
-                                                  text-cyan-200
-                                                  transition-all
-                                                  duration-300
-                                                  hover:bg-cyan-400/20
-                                                  disabled:cursor-not-allowed
-                                                  disabled:border-white/5
-                                                  disabled:bg-white/[0.02]
-                                                  disabled:text-white/25
-                                                "
-                                              >
-                                                Ver detalle
-                                              </button>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      router.push(
+                                                        `/admin/products/${product.slug}`
+                                                      )
+                                                    }}
+                                                    className="
+                                                      mt-4
+                                                      rounded-xl
+                                                      border
+                                                      border-cyan-400/20
+                                                      bg-cyan-400/10
+                                                      px-4
+                                                      py-2
+                                                      text-xs
+                                                      font-semibold
+                                                      text-cyan-200
+                                                      transition-all
+                                                      duration-300
+                                                      hover:bg-cyan-400/20
+                                                    "
+                                                  >
+                                                    Ver detalle
+                                                  </button>
+
+                                                ) : (
+
+                                                  <p
+                                                    className="
+                                                      mt-4
+                                                      text-xs
+                                                      font-semibold
+                                                      text-white/30
+                                                    "
+                                                  >
+                                                    Sin detalle disponible
+                                                  </p>
+
+                                                )
+                                              }
 
                                             </div>
 
                                           )
-                                        }
-                                      )
+                                          }
+                                        )
 
                                     )
                                   }

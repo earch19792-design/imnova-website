@@ -24,7 +24,7 @@ import {
 } from "react"
 
 import {
-  getProductsWithStatesByStateNames,
+  getPublicProductsWithStatesByStateNames,
 } from "@/lib/products-service"
 
 /* =================================================
@@ -118,7 +118,7 @@ export function EcosystemSection() {
         products,
         states,
       } =
-        await getProductsWithStatesByStateNames(
+        await getPublicProductsWithStatesByStateNames(
           [
             "Idea",
             "Validación",

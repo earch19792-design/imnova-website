@@ -23,7 +23,7 @@ import {
 } from "react"
 
 import {
-  getProductsWithStatesByStateNames,
+  getPublicProductsWithStatesByStateNames,
 } from "@/lib/products-service"
 
 import { supabase } from "@/lib/supabase"
@@ -815,7 +815,7 @@ export function InnovationsSection() {
         states:
           stateRows,
       } =
-        await getProductsWithStatesByStateNames(
+        await getPublicProductsWithStatesByStateNames(
           [
             "Idea",
             "Validación",

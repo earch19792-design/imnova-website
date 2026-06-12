@@ -6,6 +6,7 @@ import { motion } from "framer-motion"
 
 import {
   useEffect,
+  useMemo,
   useState,
 } from "react"
 
@@ -15,7 +16,7 @@ import {
 } from "lucide-react"
 
 import {
-  getAvailableProducts,
+  getPublicAvailableProducts,
 } from "@/lib/products-service"
 
 import { supabase } from "@/lib/supabase"
@@ -35,6 +36,11 @@ type Product = {
   amazon_url?: string | null
   ebay_url?: string | null
   tiktok_url?: string | null
+  launch_promo_enabled?: boolean | null
+  launch_discount_percent?: number | string | null
+  launch_promo_start_at?: string | null
+  launch_promo_end_at?: string | null
+  launch_promo_duration_days?: number | string | null
 }
 
 const MAX_LAUNCH_PRODUCTS = 12
@@ -176,6 +182,160 @@ function getPriceDisplay(
 
 }
 
+function getNumberValue(
+  value?: number | string | null
+) {
+
+  const numberValue =
+    Number(value)
+
+  return Number.isFinite(numberValue)
+    ? numberValue
+    : null
+
+}
+
+function getLaunchPromotion(
+  product: Product,
+  now: Date
+) {
+
+  const discount =
+    getNumberValue(
+      product.launch_discount_percent
+    )
+
+  const startDate =
+    product.launch_promo_start_at
+      ? new Date(
+          product.launch_promo_start_at
+        )
+      : null
+
+  const endDate =
+    product.launch_promo_end_at
+      ? new Date(
+          product.launch_promo_end_at
+        )
+      : null
+
+  const startsAtValid =
+    !startDate ||
+    (
+      !Number.isNaN(
+        startDate.getTime()
+      ) &&
+      startDate.getTime() <=
+        now.getTime()
+    )
+
+  const endsAtValid =
+    !endDate ||
+    (
+      !Number.isNaN(
+        endDate.getTime()
+      ) &&
+      endDate.getTime() >
+        now.getTime()
+    )
+
+  const isActive =
+    product.launch_promo_enabled === true &&
+    Boolean(
+      discount &&
+        discount > 0
+    ) &&
+    startsAtValid &&
+    endsAtValid
+
+  const remainingMs =
+    isActive && endDate
+      ? Math.max(
+          0,
+          endDate.getTime() -
+            now.getTime()
+        )
+      : 0
+
+  const days =
+    Math.floor(
+      remainingMs /
+        (1000 * 60 * 60 * 24)
+    )
+
+  const hours =
+    Math.floor(
+      (
+        remainingMs %
+        (1000 * 60 * 60 * 24)
+      ) /
+        (1000 * 60 * 60)
+    )
+
+  const minutes =
+    Math.floor(
+      (
+        remainingMs %
+        (1000 * 60 * 60)
+      ) /
+        (1000 * 60)
+    )
+
+  return {
+    isActive,
+    discount:
+      discount || 0,
+    discountLabel:
+      discount
+        ? `${discount}% OFF`
+        : "Lanzamiento activo",
+    hasTimer:
+      isActive &&
+      Boolean(endDate),
+    days,
+    hours,
+    minutes,
+  }
+
+}
+
+function sortLaunchProducts(
+  products: Product[],
+  now: Date
+) {
+
+  return [...products].sort(
+    (a, b) => {
+      const aPromo =
+        getLaunchPromotion(
+          a,
+          now
+        )
+
+      const bPromo =
+        getLaunchPromotion(
+          b,
+          now
+        )
+
+      if (
+        aPromo.isActive !==
+        bPromo.isActive
+      ) {
+        return aPromo.isActive
+          ? -1
+          : 1
+      }
+
+      return (
+        bPromo.discount -
+        aPromo.discount
+      )
+    }
+  )
+
+}
+
 export function PromoBanner() {
 
   const [
@@ -193,12 +353,19 @@ export function PromoBanner() {
     setHasLoadedProducts,
   ] = useState(false)
 
+  const [
+    now,
+    setNow,
+  ] = useState(
+    () => new Date()
+  )
+
   useEffect(() => {
 
     async function loadProducts() {
 
       const availableProducts =
-        await getAvailableProducts(
+        await getPublicAvailableProducts(
           {
             limit:
               MAX_LAUNCH_PRODUCTS,
@@ -206,7 +373,10 @@ export function PromoBanner() {
         )
 
       setProducts(
-        availableProducts as Product[]
+        sortLaunchProducts(
+          availableProducts as Product[],
+          new Date()
+        )
       )
       setActiveIndex(0)
       setHasLoadedProducts(true)
@@ -251,6 +421,21 @@ export function PromoBanner() {
 
   useEffect(() => {
 
+    const interval =
+      window.setInterval(
+        () => {
+          setNow(new Date())
+        },
+        60000
+      )
+
+    return () =>
+      window.clearInterval(interval)
+
+  }, [])
+
+  useEffect(() => {
+
     if (products.length <= 1) {
 
       return
@@ -275,6 +460,22 @@ export function PromoBanner() {
       window.clearInterval(interval)
 
   }, [products.length])
+
+  const promotionProducts =
+    useMemo(
+      () =>
+        products.filter(
+          product =>
+            getLaunchPromotion(
+              product,
+              now
+            ).isActive
+        ).length,
+      [
+        now,
+        products,
+      ]
+    )
 
   if (!hasLoadedProducts) {
 
@@ -333,6 +534,12 @@ export function PromoBanner() {
 
   const activePrice =
     getPriceDisplay(activeProduct)
+
+  const launchPromotion =
+    getLaunchPromotion(
+      activeProduct,
+      now
+    )
 
   return (
     <section
@@ -428,7 +635,6 @@ export function PromoBanner() {
         </motion.div>
 
         <motion.article
-          key={activeProduct.id}
           initial={{
             opacity: 0,
             y: 36,
@@ -509,7 +715,9 @@ export function PromoBanner() {
                     text-black
                   "
                 >
-                  Oferta de lanzamiento
+                  {launchPromotion.isActive
+                    ? "Promo configurada"
+                    : "Lanzamiento activo"}
                 </span>
 
               </div>
@@ -580,7 +788,9 @@ export function PromoBanner() {
                       text-amber-300
                     "
                   >
-                    Promoción de lanzamiento
+                    {launchPromotion.isActive
+                      ? "Promoción de lanzamiento"
+                      : "Producto disponible"}
                   </p>
 
                   <p
@@ -593,11 +803,15 @@ export function PromoBanner() {
                       text-white
                     "
                   >
-                    10% - 15% OFF
+                    {launchPromotion.discountLabel}
                   </p>
 
                   <p className="mt-4 text-sm leading-relaxed text-zinc-400">
-                    Oferta por tiempo limitado o hasta agotar existencias.
+                    {launchPromotion.isActive
+                      ? launchPromotion.hasTimer
+                        ? "Oferta activa por tiempo limitado."
+                        : "Promocion activa sin fecha de cierre configurada."
+                      : "Disponible para compra desde la tienda oficial."}
                   </p>
 
                 </div>
@@ -737,7 +951,15 @@ export function PromoBanner() {
                     text-amber-100/80
                   "
                 >
-                  Lanzamiento activo
+                  {launchPromotion.isActive
+                    ? launchPromotion.hasTimer
+                      ? `Termina en ${launchPromotion.days} dias ${launchPromotion.hours}h ${launchPromotion.minutes}m`
+                      : "Promo activa"
+                    : `${promotionProducts || products.length} lanzamiento${
+                        (promotionProducts || products.length) === 1
+                          ? ""
+                          : "s"
+                      }`}
                 </div>
 
               </div>

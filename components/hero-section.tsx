@@ -18,7 +18,6 @@ import {
   ChevronDown,
   MapPin,
   ShoppingBag,
-  Sparkles,
   UsersRound,
 } from "lucide-react"
 
@@ -47,13 +46,6 @@ const officialPillars = [
 ]
 
 const heroJourney = [
-  {
-    label: "Quiénes somos",
-    title: "IMNOVA",
-    text: "Tecnología, nutrición y bienestar aplicados a soluciones reales para la rutina diaria.",
-    href: "#hero",
-    icon: Sparkles,
-  },
   {
     label: "Compra hoy",
     title: "Lanzamientos",
@@ -95,7 +87,7 @@ export function HeroSection() {
     useTransform(
       scrollY,
       [0, 700],
-      [0, 180]
+      [0, 40]
     )
 
   const opacity =
@@ -441,12 +433,12 @@ export function HeroSection() {
           pb-36
           sm:px-8
           sm:pt-36
-          sm:pb-24
+          sm:pb-40
           lg:px-12
         "
       >
 
-        <div className="grid w-full gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(340px,0.58fr)] lg:items-center">
+        <div className="grid w-full gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.52fr)] lg:items-center xl:gap-14">
 
           <div>
 
@@ -635,7 +627,7 @@ export function HeroSection() {
                 duration: 1,
                 delay: 0.64,
               }}
-              className="mt-7 grid max-w-5xl gap-3 sm:grid-cols-2 xl:grid-cols-4"
+              className="mt-9 grid max-w-4xl gap-4 sm:grid-cols-3"
             >
               {heroJourney.map(item => {
                 const Icon =
@@ -645,7 +637,7 @@ export function HeroSection() {
                   <a
                     key={item.title}
                     href={item.href}
-                    className="group rounded-[22px] border border-white/10 bg-black/48 p-4 text-left shadow-[0_22px_80px_rgba(0,0,0,0.22)] backdrop-blur-2xl transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-white/[0.055]"
+                    className="group rounded-[22px] border border-white/10 bg-black/42 p-5 text-left shadow-[0_22px_80px_rgba(0,0,0,0.18)] backdrop-blur-2xl transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-white/[0.055]"
                   >
                     <div className="flex items-center gap-3">
                       <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan-200/15 bg-cyan-300/[0.10] text-cyan-100 transition group-hover:border-cyan-200/35 group-hover:bg-cyan-300/[0.16]">
@@ -685,7 +677,7 @@ export function HeroSection() {
               delay: 0.38,
               ease: [0.22, 1, 0.36, 1],
             }}
-            className="grid gap-3"
+            className="grid gap-4"
           >
             {officialPillars.map(
               pillar => (
@@ -695,16 +687,16 @@ export function HeroSection() {
                     rounded-[26px]
                     border
                     border-white/12
-                    bg-black/55
-                    p-5
-                    shadow-[0_24px_90px_rgba(0,0,0,0.28)]
+                    bg-black/42
+                    p-6
+                    shadow-[0_24px_90px_rgba(0,0,0,0.20)]
                     backdrop-blur-2xl
                   "
                 >
                   <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-100">
                     {pillar.label}
                   </p>
-                  <p className="mt-4 text-sm leading-7 text-white/74">
+                  <p className="mt-4 text-sm leading-7 text-white/68">
                     {pillar.text}
                   </p>
                 </div>
@@ -732,7 +724,7 @@ export function HeroSection() {
           absolute
           bottom-10
           left-1/2
-          z-20
+          z-[1]
           -translate-x-1/2
         "
       >
