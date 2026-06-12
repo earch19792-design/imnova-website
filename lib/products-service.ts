@@ -15,24 +15,6 @@ type AdminProductPageOptions = {
   page?: number
 }
 
-const ADMIN_PRODUCT_SUMMARY_SELECT = `
-  id,
-  state_id,
-  slug,
-  name,
-  category,
-  image_url,
-  image,
-  direct_url,
-  featured,
-  survey_score,
-  survey_votes,
-  social_interest_score,
-  survey_status,
-  validation_status,
-  validation_decision
-`
-
 function getValidMetricNumber(
   value: unknown
 ) {
@@ -211,7 +193,7 @@ export async function getAdminProductPage(
     supabase
       .from("products")
       .select(
-        ADMIN_PRODUCT_SUMMARY_SELECT,
+        "*",
         {
           count: "exact",
         }
@@ -257,7 +239,6 @@ export async function getAdminProductPage(
           `name.ilike.${pattern}`,
           `category.ilike.${pattern}`,
           `slug.ilike.${pattern}`,
-          `direct_url.ilike.${pattern}`,
         ].join(",")
       )
   }
@@ -302,7 +283,7 @@ export async function getAdminProductSuggestions(
     supabase
       .from("products")
       .select(
-        ADMIN_PRODUCT_SUMMARY_SELECT
+        "*"
       )
       .order(
         "name",
@@ -358,14 +339,7 @@ export async function getAdminPriorityProducts(
     await supabase
       .from("products")
       .select(
-        ADMIN_PRODUCT_SUMMARY_SELECT
-      )
-      .order(
-        "featured",
-        {
-          ascending: false,
-          nullsFirst: false,
-        }
+        "*"
       )
       .order(
         "created_at",
@@ -401,7 +375,7 @@ export async function getAdminValidationActionProducts() {
         supabase
           .from("products")
           .select(
-            ADMIN_PRODUCT_SUMMARY_SELECT
+            "*"
           )
           .order(
             "survey_score",
@@ -891,6 +865,330 @@ export async function getProductBySlug(
   }
 
   return data
+
+}
+
+export type DistributionLocationProduct = {
+  id: string
+  name: string
+  category: string | null
+  image_url: string | null
+  image: string | null
+  state_id: string | null
+}
+
+export type DistributionLocation = {
+  id: string
+  product_id: string
+  external_key: string | null
+  channel_category: string | null
+  channel_type: string | null
+  platform: string | null
+  name: string
+  country: string | null
+  country_code: string | null
+  city: string | null
+  area: string | null
+  address: string | null
+  latitude: number | string | null
+  longitude: number | string | null
+  description: string | null
+  product_url: string | null
+  map_url: string | null
+  is_active: boolean | null
+  is_authorized: boolean | null
+  availability_status: string | null
+  priority: number | null
+  created_at: string | null
+  updated_at: string | null
+  products?:
+    | DistributionLocationProduct
+    | DistributionLocationProduct[]
+    | null
+}
+
+export type DistributionLocationInput = {
+  product_id: string
+  external_key?: string | null
+  channel_category?: string | null
+  channel_type?: string | null
+  platform?: string | null
+  name: string
+  country?: string | null
+  country_code?: string | null
+  city?: string | null
+  area?: string | null
+  address?: string | null
+  latitude?: number | null
+  longitude?: number | null
+  description?: string | null
+  product_url?: string | null
+  map_url?: string | null
+  is_active?: boolean
+  is_authorized?: boolean
+  availability_status?: string | null
+  priority?: number | null
+}
+
+type DistributionLocationsPageOptions = {
+  limit?: number
+  page?: number
+}
+
+function getAvailableStateIds(
+  states: Array<{
+    id: string
+    name: string
+  }>
+) {
+  return states
+    .filter((state) =>
+      normalizeStateName(
+        state.name
+      ).includes("disponible")
+    )
+    .map((state) => state.id)
+}
+
+export async function getAvailableDistributionLocationsPage(
+  options: DistributionLocationsPageOptions = {}
+): Promise<{
+  locations: DistributionLocation[]
+  count: number
+  error: boolean
+}> {
+
+  const limit =
+    options.limit || 24
+
+  const page =
+    options.page || 0
+
+  const from =
+    page * limit
+
+  const to =
+    from + limit - 1
+
+  const states =
+    await getProductStates()
+
+  const availableStateIds =
+    getAvailableStateIds(
+      states as Array<{
+        id: string
+        name: string
+      }>
+    )
+
+  if (availableStateIds.length === 0) {
+    return {
+      locations: [],
+      count: 0,
+      error: false,
+    }
+  }
+
+  const {
+    data,
+    error,
+    count,
+  } =
+    await supabase
+      .from("distribution_locations")
+      .select(
+        `
+          *,
+          products!inner (
+            id,
+            name,
+            category,
+            image_url,
+            image,
+            state_id
+          )
+        `,
+        {
+          count: "exact",
+        }
+      )
+      .eq("is_active", true)
+      .eq("is_authorized", true)
+      .eq(
+        "availability_status",
+        "activo"
+      )
+      .in(
+        "products.state_id",
+        availableStateIds
+      )
+      .order(
+        "priority",
+        {
+          ascending: false,
+        }
+      )
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
+      .range(from, to)
+
+  if (error) {
+    console.error(
+      "GET AVAILABLE DISTRIBUTION LOCATIONS ERROR:",
+      error
+    )
+
+    return {
+      locations: [],
+      count: 0,
+      error: true,
+    }
+  }
+
+  return {
+    locations:
+      (data || []) as DistributionLocation[],
+    count: count || 0,
+    error: false,
+  }
+
+}
+
+export async function getDistributionLocationsByProduct(
+  productId: string
+): Promise<DistributionLocation[]> {
+
+  const { data, error } =
+    await supabase
+      .from("distribution_locations")
+      .select("*")
+      .eq(
+        "product_id",
+        productId
+      )
+      .order(
+        "priority",
+        {
+          ascending: false,
+        }
+      )
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
+
+  if (error) {
+    console.error(
+      "GET DISTRIBUTION LOCATIONS ERROR:",
+      error
+    )
+
+    return []
+  }
+
+  return (data || []) as DistributionLocation[]
+
+}
+
+export async function createDistributionLocation(
+  input: DistributionLocationInput
+): Promise<DistributionLocation | null> {
+
+  const { data, error } =
+    await supabase
+      .from("distribution_locations")
+      .insert({
+        product_id:
+          input.product_id,
+        external_key:
+          input.external_key || null,
+        channel_category:
+          input.channel_category || "physical",
+        channel_type:
+          input.channel_type || "establecimiento",
+        platform:
+          input.platform || null,
+        name:
+          input.name,
+        country:
+          input.country || "Nicaragua",
+        country_code:
+          input.country_code || "NI",
+        city:
+          input.city || "Managua",
+        area:
+          input.area || null,
+        address:
+          input.address || null,
+        latitude:
+          input.latitude ?? null,
+        longitude:
+          input.longitude ?? null,
+        description:
+          input.description || null,
+        product_url:
+          input.product_url || null,
+        map_url:
+          input.map_url || null,
+        is_active:
+          input.is_active ?? true,
+        is_authorized:
+          input.is_authorized ?? true,
+        availability_status:
+          input.availability_status || "activo",
+        priority:
+          input.priority ?? 0,
+      })
+      .select("*")
+      .single()
+
+  if (error) {
+    console.error(
+      "CREATE DISTRIBUTION LOCATION ERROR:",
+      error
+    )
+
+    return null
+  }
+
+  return data as DistributionLocation
+
+}
+
+export async function updateDistributionLocation(
+  locationId: string,
+  updates: Partial<
+    Omit<
+      DistributionLocationInput,
+      "product_id"
+    >
+  >
+): Promise<DistributionLocation | null> {
+
+  const { data, error } =
+    await supabase
+      .from("distribution_locations")
+      .update(updates)
+      .eq("id", locationId)
+      .select("*")
+      .single()
+
+  if (error) {
+    console.error(
+      "UPDATE DISTRIBUTION LOCATION ERROR:",
+      error
+    )
+
+    return null
+  }
+
+  return data as DistributionLocation
 
 }
 

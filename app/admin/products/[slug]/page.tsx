@@ -12,16 +12,20 @@ import {
 } from "next/navigation"
 
 import {
+  createDistributionLocation,
   createCommunitySurvey,
   createSocialSignal,
   createSurveyResponse,
+  getDistributionLocationsByProduct,
   getCommunitySurveysByProduct,
   getNotificationLogsByProduct,
   getProductBySlug,
   getProductStates,
   getSocialSignalsByProduct,
   getSurveyResponsesByProduct,
+  updateDistributionLocation,
   type CommunitySurvey,
+  type DistributionLocation,
   type NotificationLog,
   type SocialSignal,
   type SurveyResponse,
@@ -316,6 +320,26 @@ type SocialSignalFormData = {
   notes: string
 }
 
+type DistributionLocationFormData = {
+  channel_category: string
+  channel_type: string
+  platform: string
+  name: string
+  country: string
+  country_code: string
+  city: string
+  area: string
+  address: string
+  latitude: string
+  longitude: string
+  description: string
+  product_url: string
+  map_url: string
+  availability_status: string
+  priority: string
+  is_authorized: boolean
+}
+
 const sections = [
   {
     id: "general",
@@ -378,6 +402,26 @@ const defaultSocialSignalFormData: SocialSignalFormData = {
   notes: "",
 }
 
+const defaultDistributionLocationFormData: DistributionLocationFormData = {
+  channel_category: "physical",
+  channel_type: "establecimiento",
+  platform: "",
+  name: "",
+  country: "Nicaragua",
+  country_code: "NI",
+  city: "Managua",
+  area: "",
+  address: "",
+  latitude: "",
+  longitude: "",
+  description: "",
+  product_url: "",
+  map_url: "",
+  availability_status: "activo",
+  priority: "0",
+  is_authorized: true,
+}
+
 const surveyChannels = [
   "whatsapp",
   "instagram",
@@ -407,6 +451,46 @@ const socialSentiments = [
   "neutral",
   "negative",
   "mixed",
+]
+
+const distributionChannelCategories = [
+  {
+    value: "physical",
+    label: "Lugar fisico",
+  },
+  {
+    value: "marketplace",
+    label: "Marketplace",
+  },
+]
+
+const distributionChannelTypes = [
+  "mercado",
+  "tienda_conveniencia",
+  "establecimiento",
+  "supermercado",
+  "farmacia",
+  "gimnasio",
+  "distribuidor",
+  "marketplace",
+  "otro",
+]
+
+const distributionPlatforms = [
+  "",
+  "amazon",
+  "ebay",
+  "facebook_marketplace",
+  "tiktok_shop",
+  "instagram",
+  "whatsapp",
+  "otro",
+]
+
+const distributionAvailabilityStatuses = [
+  "activo",
+  "proximamente",
+  "pausado",
 ]
 
 function normalizeEditableList(
@@ -852,6 +936,11 @@ export default function ProductDetailPage() {
     useState<SocialSignal[]>([])
 
   const [
+    distributionLocations,
+    setDistributionLocations,
+  ] = useState<DistributionLocation[]>([])
+
+  const [
     isLoadingValidationData,
     setIsLoadingValidationData,
   ] = useState(false)
@@ -887,6 +976,13 @@ export default function ProductDetailPage() {
     defaultSocialSignalFormData
   )
 
+  const [
+    distributionLocationFormData,
+    setDistributionLocationFormData,
+  ] = useState<DistributionLocationFormData>(
+    defaultDistributionLocationFormData
+  )
+
   const [isCreatingSurvey, setIsCreatingSurvey] =
     useState(false)
 
@@ -899,6 +995,31 @@ export default function ProductDetailPage() {
     isCreatingSocialSignal,
     setIsCreatingSocialSignal,
   ] = useState(false)
+
+  const [
+    isLoadingDistributionLocations,
+    setIsLoadingDistributionLocations,
+  ] = useState(false)
+
+  const [
+    isCreatingDistributionLocation,
+    setIsCreatingDistributionLocation,
+  ] = useState(false)
+
+  const [
+    updatingDistributionLocationId,
+    setUpdatingDistributionLocationId,
+  ] = useState<string | null>(null)
+
+  const [
+    distributionLocationMessage,
+    setDistributionLocationMessage,
+  ] = useState("")
+
+  const [
+    distributionLocationError,
+    setDistributionLocationError,
+  ] = useState("")
 
   const [
     isUpdatingValidationMetrics,
@@ -979,6 +1100,35 @@ export default function ProductDetailPage() {
       []
     )
 
+  const loadDistributionLocations =
+    useCallback(
+      async (productId: string) => {
+        setIsLoadingDistributionLocations(true)
+        setDistributionLocationError("")
+
+        try {
+          const locations =
+            await getDistributionLocationsByProduct(
+              productId
+            )
+
+          setDistributionLocations(locations)
+        } catch (error) {
+          console.error(
+            "LOAD DISTRIBUTION LOCATIONS ERROR:",
+            error
+          )
+          setDistributionLocations([])
+          setDistributionLocationError(
+            "No se pudieron cargar los canales autorizados."
+          )
+        } finally {
+          setIsLoadingDistributionLocations(false)
+        }
+      },
+      []
+    )
+
   useEffect(() => {
     const auth =
       localStorage.getItem(
@@ -1052,6 +1202,21 @@ export default function ProductDetailPage() {
     void loadValidationData(productId)
   }, [
     loadValidationData,
+    product?.id,
+  ])
+
+  useEffect(() => {
+    const productId =
+      product?.id
+
+    if (!productId) {
+      setDistributionLocations([])
+      return
+    }
+
+    void loadDistributionLocations(productId)
+  }, [
+    loadDistributionLocations,
     product?.id,
   ])
 
@@ -1143,6 +1308,21 @@ export default function ProductDetailPage() {
       )
       setValidationDataError("")
       setValidationActionMessage("")
+    }
+
+  const updateDistributionLocationFormField =
+    (
+      field: keyof DistributionLocationFormData,
+      value: string | boolean
+    ) => {
+      setDistributionLocationFormData(
+        current => ({
+          ...current,
+          [field]: value,
+        })
+      )
+      setDistributionLocationError("")
+      setDistributionLocationMessage("")
     }
 
   const handleCreateSurvey =
@@ -1393,6 +1573,224 @@ export default function ProductDetailPage() {
         )
       } finally {
         setIsCreatingSocialSignal(false)
+      }
+    }
+
+  const handleCreateDistributionLocation =
+    async () => {
+      if (
+        !product ||
+        isCreatingDistributionLocation
+      ) {
+        return
+      }
+
+      const name =
+        distributionLocationFormData.name.trim()
+
+      const latitudeValue =
+        distributionLocationFormData.latitude.trim()
+          ? Number(
+              distributionLocationFormData.latitude
+                .replace(",", ".")
+            )
+          : null
+
+      const longitudeValue =
+        distributionLocationFormData.longitude.trim()
+          ? Number(
+              distributionLocationFormData.longitude
+                .replace(",", ".")
+            )
+          : null
+
+      const priorityValue =
+        distributionLocationFormData.priority.trim()
+          ? Number(
+              distributionLocationFormData.priority
+            )
+          : 0
+
+      if (!name) {
+        setDistributionLocationMessage("")
+        setDistributionLocationError(
+          "El nombre del canal autorizado es obligatorio."
+        )
+        return
+      }
+
+      if (
+        latitudeValue !== null &&
+        (
+          Number.isNaN(latitudeValue) ||
+          latitudeValue < -90 ||
+          latitudeValue > 90
+        )
+      ) {
+        setDistributionLocationMessage("")
+        setDistributionLocationError(
+          "La latitud debe estar entre -90 y 90."
+        )
+        return
+      }
+
+      if (
+        longitudeValue !== null &&
+        (
+          Number.isNaN(longitudeValue) ||
+          longitudeValue < -180 ||
+          longitudeValue > 180
+        )
+      ) {
+        setDistributionLocationMessage("")
+        setDistributionLocationError(
+          "La longitud debe estar entre -180 y 180."
+        )
+        return
+      }
+
+      if (
+        Number.isNaN(priorityValue) ||
+        !Number.isInteger(priorityValue)
+      ) {
+        setDistributionLocationMessage("")
+        setDistributionLocationError(
+          "La prioridad debe ser un numero entero."
+        )
+        return
+      }
+
+      setIsCreatingDistributionLocation(true)
+      setDistributionLocationMessage("")
+      setDistributionLocationError("")
+
+      try {
+        const createdLocation =
+          await createDistributionLocation({
+            product_id:
+              product.id,
+            channel_category:
+              distributionLocationFormData.channel_category,
+            channel_type:
+              distributionLocationFormData.channel_type,
+            platform:
+              distributionLocationFormData.platform ||
+              null,
+            name,
+            country:
+              distributionLocationFormData.country.trim() ||
+              "Nicaragua",
+            country_code:
+              distributionLocationFormData.country_code.trim() ||
+              "NI",
+            city:
+              distributionLocationFormData.city.trim() ||
+              "Managua",
+            area:
+              distributionLocationFormData.area.trim() ||
+              null,
+            address:
+              distributionLocationFormData.address.trim() ||
+              null,
+            latitude:
+              latitudeValue,
+            longitude:
+              longitudeValue,
+            description:
+              distributionLocationFormData.description.trim() ||
+              null,
+            product_url:
+              distributionLocationFormData.product_url.trim() ||
+              null,
+            map_url:
+              distributionLocationFormData.map_url.trim() ||
+              null,
+            availability_status:
+              distributionLocationFormData.availability_status,
+            priority:
+              priorityValue,
+            is_authorized:
+              distributionLocationFormData.is_authorized,
+            is_active: true,
+          })
+
+        if (!createdLocation) {
+          setDistributionLocationError(
+            "No se pudo crear el canal autorizado."
+          )
+          return
+        }
+
+        setDistributionLocationFormData(
+          defaultDistributionLocationFormData
+        )
+        setDistributionLocationMessage(
+          "Canal autorizado agregado correctamente."
+        )
+        await loadDistributionLocations(product.id)
+      } catch (error) {
+        console.error(
+          "CREATE DISTRIBUTION LOCATION ACTION ERROR:",
+          error
+        )
+        setDistributionLocationError(
+          "Error al crear el canal autorizado."
+        )
+      } finally {
+        setIsCreatingDistributionLocation(false)
+      }
+    }
+
+  const handleToggleDistributionLocation =
+    async (
+      location: DistributionLocation
+    ) => {
+      if (
+        !product ||
+        updatingDistributionLocationId
+      ) {
+        return
+      }
+
+      setUpdatingDistributionLocationId(
+        location.id
+      )
+      setDistributionLocationMessage("")
+      setDistributionLocationError("")
+
+      try {
+        const updatedLocation =
+          await updateDistributionLocation(
+            location.id,
+            {
+              is_active:
+                !location.is_active,
+            }
+          )
+
+        if (!updatedLocation) {
+          setDistributionLocationError(
+            "No se pudo actualizar el canal."
+          )
+          return
+        }
+
+        setDistributionLocationMessage(
+          updatedLocation.is_active
+            ? "Canal activado."
+            : "Canal pausado."
+        )
+        await loadDistributionLocations(product.id)
+      } catch (error) {
+        console.error(
+          "TOGGLE DISTRIBUTION LOCATION ERROR:",
+          error
+        )
+        setDistributionLocationError(
+          "Error al actualizar el canal."
+        )
+      } finally {
+        setUpdatingDistributionLocationId(null)
       }
     }
 
@@ -3688,16 +4086,516 @@ export default function ProductDetailPage() {
                 </p>
               </div>
 
+              <div className="rounded-3xl border border-cyan-200/15 bg-cyan-200/[0.04] p-5 lg:col-span-2">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-200/70">
+                      Canales autorizados
+                    </p>
+                    <h3 className="mt-3 text-2xl font-black">
+                      Distribucion escalable
+                    </h3>
+                    <p className="mt-3 max-w-3xl text-sm leading-6 text-white/55">
+                      Estos lugares se guardan en distribution_locations y
+                      alimentan la seccion publica para encontrar donde comprar
+                      el producto.
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-cyan-200/15 bg-black/30 px-4 py-3 text-[10px] uppercase tracking-[0.22em] text-cyan-100/75">
+                    {distributionLocations.length} canal
+                    {distributionLocations.length === 1
+                      ? ""
+                      : "es"}
+                  </div>
+                </div>
+
+                {distributionLocationMessage && (
+                  <p className="mt-4 rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.06] p-4 text-sm text-emerald-100">
+                    {distributionLocationMessage}
+                  </p>
+                )}
+
+                {distributionLocationError && (
+                  <p className="mt-4 rounded-2xl border border-red-300/20 bg-red-500/[0.08] p-4 text-sm text-red-100">
+                    {distributionLocationError}
+                  </p>
+                )}
+
+                <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Categoria
+                    </span>
+                    <select
+                      value={
+                        distributionLocationFormData.channel_category
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "channel_category",
+                          event.target.value
+                        )
+                      }
+                      className={inputClassName}
+                    >
+                      {distributionChannelCategories.map(
+                        option => (
+                          <option
+                            key={option.value}
+                            value={option.value}
+                          >
+                            {option.label}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </label>
+
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Tipo de canal
+                    </span>
+                    <select
+                      value={
+                        distributionLocationFormData.channel_type
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "channel_type",
+                          event.target.value
+                        )
+                      }
+                      className={inputClassName}
+                    >
+                      {distributionChannelTypes.map(
+                        channelType => (
+                          <option
+                            key={channelType}
+                            value={channelType}
+                          >
+                            {channelType}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </label>
+
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Plataforma
+                    </span>
+                    <select
+                      value={
+                        distributionLocationFormData.platform
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "platform",
+                          event.target.value
+                        )
+                      }
+                      className={inputClassName}
+                    >
+                      {distributionPlatforms.map(
+                        platform => (
+                          <option
+                            key={
+                              platform || "empty"
+                            }
+                            value={platform}
+                          >
+                            {platform ||
+                              "No aplica"}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </label>
+
+                  <label className="md:col-span-2">
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Nombre del canal
+                    </span>
+                    <input
+                      value={
+                        distributionLocationFormData.name
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "name",
+                          event.target.value
+                        )
+                      }
+                      placeholder="Galerias Santo Domingo"
+                      className={inputClassName}
+                    />
+                  </label>
+
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Estado
+                    </span>
+                    <select
+                      value={
+                        distributionLocationFormData.availability_status
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "availability_status",
+                          event.target.value
+                        )
+                      }
+                      className={inputClassName}
+                    >
+                      {distributionAvailabilityStatuses.map(
+                        status => (
+                          <option
+                            key={status}
+                            value={status}
+                          >
+                            {status}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </label>
+
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Pais
+                    </span>
+                    <input
+                      value={
+                        distributionLocationFormData.country
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "country",
+                          event.target.value
+                        )
+                      }
+                      className={inputClassName}
+                    />
+                  </label>
+
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Codigo pais
+                    </span>
+                    <input
+                      value={
+                        distributionLocationFormData.country_code
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "country_code",
+                          event.target.value
+                        )
+                      }
+                      className={inputClassName}
+                    />
+                  </label>
+
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Ciudad
+                    </span>
+                    <input
+                      value={
+                        distributionLocationFormData.city
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "city",
+                          event.target.value
+                        )
+                      }
+                      className={inputClassName}
+                    />
+                  </label>
+
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Zona
+                    </span>
+                    <input
+                      value={
+                        distributionLocationFormData.area
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "area",
+                          event.target.value
+                        )
+                      }
+                      placeholder="Carretera a Masaya"
+                      className={inputClassName}
+                    />
+                  </label>
+
+                  <label className="md:col-span-2">
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Direccion
+                    </span>
+                    <input
+                      value={
+                        distributionLocationFormData.address
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "address",
+                          event.target.value
+                        )
+                      }
+                      placeholder="Direccion visible para el cliente"
+                      className={inputClassName}
+                    />
+                  </label>
+
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Latitud
+                    </span>
+                    <input
+                      value={
+                        distributionLocationFormData.latitude
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "latitude",
+                          event.target.value
+                        )
+                      }
+                      inputMode="decimal"
+                      placeholder="12.1131000"
+                      className={inputClassName}
+                    />
+                  </label>
+
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Longitud
+                    </span>
+                    <input
+                      value={
+                        distributionLocationFormData.longitude
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "longitude",
+                          event.target.value
+                        )
+                      }
+                      inputMode="decimal"
+                      placeholder="-86.2504000"
+                      className={inputClassName}
+                    />
+                  </label>
+
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Prioridad
+                    </span>
+                    <input
+                      value={
+                        distributionLocationFormData.priority
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "priority",
+                          event.target.value
+                        )
+                      }
+                      inputMode="numeric"
+                      className={inputClassName}
+                    />
+                  </label>
+
+                  <label className="md:col-span-2">
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      URL de compra
+                    </span>
+                    <input
+                      value={
+                        distributionLocationFormData.product_url
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "product_url",
+                          event.target.value
+                        )
+                      }
+                      placeholder="https://..."
+                      className={inputClassName}
+                    />
+                  </label>
+
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      URL de mapa
+                    </span>
+                    <input
+                      value={
+                        distributionLocationFormData.map_url
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "map_url",
+                          event.target.value
+                        )
+                      }
+                      placeholder="https://maps.google.com/..."
+                      className={inputClassName}
+                    />
+                  </label>
+
+                  <label className="md:col-span-2 xl:col-span-3">
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Descripcion
+                    </span>
+                    <textarea
+                      value={
+                        distributionLocationFormData.description
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "description",
+                          event.target.value
+                        )
+                      }
+                      rows={3}
+                      placeholder="Comentario visible o interno del canal."
+                      className={`${inputClassName} resize-none leading-6`}
+                    />
+                  </label>
+                </div>
+
+                <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <label className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white/65">
+                    <input
+                      type="checkbox"
+                      checked={
+                        distributionLocationFormData.is_authorized
+                      }
+                      onChange={(event) =>
+                        updateDistributionLocationFormField(
+                          "is_authorized",
+                          event.target.checked
+                        )
+                      }
+                    />
+                    Canal autorizado
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={
+                      handleCreateDistributionLocation
+                    }
+                    disabled={
+                      isCreatingDistributionLocation
+                    }
+                    className="rounded-2xl border border-cyan-200/20 bg-cyan-300/10 px-5 py-3 text-[11px] font-bold uppercase tracking-[0.22em] text-cyan-50 transition-colors hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isCreatingDistributionLocation
+                      ? "Guardando..."
+                      : "Agregar canal"}
+                  </button>
+                </div>
+
+                <div className="mt-6 space-y-3">
+                  {isLoadingDistributionLocations ? (
+                    <p className="rounded-2xl border border-white/10 bg-black/25 p-4 text-sm text-white/45">
+                      Cargando canales autorizados...
+                    </p>
+                  ) : distributionLocations.length === 0 ? (
+                    <p className="rounded-2xl border border-white/10 bg-black/25 p-4 text-sm text-white/45">
+                      Aun no hay canales autorizados registrados en la tabla
+                      escalable.
+                    </p>
+                  ) : (
+                    distributionLocations.map(
+                      location => (
+                        <div
+                          key={location.id}
+                          className="rounded-2xl border border-white/10 bg-black/30 p-4"
+                        >
+                          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded-full border border-cyan-200/20 bg-cyan-300/10 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-cyan-100">
+                                  {location.channel_type ||
+                                    "canal"}
+                                </span>
+                                <span className="rounded-full border border-white/10 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-white/45">
+                                  {location.availability_status ||
+                                    "activo"}
+                                </span>
+                                <span className="rounded-full border border-white/10 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-white/45">
+                                  {location.is_active
+                                    ? "visible"
+                                    : "pausado"}
+                                </span>
+                              </div>
+                              <h4 className="mt-3 text-xl font-black">
+                                {location.name}
+                              </h4>
+                              <p className="mt-2 text-sm text-white/55">
+                                {[
+                                  location.area,
+                                  location.city,
+                                  location.country,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" - ") ||
+                                  "Ubicacion por completar"}
+                              </p>
+                              {location.address && (
+                                <p className="mt-1 text-xs text-white/35">
+                                  {location.address}
+                                </p>
+                              )}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleToggleDistributionLocation(
+                                  location
+                                )
+                              }
+                              disabled={
+                                updatingDistributionLocationId ===
+                                location.id
+                              }
+                              className="rounded-2xl border border-white/10 px-4 py-3 text-[10px] font-bold uppercase tracking-[0.20em] text-white/60 transition-colors hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {updatingDistributionLocationId ===
+                              location.id
+                                ? "Actualizando..."
+                                : location.is_active
+                                  ? "Pausar"
+                                  : "Activar"}
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    )
+                  )}
+                </div>
+              </div>
+
               <div className="rounded-3xl border border-white/10 bg-black/25 p-5 lg:col-span-2">
                 <p className="text-[10px] uppercase tracking-[0.24em] text-white/35">
-                  Canales de distribucion
+                  Canales de distribucion legacy
                 </p>
 
                 {"distribution_channels" in product ? (
                   <>
                     <p className="mt-3 text-sm leading-6 text-white/50">
-                      Editor basico en JSON. Mantiene la estructura existente
-                      sin redisenar los canales.
+                      Editor JSON de compatibilidad. Los canales nuevos deben
+                      registrarse arriba en distribution_locations.
                     </p>
                     <textarea
                       value={formData.distribution_channels}

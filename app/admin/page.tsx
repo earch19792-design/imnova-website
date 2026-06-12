@@ -19,6 +19,7 @@ import {
   getAdminProductSuggestions,
   getAdminValidationActionProducts,
   getProductStates,
+  updateProduct,
 } from "@/lib/products-service"
 
 import { Sidebar } from "@/app/admin/sidebar"
@@ -43,7 +44,6 @@ type Product = {
   currency?: string
   direct_url?: string
   bullets?: string[]
-  featured?: boolean
   survey_score?: number | null
   survey_votes?: number | null
   social_interest_score?: number | null
@@ -237,6 +237,21 @@ export default function AdminPage() {
   const [
     adminProductsError,
     setAdminProductsError,
+  ] = useState("")
+
+  const [
+    savingProductStateId,
+    setSavingProductStateId,
+  ] = useState<string | null>(null)
+
+  const [
+    productStateMessage,
+    setProductStateMessage,
+  ] = useState("")
+
+  const [
+    productStateError,
+    setProductStateError,
   ] = useState("")
 
   const [
@@ -457,6 +472,102 @@ export default function AdminPage() {
         selectedMenu === "products"
       ) {
         await loadAdminProductPage()
+      }
+
+    }
+
+  const handleAdminProductStateChange =
+    async (
+      product: Product,
+      nextStateId: string
+    ) => {
+
+      const normalizedStateId =
+        nextStateId || null
+
+      if (
+        (product.state_id || null) ===
+        normalizedStateId
+      ) {
+        return
+      }
+
+      setSavingProductStateId(product.id)
+      setProductStateMessage("")
+      setProductStateError("")
+
+      try {
+
+        const result =
+          await updateProduct(
+            product.id,
+            {
+              state_id:
+                normalizedStateId,
+            }
+          )
+
+        if (!result) {
+          throw new Error(
+            "No se pudo actualizar el estado del producto."
+          )
+        }
+
+        setAdminProducts(
+          currentProducts =>
+            currentProducts.map(
+              currentProduct =>
+                currentProduct.id === product.id
+                  ? {
+                      ...currentProduct,
+                      state_id:
+                        normalizedStateId,
+                    }
+                  : currentProduct
+            )
+        )
+
+        setLiveProducts(
+          currentProducts =>
+            currentProducts.map(
+              currentProduct =>
+                currentProduct.id === product.id
+                  ? {
+                      ...currentProduct,
+                      state_id:
+                        normalizedStateId,
+                    }
+                  : currentProduct
+            )
+        )
+
+        setProductStateMessage(
+          "Estado actualizado. Las notificaciones se envian desde el detalle del producto."
+        )
+
+        await Promise.all([
+          loadAdminData(),
+          loadAdminProductPage(
+            0,
+            "replace"
+          ),
+        ])
+
+      } catch (error) {
+
+        console.error(
+          "UPDATE ADMIN PRODUCT STATE ERROR:",
+          error
+        )
+
+        setProductStateError(
+          "No se pudo actualizar el estado. Intenta nuevamente o abre el detalle del producto."
+        )
+
+      } finally {
+
+        setSavingProductStateId(null)
+
       }
 
     }
@@ -774,6 +885,30 @@ export default function AdminPage() {
     adminProducts.length <
     adminProductsTotal
 
+  const selectedStateFilterName =
+    useMemo(
+      () => {
+        if (productStateFilter === "all") {
+          return "Todos los estados"
+        }
+
+        if (productStateFilter === "no-state") {
+          return "Sin estado"
+        }
+
+        return (
+          productStates.find(
+            state =>
+              state.id === productStateFilter
+          )?.name || "Estado seleccionado"
+        )
+      },
+      [
+        productStateFilter,
+        productStates,
+      ]
+    )
+
   const dashboardProducts =
     useMemo(
       () =>
@@ -783,22 +918,6 @@ export default function AdminPage() {
               productA,
               productB
             ) => {
-
-              const featuredScore =
-                Number(
-                  Boolean(
-                    productB.featured
-                  )
-                ) -
-                Number(
-                  Boolean(
-                    productA.featured
-                  )
-                )
-
-              if (featuredScore !== 0) {
-                return featuredScore
-              }
 
               const progressA =
                 stateById.get(
@@ -2529,11 +2648,11 @@ export default function AdminPage() {
                     "
                   >
                     <option value="all">
-                      Todos los estados
+                      Todos los estados ({dashboardMetrics.totalProducts})
                     </option>
 
                     <option value="no-state">
-                      Sin estado
+                      Sin estado ({productsWithoutState})
                     </option>
 
                     {
@@ -2544,7 +2663,7 @@ export default function AdminPage() {
                             key={state.id}
                             value={state.id}
                           >
-                            {state.name}
+                            {state.name} ({stateCounts[state.id] || 0})
                           </option>
 
                         )
@@ -2613,6 +2732,117 @@ export default function AdminPage() {
                 </div>
               </div>
 
+              <div
+                className="
+                  mt-6
+                  rounded-[28px]
+                  border
+                  border-cyan-300/15
+                  bg-cyan-300/[0.04]
+                  p-5
+                  backdrop-blur-md
+                "
+              >
+                <div
+                  className="
+                    flex
+                    flex-col
+                    gap-4
+                    lg:flex-row
+                    lg:items-center
+                    lg:justify-between
+                  "
+                >
+                  <div>
+                    <p
+                      className="
+                        text-[10px]
+                        uppercase
+                        tracking-[0.30em]
+                        text-cyan-100/65
+                      "
+                    >
+                      Orquestador de productos
+                    </p>
+
+                    <p
+                      className="
+                        mt-3
+                        max-w-4xl
+                        text-sm
+                        leading-6
+                        text-white/55
+                      "
+                    >
+                      Cambia estados de forma rapida desde esta lista y abre el
+                      detalle para configurar validacion, contenido,
+                      comercializacion, distribucion y notificaciones.
+                    </p>
+                  </div>
+
+                  <p
+                    className="
+                      rounded-2xl
+                      border
+                      border-white/10
+                      bg-black/25
+                      px-4
+                      py-3
+                      text-xs
+                      uppercase
+                      tracking-[0.18em]
+                      text-white/45
+                    "
+                  >
+                    Guardar estado no envia WhatsApp
+                  </p>
+                </div>
+
+                {
+                  productStateMessage && (
+
+                    <p
+                      className="
+                        mt-4
+                        rounded-2xl
+                        border
+                        border-emerald-200/15
+                        bg-emerald-200/[0.05]
+                        p-4
+                        text-sm
+                        leading-6
+                        text-emerald-100
+                      "
+                    >
+                      {productStateMessage}
+                    </p>
+
+                  )
+                }
+
+                {
+                  productStateError && (
+
+                    <p
+                      className="
+                        mt-4
+                        rounded-2xl
+                        border
+                        border-red-200/15
+                        bg-red-200/[0.05]
+                        p-4
+                        text-sm
+                        leading-6
+                        text-red-100
+                      "
+                    >
+                      {productStateError}
+                    </p>
+
+                  )
+                }
+              </div>
+
               {
                 adminProductsError && (
 
@@ -2653,7 +2883,111 @@ export default function AdminPage() {
                       text-white/50
                     "
                   >
-                    No hay productos que coincidan con estos filtros.
+                    <p
+                      className="
+                        text-[10px]
+                        uppercase
+                        tracking-[0.28em]
+                        text-cyan-100/60
+                      "
+                    >
+                      {selectedStateFilterName}
+                    </p>
+
+                    <h3
+                      className="
+                        mt-4
+                        text-3xl
+                        font-black
+                        tracking-[-0.04em]
+                        text-white
+                      "
+                    >
+                      No hay productos en este filtro.
+                    </h3>
+
+                    <p
+                      className="
+                        mt-4
+                        max-w-4xl
+                        text-sm
+                        leading-6
+                        text-white/50
+                      "
+                    >
+                      {
+                        dashboardMetrics.totalProducts > 0
+                          ? "Hay productos registrados, pero ninguno coincide con el estado o busqueda actual. Revisa Todos los estados o Sin estado para asignarles una etapa."
+                          : "Todavia no hay productos registrados. Cuando existan productos, podras asignarles estado desde esta seccion."
+                      }
+                    </p>
+
+                    <div
+                      className="
+                        mt-6
+                        flex
+                        flex-wrap
+                        gap-3
+                      "
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProductSearchTerm("")
+                          setProductStateFilter("all")
+                        }}
+                        className="
+                          rounded-2xl
+                          border
+                          border-cyan-300/25
+                          bg-cyan-300/10
+                          px-5
+                          py-3
+                          text-xs
+                          font-bold
+                          uppercase
+                          tracking-[0.18em]
+                          text-cyan-100
+                          transition-all
+                          duration-300
+                          hover:bg-cyan-300/20
+                        "
+                      >
+                        Ver todos
+                      </button>
+
+                      {
+                        productsWithoutState > 0 && (
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setProductSearchTerm("")
+                              setProductStateFilter("no-state")
+                            }}
+                            className="
+                              rounded-2xl
+                              border
+                              border-amber-200/20
+                              bg-amber-200/[0.06]
+                              px-5
+                              py-3
+                              text-xs
+                              font-bold
+                              uppercase
+                              tracking-[0.18em]
+                              text-amber-100
+                              transition-all
+                              duration-300
+                              hover:bg-amber-200/[0.10]
+                            "
+                          >
+                            Ver sin estado ({productsWithoutState})
+                          </button>
+
+                        )
+                      }
+                    </div>
                   </div>
 
                 )
@@ -2705,6 +3039,38 @@ export default function AdminPage() {
                       const progress =
                         state?.progress || 0
 
+                      const isSavingState =
+                        savingProductStateId ===
+                        product.id
+
+                      const productImage =
+                        product.image_url ||
+                        product.image ||
+                        ""
+
+                      const validationDecision =
+                        normalizeValidationValue(
+                          product.validation_decision
+                        )
+
+                      const surveyScore =
+                        getValidNumber(
+                          product.survey_score
+                        )
+
+                      const surveyVotes =
+                        getValidNumber(
+                          product.survey_votes
+                        )
+
+                      const socialScore =
+                        getValidNumber(
+                          product.social_interest_score
+                        )
+
+                      const canOpenProductDetail =
+                        Boolean(product.slug)
+
                       return (
 
                         <div
@@ -2734,56 +3100,111 @@ export default function AdminPage() {
                             "
                           >
 
-                            <div>
+                            <div
+                              className="
+                                flex
+                                gap-5
+                              "
+                            >
 
-                              <p
+                              <div
                                 className="
-                                  text-[10px]
-                                  uppercase
-                                  tracking-[0.35em]
-                                  text-cyan-300/60
-                                "
-                              >
-                                Producto
-                              </p>
-
-                              <h3
-                                className="
-                                  mt-3
-                                  text-4xl
-                                  font-black
-                                  tracking-[-0.04em]
-                                  text-white
-                                "
-                              >
-                                {product.name}
-                              </h3>
-
-                              <p
-                                className="
-                                  mt-3
-                                  text-sm
-                                  uppercase
-                                  tracking-[0.25em]
-                                  text-white/35
-                                "
-                              >
-                                {product.category}
-                              </p>
-
-                              <p
-                                className="
-                                  mt-4
-                                  text-sm
-                                  text-white/40
+                                  flex
+                                  h-20
+                                  w-20
+                                  shrink-0
+                                  items-center
+                                  justify-center
+                                  overflow-hidden
+                                  rounded-2xl
+                                  border
+                                  border-white/10
+                                  bg-black/35
                                 "
                               >
                                 {
-                                  product.slug ||
-                                  product.direct_url ||
-                                  "Sin ruta asignada"
+                                  productImage ? (
+
+                                    <img
+                                      src={productImage}
+                                      alt={product.name}
+                                      className="
+                                        h-full
+                                        w-full
+                                        object-cover
+                                      "
+                                    />
+
+                                  ) : (
+
+                                    <span
+                                      className="
+                                        text-[10px]
+                                        uppercase
+                                        tracking-[0.22em]
+                                        text-white/25
+                                      "
+                                    >
+                                      IM
+                                    </span>
+
+                                  )
                                 }
-                              </p>
+                              </div>
+
+                              <div>
+
+                                <p
+                                  className="
+                                    text-[10px]
+                                    uppercase
+                                    tracking-[0.35em]
+                                    text-cyan-300/60
+                                  "
+                                >
+                                  Producto
+                                </p>
+
+                                <h3
+                                  className="
+                                    mt-3
+                                    text-3xl
+                                    font-black
+                                    tracking-[-0.04em]
+                                    text-white
+                                    sm:text-4xl
+                                  "
+                                >
+                                  {product.name}
+                                </h3>
+
+                                <p
+                                  className="
+                                    mt-3
+                                    text-sm
+                                    uppercase
+                                    tracking-[0.25em]
+                                    text-white/35
+                                  "
+                                >
+                                  {product.category || "Sin categoria"}
+                                </p>
+
+                                <p
+                                  className="
+                                    mt-4
+                                    text-sm
+                                    text-white/40
+                                  "
+                                >
+                                  {
+                                    product.slug ||
+                                    product.direct_url ||
+                                    "Sin ruta asignada"
+                                  }
+                                </p>
+
+                              </div>
 
                             </div>
 
@@ -2848,10 +3269,218 @@ export default function AdminPage() {
 
                           </div>
 
+                          <div
+                            className="
+                              mt-6
+                              grid
+                              gap-4
+                              lg:grid-cols-[1fr_1fr]
+                            "
+                          >
+                            <label
+                              className="
+                                rounded-3xl
+                                border
+                                border-white/10
+                                bg-black/25
+                                p-4
+                              "
+                            >
+                              <span
+                                className="
+                                  text-[10px]
+                                  uppercase
+                                  tracking-[0.24em]
+                                  text-white/35
+                                "
+                              >
+                                Estado operativo
+                              </span>
+
+                              <select
+                                value={
+                                  product.state_id ||
+                                  ""
+                                }
+                                disabled={isSavingState}
+                                onChange={(event) =>
+                                  handleAdminProductStateChange(
+                                    product,
+                                    event.target.value
+                                  )
+                                }
+                                className="
+                                  mt-3
+                                  w-full
+                                  rounded-2xl
+                                  border
+                                  border-white/10
+                                  bg-[#0b0b0b]
+                                  px-4
+                                  py-3
+                                  text-sm
+                                  text-white
+                                  outline-none
+                                  transition-all
+                                  duration-300
+                                  focus:border-cyan-300/40
+                                  disabled:cursor-not-allowed
+                                  disabled:opacity-60
+                                "
+                              >
+                                <option value="">
+                                  Sin estado
+                                </option>
+
+                                {
+                                  productStates.map(
+                                    (stateOption) => (
+
+                                      <option
+                                        key={stateOption.id}
+                                        value={stateOption.id}
+                                      >
+                                        {stateOption.name}
+                                      </option>
+
+                                    )
+                                  )
+                                }
+                              </select>
+
+                              <p
+                                className="
+                                  mt-3
+                                  text-xs
+                                  leading-5
+                                  text-white/35
+                                "
+                              >
+                                {
+                                  isSavingState
+                                    ? "Guardando estado..."
+                                    : "Cambio rapido sin notificacion automatica."
+                                }
+                              </p>
+                            </label>
+
+                            <div
+                              className="
+                                rounded-3xl
+                                border
+                                border-white/10
+                                bg-black/25
+                                p-4
+                              "
+                            >
+                              <p
+                                className="
+                                  text-[10px]
+                                  uppercase
+                                  tracking-[0.24em]
+                                  text-white/35
+                                "
+                              >
+                                Validacion
+                              </p>
+
+                              <div
+                                className="
+                                  mt-4
+                                  flex
+                                  flex-wrap
+                                  gap-2
+                                "
+                              >
+                                <span
+                                  className="
+                                    rounded-full
+                                    border
+                                    border-amber-200/15
+                                    bg-amber-200/[0.06]
+                                    px-3
+                                    py-2
+                                    text-[10px]
+                                    uppercase
+                                    tracking-[0.18em]
+                                    text-amber-100/80
+                                  "
+                                >
+                                  Decision {validationDecision}
+                                </span>
+
+                                <span
+                                  className="
+                                    rounded-full
+                                    border
+                                    border-white/10
+                                    bg-white/[0.04]
+                                    px-3
+                                    py-2
+                                    text-[10px]
+                                    uppercase
+                                    tracking-[0.18em]
+                                    text-white/55
+                                  "
+                                >
+                                  Encuesta {
+                                    surveyScore === null
+                                      ? "N/A"
+                                      : `${surveyScore}%`
+                                  }
+                                </span>
+
+                                <span
+                                  className="
+                                    rounded-full
+                                    border
+                                    border-white/10
+                                    bg-white/[0.04]
+                                    px-3
+                                    py-2
+                                    text-[10px]
+                                    uppercase
+                                    tracking-[0.18em]
+                                    text-white/55
+                                  "
+                                >
+                                  {surveyVotes || 0} resp.
+                                </span>
+
+                                <span
+                                  className="
+                                    rounded-full
+                                    border
+                                    border-white/10
+                                    bg-white/[0.04]
+                                    px-3
+                                    py-2
+                                    text-[10px]
+                                    uppercase
+                                    tracking-[0.18em]
+                                    text-white/55
+                                  "
+                                >
+                                  Social {
+                                    socialScore === null
+                                      ? "N/A"
+                                      : `${socialScore}%`
+                                  }
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
                           <button
+                            type="button"
+                            disabled={
+                              !canOpenProductDetail
+                            }
                             onClick={() => {
 
-                              if (!product.slug) {
+                              if (
+                                !canOpenProductDetail
+                              ) {
 
                                 console.error(
                                   "PRODUCTO SIN SLUG:",
@@ -2881,9 +3510,17 @@ export default function AdminPage() {
                               transition-all
                               duration-300
                               hover:bg-cyan-400/20
+                              disabled:cursor-not-allowed
+                              disabled:border-white/5
+                              disabled:bg-white/[0.02]
+                              disabled:text-white/25
                             "
                           >
-                            Ver detalle
+                            {
+                              canOpenProductDetail
+                                ? "Configurar producto"
+                                : "Sin ruta para configurar"
+                            }
                           </button>
 
                         </div>

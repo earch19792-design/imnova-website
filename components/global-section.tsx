@@ -30,7 +30,9 @@ import {
 } from "react"
 
 import {
+  getAvailableDistributionLocationsPage,
   getProductStates,
+  type DistributionLocation,
 } from "@/lib/products-service"
 
 import { supabase } from "@/lib/supabase"
@@ -50,6 +52,7 @@ type DistributionChannel = {
   longitude?: number | string
   lat?: number | string
   lng?: number | string
+  map_url?: string
   maps_url?: string
   google_maps_url?: string
 }
@@ -88,6 +91,46 @@ const channelIcons: Record<string, typeof Store> = {
   mercado: Building2,
   establecimiento: Store,
   producto: Rocket,
+}
+
+function getLocationProduct(
+  location: DistributionLocation
+) {
+  if (Array.isArray(location.products)) {
+    return location.products[0] || null
+  }
+
+  return location.products || null
+}
+
+function getDistributionLocationType(
+  location: DistributionLocation
+) {
+  if (
+    location.channel_category ===
+    "marketplace"
+  ) {
+    return "Marketplace"
+  }
+
+  const channelType =
+    location.channel_type || "establecimiento"
+
+  const labels: Record<string, string> = {
+    mercado: "Mercado",
+    tienda_conveniencia:
+      "Tienda de conveniencia",
+    establecimiento:
+      "Establecimiento",
+    supermercado: "Supermercado",
+    farmacia: "Farmacia",
+    gimnasio: "Gimnasio",
+    distribuidor: "Distribuidor",
+    marketplace: "Marketplace",
+    otro: "Otro",
+  }
+
+  return labels[channelType] || channelType
 }
 
 function getChannelIcon(
@@ -264,6 +307,10 @@ function getDirectionsUrl(
   item: DistributionItem
 ) {
 
+  if (item.map_url) {
+    return item.map_url
+  }
+
   if (item.maps_url) {
     return item.maps_url
   }
@@ -312,6 +359,11 @@ export function GlobalSection() {
     products,
     setProducts,
   ] = useState<Product[]>([])
+
+  const [
+    distributionLocations,
+    setDistributionLocations,
+  ] = useState<DistributionLocation[]>([])
 
   const [
     isLoading,
@@ -418,6 +470,62 @@ export function GlobalSection() {
 
         setIsLoading(true)
 
+        const from =
+          reset
+            ? 0
+            : productsCountRef.current
+
+        const locationPage =
+          Math.floor(
+            from / distributionPageSize
+          )
+
+        const locationsResult =
+          await getAvailableDistributionLocationsPage({
+            limit:
+              distributionPageSize,
+            page:
+              locationPage,
+          })
+
+        if (
+          !locationsResult.error &&
+          (
+            locationsResult.count > 0 ||
+            locationsResult.locations.length >
+              0
+          )
+        ) {
+          const nextLocations =
+            locationsResult.locations
+
+          productsCountRef.current =
+            reset
+              ? nextLocations.length
+              : productsCountRef.current +
+                nextLocations.length
+
+          setDistributionLocations(
+            currentLocations =>
+              reset
+                ? nextLocations
+                : [
+                    ...currentLocations,
+                    ...nextLocations,
+                  ]
+          )
+
+          setProducts([])
+          setHasMore(
+            from +
+              nextLocations.length <
+              locationsResult.count
+          )
+          setIsLoading(false)
+
+          return
+        }
+
         const states =
           await getProductStates()
 
@@ -446,11 +554,6 @@ export function GlobalSection() {
           return
 
         }
-
-        const from =
-          reset
-            ? 0
-            : productsCountRef.current
 
         const to =
           from +
@@ -505,6 +608,8 @@ export function GlobalSection() {
 
         const nextProducts =
           (data || []) as Product[]
+
+        setDistributionLocations([])
 
         productsCountRef.current =
           reset
@@ -563,6 +668,17 @@ export function GlobalSection() {
           () =>
             loadDistribution(true)
         )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table:
+              "distribution_locations",
+          },
+          () =>
+            loadDistribution(true)
+        )
         .subscribe()
 
     return () => {
@@ -575,8 +691,85 @@ export function GlobalSection() {
 
   const distribution =
     useMemo<DistributionItem[]>(
-      () =>
-        products.flatMap(
+      () => {
+
+        if (
+          distributionLocations.length > 0
+        ) {
+          return distributionLocations.map(
+            (location) => {
+              const product =
+                getLocationProduct(
+                  location
+                )
+
+              const locationText =
+                location.area ||
+                location.address ||
+                [
+                  location.city,
+                  location.country,
+                ]
+                  .filter(Boolean)
+                  .join(", ")
+
+              return {
+                id:
+                  location.id,
+                productId:
+                  location.product_id,
+                country:
+                  location.country ||
+                  undefined,
+                city:
+                  location.city ||
+                  undefined,
+                type:
+                  getDistributionLocationType(
+                    location
+                  ),
+                name:
+                  location.name,
+                location:
+                  locationText ||
+                  "Ubicacion registrada",
+                status:
+                  location.availability_status ||
+                  "activo",
+                url:
+                  location.product_url ||
+                  undefined,
+                note:
+                  location.description ||
+                  undefined,
+                address:
+                  location.address ||
+                  undefined,
+                latitude:
+                  location.latitude ||
+                  undefined,
+                longitude:
+                  location.longitude ||
+                  undefined,
+                map_url:
+                  location.map_url ||
+                  undefined,
+                productName:
+                  product?.name ||
+                  "Producto IMNOVA",
+                productCategory:
+                  product?.category ||
+                  undefined,
+                productImage:
+                  product?.image_url ||
+                  product?.image ||
+                  null,
+              }
+            }
+          )
+        }
+
+        return products.flatMap(
           (product) => {
 
             const channels =
@@ -624,8 +817,12 @@ export function GlobalSection() {
             )
 
           }
-        ),
-      [products]
+        )
+      },
+      [
+        distributionLocations,
+        products,
+      ]
     )
 
   const countries =
