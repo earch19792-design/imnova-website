@@ -369,6 +369,11 @@ type DistributionLocationFormData = {
   is_authorized: boolean
 }
 
+type ReferenceDistributionLocationFormData =
+  DistributionLocationFormData & {
+    external_key: string
+  }
+
 const sections = [
   {
     id: "general",
@@ -510,6 +515,33 @@ const defaultDistributionLocationFormData: DistributionLocationFormData = {
   priority: "0",
   is_authorized: true,
 }
+
+const referenceDistributionLocations: ReferenceDistributionLocationFormData[] = [
+  {
+    ...defaultDistributionLocationFormData,
+    external_key: "reference-managua-north",
+    name: "Referencia prueba - Managua Norte",
+    area: "Managua Norte",
+    address: "Punto de referencia norte para pruebas internas",
+    latitude: "12.1549000",
+    longitude: "-86.2522000",
+    description:
+      "Lugar de distribucion de referencia para probar filtros, mapa y canal de compra.",
+    priority: "20",
+  },
+  {
+    ...defaultDistributionLocationFormData,
+    external_key: "reference-managua-south",
+    name: "Referencia prueba - Managua Sur",
+    area: "Managua Sur",
+    address: "Punto de referencia sur para pruebas internas",
+    latitude: "12.0908000",
+    longitude: "-86.2608000",
+    description:
+      "Lugar de distribucion de referencia para validar el flujo publico de donde comprar.",
+    priority: "10",
+  },
+]
 
 const surveyChannels = [
   "whatsapp",
@@ -1991,6 +2023,140 @@ export default function ProductDetailPage() {
         )
         setDistributionLocationError(
           "Error al crear el canal autorizado."
+        )
+      } finally {
+        setIsCreatingDistributionLocation(false)
+      }
+    }
+
+  const handleCreateReferenceDistributionLocations =
+    async () => {
+      if (
+        !product ||
+        isCreatingDistributionLocation
+      ) {
+        return
+      }
+
+      const existingNames =
+        new Set(
+          distributionLocations.map(
+            location =>
+              location.name
+                .trim()
+                .toLowerCase()
+          )
+        )
+
+      const pendingReferences =
+        referenceDistributionLocations.filter(
+          reference =>
+            !existingNames.has(
+              reference.name
+                .trim()
+                .toLowerCase()
+            )
+        )
+
+      if (pendingReferences.length === 0) {
+        setDistributionLocationError("")
+        setDistributionLocationMessage(
+          "Las 2 referencias de prueba ya estan registradas para este producto."
+        )
+        return
+      }
+
+      setIsCreatingDistributionLocation(true)
+      setDistributionLocationMessage("")
+      setDistributionLocationError("")
+
+      try {
+        const createdLocations =
+          await Promise.all(
+            pendingReferences.map(
+              reference =>
+                createDistributionLocation({
+                  product_id:
+                    product.id,
+                  external_key:
+                    `${reference.external_key}-${product.id}`,
+                  channel_category:
+                    reference.channel_category,
+                  channel_type:
+                    reference.channel_type,
+                  platform:
+                    reference.platform ||
+                    null,
+                  name:
+                    reference.name,
+                  country:
+                    reference.country,
+                  country_code:
+                    reference.country_code,
+                  city:
+                    reference.city,
+                  area:
+                    reference.area ||
+                    null,
+                  address:
+                    reference.address ||
+                    null,
+                  latitude:
+                    Number(
+                      reference.latitude
+                    ),
+                  longitude:
+                    Number(
+                      reference.longitude
+                    ),
+                  description:
+                    reference.description ||
+                    null,
+                  product_url:
+                    reference.product_url ||
+                    null,
+                  map_url:
+                    reference.map_url ||
+                    null,
+                  availability_status:
+                    reference.availability_status,
+                  priority:
+                    Number(
+                      reference.priority
+                    ),
+                  is_authorized:
+                    reference.is_authorized,
+                  is_active:
+                    true,
+                })
+            )
+          )
+
+        const createdCount =
+          createdLocations.filter(Boolean).length
+
+        if (
+          createdCount !==
+          pendingReferences.length
+        ) {
+          setDistributionLocationError(
+            "No se pudieron agregar todas las referencias de prueba."
+          )
+        }
+
+        if (createdCount > 0) {
+          setDistributionLocationMessage(
+            `${createdCount} referencia${createdCount === 1 ? "" : "s"} de prueba agregada${createdCount === 1 ? "" : "s"}.`
+          )
+          await loadDistributionLocations(product.id)
+        }
+      } catch (error) {
+        console.error(
+          "CREATE REFERENCE DISTRIBUTION LOCATIONS ACTION ERROR:",
+          error
+        )
+        setDistributionLocationError(
+          "Error al agregar las referencias de prueba."
         )
       } finally {
         setIsCreatingDistributionLocation(false)
@@ -4901,11 +5067,29 @@ export default function ProductDetailPage() {
                     </p>
                   </div>
 
-                  <div className="rounded-2xl border border-cyan-200/15 bg-black/30 px-4 py-3 text-[10px] uppercase tracking-[0.22em] text-cyan-100/75">
-                    {distributionLocations.length} canal
-                    {distributionLocations.length === 1
-                      ? ""
-                      : "es"}
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <div className="rounded-2xl border border-cyan-200/15 bg-black/30 px-4 py-3 text-[10px] uppercase tracking-[0.22em] text-cyan-100/75">
+                      {distributionLocations.length} canal
+                      {distributionLocations.length === 1
+                        ? ""
+                        : "es"}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={
+                        handleCreateReferenceDistributionLocations
+                      }
+                      disabled={
+                        isCreatingDistributionLocation ||
+                        isLoadingDistributionLocations
+                      }
+                      className="rounded-2xl border border-emerald-200/20 bg-emerald-300/[0.08] px-4 py-3 text-[10px] font-bold uppercase tracking-[0.20em] text-emerald-50 transition-colors hover:bg-emerald-300/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isCreatingDistributionLocation
+                        ? "Agregando..."
+                        : "Agregar 2 referencias"}
+                    </button>
                   </div>
                 </div>
 
@@ -5368,7 +5552,8 @@ export default function ProductDetailPage() {
                   ) : distributionLocations.length === 0 ? (
                     <p className="rounded-2xl border border-white/10 bg-black/25 p-4 text-sm text-white/45">
                       Aun no hay canales autorizados registrados en la tabla
-                      escalable.
+                      escalable. Usa Agregar 2 referencias para crear
+                      Managua Norte y Managua Sur como lugares de prueba.
                     </p>
                   ) : (
                     distributionLocations.map(
