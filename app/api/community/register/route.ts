@@ -36,6 +36,24 @@ type CommunitySubscriberPayload = {
 const MAX_SELECTED_SUBNICHES = 25
 const MAX_LEGACY_INTEREST_NAMES = 5
 
+const publicInterestNames = [
+  "Bienestar y Salud Natural",
+  "Fitness, Rendimiento y Recuperacion",
+  "Salud y Funcionalidad Especifica",
+  "Cuidado Personal y Belleza Natural",
+  "Bienestar Animal y Cuidado de Mascotas",
+]
+
+const publicInterestNameMap =
+  new Map(
+    publicInterestNames.map(
+      name => [
+        normalizePublicInterestName(name),
+        name,
+      ]
+    )
+  )
+
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -117,6 +135,27 @@ function getUniqueStringArray(
       getStringArray(value)
     )
   )
+}
+
+function normalizePublicInterestName(
+  value: string
+) {
+  return value
+    .normalize("NFD")
+    .replace(
+      /[\u0300-\u036f]/g,
+      ""
+    )
+    .toLowerCase()
+    .trim()
+}
+
+function getCanonicalPublicInterestName(
+  value: string
+) {
+  return publicInterestNameMap.get(
+    normalizePublicInterestName(value)
+  ) || null
 }
 
 function normalizeSource(
@@ -334,7 +373,15 @@ export async function POST(
   const selectedSubnicheNames =
     getUniqueStringArray(
       body.selectedSubnicheNames
-    ).slice(
+    )
+      .map(getCanonicalPublicInterestName)
+      .filter(
+        (
+          name
+        ): name is string =>
+          Boolean(name)
+      )
+      .slice(
       0,
       MAX_LEGACY_INTEREST_NAMES
     )

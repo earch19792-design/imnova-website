@@ -402,10 +402,10 @@ export default function InnovaPopup({
 
   {
     title:
-      "Poneme Activo",
+      "Fitness, Rendimiento y Recuperacion",
 
     subtitle:
-      "Gym, energía y rendimiento",
+      "Vida activa, energia y recuperacion",
 
     status:
       "Detectando alto rendimiento...",
@@ -431,10 +431,10 @@ export default function InnovaPopup({
 
   {
     title:
-      "Cosas del Futuro",
+      "Salud y Funcionalidad Especifica",
 
     subtitle:
-      "Tecnología brutal e innovación",
+      "Soporte funcional y bienestar dirigido",
 
     status:
       "Conectando al ecosistema IMNOVA...",
@@ -460,10 +460,10 @@ export default function InnovaPopup({
 
   {
     title:
-      "Pa’ Rendir Más",
+      "Bienestar y Salud Natural",
 
     subtitle:
-      "Bebidas funcionales y enfoque",
+      "Habitos, nutricion y vida saludable",
 
     status:
       "Modo enfoque sincronizado...",
@@ -489,10 +489,10 @@ export default function InnovaPopup({
 
   {
     title:
-      "Vida Inteligente",
+      "Bienestar y Salud Natural",
 
     subtitle:
-      "Productos premium para el día a día",
+      "Productos naturales para el dia a dia",
 
     status:
       "Sincronizando vida inteligente...",
@@ -518,10 +518,10 @@ export default function InnovaPopup({
 
   {
     title:
-      "Poneme Más Guapo",
+      "Cuidado Personal y Belleza Natural",
 
     subtitle:
-      "Skincare, glow up y cuidado premium",
+      "Colageno, piel, cabello y cuidado natural",
 
     status:
       "Glow premium activado...",
@@ -547,10 +547,10 @@ export default function InnovaPopup({
 
   {
     title:
-      "Promos Tuani",
+      "Bienestar Animal y Cuidado de Mascotas",
 
     subtitle:
-      "Acceso exclusivo y descuentos",
+      "Cuidado funcional para animales",
 
     status:
       "Buscando beneficios exclusivos...",
@@ -1009,9 +1009,7 @@ useEffect(() => {
                   selectedSubnicheIds:
                     normalizedSubnicheIds,
                   selectedSubnicheNames:
-                    selectedInterestNames.length > 0
-                      ? selectedInterestNames
-                      : selectedNiches,
+                    selectedInterestNames,
                   objective:
                     effectiveObjective,
                   source:
