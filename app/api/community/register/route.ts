@@ -2,7 +2,10 @@ export const runtime = "nodejs"
 
 import { randomUUID } from "crypto"
 import { NextResponse } from "next/server"
-import { createClient } from "@supabase/supabase-js"
+import {
+  createClient,
+  type SupabaseClient,
+} from "@supabase/supabase-js"
 
 type CommunityRegisterPayload = {
   name?: unknown
@@ -22,7 +25,16 @@ type PublicSubniche = {
   public_name: string | null
 }
 
-const MAX_SELECTED_SUBNICHES = 5
+type CommunitySubscriberPayload = {
+  nombre: string
+  telefono: string | null
+  email: string | null
+  nichos: string[]
+  objetivo_principal: string
+}
+
+const MAX_SELECTED_SUBNICHES = 25
+const MAX_LEGACY_INTEREST_NAMES = 5
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -214,6 +226,60 @@ async function getValidPublicSubniches(
   return (data || []) as PublicSubniche[]
 }
 
+async function getExistingSubscriberId(
+  supabase: SupabaseClient,
+  email: string,
+  whatsapp: string
+) {
+  if (email) {
+    const { data, error } =
+      await supabase
+        .from("subscribers")
+        .select("id")
+        .eq(
+          "email",
+          email
+        )
+        .maybeSingle()
+
+    if (error) {
+      console.warn(
+        "COMMUNITY REGISTER EXISTING EMAIL LOOKUP WARNING:",
+        error
+      )
+    }
+
+    if (data?.id) {
+      return String(data.id)
+    }
+  }
+
+  if (whatsapp) {
+    const { data, error } =
+      await supabase
+        .from("subscribers")
+        .select("id")
+        .eq(
+          "telefono",
+          whatsapp
+        )
+        .maybeSingle()
+
+    if (error) {
+      console.warn(
+        "COMMUNITY REGISTER EXISTING WHATSAPP LOOKUP WARNING:",
+        error
+      )
+    }
+
+    if (data?.id) {
+      return String(data.id)
+    }
+  }
+
+  return null
+}
+
 export async function POST(
   req: Request
 ) {
@@ -270,7 +336,7 @@ export async function POST(
       body.selectedSubnicheNames
     ).slice(
       0,
-      MAX_SELECTED_SUBNICHES
+      MAX_LEGACY_INTEREST_NAMES
     )
 
   if (!name) {
@@ -354,36 +420,42 @@ export async function POST(
     }
 
     const legacyInterestNames =
-      validPublicSubniches.length > 0
-        ? validPublicSubniches.map(
+      selectedSubnicheNames.length > 0
+        ? selectedSubnicheNames
+        : validPublicSubniches.map(
             subniche =>
               subniche.public_name ||
               subniche.name ||
               ""
           ).filter(Boolean)
-        : selectedSubnicheNames
 
-    const subscriberId =
-      randomUUID()
+    const subscriberPayload: CommunitySubscriberPayload = {
+      nombre:
+        name,
+      telefono:
+        whatsapp || null,
+      email:
+        email || null,
+      nichos:
+        legacyInterestNames,
+      objetivo_principal:
+        objective,
+    }
 
-    const { error: subscriberError } =
+    const {
+      data: createdSubscriber,
+      error: subscriberError,
+    } =
       await supabase
         .from("subscribers")
-        .insert([
-          {
-            id:
-              subscriberId,
-            nombre:
-              name,
-            telefono:
-              whatsapp,
-            email,
-            nichos:
-              legacyInterestNames,
-            objetivo_principal:
-              objective,
-          },
-        ])
+        .insert(subscriberPayload)
+        .select("id")
+        .single()
+
+    let subscriberId =
+      createdSubscriber?.id
+        ? String(createdSubscriber.id)
+        : ""
 
     if (subscriberError) {
       console.error(
@@ -391,8 +463,51 @@ export async function POST(
         subscriberError
       )
 
+      const existingSubscriberId =
+        await getExistingSubscriberId(
+          supabase,
+          email,
+          whatsapp
+        )
+
+      if (!existingSubscriberId) {
+        return createErrorResponse(
+          "subscriber_create_failed",
+          500
+        )
+      }
+
+      subscriberId =
+        existingSubscriberId
+
+      warnings.push(
+        "subscriber_already_registered"
+      )
+
+      const { error: subscriberUpdateError } =
+        await supabase
+          .from("subscribers")
+          .update(subscriberPayload)
+          .eq(
+            "id",
+            subscriberId
+          )
+
+      if (subscriberUpdateError) {
+        console.warn(
+          "COMMUNITY REGISTER EXISTING SUBSCRIBER UPDATE WARNING:",
+          subscriberUpdateError
+        )
+
+        warnings.push(
+          "subscriber_update_not_applied"
+        )
+      }
+    }
+
+    if (!subscriberId) {
       return createErrorResponse(
-        "subscriber_create_failed",
+        "subscriber_id_not_returned",
         500
       )
     }

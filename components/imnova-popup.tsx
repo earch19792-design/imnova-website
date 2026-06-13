@@ -10,7 +10,6 @@ import {
 import {
   getPublicNichesWithSubniches,
   type StrategicNicheWithSubniches,
-  type StrategicSubniche,
 } from "@/lib/products-service"
 import { useRouter } from "next/navigation"
 
@@ -28,11 +27,145 @@ interface InnovaPopupProps {
   surveyIntent?: InnovaSurveyIntent | null
 }
 
-const MAX_SELECTED_SUBNICHES = 5
+const MAX_SELECTED_AREAS = 3
 
 type RegistrationStep =
   "interests" |
   "contact"
+
+type PublicInterestArea = {
+  id: string
+  title: string
+  description: string
+  icon: string
+  nicheSlugs: string[]
+  subnicheSlugs: string[]
+  highlightIndex: number
+}
+
+const communityRegisterErrorMessages:
+  Record<string, string> = {
+    subscriber_create_failed:
+      "No pudimos completar tu registro en este momento. Intentalo de nuevo en unos segundos.",
+    subscriber_id_not_returned:
+      "Te registramos, pero no pudimos confirmar el registro. Intentalo de nuevo.",
+    subscriber_interests_create_failed:
+      "Te registramos, pero no pudimos guardar tus intereses. Intentalo de nuevo.",
+    invalid_subniches:
+      "Algunos intereses ya no estan disponibles. Cambia tus intereses e intentalo de nuevo.",
+    too_many_subniches:
+      "Selecciona menos areas e intentalo de nuevo.",
+    invalid_email:
+      "Revisa el formato de tu correo.",
+    invalid_whatsapp:
+      "Revisa el formato de tu WhatsApp.",
+    email_or_whatsapp_required:
+      "Agrega al menos WhatsApp o correo.",
+    name_required:
+      "Agrega tu nombre para unirte.",
+  }
+
+function getCommunityRegisterErrorMessage(
+  error?: string
+) {
+  if (
+    error &&
+    communityRegisterErrorMessages[error]
+  ) {
+    return communityRegisterErrorMessages[error]
+  }
+
+  return "Error registrando tu participacion"
+}
+
+const publicInterestAreas: PublicInterestArea[] = [
+  {
+    id:
+      "bienestar_salud_natural",
+    title:
+      "Bienestar y Salud Natural",
+    description:
+      "Vida saludable, productos naturales y nutricion funcional para el dia a dia.",
+    icon:
+      "✦",
+    nicheSlugs: [
+      "bienestar_diario",
+      "nutricion_funcional",
+    ],
+    subnicheSlugs: [],
+    highlightIndex:
+      3,
+  },
+  {
+    id:
+      "fitness_rendimiento_recuperacion",
+    title:
+      "Fitness, Rendimiento y Recuperacion",
+    description:
+      "Energia, hidratacion, proteina y recuperacion para una vida activa.",
+    icon:
+      "◆",
+    nicheSlugs: [
+      "vida_activa",
+    ],
+    subnicheSlugs: [
+      "proteina_funcional",
+      "energia_natural",
+    ],
+    highlightIndex:
+      0,
+  },
+  {
+    id:
+      "salud_funcionalidad_especifica",
+    title:
+      "Salud y Funcionalidad Especifica",
+    description:
+      "Digestión, defensas, descanso, enfoque, estres y soporte funcional.",
+    icon:
+      "◉",
+    nicheSlugs: [
+      "soporte_funcional",
+      "digestion_balance",
+      "energia_enfoque",
+    ],
+    subnicheSlugs: [],
+    highlightIndex:
+      1,
+  },
+  {
+    id:
+      "cuidado_belleza_natural",
+    title:
+      "Cuidado Personal y Belleza Natural",
+    description:
+      "Colageno, piel, cabello y cuidado natural con enfoque funcional.",
+    icon:
+      "✧",
+    nicheSlugs: [
+      "belleza_natural",
+    ],
+    subnicheSlugs: [],
+    highlightIndex:
+      4,
+  },
+  {
+    id:
+      "bienestar_animal_mascotas",
+    title:
+      "Bienestar Animal y Cuidado de Mascotas",
+    description:
+      "Productos, bienestar y cuidado funcional para mascotas y animales.",
+    icon:
+      "✺",
+    nicheSlugs: [
+      "bienestar_animal",
+    ],
+    subnicheSlugs: [],
+    highlightIndex:
+      5,
+  },
+]
 
 // TODO: remover fallback cuando catálogo público esté estable.
 const fallbackPublicNiches: StrategicNicheWithSubniches[] = [
@@ -140,8 +273,8 @@ export default function InnovaPopup({
   ] = useState<StrategicNicheWithSubniches[]>([])
 
   const [
-    selectedSubnicheIds,
-    setSelectedSubnicheIds,
+    selectedInterestAreaIds,
+    setSelectedInterestAreaIds,
   ] = useState<string[]>([])
 
   const [
@@ -453,86 +586,177 @@ const [displayText, setDisplayText] =
 const interestGroups =
   nichesWithSubniches
 
-const getPublicName =
-  (
-    item: {
-      public_name: string | null
-      name: string
-    }
-  ) =>
-    item.public_name ||
-    item.name
+const normalizeInterestTerm =
+  (value: string) =>
+    value
+      .toLowerCase()
+      .trim()
 
 const isFallbackSubnicheId =
   (subnicheId: string) =>
     subnicheId.startsWith("fallback-")
 
-const getSelectedSubnicheNames =
+const getSelectedInterestAreaNames =
   (
-    subnicheIds: string[]
-  ) => {
-    const selectedIds =
-      new Set(subnicheIds)
-
-    return interestGroups
-      .flatMap(
-        niche =>
-          niche.subniches || []
-      )
+    areaIds: string[]
+  ) =>
+    publicInterestAreas
       .filter(
-        subniche =>
-          selectedIds.has(
-            subniche.id
+        area =>
+          areaIds.includes(
+            area.id
           )
       )
-      .map(getPublicName)
+      .map(area => area.title)
+
+const getAreaSubnicheIds =
+  (
+    areaIds: string[]
+  ) => {
+    const selectedAreas =
+      publicInterestAreas.filter(
+        area =>
+          areaIds.includes(area.id)
+      )
+
+    const selectedNicheSlugs =
+      new Set(
+        selectedAreas.flatMap(
+          area =>
+            area.nicheSlugs
+        )
+      )
+
+    const selectedSubnicheSlugs =
+      new Set(
+        selectedAreas.flatMap(
+          area =>
+            area.subnicheSlugs
+        )
+      )
+
+    const subnicheIds =
+      interestGroups.flatMap(niche => {
+        const nicheMatches =
+          selectedNicheSlugs.has(
+            niche.slug
+          )
+
+        return (niche.subniches || [])
+          .filter(
+            subniche =>
+              nicheMatches ||
+              selectedSubnicheSlugs.has(
+                subniche.slug
+              )
+          )
+          .map(subniche => subniche.id)
+      })
+
+    return Array.from(
+      new Set(subnicheIds)
+    )
   }
 
-const toggleSubniche =
+const getAreaSearchTerms =
+  (area: PublicInterestArea) => {
+    const selectedNicheSlugs =
+      new Set(area.nicheSlugs)
+
+    const selectedSubnicheSlugs =
+      new Set(area.subnicheSlugs)
+
+    const mappedTerms =
+      interestGroups.flatMap(niche => {
+        const nicheMatches =
+          selectedNicheSlugs.has(
+            niche.slug
+          )
+
+        const nicheTerms =
+          nicheMatches
+            ? [
+                niche.slug,
+                niche.name,
+                niche.public_name || "",
+              ]
+            : []
+
+        const subnicheTerms =
+          (niche.subniches || [])
+            .filter(
+              subniche =>
+                nicheMatches ||
+                selectedSubnicheSlugs.has(
+                  subniche.slug
+                )
+            )
+            .flatMap(subniche => [
+              subniche.slug,
+              subniche.name,
+              subniche.public_name || "",
+            ])
+
+        return [
+          ...nicheTerms,
+          ...subnicheTerms,
+        ]
+      })
+
+    return [
+      area.id,
+      area.title,
+      ...area.nicheSlugs,
+      ...area.subnicheSlugs,
+      ...mappedTerms,
+    ].map(normalizeInterestTerm)
+  }
+
+const toggleInterestArea =
   (
-    subniche: StrategicSubniche,
-    nicheIndex: number
+    area: PublicInterestArea
   ) => {
     const isSelected =
-      selectedSubnicheIds.includes(
-        subniche.id
+      selectedInterestAreaIds.includes(
+        area.id
       )
 
     if (
       !isSelected &&
-      selectedSubnicheIds.length >=
-        MAX_SELECTED_SUBNICHES
+      selectedInterestAreaIds.length >=
+        MAX_SELECTED_AREAS
     ) {
       setInterestsError(
-        "Puedes seleccionar hasta 5 intereses."
+        "Puedes seleccionar hasta 3 areas."
       )
       return
     }
 
-    const nextSubnicheIds =
+    const nextAreaIds =
       isSelected
-        ? selectedSubnicheIds.filter(
-            subnicheId =>
-              subnicheId !== subniche.id
+        ? selectedInterestAreaIds.filter(
+            areaId =>
+              areaId !== area.id
           )
         : [
-            ...selectedSubnicheIds,
-            subniche.id,
+            ...selectedInterestAreaIds,
+            area.id,
           ]
 
-    setSelectedSubnicheIds(
-      nextSubnicheIds
+    setSelectedInterestAreaIds(
+      nextAreaIds
     )
     setSelectedNiches(
-      getSelectedSubnicheNames(
-        nextSubnicheIds
+      getSelectedInterestAreaNames(
+        nextAreaIds
       )
     )
     setInterestsError("")
     setIsSwitching(true)
     setActiveHighlight(
       popupHighlights[
-        nicheIndex % popupHighlights.length
+        area.highlightIndex %
+          popupHighlights.length
       ]
     )
 
@@ -555,57 +779,64 @@ useEffect(() => {
   const normalizedIntentNiches =
     surveyIntent.niches.map(
       intentNiche =>
-        intentNiche
-          .toLowerCase()
-          .trim()
+        normalizeInterestTerm(
+          intentNiche
+        )
     )
 
-  const matchedSubnicheIds =
-    interestGroups
-      .flatMap(
-        niche =>
-          niche.subniches || []
-      )
-      .filter(
-        subniche =>
-          normalizedIntentNiches.some(
-            intentNiche =>
-              [
-                subniche.slug,
-                subniche.name,
-                subniche.public_name || "",
-              ]
-                .map(value =>
-                  value
-                    .toLowerCase()
-                    .trim()
-                )
-                .includes(intentNiche)
-          )
-      )
-      .map(subniche => subniche.id)
-      .slice(0, MAX_SELECTED_SUBNICHES)
+  const matchedAreaIds =
+    publicInterestAreas
+      .filter(area => {
+        const areaTerms =
+          getAreaSearchTerms(area)
 
-  if (matchedSubnicheIds.length > 0) {
-    setSelectedSubnicheIds(prev => {
-      const nextSubnicheIds =
+        return normalizedIntentNiches.some(
+          intentNiche =>
+            areaTerms.includes(
+              intentNiche
+            )
+        )
+      })
+      .map(area => area.id)
+      .slice(0, MAX_SELECTED_AREAS)
+
+  if (matchedAreaIds.length > 0) {
+    setSelectedInterestAreaIds(prev => {
+      const nextAreaIds =
         Array.from(
           new Set([
             ...prev,
-            ...matchedSubnicheIds,
+            ...matchedAreaIds,
           ])
         ).slice(
           0,
-          MAX_SELECTED_SUBNICHES
+          MAX_SELECTED_AREAS
         )
 
       setSelectedNiches(
-        getSelectedSubnicheNames(
-          nextSubnicheIds
+        getSelectedInterestAreaNames(
+          nextAreaIds
         )
       )
 
-      return nextSubnicheIds
+      const selectedArea =
+        publicInterestAreas.find(
+          area =>
+            nextAreaIds.includes(
+              area.id
+            )
+          )
+
+      if (selectedArea) {
+        setActiveHighlight(
+          popupHighlights[
+            selectedArea.highlightIndex %
+              popupHighlights.length
+          ]
+        )
+      }
+
+      return nextAreaIds
     })
   } else {
     setSelectedNiches(prev => [
@@ -723,13 +954,13 @@ useEffect(() => {
 
   return
 
-}
+        }
         if (
-          selectedSubnicheIds.length === 0
+          selectedInterestAreaIds.length === 0
         ) {
 
           alert(
-            "Selecciona al menos un interés"
+            "Selecciona al menos un area de interes"
           )
 
           return
@@ -741,12 +972,14 @@ useEffect(() => {
         ========================================= */
 
         const selectedInterestNames =
-          getSelectedSubnicheNames(
-            selectedSubnicheIds
+          getSelectedInterestAreaNames(
+            selectedInterestAreaIds
           )
 
         const normalizedSubnicheIds =
-          selectedSubnicheIds.filter(
+          getAreaSubnicheIds(
+            selectedInterestAreaIds
+          ).filter(
             subnicheId =>
               !isFallbackSubnicheId(
                 subnicheId
@@ -798,8 +1031,9 @@ useEffect(() => {
           !registerResult?.success
         ) {
           throw new Error(
-            registerResult?.error ||
-            "Error registrando tu participación"
+            getCommunityRegisterErrorMessage(
+              registerResult?.error
+            )
           )
         }
 
@@ -817,10 +1051,10 @@ useEffect(() => {
 
         if (
           normalizedSubnicheIds.length === 0 &&
-          selectedSubnicheIds.length > 0
+          selectedInterestAreaIds.length > 0
         ) {
           console.warn(
-            "COMMUNITY REGISTER LEGACY INTERESTS ONLY: selected interests did not include public subniche IDs."
+            "COMMUNITY REGISTER LEGACY INTERESTS ONLY: selected areas did not map to public subniche IDs."
           )
         }
 
@@ -850,7 +1084,7 @@ useEffect(() => {
         setPhone("")
         setEmail("")
         setSelectedNiches([])
-        setSelectedSubnicheIds([])
+        setSelectedInterestAreaIds([])
         setRegistrationStep("interests")
 
       } catch (err: any) {
@@ -884,9 +1118,9 @@ useEffect(() => {
     async () => {
 
       if (registrationStep === "interests") {
-        if (selectedSubnicheIds.length === 0) {
+        if (selectedInterestAreaIds.length === 0) {
           alert(
-            "Selecciona al menos un interés"
+            "Selecciona al menos un area de interes"
           )
 
           return
@@ -1710,7 +1944,7 @@ useEffect(() => {
         "
       >
 
-        Selecciona hasta 5 temas. Esto nos ayuda a enviarte encuestas y lanzamientos relevantes.
+        Selecciona hasta 3 areas generales. Esto nos ayuda a enviarte encuestas y lanzamientos relevantes sin hacerte escoger subnichos técnicos.
 
       </p>
 
@@ -1761,103 +1995,125 @@ useEffect(() => {
 
     <div
       className="
-        max-h-[280px]
-        sm:max-h-[320px]
-        lg:max-h-[360px]
-        space-y-4
-        overflow-y-auto
-        pr-1
+        grid
+        gap-3
+        sm:grid-cols-2
       "
     >
 
-      {interestGroups.map(
-        (niche, nicheIndex) => {
-          const subniches =
-            niche.subniches || []
+      {publicInterestAreas.map(
+        (area) => {
+          const active =
+            selectedInterestAreaIds.includes(
+              area.id
+            )
 
-          const selectedInGroup =
-            subniches.filter(
-              subniche =>
-                selectedSubnicheIds.includes(
-                  subniche.id
-                )
-            ).length
+          const disabled =
+            !active &&
+            selectedInterestAreaIds.length >=
+              MAX_SELECTED_AREAS
 
           return (
 
-            <div
-              key={niche.id}
-              className="
+            <button
+              key={area.id}
+              type="button"
+              disabled={disabled}
+              onClick={() =>
+                toggleInterestArea(area)
+              }
+              className={`
                 rounded-2xl
                 border
-                border-white/10
-                bg-white/[0.04]
                 p-4
-              "
+                text-left
+                transition-all
+                duration-300
+
+                ${
+                  active
+                    ? `
+                      border-cyan-300/50
+                      bg-cyan-300/[0.12]
+                      shadow-[0_0_34px_rgba(34,211,238,0.16)]
+                    `
+                    : disabled
+                      ? `
+                        cursor-not-allowed
+                        border-white/5
+                        bg-white/[0.02]
+                        opacity-45
+                      `
+                      : `
+                        border-white/10
+                        bg-white/[0.04]
+                        hover:border-cyan-300/25
+                        hover:bg-cyan-300/[0.07]
+                      `
+                }
+              `}
             >
 
               <div
                 className="
                   flex
-                  items-start
+                  items-center
                   justify-between
                   gap-3
                 "
               >
 
-                <div>
+                <span
+                  className={`
+                    flex
+                    h-10
+                    w-10
+                    shrink-0
+                    items-center
+                    justify-center
+                    rounded-2xl
+                    border
+                    text-base
 
-                  <h5
-                    className="
-                      text-sm
-                      font-bold
-                      text-white
-                    "
-                  >
+                    ${
+                      active
+                        ? `
+                          border-cyan-300/40
+                          bg-cyan-300/[0.14]
+                          text-cyan-50
+                        `
+                        : `
+                          border-white/10
+                          bg-white/[0.05]
+                          text-white/70
+                        `
+                    }
+                  `}
+                >
 
-                    {getPublicName(niche)}
+                  {area.icon}
 
-                  </h5>
+                </span>
 
-                  {niche.description && (
-
-                    <p
-                      className="
-                        mt-1
-                        text-xs
-                        leading-5
-                        text-white/55
-                      "
-                    >
-
-                      {niche.description}
-
-                    </p>
-
-                  )}
-
-                </div>
-
-                {selectedInGroup > 0 && (
+                {active && (
 
                   <span
                     className="
-                      shrink-0
                       rounded-full
                       border
                       border-cyan-300/25
-                      bg-cyan-300/[0.08]
+                      bg-cyan-300/[0.12]
                       px-2.5
                       py-1
                       text-[10px]
-                      font-bold
+                      font-black
                       uppercase
-                      tracking-[0.18em]
-                      text-cyan-100
+                      tracking-[0.16em]
+                      text-cyan-50
                     "
                   >
 
-                    {selectedInGroup}
+                    Elegido
 
                   </span>
 
@@ -1865,106 +2121,34 @@ useEffect(() => {
 
               </div>
 
-              <div
+              <h5
                 className="
-                  mt-3
-                  flex
-                  flex-wrap
-                  gap-2
+                  mt-4
+                  text-sm
+                  font-bold
+                  leading-5
+                  text-white
                 "
               >
 
-                {subniches.map(
-                  subniche => {
-                    const active =
-                      selectedSubnicheIds.includes(
-                        subniche.id
-                      )
+                {area.title}
 
-                    const disabled =
-                      !active &&
-                      selectedSubnicheIds.length >=
-                        MAX_SELECTED_SUBNICHES
+              </h5>
 
-                    return (
+              <p
+                className="
+                  mt-2
+                  text-xs
+                  leading-5
+                  text-white/58
+                "
+              >
 
-                      <button
-                        key={subniche.id}
-                        type="button"
-                        disabled={disabled}
-                        onClick={() =>
-                          toggleSubniche(
-                            subniche,
-                            nicheIndex
-                          )
-                        }
-                        className={`
-                          rounded-full
-                          border
-                          px-3
-                          py-2
-                          text-left
-                          text-xs
-                          font-semibold
-                          leading-5
-                          transition-all
-                          duration-300
+                {area.description}
 
-                          ${
-                            active
+              </p>
 
-                              ? `
-                                border-cyan-300/50
-                                bg-cyan-300/[0.14]
-                                text-cyan-50
-                              `
-
-                              : disabled
-                                ? `
-                                  cursor-not-allowed
-                                  border-white/5
-                                  bg-white/[0.02]
-                                  text-white/25
-                                `
-
-                                : `
-                                  border-white/10
-                                  bg-white/[0.05]
-                                  text-white/70
-                                  hover:border-cyan-300/25
-                                  hover:bg-cyan-300/[0.08]
-                                  hover:text-cyan-50
-                                `
-                          }
-                        `}
-                      >
-
-                        {getPublicName(subniche)}
-
-                      </button>
-
-                    )
-                  }
-                )}
-
-                {subniches.length === 0 && (
-
-                  <p
-                    className="
-                      text-xs
-                      text-white/45
-                    "
-                  >
-
-                    Estamos preparando estos intereses.
-
-                  </p>
-
-                )}
-
-              </div>
-
-            </div>
+            </button>
 
           )
         }
@@ -1979,7 +2163,7 @@ useEffect(() => {
       "
     >
 
-      {selectedSubnicheIds.length}/{MAX_SELECTED_SUBNICHES} intereses seleccionados
+      {selectedInterestAreaIds.length}/{MAX_SELECTED_AREAS} areas seleccionadas
 
     </p>
 
@@ -1991,7 +2175,7 @@ useEffect(() => {
       "
     >
 
-      Usamos tus intereses para enviarte contenido relevante, no mensajes genéricos.
+      Mostramos areas simples para que elijas rapido. La segmentacion detallada queda organizada internamente por IMNOVA.
 
     </p>
 
