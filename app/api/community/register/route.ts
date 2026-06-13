@@ -545,9 +545,8 @@ export async function POST(
           interestsError
         )
 
-        return createErrorResponse(
-          "subscriber_interests_create_failed",
-          500
+        warnings.push(
+          "subscriber_interests_not_saved"
         )
       }
     }
