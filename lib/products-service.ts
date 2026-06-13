@@ -1567,6 +1567,26 @@ export type ManualCommunitySubscriberInput = {
   objetivo_principal?: string | null
 }
 
+export type SubscriberInterest = {
+  id: string
+  subscriber_id: string
+  subniche_id: string
+  source: string | null
+  created_at: string | null
+}
+
+export type CreateSubscriberInterestInput = {
+  subscriber_id: string
+  subniche_id: string
+  source?: string | null
+}
+
+export type CreateSubscriberInterestsInput = {
+  subscriber_id: string
+  subniche_ids: string[]
+  source?: string | null
+}
+
 function normalizeCommunityPhone(
   phone: string
 ) {
@@ -1582,6 +1602,40 @@ function normalizeCommunityPhone(
   }
 
   return digits
+}
+
+function createLocalUuid() {
+  const randomUuid =
+    globalThis.crypto?.randomUUID?.()
+
+  if (randomUuid) {
+    return randomUuid
+  }
+
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
+    .replace(
+      /[xy]/g,
+      (character) => {
+        const value =
+          Math.floor(
+            Math.random() * 16
+          )
+
+        const uuidValue =
+          character === "x"
+            ? value
+            : (value & 0x3) | 0x8
+
+        return uuidValue.toString(16)
+      }
+    )
+}
+
+function getSubscriberInterestSource(
+  source?: string | null
+) {
+  return source?.trim() ||
+    "community_popup"
 }
 
 export async function getRecentCommunitySubscribers(
@@ -1692,6 +1746,207 @@ export async function createManualCommunitySubscriber(
       data as CommunitySubscriber,
     error: null,
   }
+
+}
+
+export async function createSubscriberInterest(
+  input: CreateSubscriberInterestInput
+): Promise<SubscriberInterest | null> {
+
+  const subscriberInterest: SubscriberInterest = {
+    id:
+      createLocalUuid(),
+    subscriber_id:
+      input.subscriber_id,
+    subniche_id:
+      input.subniche_id,
+    source:
+      getSubscriberInterestSource(
+        input.source
+      ),
+    created_at:
+      null,
+  }
+
+  const { error } =
+    await supabase
+      .from("subscriber_interests")
+      .upsert(
+        {
+          id:
+            subscriberInterest.id,
+          subscriber_id:
+            subscriberInterest.subscriber_id,
+          subniche_id:
+            subscriberInterest.subniche_id,
+          source:
+            subscriberInterest.source,
+        },
+        {
+          onConflict:
+            "subscriber_id,subniche_id",
+          ignoreDuplicates:
+            true,
+        }
+      )
+
+  if (error) {
+    console.error(
+      "CREATE SUBSCRIBER INTEREST ERROR:",
+      error
+    )
+
+    return null
+  }
+
+  return subscriberInterest
+
+}
+
+export async function createSubscriberInterests(
+  input: CreateSubscriberInterestsInput
+): Promise<SubscriberInterest[]> {
+
+  const uniqueSubnicheIds =
+    Array.from(
+      new Set(
+        input.subniche_ids
+          .map(subnicheId =>
+            subnicheId.trim()
+          )
+          .filter(Boolean)
+      )
+    )
+
+  if (uniqueSubnicheIds.length === 0) {
+    return []
+  }
+
+  const source =
+    getSubscriberInterestSource(
+      input.source
+    )
+
+  const subscriberInterests: SubscriberInterest[] =
+    uniqueSubnicheIds.map(
+      subnicheId => ({
+        id:
+          createLocalUuid(),
+        subscriber_id:
+          input.subscriber_id,
+        subniche_id:
+          subnicheId,
+        source,
+        created_at:
+          null,
+      })
+    )
+
+  const { error } =
+    await supabase
+      .from("subscriber_interests")
+      .upsert(
+        subscriberInterests.map(
+          subscriberInterest => ({
+            id:
+              subscriberInterest.id,
+            subscriber_id:
+              subscriberInterest.subscriber_id,
+            subniche_id:
+              subscriberInterest.subniche_id,
+            source:
+              subscriberInterest.source,
+          })
+        ),
+        {
+          onConflict:
+            "subscriber_id,subniche_id",
+          ignoreDuplicates:
+            true,
+        }
+      )
+
+  if (error) {
+    console.error(
+      "CREATE SUBSCRIBER INTERESTS ERROR:",
+      error
+    )
+
+    return []
+  }
+
+  return subscriberInterests
+
+}
+
+export async function getAdminSubscriberInterests(): Promise<SubscriberInterest[]> {
+
+  const { data, error } =
+    await supabase
+      .from("subscriber_interests")
+      .select(`
+        id,
+        subscriber_id,
+        subniche_id,
+        source,
+        created_at
+      `)
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
+      .limit(100)
+
+  if (error) {
+    console.error(
+      "GET ADMIN SUBSCRIBER INTERESTS ERROR:",
+      error
+    )
+
+    return []
+  }
+
+  return (data || []) as SubscriberInterest[]
+
+}
+
+export async function getSubscriberInterestsBySubscriber(
+  subscriberId: string
+): Promise<SubscriberInterest[]> {
+
+  const { data, error } =
+    await supabase
+      .from("subscriber_interests")
+      .select(`
+        id,
+        subscriber_id,
+        subniche_id,
+        source,
+        created_at
+      `)
+      .eq(
+        "subscriber_id",
+        subscriberId
+      )
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
+
+  if (error) {
+    console.error(
+      "GET SUBSCRIBER INTERESTS BY SUBSCRIBER ERROR:",
+      error
+    )
+
+    return []
+  }
+
+  return (data || []) as SubscriberInterest[]
 
 }
 
@@ -2045,6 +2300,172 @@ export async function createSocialSignal(
   }
 
   return data
+
+}
+
+export type StrategicNiche = {
+  id: string
+  slug: string
+  name: string
+  public_name: string | null
+  description: string | null
+  icon: string | null
+  icon_key: string | null
+  sort_order: number | null
+}
+
+export type StrategicSubniche = {
+  id: string
+  niche_id: string
+  slug: string
+  name: string
+  public_name: string | null
+  description: string | null
+  icon: string | null
+  icon_key: string | null
+  sort_order: number | null
+}
+
+export type StrategicNicheWithSubniches =
+  StrategicNiche & {
+    subniches: StrategicSubniche[]
+  }
+
+export async function getPublicStrategicNiches(): Promise<StrategicNiche[]> {
+
+  const { data, error } =
+    await supabase
+      .from("strategic_niches")
+      .select(`
+        id,
+        slug,
+        name,
+        public_name,
+        description,
+        icon,
+        icon_key,
+        sort_order
+      `)
+      .eq(
+        "is_active",
+        true
+      )
+      .eq(
+        "is_public",
+        true
+      )
+      .order(
+        "sort_order",
+        {
+          ascending: true,
+        }
+      )
+
+  if (error) {
+
+    console.error(
+      "GET PUBLIC STRATEGIC NICHES ERROR:",
+      error
+    )
+
+    return []
+
+  }
+
+  return (data || []) as StrategicNiche[]
+
+}
+
+export async function getPublicStrategicSubniches(): Promise<StrategicSubniche[]> {
+
+  const { data, error } =
+    await supabase
+      .from("strategic_subniches")
+      .select(`
+        id,
+        niche_id,
+        slug,
+        name,
+        public_name,
+        description,
+        icon,
+        icon_key,
+        sort_order
+      `)
+      .eq(
+        "is_active",
+        true
+      )
+      .eq(
+        "is_public",
+        true
+      )
+      .order(
+        "sort_order",
+        {
+          ascending: true,
+        }
+      )
+
+  if (error) {
+
+    console.error(
+      "GET PUBLIC STRATEGIC SUBNICHES ERROR:",
+      error
+    )
+
+    return []
+
+  }
+
+  return (data || []) as StrategicSubniche[]
+
+}
+
+export async function getPublicNichesWithSubniches(): Promise<StrategicNicheWithSubniches[]> {
+
+  const [
+    niches,
+    subniches,
+  ] =
+    await Promise.all([
+      getPublicStrategicNiches(),
+      getPublicStrategicSubniches(),
+    ])
+
+  const subnichesByNicheId =
+    subniches.reduce<
+      Map<string, StrategicSubniche[]>
+    >(
+      (groups, subniche) => {
+        const nicheSubniches =
+          groups.get(
+            subniche.niche_id
+          ) || []
+
+        nicheSubniches.push(
+          subniche
+        )
+
+        groups.set(
+          subniche.niche_id,
+          nicheSubniches
+        )
+
+        return groups
+      },
+      new Map()
+    )
+
+  return niches.map(
+    niche => ({
+      ...niche,
+      subniches:
+        subnichesByNicheId.get(
+          niche.id
+        ) || [],
+    })
+  )
 
 }
 

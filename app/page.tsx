@@ -149,30 +149,30 @@ export default function IMNOVAPage() {
               </div>
 
               <h2 className="mt-8 max-w-4xl text-4xl font-black leading-[1.02] tracking-[-0.045em] text-white md:text-6xl lg:text-7xl">
-                La comunidad que ayuda a decidir lo próximo.
+                Votá los próximos lanzamientos de IMNOVA.
               </h2>
 
               <p className="mt-7 max-w-3xl text-base leading-8 text-zinc-400 md:text-lg">
-                En IMNOVA las ideas no avanzan por intuición: se validan con
-                personas reales. Elegí tus intereses, respondé encuestas y ayudá
-                a decidir qué productos merecen pasar de idea a desarrollo.
+                Únete como miembro fundador, elige tus intereses y participa en
+                encuestas que ayudan a decidir qué productos avanzan, se ajustan
+                o llegan al mercado.
               </p>
 
               <div className="mt-9 grid gap-3 sm:grid-cols-3">
                 {[
                   {
                     icon: Vote,
-                    label: "Votá ideas antes del mercado",
-                    text: "Tu respuesta puede impulsar una solución al siguiente estado.",
+                    label: "Votá antes de fabricar",
+                    text: "Tu señal ayuda a decidir qué ideas merecen avanzar.",
                   },
                   {
                     icon: MessageCircle,
-                    label: "Web, WhatsApp y redes",
-                    text: "Recibí encuestas y avances según los temas que elegís.",
+                    label: "Encuestas relevantes",
+                    text: "Recibí avances según los temas que elegís.",
                   },
                   {
                     icon: Gift,
-                    label: "Acceso de miembro",
+                    label: "Acceso anticipado",
                     text: "Enterate primero de pruebas, lanzamientos y beneficios.",
                   },
                 ].map(item => (
@@ -195,9 +195,9 @@ export default function IMNOVAPage() {
                 <button
                   type="button"
                   onClick={openCommunity}
-                  className="group inline-flex items-center justify-center gap-3 rounded-3xl border border-cyan-200/25 bg-cyan-300/[0.14] px-8 py-5 text-xs font-black uppercase tracking-[0.18em] text-cyan-50 transition-all duration-500 hover:-translate-y-0.5 hover:border-cyan-200/45 hover:bg-cyan-300/[0.20]"
+                  className="group inline-flex items-center justify-center gap-3 rounded-3xl border border-cyan-200/45 bg-gradient-to-r from-cyan-200 to-white px-8 py-5 text-xs font-black uppercase tracking-[0.18em] text-black shadow-[0_0_45px_rgba(34,211,238,0.22)] transition-all duration-500 hover:-translate-y-0.5 hover:border-white hover:shadow-[0_0_65px_rgba(34,211,238,0.34)]"
                 >
-                  Entrar a la comunidad
+                  Únete como miembro fundador
                   <ArrowUpRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
                 </button>
 
@@ -227,9 +227,9 @@ export default function IMNOVAPage() {
 
                   <div className="mt-6 grid gap-4">
                     {[
-                      "Elegís los nichos y problemas que más te importan.",
-                      "IMNOVA te muestra ideas, prototipos y encuestas reales.",
-                      "La señal de la comunidad ayuda a decidir si avanza, se ajusta o se pausa.",
+                      "Elegís hasta 5 intereses que realmente te importan.",
+                      "IMNOVA te envía encuestas y pruebas conectadas a esos temas.",
+                      "Tu señal ayuda a decidir si un producto avanza, se ajusta o se pausa.",
                     ].map((item, index) => (
                       <div
                         key={item}
@@ -301,6 +301,65 @@ export default function IMNOVAPage() {
           </div>
         </div>
       </section>
+
+      <button
+        type="button"
+        onClick={openCommunity}
+        className="
+          fixed
+          bottom-4
+          left-4
+          right-4
+          z-40
+          inline-flex
+          items-center
+          justify-center
+          gap-3
+          rounded-3xl
+          border
+          border-cyan-200/45
+          bg-gradient-to-r
+          from-cyan-200
+          to-white
+          px-5
+          py-4
+          text-[11px]
+          font-black
+          uppercase
+          tracking-[0.16em]
+          text-black
+          shadow-[0_0_55px_rgba(34,211,238,0.28)]
+          transition-all
+          duration-500
+          hover:-translate-y-0.5
+          hover:shadow-[0_0_75px_rgba(34,211,238,0.38)]
+          sm:left-auto
+          sm:right-6
+          sm:w-auto
+          sm:px-6
+        "
+      >
+
+        <span
+          className="
+            rounded-full
+            border
+            border-black/10
+            bg-black/[0.08]
+            px-2.5
+            py-1
+            text-[9px]
+            tracking-[0.14em]
+          "
+        >
+          Miembro fundador
+        </span>
+
+        Votá lanzamientos
+
+        <ArrowUpRight className="h-4 w-4" />
+
+      </button>
 
       <InnovaPopup
         isOpen={showPopup}

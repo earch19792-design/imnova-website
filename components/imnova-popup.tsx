@@ -7,7 +7,11 @@ import {
   AnimatePresence,
 } from "framer-motion"
 
-import { supabase } from "@/lib/supabase"
+import {
+  getPublicNichesWithSubniches,
+  type StrategicNicheWithSubniches,
+  type StrategicSubniche,
+} from "@/lib/products-service"
 import { useRouter } from "next/navigation"
 
 export type InnovaSurveyIntent = {
@@ -24,6 +28,84 @@ interface InnovaPopupProps {
   surveyIntent?: InnovaSurveyIntent | null
 }
 
+const MAX_SELECTED_SUBNICHES = 5
+
+type RegistrationStep =
+  "interests" |
+  "contact"
+
+// TODO: remover fallback cuando catálogo público esté estable.
+const fallbackPublicNiches: StrategicNicheWithSubniches[] = [
+  {
+    id: "fallback-nutricion-funcional",
+    slug: "nutricion_funcional",
+    name: "Nutrición funcional",
+    public_name: "Nutrición funcional",
+    description: null,
+    icon: "apple",
+    icon_key: "apple",
+    sort_order: 10,
+    subniches: [
+      {
+        id: "fallback-cafe-funcional",
+        niche_id: "fallback-nutricion-funcional",
+        slug: "cafe_funcional",
+        name: "Café funcional",
+        public_name: "Café funcional",
+        description: null,
+        icon: "coffee",
+        icon_key: "coffee",
+        sort_order: 10,
+      },
+      {
+        id: "fallback-proteina-funcional",
+        niche_id: "fallback-nutricion-funcional",
+        slug: "proteina_funcional",
+        name: "Proteína funcional",
+        public_name: "Proteína funcional",
+        description: null,
+        icon: "dumbbell",
+        icon_key: "dumbbell",
+        sort_order: 20,
+      },
+    ],
+  },
+  {
+    id: "fallback-energia-enfoque",
+    slug: "energia_enfoque",
+    name: "Energía natural y enfoque",
+    public_name: "Energía natural y enfoque",
+    description: null,
+    icon: "zap",
+    icon_key: "zap",
+    sort_order: 20,
+    subniches: [
+      {
+        id: "fallback-energia-natural",
+        niche_id: "fallback-energia-enfoque",
+        slug: "energia_natural",
+        name: "Energía natural",
+        public_name: "Energía natural",
+        description: null,
+        icon: "zap",
+        icon_key: "zap",
+        sort_order: 10,
+      },
+      {
+        id: "fallback-enfoque-mental",
+        niche_id: "fallback-energia-enfoque",
+        slug: "enfoque_mental",
+        name: "Enfoque mental",
+        public_name: "Enfoque mental",
+        description: null,
+        icon: "brain",
+        icon_key: "brain",
+        sort_order: 20,
+      },
+    ],
+  },
+]
+
 export default function InnovaPopup({
   isOpen,
   onClose,
@@ -34,10 +116,7 @@ export default function InnovaPopup({
   const [fullName, setFullName] =
     useState("")
 
-  const [password, setPassword] =
-    useState("")
-    const [isLogin, setIsLogin] =
-    useState(false)
+  const isLogin = false
 
   const [countryCode, setCountryCode] =
   useState("+505")
@@ -54,6 +133,36 @@ export default function InnovaPopup({
     selectedNiches,
     setSelectedNiches,
   ] = useState<string[]>([])
+
+  const [
+    nichesWithSubniches,
+    setNichesWithSubniches,
+  ] = useState<StrategicNicheWithSubniches[]>([])
+
+  const [
+    selectedSubnicheIds,
+    setSelectedSubnicheIds,
+  ] = useState<string[]>([])
+
+  const [
+    registrationStep,
+    setRegistrationStep,
+  ] = useState<RegistrationStep>("interests")
+
+  const [
+    isLoadingInterests,
+    setIsLoadingInterests,
+  ] = useState(false)
+
+  const [
+    interestsError,
+    setInterestsError,
+  ] = useState("")
+
+  const [
+    interestSaveWarning,
+    setInterestSaveWarning,
+  ] = useState("")
 
   const [loading, setLoading] =
     useState(false)
@@ -75,12 +184,88 @@ export default function InnovaPopup({
   setMounted(true)
 
 }, [])
+
+  useEffect(() => {
+
+    if (!isOpen) {
+      return
+    }
+
+    setRegistrationStep("interests")
+    setInterestSaveWarning("")
+    setSuccess(false)
+
+  }, [isOpen])
+
+  useEffect(() => {
+
+    if (!isOpen) {
+      return
+    }
+
+    let isMounted = true
+
+    async function loadInterests() {
+      setIsLoadingInterests(true)
+      setInterestsError("")
+
+      try {
+        const publicNiches =
+          await getPublicNichesWithSubniches()
+
+        if (!isMounted) {
+          return
+        }
+
+        if (publicNiches.length === 0) {
+          setNichesWithSubniches(
+            fallbackPublicNiches
+          )
+          setInterestsError(
+            "Estamos preparando los intereses. Puedes registrarte y actualizarlos después."
+          )
+          return
+        }
+
+        setNichesWithSubniches(
+          publicNiches
+        )
+      } catch (error) {
+        console.error(
+          "LOAD PUBLIC INTERESTS ERROR:",
+          error
+        )
+
+        if (!isMounted) {
+          return
+        }
+
+        setNichesWithSubniches(
+          fallbackPublicNiches
+        )
+        setInterestsError(
+          "Estamos preparando los intereses. Puedes registrarte y actualizarlos después."
+        )
+      } finally {
+        if (isMounted) {
+          setIsLoadingInterests(false)
+        }
+      }
+    }
+
+    loadInterests()
+
+    return () => {
+      isMounted = false
+    }
+
+  }, [isOpen])
   
   /* =================================================
-  NICHES
+  POPUP HIGHLIGHTS
   ================================================= */
 
-  const niches = [
+  const popupHighlights = [
 
   {
     title:
@@ -96,7 +281,7 @@ export default function InnovaPopup({
       "⚡",
 
     image:
-      "/images/imnova-fitness.webp",
+      "/images/imnova-community-hero.webp",
 
     quote:
       "⚡ Energía desbloqueada.",
@@ -125,7 +310,7 @@ export default function InnovaPopup({
       "◉",
 
     image:
-      "/images/imnova-tech.webp",
+      "/images/imnova-community-hero.webp",
 
     quote:
       "◉ Bienvenido al futuro.",
@@ -154,7 +339,7 @@ export default function InnovaPopup({
       "☕",
 
     image:
-      "/images/imnova-focus.webp",
+      "/images/imnova-community-hero.webp",
 
     quote:
       "☕ Modo enfoque activado.",
@@ -183,7 +368,7 @@ export default function InnovaPopup({
       "◆",
 
     image:
-      "/images/imnova-lifestyle.webp",
+      "/images/imnova-community-hero.webp",
 
     quote:
       "◆ Simplificá tu vida.",
@@ -212,7 +397,7 @@ export default function InnovaPopup({
       "✨",
 
     image:
-      "/images/imnova-skincare.webp",
+      "/images/imnova-community-hero.webp",
 
     quote:
       "✨ Glow premium activado.",
@@ -241,7 +426,7 @@ export default function InnovaPopup({
       "✺",
 
     image:
-      "/images/imnova-deals.webp",
+      "/images/imnova-community-hero.webp",
 
     quote:
       "✺ Acceso VIP desbloqueado.",
@@ -256,14 +441,107 @@ export default function InnovaPopup({
       "IM NOVA mostrando ofertas premium y acceso VIP futurista.",
   },
 ]
-const [activeNiche, setActiveNiche] =
-  useState(niches[0])
+const [activeHighlight, setActiveHighlight] =
+  useState(popupHighlights[0])
 
 const [isSwitching, setIsSwitching] =
   useState(false)
 
 const [displayText, setDisplayText] =
   useState("")
+
+const interestGroups =
+  nichesWithSubniches
+
+const getPublicName =
+  (
+    item: {
+      public_name: string | null
+      name: string
+    }
+  ) =>
+    item.public_name ||
+    item.name
+
+const isFallbackSubnicheId =
+  (subnicheId: string) =>
+    subnicheId.startsWith("fallback-")
+
+const getSelectedSubnicheNames =
+  (
+    subnicheIds: string[]
+  ) => {
+    const selectedIds =
+      new Set(subnicheIds)
+
+    return interestGroups
+      .flatMap(
+        niche =>
+          niche.subniches || []
+      )
+      .filter(
+        subniche =>
+          selectedIds.has(
+            subniche.id
+          )
+      )
+      .map(getPublicName)
+  }
+
+const toggleSubniche =
+  (
+    subniche: StrategicSubniche,
+    nicheIndex: number
+  ) => {
+    const isSelected =
+      selectedSubnicheIds.includes(
+        subniche.id
+      )
+
+    if (
+      !isSelected &&
+      selectedSubnicheIds.length >=
+        MAX_SELECTED_SUBNICHES
+    ) {
+      setInterestsError(
+        "Puedes seleccionar hasta 5 intereses."
+      )
+      return
+    }
+
+    const nextSubnicheIds =
+      isSelected
+        ? selectedSubnicheIds.filter(
+            subnicheId =>
+              subnicheId !== subniche.id
+          )
+        : [
+            ...selectedSubnicheIds,
+            subniche.id,
+          ]
+
+    setSelectedSubnicheIds(
+      nextSubnicheIds
+    )
+    setSelectedNiches(
+      getSelectedSubnicheNames(
+        nextSubnicheIds
+      )
+    )
+    setInterestsError("")
+    setIsSwitching(true)
+    setActiveHighlight(
+      popupHighlights[
+        nicheIndex % popupHighlights.length
+      ]
+    )
+
+    setTimeout(() => {
+
+      setIsSwitching(false)
+
+    }, 700)
+  }
 
 useEffect(() => {
 
@@ -274,38 +552,99 @@ useEffect(() => {
     return
   }
 
-  setSelectedNiches(prev => [
-    ...new Set([
-      ...prev,
-      ...surveyIntent.niches,
-    ]),
-  ])
+  const normalizedIntentNiches =
+    surveyIntent.niches.map(
+      intentNiche =>
+        intentNiche
+          .toLowerCase()
+          .trim()
+    )
 
-  const matchedNiche =
-    niches.find(niche =>
+  const matchedSubnicheIds =
+    interestGroups
+      .flatMap(
+        niche =>
+          niche.subniches || []
+      )
+      .filter(
+        subniche =>
+          normalizedIntentNiches.some(
+            intentNiche =>
+              [
+                subniche.slug,
+                subniche.name,
+                subniche.public_name || "",
+              ]
+                .map(value =>
+                  value
+                    .toLowerCase()
+                    .trim()
+                )
+                .includes(intentNiche)
+          )
+      )
+      .map(subniche => subniche.id)
+      .slice(0, MAX_SELECTED_SUBNICHES)
+
+  if (matchedSubnicheIds.length > 0) {
+    setSelectedSubnicheIds(prev => {
+      const nextSubnicheIds =
+        Array.from(
+          new Set([
+            ...prev,
+            ...matchedSubnicheIds,
+          ])
+        ).slice(
+          0,
+          MAX_SELECTED_SUBNICHES
+        )
+
+      setSelectedNiches(
+        getSelectedSubnicheNames(
+          nextSubnicheIds
+        )
+      )
+
+      return nextSubnicheIds
+    })
+  } else {
+    setSelectedNiches(prev => [
+      ...new Set([
+        ...prev,
+        ...surveyIntent.niches,
+      ]),
+    ])
+  }
+
+  const matchedHighlight =
+    popupHighlights.find(highlight =>
       surveyIntent.niches.some(
         intentNiche =>
-          niche.title.toLowerCase() ===
+          highlight.title.toLowerCase() ===
           intentNiche.toLowerCase()
       )
     )
 
-  if (matchedNiche) {
-    setActiveNiche(matchedNiche)
+  if (matchedHighlight) {
+    setActiveHighlight(matchedHighlight)
   }
 
   setObjective(
     `Validación comunitaria: ${surveyIntent.productName}`
   )
 
-}, [isOpen, surveyIntent])
+}, [
+  isOpen,
+  surveyIntent,
+  nichesWithSubniches,
+])
 
 useEffect(() => {
 
   if (!isSwitching) return
 
   const text =
-    activeNiche.status
+    activeHighlight.status
 
   let index = 0
 
@@ -329,30 +668,7 @@ useEffect(() => {
   return () =>
     clearInterval(interval)
 
-}, [isSwitching, activeNiche]) 
-
-/* =================================================
-  TOGGLE NICHE
-  ================================================= */
-
-  const toggleNiche = (
-    title: string
-  ) => {
-
-    setSelectedNiches(
-      (prev) =>
-
-        prev.includes(title)
-
-          ? prev.filter(
-              (item) =>
-                item !== title
-            )
-
-          : [...prev, title]
-    )
-
-  }
+}, [isSwitching, activeHighlight])
 
   /* =================================================
   SUBMIT
@@ -364,69 +680,10 @@ useEffect(() => {
       try {
 
         setLoading(true)
+        setInterestSaveWarning("")
 
         /* =========================================
-        LOGIN
-        ========================================= */
-
-        if (isLogin) {
-
-          if (
-            !email ||
-            !password
-          ) {
-
-            alert(
-              "Ingresá email y contraseña"
-            
-            )
-            console.log("HANDLE SUBMIT FUNCIONANDO")
-            return
-
-          }
-
-          const { error } =
-            await supabase.auth.signInWithPassword({
-
-              email,
-
-              password,
-
-            })
-
-          if (error) {
-            throw error
-          }
-
-          localStorage.setItem(
-            "innova-access",
-            "true"
-          )
-
-          localStorage.setItem(
-            "innova-access-expiration",
-            String(
-              Date.now() +
-              24 * 60 * 60 * 1000
-            )
-          )
-
-          setSuccess(true)
-
-          setTimeout(() => {
-
-            onClose()
-
-            router.push("/")
-
-          }, 1200)
-
-          return
-
-        }
-
-        /* =========================================
-        SIGNUP VALIDATION
+        COMMUNITY REGISTRATION VALIDATION
         ========================================= */
 
         const surveyRecord =
@@ -443,29 +700,36 @@ useEffect(() => {
 
         const effectiveObjective =
           surveyRecord ||
-          objective
+          objective ||
+          "Registro comunidad IMNOVA"
+
+        const normalizedPhone =
+          phone.replace(/\D/g, "")
+
+        const trimmedEmail =
+          email.trim()
 
        if (
-  !fullName ||
-  !phone ||
-  !email ||
-  !password ||
-  !effectiveObjective
+  !fullName.trim() ||
+  (
+    !normalizedPhone &&
+    !trimmedEmail
+  )
 ) {
 
   alert(
-    "Completá todos los campos"
+    "Completá tu nombre y al menos WhatsApp o correo"
   )
 
   return
 
 }
         if (
-          selectedNiches.length === 0
+          selectedSubnicheIds.length === 0
         ) {
 
           alert(
-            "Seleccioná al menos un nicho"
+            "Selecciona al menos un interés"
           )
 
           return
@@ -473,68 +737,91 @@ useEffect(() => {
         }
 
         /* =========================================
-        SIGN UP AUTH
-        ========================================= */
-
-        const {
-          data: authData,
-          error: authError,
-        } = await supabase.auth.signUp({
-
-          email,
-
-          password,
-
-        })
-
-        if (authError) {
-          throw authError
-        }
-
-        /* =========================================
         SAVE USER DATA
         ========================================= */
 
-        const cleanPhone = (
-  countryCode +
-  phone.replace(/\D/g, "")
-).trim()
-console.log({
-  countryCode,
-  phone,
-  cleanPhone,
-})
+        const selectedInterestNames =
+          getSelectedSubnicheNames(
+            selectedSubnicheIds
+          )
 
-        const {
-          error,
-        } = await supabase
+        const normalizedSubnicheIds =
+          selectedSubnicheIds.filter(
+            subnicheId =>
+              !isFallbackSubnicheId(
+                subnicheId
+              )
+          )
 
-          .from("subscribers")
-
-          .insert([
+        const registerResponse =
+          await fetch(
+            "/api/community/register",
             {
-              nombre:
-                fullName,
+              method:
+                "POST",
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+              body:
+                JSON.stringify({
+                  name:
+                    fullName.trim(),
+                  email:
+                    trimmedEmail,
+                  whatsapp:
+                    phone.trim(),
+                  country:
+                    countryCode,
+                  selectedSubnicheIds:
+                    normalizedSubnicheIds,
+                  selectedSubnicheNames:
+                    selectedInterestNames.length > 0
+                      ? selectedInterestNames
+                      : selectedNiches,
+                  objective:
+                    effectiveObjective,
+                  source:
+                    "community_popup",
+                  honeypot:
+                    "",
+                }),
+            }
+          )
 
-              telefono:
-                cleanPhone,
+        const registerResult =
+          await registerResponse.json()
+            .catch(() => null)
 
-              email:
-                email,
+        if (
+          !registerResponse.ok ||
+          !registerResult?.success
+        ) {
+          throw new Error(
+            registerResult?.error ||
+            "Error registrando tu participación"
+          )
+        }
 
-              nichos:
-                selectedNiches,
+        if (
+          Array.isArray(
+            registerResult.warnings
+          ) &&
+          registerResult.warnings.length > 0
+        ) {
+          console.warn(
+            "COMMUNITY REGISTER WARNINGS:",
+            registerResult.warnings
+          )
+        }
 
-              auth_id:
-  authData.user?.id,
-
-objetivo_principal:
-  effectiveObjective,
-            },
-          ])
-
-        if (error) {
-          throw error
+        if (
+          normalizedSubnicheIds.length === 0 &&
+          selectedSubnicheIds.length > 0
+        ) {
+          console.warn(
+            "COMMUNITY REGISTER LEGACY INTERESTS ONLY: selected interests did not include public subniche IDs."
+          )
         }
 
         localStorage.setItem(
@@ -562,8 +849,9 @@ objetivo_principal:
         setFullName("")
         setPhone("")
         setEmail("")
-        setPassword("")
         setSelectedNiches([])
+        setSelectedSubnicheIds([])
+        setRegistrationStep("interests")
 
       } catch (err: any) {
 
@@ -580,7 +868,7 @@ objetivo_principal:
 
           err?.error_description ||
 
-          "Error autenticando usuario"
+          "Error registrando tu participación"
 
         )
 
@@ -589,6 +877,26 @@ objetivo_principal:
         setLoading(false)
 
       }
+
+    }
+
+  const handlePrimaryAction =
+    async () => {
+
+      if (registrationStep === "interests") {
+        if (selectedSubnicheIds.length === 0) {
+          alert(
+            "Selecciona al menos un interés"
+          )
+
+          return
+        }
+
+        setRegistrationStep("contact")
+        return
+      }
+
+      await handleSubmit()
 
     }
 
@@ -627,7 +935,7 @@ objetivo_principal:
 
           {/* BACKGROUND */}
           <motion.div
-  key={activeNiche.title}
+  key={activeHighlight.title}
   initial={{
     opacity: 0,
     scale: 0.7,
@@ -650,7 +958,7 @@ objetivo_principal:
     -translate-y-1/2
     rounded-full
     blur-3xl
-    ${activeNiche.energy}
+    ${activeHighlight.energy}
   `}
 />
 
@@ -737,11 +1045,13 @@ objetivo_principal:
 
               <div
                 className="
+                  hidden
                   relative
                   overflow-hidden
                   border-b
                   border-white/10
                   p-8
+                  lg:block
                   lg:border-b-0
                   lg:border-r
                   lg:p-12
@@ -800,7 +1110,7 @@ objetivo_principal:
                   "
                 >
 
-                  Decidí lo próximo
+                  La comunidad decide
 
                   <span
                     className="
@@ -814,7 +1124,7 @@ objetivo_principal:
                     "
                   >
 
-                    con IMNOVA™
+                    lo próximo
 
                   </span>
 
@@ -823,11 +1133,11 @@ objetivo_principal:
                 <div
                   className="
                     relative
-                    mt-16
+                    mt-10
                     flex
                     items-center
                     justify-center
-                    min-h-[500px]
+                    min-h-[420px]
                   "
                 >
 
@@ -851,9 +1161,9 @@ objetivo_principal:
                   />
 
                   <motion.img
-  key={activeNiche.image}
-  src={activeNiche.image}
-  alt={activeNiche.title}
+  key={activeHighlight.image}
+  src={activeHighlight.image}
+  alt="Comunidad IMNOVA participando en innovación y selección de intereses."
   initial={{
     opacity: 0,
     scale: 0.92,
@@ -897,7 +1207,8 @@ objetivo_principal:
               <div
                 className="
                   relative
-                  p-8
+                  p-6
+                  sm:p-8
                   lg:p-12
                 "
               >
@@ -906,47 +1217,13 @@ objetivo_principal:
 
                 <div
                   className="
-                    mb-8
+                    mb-6
                     flex
                     items-center
-                    justify-between
+                    justify-end
                     gap-4
                   "
                 >
-
-                  <div>
-
-                    <p
-                      className="
-                        text-sm
-                        text-white/40
-                      "
-                    >
-
-                      ¿Ya sos parte de la comunidad IMNOVA™?
-
-                    </p>
-
-                    <button
-                      onClick={() =>
-                        setIsLogin(true)
-                      }
-                      className="
-                        mt-1
-                        text-sm
-                        font-medium
-                        text-cyan-200
-                        transition-all
-                        duration-300
-                        hover:text-cyan-100
-                      "
-                    >
-
-                      Iniciar sesión →
-
-                    </button>
-
-                  </div>
 
                   <button
                     type="button"
@@ -988,25 +1265,167 @@ objetivo_principal:
                   {
                     isLogin
                       ? "Bienvenido de nuevo"
-                      : "Elegí tus intereses IMNOVA™"
+                      : "Decidí los próximos lanzamientos de IMNOVA"
                   }
 
                 </h3>
-                {isLogin && (
 
-  <button
-    onClick={() => setIsLogin(false)}
+                {!isLogin && (
+
+                  <p
+                    className="
+                      mt-4
+                      text-sm
+                      leading-6
+                      text-white/60
+                    "
+                  >
+
+                    Únete como miembro fundador, elige tus intereses y participa en encuestas que ayudan a decidir qué productos avanzan, se ajustan o llegan al mercado.
+
+                  </p>
+
+                )}
+{!isLogin && (
+
+  <div
     className="
-      mt-4
-      text-sm
-      text-cyan-200
-      hover:text-cyan-100
+      mt-5
+      grid
+      gap-3
+      sm:grid-cols-3
     "
   >
 
-    ← Crear cuenta nueva
+    {[
+      "Vota ideas antes de que se fabriquen",
+      "Recibe acceso anticipado a lanzamientos",
+      "Participa en pruebas, encuestas y beneficios exclusivos",
+    ].map((benefit, index) => (
 
-  </button>
+      <div
+        key={benefit}
+        className="
+          rounded-2xl
+          border
+          border-white/10
+          bg-white/[0.04]
+          p-4
+        "
+      >
+
+        <span
+          className="
+            flex
+            h-7
+            w-7
+            items-center
+            justify-center
+            rounded-full
+            border
+            border-cyan-300/25
+            bg-cyan-300/[0.08]
+            text-[10px]
+            font-black
+            text-cyan-100
+          "
+        >
+
+          {index + 1}
+
+        </span>
+
+        <p
+          className="
+            mt-3
+            text-xs
+            font-semibold
+            leading-5
+            text-white/75
+          "
+        >
+
+          {benefit}
+
+        </p>
+
+      </div>
+
+    ))}
+
+  </div>
+
+)}
+
+{!isLogin && (
+
+  <div
+    className="
+      mt-5
+      grid
+      grid-cols-2
+      gap-3
+    "
+  >
+
+    {[
+      {
+        key:
+          "interests",
+        label:
+          "1. Intereses",
+      },
+      {
+        key:
+          "contact",
+        label:
+          "2. Tus datos",
+      },
+    ].map(step => {
+      const active =
+        registrationStep === step.key
+
+      return (
+
+        <div
+          key={step.key}
+          className={`
+            rounded-full
+            border
+            px-4
+            py-2
+            text-center
+            text-[10px]
+            font-black
+            uppercase
+            tracking-[0.16em]
+            transition-all
+            duration-300
+
+            ${
+              active
+                ? `
+                  border-cyan-300/40
+                  bg-cyan-300/[0.12]
+                  text-cyan-50
+                `
+                : `
+                  border-white/10
+                  bg-white/[0.03]
+                  text-white/35
+                `
+            }
+          `}
+        >
+
+          {step.label}
+
+        </div>
+
+      )
+    })}
+
+  </div>
 
 )}
 
@@ -1017,7 +1436,7 @@ objetivo_principal:
     border
     border-cyan-400/20
     bg-gradient-to-br
-    ${activeNiche.glow}
+    ${activeHighlight.glow}
     p-5
     backdrop-blur-xl
   `}
@@ -1034,7 +1453,7 @@ objetivo_principal:
     {
        isSwitching
     ? `${displayText}|`
-    : activeNiche.quote
+    : activeHighlight.quote
     }
 
   </div>
@@ -1089,7 +1508,30 @@ objetivo_principal:
 )}
                {/* FORM */}
 
-<div className="mt-6 space-y-4">
+<div
+  className={
+    registrationStep === "contact"
+      ? "mt-6 space-y-4"
+      : "hidden"
+  }
+>
+
+  <div
+    className="
+      rounded-2xl
+      border
+      border-cyan-300/15
+      bg-cyan-300/[0.06]
+      p-4
+      text-sm
+      leading-6
+      text-cyan-50/80
+    "
+  >
+
+    Déjanos tu WhatsApp o correo para enviarte encuestas y oportunidades conectadas a los intereses que elegiste.
+
+  </div>
 
   {!isLogin && (
 
@@ -1209,65 +1651,6 @@ objetivo_principal:
     </>
 
   )}
-   {/* OBJETIVO PRINCIPAL */}
-
-{!isLogin && (
-
-  <select
-    value={objective}
-    onChange={(e) =>
-      setObjective(
-        e.target.value
-      )
-    }
-    className="
-      w-full
-      rounded-2xl
-      border
-      border-white/10
-      bg-white/[0.06]
-      px-6
-      py-4
-      text-white
-      outline-none
-    "
-  >
-
-    <option value="">
-      🎯 ¿Qué querés mejorar o descubrir primero?
-    </option>
-
-    {surveyIntent && (
-
-      <option value={`Validación comunitaria: ${surveyIntent.productName}`}>
-        Encuesta: {surveyIntent.productName}
-      </option>
-
-    )}
-
-    <option value="fitness">
-      🏋️ Mejorar mi físico
-    </option>
-
-    <option value="productividad">
-      🧠 Aumentar mi productividad
-    </option>
-
-    <option value="imagen">
-      ✨ Mejorar mi imagen personal
-    </option>
-
-    <option value="salud">
-      🌱 Tener una vida más saludable
-    </option>
-
-    <option value="emprender">
-      🚀 Emprender e innovar
-    </option>
-
-  </select>
-
-)}
   {/* EMAIL */}
 
   <input
@@ -1292,142 +1675,325 @@ objetivo_principal:
     "
   />
 
-  {/* PASSWORD */}
-
-  <input
-    type="password"
-    value={password}
-    onChange={(e) =>
-      setPassword(
-        e.target.value
-      )
-    }
-    placeholder="Contraseña"
-    className="
-      w-full
-      rounded-2xl
-      border
-      border-white/10
-      bg-white/[0.06]
-      px-6
-      py-4
-      text-white
-      outline-none
-      placeholder:text-white/45
-    "
-  />
-
 </div>
 
 {/* NICHES */}
 
-{!isLogin && (
+{!isLogin && registrationStep === "interests" && (
 
   <div
     className="
       mt-6
-      grid
-      grid-cols-2
-      gap-4
+      space-y-4
     "
   >
 
-    {niches.map(
-      (niche) => {
+    <div className="space-y-2">
 
-        const active =
-          selectedNiches.includes(
-            niche.title
-          )
+      <h4
+        className="
+          text-base
+          font-bold
+          text-white
+        "
+      >
 
-        return (
+        ¿Qué temas te interesan más?
 
-          <button
-            key={niche.title}
-            type="button"
-           onClick={() => {
+      </h4>
 
-  toggleNiche(
-    niche.title
-  )
+      <p
+        className="
+          text-sm
+          leading-6
+          text-white/60
+        "
+      >
 
-  setIsSwitching(true)
+        Selecciona hasta 5 temas. Esto nos ayuda a enviarte encuestas y lanzamientos relevantes.
 
-setActiveNiche(niche)
+      </p>
 
-setTimeout(() => {
+    </div>
 
-  setIsSwitching(false)
+    {isLoadingInterests && (
 
-}, 700)
-}}
+      <div
+        className="
+          rounded-2xl
+          border
+          border-white/10
+          bg-white/[0.04]
+          px-4
+          py-3
+          text-sm
+          text-cyan-100
+        "
+      >
 
-            className={`
-              rounded-[28px]
-              border
-              p-5
-              text-left
-              transition-all
-              duration-500
+        Cargando intereses...
 
-              ${
-                active
+      </div>
 
-                  ? `
-                    border-cyan-400/40
-                    bg-cyan-400/[0.10]
-                    shadow-[0_0_40px_rgba(34,211,238,0.15)]
-                  `
+    )}
 
-                  : `
-                    border-white/10
-                    bg-white/[0.04]
-                  `
-              }
-            `}
-          >
+    {interestsError && (
+
+      <div
+        className="
+          rounded-2xl
+          border
+          border-amber-200/20
+          bg-amber-200/[0.06]
+          px-4
+          py-3
+          text-sm
+          leading-6
+          text-amber-50/85
+        "
+      >
+
+        {interestsError}
+
+      </div>
+
+    )}
+
+    <div
+      className="
+        max-h-[280px]
+        sm:max-h-[320px]
+        lg:max-h-[360px]
+        space-y-4
+        overflow-y-auto
+        pr-1
+      "
+    >
+
+      {interestGroups.map(
+        (niche, nicheIndex) => {
+          const subniches =
+            niche.subniches || []
+
+          const selectedInGroup =
+            subniches.filter(
+              subniche =>
+                selectedSubnicheIds.includes(
+                  subniche.id
+                )
+            ).length
+
+          return (
 
             <div
+              key={niche.id}
               className="
-                mb-4
-                text-2xl
+                rounded-2xl
+                border
+                border-white/10
+                bg-white/[0.04]
+                p-4
               "
             >
 
-              {niche.icon}
+              <div
+                className="
+                  flex
+                  items-start
+                  justify-between
+                  gap-3
+                "
+              >
+
+                <div>
+
+                  <h5
+                    className="
+                      text-sm
+                      font-bold
+                      text-white
+                    "
+                  >
+
+                    {getPublicName(niche)}
+
+                  </h5>
+
+                  {niche.description && (
+
+                    <p
+                      className="
+                        mt-1
+                        text-xs
+                        leading-5
+                        text-white/55
+                      "
+                    >
+
+                      {niche.description}
+
+                    </p>
+
+                  )}
+
+                </div>
+
+                {selectedInGroup > 0 && (
+
+                  <span
+                    className="
+                      shrink-0
+                      rounded-full
+                      border
+                      border-cyan-300/25
+                      bg-cyan-300/[0.08]
+                      px-2.5
+                      py-1
+                      text-[10px]
+                      font-bold
+                      uppercase
+                      tracking-[0.18em]
+                      text-cyan-100
+                    "
+                  >
+
+                    {selectedInGroup}
+
+                  </span>
+
+                )}
+
+              </div>
+
+              <div
+                className="
+                  mt-3
+                  flex
+                  flex-wrap
+                  gap-2
+                "
+              >
+
+                {subniches.map(
+                  subniche => {
+                    const active =
+                      selectedSubnicheIds.includes(
+                        subniche.id
+                      )
+
+                    const disabled =
+                      !active &&
+                      selectedSubnicheIds.length >=
+                        MAX_SELECTED_SUBNICHES
+
+                    return (
+
+                      <button
+                        key={subniche.id}
+                        type="button"
+                        disabled={disabled}
+                        onClick={() =>
+                          toggleSubniche(
+                            subniche,
+                            nicheIndex
+                          )
+                        }
+                        className={`
+                          rounded-full
+                          border
+                          px-3
+                          py-2
+                          text-left
+                          text-xs
+                          font-semibold
+                          leading-5
+                          transition-all
+                          duration-300
+
+                          ${
+                            active
+
+                              ? `
+                                border-cyan-300/50
+                                bg-cyan-300/[0.14]
+                                text-cyan-50
+                              `
+
+                              : disabled
+                                ? `
+                                  cursor-not-allowed
+                                  border-white/5
+                                  bg-white/[0.02]
+                                  text-white/25
+                                `
+
+                                : `
+                                  border-white/10
+                                  bg-white/[0.05]
+                                  text-white/70
+                                  hover:border-cyan-300/25
+                                  hover:bg-cyan-300/[0.08]
+                                  hover:text-cyan-50
+                                `
+                          }
+                        `}
+                      >
+
+                        {getPublicName(subniche)}
+
+                      </button>
+
+                    )
+                  }
+                )}
+
+                {subniches.length === 0 && (
+
+                  <p
+                    className="
+                      text-xs
+                      text-white/45
+                    "
+                  >
+
+                    Estamos preparando estos intereses.
+
+                  </p>
+
+                )}
+
+              </div>
 
             </div>
 
-            <h4
-              className="
-                text-sm
-                font-bold
-                text-white
-              "
-            >
+          )
+        }
+      )}
 
-              {niche.title}
+    </div>
 
-            </h4>
+    <p
+      className="
+        text-xs
+        text-white/45
+      "
+    >
 
-            <p
-              className="
-                mt-2
-                text-xs
-                text-white/60
-              "
-            >
+      {selectedSubnicheIds.length}/{MAX_SELECTED_SUBNICHES} intereses seleccionados
 
-              {niche.subtitle}
+    </p>
 
-            </p>
+    <p
+      className="
+        text-xs
+        leading-5
+        text-white/45
+      "
+    >
 
-          </button>
+      Usamos tus intereses para enviarte contenido relevante, no mensajes genéricos.
 
-        )
-
-      }
-    )}
+    </p>
 
   </div>
 
@@ -1435,12 +2001,53 @@ setTimeout(() => {
 
 {/* BUTTON */}
 
+{registrationStep === "contact" && !isLogin && (
+
+  <button
+    type="button"
+    onClick={() =>
+      setRegistrationStep("interests")
+    }
+    className="
+      mt-5
+      w-full
+      rounded-2xl
+      border
+      border-white/10
+      bg-white/[0.04]
+      px-5
+      py-3
+      text-xs
+      font-bold
+      uppercase
+      tracking-[0.18em]
+      text-white/60
+      transition-all
+      duration-300
+      hover:border-cyan-300/25
+      hover:bg-cyan-300/[0.08]
+      hover:text-cyan-50
+    "
+  >
+
+    Cambiar intereses
+
+  </button>
+
+)}
+
 <button
   type="button"
-  onClick={handleSubmit}
-  disabled={loading}
+  onClick={handlePrimaryAction}
+  disabled={
+    loading ||
+    (
+      registrationStep === "interests" &&
+      isLoadingInterests
+    )
+  }
   className="
-    mt-8
+    mt-6
     w-full
     rounded-3xl
     border
@@ -1465,12 +2072,62 @@ setTimeout(() => {
   {
     loading
       ? "PROCESANDO..."
-      : isLogin
-        ? "INICIAR SESIÓN"
-        : "UNIRME A LA COMUNIDAD"
+      : registrationStep === "interests"
+        ? "CONTINUAR"
+        : "UNIRME COMO MIEMBRO FUNDADOR"
   }
 
-</button>               {/* SUCCESS */}
+</button>
+
+{!isLogin && (
+
+  <p
+    className="
+      mt-3
+      text-center
+      text-xs
+      leading-5
+      text-white/45
+    "
+  >
+
+    Sin spam. Solo avances, encuestas y oportunidades conectadas a tus intereses.
+
+  </p>
+
+)}
+
+                {interestSaveWarning && (
+
+                  <motion.div
+                    initial={{
+                      opacity: 0,
+                      y: 10,
+                    }}
+                    animate={{
+                      opacity: 1,
+                      y: 0,
+                    }}
+                    className="
+                      mt-5
+                      rounded-2xl
+                      border
+                      border-amber-200/20
+                      bg-amber-200/[0.06]
+                      p-5
+                      text-sm
+                      leading-6
+                      text-amber-50/85
+                    "
+                  >
+
+                    {interestSaveWarning}
+
+                  </motion.div>
+
+                )}
+
+                {/* SUCCESS */}
 
                 {success && (
 
@@ -1494,7 +2151,7 @@ setTimeout(() => {
                     "
                   >
 
-                    ✓ Ya sos parte de la comunidad IMNOVA.
+                    Ya eres parte de la comunidad IMNOVA. Te enviaremos encuestas, avances y oportunidades según tus intereses.
 
                   </motion.div>
 
