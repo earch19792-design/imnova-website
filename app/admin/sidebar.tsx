@@ -254,18 +254,18 @@ export function Sidebar({
             </div>
           </button>
         ))}
-      </div>
 
-      <div
-        className="
-          shrink-0
-          border-t
-          border-white/10
-          p-6
-        "
-      >
         <div
           className="
+            mt-5
+            border-t
+            border-white/10
+            pt-5
+            pb-6
+          "
+        >
+          <div
+            className="
             rounded-2xl
             border
             border-cyan-400/20
@@ -343,6 +343,7 @@ export function Sidebar({
             ))}
           </div>
         </div>
+      </div>
       </div>
     </aside>
   )
