@@ -801,6 +801,107 @@ function getOfficialFlowPercent(
   )}%`
 }
 
+type IdeaVoteType =
+  | "interested"
+  | "not_interested"
+  | "would_buy"
+  | "wants_trial"
+
+type IdeaVoteStatus =
+  | "idle"
+  | "loading"
+  | "success"
+  | "error"
+
+const ideaVoteOptions: Array<{
+  type: IdeaVoteType
+  label: string
+  detail: string
+}> = [
+  {
+    type: "interested",
+    label: "Me interesa",
+    detail: "Quiero seguir viendo esta idea.",
+  },
+  {
+    type: "not_interested",
+    label: "No me interesa",
+    detail: "No conecta conmigo por ahora.",
+  },
+  {
+    type: "would_buy",
+    label: "Lo compraría",
+    detail: "Si sale bien, podría comprarlo.",
+  },
+  {
+    type: "wants_trial",
+    label: "Quiero prueba",
+    detail: "Me interesa probarlo primero.",
+  },
+]
+
+function isIdeaVoteType(
+  value: string | null
+): value is IdeaVoteType {
+  return ideaVoteOptions.some(
+    option =>
+      option.type === value
+  )
+}
+
+function getIdeaKey(
+  product: LiveProduct
+) {
+  return (
+    product.slug ||
+    product.name
+  )
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, 160)
+}
+
+function getIdeaVoteTargetKey(
+  product: LiveProduct
+) {
+  return product.id
+    ? `product:${product.id}`
+    : `idea:${getIdeaKey(product)}`
+}
+
+function getIdeaVoteSelectionStorageKey(
+  targetKey: string
+) {
+  return `imnova_idea_vote_selection:${targetKey}`
+}
+
+function getOrCreateIdeaVoteClientKey() {
+  const storageKey =
+    "imnova_idea_vote_client_key"
+
+  const existingKey =
+    window.localStorage.getItem(storageKey)
+
+  if (existingKey) {
+    return existingKey
+  }
+
+  const generatedKey =
+    globalThis.crypto?.randomUUID?.() ||
+    `local-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}`
+
+  window.localStorage.setItem(
+    storageKey,
+    generatedKey
+  )
+
+  return generatedKey
+}
+
 type InnovationsSectionProps = {
   onJoinCommunity?: () => void
 }
@@ -813,7 +914,41 @@ export function InnovationsSection({
     setProducts,
   ] = useState<LiveProduct[]>([])
 
+  const [
+    selectedIdeaVote,
+    setSelectedIdeaVote,
+  ] = useState<IdeaVoteType | null>(null)
+
+  const [
+    ideaVoteStatus,
+    setIdeaVoteStatus,
+  ] = useState<IdeaVoteStatus>("idle")
+
+  const [
+    ideaVoteMessage,
+    setIdeaVoteMessage,
+  ] = useState("")
+
   const handleVotingInterestClick = () => {
+    const ideaVotePanel =
+      document.getElementById(
+        "idea-vote-panel"
+      )
+
+    if (ideaVotePanel) {
+      ideaVotePanel.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      })
+      return
+    }
+
+    if (onJoinCommunity) {
+      onJoinCommunity()
+    }
+  }
+
+  const handleIdeaVoteCommunityClick = () => {
     if (onJoinCommunity) {
       onJoinCommunity()
       return
@@ -1008,6 +1143,13 @@ export function InnovationsSection({
   const featuredComingSoonProduct =
     comingSoonProducts[0]
 
+  const featuredIdeaVoteTargetKey =
+    featuredComingSoonProduct
+      ? getIdeaVoteTargetKey(
+          featuredComingSoonProduct
+        )
+      : ""
+
   const featuredHasPositiveValidation =
     featuredComingSoonProduct
       ? hasRecordedPositiveValidation(
@@ -1061,6 +1203,132 @@ export function InnovationsSection({
       comingSoonProducts.length - 4,
       0
     )
+
+  useEffect(() => {
+    if (!featuredIdeaVoteTargetKey) {
+      setSelectedIdeaVote(null)
+      setIdeaVoteStatus("idle")
+      setIdeaVoteMessage("")
+      return
+    }
+
+    try {
+      const storedVote =
+        window.localStorage.getItem(
+          getIdeaVoteSelectionStorageKey(
+            featuredIdeaVoteTargetKey
+          )
+        )
+
+      if (isIdeaVoteType(storedVote)) {
+        setSelectedIdeaVote(storedVote)
+        setIdeaVoteStatus("success")
+        setIdeaVoteMessage(
+          "Gracias. Tu respuesta ayuda a decidir los próximos lanzamientos."
+        )
+        return
+      }
+    } catch (error) {
+      console.warn(
+        "IDEA VOTE LOCAL STATE WARNING:",
+        error
+      )
+    }
+
+    setSelectedIdeaVote(null)
+    setIdeaVoteStatus("idle")
+    setIdeaVoteMessage("")
+  }, [
+    featuredIdeaVoteTargetKey,
+  ])
+
+  const handleIdeaVote = async (
+    voteType: IdeaVoteType
+  ) => {
+    if (!featuredComingSoonProduct) {
+      return
+    }
+
+    const previousVote =
+      selectedIdeaVote
+
+    setSelectedIdeaVote(voteType)
+    setIdeaVoteStatus("loading")
+    setIdeaVoteMessage("")
+
+    try {
+      const clientVoteKey =
+        getOrCreateIdeaVoteClientKey()
+
+      const response =
+        await fetch(
+          "/api/community/vote",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              product_id:
+                featuredComingSoonProduct.id,
+              idea_key:
+                getIdeaKey(
+                  featuredComingSoonProduct
+                ),
+              idea_title:
+                featuredComingSoonProduct.name,
+              vote_type:
+                voteType,
+              source:
+                "idea_active",
+              client_vote_key:
+                clientVoteKey,
+              honeypot:
+                "",
+            }),
+          }
+        )
+
+      const result =
+        await response
+          .json()
+          .catch(() => null)
+
+      if (
+        !response.ok ||
+        !result?.ok
+      ) {
+        throw new Error(
+          result?.error ||
+          "idea_vote_failed"
+        )
+      }
+
+      window.localStorage.setItem(
+        getIdeaVoteSelectionStorageKey(
+          featuredIdeaVoteTargetKey
+        ),
+        voteType
+      )
+
+      setIdeaVoteStatus("success")
+      setIdeaVoteMessage(
+        "Gracias. Tu respuesta ayuda a decidir los próximos lanzamientos."
+      )
+    } catch (error) {
+      console.error(
+        "COMMUNITY IDEA VOTE UI ERROR:",
+        error
+      )
+
+      setSelectedIdeaVote(previousVote)
+      setIdeaVoteStatus("error")
+      setIdeaVoteMessage(
+        "No pudimos registrar tu voto ahora. Intenta de nuevo."
+      )
+    }
+  }
 
   return (
     <section
@@ -1148,7 +1416,7 @@ export function InnovationsSection({
                 onClick={handleVotingInterestClick}
                 className="inline-flex shrink-0 items-center justify-center gap-2 rounded-2xl border border-cyan-200/25 bg-cyan-200 px-5 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-black transition hover:-translate-y-0.5 hover:bg-white"
               >
-                Votar interés
+                Votar ahora
                 <MessageCircle className="h-4 w-4" />
               </button>
             </motion.div>
@@ -1546,10 +1814,10 @@ export function InnovationsSection({
                 </div>
 
                 <a
-                  href="#contact"
+                  href="#idea-vote-panel"
                   className="relative mt-5 inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-amber-200/25 bg-amber-200/[0.10] px-5 py-4 text-[10px] font-black uppercase tracking-[0.18em] text-amber-50 transition hover:border-amber-100/45 hover:bg-amber-200/[0.16]"
                 >
-                  Votar intereses
+                  Votar esta idea
                   <MessageCircle className="h-4 w-4" />
                 </a>
 
@@ -1692,6 +1960,126 @@ export function InnovationsSection({
                               Si la comunidad responde, IMNOVA la convierte en
                               desarrollo real.
                             </p>
+                          </div>
+
+                          <div
+                            id="idea-vote-panel"
+                            className="scroll-mt-28 rounded-3xl border border-cyan-200/20 bg-[linear-gradient(135deg,rgba(34,211,238,0.10),rgba(251,191,36,0.055),rgba(255,255,255,0.03))] p-5 shadow-[0_24px_80px_rgba(34,211,238,0.08)] md:col-span-2"
+                          >
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div>
+                                <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/65">
+                                  Votación real
+                                </p>
+                                <h4 className="mt-3 text-2xl font-black leading-tight text-white">
+                                  ¿Qué harías si IMNOVA lanza esta idea?
+                                </h4>
+                                <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
+                                  Tu voto ayuda a decidir si esta idea avanza, se
+                                  ajusta o se pausa.
+                                </p>
+                              </div>
+
+                              {ideaVoteStatus === "loading" && (
+                                <span className="inline-flex items-center gap-2 rounded-full border border-cyan-200/20 bg-cyan-300/[0.08] px-3 py-2 text-[9px] font-black uppercase tracking-[0.16em] text-cyan-100">
+                                  <Activity className="h-3.5 w-3.5 animate-pulse" />
+                                  Guardando
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                              {ideaVoteOptions.map(
+                                option => {
+                                  const isSelected =
+                                    selectedIdeaVote ===
+                                    option.type
+
+                                  return (
+                                    <button
+                                      key={option.type}
+                                      type="button"
+                                      onClick={() =>
+                                        handleIdeaVote(
+                                          option.type
+                                        )
+                                      }
+                                      disabled={
+                                        ideaVoteStatus ===
+                                        "loading"
+                                      }
+                                      className={
+                                        isSelected
+                                          ? "group rounded-2xl border border-cyan-100/55 bg-cyan-200 px-4 py-4 text-left text-black shadow-[0_0_34px_rgba(34,211,238,0.20)] transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-80"
+                                          : "group rounded-2xl border border-white/10 bg-black/30 px-4 py-4 text-left text-white transition hover:-translate-y-0.5 hover:border-cyan-200/35 hover:bg-cyan-300/[0.08] disabled:cursor-wait disabled:opacity-60"
+                                      }
+                                      aria-pressed={
+                                        isSelected
+                                      }
+                                    >
+                                      <span className="flex items-center justify-between gap-3">
+                                        <span className="text-sm font-black">
+                                          {option.label}
+                                        </span>
+                                        <span
+                                          className={
+                                            isSelected
+                                              ? "flex h-8 w-8 items-center justify-center rounded-full bg-black text-cyan-100"
+                                              : "flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-zinc-400 group-hover:border-cyan-200/30 group-hover:text-cyan-100"
+                                          }
+                                        >
+                                          <Vote className="h-4 w-4" />
+                                        </span>
+                                      </span>
+                                      <span
+                                        className={
+                                          isSelected
+                                            ? "mt-2 block text-xs leading-5 text-black/70"
+                                            : "mt-2 block text-xs leading-5 text-zinc-500"
+                                        }
+                                      >
+                                        {option.detail}
+                                      </span>
+                                    </button>
+                                  )
+                                }
+                              )}
+                            </div>
+
+                            {ideaVoteMessage && (
+                              <div
+                                className={
+                                  ideaVoteStatus ===
+                                  "error"
+                                    ? "mt-4 rounded-2xl border border-amber-200/20 bg-amber-200/[0.08] px-4 py-3 text-xs leading-5 text-amber-100"
+                                    : "mt-4 rounded-2xl border border-emerald-200/20 bg-emerald-300/[0.08] px-4 py-4 text-xs leading-5 text-emerald-100"
+                                }
+                              >
+                                <p>
+                                  {ideaVoteMessage}
+                                </p>
+
+                                {ideaVoteStatus ===
+                                  "success" && (
+                                  <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-white/10 bg-black/25 p-4 sm:flex-row sm:items-center sm:justify-between">
+                                    <p className="text-xs leading-5 text-emerald-50/85">
+                                      ¿Quieres recibir avances de esta idea por
+                                      WhatsApp?
+                                    </p>
+                                    <button
+                                      type="button"
+                                      onClick={
+                                        handleIdeaVoteCommunityClick
+                                      }
+                                      className="inline-flex items-center justify-center gap-2 rounded-2xl border border-cyan-100/35 bg-cyan-200 px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-black transition hover:-translate-y-0.5 hover:bg-white"
+                                    >
+                                      Unirme a la comunidad
+                                      <MessageCircle className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>

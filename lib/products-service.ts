@@ -3794,6 +3794,288 @@ export async function createSurveyResponse(
 
 }
 
+export type CommunityIdeaVoteType =
+  | "interested"
+  | "not_interested"
+  | "would_buy"
+  | "wants_trial"
+
+export type CommunityIdeaVote = {
+  id: string
+  product_id: string | null
+  idea_key: string | null
+  idea_title: string
+  subscriber_id: string | null
+  email: string | null
+  phone: string | null
+  vote_type: CommunityIdeaVoteType
+  source: string | null
+  strategic_niche_id: string | null
+  subniche_id: string | null
+  area_id: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export type CommunityIdeaVoteSummary = {
+  target_key: string
+  product_id: string | null
+  idea_key: string | null
+  idea_title: string
+  total_votes: number
+  interested_count: number
+  not_interested_count: number
+  would_buy_count: number
+  wants_trial_count: number
+  would_buy_rate: number
+  wants_trial_rate: number
+}
+
+const communityIdeaVoteSelect = `
+  id,
+  product_id,
+  idea_key,
+  idea_title,
+  subscriber_id,
+  email,
+  phone,
+  vote_type,
+  source,
+  strategic_niche_id,
+  subniche_id,
+  area_id,
+  created_at,
+  updated_at
+`
+
+function createEmptyCommunityIdeaVoteSummary(
+  vote: CommunityIdeaVote
+): CommunityIdeaVoteSummary {
+  const targetKey =
+    vote.product_id
+      ? `product:${vote.product_id}`
+      : `idea:${vote.idea_key || vote.idea_title}`
+
+  return {
+    target_key:
+      targetKey,
+    product_id:
+      vote.product_id,
+    idea_key:
+      vote.idea_key,
+    idea_title:
+      vote.idea_title,
+    total_votes:
+      0,
+    interested_count:
+      0,
+    not_interested_count:
+      0,
+    would_buy_count:
+      0,
+    wants_trial_count:
+      0,
+    would_buy_rate:
+      0,
+    wants_trial_rate:
+      0,
+  }
+}
+
+function summarizeCommunityIdeaVotes(
+  votes: CommunityIdeaVote[],
+  limit: number
+) {
+  const summaryByTarget =
+    new Map<string, CommunityIdeaVoteSummary>()
+
+  votes.forEach(
+    (vote) => {
+      const targetKey =
+        vote.product_id
+          ? `product:${vote.product_id}`
+          : `idea:${vote.idea_key || vote.idea_title}`
+
+      const summary =
+        summaryByTarget.get(targetKey) ||
+        createEmptyCommunityIdeaVoteSummary(vote)
+
+      summary.total_votes += 1
+
+      if (vote.vote_type === "interested") {
+        summary.interested_count += 1
+      }
+
+      if (vote.vote_type === "not_interested") {
+        summary.not_interested_count += 1
+      }
+
+      if (vote.vote_type === "would_buy") {
+        summary.would_buy_count += 1
+      }
+
+      if (vote.vote_type === "wants_trial") {
+        summary.wants_trial_count += 1
+      }
+
+      summary.would_buy_rate =
+        getCommunityPercent(
+          summary.would_buy_count,
+          summary.total_votes
+        )
+
+      summary.wants_trial_rate =
+        getCommunityPercent(
+          summary.wants_trial_count,
+          summary.total_votes
+        )
+
+      summaryByTarget.set(
+        targetKey,
+        summary
+      )
+    }
+  )
+
+  return Array.from(
+    summaryByTarget.values()
+  )
+    .sort(
+      (
+        summaryA,
+        summaryB
+      ) =>
+        summaryB.total_votes -
+        summaryA.total_votes
+    )
+    .slice(
+      0,
+      limit
+    )
+}
+
+function normalizeCommunityIdeaVoteIdeaKey(
+  value: string
+) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, 160)
+}
+
+export async function getCommunityIdeaVoteSummary(
+  limit = 20
+): Promise<CommunityIdeaVoteSummary[]> {
+
+  const { data, error } =
+    await supabase
+      .from("community_idea_votes")
+      .select(communityIdeaVoteSelect)
+      .order(
+        "updated_at",
+        {
+          ascending: false,
+        }
+      )
+      .limit(1000)
+
+  if (error) {
+    console.error(
+      "GET COMMUNITY IDEA VOTE SUMMARY ERROR:",
+      error
+    )
+
+    return []
+  }
+
+  return summarizeCommunityIdeaVotes(
+    (data || []) as CommunityIdeaVote[],
+    limit
+  )
+
+}
+
+export async function getCommunityIdeaVotesByProduct(
+  productId: string
+): Promise<CommunityIdeaVote[]> {
+
+  if (!productId) {
+    return []
+  }
+
+  const { data, error } =
+    await supabase
+      .from("community_idea_votes")
+      .select(communityIdeaVoteSelect)
+      .eq(
+        "product_id",
+        productId
+      )
+      .order(
+        "updated_at",
+        {
+          ascending: false,
+        }
+      )
+      .limit(100)
+
+  if (error) {
+    console.error(
+      "GET COMMUNITY IDEA VOTES BY PRODUCT ERROR:",
+      error
+    )
+
+    return []
+  }
+
+  return (data || []) as CommunityIdeaVote[]
+
+}
+
+export async function getCommunityIdeaVotesByIdeaKey(
+  ideaKey: string
+): Promise<CommunityIdeaVote[]> {
+
+  const normalizedIdeaKey =
+    normalizeCommunityIdeaVoteIdeaKey(
+      ideaKey
+    )
+
+  if (!normalizedIdeaKey) {
+    return []
+  }
+
+  const { data, error } =
+    await supabase
+      .from("community_idea_votes")
+      .select(communityIdeaVoteSelect)
+      .eq(
+        "idea_key",
+        normalizedIdeaKey
+      )
+      .order(
+        "updated_at",
+        {
+          ascending: false,
+        }
+      )
+      .limit(100)
+
+  if (error) {
+    console.error(
+      "GET COMMUNITY IDEA VOTES BY IDEA KEY ERROR:",
+      error
+    )
+
+    return []
+  }
+
+  return (data || []) as CommunityIdeaVote[]
+
+}
+
 export type SocialSignal = {
   id: string
   product_id: string
