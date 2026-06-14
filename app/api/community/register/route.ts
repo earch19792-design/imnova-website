@@ -67,23 +67,33 @@ const uuidPattern =
 const emailPattern =
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-function getSupabaseServerClient() {
+function getSupabaseUrl() {
+  return process.env.NEXT_PUBLIC_SUPABASE_URL
+}
+
+function getSupabaseServiceRoleKey() {
+  return process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || ""
+}
+
+function getSupabaseAdminClient() {
   const supabaseUrl =
-    process.env.NEXT_PUBLIC_SUPABASE_URL
+    getSupabaseUrl()
 
-  const supabaseKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  const supabaseServiceRoleKey =
+    getSupabaseServiceRoleKey()
 
-  if (!supabaseUrl || !supabaseKey) {
+  if (
+    !supabaseUrl ||
+    !supabaseServiceRoleKey
+  ) {
     throw new Error(
-      "Supabase no esta configurado para registrar comunidad."
+      "Supabase service role no esta configurado para registrar comunidad normalizada."
     )
   }
 
   return createClient(
     supabaseUrl,
-    supabaseKey,
+    supabaseServiceRoleKey,
     {
       auth: {
         autoRefreshToken: false,
@@ -235,14 +245,14 @@ function isValidWhatsApp(
 
 function createErrorResponse(
   error: string,
-  status = 400
+  status = 400,
+  warnings = getWelcomeWarnings()
 ) {
   return NextResponse.json(
     {
       success: false,
       error,
-      warnings:
-        getWelcomeWarnings(),
+      warnings,
     },
     {
       status,
@@ -250,15 +260,37 @@ function createErrorResponse(
   )
 }
 
+function createCommunityBackendConfigErrorResponse(
+  warnings: string[]
+) {
+  const code =
+    getSupabaseUrl()
+      ? "missing_service_role_key"
+      : "missing_supabase_url"
+
+  return NextResponse.json(
+    {
+      success: false,
+      error:
+        "community_backend_not_configured",
+      code,
+      message:
+        "No se puede guardar la comunidad normalizada sin SUPABASE_SERVICE_ROLE_KEY configurada en el backend.",
+      warnings,
+    },
+    {
+      status: 500,
+    }
+  )
+}
+
 async function getValidPublicSubniches(
+  supabase: SupabaseClient,
   selectedSubnicheIds: string[]
 ) {
   if (selectedSubnicheIds.length === 0) {
     return []
   }
-
-  const supabase =
-    getSupabaseServerClient()
 
   const { data, error } =
     await supabase
@@ -467,6 +499,105 @@ async function getExistingSubscriberId(
   return null
 }
 
+async function createMissingSubscriberInterests(
+  supabase: SupabaseClient,
+  subscriberId: string,
+  selectedSubnicheIds: string[],
+  source: CommunityRegisterSource
+) {
+  if (selectedSubnicheIds.length === 0) {
+    return {
+      saved: true,
+      addedCount: 0,
+      error: null,
+    }
+  }
+
+  const {
+    data: existingInterests,
+    error: existingInterestsError,
+  } =
+    await supabase
+      .from("subscriber_interests")
+      .select("subniche_id")
+      .eq(
+        "subscriber_id",
+        subscriberId
+      )
+      .in(
+        "subniche_id",
+        selectedSubnicheIds
+      )
+
+  if (existingInterestsError) {
+    return {
+      saved: false,
+      addedCount: 0,
+      error:
+        existingInterestsError,
+    }
+  }
+
+  const existingSubnicheIds =
+    new Set(
+      (existingInterests || [])
+        .map(
+          interest =>
+            String(interest.subniche_id)
+        )
+    )
+
+  const missingSubnicheIds =
+    selectedSubnicheIds.filter(
+      subnicheId =>
+        !existingSubnicheIds.has(
+          subnicheId
+        )
+    )
+
+  if (missingSubnicheIds.length === 0) {
+    return {
+      saved: true,
+      addedCount: 0,
+      error: null,
+    }
+  }
+
+  const interestRows =
+    missingSubnicheIds.map(
+      subnicheId => ({
+        id:
+          randomUUID(),
+        subscriber_id:
+          subscriberId,
+        subniche_id:
+          subnicheId,
+        source,
+      })
+    )
+
+  const { error: interestsError } =
+    await supabase
+      .from("subscriber_interests")
+      .insert(interestRows)
+
+  if (interestsError) {
+    return {
+      saved: false,
+      addedCount: 0,
+      error:
+        interestsError,
+    }
+  }
+
+  return {
+    saved: true,
+    addedCount:
+      missingSubnicheIds.length,
+    error: null,
+  }
+}
+
 export async function POST(
   req: Request
 ) {
@@ -518,6 +649,7 @@ export async function POST(
       return createErrorResponse(
         adminValidation.error,
         adminValidation.status,
+        warnings,
       )
     }
   }
@@ -567,13 +699,17 @@ export async function POST(
 
   if (!name) {
     return createErrorResponse(
-      "name_required"
+      "name_required",
+      400,
+      warnings
     )
   }
 
   if (!email && !whatsapp) {
     return createErrorResponse(
-      "email_or_whatsapp_required"
+      "email_or_whatsapp_required",
+      400,
+      warnings
     )
   }
 
@@ -582,7 +718,9 @@ export async function POST(
     !emailPattern.test(email)
   ) {
     return createErrorResponse(
-      "invalid_email"
+      "invalid_email",
+      400,
+      warnings
     )
   }
 
@@ -591,7 +729,9 @@ export async function POST(
     !isValidWhatsApp(whatsapp)
   ) {
     return createErrorResponse(
-      "invalid_whatsapp"
+      "invalid_whatsapp",
+      400,
+      warnings
     )
   }
 
@@ -600,7 +740,9 @@ export async function POST(
     MAX_SELECTED_SUBNICHES
   ) {
     return createErrorResponse(
-      "too_many_subniches"
+      "too_many_subniches",
+      400,
+      warnings
     )
   }
 
@@ -612,16 +754,28 @@ export async function POST(
 
   if (invalidUuid) {
     return createErrorResponse(
-      "invalid_subniches"
+      "invalid_subniches",
+      400,
+      warnings
+    )
+  }
+
+  if (
+    !getSupabaseUrl() ||
+    !getSupabaseServiceRoleKey()
+  ) {
+    return createCommunityBackendConfigErrorResponse(
+      warnings
     )
   }
 
   try {
     const supabase =
-      getSupabaseServerClient()
+      getSupabaseAdminClient()
 
     const validPublicSubniches =
       await getValidPublicSubniches(
+        supabase,
         selectedSubnicheIds
       )
 
@@ -641,7 +795,9 @@ export async function POST(
 
     if (hasInvalidSubniche) {
       return createErrorResponse(
-        "invalid_subniches"
+        "invalid_subniches",
+        400,
+        warnings
       )
     }
 
@@ -668,6 +824,15 @@ export async function POST(
         objective,
     }
 
+    let subscriberAlreadyRegistered =
+      false
+
+    let interestsSaved =
+      selectedSubnicheIds.length === 0
+
+    let interestsAddedCount =
+      0
+
     let subscriberId =
       await getExistingSubscriberId(
         supabase,
@@ -676,6 +841,9 @@ export async function POST(
       ) || ""
 
     if (subscriberId) {
+      subscriberAlreadyRegistered =
+        true
+
       warnings.push(
         "subscriber_already_registered"
       )
@@ -731,57 +899,70 @@ export async function POST(
         if (!existingSubscriberId) {
           return createErrorResponse(
             "subscriber_create_failed",
-            500
+            500,
+            warnings
           )
         }
 
         subscriberId =
           existingSubscriberId
 
+        subscriberAlreadyRegistered =
+          true
+
         warnings.push(
           "subscriber_already_registered"
         )
+
+        const { error: subscriberUpdateError } =
+          await supabase
+            .from("subscribers")
+            .update(subscriberPayload)
+            .eq(
+              "id",
+              subscriberId
+            )
+
+        if (subscriberUpdateError) {
+          console.warn(
+            "COMMUNITY REGISTER DUPLICATE SUBSCRIBER UPDATE WARNING:",
+            subscriberUpdateError
+          )
+
+          warnings.push(
+            "subscriber_update_not_applied"
+          )
+        }
       }
     }
 
     if (!subscriberId) {
       return createErrorResponse(
         "subscriber_id_not_returned",
-        500
+        500,
+        warnings
       )
     }
 
     if (selectedSubnicheIds.length > 0) {
-      const interestRows =
-        selectedSubnicheIds.map(
-          subnicheId => ({
-            id:
-              randomUUID(),
-            subscriber_id:
-              subscriberId,
-            subniche_id:
-              subnicheId,
-            source,
-          })
+      const interestSaveResult =
+        await createMissingSubscriberInterests(
+          supabase,
+          subscriberId,
+          selectedSubnicheIds,
+          source
         )
 
-      const { error: interestsError } =
-        await supabase
-          .from("subscriber_interests")
-          .upsert(
-            interestRows,
-            {
-              onConflict:
-                "subscriber_id,subniche_id",
-              ignoreDuplicates:
-                true,
-            }
-          )
+      interestsSaved =
+        interestSaveResult.saved
 
-      if (interestsError) {
+      interestsAddedCount =
+        interestSaveResult.addedCount
+
+      if (interestSaveResult.error) {
         console.error(
           "COMMUNITY REGISTER INTERESTS ERROR:",
-          interestsError
+          interestSaveResult.error
         )
 
         warnings.push(
@@ -826,6 +1007,12 @@ export async function POST(
     return NextResponse.json({
       success: true,
       subscriberId,
+      subscriber_already_registered:
+        subscriberAlreadyRegistered,
+      interests_saved:
+        interestsSaved,
+      interests_added_count:
+        interestsAddedCount,
       warnings,
     })
   } catch (error) {
@@ -836,7 +1023,8 @@ export async function POST(
 
     return createErrorResponse(
       "community_register_failed",
-      500
+      500,
+      warnings
     )
   }
 }
