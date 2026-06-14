@@ -128,7 +128,6 @@ type ManualSubscriberFormData = {
   nombre: string
   telefono: string
   email: string
-  nichos: string
   objetivo_principal: string
 }
 
@@ -316,7 +315,7 @@ const adminMenuGuides = {
       "Usa Demanda vs Productos para priorizar encuestas, pruebas y futuras oportunidades.",
     ],
     reminder:
-      "subscriber_interests es la fuente principal; subscribers.nichos queda solo como legacy.",
+      "subscriber_interests es la fuente oficial para decisiones nuevas de comunidad.",
   },
   analytics: {
     title:
@@ -492,7 +491,6 @@ export default function AdminPage() {
     nombre: "",
     telefono: "",
     email: "",
-    nichos: "",
     objetivo_principal:
       "Registro manual para comunidad WhatsApp IMNOVA.",
   })
@@ -922,20 +920,11 @@ export default function AdminPage() {
       setIsSavingCommunitySubscriber(true)
 
       try {
-        const legacyNiches =
-          manualSubscriberForm.nichos
-            .split(",")
-            .map((niche) =>
-              niche.trim()
-            )
-            .filter(Boolean)
-
         const selectedSubnicheNames =
           Array.from(
-            new Set([
-              ...selectedManualSubnicheNames,
-              ...legacyNiches,
-            ])
+            new Set(
+              selectedManualSubnicheNames
+            )
           )
 
         const {
@@ -1016,7 +1005,6 @@ export default function AdminPage() {
           nombre: "",
           telefono: "",
           email: "",
-          nichos: "",
           objetivo_principal:
             "Registro manual para comunidad WhatsApp IMNOVA.",
         })
@@ -5373,43 +5361,13 @@ export default function AdminPage() {
                       </p>
                     </label>
 
-                    <label className="space-y-2">
-                      <span className="text-xs uppercase tracking-[0.25em] text-white/45">
-                        Legacy / notas de interes
-                      </span>
-                      <input
-                        value={manualSubscriberForm.nichos}
-                        onChange={(event) =>
-                          updateManualSubscriberField(
-                            "nichos",
-                            event.target.value
-                          )
-                        }
-                        placeholder="energia, bienestar, fitness"
-                        className="
-                          w-full
-                          rounded-2xl
-                          border
-                          border-white/10
-                          bg-black/40
-                          px-5
-                          py-4
-                          text-white
-                          outline-none
-                        "
-                      />
-                      <p className="text-xs leading-5 text-white/35">
-                        Opcional. El selector normalizado de abajo es la fuente principal.
-                      </p>
-                    </label>
-
                     <div className="space-y-4 md:col-span-2">
                       <div>
                         <span className="text-xs uppercase tracking-[0.25em] text-cyan-100/60">
                           Intereses normalizados
                         </span>
                         <p className="mt-2 text-xs leading-5 text-white/35">
-                          Selecciona intereses reales de IMNOVA OS. Se guardan en subscriber_interests y tambien como legacy para compatibilidad.
+                          Selecciona intereses reales de IMNOVA OS. Se guardan en subscriber_interests como la fuente oficial de comunidad.
                         </p>
                       </div>
 
@@ -5680,11 +5638,6 @@ export default function AdminPage() {
                                   interest.subniche_name
                               )
 
-                            const legacyInterests =
-                              normalizedInterests.length === 0
-                                ? subscriber.legacy_nichos
-                                : []
-
                             return (
                               <div
                                 key={subscriber.id}
@@ -5744,36 +5697,9 @@ export default function AdminPage() {
                                         )
                                       )}
                                   </div>
-                                ) : legacyInterests.length > 0 ? (
-                                  <div className="mt-4 flex flex-wrap gap-2">
-                                    {legacyInterests
-                                      .slice(
-                                        0,
-                                        4
-                                      )
-                                      .map(
-                                        (interest) => (
-                                          <span
-                                            key={interest}
-                                            className="
-                                              rounded-full
-                                              border
-                                              border-white/10
-                                              bg-white/[0.04]
-                                              px-3
-                                              py-1
-                                              text-[11px]
-                                              text-white/45
-                                            "
-                                          >
-                                            Legacy: {interest}
-                                          </span>
-                                        )
-                                      )}
-                                  </div>
                                 ) : (
                                   <p className="mt-4 text-xs leading-5 text-white/35">
-                                    Sin intereses normalizados todavia.
+                                    Sin intereses normalizados utiles todavia.
                                   </p>
                                 )}
 
