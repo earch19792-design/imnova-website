@@ -20,6 +20,7 @@ import { Footer } from "@/components/footer"
 import { GlobalSection } from "@/components/global-section"
 import { HeroSection } from "@/components/hero-section"
 import { ImnovaGuidesSection } from "@/components/imnova-guides-section"
+import { ImnovaOsFlowSection } from "@/components/imnova-os-flow-section"
 import { InnovationsSection } from "@/components/innovations-section"
 import InnovaPopup from "@/components/imnova-popup"
 import { Navigation } from "@/components/navigation"
@@ -124,6 +125,9 @@ export default function IMNOVAPage() {
         onJoinFamily={openCommunity}
       />
       <GlobalSection />
+      <ImnovaOsFlowSection
+        onJoinCommunity={openCommunity}
+      />
       <InnovationsSection />
       <WorkingSection />
 
@@ -227,7 +231,7 @@ export default function IMNOVAPage() {
 
                   <div className="mt-6 grid gap-4">
                     {[
-                      "Elegís hasta 5 intereses que realmente te importan.",
+                      "Elegís hasta 3 áreas de interés que realmente te importan.",
                       "IMNOVA te envía encuestas y pruebas conectadas a esos temas.",
                       "Tu señal ayuda a decidir si un producto avanza, se ajusta o se pausa.",
                     ].map((item, index) => (

@@ -18,7 +18,7 @@ import {
   ChevronDown,
   MapPin,
   ShoppingBag,
-  UsersRound,
+  Sparkles,
 } from "lucide-react"
 
 const heroImages = [
@@ -62,10 +62,10 @@ const heroJourney = [
   },
   {
     label: "Lo que viene",
-    title: "Comunidad",
-    text: "Participa en ideas que se validan antes de convertirse en productos IMNOVA.",
+    title: "Innovación",
+    text: "Explora ideas y próximos productos que IMNOVA valida antes de llegar al mercado.",
     href: "#innovations",
-    icon: UsersRound,
+    icon: Sparkles,
   },
 ]
 
