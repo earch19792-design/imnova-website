@@ -424,7 +424,7 @@ const productDetailFlowSteps = [
   {
     label: "Validacion",
     description:
-      "Registra nicho normalizado, subnichos, problema humano, encuestas, senales y decision estrategica.",
+      "Registra nicho normalizado, subnichos, problema humano, encuestas heredadas por clasificacion, senales y decision estrategica.",
   },
   {
     label: "Contenido",
@@ -449,7 +449,7 @@ const productSectionGuides = {
   estado:
     "Cambia etapa solo cuando la informacion del producto acompane ese avance.",
   validacion:
-    "Esta seccion conecta nicho normalizado, subnichos y validacion para decidir si una idea merece avanzar.",
+    "Esta seccion conecta nicho normalizado, subnichos y validacion. Las encuestas creadas aqui heredan la clasificacion oficial del producto para medir demanda real.",
   comercializacion:
     "Completa canales y promocion antes de que un producto Disponible sea protagonista en tienda.",
   contenido:
@@ -1218,6 +1218,39 @@ export default function ProductDetailPage() {
         )
     )
 
+  const surveyInheritedNiche =
+    useMemo(
+      () =>
+        nichesWithSubniches.find(
+          niche =>
+            niche.id ===
+            product?.strategic_niche_id
+        ) || null,
+      [
+        nichesWithSubniches,
+        product?.strategic_niche_id,
+      ]
+    )
+
+  const surveyInheritedSubniche =
+    useMemo(
+      () =>
+        nichesWithSubniches
+          .flatMap(
+            niche =>
+              niche.subniches
+          )
+          .find(
+            subniche =>
+              subniche.id ===
+              product?.primary_subniche_id
+          ) || null,
+      [
+        nichesWithSubniches,
+        product?.primary_subniche_id,
+      ]
+    )
+
   const [isSaving, setIsSaving] =
     useState(false)
 
@@ -1914,6 +1947,12 @@ export default function ProductDetailPage() {
           await createCommunitySurvey({
             product_id:
               productId,
+            strategic_niche_id:
+              product.strategic_niche_id ||
+              null,
+            subniche_id:
+              product.primary_subniche_id ||
+              null,
             title,
             question,
             description:
@@ -4546,6 +4585,50 @@ export default function ProductDetailPage() {
                   <p className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                     Crear encuesta
                   </p>
+
+                  <div className="mt-5 rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.05] p-4">
+                    <p className="text-[10px] uppercase tracking-[0.20em] text-cyan-100/60">
+                      Clasificacion de la encuesta
+                    </p>
+                    <p className="mt-3 text-xs leading-5 text-white/45">
+                      Las encuestas heredan la clasificacion del producto para medir demanda real por nicho e interes de comunidad.
+                    </p>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                        <p className="text-[10px] uppercase tracking-[0.16em] text-white/30">
+                          Nicho heredado
+                        </p>
+                        <p className="mt-2 text-sm font-semibold text-white/75">
+                          {surveyInheritedNiche
+                            ? surveyInheritedNiche.public_name ||
+                              surveyInheritedNiche.name
+                            : "Sin nicho normalizado"}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                        <p className="text-[10px] uppercase tracking-[0.16em] text-white/30">
+                          Subnicho heredado
+                        </p>
+                        <p className="mt-2 text-sm font-semibold text-white/75">
+                          {surveyInheritedSubniche
+                            ? surveyInheritedSubniche.public_name ||
+                              surveyInheritedSubniche.name
+                            : "Sin subnicho principal"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {(
+                      !product?.strategic_niche_id ||
+                      !product?.primary_subniche_id
+                    ) && (
+                      <p className="mt-4 rounded-xl border border-amber-200/15 bg-amber-200/[0.06] p-3 text-xs leading-5 text-amber-100/75">
+                        Este producto todavia no tiene nicho/subnicho normalizado. La encuesta se creara solo asociada al producto.
+                      </p>
+                    )}
+                  </div>
 
                   <label className="mt-5 block">
                     <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">

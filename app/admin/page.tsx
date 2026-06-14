@@ -21,12 +21,14 @@ import {
   getPublicNichesWithSubniches,
   getRecentSubscribersWithInterests,
   getAdminValidationActionProducts,
+  getSubnicheDemandWithProducts,
   getTopCommunityNiches,
   getTopCommunitySubniches,
   getProductStates,
   type CommunitySubscriberStats,
   type CommunitySubscriberWithInterests,
   type StrategicNicheWithSubniches,
+  type SubnicheDemandWithProducts,
   type TopCommunityNiche,
   type TopCommunitySubniche,
   updateProduct,
@@ -229,6 +231,34 @@ function formatCommunityDate(
   }
 }
 
+const demandOpportunityLabels: Record<
+  SubnicheDemandWithProducts["opportunity_status"],
+  string
+> = {
+  alta_demanda_sin_producto:
+    "Alta demanda sin producto",
+  producto_con_demanda:
+    "Producto con demanda",
+  producto_sin_demanda_suficiente:
+    "Producto con baja demanda",
+  en_validacion:
+    "En validacion",
+}
+
+const demandOpportunityClassNames: Record<
+  SubnicheDemandWithProducts["opportunity_status"],
+  string
+> = {
+  alta_demanda_sin_producto:
+    "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100",
+  producto_con_demanda:
+    "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100",
+  producto_sin_demanda_suficiente:
+    "border-amber-200/25 bg-amber-200/[0.10] text-amber-100",
+  en_validacion:
+    "border-violet-300/25 bg-violet-300/[0.10] text-violet-100",
+}
+
 const ADMIN_PRODUCT_LIST_BATCH_SIZE =
   24
 
@@ -279,11 +309,11 @@ const adminMenuGuides = {
     title:
       "Lee comunidad e intereses antes de decidir.",
     description:
-      "Usa esta vista para registrar miembros, normalizar intereses y detectar donde hay mayor demanda.",
+      "Usa esta vista para registrar miembros, normalizar intereses y cruzar demanda real contra productos disponibles.",
     steps: [
       "Revisa las metricas de comunidad e identifica los nichos con mas seleccion.",
       "Registra contactos manuales solo con consentimiento y selecciona intereses reales.",
-      "Usa los rankings para priorizar encuestas, pruebas y futuras oportunidades.",
+      "Usa Demanda vs Productos para priorizar encuestas, pruebas y futuras oportunidades.",
     ],
     reminder:
       "subscriber_interests es la fuente principal; subscribers.nichos queda solo como legacy.",
@@ -439,6 +469,11 @@ export default function AdminPage() {
     topCommunitySubniches,
     setTopCommunitySubniches,
   ] = useState<TopCommunitySubniche[]>([])
+
+  const [
+    subnicheDemandWithProducts,
+    setSubnicheDemandWithProducts,
+  ] = useState<SubnicheDemandWithProducts[]>([])
 
   const [
     communityNichesWithSubniches,
@@ -689,6 +724,7 @@ export default function AdminPage() {
           subniches,
           subscribers,
           nichesWithSubniches,
+          demandWithProducts,
         ] =
           await Promise.all([
             getCommunitySubscriberStats(),
@@ -696,6 +732,7 @@ export default function AdminPage() {
             getTopCommunitySubniches(5),
             getRecentSubscribersWithInterests(10),
             getPublicNichesWithSubniches(),
+            getSubnicheDemandWithProducts(10),
           ])
 
         setCommunityStats(
@@ -717,6 +754,10 @@ export default function AdminPage() {
         setCommunityNichesWithSubniches(
           nichesWithSubniches || []
         )
+
+        setSubnicheDemandWithProducts(
+          demandWithProducts || []
+        )
       } catch (error) {
         console.error(
           "LOAD COMMUNITY SUBSCRIBERS ERROR:",
@@ -731,6 +772,7 @@ export default function AdminPage() {
         setTopCommunitySubniches([])
         setCommunitySubscribers([])
         setCommunityNichesWithSubniches([])
+        setSubnicheDemandWithProducts([])
       } finally {
         setIsLoadingCommunity(false)
       }
@@ -4961,6 +5003,219 @@ export default function AdminPage() {
                           )}
                         </div>
                       </div>
+                    </div>
+
+                    <div
+                      className="
+                        mt-6
+                        rounded-3xl
+                        border
+                        border-emerald-300/15
+                        bg-emerald-300/[0.04]
+                        p-6
+                      "
+                    >
+                      <div
+                        className="
+                          flex
+                          flex-col
+                          gap-4
+                          lg:flex-row
+                          lg:items-start
+                          lg:justify-between
+                        "
+                      >
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.28em] text-emerald-100/60">
+                            Demanda vs Productos
+                          </p>
+
+                          <h3
+                            className="
+                              mt-3
+                              text-2xl
+                              font-black
+                              tracking-[-0.03em]
+                              text-white
+                            "
+                          >
+                            Oportunidades por interes real
+                          </h3>
+
+                          <p className="mt-3 max-w-3xl text-sm leading-6 text-white/50">
+                            Compara intereses reales de la comunidad con productos asociados y encuestas activas.
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-xs leading-5 text-white/45">
+                          Lectura de diagnostico. No crea encuestas ni cambia estados.
+                        </div>
+                      </div>
+
+                      {subnicheDemandWithProducts.length === 0 ? (
+                        <p className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-5 text-sm leading-6 text-white/45">
+                          No hay suficiente informacion de comunidad para cruzar demanda y productos todavia.
+                        </p>
+                      ) : (
+                        <div className="mt-6 overflow-x-auto">
+                          <table className="min-w-[1080px] w-full border-separate border-spacing-y-3 text-left">
+                            <thead>
+                              <tr className="text-[10px] uppercase tracking-[0.22em] text-white/35">
+                                <th className="px-4 py-2">
+                                  Subnicho
+                                </th>
+                                <th className="px-4 py-2">
+                                  Nicho
+                                </th>
+                                <th className="px-4 py-2">
+                                  Miembros
+                                </th>
+                                <th className="px-4 py-2">
+                                  Productos asociados
+                                </th>
+                                <th className="px-4 py-2">
+                                  Encuestas
+                                </th>
+                                <th className="px-4 py-2">
+                                  Estado
+                                </th>
+                                <th className="px-4 py-2">
+                                  Futuro
+                                </th>
+                              </tr>
+                            </thead>
+
+                            <tbody>
+                              {subnicheDemandWithProducts.map(
+                                (demand) => (
+                                  <tr
+                                    key={demand.subniche_id}
+                                    className="bg-black/30"
+                                  >
+                                    <td className="rounded-l-2xl border-y border-l border-white/10 px-4 py-4">
+                                      <p className="text-sm font-semibold text-white/85">
+                                        {demand.subniche_public_name || demand.subniche_name}
+                                      </p>
+                                    </td>
+
+                                    <td className="border-y border-white/10 px-4 py-4">
+                                      <p className="text-sm text-cyan-100/60">
+                                        {demand.niche_public_name || demand.niche_name || "Sin nicho"}
+                                      </p>
+                                    </td>
+
+                                    <td className="border-y border-white/10 px-4 py-4">
+                                      <p className="text-lg font-black text-white">
+                                        {demand.interested_members_count.toLocaleString("es-NI")}
+                                      </p>
+                                      <p className="mt-1 text-[10px] uppercase tracking-[0.16em] text-white/30">
+                                        interesados
+                                      </p>
+                                    </td>
+
+                                    <td className="border-y border-white/10 px-4 py-4">
+                                      {demand.products.length === 0 ? (
+                                        <p className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs text-white/40">
+                                          Sin producto asociado
+                                        </p>
+                                      ) : (
+                                        <div className="space-y-3">
+                                          <p className="text-[10px] uppercase tracking-[0.16em] text-white/30">
+                                            {demand.products_count === 1
+                                              ? "1 producto asociado"
+                                              : `${demand.products_count.toLocaleString("es-NI")} productos asociados`}
+                                          </p>
+
+                                          {demand.products.slice(0, 3).map(
+                                            (product) => (
+                                              <div
+                                                key={product.id}
+                                                className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/25 px-3 py-2"
+                                              >
+                                                <div className="min-w-0">
+                                                  <p className="truncate text-xs font-semibold text-white/75">
+                                                    {product.name}
+                                                  </p>
+
+                                                  {(product.validation_status || product.survey_status) && (
+                                                    <p className="mt-1 truncate text-[10px] uppercase tracking-[0.12em] text-white/30">
+                                                      {product.validation_status || "sin validacion"} · {product.survey_status || "sin encuesta"}
+                                                    </p>
+                                                  )}
+                                                </div>
+
+                                                {product.slug ? (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                      router.push(
+                                                        `/admin/products/${product.slug}`
+                                                      )
+                                                    }
+                                                    className="shrink-0 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100 transition-all hover:bg-cyan-300/15"
+                                                  >
+                                                    Ver detalle
+                                                  </button>
+                                                ) : (
+                                                  <span className="shrink-0 rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-[10px] uppercase tracking-[0.12em] text-white/25">
+                                                    Sin detalle
+                                                  </span>
+                                                )}
+                                              </div>
+                                            )
+                                          )}
+
+                                          {demand.products_count > 3 && (
+                                            <p className="text-xs text-white/35">
+                                              +{(demand.products_count - 3).toLocaleString("es-NI")} productos mas
+                                            </p>
+                                          )}
+                                        </div>
+                                      )}
+                                    </td>
+
+                                    <td className="border-y border-white/10 px-4 py-4">
+                                      <p className="text-lg font-black text-white">
+                                        {demand.active_surveys_count.toLocaleString("es-NI")}
+                                      </p>
+                                      <p className="mt-1 text-[10px] uppercase tracking-[0.16em] text-white/30">
+                                        activas / {demand.total_surveys_count.toLocaleString("es-NI")} total
+                                      </p>
+                                    </td>
+
+                                    <td className="border-y border-white/10 px-4 py-4">
+                                      <span
+                                        className={`
+                                          inline-flex
+                                          rounded-full
+                                          border
+                                          px-3
+                                          py-2
+                                          text-[10px]
+                                          font-semibold
+                                          uppercase
+                                          tracking-[0.14em]
+                                          ${demandOpportunityClassNames[demand.opportunity_status]}
+                                        `}
+                                      >
+                                        {demandOpportunityLabels[demand.opportunity_status]}
+                                      </span>
+                                    </td>
+
+                                    <td className="rounded-r-2xl border-y border-r border-white/10 px-4 py-4">
+                                      <div className="flex flex-wrap gap-2">
+                                        <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-white/35">
+                                          Crear encuesta
+                                        </span>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                     </div>
                   </>
                 )}

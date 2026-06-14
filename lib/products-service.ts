@@ -1597,6 +1597,34 @@ export type TopCommunitySubniche = {
   count: number
 }
 
+export type SubnicheDemandProduct = {
+  id: string
+  name: string
+  slug: string | null
+  state_id?: string | null
+  validation_status?: string | null
+  survey_status?: string | null
+}
+
+export type SubnicheDemandWithProducts = {
+  subniche_id: string
+  subniche_name: string
+  subniche_public_name: string | null
+  niche_id: string | null
+  niche_name: string | null
+  niche_public_name: string | null
+  interested_members_count: number
+  products_count: number
+  products: SubnicheDemandProduct[]
+  active_surveys_count: number
+  total_surveys_count: number
+  opportunity_status:
+    | "alta_demanda_sin_producto"
+    | "producto_con_demanda"
+    | "producto_sin_demanda_suficiente"
+    | "en_validacion"
+}
+
 export type CommunitySubscriberNormalizedInterest = {
   subniche_id: string
   subniche_name: string
@@ -1694,6 +1722,31 @@ type CommunityStrategicSubnicheRow = {
   public_name: string | null
 }
 
+type ProductSubnicheDemandRow = {
+  product_id: string | null
+  subniche_id: string | null
+}
+
+type ProductPrimarySubnicheDemandRow = {
+  id: string | null
+  primary_subniche_id: string | null
+}
+
+type ProductDemandDetailRow = {
+  id: string | null
+  name: string | null
+  slug: string | null
+  state_id: string | null
+  validation_status: string | null
+  survey_status: string | null
+}
+
+type CommunitySurveyDemandRow = {
+  id: string | null
+  subniche_id: string | null
+  status: string | null
+}
+
 const EMPTY_COMMUNITY_SUBSCRIBER_STATS: CommunitySubscriberStats = {
   totalSubscribers: 0,
   subscribersWithInterests: 0,
@@ -1712,6 +1765,66 @@ function getCommunityPercent(
   return Math.round(
     (value / total) * 100
   )
+}
+
+function normalizeDemandStatus(
+  status?: string | null
+) {
+  return (status || "")
+    .toLowerCase()
+    .trim()
+}
+
+function getSubnicheOpportunityStatus({
+  activeSurveysCount,
+  interestedMembersCount,
+  productsCount,
+}: {
+  activeSurveysCount: number
+  interestedMembersCount: number
+  productsCount: number
+}): SubnicheDemandWithProducts["opportunity_status"] {
+
+  if (activeSurveysCount > 0) {
+    return "en_validacion"
+  }
+
+  if (
+    interestedMembersCount > 0 &&
+    productsCount === 0
+  ) {
+    return "alta_demanda_sin_producto"
+  }
+
+  if (
+    productsCount > 0 &&
+    interestedMembersCount < 3
+  ) {
+    return "producto_sin_demanda_suficiente"
+  }
+
+  if (
+    interestedMembersCount > 0 &&
+    productsCount > 0
+  ) {
+    return "producto_con_demanda"
+  }
+
+  return "producto_sin_demanda_suficiente"
+
+}
+
+function getSubnicheOpportunitySortValue(
+  status: SubnicheDemandWithProducts["opportunity_status"]
+) {
+  const priority = {
+    en_validacion: 0,
+    alta_demanda_sin_producto: 1,
+    producto_con_demanda: 2,
+    producto_sin_demanda_suficiente: 3,
+  }
+
+  return priority[status]
 }
 
 function normalizeLegacyNichos(
@@ -2201,6 +2314,422 @@ export async function getTopCommunitySubniches(
 
 }
 
+export async function getSubnicheDemandWithProducts(
+  limit = 10
+): Promise<SubnicheDemandWithProducts[]> {
+
+  try {
+    const [
+      interestRows,
+      catalog,
+      productSubnichesResult,
+      primaryProductsResult,
+      surveysResult,
+    ] =
+      await Promise.all([
+        getCommunityInterestRowsForAdmin(),
+        getCommunityStrategicCatalog(),
+        supabase
+          .from("product_subniches")
+          .select(`
+            product_id,
+            subniche_id
+          `),
+        supabase
+          .from("products")
+          .select(`
+            id,
+            primary_subniche_id
+          `)
+          .not(
+            "primary_subniche_id",
+            "is",
+            null
+          ),
+        supabase
+          .from("community_surveys")
+          .select(`
+            id,
+            subniche_id,
+            status
+          `)
+          .not(
+            "subniche_id",
+            "is",
+            null
+          ),
+      ])
+
+    if (productSubnichesResult.error) {
+      console.error(
+        "GET SUBNICHE DEMAND WITH PRODUCTS ERROR:",
+        productSubnichesResult.error
+      )
+
+      return []
+    }
+
+    if (primaryProductsResult.error) {
+      console.error(
+        "GET SUBNICHE DEMAND WITH PRODUCTS ERROR:",
+        primaryProductsResult.error
+      )
+
+      return []
+    }
+
+    if (surveysResult.error) {
+      console.error(
+        "GET SUBNICHE DEMAND WITH PRODUCTS ERROR:",
+        surveysResult.error
+      )
+
+      return []
+    }
+
+    const interestedMembersBySubnicheId =
+      new Map<string, number>()
+
+    interestRows.forEach(
+      (interestRow) => {
+        if (!interestRow.subniche_id) {
+          return
+        }
+
+        interestedMembersBySubnicheId.set(
+          interestRow.subniche_id,
+          (
+            interestedMembersBySubnicheId.get(
+              interestRow.subniche_id
+            ) || 0
+          ) + 1
+        )
+      }
+    )
+
+    const productIdsBySubnicheId =
+      new Map<string, Set<string>>()
+
+    const addProductForSubniche =
+      (
+        subnicheId?: string | null,
+        productId?: string | null
+      ) => {
+        if (
+          !subnicheId ||
+          !productId
+        ) {
+          return
+        }
+
+        const productIds =
+          productIdsBySubnicheId.get(
+            subnicheId
+          ) || new Set<string>()
+
+        productIds.add(productId)
+
+        productIdsBySubnicheId.set(
+          subnicheId,
+          productIds
+        )
+      }
+
+    ;(
+      (
+        productSubnichesResult.data || []
+      ) as ProductSubnicheDemandRow[]
+    ).forEach(
+      (row) => {
+        addProductForSubniche(
+          row.subniche_id,
+          row.product_id
+        )
+      }
+    )
+
+    ;(
+      (
+        primaryProductsResult.data || []
+      ) as ProductPrimarySubnicheDemandRow[]
+    ).forEach(
+      (row) => {
+        addProductForSubniche(
+          row.primary_subniche_id,
+          row.id
+        )
+      }
+    )
+
+    const productIds =
+      Array.from(
+        new Set(
+          Array.from(
+            productIdsBySubnicheId.values()
+          ).flatMap(
+            productIdsSet =>
+              Array.from(productIdsSet)
+          )
+        )
+      )
+
+    const productDetailsById =
+      new Map<string, SubnicheDemandProduct>()
+
+    if (productIds.length > 0) {
+      const {
+        data: productDetails,
+        error: productDetailsError,
+      } =
+        await supabase
+          .from("products")
+          .select(`
+            id,
+            name,
+            slug,
+            state_id,
+            validation_status,
+            survey_status
+          `)
+          .in(
+            "id",
+            productIds
+          )
+
+      if (productDetailsError) {
+        console.error(
+          "GET SUBNICHE DEMAND WITH PRODUCTS ERROR:",
+          productDetailsError
+        )
+
+        return []
+      }
+
+      ;(
+        (
+          productDetails || []
+        ) as ProductDemandDetailRow[]
+      ).forEach(
+        (product) => {
+          if (!product.id) {
+            return
+          }
+
+          productDetailsById.set(
+            product.id,
+            {
+              id:
+                product.id,
+              name:
+                product.name ||
+                "Producto sin nombre",
+              slug:
+                product.slug ||
+                null,
+              state_id:
+                product.state_id ||
+                null,
+              validation_status:
+                product.validation_status ||
+                null,
+              survey_status:
+                product.survey_status ||
+                null,
+            }
+          )
+        }
+      )
+    }
+
+    const totalSurveysBySubnicheId =
+      new Map<string, number>()
+
+    const activeSurveysBySubnicheId =
+      new Map<string, number>()
+
+    ;(
+      (
+        surveysResult.data || []
+      ) as CommunitySurveyDemandRow[]
+    ).forEach(
+      (survey) => {
+        if (!survey.subniche_id) {
+          return
+        }
+
+        totalSurveysBySubnicheId.set(
+          survey.subniche_id,
+          (
+            totalSurveysBySubnicheId.get(
+              survey.subniche_id
+            ) || 0
+          ) + 1
+        )
+
+        const normalizedStatus =
+          normalizeDemandStatus(
+            survey.status
+          )
+
+        if (
+          normalizedStatus === "active" ||
+          normalizedStatus === "activa"
+        ) {
+          activeSurveysBySubnicheId.set(
+            survey.subniche_id,
+            (
+              activeSurveysBySubnicheId.get(
+                survey.subniche_id
+              ) || 0
+            ) + 1
+          )
+        }
+      }
+    )
+
+    const subnicheIds =
+      new Set<string>([
+        ...interestedMembersBySubnicheId.keys(),
+        ...productIdsBySubnicheId.keys(),
+        ...totalSurveysBySubnicheId.keys(),
+      ])
+
+    return Array.from(subnicheIds)
+      .map(
+        (subnicheId) => {
+          const subniche =
+            catalog.subnichesById.get(
+              subnicheId
+            )
+
+          const niche =
+            subniche?.niche_id
+              ? catalog.nichesById.get(
+                  subniche.niche_id
+                )
+              : null
+
+          const interestedMembersCount =
+            interestedMembersBySubnicheId.get(
+              subnicheId
+            ) || 0
+
+          const productsCount =
+            productIdsBySubnicheId.get(
+              subnicheId
+            )?.size || 0
+
+          const products =
+            Array.from(
+              productIdsBySubnicheId.get(
+                subnicheId
+              ) || []
+            )
+              .map(
+                productId =>
+                  productDetailsById.get(
+                    productId
+                  ) || null
+              )
+              .filter(
+                (
+                  product
+                ): product is SubnicheDemandProduct =>
+                  Boolean(product)
+              )
+              .sort(
+                (
+                  productA,
+                  productB
+                ) =>
+                  productA.name.localeCompare(
+                    productB.name
+                  )
+              )
+
+          const activeSurveysCount =
+            activeSurveysBySubnicheId.get(
+              subnicheId
+            ) || 0
+
+          const totalSurveysCount =
+            totalSurveysBySubnicheId.get(
+              subnicheId
+            ) || 0
+
+          const opportunityStatus =
+            getSubnicheOpportunityStatus({
+              activeSurveysCount,
+              interestedMembersCount,
+              productsCount,
+            })
+
+          return {
+            subniche_id:
+              subnicheId,
+            subniche_name:
+              subniche?.name ||
+              "Subnicho sin catalogo",
+            subniche_public_name:
+              subniche?.public_name ||
+              null,
+            niche_id:
+              subniche?.niche_id ||
+              null,
+            niche_name:
+              niche?.name ||
+              null,
+            niche_public_name:
+              niche?.public_name ||
+              null,
+            interested_members_count:
+              interestedMembersCount,
+            products_count:
+              productsCount,
+            products,
+            active_surveys_count:
+              activeSurveysCount,
+            total_surveys_count:
+              totalSurveysCount,
+            opportunity_status:
+              opportunityStatus,
+          }
+        }
+      )
+      .sort(
+        (
+          demandA,
+          demandB
+        ) =>
+          getSubnicheOpportunitySortValue(
+            demandA.opportunity_status
+          ) -
+            getSubnicheOpportunitySortValue(
+              demandB.opportunity_status
+            ) ||
+          demandB.interested_members_count -
+            demandA.interested_members_count ||
+          demandB.products_count -
+            demandA.products_count ||
+          demandA.subniche_name.localeCompare(
+            demandB.subniche_name
+          )
+      )
+      .slice(
+        0,
+        limit
+      )
+  } catch (error) {
+    console.error(
+      "GET SUBNICHE DEMAND WITH PRODUCTS ERROR:",
+      error
+    )
+
+    return []
+  }
+
+}
+
 export async function getRecentSubscribersWithInterests(
   limit = 10
 ): Promise<CommunitySubscriberWithInterests[]> {
@@ -2601,6 +3130,8 @@ export async function getSubscriberInterestsBySubscriber(
 export type CommunitySurvey = {
   id: string
   product_id: string
+  strategic_niche_id?: string | null
+  subniche_id?: string | null
   title: string
   question: string
   description: string | null
@@ -2613,6 +3144,8 @@ export type CommunitySurvey = {
 
 export type CreateCommunitySurveyInput = {
   product_id: string
+  strategic_niche_id?: string | null
+  subniche_id?: string | null
   title: string
   question: string
   description?: string | null
@@ -2692,6 +3225,10 @@ export async function createCommunitySurvey(
   const payload = {
     product_id:
       input.product_id,
+    strategic_niche_id:
+      input.strategic_niche_id || null,
+    subniche_id:
+      input.subniche_id || null,
     title:
       input.title,
     question:
