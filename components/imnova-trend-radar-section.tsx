@@ -40,7 +40,7 @@ const trendSignals = [
     summary:
       "La conversacion sobre microbiota mantiene a la digestion como una entrada fuerte para bebidas, fibras, fermentados y formulas de balance diario.",
     opportunity:
-      "El radar ayuda a detectar si la comunidad quiere soluciones de digestion, ligereza o bienestar intestinal.",
+      "El observatorio ayuda a detectar si la comunidad quiere soluciones de digestion, ligereza o bienestar intestinal.",
     sourceLabel: "NIH ODS",
     sourceHref:
       "https://ods.od.nih.gov/factsheets/Probiotics-HealthProfessional/",
@@ -113,7 +113,7 @@ export function ImnovaTrendRadarSection({
             <div className="inline-flex items-center gap-3 rounded-full border border-amber-200/20 bg-amber-200/[0.08] px-5 py-3">
               <Radar className="h-4 w-4 text-amber-100" />
               <span className="text-[10px] font-black uppercase tracking-[0.30em] text-amber-100/70">
-                Radar IMNOVA
+                Observatorio IMNOVA
               </span>
             </div>
 
@@ -125,9 +125,9 @@ export function ImnovaTrendRadarSection({
             </h2>
 
             <p className="mt-7 max-w-2xl text-base leading-8 text-zinc-400 md:text-lg">
-              IMNOVA observa senales de mercado, estudios y conversaciones de
-              consumo para detectar oportunidades antes de convertirlas en
-              productos, encuestas o pruebas.
+              Contenido editorial seleccionado por IMNOVA a partir de senales
+              de mercado, estudios y conversaciones de consumo. No publica
+              automaticamente senales internas del Radar Admin.
             </p>
           </motion.div>
 
@@ -269,9 +269,10 @@ export function ImnovaTrendRadarSection({
                   Nota editorial
                 </p>
                 <p className="mt-3 text-sm leading-7 text-zinc-500">
-                  Este radar no es consejo medico ni recomendacion de consumo.
-                  Son senales para investigar, validar con comunidad y revisar
-                  con fuentes confiables antes de crear productos.
+                  Este observatorio no es consejo medico ni recomendacion de
+                  consumo. Son senales editoriales para investigar, validar con
+                  comunidad y revisar con fuentes confiables antes de crear
+                  productos.
                 </p>
               </div>
             </div>

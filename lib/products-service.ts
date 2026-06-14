@@ -4207,6 +4207,7 @@ export type TrendRadarSignal = {
   recommendation: string | null
   status: TrendRadarSignalStatus
   reviewed_by_admin: boolean
+  converted_idea_id?: string | null
   created_at: string | null
   updated_at: string | null
 }
@@ -4230,7 +4231,9 @@ export type CreateTrendRadarSignalInput = {
 }
 
 export type UpdateTrendRadarSignalInput =
-  Partial<CreateTrendRadarSignalInput>
+  Partial<CreateTrendRadarSignalInput> & {
+    converted_idea_id?: string | null
+  }
 
 export type TrendRadarSignalSummary = {
   total_signals: number
@@ -4244,6 +4247,59 @@ export type TrendRadarSignalSummary = {
   high_strength_signals: number
 }
 
+export type IdeaLabItemStatus =
+  | "draft"
+  | "under_review"
+  | "ready_for_validation"
+  | "dismissed"
+  | "converted_to_product"
+
+export type IdeaLabItem = {
+  id: string
+  trend_radar_signal_id: string | null
+  title: string
+  summary: string
+  suggested_product: string | null
+  recommendation: string | null
+  source: string | null
+  evidence_url: string | null
+  evidence_note: string | null
+  niche_id: string | null
+  subniche_id: string | null
+  area_id: string | null
+  signal_strength: number | null
+  risk_level: TrendRadarRiskLevel | null
+  status: IdeaLabItemStatus
+  created_at: string | null
+  updated_at: string | null
+}
+
+export type CreateIdeaLabItemInput = {
+  trend_radar_signal_id?: string | null
+  title: string
+  summary: string
+  suggested_product?: string | null
+  recommendation?: string | null
+  source?: string | null
+  evidence_url?: string | null
+  evidence_note?: string | null
+  niche_id?: string | null
+  subniche_id?: string | null
+  area_id?: string | null
+  signal_strength?: number | null
+  risk_level?: TrendRadarRiskLevel | null
+  status?: IdeaLabItemStatus | null
+}
+
+export type IdeaLabItemSummary = {
+  total_items: number
+  draft_items: number
+  under_review_items: number
+  ready_for_validation_items: number
+  dismissed_items: number
+  converted_to_product_items: number
+}
+
 const EMPTY_TREND_RADAR_SIGNAL_SUMMARY: TrendRadarSignalSummary = {
   total_signals: 0,
   new_signals: 0,
@@ -4254,6 +4310,15 @@ const EMPTY_TREND_RADAR_SIGNAL_SUMMARY: TrendRadarSignalSummary = {
   average_signal_strength: null,
   high_risk_signals: 0,
   high_strength_signals: 0,
+}
+
+const EMPTY_IDEA_LAB_ITEM_SUMMARY: IdeaLabItemSummary = {
+  total_items: 0,
+  draft_items: 0,
+  under_review_items: 0,
+  ready_for_validation_items: 0,
+  dismissed_items: 0,
+  converted_to_product_items: 0,
 }
 
 const trendRadarSignalSelect = `
@@ -4273,6 +4338,31 @@ const trendRadarSignalSelect = `
   recommendation,
   status,
   reviewed_by_admin,
+  created_at,
+  updated_at
+`
+
+const trendRadarSignalWithConversionSelect = `
+  ${trendRadarSignalSelect},
+  converted_idea_id
+`
+
+const ideaLabItemSelect = `
+  id,
+  trend_radar_signal_id,
+  title,
+  summary,
+  suggested_product,
+  recommendation,
+  source,
+  evidence_url,
+  evidence_note,
+  niche_id,
+  subniche_id,
+  area_id,
+  signal_strength,
+  risk_level,
+  status,
   created_at,
   updated_at
 `
@@ -4413,7 +4503,47 @@ function getTrendRadarSignalUpdatePayload(
       Boolean(input.reviewed_by_admin)
   }
 
+  if (input.converted_idea_id !== undefined) {
+    payload.converted_idea_id =
+      input.converted_idea_id || null
+  }
+
   return payload
+}
+
+function getIdeaLabItemPayload(
+  input: CreateIdeaLabItemInput
+) {
+  return {
+    trend_radar_signal_id:
+      input.trend_radar_signal_id || null,
+    title:
+      input.title.trim(),
+    summary:
+      input.summary.trim(),
+    suggested_product:
+      input.suggested_product?.trim() || null,
+    recommendation:
+      input.recommendation?.trim() || null,
+    source:
+      input.source?.trim() || null,
+    evidence_url:
+      input.evidence_url?.trim() || null,
+    evidence_note:
+      input.evidence_note?.trim() || null,
+    niche_id:
+      input.niche_id || null,
+    subniche_id:
+      input.subniche_id || null,
+    area_id:
+      input.area_id || null,
+    signal_strength:
+      input.signal_strength ?? null,
+    risk_level:
+      input.risk_level || null,
+    status:
+      input.status || "draft",
+  }
 }
 
 export async function getTrendRadarSignals(
@@ -4638,6 +4768,286 @@ export async function getTrendRadarSignalSummary(): Promise<TrendRadarSignalSumm
             signal.signal_strength ||
             0
           ) >= 4
+      ).length,
+  }
+
+}
+
+export async function getIdeaLabItems(
+  limit = 20
+): Promise<IdeaLabItem[]> {
+
+  const { data, error } =
+    await supabase
+      .from("idea_lab_items")
+      .select(ideaLabItemSelect)
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
+      .limit(limit)
+
+  if (error) {
+    console.error(
+      "GET IDEA LAB ITEMS ERROR:",
+      error
+    )
+
+    return []
+  }
+
+  return (data || []) as IdeaLabItem[]
+
+}
+
+export async function getIdeaLabItemById(
+  id: string
+): Promise<IdeaLabItem | null> {
+
+  if (!id) {
+    return null
+  }
+
+  const { data, error } =
+    await supabase
+      .from("idea_lab_items")
+      .select(ideaLabItemSelect)
+      .eq(
+        "id",
+        id
+      )
+      .maybeSingle()
+
+  if (error) {
+    console.error(
+      "GET IDEA LAB ITEM BY ID ERROR:",
+      error
+    )
+
+    return null
+  }
+
+  return data as IdeaLabItem | null
+
+}
+
+export async function createIdeaLabItem(
+  input: CreateIdeaLabItemInput
+): Promise<IdeaLabItem | null> {
+
+  const { data, error } =
+    await supabase
+      .from("idea_lab_items")
+      .insert(
+        getIdeaLabItemPayload(input)
+      )
+      .select(ideaLabItemSelect)
+      .single()
+
+  if (error) {
+    console.error(
+      "CREATE IDEA LAB ITEM ERROR:",
+      error
+    )
+
+    return null
+  }
+
+  return data as IdeaLabItem
+
+}
+
+export async function createIdeaLabItemFromTrendSignal(
+  signalId: string
+): Promise<IdeaLabItem | null> {
+
+  if (!signalId) {
+    return null
+  }
+
+  const {
+    data: signal,
+    error: signalError,
+  } =
+    await supabase
+      .from("trend_radar_signals")
+      .select(trendRadarSignalWithConversionSelect)
+      .eq(
+        "id",
+        signalId
+      )
+      .maybeSingle()
+
+  if (signalError) {
+    console.error(
+      "CREATE IDEA LAB FROM TREND SIGNAL LOOKUP ERROR:",
+      signalError
+    )
+
+    return null
+  }
+
+  const trendSignal =
+    signal as TrendRadarSignal | null
+
+  if (!trendSignal) {
+    console.error(
+      "CREATE IDEA LAB FROM TREND SIGNAL ERROR:",
+      "trend_signal_not_found"
+    )
+
+    return null
+  }
+
+  if (trendSignal.status !== "candidate") {
+    console.error(
+      "CREATE IDEA LAB FROM TREND SIGNAL ERROR:",
+      "trend_signal_not_candidate"
+    )
+
+    return null
+  }
+
+  if (trendSignal.converted_idea_id) {
+    console.error(
+      "CREATE IDEA LAB FROM TREND SIGNAL ERROR:",
+      "trend_signal_already_converted"
+    )
+
+    return null
+  }
+
+  const title =
+    trendSignal.suggested_product?.trim() ||
+    trendSignal.title
+
+  const idea =
+    await createIdeaLabItem({
+      trend_radar_signal_id:
+        trendSignal.id,
+      title,
+      summary:
+        trendSignal.summary,
+      suggested_product:
+        trendSignal.suggested_product,
+      recommendation:
+        trendSignal.recommendation,
+      source:
+        trendSignal.source,
+      evidence_url:
+        trendSignal.evidence_url,
+      evidence_note:
+        trendSignal.evidence_note,
+      niche_id:
+        trendSignal.niche_id,
+      subniche_id:
+        trendSignal.subniche_id,
+      area_id:
+        trendSignal.area_id,
+      signal_strength:
+        trendSignal.signal_strength,
+      risk_level:
+        trendSignal.risk_level,
+      status:
+        "draft",
+    })
+
+  if (!idea) {
+    return null
+  }
+
+  const { error: updateSignalError } =
+    await supabase
+      .from("trend_radar_signals")
+      .update({
+        status:
+          "converted_to_idea",
+        reviewed_by_admin:
+          true,
+        converted_idea_id:
+          idea.id,
+        updated_at:
+          new Date().toISOString(),
+      })
+      .eq(
+        "id",
+        trendSignal.id
+      )
+
+  if (updateSignalError) {
+    console.error(
+      "CREATE IDEA LAB FROM TREND SIGNAL UPDATE ERROR:",
+      updateSignalError
+    )
+
+    await supabase
+      .from("idea_lab_items")
+      .delete()
+      .eq(
+        "id",
+        idea.id
+      )
+
+    return null
+  }
+
+  return idea
+
+}
+
+export async function getIdeaLabItemSummary(): Promise<IdeaLabItemSummary> {
+
+  const { data, error } =
+    await supabase
+      .from("idea_lab_items")
+      .select("status")
+
+  if (error) {
+    console.error(
+      "GET IDEA LAB ITEM SUMMARY ERROR:",
+      error
+    )
+
+    return EMPTY_IDEA_LAB_ITEM_SUMMARY
+  }
+
+  const items =
+    (
+      data || []
+    ) as Array<{
+      status: IdeaLabItemStatus | null
+    }>
+
+  return {
+    total_items:
+      items.length,
+    draft_items:
+      items.filter(
+        item =>
+          item.status === "draft"
+      ).length,
+    under_review_items:
+      items.filter(
+        item =>
+          item.status === "under_review"
+      ).length,
+    ready_for_validation_items:
+      items.filter(
+        item =>
+          item.status === "ready_for_validation"
+      ).length,
+    dismissed_items:
+      items.filter(
+        item =>
+          item.status === "dismissed"
+      ).length,
+    converted_to_product_items:
+      items.filter(
+        item =>
+          item.status ===
+          "converted_to_product"
       ).length,
   }
 

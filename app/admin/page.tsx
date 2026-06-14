@@ -25,15 +25,20 @@ import {
   getSubnicheDemandWithProducts,
   getTrendRadarSignals,
   getTrendRadarSignalSummary,
+  getIdeaLabItems,
+  getIdeaLabItemSummary,
   getTopCommunityAreas,
   getTopCommunityNiches,
   getTopCommunitySubniches,
   getProductStates,
   createTrendRadarSignal,
   updateTrendRadarSignal,
+  createIdeaLabItemFromTrendSignal,
   type CommunitySubscriberStats,
   type CommunitySubscriberWithInterests,
   type CommunityIdeaVoteSummary,
+  type IdeaLabItem,
+  type IdeaLabItemSummary,
   type StrategicNicheWithSubniches,
   type SubnicheDemandWithProducts,
   type TrendRadarSignal,
@@ -206,6 +211,15 @@ const EMPTY_TREND_RADAR_SIGNAL_SUMMARY: TrendRadarSignalSummary = {
   average_signal_strength: null,
   high_risk_signals: 0,
   high_strength_signals: 0,
+}
+
+const EMPTY_IDEA_LAB_ITEM_SUMMARY: IdeaLabItemSummary = {
+  total_items: 0,
+  draft_items: 0,
+  under_review_items: 0,
+  ready_for_validation_items: 0,
+  dismissed_items: 0,
+  converted_to_product_items: 0,
 }
 
 const EMPTY_TREND_RADAR_FORM: TrendRadarManualFormData = {
@@ -448,6 +462,38 @@ const trendRadarRiskClassNames: Record<
     "border-red-300/25 bg-red-300/[0.10] text-red-100",
 }
 
+const ideaLabStatusLabels: Record<
+  string,
+  string
+> = {
+  draft:
+    "Borrador interno",
+  under_review:
+    "En revision",
+  ready_for_validation:
+    "Lista para validar",
+  dismissed:
+    "Descartada",
+  converted_to_product:
+    "Convertida en producto",
+}
+
+const ideaLabStatusClassNames: Record<
+  string,
+  string
+> = {
+  draft:
+    "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100",
+  under_review:
+    "border-amber-200/25 bg-amber-200/[0.10] text-amber-100",
+  ready_for_validation:
+    "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100",
+  dismissed:
+    "border-white/10 bg-white/[0.04] text-white/45",
+  converted_to_product:
+    "border-violet-300/25 bg-violet-300/[0.10] text-violet-100",
+}
+
 const ADMIN_PRODUCT_LIST_BATCH_SIZE =
   24
 
@@ -680,6 +726,18 @@ export default function AdminPage() {
   ] = useState<TrendRadarSignal[]>([])
 
   const [
+    ideaLabItems,
+    setIdeaLabItems,
+  ] = useState<IdeaLabItem[]>([])
+
+  const [
+    ideaLabSummary,
+    setIdeaLabSummary,
+  ] = useState<IdeaLabItemSummary>(
+    EMPTY_IDEA_LAB_ITEM_SUMMARY
+  )
+
+  const [
     trendRadarSummary,
     setTrendRadarSummary,
   ] = useState<TrendRadarSignalSummary>(
@@ -732,6 +790,11 @@ export default function AdminPage() {
   const [
     candidateTrendRadarSignalId,
     setCandidateTrendRadarSignalId,
+  ] = useState<string | null>(null)
+
+  const [
+    convertingTrendRadarSignalId,
+    setConvertingTrendRadarSignalId,
   ] = useState<string | null>(null)
 
   const [
@@ -966,6 +1029,8 @@ export default function AdminPage() {
           ideaVoteSummaries,
           trendSignals,
           trendSummary,
+          ideaItems,
+          ideaSummary,
         ] =
           await Promise.all([
             getCommunitySubscriberStats(),
@@ -978,6 +1043,8 @@ export default function AdminPage() {
             getCommunityIdeaVoteTargetSummaries(10),
             getTrendRadarSignals(10),
             getTrendRadarSignalSummary(),
+            getIdeaLabItems(8),
+            getIdeaLabItemSummary(),
           ])
 
         setCommunityStats(
@@ -1020,6 +1087,15 @@ export default function AdminPage() {
           trendSummary ||
             EMPTY_TREND_RADAR_SIGNAL_SUMMARY
         )
+
+        setIdeaLabItems(
+          ideaItems || []
+        )
+
+        setIdeaLabSummary(
+          ideaSummary ||
+            EMPTY_IDEA_LAB_ITEM_SUMMARY
+        )
       } catch (error) {
         console.error(
           "LOAD COMMUNITY SUBSCRIBERS ERROR:",
@@ -1039,6 +1115,10 @@ export default function AdminPage() {
         setTrendRadarSignals([])
         setTrendRadarSummary(
           EMPTY_TREND_RADAR_SIGNAL_SUMMARY
+        )
+        setIdeaLabItems([])
+        setIdeaLabSummary(
+          EMPTY_IDEA_LAB_ITEM_SUMMARY
         )
       } finally {
         setIsLoadingCommunity(false)
@@ -1252,6 +1332,67 @@ export default function AdminPage() {
         )
       } finally {
         setCandidateTrendRadarSignalId(null)
+      }
+    }
+
+  const handleConvertTrendRadarSignalToIdea =
+    async (
+      signal: TrendRadarSignal
+    ) => {
+      setTrendRadarMessage("")
+      setTrendRadarError("")
+
+      if (
+        signal.status !== "candidate" ||
+        signal.converted_idea_id
+      ) {
+        setTrendRadarError(
+          "Solo una senal candidata sin idea interna puede convertirse en idea."
+        )
+        return
+      }
+
+      const confirmed =
+        window.confirm(
+          "Convertir esta senal en una idea interna? No se publicara en Home, no se creara producto y no se enviaran mensajes."
+        )
+
+      if (!confirmed) {
+        return
+      }
+
+      setConvertingTrendRadarSignalId(
+        signal.id
+      )
+
+      try {
+        const idea =
+          await createIdeaLabItemFromTrendSignal(
+            signal.id
+          )
+
+        if (!idea) {
+          throw new Error(
+            "idea_lab_item_not_created"
+          )
+        }
+
+        setTrendRadarMessage(
+          "La senal fue convertida en una idea interna. Aun no se ha publicado ni convertido en producto."
+        )
+
+        await loadCommunitySubscribers()
+      } catch (error) {
+        console.error(
+          "CONVERT TREND RADAR SIGNAL TO IDEA UI ERROR:",
+          error
+        )
+
+        setTrendRadarError(
+          "No se pudo convertir la senal en idea interna. Verifica que la migracion idea_lab_items este aplicada y que la senal siga como candidata."
+        )
+      } finally {
+        setConvertingTrendRadarSignalId(null)
       }
     }
 
@@ -6434,14 +6575,60 @@ export default function AdminPage() {
                                               ? "No disponible"
                                               : "Marcar como candidata"}
                                       </button>
-                                      <span className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-white/30">
-                                        Convertir en idea
-                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleConvertTrendRadarSignalToIdea(
+                                            signal
+                                          )
+                                        }
+                                        disabled={
+                                          signal.status !==
+                                            "candidate" ||
+                                          Boolean(
+                                            signal.converted_idea_id
+                                          ) ||
+                                          convertingTrendRadarSignalId ===
+                                            signal.id
+                                        }
+                                        className={`
+                                          rounded-full
+                                          border
+                                          px-3
+                                          py-2
+                                          text-[10px]
+                                          uppercase
+                                          tracking-[0.14em]
+                                          transition
+                                          ${
+                                            signal.status ===
+                                              "candidate" &&
+                                            !signal.converted_idea_id
+                                              ? "border-cyan-300/25 bg-cyan-300/[0.08] text-cyan-100 hover:border-cyan-200/50 hover:bg-cyan-300/[0.14]"
+                                              : "cursor-not-allowed border-white/10 bg-white/[0.035] text-white/30"
+                                          }
+                                        `}
+                                      >
+                                        {convertingTrendRadarSignalId ===
+                                        signal.id
+                                          ? "Convirtiendo..."
+                                          : signal.status ===
+                                              "converted_to_idea" ||
+                                            signal.converted_idea_id
+                                            ? "Idea interna creada"
+                                            : "Convertir en idea"}
+                                      </button>
                                     </div>
 
                                     {signal.status === "candidate" && (
                                       <p className="mt-3 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.06] px-3 py-2 text-xs leading-5 text-emerald-50/65">
                                         Esta senal fue marcada como candidata para revision estrategica. Aun no se ha convertido en idea ni producto.
+                                      </p>
+                                    )}
+
+                                    {(signal.status === "converted_to_idea" || signal.converted_idea_id) && (
+                                      <p className="mt-3 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.06] px-3 py-2 text-xs leading-5 text-cyan-50/65">
+                                        Idea interna creada. Aun no se ha publicado, no se ha convertido en producto y no tiene votacion automatica.
                                       </p>
                                     )}
                                   </article>
@@ -6752,6 +6939,94 @@ export default function AdminPage() {
                             </button>
                           </div>
                         </div>
+                      </div>
+
+                      <div className="mt-6 rounded-3xl border border-cyan-300/15 bg-black/25 p-6">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.24em] text-cyan-100/55">
+                              Ideas internas recientes
+                            </p>
+                            <p className="mt-2 text-sm leading-6 text-white/45">
+                              Borradores creados desde senales candidatas. No aparecen en Home, Store ni votaciones.
+                            </p>
+                          </div>
+
+                          <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-white/35">
+                            {ideaLabSummary.total_items.toLocaleString("es-NI")} internas
+                          </span>
+                        </div>
+
+                        {ideaLabItems.length === 0 ? (
+                          <p className="mt-5 rounded-2xl border border-white/10 bg-black/30 p-5 text-sm leading-6 text-white/45">
+                            Aun no hay ideas internas. Convierte una senal candidata para crear el primer borrador interno.
+                          </p>
+                        ) : (
+                          <div className="mt-5 grid gap-3 md:grid-cols-2">
+                            {ideaLabItems.map(
+                              item => (
+                                <article
+                                  key={item.id}
+                                  className="rounded-2xl border border-white/10 bg-black/30 p-4"
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-bold text-white/85">
+                                        {item.title}
+                                      </p>
+                                      <p className="mt-2 line-clamp-2 text-xs leading-5 text-white/45">
+                                        {item.summary}
+                                      </p>
+                                    </div>
+
+                                    <span
+                                      className={`
+                                        shrink-0
+                                        rounded-full
+                                        border
+                                        px-3
+                                        py-1.5
+                                        text-[9px]
+                                        uppercase
+                                        tracking-[0.13em]
+                                        ${ideaLabStatusClassNames[item.status] || ideaLabStatusClassNames.draft}
+                                      `}
+                                    >
+                                      {ideaLabStatusLabels[item.status] || item.status}
+                                    </span>
+                                  </div>
+
+                                  <div className="mt-4 flex flex-wrap gap-2">
+                                    {item.source && (
+                                      <span className="rounded-full border border-cyan-300/15 bg-cyan-300/[0.06] px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-cyan-100/70">
+                                        {item.source}
+                                      </span>
+                                    )}
+                                    {item.risk_level && (
+                                      <span
+                                        className={`
+                                          rounded-full
+                                          border
+                                          px-3
+                                          py-1.5
+                                          text-[10px]
+                                          uppercase
+                                          tracking-[0.12em]
+                                          ${trendRadarRiskClassNames[item.risk_level]}
+                                        `}
+                                      >
+                                        Riesgo {trendRadarRiskLabels[item.risk_level]}
+                                      </span>
+                                    )}
+                                    <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-white/35">
+                                      {formatCommunityDate(item.created_at)}
+                                    </span>
+                                  </div>
+                                </article>
+                              )
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </>
