@@ -3827,8 +3827,12 @@ export type CommunityIdeaVoteSummary = {
   not_interested_count: number
   would_buy_count: number
   wants_trial_count: number
+  interested_rate: number
+  not_interested_rate: number
   would_buy_rate: number
   wants_trial_rate: number
+  last_vote_at: string | null
+  recommendation_label: string
 }
 
 const communityIdeaVoteSelect = `
@@ -3875,11 +3879,57 @@ function createEmptyCommunityIdeaVoteSummary(
       0,
     wants_trial_count:
       0,
+    interested_rate:
+      0,
+    not_interested_rate:
+      0,
     would_buy_rate:
       0,
     wants_trial_rate:
       0,
+    last_vote_at:
+      vote.updated_at ||
+      vote.created_at ||
+      null,
+    recommendation_label:
+      "Necesita mas votos",
   }
+}
+
+function getCommunityIdeaVoteRecommendation(
+  summary: Pick<
+    CommunityIdeaVoteSummary,
+    | "total_votes"
+    | "interested_rate"
+    | "not_interested_rate"
+    | "would_buy_rate"
+    | "wants_trial_rate"
+  >
+) {
+  if (summary.total_votes < 5) {
+    return "Necesita mas votos"
+  }
+
+  if (
+    summary.would_buy_rate +
+      summary.wants_trial_rate >=
+    50
+  ) {
+    return "Alta intencion"
+  }
+
+  if (
+    summary.interested_rate >= 50 &&
+    summary.would_buy_rate < 25
+  ) {
+    return "Interes temprano"
+  }
+
+  if (summary.not_interested_rate >= 50) {
+    return "Revisar o ajustar"
+  }
+
+  return "En observacion"
 }
 
 function summarizeCommunityIdeaVotes(
@@ -3918,6 +3968,35 @@ function summarizeCommunityIdeaVotes(
         summary.wants_trial_count += 1
       }
 
+      const voteTimestamp =
+        vote.updated_at ||
+        vote.created_at ||
+        null
+
+      if (
+        voteTimestamp &&
+        (
+          !summary.last_vote_at ||
+          new Date(voteTimestamp).getTime() >
+            new Date(summary.last_vote_at).getTime()
+        )
+      ) {
+        summary.last_vote_at =
+          voteTimestamp
+      }
+
+      summary.interested_rate =
+        getCommunityPercent(
+          summary.interested_count,
+          summary.total_votes
+        )
+
+      summary.not_interested_rate =
+        getCommunityPercent(
+          summary.not_interested_count,
+          summary.total_votes
+        )
+
       summary.would_buy_rate =
         getCommunityPercent(
           summary.would_buy_count,
@@ -3928,6 +4007,11 @@ function summarizeCommunityIdeaVotes(
         getCommunityPercent(
           summary.wants_trial_count,
           summary.total_votes
+        )
+
+      summary.recommendation_label =
+        getCommunityIdeaVoteRecommendation(
+          summary
         )
 
       summaryByTarget.set(
@@ -3992,6 +4076,16 @@ export async function getCommunityIdeaVoteSummary(
 
   return summarizeCommunityIdeaVotes(
     (data || []) as CommunityIdeaVote[],
+    limit
+  )
+
+}
+
+export async function getCommunityIdeaVoteTargetSummaries(
+  limit = 10
+): Promise<CommunityIdeaVoteSummary[]> {
+
+  return getCommunityIdeaVoteSummary(
     limit
   )
 
@@ -4073,6 +4167,479 @@ export async function getCommunityIdeaVotesByIdeaKey(
   }
 
   return (data || []) as CommunityIdeaVote[]
+
+}
+
+export type TrendRadarSignalStatus =
+  | "new"
+  | "under_review"
+  | "candidate"
+  | "dismissed"
+  | "converted_to_idea"
+
+export type TrendRadarOpportunityType =
+  | "producto_emergente"
+  | "categoria_en_crecimiento"
+  | "problema_repetido"
+  | "ingrediente_tendencia"
+  | "demanda_sin_producto"
+  | "producto_con_alta_intencion"
+
+export type TrendRadarRiskLevel =
+  | "low"
+  | "medium"
+  | "high"
+
+export type TrendRadarSignal = {
+  id: string
+  source: string
+  title: string
+  summary: string
+  niche_id: string | null
+  subniche_id: string | null
+  area_id: string | null
+  signal_strength: number
+  opportunity_type: TrendRadarOpportunityType
+  evidence_url: string | null
+  evidence_note: string | null
+  suggested_product: string | null
+  risk_level: TrendRadarRiskLevel
+  recommendation: string | null
+  status: TrendRadarSignalStatus
+  reviewed_by_admin: boolean
+  created_at: string | null
+  updated_at: string | null
+}
+
+export type CreateTrendRadarSignalInput = {
+  source: string
+  title: string
+  summary: string
+  niche_id?: string | null
+  subniche_id?: string | null
+  area_id?: string | null
+  signal_strength?: number | null
+  opportunity_type: TrendRadarOpportunityType
+  evidence_url?: string | null
+  evidence_note?: string | null
+  suggested_product?: string | null
+  risk_level?: TrendRadarRiskLevel | null
+  recommendation?: string | null
+  status?: TrendRadarSignalStatus | null
+  reviewed_by_admin?: boolean | null
+}
+
+export type UpdateTrendRadarSignalInput =
+  Partial<CreateTrendRadarSignalInput>
+
+export type TrendRadarSignalSummary = {
+  total_signals: number
+  new_signals: number
+  under_review_signals: number
+  candidate_signals: number
+  dismissed_signals: number
+  converted_signals: number
+  average_signal_strength: number | null
+  high_risk_signals: number
+  high_strength_signals: number
+}
+
+const EMPTY_TREND_RADAR_SIGNAL_SUMMARY: TrendRadarSignalSummary = {
+  total_signals: 0,
+  new_signals: 0,
+  under_review_signals: 0,
+  candidate_signals: 0,
+  dismissed_signals: 0,
+  converted_signals: 0,
+  average_signal_strength: null,
+  high_risk_signals: 0,
+  high_strength_signals: 0,
+}
+
+const trendRadarSignalSelect = `
+  id,
+  source,
+  title,
+  summary,
+  niche_id,
+  subniche_id,
+  area_id,
+  signal_strength,
+  opportunity_type,
+  evidence_url,
+  evidence_note,
+  suggested_product,
+  risk_level,
+  recommendation,
+  status,
+  reviewed_by_admin,
+  created_at,
+  updated_at
+`
+
+function getTrendRadarSignalPayload(
+  input: CreateTrendRadarSignalInput
+) {
+  return {
+    source:
+      input.source.trim(),
+    title:
+      input.title.trim(),
+    summary:
+      input.summary.trim(),
+    niche_id:
+      input.niche_id || null,
+    subniche_id:
+      input.subniche_id || null,
+    area_id:
+      input.area_id || null,
+    signal_strength:
+      Math.max(
+        1,
+        Math.min(
+          5,
+          Math.round(
+            input.signal_strength || 1
+          )
+        )
+      ),
+    opportunity_type:
+      input.opportunity_type,
+    evidence_url:
+      input.evidence_url?.trim() || null,
+    evidence_note:
+      input.evidence_note?.trim() || null,
+    suggested_product:
+      input.suggested_product?.trim() || null,
+    risk_level:
+      input.risk_level || "medium",
+    recommendation:
+      input.recommendation?.trim() || null,
+    status:
+      input.status || "new",
+    reviewed_by_admin:
+      Boolean(input.reviewed_by_admin),
+  }
+}
+
+function getTrendRadarSignalUpdatePayload(
+  input: UpdateTrendRadarSignalInput
+) {
+  const payload: Record<string, unknown> = {
+    updated_at:
+      new Date().toISOString(),
+  }
+
+  if (input.source !== undefined) {
+    payload.source =
+      input.source?.trim()
+  }
+
+  if (input.title !== undefined) {
+    payload.title =
+      input.title?.trim()
+  }
+
+  if (input.summary !== undefined) {
+    payload.summary =
+      input.summary?.trim()
+  }
+
+  if (input.niche_id !== undefined) {
+    payload.niche_id =
+      input.niche_id || null
+  }
+
+  if (input.subniche_id !== undefined) {
+    payload.subniche_id =
+      input.subniche_id || null
+  }
+
+  if (input.area_id !== undefined) {
+    payload.area_id =
+      input.area_id || null
+  }
+
+  if (input.signal_strength !== undefined) {
+    payload.signal_strength =
+      Math.max(
+        1,
+        Math.min(
+          5,
+          Math.round(
+            input.signal_strength || 1
+          )
+        )
+      )
+  }
+
+  if (input.opportunity_type !== undefined) {
+    payload.opportunity_type =
+      input.opportunity_type
+  }
+
+  if (input.evidence_url !== undefined) {
+    payload.evidence_url =
+      input.evidence_url?.trim() || null
+  }
+
+  if (input.evidence_note !== undefined) {
+    payload.evidence_note =
+      input.evidence_note?.trim() || null
+  }
+
+  if (input.suggested_product !== undefined) {
+    payload.suggested_product =
+      input.suggested_product?.trim() || null
+  }
+
+  if (input.risk_level !== undefined) {
+    payload.risk_level =
+      input.risk_level || "medium"
+  }
+
+  if (input.recommendation !== undefined) {
+    payload.recommendation =
+      input.recommendation?.trim() || null
+  }
+
+  if (input.status !== undefined) {
+    payload.status =
+      input.status || "new"
+  }
+
+  if (input.reviewed_by_admin !== undefined) {
+    payload.reviewed_by_admin =
+      Boolean(input.reviewed_by_admin)
+  }
+
+  return payload
+}
+
+export async function getTrendRadarSignals(
+  limit = 20
+): Promise<TrendRadarSignal[]> {
+
+  const { data, error } =
+    await supabase
+      .from("trend_radar_signals")
+      .select(trendRadarSignalSelect)
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
+      .limit(limit)
+
+  if (error) {
+    console.error(
+      "GET TREND RADAR SIGNALS ERROR:",
+      error
+    )
+
+    return []
+  }
+
+  return (data || []) as TrendRadarSignal[]
+
+}
+
+export async function getTrendRadarSignalById(
+  id: string
+): Promise<TrendRadarSignal | null> {
+
+  if (!id) {
+    return null
+  }
+
+  const { data, error } =
+    await supabase
+      .from("trend_radar_signals")
+      .select(trendRadarSignalSelect)
+      .eq(
+        "id",
+        id
+      )
+      .maybeSingle()
+
+  if (error) {
+    console.error(
+      "GET TREND RADAR SIGNAL BY ID ERROR:",
+      error
+    )
+
+    return null
+  }
+
+  return data as TrendRadarSignal | null
+
+}
+
+export async function createTrendRadarSignal(
+  input: CreateTrendRadarSignalInput
+): Promise<TrendRadarSignal | null> {
+
+  const { data, error } =
+    await supabase
+      .from("trend_radar_signals")
+      .insert(
+        getTrendRadarSignalPayload(
+          input
+        )
+      )
+      .select(trendRadarSignalSelect)
+      .single()
+
+  if (error) {
+    console.error(
+      "CREATE TREND RADAR SIGNAL ERROR:",
+      error
+    )
+
+    return null
+  }
+
+  return data as TrendRadarSignal
+
+}
+
+export async function updateTrendRadarSignal(
+  id: string,
+  input: UpdateTrendRadarSignalInput
+): Promise<TrendRadarSignal | null> {
+
+  if (!id) {
+    return null
+  }
+
+  const { data, error } =
+    await supabase
+      .from("trend_radar_signals")
+      .update(
+        getTrendRadarSignalUpdatePayload(
+          input
+        )
+      )
+      .eq(
+        "id",
+        id
+      )
+      .select(trendRadarSignalSelect)
+      .single()
+
+  if (error) {
+    console.error(
+      "UPDATE TREND RADAR SIGNAL ERROR:",
+      error
+    )
+
+    return null
+  }
+
+  return data as TrendRadarSignal
+
+}
+
+export async function getTrendRadarSignalSummary(): Promise<TrendRadarSignalSummary> {
+
+  const { data, error } =
+    await supabase
+      .from("trend_radar_signals")
+      .select(`
+        status,
+        signal_strength,
+        risk_level
+      `)
+
+  if (error) {
+    console.error(
+      "GET TREND RADAR SIGNAL SUMMARY ERROR:",
+      error
+    )
+
+    return EMPTY_TREND_RADAR_SIGNAL_SUMMARY
+  }
+
+  const signals =
+    (
+      data || []
+    ) as Array<{
+      status: TrendRadarSignalStatus | null
+      signal_strength: number | null
+      risk_level: TrendRadarRiskLevel | null
+    }>
+
+  const totalSignals =
+    signals.length
+
+  if (totalSignals === 0) {
+    return EMPTY_TREND_RADAR_SIGNAL_SUMMARY
+  }
+
+  const signalStrengthTotal =
+    signals.reduce(
+      (
+        total,
+        signal
+      ) =>
+        total +
+        (
+          signal.signal_strength || 0
+        ),
+      0
+    )
+
+  return {
+    total_signals:
+      totalSignals,
+    new_signals:
+      signals.filter(
+        signal =>
+          signal.status === "new"
+      ).length,
+    under_review_signals:
+      signals.filter(
+        signal =>
+          signal.status === "under_review"
+      ).length,
+    candidate_signals:
+      signals.filter(
+        signal =>
+          signal.status === "candidate"
+      ).length,
+    dismissed_signals:
+      signals.filter(
+        signal =>
+          signal.status === "dismissed"
+      ).length,
+    converted_signals:
+      signals.filter(
+        signal =>
+          signal.status ===
+          "converted_to_idea"
+      ).length,
+    average_signal_strength:
+      Math.round(
+        (
+          signalStrengthTotal /
+          totalSignals
+        ) * 10
+      ) / 10,
+    high_risk_signals:
+      signals.filter(
+        signal =>
+          signal.risk_level === "high"
+      ).length,
+    high_strength_signals:
+      signals.filter(
+        signal =>
+          (
+            signal.signal_strength ||
+            0
+          ) >= 4
+      ).length,
+  }
 
 }
 

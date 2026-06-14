@@ -18,18 +18,27 @@ import {
   getAdminPriorityProducts,
   getAdminProductSuggestions,
   getCommunitySubscriberStats,
+  getCommunityIdeaVoteTargetSummaries,
   getPublicNichesWithSubniches,
   getRecentSubscribersWithInterests,
   getAdminValidationActionProducts,
   getSubnicheDemandWithProducts,
+  getTrendRadarSignals,
+  getTrendRadarSignalSummary,
   getTopCommunityAreas,
   getTopCommunityNiches,
   getTopCommunitySubniches,
   getProductStates,
+  createTrendRadarSignal,
   type CommunitySubscriberStats,
   type CommunitySubscriberWithInterests,
+  type CommunityIdeaVoteSummary,
   type StrategicNicheWithSubniches,
   type SubnicheDemandWithProducts,
+  type TrendRadarSignal,
+  type TrendRadarSignalSummary,
+  type TrendRadarOpportunityType,
+  type TrendRadarRiskLevel,
   type TopCommunityArea,
   type TopCommunityNiche,
   type TopCommunitySubniche,
@@ -133,6 +142,21 @@ type ManualSubscriberFormData = {
   objetivo_principal: string
 }
 
+type TrendRadarManualFormData = {
+  title: string
+  summary: string
+  source: string
+  opportunity_type: TrendRadarOpportunityType
+  signal_strength: string
+  risk_level: TrendRadarRiskLevel
+  evidence_url: string
+  evidence_note: string
+  suggested_product: string
+  recommendation: string
+  niche_id: string
+  subniche_id: string
+}
+
 const EMPTY_VALIDATION_SUMMARY: ValidationSummary = {
   pendingDecision: 0,
   readyToAdvance: 0,
@@ -169,6 +193,36 @@ const EMPTY_VALIDATION_ACTION_PRODUCTS: ValidationActionProducts = {
   readyToAdvance: [],
   pendingDecision: [],
   needsAdjustment: [],
+}
+
+const EMPTY_TREND_RADAR_SIGNAL_SUMMARY: TrendRadarSignalSummary = {
+  total_signals: 0,
+  new_signals: 0,
+  under_review_signals: 0,
+  candidate_signals: 0,
+  dismissed_signals: 0,
+  converted_signals: 0,
+  average_signal_strength: null,
+  high_risk_signals: 0,
+  high_strength_signals: 0,
+}
+
+const EMPTY_TREND_RADAR_FORM: TrendRadarManualFormData = {
+  title: "",
+  summary: "",
+  source: "",
+  opportunity_type:
+    "producto_emergente",
+  signal_strength:
+    "3",
+  risk_level:
+    "medium",
+  evidence_url: "",
+  evidence_note: "",
+  suggested_product: "",
+  recommendation: "",
+  niche_id: "",
+  subniche_id: "",
 }
 
 function normalizeValidationValue(
@@ -301,6 +355,96 @@ const demandOpportunityClassNames: Record<
     "border-amber-200/25 bg-amber-200/[0.10] text-amber-100",
   en_validacion:
     "border-violet-300/25 bg-violet-300/[0.10] text-violet-100",
+}
+
+const ideaVoteRecommendationClassNames: Record<
+  string,
+  string
+> = {
+  "Alta intencion":
+    "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100",
+  "Interes temprano":
+    "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100",
+  "Revisar o ajustar":
+    "border-amber-200/25 bg-amber-200/[0.10] text-amber-100",
+  "Necesita mas votos":
+    "border-white/10 bg-white/[0.04] text-white/45",
+  "En observacion":
+    "border-violet-300/20 bg-violet-300/[0.08] text-violet-100",
+}
+
+const trendRadarOpportunityTypeLabels: Record<
+  TrendRadarOpportunityType,
+  string
+> = {
+  producto_emergente:
+    "Producto emergente",
+  categoria_en_crecimiento:
+    "Categoria en crecimiento",
+  problema_repetido:
+    "Problema repetido",
+  ingrediente_tendencia:
+    "Ingrediente tendencia",
+  demanda_sin_producto:
+    "Demanda sin producto",
+  producto_con_alta_intencion:
+    "Producto con alta intencion",
+}
+
+const trendRadarStatusLabels: Record<
+  string,
+  string
+> = {
+  new:
+    "Nueva",
+  under_review:
+    "En revision",
+  candidate:
+    "Candidata",
+  dismissed:
+    "Descartada",
+  converted_to_idea:
+    "Convertida en idea",
+}
+
+const trendRadarStatusClassNames: Record<
+  string,
+  string
+> = {
+  new:
+    "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100",
+  under_review:
+    "border-amber-200/25 bg-amber-200/[0.10] text-amber-100",
+  candidate:
+    "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100",
+  dismissed:
+    "border-white/10 bg-white/[0.04] text-white/45",
+  converted_to_idea:
+    "border-violet-300/25 bg-violet-300/[0.10] text-violet-100",
+}
+
+const trendRadarRiskLabels: Record<
+  TrendRadarRiskLevel,
+  string
+> = {
+  low:
+    "Bajo",
+  medium:
+    "Medio",
+  high:
+    "Alto",
+}
+
+const trendRadarRiskClassNames: Record<
+  TrendRadarRiskLevel,
+  string
+> = {
+  low:
+    "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100",
+  medium:
+    "border-amber-200/25 bg-amber-200/[0.10] text-amber-100",
+  high:
+    "border-red-300/25 bg-red-300/[0.10] text-red-100",
 }
 
 const ADMIN_PRODUCT_LIST_BATCH_SIZE =
@@ -525,6 +669,23 @@ export default function AdminPage() {
   ] = useState<SubnicheDemandWithProducts[]>([])
 
   const [
+    communityIdeaVoteSummaries,
+    setCommunityIdeaVoteSummaries,
+  ] = useState<CommunityIdeaVoteSummary[]>([])
+
+  const [
+    trendRadarSignals,
+    setTrendRadarSignals,
+  ] = useState<TrendRadarSignal[]>([])
+
+  const [
+    trendRadarSummary,
+    setTrendRadarSummary,
+  ] = useState<TrendRadarSignalSummary>(
+    EMPTY_TREND_RADAR_SIGNAL_SUMMARY
+  )
+
+  const [
     communityNichesWithSubniches,
     setCommunityNichesWithSubniches,
   ] = useState<StrategicNicheWithSubniches[]>([])
@@ -546,6 +707,13 @@ export default function AdminPage() {
   })
 
   const [
+    trendRadarForm,
+    setTrendRadarForm,
+  ] = useState<TrendRadarManualFormData>(
+    EMPTY_TREND_RADAR_FORM
+  )
+
+  const [
     isLoadingCommunity,
     setIsLoadingCommunity,
   ] = useState(false)
@@ -556,6 +724,11 @@ export default function AdminPage() {
   ] = useState(false)
 
   const [
+    isSavingTrendRadarSignal,
+    setIsSavingTrendRadarSignal,
+  ] = useState(false)
+
+  const [
     communityMessage,
     setCommunityMessage,
   ] = useState("")
@@ -563,6 +736,16 @@ export default function AdminPage() {
   const [
     communityError,
     setCommunityError,
+  ] = useState("")
+
+  const [
+    trendRadarMessage,
+    setTrendRadarMessage,
+  ] = useState("")
+
+  const [
+    trendRadarError,
+    setTrendRadarError,
   ] = useState("")
 
   const [
@@ -774,6 +957,9 @@ export default function AdminPage() {
           subscribers,
           nichesWithSubniches,
           demandWithProducts,
+          ideaVoteSummaries,
+          trendSignals,
+          trendSummary,
         ] =
           await Promise.all([
             getCommunitySubscriberStats(),
@@ -783,6 +969,9 @@ export default function AdminPage() {
             getRecentSubscribersWithInterests(10),
             getPublicNichesWithSubniches(),
             getSubnicheDemandWithProducts(10),
+            getCommunityIdeaVoteTargetSummaries(10),
+            getTrendRadarSignals(10),
+            getTrendRadarSignalSummary(),
           ])
 
         setCommunityStats(
@@ -812,6 +1001,19 @@ export default function AdminPage() {
         setSubnicheDemandWithProducts(
           demandWithProducts || []
         )
+
+        setCommunityIdeaVoteSummaries(
+          ideaVoteSummaries || []
+        )
+
+        setTrendRadarSignals(
+          trendSignals || []
+        )
+
+        setTrendRadarSummary(
+          trendSummary ||
+            EMPTY_TREND_RADAR_SIGNAL_SUMMARY
+        )
       } catch (error) {
         console.error(
           "LOAD COMMUNITY SUBSCRIBERS ERROR:",
@@ -827,6 +1029,11 @@ export default function AdminPage() {
         setCommunitySubscribers([])
         setCommunityNichesWithSubniches([])
         setSubnicheDemandWithProducts([])
+        setCommunityIdeaVoteSummaries([])
+        setTrendRadarSignals([])
+        setTrendRadarSummary(
+          EMPTY_TREND_RADAR_SIGNAL_SUMMARY
+        )
       } finally {
         setIsLoadingCommunity(false)
       }
@@ -844,6 +1051,132 @@ export default function AdminPage() {
           [field]: value,
         })
       )
+    }
+
+  const updateTrendRadarField =
+    (
+      field: keyof TrendRadarManualFormData,
+      value: string
+    ) => {
+      setTrendRadarForm(
+        currentForm => ({
+          ...currentForm,
+          [field]:
+            value,
+          ...(field === "niche_id"
+            ? {
+                subniche_id:
+                  "",
+              }
+            : {}),
+        })
+      )
+    }
+
+  const trendRadarSubnicheOptions =
+    useMemo(
+      () => {
+        const selectedNiche =
+          communityNichesWithSubniches.find(
+            niche =>
+              niche.id ===
+              trendRadarForm.niche_id
+          )
+
+        return selectedNiche?.subniches || []
+      },
+      [
+        communityNichesWithSubniches,
+        trendRadarForm.niche_id,
+      ]
+    )
+
+  const handleCreateTrendRadarSignal =
+    async () => {
+      setTrendRadarMessage("")
+      setTrendRadarError("")
+
+      const title =
+        trendRadarForm.title.trim()
+
+      const summary =
+        trendRadarForm.summary.trim()
+
+      const source =
+        trendRadarForm.source.trim()
+
+      if (
+        !title ||
+        !summary ||
+        !source
+      ) {
+        setTrendRadarError(
+          "Titulo, resumen y fuente son obligatorios."
+        )
+        return
+      }
+
+      setIsSavingTrendRadarSignal(true)
+
+      try {
+        const createdSignal =
+          await createTrendRadarSignal({
+            title,
+            summary,
+            source,
+            opportunity_type:
+              trendRadarForm.opportunity_type,
+            signal_strength:
+              Number(
+                trendRadarForm.signal_strength
+              ) || 1,
+            risk_level:
+              trendRadarForm.risk_level,
+            evidence_url:
+              trendRadarForm.evidence_url,
+            evidence_note:
+              trendRadarForm.evidence_note,
+            suggested_product:
+              trendRadarForm.suggested_product,
+            recommendation:
+              trendRadarForm.recommendation,
+            niche_id:
+              trendRadarForm.niche_id || null,
+            subniche_id:
+              trendRadarForm.subniche_id || null,
+            status:
+              "new",
+            reviewed_by_admin:
+              false,
+          })
+
+        if (!createdSignal) {
+          throw new Error(
+            "trend_radar_signal_not_created"
+          )
+        }
+
+        setTrendRadarForm(
+          EMPTY_TREND_RADAR_FORM
+        )
+
+        setTrendRadarMessage(
+          "Senal agregada al Radar. Revisala antes de convertirla en idea."
+        )
+
+        await loadCommunitySubscribers()
+      } catch (error) {
+        console.error(
+          "CREATE TREND RADAR SIGNAL UI ERROR:",
+          error
+        )
+
+        setTrendRadarError(
+          "No se pudo guardar la senal. Verifica que la migracion trend_radar_signals este aplicada y que tengas permisos Admin."
+        )
+      } finally {
+        setIsSavingTrendRadarSignal(false)
+      }
     }
 
   const manualSubnichesById =
@@ -1720,6 +2053,133 @@ export default function AdminPage() {
         ),
       detail:
         "Canal correo disponible",
+    },
+  ]
+
+  const communityIdeaVoteTotals =
+    communityIdeaVoteSummaries.reduce(
+      (
+        totals,
+        summary
+      ) => ({
+        total_votes:
+          totals.total_votes +
+          summary.total_votes,
+        interested_count:
+          totals.interested_count +
+          summary.interested_count,
+        not_interested_count:
+          totals.not_interested_count +
+          summary.not_interested_count,
+        would_buy_count:
+          totals.would_buy_count +
+          summary.would_buy_count,
+        wants_trial_count:
+          totals.wants_trial_count +
+          summary.wants_trial_count,
+      }),
+      {
+        total_votes: 0,
+        interested_count: 0,
+        not_interested_count: 0,
+        would_buy_count: 0,
+        wants_trial_count: 0,
+      }
+    )
+
+  const communityIdeaVoteCards = [
+    {
+      label:
+        "Total votos",
+      value:
+        communityIdeaVoteTotals.total_votes,
+      detail:
+        "Votos reales de ideas",
+    },
+    {
+      label:
+        "Me interesa",
+      value:
+        communityIdeaVoteTotals.interested_count,
+      detail:
+        "Interes general",
+    },
+    {
+      label:
+        "No me interesa",
+      value:
+        communityIdeaVoteTotals.not_interested_count,
+      detail:
+        "Senal de ajuste",
+    },
+    {
+      label:
+        "Lo compraria",
+      value:
+        communityIdeaVoteTotals.would_buy_count,
+      detail:
+        "Intencion de compra",
+    },
+    {
+      label:
+        "Quiero prueba",
+      value:
+        communityIdeaVoteTotals.wants_trial_count,
+      detail:
+        "Interes en prueba",
+    },
+  ]
+
+  const trendRadarMetricCards = [
+    {
+      label:
+        "Total senales",
+      value:
+        trendRadarSummary.total_signals,
+      detail:
+        "Entradas del radar",
+    },
+    {
+      label:
+        "Nuevas",
+      value:
+        trendRadarSummary.new_signals,
+      detail:
+        "Pendientes de revision",
+    },
+    {
+      label:
+        "En revision",
+      value:
+        trendRadarSummary.under_review_signals,
+      detail:
+        "Bajo analisis Admin",
+    },
+    {
+      label:
+        "Candidatas",
+      value:
+        trendRadarSummary.candidate_signals,
+      detail:
+        "Posibles ideas futuras",
+    },
+    {
+      label:
+        "Alta fuerza",
+      value:
+        trendRadarSummary.high_strength_signals,
+      detail:
+        trendRadarSummary.average_signal_strength === null
+          ? "Promedio pendiente"
+          : `Promedio ${trendRadarSummary.average_signal_strength}/5`,
+    },
+    {
+      label:
+        "Alto riesgo",
+      value:
+        trendRadarSummary.high_risk_signals,
+      detail:
+        "Requiere cuidado",
     },
   ]
 
@@ -5446,6 +5906,725 @@ export default function AdminPage() {
                           </table>
                         </div>
                       )}
+                    </div>
+
+                    <div
+                      className="
+                        mt-6
+                        rounded-3xl
+                        border
+                        border-cyan-300/15
+                        bg-cyan-300/[0.04]
+                        p-6
+                      "
+                    >
+                      <div
+                        className="
+                          flex
+                          flex-col
+                          gap-4
+                          lg:flex-row
+                          lg:items-start
+                          lg:justify-between
+                        "
+                      >
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.28em] text-cyan-100/60">
+                            Votacion real de ideas
+                          </p>
+
+                          <h3
+                            className="
+                              mt-3
+                              text-2xl
+                              font-black
+                              tracking-[-0.03em]
+                              text-white
+                            "
+                          >
+                            Intencion directa de la comunidad
+                          </h3>
+
+                          <p className="mt-3 max-w-3xl text-sm leading-6 text-white/50">
+                            Intencion directa de la comunidad sobre ideas y productos en validacion. Esta lectura no cambia estados ni automatiza decisiones.
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-xs leading-5 text-white/45">
+                          Fuente: community_idea_votes. Solo datos agregados, sin PII.
+                        </div>
+                      </div>
+
+                      {communityIdeaVoteTotals.total_votes === 0 ? (
+                        <p className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-5 text-sm leading-6 text-white/45">
+                          Aun no hay votos de ideas. Cuando la comunidad vote "Me interesa", "Lo compraria" o "Quiero prueba", apareceran aqui.
+                        </p>
+                      ) : (
+                        <>
+                          <div
+                            className="
+                              mt-6
+                              grid
+                              grid-cols-1
+                              gap-4
+                              md:grid-cols-2
+                              xl:grid-cols-5
+                            "
+                          >
+                            {communityIdeaVoteCards.map(
+                              (card) => (
+                                <div
+                                  key={card.label}
+                                  className="
+                                    rounded-3xl
+                                    border
+                                    border-white/10
+                                    bg-black/30
+                                    p-5
+                                  "
+                                >
+                                  <p className="text-[10px] uppercase tracking-[0.22em] text-white/40">
+                                    {card.label}
+                                  </p>
+                                  <p className="mt-4 text-3xl font-black text-white">
+                                    {card.value.toLocaleString("es-NI")}
+                                  </p>
+                                  <p className="mt-3 text-xs leading-5 text-white/40">
+                                    {card.detail}
+                                  </p>
+                                </div>
+                              )
+                            )}
+                          </div>
+
+                          <div className="mt-6 overflow-x-auto">
+                            <table className="min-w-[1020px] w-full border-separate border-spacing-y-3 text-left">
+                              <thead>
+                                <tr className="text-[10px] uppercase tracking-[0.22em] text-white/35">
+                                  <th className="px-4 py-2">
+                                    Idea / Producto
+                                  </th>
+                                  <th className="px-4 py-2">
+                                    Total votos
+                                  </th>
+                                  <th className="px-4 py-2">
+                                    Me interesa
+                                  </th>
+                                  <th className="px-4 py-2">
+                                    No me interesa
+                                  </th>
+                                  <th className="px-4 py-2">
+                                    Lo compraria
+                                  </th>
+                                  <th className="px-4 py-2">
+                                    Quiero prueba
+                                  </th>
+                                  <th className="px-4 py-2">
+                                    Recomendacion
+                                  </th>
+                                  <th className="px-4 py-2">
+                                    Ultimo voto
+                                  </th>
+                                </tr>
+                              </thead>
+
+                              <tbody>
+                                {communityIdeaVoteSummaries.map(
+                                  (summary) => (
+                                    <tr
+                                      key={summary.target_key}
+                                      className="bg-black/30"
+                                    >
+                                      <td className="rounded-l-2xl border-y border-l border-white/10 px-4 py-4">
+                                        <p className="max-w-[260px] truncate text-sm font-semibold text-white/85">
+                                          {summary.idea_title}
+                                        </p>
+                                        <p className="mt-1 max-w-[260px] truncate text-xs text-cyan-100/45">
+                                          {summary.product_id
+                                            ? "Producto conectado"
+                                            : summary.idea_key || "Idea sin clave"}
+                                        </p>
+                                      </td>
+
+                                      <td className="border-y border-white/10 px-4 py-4">
+                                        <p className="text-lg font-black text-white">
+                                          {summary.total_votes.toLocaleString("es-NI")}
+                                        </p>
+                                      </td>
+
+                                      <td className="border-y border-white/10 px-4 py-4">
+                                        <p className="text-sm font-semibold text-white/80">
+                                          {summary.interested_count.toLocaleString("es-NI")}
+                                        </p>
+                                        <p className="mt-1 text-xs text-white/35">
+                                          {formatCommunityPercent(summary.interested_rate)}
+                                        </p>
+                                      </td>
+
+                                      <td className="border-y border-white/10 px-4 py-4">
+                                        <p className="text-sm font-semibold text-white/80">
+                                          {summary.not_interested_count.toLocaleString("es-NI")}
+                                        </p>
+                                        <p className="mt-1 text-xs text-white/35">
+                                          {formatCommunityPercent(summary.not_interested_rate)}
+                                        </p>
+                                      </td>
+
+                                      <td className="border-y border-white/10 px-4 py-4">
+                                        <p className="text-sm font-semibold text-white/80">
+                                          {summary.would_buy_count.toLocaleString("es-NI")}
+                                        </p>
+                                        <p className="mt-1 text-xs text-white/35">
+                                          {formatCommunityPercent(summary.would_buy_rate)}
+                                        </p>
+                                      </td>
+
+                                      <td className="border-y border-white/10 px-4 py-4">
+                                        <p className="text-sm font-semibold text-white/80">
+                                          {summary.wants_trial_count.toLocaleString("es-NI")}
+                                        </p>
+                                        <p className="mt-1 text-xs text-white/35">
+                                          {formatCommunityPercent(summary.wants_trial_rate)}
+                                        </p>
+                                      </td>
+
+                                      <td className="border-y border-white/10 px-4 py-4">
+                                        <span
+                                          className={`
+                                            inline-flex
+                                            rounded-full
+                                            border
+                                            px-3
+                                            py-2
+                                            text-[10px]
+                                            font-semibold
+                                            uppercase
+                                            tracking-[0.14em]
+                                            ${ideaVoteRecommendationClassNames[summary.recommendation_label] || ideaVoteRecommendationClassNames["En observacion"]}
+                                          `}
+                                        >
+                                          {summary.recommendation_label}
+                                        </span>
+                                      </td>
+
+                                      <td className="rounded-r-2xl border-y border-r border-white/10 px-4 py-4">
+                                        <p className="text-sm text-white/55">
+                                          {formatCommunityDate(
+                                            summary.last_vote_at
+                                          )}
+                                        </p>
+                                      </td>
+                                    </tr>
+                                  )
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    <div
+                      className="
+                        mt-6
+                        rounded-3xl
+                        border
+                        border-amber-200/15
+                        bg-amber-200/[0.035]
+                        p-6
+                      "
+                    >
+                      <div
+                        className="
+                          flex
+                          flex-col
+                          gap-4
+                          lg:flex-row
+                          lg:items-start
+                          lg:justify-between
+                        "
+                      >
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.28em] text-amber-100/60">
+                            Radar de tendencias
+                          </p>
+
+                          <h3
+                            className="
+                              mt-3
+                              text-2xl
+                              font-black
+                              tracking-[-0.03em]
+                              text-white
+                            "
+                          >
+                            Senales antes de crear ideas
+                          </h3>
+
+                          <p className="mt-3 max-w-3xl text-sm leading-6 text-white/50">
+                            Senales de mercado y comunidad para detectar oportunidades antes de crear ideas. Todo queda en revision manual.
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-xs leading-5 text-white/45">
+                          Manual por ahora. No publica, no crea productos y no llama fuentes externas.
+                        </div>
+                      </div>
+
+                      <div
+                        className="
+                          mt-6
+                          grid
+                          grid-cols-1
+                          gap-4
+                          md:grid-cols-2
+                          xl:grid-cols-6
+                        "
+                      >
+                        {trendRadarMetricCards.map(
+                          (card) => (
+                            <div
+                              key={card.label}
+                              className="
+                                rounded-3xl
+                                border
+                                border-white/10
+                                bg-black/30
+                                p-5
+                              "
+                            >
+                              <p className="text-[10px] uppercase tracking-[0.22em] text-white/40">
+                                {card.label}
+                              </p>
+                              <p className="mt-4 text-3xl font-black text-white">
+                                {card.value.toLocaleString("es-NI")}
+                              </p>
+                              <p className="mt-3 text-xs leading-5 text-white/40">
+                                {card.detail}
+                              </p>
+                            </div>
+                          )
+                        )}
+                      </div>
+
+                      <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+                        <div className="rounded-3xl border border-white/10 bg-black/25 p-6">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <p className="text-xs uppercase tracking-[0.24em] text-white/45">
+                                Lista reciente
+                              </p>
+                              <p className="mt-2 text-sm leading-6 text-white/45">
+                                Tendencias capturadas manualmente para revision.
+                              </p>
+                            </div>
+                            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-white/35">
+                              Sin automatizacion
+                            </span>
+                          </div>
+
+                          {trendRadarSignals.length === 0 ? (
+                            <p className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-5 text-sm leading-6 text-white/45">
+                              Aun no hay senales en el Radar. Agrega senales manuales para empezar a detectar oportunidades.
+                            </p>
+                          ) : (
+                            <div className="mt-6 space-y-3">
+                              {trendRadarSignals.map(
+                                (signal) => (
+                                  <article
+                                    key={signal.id}
+                                    className="rounded-2xl border border-white/10 bg-black/30 p-4"
+                                  >
+                                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                      <div className="min-w-0">
+                                        <p className="truncate text-sm font-bold text-white/85">
+                                          {signal.title}
+                                        </p>
+                                        <p className="mt-2 line-clamp-2 text-xs leading-5 text-white/45">
+                                          {signal.summary}
+                                        </p>
+                                      </div>
+
+                                      <span
+                                        className={`
+                                          inline-flex
+                                          shrink-0
+                                          rounded-full
+                                          border
+                                          px-3
+                                          py-2
+                                          text-[10px]
+                                          font-semibold
+                                          uppercase
+                                          tracking-[0.14em]
+                                          ${trendRadarStatusClassNames[signal.status] || trendRadarStatusClassNames.new}
+                                        `}
+                                      >
+                                        {trendRadarStatusLabels[signal.status] || signal.status}
+                                      </span>
+                                    </div>
+
+                                    <div className="mt-4 flex flex-wrap gap-2">
+                                      <span className="rounded-full border border-cyan-300/15 bg-cyan-300/[0.06] px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-cyan-100/75">
+                                        {signal.source}
+                                      </span>
+                                      <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-white/45">
+                                        {trendRadarOpportunityTypeLabels[signal.opportunity_type]}
+                                      </span>
+                                      <span className="rounded-full border border-amber-200/15 bg-amber-200/[0.08] px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-amber-100/75">
+                                        Fuerza {signal.signal_strength}/5
+                                      </span>
+                                      <span
+                                        className={`
+                                          rounded-full
+                                          border
+                                          px-3
+                                          py-1.5
+                                          text-[10px]
+                                          uppercase
+                                          tracking-[0.12em]
+                                          ${trendRadarRiskClassNames[signal.risk_level]}
+                                        `}
+                                      >
+                                        Riesgo {trendRadarRiskLabels[signal.risk_level]}
+                                      </span>
+                                      <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-white/35">
+                                        {formatCommunityDate(signal.created_at)}
+                                      </span>
+                                    </div>
+
+                                    {(signal.suggested_product || signal.recommendation) && (
+                                      <div className="mt-4 grid gap-3 md:grid-cols-2">
+                                        {signal.suggested_product && (
+                                          <p className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs leading-5 text-white/45">
+                                            Producto sugerido: {signal.suggested_product}
+                                          </p>
+                                        )}
+                                        {signal.recommendation && (
+                                          <p className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs leading-5 text-white/45">
+                                            Recomendacion: {signal.recommendation}
+                                          </p>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    <div className="mt-4 flex flex-wrap gap-2">
+                                      <span className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-white/30">
+                                        Marcar como candidata
+                                      </span>
+                                      <span className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-white/30">
+                                        Convertir en idea
+                                      </span>
+                                    </div>
+                                  </article>
+                                )
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-3xl border border-amber-200/15 bg-black/25 p-6">
+                          <p className="text-xs uppercase tracking-[0.24em] text-amber-100/60">
+                            Agregar senal manual
+                          </p>
+                          <p className="mt-3 text-sm leading-6 text-white/45">
+                            Captura una tendencia o senal observada. Admin la revisa antes de convertirla en idea.
+                          </p>
+
+                          <div className="mt-6 space-y-4">
+                            <label className="block space-y-2">
+                              <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+                                Titulo
+                              </span>
+                              <input
+                                value={trendRadarForm.title}
+                                onChange={(event) =>
+                                  updateTrendRadarField(
+                                    "title",
+                                    event.target.value
+                                  )
+                                }
+                                placeholder="Ej: Cafe funcional con colageno"
+                                className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none"
+                              />
+                            </label>
+
+                            <label className="block space-y-2">
+                              <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+                                Resumen
+                              </span>
+                              <textarea
+                                value={trendRadarForm.summary}
+                                onChange={(event) =>
+                                  updateTrendRadarField(
+                                    "summary",
+                                    event.target.value
+                                  )
+                                }
+                                placeholder="Que se esta viendo, por que importa y que evidencia existe."
+                                rows={4}
+                                className="w-full resize-none rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm leading-6 text-white outline-none"
+                              />
+                            </label>
+
+                            <div className="grid gap-4 sm:grid-cols-2">
+                              <label className="block space-y-2">
+                                <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+                                  Fuente
+                                </span>
+                                <input
+                                  value={trendRadarForm.source}
+                                  onChange={(event) =>
+                                    updateTrendRadarField(
+                                      "source",
+                                      event.target.value
+                                    )
+                                  }
+                                  placeholder="Google Trends, TikTok, Amazon..."
+                                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none"
+                                />
+                              </label>
+
+                              <label className="block space-y-2">
+                                <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+                                  Tipo
+                                </span>
+                                <select
+                                  value={trendRadarForm.opportunity_type}
+                                  onChange={(event) =>
+                                    updateTrendRadarField(
+                                      "opportunity_type",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none"
+                                >
+                                  {Object.entries(trendRadarOpportunityTypeLabels).map(
+                                    ([value, label]) => (
+                                      <option
+                                        key={value}
+                                        value={value}
+                                      >
+                                        {label}
+                                      </option>
+                                    )
+                                  )}
+                                </select>
+                              </label>
+                            </div>
+
+                            <div className="grid gap-4 sm:grid-cols-2">
+                              <label className="block space-y-2">
+                                <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+                                  Fuerza 1-5
+                                </span>
+                                <select
+                                  value={trendRadarForm.signal_strength}
+                                  onChange={(event) =>
+                                    updateTrendRadarField(
+                                      "signal_strength",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none"
+                                >
+                                  {[1, 2, 3, 4, 5].map(
+                                    value => (
+                                      <option
+                                        key={value}
+                                        value={value}
+                                      >
+                                        {value}
+                                      </option>
+                                    )
+                                  )}
+                                </select>
+                              </label>
+
+                              <label className="block space-y-2">
+                                <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+                                  Riesgo
+                                </span>
+                                <select
+                                  value={trendRadarForm.risk_level}
+                                  onChange={(event) =>
+                                    updateTrendRadarField(
+                                      "risk_level",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none"
+                                >
+                                  {Object.entries(trendRadarRiskLabels).map(
+                                    ([value, label]) => (
+                                      <option
+                                        key={value}
+                                        value={value}
+                                      >
+                                        {label}
+                                      </option>
+                                    )
+                                  )}
+                                </select>
+                              </label>
+                            </div>
+
+                            <div className="grid gap-4 sm:grid-cols-2">
+                              <label className="block space-y-2">
+                                <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+                                  Nicho opcional
+                                </span>
+                                <select
+                                  value={trendRadarForm.niche_id}
+                                  onChange={(event) =>
+                                    updateTrendRadarField(
+                                      "niche_id",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none"
+                                >
+                                  <option value="">
+                                    Sin nicho
+                                  </option>
+                                  {communityNichesWithSubniches.map(
+                                    niche => (
+                                      <option
+                                        key={niche.id}
+                                        value={niche.id}
+                                      >
+                                        {niche.public_name || niche.name}
+                                      </option>
+                                    )
+                                  )}
+                                </select>
+                              </label>
+
+                              <label className="block space-y-2">
+                                <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+                                  Subnicho opcional
+                                </span>
+                                <select
+                                  value={trendRadarForm.subniche_id}
+                                  onChange={(event) =>
+                                    updateTrendRadarField(
+                                      "subniche_id",
+                                      event.target.value
+                                    )
+                                  }
+                                  disabled={!trendRadarForm.niche_id}
+                                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none disabled:cursor-not-allowed disabled:opacity-45"
+                                >
+                                  <option value="">
+                                    Sin subnicho
+                                  </option>
+                                  {trendRadarSubnicheOptions.map(
+                                    subniche => (
+                                      <option
+                                        key={subniche.id}
+                                        value={subniche.id}
+                                      >
+                                        {subniche.public_name || subniche.name}
+                                      </option>
+                                    )
+                                  )}
+                                </select>
+                              </label>
+                            </div>
+
+                            <label className="block space-y-2">
+                              <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+                                Evidencia URL opcional
+                              </span>
+                              <input
+                                value={trendRadarForm.evidence_url}
+                                onChange={(event) =>
+                                  updateTrendRadarField(
+                                    "evidence_url",
+                                    event.target.value
+                                  )
+                                }
+                                placeholder="https://..."
+                                className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none"
+                              />
+                            </label>
+
+                            <label className="block space-y-2">
+                              <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+                                Nota de evidencia opcional
+                              </span>
+                              <textarea
+                                value={trendRadarForm.evidence_note}
+                                onChange={(event) =>
+                                  updateTrendRadarField(
+                                    "evidence_note",
+                                    event.target.value
+                                  )
+                                }
+                                rows={3}
+                                className="w-full resize-none rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm leading-6 text-white outline-none"
+                              />
+                            </label>
+
+                            <div className="grid gap-4 sm:grid-cols-2">
+                              <label className="block space-y-2">
+                                <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+                                  Producto sugerido
+                                </span>
+                                <input
+                                  value={trendRadarForm.suggested_product}
+                                  onChange={(event) =>
+                                    updateTrendRadarField(
+                                      "suggested_product",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none"
+                                />
+                              </label>
+
+                              <label className="block space-y-2">
+                                <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+                                  Recomendacion
+                                </span>
+                                <input
+                                  value={trendRadarForm.recommendation}
+                                  onChange={(event) =>
+                                    updateTrendRadarField(
+                                      "recommendation",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none"
+                                />
+                              </label>
+                            </div>
+
+                            {trendRadarError && (
+                              <p className="rounded-2xl border border-red-300/20 bg-red-300/[0.08] p-4 text-sm leading-6 text-red-100">
+                                {trendRadarError}
+                              </p>
+                            )}
+
+                            {trendRadarMessage && (
+                              <p className="rounded-2xl border border-emerald-300/20 bg-emerald-300/[0.08] p-4 text-sm leading-6 text-emerald-100">
+                                {trendRadarMessage}
+                              </p>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={handleCreateTrendRadarSignal}
+                              disabled={isSavingTrendRadarSignal}
+                              className="w-full rounded-2xl border border-amber-200/25 bg-amber-200 px-5 py-4 text-xs font-black uppercase tracking-[0.18em] text-black transition-all hover:-translate-y-0.5 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {isSavingTrendRadarSignal
+                                ? "Guardando senal"
+                                : "Agregar senal al radar"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </>
                 )}
