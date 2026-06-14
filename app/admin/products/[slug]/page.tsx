@@ -284,6 +284,25 @@ type FormData = {
   commercial_notes: string
 }
 
+type ProductFieldErrors =
+  Partial<Record<keyof FormData, string>>
+
+const fieldSectionMap:
+  Partial<Record<keyof FormData, string>> = {
+  name: "general",
+  category: "general",
+  description: "general",
+  image_url: "general",
+  price: "general",
+  strategic_niche_id: "validacion",
+  primary_subniche_id: "validacion",
+  usage_moment: "contenido",
+  main_benefit: "contenido",
+  how_to_use: "contenido",
+  usage_description: "contenido",
+  benefits: "contenido",
+}
+
 type ProductUpdateData = {
   name: string
   category: string
@@ -1260,6 +1279,9 @@ export default function ProductDetailPage() {
   const [saveError, setSaveError] =
     useState("")
 
+  const [fieldErrors, setFieldErrors] =
+    useState<ProductFieldErrors>({})
+
   const [
     isSendingNotification,
     setIsSendingNotification,
@@ -1680,6 +1702,82 @@ export default function ProductDetailPage() {
     product?.id,
   ])
 
+  const clearFieldErrors =
+    useCallback(
+      (
+        fields: Array<keyof FormData>
+      ) => {
+        setFieldErrors(current => {
+          const next = {
+            ...current,
+          }
+
+          fields.forEach(field => {
+            delete next[field]
+          })
+
+          return next
+        })
+      },
+      []
+    )
+
+  const scrollToFirstFieldError =
+    useCallback(
+      (
+        fields: Array<keyof FormData>
+      ) => {
+        const firstField =
+          fields[0]
+
+        if (!firstField) {
+          return
+        }
+
+        const targetSection =
+          fieldSectionMap[firstField]
+
+        if (targetSection) {
+          setActiveSection(targetSection)
+        }
+
+        window.setTimeout(() => {
+          document
+            .querySelector(
+              `[data-product-field="${firstField}"]`
+            )
+            ?.scrollIntoView({
+              behavior: "smooth",
+              block: "center",
+            })
+        }, 120)
+      },
+      []
+    )
+
+  const getValidatedInputClassName =
+    (
+      field: keyof FormData,
+      extraClassName = ""
+    ) =>
+      [
+        inputClassName,
+        fieldErrors[field]
+          ? "border-red-300/70 bg-red-500/[0.08] text-red-50 placeholder:text-red-100/30 focus:border-red-200/80"
+          : "",
+        extraClassName,
+      ]
+        .filter(Boolean)
+        .join(" ")
+
+  const renderFieldError =
+    (field: keyof FormData) =>
+      fieldErrors[field] ? (
+        <p className="mt-2 rounded-xl border border-red-300/20 bg-red-500/[0.08] px-3 py-2 text-xs leading-5 text-red-100">
+          {fieldErrors[field]}
+        </p>
+      ) : null
+
   const updateField =
     (
       field: keyof FormData,
@@ -1723,6 +1821,17 @@ export default function ProductDetailPage() {
 
       setSaveMessage("")
       setSaveError("")
+      clearFieldErrors(
+        field === "how_to_use" ||
+          field === "usage_description"
+          ? [
+              "how_to_use",
+              "usage_description",
+            ]
+          : [
+              field,
+            ]
+      )
     }
 
   const updateStrategicNiche =
@@ -1767,6 +1876,10 @@ export default function ProductDetailPage() {
 
       setSaveMessage("")
       setSaveError("")
+      clearFieldErrors([
+        "strategic_niche_id",
+        "primary_subniche_id",
+      ])
     }
 
   const updatePrimarySubniche =
@@ -1802,6 +1915,9 @@ export default function ProductDetailPage() {
 
       setSaveMessage("")
       setSaveError("")
+      clearFieldErrors([
+        "primary_subniche_id",
+      ])
     }
 
   const toggleSecondarySubniche =
@@ -2841,9 +2957,33 @@ export default function ProductDetailPage() {
         )
 
       if (!name || !category) {
+        const nextFieldErrors:
+          ProductFieldErrors = {}
+
+        if (!name) {
+          nextFieldErrors.name =
+            "Completa el nombre del producto antes de guardar."
+        }
+
+        if (!category) {
+          nextFieldErrors.category =
+            "Completa la categoria antes de guardar."
+        }
+
+        const errorFields =
+          Object.keys(
+            nextFieldErrors
+          ) as Array<keyof FormData>
+
+        setFieldErrors(
+          nextFieldErrors
+        )
         setSaveMessage("")
         setSaveError(
-          "Nombre y categoria son obligatorios."
+          `No se ejecuto la accion "Guardar producto" porque falta completar: ${errorFields.map(field => field === "name" ? "nombre" : "categoria").join(", ")}.`
+        )
+        scrollToFirstFieldError(
+          errorFields
         )
         return
       }
@@ -2852,10 +2992,17 @@ export default function ProductDetailPage() {
         priceValue !== null &&
         Number.isNaN(priceValue)
       ) {
+        setFieldErrors({
+          price:
+            "Ingresa un precio numerico valido. Ejemplo: 12.99.",
+        })
         setSaveMessage("")
         setSaveError(
-          "El precio debe ser un numero valido."
+          "No se ejecuto la accion porque el precio no es un numero valido."
         )
+        scrollToFirstFieldError([
+          "price",
+        ])
         return
       }
 
@@ -3036,14 +3183,39 @@ export default function ProductDetailPage() {
           selectedStateName
         ).includes("disponible")
       ) {
-        const missingFields: string[] =
-          []
+        const nextFieldErrors:
+          ProductFieldErrors = {}
+
+        const missingFieldLabels:
+          string[] = []
+
+        const addMissingField =
+          (
+            field: keyof FormData,
+            label: string,
+            message: string
+          ) => {
+            nextFieldErrors[field] =
+              message
+
+            if (
+              !missingFieldLabels.includes(
+                label
+              )
+            ) {
+              missingFieldLabels.push(
+                label
+              )
+            }
+          }
 
         if (
           !formData.description.trim()
         ) {
-          missingFields.push(
-            "descripcion"
+          addMissingField(
+            "description",
+            "descripcion",
+            "Agrega una descripcion clara antes de publicar el producto como Disponible."
           )
         }
 
@@ -3051,30 +3223,58 @@ export default function ProductDetailPage() {
           !formData.image_url.trim() &&
           !product.image
         ) {
-          missingFields.push(
-            "imagen principal"
+          addMissingField(
+            "image_url",
+            "imagen principal",
+            "Agrega una URL de imagen principal para publicar y notificar el lanzamiento."
           )
         }
 
         if (priceValue === null) {
-          missingFields.push(
-            "precio"
+          addMissingField(
+            "price",
+            "precio",
+            "Agrega el precio antes de publicar el producto como Disponible."
+          )
+        }
+
+        if (
+          !formData.strategic_niche_id
+        ) {
+          addMissingField(
+            "strategic_niche_id",
+            "nicho principal",
+            "Selecciona el nicho principal para segmentar correctamente la comunidad."
+          )
+        }
+
+        if (
+          !formData.primary_subniche_id
+        ) {
+          addMissingField(
+            "primary_subniche_id",
+            "subnicho principal",
+            "Selecciona el subnicho principal para saber a que interesados avisar."
           )
         }
 
         if (
           !formData.usage_moment.trim()
         ) {
-          missingFields.push(
-            "momento de uso"
+          addMissingField(
+            "usage_moment",
+            "momento de uso",
+            "Completa el momento de uso antes de publicar el producto."
           )
         }
 
         if (
           !formData.main_benefit.trim()
         ) {
-          missingFields.push(
-            "beneficio principal"
+          addMissingField(
+            "main_benefit",
+            "beneficio principal",
+            "Agrega el beneficio principal para que la ficha publica sea clara."
           )
         }
 
@@ -3082,21 +3282,41 @@ export default function ProductDetailPage() {
           !formData.how_to_use.trim() &&
           !formData.usage_description.trim()
         ) {
-          missingFields.push(
-            "como usarlo"
+          addMissingField(
+            "how_to_use",
+            "como usarlo",
+            "Completa Como usarlo o Descripcion lifestyle antes de publicar."
+          )
+          addMissingField(
+            "usage_description",
+            "como usarlo",
+            "Completa Descripcion lifestyle o Como usarlo antes de publicar."
           )
         }
 
         if (!benefitsValue.length) {
-          missingFields.push(
-            "beneficios"
+          addMissingField(
+            "benefits",
+            "beneficios",
+            "Agrega al menos un beneficio, una linea por item."
           )
         }
 
-        if (missingFields.length) {
+        const errorFields =
+          Object.keys(
+            nextFieldErrors
+          ) as Array<keyof FormData>
+
+        if (errorFields.length) {
+          setFieldErrors(
+            nextFieldErrors
+          )
           setSaveMessage("")
           setSaveError(
-            `Antes de publicar este producto como Disponible completa: ${missingFields.join(", ")}.`
+            `No se ejecuto la accion "Publicar como Disponible" porque falta completar: ${missingFieldLabels.join(", ")}.`
+          )
+          scrollToFirstFieldError(
+            errorFields
           )
           return
         }
@@ -3105,6 +3325,7 @@ export default function ProductDetailPage() {
       setIsSaving(true)
       setSaveMessage("")
       setSaveError("")
+      setFieldErrors({})
 
       const updates: ProductUpdateData = {
         name,
@@ -3854,7 +4075,7 @@ export default function ProductDetailPage() {
               </p>
 
               <div className="mt-6 grid gap-5 md:grid-cols-2">
-                <label>
+                <label data-product-field="name">
                   <span className="text-[10px] uppercase tracking-[0.24em] text-white/40">
                     Nombre
                   </span>
@@ -3869,11 +4090,14 @@ export default function ProductDetailPage() {
                         event.target.value
                       )
                     }
-                    className={inputClassName}
+                    className={getValidatedInputClassName(
+                      "name"
+                    )}
                   />
+                  {renderFieldError("name")}
                 </label>
 
-                <label>
+                <label data-product-field="category">
                   <span className="text-[10px] uppercase tracking-[0.24em] text-white/40">
                     Categoria
                   </span>
@@ -3888,11 +4112,17 @@ export default function ProductDetailPage() {
                         event.target.value
                       )
                     }
-                    className={inputClassName}
+                    className={getValidatedInputClassName(
+                      "category"
+                    )}
                   />
+                  {renderFieldError("category")}
                 </label>
 
-                <label className="md:col-span-2">
+                <label
+                  data-product-field="description"
+                  className="md:col-span-2"
+                >
                   <span className="text-[10px] uppercase tracking-[0.24em] text-white/40">
                     Descripcion
                   </span>
@@ -3908,11 +4138,18 @@ export default function ProductDetailPage() {
                       )
                     }
                     rows={5}
-                    className={`${inputClassName} resize-none leading-6`}
+                    className={getValidatedInputClassName(
+                      "description",
+                      "resize-none leading-6"
+                    )}
                   />
+                  {renderFieldError("description")}
                 </label>
 
-                <label className="md:col-span-2">
+                <label
+                  data-product-field="image_url"
+                  className="md:col-span-2"
+                >
                   <span className="text-[10px] uppercase tracking-[0.24em] text-white/40">
                     Image URL
                   </span>
@@ -3929,11 +4166,14 @@ export default function ProductDetailPage() {
                       )
                     }
                     placeholder="https://..."
-                    className={inputClassName}
+                    className={getValidatedInputClassName(
+                      "image_url"
+                    )}
                   />
+                  {renderFieldError("image_url")}
                 </label>
 
-                <label>
+                <label data-product-field="price">
                   <span className="text-[10px] uppercase tracking-[0.24em] text-white/40">
                     Precio
                   </span>
@@ -3951,8 +4191,11 @@ export default function ProductDetailPage() {
                     }
                     inputMode="decimal"
                     placeholder="0.00"
-                    className={inputClassName}
+                    className={getValidatedInputClassName(
+                      "price"
+                    )}
                   />
+                  {renderFieldError("price")}
                 </label>
 
                 <label>
@@ -4181,7 +4424,7 @@ export default function ProductDetailPage() {
                 </FieldGuide>
 
                 <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                  <label>
+                  <label data-product-field="strategic_niche_id">
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Nicho principal
                     </span>
@@ -4192,7 +4435,9 @@ export default function ProductDetailPage() {
                           event.target.value
                         )
                       }
-                      className={inputClassName}
+                      className={getValidatedInputClassName(
+                        "strategic_niche_id"
+                      )}
                     >
                       <option value="">
                         Sin nicho principal
@@ -4208,9 +4453,10 @@ export default function ProductDetailPage() {
                         )
                       )}
                     </select>
+                    {renderFieldError("strategic_niche_id")}
                   </label>
 
-                  <label>
+                  <label data-product-field="primary_subniche_id">
                     <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
                       Subnicho principal
                     </span>
@@ -4225,7 +4471,9 @@ export default function ProductDetailPage() {
                         !formData.strategic_niche_id ||
                         selectedNicheSubniches.length === 0
                       }
-                      className={inputClassName}
+                      className={getValidatedInputClassName(
+                        "primary_subniche_id"
+                      )}
                     >
                       <option value="">
                         Sin subnicho principal
@@ -4241,6 +4489,7 @@ export default function ProductDetailPage() {
                         )
                       )}
                     </select>
+                    {renderFieldError("primary_subniche_id")}
                   </label>
                 </div>
 
@@ -6495,7 +6744,10 @@ export default function ProductDetailPage() {
             </p>
 
             <div className="mt-8 grid gap-5 lg:grid-cols-2">
-              <label className="rounded-3xl border border-white/10 bg-black/25 p-5">
+              <label
+                data-product-field="usage_moment"
+                className="rounded-3xl border border-white/10 bg-black/25 p-5"
+              >
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Momento de uso
                 </span>
@@ -6511,11 +6763,17 @@ export default function ProductDetailPage() {
                     )
                   }
                   placeholder="Cafe funcional de la manana"
-                  className={inputClassName}
+                  className={getValidatedInputClassName(
+                    "usage_moment"
+                  )}
                 />
+                {renderFieldError("usage_moment")}
               </label>
 
-              <label className="rounded-3xl border border-white/10 bg-black/25 p-5">
+              <label
+                data-product-field="main_benefit"
+                className="rounded-3xl border border-white/10 bg-black/25 p-5"
+              >
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Beneficio principal
                 </span>
@@ -6532,11 +6790,17 @@ export default function ProductDetailPage() {
                     )
                   }
                   placeholder="Cafe funcional con vitaminas y colageno para bienestar diario"
-                  className={inputClassName}
+                  className={getValidatedInputClassName(
+                    "main_benefit"
+                  )}
                 />
+                {renderFieldError("main_benefit")}
               </label>
 
-              <label className="rounded-3xl border border-white/10 bg-black/25 p-5 lg:col-span-2">
+              <label
+                data-product-field="how_to_use"
+                className="rounded-3xl border border-white/10 bg-black/25 p-5 lg:col-span-2"
+              >
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Como usarlo
                 </span>
@@ -6554,11 +6818,18 @@ export default function ProductDetailPage() {
                   }
                   placeholder="Integra Mash Coffee+ en tu rutina diaria como cafe funcional con vitaminas, colageno marino y extractos herbales."
                   rows={4}
-                  className={`${inputClassName} resize-none leading-6`}
+                  className={getValidatedInputClassName(
+                    "how_to_use",
+                    "resize-none leading-6"
+                  )}
                 />
+                {renderFieldError("how_to_use")}
               </label>
 
-              <label className="rounded-3xl border border-white/10 bg-black/25 p-5 lg:col-span-2">
+              <label
+                data-product-field="usage_description"
+                className="rounded-3xl border border-white/10 bg-black/25 p-5 lg:col-span-2"
+              >
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Descripcion lifestyle
                 </span>
@@ -6576,11 +6847,18 @@ export default function ProductDetailPage() {
                   }
                   placeholder="Una forma moderna de disfrutar cafe con beneficios funcionales, sin azucar y bajo en calorias."
                   rows={4}
-                  className={`${inputClassName} resize-none leading-6`}
+                  className={getValidatedInputClassName(
+                    "usage_description",
+                    "resize-none leading-6"
+                  )}
                 />
+                {renderFieldError("usage_description")}
               </label>
 
-              <label className="rounded-3xl border border-white/10 bg-black/25 p-5">
+              <label
+                data-product-field="benefits"
+                className="rounded-3xl border border-white/10 bg-black/25 p-5"
+              >
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Rutina sugerida
                 </span>
@@ -6597,8 +6875,12 @@ export default function ProductDetailPage() {
                   }
                   placeholder={"Agitalo bien antes de tomar.\nSirvelo frio sobre hielo.\nAnade tu leche favorita."}
                   rows={6}
-                  className={`${inputClassName} resize-none leading-6`}
+                  className={getValidatedInputClassName(
+                    "benefits",
+                    "resize-none leading-6"
+                  )}
                 />
+                {renderFieldError("benefits")}
               </label>
 
               <label className="rounded-3xl border border-white/10 bg-black/25 p-5">
