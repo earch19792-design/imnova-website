@@ -22,6 +22,7 @@ import {
   getRecentSubscribersWithInterests,
   getAdminValidationActionProducts,
   getSubnicheDemandWithProducts,
+  getTopCommunityAreas,
   getTopCommunityNiches,
   getTopCommunitySubniches,
   getProductStates,
@@ -29,6 +30,7 @@ import {
   type CommunitySubscriberWithInterests,
   type StrategicNicheWithSubniches,
   type SubnicheDemandWithProducts,
+  type TopCommunityArea,
   type TopCommunityNiche,
   type TopCommunitySubniche,
   updateProduct,
@@ -157,6 +159,8 @@ const EMPTY_DASHBOARD_METRICS: AdminDashboardMetrics = {
 const EMPTY_COMMUNITY_SUBSCRIBER_STATS: CommunitySubscriberStats = {
   totalSubscribers: 0,
   subscribersWithInterests: 0,
+  subscribersWithAreaInterests: 0,
+  subscribersWithSubnicheInterests: 0,
   percentWithWhatsapp: 0,
   percentWithEmail: 0,
 }
@@ -311,11 +315,11 @@ const adminMenuGuides = {
       "Usa esta vista para registrar miembros, normalizar intereses y cruzar demanda real contra productos disponibles.",
     steps: [
       "Revisa las metricas de comunidad e identifica los nichos con mas seleccion.",
-      "Registra contactos manuales solo con consentimiento y selecciona intereses reales.",
-      "Usa Demanda vs Productos para priorizar encuestas, pruebas y futuras oportunidades.",
+      "Distingue areas generales del popup y subnichos especificos del Admin.",
+      "Usa Demanda vs Productos solo para priorizar con subnichos especificos.",
     ],
     reminder:
-      "subscriber_interests es la fuente oficial para decisiones nuevas de comunidad.",
+      "subscriber_area_interests mide intereses generales; subscriber_interests mide subnichos especificos.",
   },
   analytics: {
     title:
@@ -463,6 +467,11 @@ export default function AdminPage() {
     topCommunityNiches,
     setTopCommunityNiches,
   ] = useState<TopCommunityNiche[]>([])
+
+  const [
+    topCommunityAreas,
+    setTopCommunityAreas,
+  ] = useState<TopCommunityArea[]>([])
 
   const [
     topCommunitySubniches,
@@ -718,6 +727,7 @@ export default function AdminPage() {
       try {
         const [
           stats,
+          areas,
           niches,
           subniches,
           subscribers,
@@ -726,6 +736,7 @@ export default function AdminPage() {
         ] =
           await Promise.all([
             getCommunitySubscriberStats(),
+            getTopCommunityAreas(5),
             getTopCommunityNiches(5),
             getTopCommunitySubniches(5),
             getRecentSubscribersWithInterests(10),
@@ -735,6 +746,10 @@ export default function AdminPage() {
 
         setCommunityStats(
           stats
+        )
+
+        setTopCommunityAreas(
+          areas || []
         )
 
         setTopCommunityNiches(
@@ -1548,6 +1563,9 @@ export default function AdminPage() {
   const topCommunityNiche =
     topCommunityNiches[0]
 
+  const topCommunityArea =
+    topCommunityAreas[0]
+
   const topCommunitySubniche =
     topCommunitySubniches[0]
 
@@ -1556,10 +1574,23 @@ export default function AdminPage() {
     topCommunityNiche?.niche_name ||
     "Sin datos"
 
+  const topCommunityAreaName =
+    topCommunityArea?.area_label ||
+    "Sin datos"
+
   const topCommunitySubnicheName =
     topCommunitySubniche?.subniche_public_name ||
     topCommunitySubniche?.subniche_name ||
     "Sin datos"
+
+  const maxTopCommunityAreaCount =
+    Math.max(
+      1,
+      ...topCommunityAreas.map(
+        (area) =>
+          area.count
+      )
+    )
 
   const maxTopCommunityNicheCount =
     Math.max(
@@ -1592,9 +1623,19 @@ export default function AdminPage() {
     },
     {
       label:
-        "Con intereses",
+        "Con areas generales",
       value:
-        communityStats.subscribersWithInterests.toLocaleString(
+        communityStats.subscribersWithAreaInterests.toLocaleString(
+          "es-NI"
+        ),
+      detail:
+        "Fuente: subscriber_area_interests",
+    },
+    {
+      label:
+        "Con subnichos",
+      value:
+        communityStats.subscribersWithSubnicheInterests.toLocaleString(
           "es-NI"
         ),
       detail:
@@ -1602,7 +1643,17 @@ export default function AdminPage() {
     },
     {
       label:
-        "Nicho mas popular",
+        "Area mas popular",
+      value:
+        topCommunityAreaName,
+      detail:
+        topCommunityArea
+          ? `${topCommunityArea.count} selecciones`
+          : "Pendiente de datos",
+    },
+    {
+      label:
+        "Nicho especifico mas popular",
       value:
         topCommunityNicheName,
       detail:
@@ -1612,7 +1663,7 @@ export default function AdminPage() {
     },
     {
       label:
-        "Subnicho mas popular",
+        "Subnicho especifico mas popular",
       value:
         topCommunitySubnicheName,
       detail:
@@ -4732,7 +4783,7 @@ export default function AdminPage() {
                         text-white/50
                       "
                     >
-                      Que temas esta eligiendo la comunidad y donde hay mayor demanda.
+                      Que areas generales elige la comunidad y que subnichos especificos tienen demanda real.
                     </p>
                   </div>
 
@@ -4799,7 +4850,7 @@ export default function AdminPage() {
                           text-amber-100/80
                         "
                       >
-                        Los intereses apareceran cuando la comunidad seleccione subnichos desde el popup.
+                        Los intereses apareceran cuando la comunidad seleccione areas desde el popup o subnichos especificos desde Admin.
                       </div>
                     )}
 
@@ -4857,7 +4908,7 @@ export default function AdminPage() {
                         grid
                         grid-cols-1
                         gap-6
-                        xl:grid-cols-2
+                        xl:grid-cols-3
                       "
                     >
                       <div
@@ -4870,13 +4921,82 @@ export default function AdminPage() {
                         "
                       >
                         <p className="text-xs uppercase tracking-[0.28em] text-white/45">
-                          Top 5 nichos
+                          Top 5 areas generales
+                        </p>
+
+                        <div className="mt-6 space-y-4">
+                          {topCommunityAreas.length === 0 ? (
+                            <p className="rounded-2xl border border-white/10 bg-black/30 p-5 text-sm text-white/45">
+                              Las areas apareceran cuando la comunidad seleccione intereses desde el popup.
+                            </p>
+                          ) : (
+                            topCommunityAreas.map(
+                              (area) => {
+                                const width =
+                                  Math.max(
+                                    8,
+                                    Math.round(
+                                      (
+                                        area.count /
+                                        maxTopCommunityAreaCount
+                                      ) * 100
+                                    )
+                                  )
+
+                                return (
+                                  <div
+                                    key={area.area_id}
+                                    className="space-y-2"
+                                  >
+                                    <div className="flex items-center justify-between gap-4 text-sm">
+                                      <span className="min-w-0 break-words font-semibold text-white/80">
+                                        {area.area_label}
+                                      </span>
+                                      <span className="text-white/45">
+                                        {area.count}
+                                      </span>
+                                    </div>
+
+                                    {area.area_description && (
+                                      <p className="text-xs leading-5 text-cyan-100/45">
+                                        {area.area_description}
+                                      </p>
+                                    )}
+
+                                    <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                                      <div
+                                        className="h-full rounded-full bg-cyan-300"
+                                        style={{
+                                          width:
+                                            `${width}%`,
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+                                )
+                              }
+                            )
+                          )}
+                        </div>
+                      </div>
+
+                      <div
+                        className="
+                          rounded-3xl
+                          border
+                          border-white/10
+                          bg-black/25
+                          p-6
+                        "
+                      >
+                        <p className="text-xs uppercase tracking-[0.28em] text-white/45">
+                          Top 5 nichos especificos
                         </p>
 
                         <div className="mt-6 space-y-4">
                           {topCommunityNiches.length === 0 ? (
                             <p className="rounded-2xl border border-white/10 bg-black/30 p-5 text-sm text-white/45">
-                              Los intereses apareceran cuando la comunidad seleccione subnichos desde el popup.
+                              Los nichos especificos apareceran cuando existan subnichos reales seleccionados.
                             </p>
                           ) : (
                             topCommunityNiches.map(
@@ -4933,13 +5053,13 @@ export default function AdminPage() {
                         "
                       >
                         <p className="text-xs uppercase tracking-[0.28em] text-white/45">
-                          Top 5 subnichos
+                          Top 5 subnichos especificos
                         </p>
 
                         <div className="mt-6 space-y-4">
                           {topCommunitySubniches.length === 0 ? (
                             <p className="rounded-2xl border border-white/10 bg-black/30 p-5 text-sm text-white/45">
-                              Los intereses apareceran cuando la comunidad seleccione subnichos desde el popup.
+                              Los subnichos apareceran cuando Admin o una accion especifica registre intereses detallados.
                             </p>
                           ) : (
                             topCommunitySubniches.map(
@@ -5027,11 +5147,11 @@ export default function AdminPage() {
                               text-white
                             "
                           >
-                            Oportunidades por interes real
+                            Oportunidades por subnicho especifico
                           </h3>
 
                           <p className="mt-3 max-w-3xl text-sm leading-6 text-white/50">
-                            Compara intereses reales de la comunidad con productos asociados y encuestas activas.
+                            Compara subnichos especificos guardados en subscriber_interests con productos asociados y encuestas activas.
                           </p>
                         </div>
 
@@ -5367,7 +5487,7 @@ export default function AdminPage() {
                           Intereses normalizados
                         </span>
                         <p className="mt-2 text-xs leading-5 text-white/35">
-                          Selecciona intereses reales de IMNOVA OS. Se guardan en subscriber_interests como la fuente oficial de comunidad.
+                          Selecciona subnichos especificos de IMNOVA OS. Se guardan en subscriber_interests; las areas generales del popup viven en subscriber_area_interests.
                         </p>
                       </div>
 
@@ -5638,6 +5758,12 @@ export default function AdminPage() {
                                   interest.subniche_name
                               )
 
+                            const areaInterests =
+                              subscriber.area_interests.map(
+                                (interest) =>
+                                  interest.area_label
+                              )
+
                             return (
                               <div
                                 key={subscriber.id}
@@ -5670,6 +5796,35 @@ export default function AdminPage() {
                                   </span>
                                 </div>
 
+                                {areaInterests.length > 0 && (
+                                  <div className="mt-4 flex flex-wrap gap-2">
+                                    {areaInterests
+                                      .slice(
+                                        0,
+                                        3
+                                      )
+                                      .map(
+                                        (interest) => (
+                                          <span
+                                            key={interest}
+                                            className="
+                                              rounded-full
+                                              border
+                                              border-emerald-300/15
+                                              bg-emerald-300/[0.08]
+                                              px-3
+                                              py-1
+                                              text-[11px]
+                                              text-emerald-50/75
+                                            "
+                                          >
+                                            Area: {interest}
+                                          </span>
+                                        )
+                                      )}
+                                  </div>
+                                )}
+
                                 {normalizedInterests.length > 0 ? (
                                   <div className="mt-4 flex flex-wrap gap-2">
                                     {normalizedInterests
@@ -5692,16 +5847,16 @@ export default function AdminPage() {
                                               text-cyan-50/75
                                             "
                                           >
-                                            {interest}
+                                            Subnicho: {interest}
                                           </span>
                                         )
                                       )}
                                   </div>
-                                ) : (
+                                ) : areaInterests.length === 0 ? (
                                   <p className="mt-4 text-xs leading-5 text-white/35">
-                                    Sin intereses normalizados utiles todavia.
+                                    Sin areas ni subnichos normalizados utiles todavia.
                                   </p>
-                                )}
+                                ) : null}
 
                                 {subscriber.objetivo_principal && (
                                   <p className="mt-4 text-xs leading-5 text-white/40">

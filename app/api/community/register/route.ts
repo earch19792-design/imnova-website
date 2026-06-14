@@ -17,6 +17,8 @@ type CommunityRegisterPayload = {
   country?: unknown
   selectedSubnicheIds?: unknown
   selectedSubnicheNames?: unknown
+  selectedAreaKeys?: unknown
+  selectedAreaLabels?: unknown
   objective?: unknown
   source?: unknown
   honeypot?: unknown
@@ -32,6 +34,13 @@ type PublicSubniche = {
   public_name: string | null
 }
 
+type CommunityInterestArea = {
+  id: string
+  key: string
+  label: string
+  description: string | null
+}
+
 type CommunitySubscriberPayload = {
   nombre: string
   telefono: string | null
@@ -42,27 +51,83 @@ type CommunitySubscriberPayload = {
 
 const MAX_SELECTED_SUBNICHES = 25
 const MAX_LEGACY_INTEREST_NAMES = 5
+const MAX_SELECTED_AREAS = 3
 
-const publicInterestNames = [
-  "Bienestar y Salud Natural",
-  "Fitness, Rendimiento y Recuperacion",
-  "Salud y Funcionalidad Especifica",
-  "Cuidado Personal y Belleza Natural",
-  "Bienestar Animal y Cuidado de Mascotas",
+const publicInterestAreas = [
+  {
+    key:
+      "bienestar_salud_natural",
+    label:
+      "Bienestar y Salud Natural",
+  },
+  {
+    key:
+      "fitness_rendimiento_recuperacion",
+    label:
+      "Fitness, Rendimiento y Recuperacion",
+  },
+  {
+    key:
+      "salud_funcionalidad_especifica",
+    label:
+      "Salud y Funcionalidad Especifica",
+  },
+  {
+    key:
+      "cuidado_belleza_natural",
+    label:
+      "Cuidado Personal y Belleza Natural",
+  },
+  {
+    key:
+      "bienestar_animal_mascotas",
+    label:
+      "Bienestar Animal y Cuidado de Mascotas",
+  },
 ]
 
 const publicInterestNameMap =
   new Map(
-    publicInterestNames.map(
-      name => [
-        normalizePublicInterestName(name),
-        name,
+    publicInterestAreas.map(
+      area => [
+        normalizePublicInterestName(area.label),
+        area.label,
+      ]
+    )
+  )
+
+const publicInterestKeyMap =
+  new Map(
+    publicInterestAreas.flatMap(
+      area => [
+        [
+          area.key,
+          area.key,
+        ],
+        [
+          normalizePublicInterestName(area.label)
+            .replace(/\s+/g, "_"),
+          area.key,
+        ],
+      ]
+    )
+  )
+
+const publicInterestLabelToKeyMap =
+  new Map(
+    publicInterestAreas.map(
+      area => [
+        normalizePublicInterestName(area.label),
+        area.key,
       ]
     )
   )
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+const areaKeyPattern =
+  /^[a-z0-9_]+$/
 
 const emailPattern =
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -181,6 +246,21 @@ function getCanonicalPublicInterestName(
   return publicInterestNameMap.get(
     normalizePublicInterestName(value)
   ) || null
+}
+
+function getCanonicalPublicInterestAreaKey(
+  value: string
+) {
+  const normalizedValue =
+    normalizePublicInterestName(value)
+      .replace(/\s+/g, "_")
+
+  return publicInterestKeyMap.get(value) ||
+    publicInterestKeyMap.get(normalizedValue) ||
+    publicInterestLabelToKeyMap.get(
+      normalizePublicInterestName(value)
+    ) ||
+    null
 }
 
 function normalizeSource(
@@ -320,6 +400,41 @@ async function getValidPublicSubniches(
   }
 
   return (data || []) as PublicSubniche[]
+}
+
+async function getValidCommunityInterestAreas(
+  supabase: SupabaseClient,
+  selectedAreaKeys: string[]
+) {
+  if (selectedAreaKeys.length === 0) {
+    return []
+  }
+
+  const { data, error } =
+    await supabase
+      .from("community_interest_areas")
+      .select(`
+        id,
+        key,
+        label,
+        description
+      `)
+      .in(
+        "key",
+        selectedAreaKeys
+      )
+      .eq(
+        "is_active",
+        true
+      )
+
+  if (error) {
+    throw new Error(
+      error.message
+    )
+  }
+
+  return (data || []) as CommunityInterestArea[]
 }
 
 function getBearerToken(
@@ -598,6 +713,109 @@ async function createMissingSubscriberInterests(
   }
 }
 
+async function createMissingSubscriberAreaInterests(
+  supabase: SupabaseClient,
+  subscriberId: string,
+  selectedAreas: CommunityInterestArea[],
+  source: CommunityRegisterSource
+) {
+  if (selectedAreas.length === 0) {
+    return {
+      saved: true,
+      addedCount: 0,
+      error: null,
+    }
+  }
+
+  const selectedAreaIds =
+    selectedAreas.map(
+      area =>
+        area.id
+    )
+
+  const {
+    data: existingAreaInterests,
+    error: existingAreaInterestsError,
+  } =
+    await supabase
+      .from("subscriber_area_interests")
+      .select("area_id")
+      .eq(
+        "subscriber_id",
+        subscriberId
+      )
+      .in(
+        "area_id",
+        selectedAreaIds
+      )
+
+  if (existingAreaInterestsError) {
+    return {
+      saved: false,
+      addedCount: 0,
+      error:
+        existingAreaInterestsError,
+    }
+  }
+
+  const existingAreaIds =
+    new Set(
+      (existingAreaInterests || [])
+        .map(
+          interest =>
+            String(interest.area_id)
+        )
+    )
+
+  const missingAreas =
+    selectedAreas.filter(
+      area =>
+        !existingAreaIds.has(area.id)
+    )
+
+  if (missingAreas.length === 0) {
+    return {
+      saved: true,
+      addedCount: 0,
+      error: null,
+    }
+  }
+
+  const areaInterestRows =
+    missingAreas.map(
+      area => ({
+        id:
+          randomUUID(),
+        subscriber_id:
+          subscriberId,
+        area_id:
+          area.id,
+        source,
+      })
+    )
+
+  const { error: areaInterestsError } =
+    await supabase
+      .from("subscriber_area_interests")
+      .insert(areaInterestRows)
+
+  if (areaInterestsError) {
+    return {
+      saved: false,
+      addedCount: 0,
+      error:
+        areaInterestsError,
+    }
+  }
+
+  return {
+    saved: true,
+    addedCount:
+      missingAreas.length,
+    error: null,
+  }
+}
+
 export async function POST(
   req: Request
 ) {
@@ -670,7 +888,7 @@ export async function POST(
     getString(body.objective) ||
     "Registro comunidad IMNOVA"
 
-  const selectedSubnicheIds =
+  const rawSelectedSubnicheIds =
     getUniqueStringArray(
       body.selectedSubnicheIds
     )
@@ -679,6 +897,47 @@ export async function POST(
     getUniqueStringArray(
       body.selectedSubnicheNames
     )
+
+  const rawSelectedAreaKeys =
+    getUniqueStringArray(
+      body.selectedAreaKeys
+    )
+
+  const rawSelectedAreaLabels =
+    getUniqueStringArray(
+      body.selectedAreaLabels
+    )
+
+  const canonicalAreaKeys =
+    Array.from(
+      new Set(
+        [
+          ...rawSelectedAreaKeys,
+          ...rawSelectedAreaLabels,
+          ...(
+            source === "community_popup"
+              ? rawSelectedSubnicheNames
+              : []
+          ),
+        ]
+          .map(getCanonicalPublicInterestAreaKey)
+          .filter(
+            (
+              areaKey
+            ): areaKey is string =>
+              Boolean(areaKey)
+          )
+      )
+    )
+
+  const selectedAreaKeys =
+    canonicalAreaKeys
+
+  const selectedSubnicheIds =
+    source === "community_popup" &&
+    selectedAreaKeys.length > 0
+      ? []
+      : rawSelectedSubnicheIds
 
   const selectedSubnicheNames =
     (
@@ -761,6 +1020,31 @@ export async function POST(
   }
 
   if (
+    selectedAreaKeys.length >
+    MAX_SELECTED_AREAS
+  ) {
+    return createErrorResponse(
+      "too_many_area_interests",
+      400,
+      warnings
+    )
+  }
+
+  const invalidAreaKey =
+    selectedAreaKeys.find(
+      areaKey =>
+        !areaKeyPattern.test(areaKey)
+    )
+
+  if (invalidAreaKey) {
+    return createErrorResponse(
+      "invalid_area_interests",
+      400,
+      warnings
+    )
+  }
+
+  if (
     !getSupabaseUrl() ||
     !getSupabaseServiceRoleKey()
   ) {
@@ -772,6 +1056,34 @@ export async function POST(
   try {
     const supabase =
       getSupabaseAdminClient()
+
+    const validCommunityAreas =
+      await getValidCommunityInterestAreas(
+        supabase,
+        selectedAreaKeys
+      )
+
+    const validAreaKeys =
+      new Set(
+        validCommunityAreas.map(
+          area =>
+            area.key
+        )
+      )
+
+    const hasInvalidArea =
+      selectedAreaKeys.some(
+        areaKey =>
+          !validAreaKeys.has(areaKey)
+      )
+
+    if (hasInvalidArea) {
+      return createErrorResponse(
+        "invalid_area_interests",
+        400,
+        warnings
+      )
+    }
 
     const validPublicSubniches =
       await getValidPublicSubniches(
@@ -802,7 +1114,12 @@ export async function POST(
     }
 
     const legacyInterestNames =
-      selectedSubnicheNames.length > 0
+      validCommunityAreas.length > 0
+        ? validCommunityAreas.map(
+            area =>
+              area.label
+          )
+        : selectedSubnicheNames.length > 0
         ? selectedSubnicheNames
         : validPublicSubniches.map(
             subniche =>
@@ -831,6 +1148,12 @@ export async function POST(
       selectedSubnicheIds.length === 0
 
     let interestsAddedCount =
+      0
+
+    let areaInterestsSaved =
+      selectedAreaKeys.length === 0
+
+    let areaInterestsAddedCount =
       0
 
     let subscriberId =
@@ -971,6 +1294,33 @@ export async function POST(
       }
     }
 
+    if (validCommunityAreas.length > 0) {
+      const areaInterestSaveResult =
+        await createMissingSubscriberAreaInterests(
+          supabase,
+          subscriberId,
+          validCommunityAreas,
+          source
+        )
+
+      areaInterestsSaved =
+        areaInterestSaveResult.saved
+
+      areaInterestsAddedCount =
+        areaInterestSaveResult.addedCount
+
+      if (areaInterestSaveResult.error) {
+        console.error(
+          "COMMUNITY REGISTER AREA INTERESTS ERROR:",
+          areaInterestSaveResult.error
+        )
+
+        warnings.push(
+          "subscriber_area_interests_not_saved"
+        )
+      }
+    }
+
     if (
       source === "community_popup" &&
       whatsapp
@@ -1013,6 +1363,10 @@ export async function POST(
         interestsSaved,
       interests_added_count:
         interestsAddedCount,
+      area_interests_saved:
+        areaInterestsSaved,
+      area_interests_added_count:
+        areaInterestsAddedCount,
       warnings,
     })
   } catch (error) {

@@ -55,6 +55,10 @@ const communityRegisterErrorMessages:
       "Algunos intereses ya no estan disponibles. Cambia tus intereses e intentalo de nuevo.",
     too_many_subniches:
       "Selecciona menos areas e intentalo de nuevo.",
+    too_many_area_interests:
+      "Selecciona hasta 3 areas e intentalo de nuevo.",
+    invalid_area_interests:
+      "Algunas areas ya no estan disponibles. Cambia tus intereses e intentalo de nuevo.",
     invalid_email:
       "Revisa el formato de tu correo.",
     invalid_whatsapp:
@@ -977,14 +981,7 @@ useEffect(() => {
           )
 
         const normalizedSubnicheIds =
-          getAreaSubnicheIds(
-            selectedInterestAreaIds
-          ).filter(
-            subnicheId =>
-              !isFallbackSubnicheId(
-                subnicheId
-              )
-          )
+          []
 
         const registerResponse =
           await fetch(
@@ -1009,6 +1006,10 @@ useEffect(() => {
                   selectedSubnicheIds:
                     normalizedSubnicheIds,
                   selectedSubnicheNames:
+                    [],
+                  selectedAreaKeys:
+                    selectedInterestAreaIds,
+                  selectedAreaLabels:
                     selectedInterestNames,
                   objective:
                     effectiveObjective,

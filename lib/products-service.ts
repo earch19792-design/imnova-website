@@ -1578,6 +1578,8 @@ export type SubscriberInterest = {
 export type CommunitySubscriberStats = {
   totalSubscribers: number
   subscribersWithInterests: number
+  subscribersWithAreaInterests: number
+  subscribersWithSubnicheInterests: number
   percentWithWhatsapp: number
   percentWithEmail: number
 }
@@ -1594,6 +1596,14 @@ export type TopCommunitySubniche = {
   subniche_name: string
   subniche_public_name: string | null
   niche_public_name: string | null
+  count: number
+}
+
+export type TopCommunityArea = {
+  area_id: string
+  area_key: string
+  area_label: string
+  area_description: string | null
   count: number
 }
 
@@ -1634,9 +1644,17 @@ export type CommunitySubscriberNormalizedInterest = {
   niche_public_name: string | null
 }
 
+export type CommunitySubscriberAreaInterest = {
+  area_id: string
+  area_key: string
+  area_label: string
+  area_description: string | null
+}
+
 export type CommunitySubscriberWithInterests =
   CommunitySubscriber & {
     interests: CommunitySubscriberNormalizedInterest[]
+    area_interests: CommunitySubscriberAreaInterest[]
     legacy_nichos: string[]
   }
 
@@ -1709,6 +1727,20 @@ type CommunityInterestRow = {
   created_at?: string | null
 }
 
+type CommunityAreaInterestRow = {
+  subscriber_id: string | null
+  area_id: string | null
+  created_at?: string | null
+}
+
+type CommunityInterestAreaRow = {
+  id: string
+  key: string | null
+  label: string | null
+  description: string | null
+  display_order?: number | null
+}
+
 type CommunityStrategicNicheRow = {
   id: string
   name: string | null
@@ -1750,6 +1782,8 @@ type CommunitySurveyDemandRow = {
 const EMPTY_COMMUNITY_SUBSCRIBER_STATS: CommunitySubscriberStats = {
   totalSubscribers: 0,
   subscribersWithInterests: 0,
+  subscribersWithAreaInterests: 0,
+  subscribersWithSubnicheInterests: 0,
   percentWithWhatsapp: 0,
   percentWithEmail: 0,
 }
@@ -1916,6 +1950,105 @@ async function getCommunityInterestRowsForAdmin(): Promise<CommunityInterestRow[
 
 }
 
+async function getCommunityAreaInterestRowsForAdmin(): Promise<CommunityAreaInterestRow[]> {
+
+  const rows: CommunityAreaInterestRow[] = []
+  const pageSize = 1000
+  let from = 0
+
+  while (true) {
+    const { data, error } =
+      await supabase
+        .from("subscriber_area_interests")
+        .select(`
+          subscriber_id,
+          area_id,
+          created_at
+        `)
+        .range(
+          from,
+          from + pageSize - 1
+        )
+
+    if (error) {
+      console.error(
+        "GET COMMUNITY AREA INTEREST ROWS ERROR:",
+        error
+      )
+
+      return []
+    }
+
+    const page =
+      (data || []) as CommunityAreaInterestRow[]
+
+    rows.push(
+      ...page.filter(
+        (row) =>
+          Boolean(row.subscriber_id) &&
+          Boolean(row.area_id)
+      )
+    )
+
+    if (page.length < pageSize) {
+      break
+    }
+
+    from += pageSize
+  }
+
+  return rows
+
+}
+
+async function getCommunityInterestAreaCatalog() {
+
+  const { data, error } =
+    await supabase
+      .from("community_interest_areas")
+      .select(`
+        id,
+        key,
+        label,
+        description,
+        display_order
+      `)
+      .order(
+        "display_order",
+        {
+          ascending: true,
+        }
+      )
+
+  if (error) {
+    console.error(
+      "GET COMMUNITY INTEREST AREA CATALOG ERROR:",
+      error
+    )
+
+    return {
+      areasById:
+        new Map<string, CommunityInterestAreaRow>(),
+    }
+  }
+
+  const areas =
+    (data || []) as CommunityInterestAreaRow[]
+
+  return {
+    areasById:
+      new Map(
+        areas.map(
+          (area) => [
+            area.id,
+            area,
+          ]
+        )
+      ),
+  }
+
+}
+
 async function getCommunityStrategicCatalog() {
 
   const [
@@ -2031,6 +2164,7 @@ export async function getCommunitySubscriberStats(): Promise<CommunitySubscriber
     subscribersWithWhatsappResult,
     subscribersWithEmailResult,
     interestRows,
+    areaInterestRows,
   ] =
     await Promise.all([
       supabase
@@ -2079,6 +2213,7 @@ export async function getCommunitySubscriberStats(): Promise<CommunitySubscriber
           ""
         ),
       getCommunityInterestRowsForAdmin(),
+      getCommunityAreaInterestRowsForAdmin(),
     ])
 
   if (totalSubscribersResult.error) {
@@ -2117,7 +2252,7 @@ export async function getCommunitySubscriberStats(): Promise<CommunitySubscriber
       ? 0
       : subscribersWithEmailResult.count || 0
 
-  const subscribersWithInterests =
+  const subscribersWithSubnicheInterests =
     new Set(
       interestRows
         .map((row) =>
@@ -2129,9 +2264,43 @@ export async function getCommunitySubscriberStats(): Promise<CommunitySubscriber
         )
     ).size
 
+  const subscribersWithAreaInterests =
+    new Set(
+      areaInterestRows
+        .map((row) =>
+          row.subscriber_id
+        )
+        .filter(
+          (subscriberId): subscriberId is string =>
+            Boolean(subscriberId)
+        )
+    ).size
+
+  const subscribersWithInterests =
+    new Set([
+      ...interestRows
+        .map((row) =>
+          row.subscriber_id
+        )
+        .filter(
+          (subscriberId): subscriberId is string =>
+            Boolean(subscriberId)
+        ),
+      ...areaInterestRows
+        .map((row) =>
+          row.subscriber_id
+        )
+        .filter(
+          (subscriberId): subscriberId is string =>
+            Boolean(subscriberId)
+        ),
+    ]).size
+
   return {
     totalSubscribers,
     subscribersWithInterests,
+    subscribersWithAreaInterests,
+    subscribersWithSubnicheInterests,
     percentWithWhatsapp:
       getCommunityPercent(
         subscribersWithWhatsapp,
@@ -2306,6 +2475,81 @@ export async function getTopCommunitySubniches(
       ) =>
         subnicheB.count -
         subnicheA.count
+    )
+    .slice(
+      0,
+      limit
+    )
+
+}
+
+export async function getTopCommunityAreas(
+  limit = 5
+): Promise<TopCommunityArea[]> {
+
+  const [
+    areaInterestRows,
+    catalog,
+  ] =
+    await Promise.all([
+      getCommunityAreaInterestRowsForAdmin(),
+      getCommunityInterestAreaCatalog(),
+    ])
+
+  const countByAreaId =
+    new Map<string, number>()
+
+  areaInterestRows.forEach(
+    (areaInterestRow) => {
+      if (!areaInterestRow.area_id) {
+        return
+      }
+
+      countByAreaId.set(
+        areaInterestRow.area_id,
+        (
+          countByAreaId.get(
+            areaInterestRow.area_id
+          ) || 0
+        ) + 1
+      )
+    }
+  )
+
+  return Array.from(
+    countByAreaId.entries()
+  )
+    .map(
+      ([
+        areaId,
+        count,
+      ]) => {
+        const area =
+          catalog.areasById.get(areaId)
+
+        return {
+          area_id:
+            areaId,
+          area_key:
+            area?.key ||
+            "area_sin_catalogo",
+          area_label:
+            area?.label ||
+            "Area sin catalogo",
+          area_description:
+            area?.description ||
+            null,
+          count,
+        }
+      }
+    )
+    .sort(
+      (
+        areaA,
+        areaB
+      ) =>
+        areaB.count -
+        areaA.count
     )
     .slice(
       0,
@@ -2751,7 +2995,9 @@ export async function getRecentSubscribersWithInterests(
 
   const [
     interestsResult,
+    areaInterestsResult,
     catalog,
+    areaCatalog,
   ] =
     await Promise.all([
       supabase
@@ -2765,7 +3011,19 @@ export async function getRecentSubscribersWithInterests(
           "subscriber_id",
           subscriberIds
         ),
+      supabase
+        .from("subscriber_area_interests")
+        .select(`
+          subscriber_id,
+          area_id,
+          created_at
+        `)
+        .in(
+          "subscriber_id",
+          subscriberIds
+        ),
       getCommunityStrategicCatalog(),
+      getCommunityInterestAreaCatalog(),
     ])
 
   if (interestsResult.error) {
@@ -2780,8 +3038,23 @@ export async function getRecentSubscribersWithInterests(
       ? []
       : (interestsResult.data || []) as CommunityInterestRow[]
 
+  if (areaInterestsResult.error) {
+    console.error(
+      "GET RECENT SUBSCRIBERS AREA INTERESTS ERROR:",
+      areaInterestsResult.error
+    )
+  }
+
+  const areaInterestRows =
+    areaInterestsResult.error
+      ? []
+      : (areaInterestsResult.data || []) as CommunityAreaInterestRow[]
+
   const interestsBySubscriberId =
     new Map<string, CommunitySubscriberNormalizedInterest[]>()
+
+  const areaInterestsBySubscriberId =
+    new Map<string, CommunitySubscriberAreaInterest[]>()
 
   interestRows.forEach(
     (interestRow) => {
@@ -2836,11 +3109,55 @@ export async function getRecentSubscribersWithInterests(
     }
   )
 
+  areaInterestRows.forEach(
+    (areaInterestRow) => {
+      if (
+        !areaInterestRow.subscriber_id ||
+        !areaInterestRow.area_id
+      ) {
+        return
+      }
+
+      const area =
+        areaCatalog.areasById.get(
+          areaInterestRow.area_id
+        )
+
+      const subscriberAreaInterests =
+        areaInterestsBySubscriberId.get(
+          areaInterestRow.subscriber_id
+        ) || []
+
+      subscriberAreaInterests.push({
+        area_id:
+          areaInterestRow.area_id,
+        area_key:
+          area?.key ||
+          "area_sin_catalogo",
+        area_label:
+          area?.label ||
+          "Area sin catalogo",
+        area_description:
+          area?.description ||
+          null,
+      })
+
+      areaInterestsBySubscriberId.set(
+        areaInterestRow.subscriber_id,
+        subscriberAreaInterests
+      )
+    }
+  )
+
   return subscribers.map(
     (subscriber) => ({
       ...subscriber,
       interests:
         interestsBySubscriberId.get(
+          subscriber.id
+        ) || [],
+      area_interests:
+        areaInterestsBySubscriberId.get(
           subscriber.id
         ) || [],
       legacy_nichos:
@@ -2850,6 +3167,88 @@ export async function getRecentSubscribersWithInterests(
     })
   )
 
+}
+
+export async function getSubscriberAreaInterestsBySubscriber(
+  subscriberId: string
+): Promise<CommunitySubscriberAreaInterest[]> {
+
+  const [
+    areaInterestsResult,
+    areaCatalog,
+  ] =
+    await Promise.all([
+      supabase
+        .from("subscriber_area_interests")
+        .select(`
+          subscriber_id,
+          area_id,
+          created_at
+        `)
+        .eq(
+          "subscriber_id",
+          subscriberId
+        )
+        .order(
+          "created_at",
+          {
+            ascending: false,
+          }
+        ),
+      getCommunityInterestAreaCatalog(),
+    ])
+
+  if (areaInterestsResult.error) {
+    console.error(
+      "GET SUBSCRIBER AREA INTERESTS BY SUBSCRIBER ERROR:",
+      areaInterestsResult.error
+    )
+
+    return []
+  }
+
+  return (
+    (areaInterestsResult.data || []) as CommunityAreaInterestRow[]
+  )
+    .map(
+      (areaInterestRow) => {
+        if (!areaInterestRow.area_id) {
+          return null
+        }
+
+        const area =
+          areaCatalog.areasById.get(
+            areaInterestRow.area_id
+          )
+
+        return {
+          area_id:
+            areaInterestRow.area_id,
+          area_key:
+            area?.key ||
+            "area_sin_catalogo",
+          area_label:
+            area?.label ||
+            "Area sin catalogo",
+          area_description:
+            area?.description ||
+            null,
+        }
+      }
+    )
+    .filter(
+      (
+        areaInterest
+      ): areaInterest is CommunitySubscriberAreaInterest =>
+        Boolean(areaInterest)
+    )
+
+}
+
+export async function getRecentSubscribersWithAreaInterests(
+  limit = 10
+): Promise<CommunitySubscriberWithInterests[]> {
+  return getRecentSubscribersWithInterests(limit)
 }
 
 export async function createManualCommunitySubscriber(
