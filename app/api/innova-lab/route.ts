@@ -19,6 +19,19 @@ type InnovaLabRequestBody = {
   imageUrl?: string
   source?: string
   triggeredBy?: string
+  force?: boolean
+}
+
+type ProductLaunchTargeting = {
+  mode:
+    | "segmented_by_product_subniches"
+    | "segmented_by_product_niche"
+    | "all_community"
+    | "none"
+  subnicheIds: string[]
+  subscriberIds: string[]
+  phoneCount: number
+  warning?: string
 }
 
 type WhatsAppResult =
@@ -44,7 +57,8 @@ function getTemplateName(
 ) {
 
   return status === "Disponible"
-    ? "imnova_product_launch"
+    ? process.env.WHATSAPP_PRODUCT_LAUNCH_TEMPLATE_NAME?.trim() ||
+        "imnova_product_launch"
     : "imnova_update"
 
 }
@@ -364,6 +378,305 @@ async function getCommunityRecipientPhones(
 
 }
 
+async function getProductLaunchRecipientPhones(
+  supabaseClient: SupabaseClient,
+  productId?: string | null
+): Promise<{
+  phones: string[]
+  targeting: ProductLaunchTargeting
+}> {
+  const emptyTargeting: ProductLaunchTargeting = {
+    mode: "none",
+    subnicheIds: [],
+    subscriberIds: [],
+    phoneCount: 0,
+  }
+
+  if (!productId) {
+    return {
+      phones: [],
+      targeting: {
+        ...emptyTargeting,
+        warning:
+          "product_id_required_for_segmented_launch",
+      },
+    }
+  }
+
+  const {
+    data: product,
+    error: productError,
+  } =
+    await supabaseClient
+      .from("products")
+      .select(
+        "primary_subniche_id, strategic_niche_id"
+      )
+      .eq("id", productId)
+      .maybeSingle()
+
+  if (productError) {
+    console.error(
+      "GET PRODUCT LAUNCH PRODUCT ERROR:",
+      productError
+    )
+
+    return {
+      phones: [],
+      targeting: {
+        ...emptyTargeting,
+        warning:
+          "product_launch_product_lookup_failed",
+      },
+    }
+  }
+
+  const {
+    data: productSubniches,
+    error: productSubnichesError,
+  } =
+    await supabaseClient
+      .from("product_subniches")
+      .select("subniche_id")
+      .eq("product_id", productId)
+
+  if (productSubnichesError) {
+    console.error(
+      "GET PRODUCT LAUNCH SUBNICHES ERROR:",
+      productSubnichesError
+    )
+  }
+
+  let subnicheIds =
+    Array.from(
+      new Set(
+        [
+          typeof product?.primary_subniche_id ===
+          "string"
+            ? product.primary_subniche_id
+            : "",
+          ...(productSubniches || [])
+            .map(row =>
+              typeof row.subniche_id ===
+              "string"
+                ? row.subniche_id
+                : ""
+            ),
+        ].filter(Boolean)
+      )
+    )
+
+  let mode: ProductLaunchTargeting["mode"] =
+    "segmented_by_product_subniches"
+
+  if (
+    subnicheIds.length === 0 &&
+    typeof product?.strategic_niche_id ===
+      "string" &&
+    product.strategic_niche_id
+  ) {
+    const {
+      data: nicheSubniches,
+      error: nicheSubnichesError,
+    } =
+      await supabaseClient
+        .from("strategic_subniches")
+        .select("id")
+        .eq(
+          "niche_id",
+          product.strategic_niche_id
+        )
+        .eq("is_active", true)
+        .eq("is_public", true)
+
+    if (nicheSubnichesError) {
+      console.error(
+        "GET PRODUCT LAUNCH NICHE SUBNICHES ERROR:",
+        nicheSubnichesError
+      )
+    }
+
+    subnicheIds =
+      (nicheSubniches || [])
+        .map(row =>
+          typeof row.id === "string"
+            ? row.id
+            : ""
+        )
+        .filter(Boolean)
+
+    mode =
+      subnicheIds.length > 0
+        ? "segmented_by_product_niche"
+        : "none"
+  }
+
+  if (subnicheIds.length === 0) {
+    return {
+      phones: [],
+      targeting: {
+        ...emptyTargeting,
+        warning:
+          "product_without_normalized_interests",
+      },
+    }
+  }
+
+  const {
+    data: interestRows,
+    error: interestsError,
+  } =
+    await supabaseClient
+      .from("subscriber_interests")
+      .select("subscriber_id")
+      .in("subniche_id", subnicheIds)
+      .limit(1000)
+
+  if (interestsError) {
+    console.error(
+      "GET PRODUCT LAUNCH INTERESTS ERROR:",
+      interestsError
+    )
+
+    return {
+      phones: [],
+      targeting: {
+        mode,
+        subnicheIds,
+        subscriberIds: [],
+        phoneCount: 0,
+        warning:
+          "product_launch_interests_lookup_failed",
+      },
+    }
+  }
+
+  const subscriberIds =
+    Array.from(
+      new Set(
+        (interestRows || [])
+          .map(row =>
+            typeof row.subscriber_id ===
+            "string"
+              ? row.subscriber_id
+              : ""
+          )
+          .filter(Boolean)
+      )
+    )
+
+  if (subscriberIds.length === 0) {
+    return {
+      phones: [],
+      targeting: {
+        mode,
+        subnicheIds,
+        subscriberIds: [],
+        phoneCount: 0,
+        warning:
+          "no_interested_subscribers_for_product_launch",
+      },
+    }
+  }
+
+  const {
+    data: subscribers,
+    error: subscribersError,
+  } =
+    await supabaseClient
+      .from("subscribers")
+      .select("id, telefono")
+      .in("id", subscriberIds)
+      .not("telefono", "is", null)
+      .neq("telefono", "")
+      .limit(1000)
+
+  if (subscribersError) {
+    console.error(
+      "GET PRODUCT LAUNCH SUBSCRIBERS ERROR:",
+      subscribersError
+    )
+
+    return {
+      phones: [],
+      targeting: {
+        mode,
+        subnicheIds,
+        subscriberIds,
+        phoneCount: 0,
+        warning:
+          "product_launch_subscribers_lookup_failed",
+      },
+    }
+  }
+
+  const phones =
+    Array.from(
+      new Set(
+        (subscribers || [])
+          .map(subscriber =>
+            typeof subscriber.telefono ===
+            "string"
+              ? subscriber.telefono
+              : ""
+          )
+          .filter(Boolean)
+      )
+    )
+
+  return {
+    phones,
+    targeting: {
+      mode,
+      subnicheIds,
+      subscriberIds,
+      phoneCount:
+        phones.length,
+      ...(phones.length === 0
+        ? {
+            warning:
+              "interested_subscribers_without_whatsapp",
+          }
+        : {}),
+    },
+  }
+}
+
+async function hasSuccessfulProductLaunchNotification(
+  supabaseClient: SupabaseClient,
+  productId?: string | null
+) {
+  if (!productId) {
+    return false
+  }
+
+  const {
+    data,
+    error,
+  } =
+    await supabaseClient
+      .from("notification_logs")
+      .select("id")
+      .eq("product_id", productId)
+      .eq(
+        "template_name",
+        getTemplateName("Disponible")
+      )
+      .eq("success", true)
+      .limit(1)
+      .maybeSingle()
+
+  if (error) {
+    console.error(
+      "CHECK PRODUCT LAUNCH NOTIFICATION ERROR:",
+      error
+    )
+    return false
+  }
+
+  return Boolean(data?.id)
+}
+
 export async function POST(
   req: Request
 ) {
@@ -401,6 +714,7 @@ export async function POST(
       imageUrl,
       source,
       triggeredBy,
+      force,
     } = body
 
     const authenticatedTriggeredBy =
@@ -408,10 +722,52 @@ export async function POST(
       triggeredBy ||
       "admin"
 
-    const communityRecipientPhones =
-      await getCommunityRecipientPhones(
-        adminAuth.supabaseClient
+    if (
+      status === "Disponible" &&
+      productId &&
+      force !== true &&
+      await hasSuccessfulProductLaunchNotification(
+        adminAuth.supabaseClient,
+        productId
       )
+    ) {
+      return NextResponse.json({
+        success: true,
+        warning:
+          "product_launch_already_notified",
+        result: {
+          success: true,
+          total: 0,
+          successful: 0,
+          failed: 0,
+          results: [],
+        },
+      })
+    }
+
+    let targeting:
+      | ProductLaunchTargeting
+      | null = null
+
+    let communityRecipientPhones: string[]
+
+    if (status === "Disponible") {
+      const launchRecipients =
+        await getProductLaunchRecipientPhones(
+          adminAuth.supabaseClient,
+          productId
+        )
+
+      communityRecipientPhones =
+        launchRecipients.phones
+      targeting =
+        launchRecipients.targeting
+    } else {
+      communityRecipientPhones =
+        await getCommunityRecipientPhones(
+          adminAuth.supabaseClient
+        )
+    }
 
     let result: WhatsAppResult
 
@@ -514,6 +870,12 @@ export async function POST(
         result.success,
 
       result,
+
+      ...(targeting
+        ? {
+            targeting,
+          }
+        : {}),
 
       ...(logError
         ? {

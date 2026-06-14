@@ -257,7 +257,8 @@ export async function sendWhatsAppUpdate(
 
       const selectedTemplate =
         status === "Disponible"
-          ? "imnova_product_launch"
+          ? process.env.WHATSAPP_PRODUCT_LAUNCH_TEMPLATE_NAME?.trim() ||
+            "imnova_product_launch"
           : "imnova_update"
 
       const selectedImageUrl =

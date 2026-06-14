@@ -3009,6 +3009,28 @@ export default function ProductDetailPage() {
             formData.state_id
         )?.name || ""
 
+      const previousStateName =
+        states.find(
+          state =>
+            state.id ===
+            product.state_id
+        )?.name || ""
+
+      const selectedStateProgress =
+        states.find(
+          state =>
+            state.id ===
+            formData.state_id
+        )?.progress || 0
+
+      const shouldAutoSendLaunchNotification =
+        normalizeLabel(
+          selectedStateName
+        ).includes("disponible") &&
+        !normalizeLabel(
+          previousStateName
+        ).includes("disponible")
+
       if (
         normalizeLabel(
           selectedStateName
@@ -3256,6 +3278,128 @@ export default function ProductDetailPage() {
         setSaveMessage(
           "Producto actualizado correctamente"
         )
+
+        if (shouldAutoSendLaunchNotification) {
+          setIsSendingNotification(true)
+          setNotificationMessage("")
+          setNotificationError("")
+
+          try {
+            const {
+              data: sessionData,
+              error: sessionError,
+            } =
+              await supabase.auth.getSession()
+
+            const accessToken =
+              sessionData.session?.access_token
+
+            if (
+              sessionError ||
+              !accessToken
+            ) {
+              setNotificationError(
+                "Producto disponible guardado, pero no se pudo enviar WhatsApp porque la sesion Admin expiro."
+              )
+            } else {
+              const response =
+                await fetch(
+                  "/api/innova-lab",
+                  {
+                    method:
+                      "POST",
+                    headers: {
+                      "Content-Type":
+                        "application/json",
+                      Authorization:
+                        `Bearer ${accessToken}`,
+                    },
+                    body:
+                      JSON.stringify({
+                        productId:
+                          product.id,
+                        product:
+                          name,
+                        status:
+                          selectedStateName,
+                        progress:
+                          `${selectedStateProgress}%`,
+                        imageUrl:
+                          formData.image_url.trim() ||
+                          product.image ||
+                          "",
+                        source:
+                          "admin_product_available_auto",
+                        triggeredBy:
+                          "admin",
+                      }),
+                  }
+                )
+
+              const text =
+                await response.text()
+
+              let payload:
+                | {
+                    success?: boolean
+                    warning?: string
+                    error?: string
+                    targeting?: {
+                      phoneCount?: number
+                    }
+                    result?: {
+                      error?: string
+                    }
+                  }
+                | null = null
+
+              if (text) {
+                try {
+                  payload =
+                    JSON.parse(text)
+                } catch {
+                  payload = null
+                }
+              }
+
+              if (
+                response.ok &&
+                payload?.success === true
+              ) {
+                if (
+                  payload.warning ===
+                  "product_launch_already_notified"
+                ) {
+                  setNotificationMessage(
+                    "Producto disponible. El lanzamiento ya habia sido notificado antes, no se envio duplicado."
+                  )
+                } else {
+                  const segmentedPhoneCount =
+                    payload.targeting?.phoneCount
+
+                  setNotificationMessage(
+                    `WhatsApp de lanzamiento enviado automaticamente. Audiencia de comunidad por intereses: ${segmentedPhoneCount ?? 0} telefono${segmentedPhoneCount === 1 ? "" : "s"}.`
+                  )
+                }
+              } else {
+                setNotificationError(
+                  payload?.error ||
+                    payload?.result?.error ||
+                    "Producto disponible guardado, pero Meta no confirmo el WhatsApp de lanzamiento."
+                )
+              }
+            }
+          } catch {
+            setNotificationError(
+              "Producto disponible guardado, pero hubo error de conexion al enviar WhatsApp."
+            )
+          } finally {
+            await loadNotificationLogs(
+              product.id
+            )
+            setIsSendingNotification(false)
+          }
+        }
       } catch {
         setSaveError(
           "Error al actualizar el producto."
@@ -3361,6 +3505,8 @@ export default function ProductDetailPage() {
                     "admin_product_detail",
                   triggeredBy:
                     "admin",
+                  force:
+                    true,
                 }),
             }
           )
@@ -3372,8 +3518,16 @@ export default function ProductDetailPage() {
           | {
               success?: boolean
               error?: string
+              targeting?: {
+                mode?: string
+                phoneCount?: number
+                warning?: string
+              }
               result?: {
                 error?: string
+                total?: number
+                successful?: number
+                failed?: number
               }
             }
           | null = null
@@ -3403,8 +3557,20 @@ export default function ProductDetailPage() {
           return
         }
 
+        const successfulCount =
+          payload?.result?.successful
+
+        const totalCount =
+          payload?.result?.total
+
+        const segmentedPhoneCount =
+          payload?.targeting?.phoneCount
+
         setNotificationMessage(
-          "WhatsApp enviado correctamente."
+          savedState.name ===
+            "Disponible"
+            ? `WhatsApp de lanzamiento enviado correctamente. Audiencia de comunidad por intereses: ${segmentedPhoneCount ?? 0} telefono${segmentedPhoneCount === 1 ? "" : "s"}.`
+            : `WhatsApp enviado correctamente${typeof successfulCount === "number" && typeof totalCount === "number" ? `: ${successfulCount} de ${totalCount}.` : "."}`
         )
       } catch {
         setNotificationError(
