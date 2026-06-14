@@ -638,6 +638,21 @@ export function PromoBanner() {
             principal y acceso directo a la Store oficial.
           </p>
 
+          <div className="mt-7 flex max-w-3xl flex-wrap gap-2">
+            {[
+              "Producto disponible",
+              "Canales autorizados",
+              "Compra clara",
+            ].map(item => (
+              <span
+                key={item}
+                className="rounded-full border border-amber-200/15 bg-amber-200/[0.065] px-4 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-amber-100/70"
+              >
+                {item}
+              </span>
+            ))}
+          </div>
+
         </motion.div>
 
         <motion.article
@@ -731,18 +746,18 @@ export function PromoBanner() {
                     className="
                       rounded-full
                       border
-                      border-white/10
-                      bg-white/[0.04]
+                      border-amber-200/30
+                      bg-amber-200/[0.09]
                       px-4
                       py-2
                       text-[10px]
                       font-black
                       uppercase
                       tracking-[0.16em]
-                      text-white/55
+                      text-amber-50
                     "
                   >
-                    Producto {activeProductNumber} de {productCount}
+                    Estas viendo producto {activeProductNumber} de {productCount}
                   </span>
                 )}
 
@@ -920,6 +935,7 @@ export function PromoBanner() {
                   gap-4
                   sm:flex-row
                   sm:items-center
+                  sm:flex-wrap
                 "
               >
 
@@ -959,6 +975,40 @@ export function PromoBanner() {
                   "
                 >
                   Comprar ahora
+                  <ArrowUpRight className="h-4 w-4" />
+                </Link>
+
+                <Link
+                  href={
+                    activeProduct.slug
+                      ? `/store/${activeProduct.slug}`
+                      : "/store"
+                  }
+                  className="
+                    inline-flex
+                    items-center
+                    justify-center
+                    gap-3
+                    rounded-3xl
+                    border
+                    border-white/10
+                    bg-white/[0.045]
+                    px-7
+                    py-5
+                    text-xs
+                    font-black
+                    uppercase
+                    tracking-[0.16em]
+                    text-white/72
+                    transition-all
+                    duration-500
+                    hover:-translate-y-0.5
+                    hover:border-white/20
+                    hover:bg-white/[0.08]
+                    hover:text-white
+                  "
+                >
+                  Ver detalle
                   <ArrowUpRight className="h-4 w-4" />
                 </Link>
 
@@ -1093,8 +1143,8 @@ export function PromoBanner() {
                   <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-200/70">
                     Cambiar producto disponible
                   </p>
-                  <p className="mt-2 text-sm leading-6 text-white/45">
-                    El producto seleccionado se muestra arriba. Cambia manualmente para revisar precio, beneficio y compra.
+                  <p className="mt-2 text-sm leading-6 text-white/58">
+                    Estas viendo producto {activeProductNumber} de {productCount}. Cambia manualmente para comparar precio, beneficio y acceso de compra.
                   </p>
                 </div>
 
@@ -1232,7 +1282,7 @@ export function PromoBanner() {
                             `}
                           >
                             {isActive
-                              ? "Seleccionado"
+                              ? "Estas viendo"
                               : "Ver producto"}
                           </span>
                           <span className="mt-1 block truncate text-sm font-black text-white">

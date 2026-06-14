@@ -234,6 +234,47 @@ function formatCommunityDate(
   }
 }
 
+function getCommunityCountryLabel(
+  phone?: string | null
+) {
+  const digits =
+    (phone || "").replace(/\D/g, "")
+
+  if (!digits) {
+    return ""
+  }
+
+  if (digits.startsWith("505")) {
+    return "Nicaragua +505"
+  }
+
+  if (digits.startsWith("506")) {
+    return "Costa Rica +506"
+  }
+
+  if (digits.startsWith("507")) {
+    return "Panama +507"
+  }
+
+  if (digits.startsWith("503")) {
+    return "El Salvador +503"
+  }
+
+  if (digits.startsWith("504")) {
+    return "Honduras +504"
+  }
+
+  if (digits.startsWith("502")) {
+    return "Guatemala +502"
+  }
+
+  if (digits.startsWith("501")) {
+    return "Belize +501"
+  }
+
+  return ""
+}
+
 const demandOpportunityLabels: Record<
   SubnicheDemandWithProducts["opportunity_status"],
   string
@@ -1560,19 +1601,11 @@ export default function AdminPage() {
         "Active"
     ).length
 
-  const topCommunityNiche =
-    topCommunityNiches[0]
-
   const topCommunityArea =
     topCommunityAreas[0]
 
   const topCommunitySubniche =
     topCommunitySubniches[0]
-
-  const topCommunityNicheName =
-    topCommunityNiche?.niche_public_name ||
-    topCommunityNiche?.niche_name ||
-    "Sin datos"
 
   const topCommunityAreaName =
     topCommunityArea?.area_label ||
@@ -1590,6 +1623,13 @@ export default function AdminPage() {
         (area) =>
           area.count
       )
+    )
+
+  const totalTopCommunityAreaSelections =
+    topCommunityAreas.reduce(
+      (total, area) =>
+        total + area.count,
+      0
     )
 
   const maxTopCommunityNicheCount =
@@ -1629,17 +1669,17 @@ export default function AdminPage() {
           "es-NI"
         ),
       detail:
-        "Fuente: subscriber_area_interests",
+        "Popup publico",
     },
     {
       label:
-        "Con subnichos",
+        "Con subnichos especificos",
       value:
         communityStats.subscribersWithSubnicheInterests.toLocaleString(
           "es-NI"
         ),
       detail:
-        "Fuente: subscriber_interests",
+        "Senales especificas",
     },
     {
       label:
@@ -1649,16 +1689,6 @@ export default function AdminPage() {
       detail:
         topCommunityArea
           ? `${topCommunityArea.count} selecciones`
-          : "Pendiente de datos",
-    },
-    {
-      label:
-        "Nicho especifico mas popular",
-      value:
-        topCommunityNicheName,
-      detail:
-        topCommunityNiche
-          ? `${topCommunityNiche.count} selecciones`
           : "Pendiente de datos",
     },
     {
@@ -4819,6 +4849,76 @@ export default function AdminPage() {
                   </button>
                 </div>
 
+                <div
+                  className="
+                    mt-8
+                    grid
+                    grid-cols-1
+                    gap-4
+                    lg:grid-cols-3
+                  "
+                >
+                  <div
+                    className="
+                      rounded-3xl
+                      border
+                      border-emerald-300/15
+                      bg-emerald-300/[0.05]
+                      p-5
+                    "
+                  >
+                    <p className="text-[10px] uppercase tracking-[0.22em] text-emerald-100/55">
+                      Areas generales
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-white/70">
+                      Intereses generales elegidos por visitantes en el popup.
+                    </p>
+                    <p className="mt-3 text-xs text-emerald-100/45">
+                      Fuente: subscriber_area_interests
+                    </p>
+                  </div>
+
+                  <div
+                    className="
+                      rounded-3xl
+                      border
+                      border-cyan-300/15
+                      bg-cyan-300/[0.05]
+                      p-5
+                    "
+                  >
+                    <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-100/55">
+                      Subnichos especificos
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-white/70">
+                      Senales especificas usadas para demanda por producto, encuestas o clasificacion Admin.
+                    </p>
+                    <p className="mt-3 text-xs text-cyan-100/45">
+                      Fuente: subscriber_interests
+                    </p>
+                  </div>
+
+                  <div
+                    className="
+                      rounded-3xl
+                      border
+                      border-white/10
+                      bg-black/25
+                      p-5
+                    "
+                  >
+                    <p className="text-[10px] uppercase tracking-[0.22em] text-white/40">
+                      Legacy
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-white/60">
+                      Dato heredado de compatibilidad. No usar como fuente principal de analisis.
+                    </p>
+                    <p className="mt-3 text-xs text-white/35">
+                      Fuente: subscribers.nichos
+                    </p>
+                  </div>
+                </div>
+
                 {communityStats.totalSubscribers === 0 ? (
                   <div
                     className="
@@ -4923,11 +5023,14 @@ export default function AdminPage() {
                         <p className="text-xs uppercase tracking-[0.28em] text-white/45">
                           Top 5 areas generales
                         </p>
+                        <p className="mt-3 text-xs leading-5 text-white/40">
+                          Lo que la comunidad elige de forma simple en el popup.
+                        </p>
 
                         <div className="mt-6 space-y-4">
                           {topCommunityAreas.length === 0 ? (
                             <p className="rounded-2xl border border-white/10 bg-black/30 p-5 text-sm text-white/45">
-                              Las areas apareceran cuando la comunidad seleccione intereses desde el popup.
+                              Todavia no hay areas generales registradas.
                             </p>
                           ) : (
                             topCommunityAreas.map(
@@ -4943,6 +5046,16 @@ export default function AdminPage() {
                                     )
                                   )
 
+                                const percent =
+                                  totalTopCommunityAreaSelections > 0
+                                    ? Math.round(
+                                        (
+                                          area.count /
+                                          totalTopCommunityAreaSelections
+                                        ) * 100
+                                      )
+                                    : 0
+
                                 return (
                                   <div
                                     key={area.area_id}
@@ -4953,7 +5066,7 @@ export default function AdminPage() {
                                         {area.area_label}
                                       </span>
                                       <span className="text-white/45">
-                                        {area.count}
+                                        {area.count} / {percent}%
                                       </span>
                                     </div>
 
@@ -4992,11 +5105,14 @@ export default function AdminPage() {
                         <p className="text-xs uppercase tracking-[0.28em] text-white/45">
                           Top 5 nichos especificos
                         </p>
+                        <p className="mt-3 text-xs leading-5 text-white/40">
+                          Agrupacion por nicho basada solo en subnichos especificos.
+                        </p>
 
                         <div className="mt-6 space-y-4">
                           {topCommunityNiches.length === 0 ? (
                             <p className="rounded-2xl border border-white/10 bg-black/30 p-5 text-sm text-white/45">
-                              Los nichos especificos apareceran cuando existan subnichos reales seleccionados.
+                              Aun no hay senales especificas agrupadas por nicho.
                             </p>
                           ) : (
                             topCommunityNiches.map(
@@ -5055,11 +5171,14 @@ export default function AdminPage() {
                         <p className="text-xs uppercase tracking-[0.28em] text-white/45">
                           Top 5 subnichos especificos
                         </p>
+                        <p className="mt-3 text-xs leading-5 text-white/40">
+                          Senales especificas usadas para analisis de demanda por subnicho.
+                        </p>
 
                         <div className="mt-6 space-y-4">
                           {topCommunitySubniches.length === 0 ? (
                             <p className="rounded-2xl border border-white/10 bg-black/30 p-5 text-sm text-white/45">
-                              Los subnichos apareceran cuando Admin o una accion especifica registre intereses detallados.
+                              Todavia no hay subnichos especificos registrados. Esto es normal si los registros vienen del popup publico, que ahora guarda areas generales.
                             </p>
                           ) : (
                             topCommunitySubniches.map(
@@ -5153,6 +5272,9 @@ export default function AdminPage() {
                           <p className="mt-3 max-w-3xl text-sm leading-6 text-white/50">
                             Compara subnichos especificos guardados en subscriber_interests con productos asociados y encuestas activas.
                           </p>
+                          <p className="mt-2 max-w-3xl text-xs leading-5 text-emerald-100/55">
+                            Este analisis usa subnichos especificos, no areas generales del popup, para evitar inflar demanda.
+                          </p>
                         </div>
 
                         <div className="rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-xs leading-5 text-white/45">
@@ -5162,7 +5284,7 @@ export default function AdminPage() {
 
                       {subnicheDemandWithProducts.length === 0 ? (
                         <p className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-5 text-sm leading-6 text-white/45">
-                          No hay suficiente informacion de comunidad para cruzar demanda y productos todavia.
+                          No hay senales especificas por subnicho todavia. Las areas generales se muestran en Comunidad e intereses; la demanda por subnicho aparecera cuando existan senales especificas desde Admin, encuestas o futuras votaciones.
                         </p>
                       ) : (
                         <div className="mt-6 overflow-x-auto">
@@ -5764,6 +5886,14 @@ export default function AdminPage() {
                                   interest.area_label
                               )
 
+                            const legacyInterests =
+                              subscriber.legacy_nichos || []
+
+                            const countryLabel =
+                              getCommunityCountryLabel(
+                                subscriber.telefono
+                              )
+
                             return (
                               <div
                                 key={subscriber.id}
@@ -5786,6 +5916,11 @@ export default function AdminPage() {
                                     {subscriber.email && subscriber.telefono && (
                                       <p className="mt-1 text-xs text-white/35">
                                         {subscriber.email}
+                                      </p>
+                                    )}
+                                    {countryLabel && (
+                                      <p className="mt-1 text-xs text-white/35">
+                                        {countryLabel}
                                       </p>
                                     )}
                                   </div>
@@ -5818,7 +5953,7 @@ export default function AdminPage() {
                                               text-emerald-50/75
                                             "
                                           >
-                                            Area: {interest}
+                                            Area general: {interest}
                                           </span>
                                         )
                                       )}
@@ -5847,16 +5982,53 @@ export default function AdminPage() {
                                               text-cyan-50/75
                                             "
                                           >
-                                            Subnicho: {interest}
+                                            Subnicho especifico: {interest}
                                           </span>
                                         )
                                       )}
                                   </div>
-                                ) : areaInterests.length === 0 ? (
+                                ) : areaInterests.length === 0 &&
+                                  legacyInterests.length === 0 ? (
                                   <p className="mt-4 text-xs leading-5 text-white/35">
                                     Sin areas ni subnichos normalizados utiles todavia.
                                   </p>
                                 ) : null}
+
+                                {areaInterests.length === 0 &&
+                                  normalizedInterests.length === 0 &&
+                                  legacyInterests.length > 0 && (
+                                    <div className="mt-4 space-y-2">
+                                      <p className="text-[10px] uppercase tracking-[0.18em] text-white/30">
+                                        Legacy / compatibilidad
+                                      </p>
+                                      <div className="flex flex-wrap gap-2">
+                                        {legacyInterests
+                                          .slice(
+                                            0,
+                                            4
+                                          )
+                                          .map(
+                                            (interest) => (
+                                              <span
+                                                key={interest}
+                                                className="
+                                                  rounded-full
+                                                  border
+                                                  border-white/10
+                                                  bg-white/[0.04]
+                                                  px-3
+                                                  py-1
+                                                  text-[11px]
+                                                  text-white/45
+                                                "
+                                              >
+                                                {interest}
+                                              </span>
+                                            )
+                                          )}
+                                      </div>
+                                    </div>
+                                  )}
 
                                 {subscriber.objetivo_principal && (
                                   <p className="mt-4 text-xs leading-5 text-white/40">

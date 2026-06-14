@@ -251,9 +251,9 @@ export default function IMNOVAPage() {
         onClick={openCommunity}
         className="
           fixed
-          bottom-4
-          left-4
-          right-4
+          bottom-3
+          left-3
+          right-3
           z-40
           inline-flex
           items-center
@@ -265,8 +265,8 @@ export default function IMNOVAPage() {
           bg-gradient-to-r
           from-cyan-200
           to-white
-          px-5
-          py-4
+          px-4
+          py-3.5
           text-[11px]
           font-black
           uppercase
@@ -281,6 +281,7 @@ export default function IMNOVAPage() {
           sm:right-6
           sm:w-auto
           sm:px-6
+          sm:py-4
         "
       >
 
@@ -293,10 +294,11 @@ export default function IMNOVAPage() {
             inline-flex
             items-center
             gap-2
-            px-2.5
+            px-2
             py-1
             text-[9px]
             tracking-[0.14em]
+            min-[420px]:px-2.5
           "
         >
           <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_14px_rgba(16,185,129,0.75)]" />

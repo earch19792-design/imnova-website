@@ -55,21 +55,21 @@ const heroJourney = [
   {
     label: "Compra hoy",
     title: "Lanzamientos",
-    text: "Productos disponibles con presentación clara, precio y acceso directo a compra.",
+    text: "Ve precio, beneficio y acceso directo a compra.",
     href: "#available-now",
     icon: ShoppingBag,
   },
   {
     label: "Dónde comprar",
     title: "Canales",
-    text: "Encuentra store, marketplaces o distribuidores autorizados cerca de ti.",
+    text: "Encuentra Store, marketplaces o distribuidores autorizados.",
     href: "#where-to-buy",
     icon: MapPin,
   },
   {
     label: "Lo que viene",
     title: "Validación",
-    text: "Explora ideas que la comunidad puede ayudar a ajustar, pausar o convertir en producto.",
+    text: "Vota ideas antes de que se conviertan en producto.",
     href: "#innovations",
     icon: Sparkles,
   },
@@ -98,7 +98,7 @@ export function HeroSection({
     useTransform(
       scrollY,
       [0, 700],
-      [0, 12]
+      [0, 8]
     )
 
   const opacity =
@@ -165,7 +165,7 @@ export function HeroSection({
             heroImages.length
         )
 
-      }, 18000)
+      }, 30000)
 
     return () =>
       clearInterval(interval)
@@ -645,10 +645,9 @@ export function HeroSection({
               "
             >
 
-              Un ecosistema de innovación que convierte
-              comunidad, datos y bienestar funcional en
-              productos útiles, simples y listos para la vida
-              diaria.
+              IMNOVA crea productos funcionales guiados por comunidad,
+              datos y bienestar: compra lo disponible hoy y vota lo que
+              viene mañana.
 
             </motion.p>
 
@@ -671,7 +670,7 @@ export function HeroSection({
             >
               <a
                 href="#available-now"
-                className="inline-flex items-center justify-center rounded-2xl border border-cyan-200/25 bg-cyan-300/[0.14] px-6 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-50 transition hover:border-cyan-200/45 hover:bg-cyan-300/[0.20]"
+                className="inline-flex items-center justify-center rounded-2xl border border-amber-200/35 bg-gradient-to-r from-amber-300 to-orange-500 px-6 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-black shadow-[0_0_42px_rgba(251,191,36,0.20)] transition hover:-translate-y-0.5 hover:border-amber-100 hover:shadow-[0_0_62px_rgba(251,191,36,0.32)]"
               >
                 Ver productos disponibles
               </a>
@@ -679,7 +678,7 @@ export function HeroSection({
               <button
                 type="button"
                 onClick={onJoinCommunity}
-                className="inline-flex items-center justify-center rounded-2xl border border-white/15 bg-white/[0.06] px-6 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-white/82 transition hover:border-white/25 hover:bg-white/[0.09] hover:text-white"
+                className="inline-flex items-center justify-center rounded-2xl border border-cyan-200/30 bg-cyan-300/[0.11] px-6 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-50 transition hover:-translate-y-0.5 hover:border-cyan-100/50 hover:bg-cyan-300/[0.18] hover:text-white"
               >
                 Unirme a la comunidad
                 <MessageCircle className="ml-2 h-4 w-4" />
@@ -687,10 +686,41 @@ export function HeroSection({
 
               <a
                 href="#innovations"
-                className="inline-flex items-center justify-center rounded-2xl border border-amber-200/20 bg-amber-200/[0.10] px-6 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-amber-50 transition hover:border-amber-200/40 hover:bg-amber-200/[0.16]"
+                className="inline-flex items-center justify-center rounded-2xl border border-white/10 bg-white/[0.035] px-5 py-4 text-[10px] font-black uppercase tracking-[0.16em] text-white/55 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-white/80"
               >
                 Ver ideas en validación
               </a>
+            </motion.div>
+
+            <motion.div
+              initial={{
+                opacity: 0,
+                y: prefersReducedMotion
+                  ? 0
+                  : 8,
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+              }}
+              transition={{
+                duration: 0.9,
+                delay: 0.58,
+              }}
+              className="mt-4 flex max-w-3xl flex-wrap gap-2"
+            >
+              {[
+                "Producto disponible",
+                "Compra clara",
+                "Comunidad sin spam",
+              ].map(item => (
+                <span
+                  key={item}
+                  className="rounded-full border border-white/10 bg-black/35 px-3 py-2 text-[9px] font-semibold uppercase tracking-[0.16em] text-white/48 backdrop-blur-xl"
+                >
+                  {item}
+                </span>
+              ))}
             </motion.div>
 
             <motion.div
@@ -705,10 +735,10 @@ export function HeroSection({
                 y: 0,
               }}
               transition={{
-                duration: 1,
-                delay: 0.64,
+                duration: 0.9,
+                delay: 0.68,
               }}
-              className="mt-9 grid max-w-4xl gap-4 sm:grid-cols-3"
+              className="mt-7 grid max-w-4xl gap-3 sm:grid-cols-3"
             >
               {heroJourney.map(item => {
                 const Icon =
@@ -718,7 +748,7 @@ export function HeroSection({
                   <a
                     key={item.title}
                     href={item.href}
-                    className="group rounded-[22px] border border-white/10 bg-black/42 p-5 text-left shadow-[0_22px_80px_rgba(0,0,0,0.18)] backdrop-blur-2xl transition hover:-translate-y-0.5 hover:border-cyan-200/25 hover:bg-white/[0.055]"
+                    className="group rounded-[20px] border border-white/10 bg-black/34 p-4 text-left shadow-[0_18px_70px_rgba(0,0,0,0.16)] backdrop-blur-2xl transition hover:-translate-y-0.5 hover:border-cyan-200/22 hover:bg-white/[0.05]"
                   >
                     <div className="flex items-center gap-3">
                       <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan-200/15 bg-cyan-300/[0.10] text-cyan-100 transition group-hover:border-cyan-200/35 group-hover:bg-cyan-300/[0.16]">
@@ -729,7 +759,7 @@ export function HeroSection({
                       </span>
                     </div>
 
-                    <p className="mt-4 text-sm font-black uppercase tracking-[0.12em] text-white">
+                    <p className="mt-3 text-sm font-black uppercase tracking-[0.12em] text-white">
                       {item.title}
                     </p>
                     <p className="mt-2 text-xs leading-5 text-white/58">
@@ -798,20 +828,12 @@ export function HeroSection({
       ================================================= */}
 
       <motion.div
-        animate={
-          prefersReducedMotion
-            ? {
-                y: 0,
-              }
-            : {
-                y: [0, 4, 0],
-              }
-        }
+        animate={{
+          y: 0,
+        }}
         transition={{
-          duration: 2.8,
-          repeat: prefersReducedMotion
-            ? 0
-            : Infinity,
+          duration: 0,
+          repeat: 0,
         }}
         className="
           absolute

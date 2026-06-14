@@ -1161,8 +1161,10 @@ useEffect(() => {
             overflow-y-auto
             bg-black/90
             px-4
-            py-10
+            py-4
             backdrop-blur-3xl
+            sm:py-8
+            lg:py-10
           "
         >
 
@@ -1206,10 +1208,10 @@ useEffect(() => {
 
             <motion.div
               animate={{
-                scale: [1.08, 1.12, 1.08],
+                scale: [1.04, 1.06, 1.04],
               }}
               transition={{
-                duration: 20,
+                duration: 28,
                 repeat: Infinity,
                 ease: "easeInOut",
               }}
@@ -1258,12 +1260,13 @@ useEffect(() => {
               relative
               w-full
               max-w-6xl
-              rounded-[40px]
+              rounded-[30px]
               border
               border-cyan-400/10
               bg-black/60
               backdrop-blur-3xl
               shadow-[0_0_120px_rgba(34,211,238,0.08)]
+              sm:rounded-[40px]
             "
           >
 
@@ -1379,7 +1382,7 @@ useEffect(() => {
                       rotate: 360,
                     }}
                     transition={{
-                      duration: 80,
+                      duration: 160,
                       repeat: Infinity,
                       ease: "linear",
                     }}
@@ -1404,10 +1407,10 @@ useEffect(() => {
   }}
   animate={{
     opacity: 1,
-    scale: [1, 1.04, 1],
-    y: [0, -18, 0],
-    rotateY: [0, 8, 0],
-    rotateX: [0, 2, 0],
+    scale: [1, 1.015, 1],
+    y: [0, -6, 0],
+    rotateY: [0, 2, 0],
+    rotateX: [0, 1, 0],
     filter: [
       "drop-shadow(0 0 40px rgba(34,211,238,0.25))",
       "drop-shadow(0 0 90px rgba(34,211,238,0.55))",
@@ -1415,7 +1418,7 @@ useEffect(() => {
     ],
   }}
   transition={{
-    duration: 8,
+    duration: 12,
     repeat: Infinity,
     ease: "easeInOut",
   }}
@@ -1440,7 +1443,7 @@ useEffect(() => {
               <div
                 className="
                   relative
-                  p-6
+                  p-5
                   sm:p-8
                   lg:p-12
                 "
@@ -1450,11 +1453,12 @@ useEffect(() => {
 
                 <div
                   className="
-                    mb-6
+                    mb-4
                     flex
                     items-center
                     justify-end
                     gap-4
+                    sm:mb-6
                   "
                 >
 
@@ -1466,11 +1470,11 @@ useEffect(() => {
                       border
                       border-white/10
                       bg-white/[0.04]
-                      px-5
+                      px-4
                       py-2
-                      text-[11px]
+                      text-[10px]
                       uppercase
-                      tracking-[0.25em]
+                      tracking-[0.18em]
                       text-white/50
                       transition-all
                       duration-300
@@ -1488,10 +1492,11 @@ useEffect(() => {
 
                 <h3
                   className="
-                    text-3xl
+                    text-2xl
                     font-bold
                     tracking-[-0.04em]
                     text-white
+                    sm:text-3xl
                   "
                 >
 
@@ -1507,14 +1512,14 @@ useEffect(() => {
 
                   <p
                     className="
-                      mt-4
+                      mt-3
                       text-sm
                       leading-6
                       text-white/60
                     "
                   >
 
-                    Únete como miembro fundador, elige tus intereses y participa en encuestas que ayudan a decidir qué productos avanzan, se ajustan o llegan al mercado.
+                    Elige hasta 3 áreas. Tus intereses ayudan a decidir próximos productos, encuestas y lanzamientos relevantes.
 
                   </p>
 
@@ -1523,10 +1528,11 @@ useEffect(() => {
 
   <div
     className="
-      mt-5
-      grid
+      mt-4
+      hidden
       gap-3
       sm:grid-cols-3
+      sm:grid
     "
   >
 
@@ -1594,7 +1600,52 @@ useEffect(() => {
 
   <div
     className="
-      mt-5
+      mt-4
+      flex
+      flex-wrap
+      gap-2
+      sm:hidden
+    "
+  >
+
+    {[
+      "Sin spam",
+      "Hasta 3 areas",
+      "Vota lo proximo",
+    ].map(item => (
+
+      <span
+        key={item}
+        className="
+          rounded-full
+          border
+          border-cyan-300/15
+          bg-cyan-300/[0.07]
+          px-3
+          py-2
+          text-[10px]
+          font-black
+          uppercase
+          tracking-[0.14em]
+          text-cyan-50/75
+        "
+      >
+
+        {item}
+
+      </span>
+
+    ))}
+
+  </div>
+
+)}
+
+{!isLogin && (
+
+  <div
+    className="
+      mt-4
       grid
       grid-cols-2
       gap-3
@@ -1665,6 +1716,7 @@ useEffect(() => {
                 <div
   className={`
     mt-4
+    hidden
     rounded-2xl
     border
     border-cyan-400/20
@@ -1672,6 +1724,7 @@ useEffect(() => {
     ${activeHighlight.glow}
     p-5
     backdrop-blur-xl
+    sm:block
   `}
 >
 
@@ -1787,10 +1840,11 @@ useEffect(() => {
           border-white/10
           bg-white/[0.06]
           px-6
-          py-4
+          py-3.5
           text-white
           outline-none
           placeholder:text-white/45
+          sm:py-4
         "
       />
 
@@ -1811,8 +1865,10 @@ useEffect(() => {
     border-white/10
     bg-white/[0.06]
     px-4
+    py-3.5
     text-white
     outline-none
+    sm:py-4
   "
 >
 
@@ -1872,10 +1928,11 @@ useEffect(() => {
             border-white/10
             bg-white/[0.06]
             px-6
-            py-4
+            py-3.5
             text-white
             outline-none
             placeholder:text-white/45
+            sm:py-4
           "
         />
 
@@ -1901,10 +1958,11 @@ useEffect(() => {
       border-white/10
       bg-white/[0.06]
       px-6
-      py-4
+      py-3.5
       text-white
       outline-none
       placeholder:text-white/45
+      sm:py-4
     "
   />
 
@@ -1916,7 +1974,7 @@ useEffect(() => {
 
   <div
     className="
-      mt-6
+      mt-5
       space-y-4
     "
   >
@@ -1938,8 +1996,9 @@ useEffect(() => {
       <p
         className="
           text-sm
-          leading-6
+          leading-5
           text-white/60
+          sm:leading-6
         "
       >
 
@@ -2024,10 +2083,11 @@ useEffect(() => {
               className={`
                 rounded-2xl
                 border
-                p-4
+                p-3
                 text-left
                 transition-all
                 duration-300
+                sm:p-4
 
                 ${
                   active
@@ -2064,10 +2124,10 @@ useEffect(() => {
 
                 <span
                   className={`
-                    flex
-                    h-10
-                    w-10
-                    shrink-0
+                  flex
+                  h-9
+                  w-9
+                  shrink-0
                     items-center
                     justify-center
                     rounded-2xl
@@ -2122,7 +2182,7 @@ useEffect(() => {
 
               <h5
                 className="
-                  mt-4
+                  mt-3
                   text-sm
                   font-bold
                   leading-5
@@ -2137,9 +2197,11 @@ useEffect(() => {
               <p
                 className="
                   mt-2
+                  hidden
                   text-xs
                   leading-5
                   text-white/58
+                  sm:block
                 "
               >
 
@@ -2192,7 +2254,7 @@ useEffect(() => {
       setRegistrationStep("interests")
     }
     className="
-      mt-5
+      mt-4
       w-full
       rounded-2xl
       border
@@ -2238,8 +2300,8 @@ useEffect(() => {
     bg-gradient-to-r
     from-cyan-300
     to-white
-    px-8
-    py-5
+    px-6
+    py-4
     text-sm
     font-black
     uppercase
@@ -2249,6 +2311,8 @@ useEffect(() => {
     duration-500
     hover:scale-[1.01]
     disabled:opacity-50
+    sm:px-8
+    sm:py-5
   "
 >
 
