@@ -296,6 +296,63 @@ function isBreadGuideProduct(
   )
 }
 
+function getCoffeeGuideVariant(
+  product: Product,
+  profile = getProductProfile(product)
+): "single" | "sixPack" | "twelvePack" | null {
+  const identity =
+    normalizeText(
+      [
+        product.slug,
+        product.name,
+        product.category,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    )
+
+  const isCoffee =
+    identity.includes("coffee") ||
+    identity.includes("cafe") ||
+    profileIncludes(
+      profile,
+      [
+        "coffee",
+        "cafe",
+        "caf",
+        "latte",
+      ]
+    )
+
+  if (!isCoffee) {
+    return null
+  }
+
+  if (
+    identity.includes("12pack") ||
+    identity.includes("12 pack") ||
+    identity.includes("12 latas") ||
+    profile.includes("12pack") ||
+    profile.includes("12 pack") ||
+    profile.includes("12 latas")
+  ) {
+    return "twelvePack"
+  }
+
+  if (
+    identity.includes("6pack") ||
+    identity.includes("6 pack") ||
+    identity.includes("6 latas") ||
+    profile.includes("6pack") ||
+    profile.includes("6 pack") ||
+    profile.includes("6 latas")
+  ) {
+    return "sixPack"
+  }
+
+  return "single"
+}
+
 function getFirstText(
   values: Array<string | null | undefined>
 ) {
@@ -331,6 +388,24 @@ function getUsageMoment(
   const profile =
     getProductProfile(product)
 
+  const coffeeVariant =
+    getCoffeeGuideVariant(
+      product,
+      profile
+    )
+
+  if (coffeeVariant === "twelvePack") {
+    return "Abastecimiento para varios días: ideal si ya tomas MASH Coffee+ y quieres tener latas listas para mañana, oficina, estudio o ruta."
+  }
+
+  if (coffeeVariant === "sixPack") {
+    return "Rutina semanal de prueba: perfecto para organizar seis momentos de café funcional durante la semana sin quedarte corto."
+  }
+
+  if (coffeeVariant === "single") {
+    return "Mañana, oficina o estudio: ideal cuando quieres café, enfoque y una pausa funcional sin preparar una rutina complicada."
+  }
+
   if (
     profileIncludes(
       profile,
@@ -342,7 +417,7 @@ function getUsageMoment(
       ]
     )
   ) {
-    return "Mañana, oficina o estudio: ideal cuando quieres café, enfoque y una pausa funcional sin preparar una rutina complicada."
+    return "Mañana, oficina o estudio: ideal cuando quieres una pausa funcional sin preparar una rutina complicada."
   }
 
   if (
@@ -422,13 +497,31 @@ function getHowToUse(
   const profile =
     getProductProfile(product)
 
+  const coffeeVariant =
+    getCoffeeGuideVariant(
+      product,
+      profile
+    )
+
+  if (coffeeVariant === "twelvePack") {
+    return "Refrigera tus latas, agita antes de tomar y usa el pack para mantener tu ritual funcional disponible durante varios días."
+  }
+
+  if (coffeeVariant === "sixPack") {
+    return "Refrigera el pack, elige tus seis momentos de la semana y toma cada lata fría, sola o con hielo, cuando quieras café funcional listo."
+  }
+
+  if (coffeeVariant === "single") {
+    return "Agita bien la lata, sírvela fría o con hielo y disfrútala sola o con leche regular, almendra, avena o coco."
+  }
+
   if (
     isPancakeGuideProduct(
       product,
       profile
     )
   ) {
-    return "Usa el paquete completo: mezcla 1 huevo con 150 g de leche, agrega 150 g de High Protein Pancake Flour y cocina la mezcla en waflera durante 10 minutos."
+    return "El paquete ya trae 150 g de mezcla en polvo Mash Nutri+ Pancake. Solo agrega 1 huevo y 150 ml de leche; mezcla bien y cocina en waflera durante 10 minutos."
   }
 
   if (
@@ -437,7 +530,7 @@ function getHowToUse(
       profile
     )
   ) {
-    return "Prepáralo en máquina de pan con 200 g de agua, 200 g de harina para pan, 3 g de levadura y 25 g de mantequilla cuando la mezcla ya esté integrada."
+    return "El paquete ya trae 200 g de mezcla en polvo Mash Nutra+ Pan alto en proteína. Solo agrega 200 ml de agua, 3 g de levadura y 25 g de mantequilla en máquina de pan."
   }
 
   const configuredUsage =
@@ -481,6 +574,20 @@ function getIngredientsAndStorage(
   const profile =
     getProductProfile(product)
 
+  const coffeeVariant =
+    getCoffeeGuideVariant(
+      product,
+      profile
+    )
+
+  if (coffeeVariant) {
+    return [
+      "Café funcional listo para tomar con colágeno marino, vitaminas B6, B12 y D3, y extractos herbales.",
+      "Sin azúcar y bajo en calorías.",
+      "Servir frío; revisar la etiqueta del producto para fecha de vencimiento y conservación específica.",
+    ].join(" ")
+  }
+
   if (
     isPancakeGuideProduct(
       product,
@@ -488,7 +595,10 @@ function getIngredientsAndStorage(
     )
   ) {
     return [
-      "Ingredientes por paquete: 150 g de High Protein Pancake Flour, 1 huevo y 150 g de leche.",
+      "El paquete trae 150 g de mezcla en polvo Mash Nutri+ Pancake.",
+      "Solo debes agregar: 1 huevo y 150 ml de leche.",
+      "La mezcla ya incluye los ingredientes secos principales; no necesitas agregar más harina, proteína, fibra, sal o endulzante.",
+      "Opcional si lo preparas en sartén: usa un poco de mantequilla o aceite para que no se pegue.",
       "Vida útil: 12 meses.",
       "Almacenamiento: guardar en lugar fresco y seco, lejos de luz fuerte y calor.",
     ].join(" ")
@@ -501,7 +611,9 @@ function getIngredientsAndStorage(
     )
   ) {
     return [
-      "Ingredientes para preparar: 200 g de agua, 200 g de harina para pan, 3 g de levadura y 25 g de mantequilla.",
+      "El paquete trae 200 g de mezcla en polvo Mash Nutra+ Pan alto en proteína.",
+      "Solo debes agregar: 200 ml de agua, 3 g de levadura y 25 g de mantequilla.",
+      "La mezcla ya incluye los ingredientes secos principales como proteína, fibra, gluten, eritritol, konjac e inulina; no necesitas agregar más harina, proteína, fibra, sal o endulzante.",
       "Vida útil: 18 meses.",
       "Almacenamiento: guardar en lugar fresco y seco, lejos de luz fuerte y calor.",
     ].join(" ")
@@ -516,6 +628,41 @@ function getRitualSteps(
   const profile =
     getProductProfile(product)
 
+  const coffeeVariant =
+    getCoffeeGuideVariant(
+      product,
+      profile
+    )
+
+  if (coffeeVariant === "twelvePack") {
+    return [
+      "Refrigera las latas para tenerlas listas durante varios días.",
+      "Elige tus momentos clave: mañana, oficina, estudio, ruta o pausa funcional.",
+      "Agita bien cada lata antes de abrirla.",
+      "Tómala fría, sola o sobre hielo.",
+      "Úsala para mantener tu ritual de café funcional sin improvisar.",
+    ]
+  }
+
+  if (coffeeVariant === "sixPack") {
+    return [
+      "Refrigera el pack para tener seis momentos listos.",
+      "Elige cuándo usarlo: mañana, oficina, estudio o después de una rutina activa.",
+      "Agita bien la lata antes de tomar.",
+      "Sírvela fría o con hielo.",
+      "Repite durante la semana y descubre si encaja en tu rutina.",
+    ]
+  }
+
+  if (coffeeVariant === "single") {
+    return [
+      "Agita bien la lata antes de abrirla.",
+      "Sírvela fría, sola o sobre hielo.",
+      "Si quieres una textura más suave, añade leche regular, almendra, avena o coco.",
+      "Tómala en la mañana, oficina o estudio como una pausa funcional.",
+    ]
+  }
+
   if (
     isPancakeGuideProduct(
       product,
@@ -524,9 +671,9 @@ function getRitualSteps(
   ) {
     return [
       "Coloca 1 huevo en un bowl.",
-      "Agrega 150 g de leche.",
+      "Agrega 150 ml de leche.",
       "Mezcla bien hasta que el huevo y la leche queden uniformes.",
-      "Agrega los 150 g de harina para pancake.",
+      "Agrega los 150 g de mezcla en polvo Mash Nutri+ Pancake.",
       "Mezcla hasta obtener una masa pareja, sin grumos grandes.",
       "Precalienta la waflera.",
       "Vierte la mezcla en la waflera.",
@@ -542,12 +689,12 @@ function getRitualSteps(
     )
   ) {
     return [
-      "Pesa 200 g de agua.",
-      "Pesa 200 g de harina para pan.",
+      "Pesa 200 g de agua, aproximadamente 200 ml.",
+      "Pesa los 200 g de mezcla en polvo Mash Nutra+ Pan alto en proteína.",
       "Pesa 3 g de levadura.",
-      "Coloca el agua, la harina y la levadura dentro de la máquina de pan.",
+      "Coloca el agua, la mezcla en polvo y la levadura dentro de la máquina de pan.",
       "Enciende la máquina de pan.",
-      "Cuando la harina y el agua ya estén bien mezcladas, agrega 25 g de mantequilla.",
+      "Cuando la mezcla en polvo y el agua ya estén bien integradas, agrega 25 g de mantequilla.",
       "Deja que la máquina termine el amasado, fermentación y horneado.",
       "Cuando finalice, retira el pan.",
       "Déjalo reposar unos minutos antes de cortarlo.",
@@ -562,24 +709,6 @@ function getRitualSteps(
 
   if (configuredSteps.length > 0) {
     return configuredSteps
-  }
-
-  if (
-    profileIncludes(
-      profile,
-      [
-        "coffee",
-        "cafe",
-        "caf",
-      ]
-    )
-  ) {
-    return [
-      "Agítalo bien antes de tomar.",
-      "Sírvelo frío sobre hielo.",
-      "Añade leche regular, almendra, avena o coco.",
-      "Tómalo en la mañana, oficina o estudio como una pausa funcional.",
-    ]
   }
 
   if (
@@ -612,6 +741,39 @@ function getFallbackBenefits(
 ) {
   const profile =
     getProductProfile(product)
+
+  const coffeeVariant =
+    getCoffeeGuideVariant(
+      product,
+      profile
+    )
+
+  if (coffeeVariant === "twelvePack") {
+    return [
+      "Pack para mantener tu ritual funcional",
+      "Café listo con colágeno marino y vitaminas",
+      "Ideal para abastecer varios días",
+      "Sin azúcar y bajo en calorías",
+    ]
+  }
+
+  if (coffeeVariant === "sixPack") {
+    return [
+      "Seis momentos de café funcional",
+      "Ideal para probar una rutina semanal",
+      "Café listo con colágeno marino y vitaminas",
+      "Sin azúcar y bajo en calorías",
+    ]
+  }
+
+  if (coffeeVariant === "single") {
+    return [
+      "Café funcional listo para tomar",
+      "Colágeno marino, vitaminas y extractos herbales",
+      "Energía natural del café",
+      "Sin azúcar y bajo en calorías",
+    ]
+  }
 
   if (
     profileIncludes(
@@ -707,19 +869,13 @@ function getPracticalBenefits(
     ...normalizeStringList(product.main_benefit),
   ]
 
-  if (configuredBenefits.length > 0) {
-    return configuredBenefits.slice(
-      0,
-      4
-    )
-  }
-
   const configuredFallbacks = [
     ...normalizeStringList(product.benefits),
     ...normalizeStringList(product.bullets),
   ]
 
   const combinedBenefits = [
+    ...configuredBenefits,
     ...configuredFallbacks,
     ...getFallbackBenefits(product),
   ]
@@ -744,59 +900,34 @@ function getGuideStory(
       product.description,
     ])
 
-  if (
-    profileIncludes(
-      profile,
-      [
-        "coffee",
-        "cafe",
-        "caf",
-      ]
+  const coffeeVariant =
+    getCoffeeGuideVariant(
+      product,
+      profile
     )
-  ) {
-    const isSixPack =
-      profileIncludes(
-        profile,
-        [
-          "6 pack",
-          "6pack",
-          "6 latas",
-        ]
-      )
 
-    const isTwelvePack =
-      profileIncludes(
-        profile,
-        [
-          "12 pack",
-          "12pack",
-          "12 latas",
-        ]
-      )
-
-    if (isTwelvePack) {
+  if (coffeeVariant) {
+    if (coffeeVariant === "twelvePack") {
       return {
         storyTitle:
-          "Tu ritual funcional listo para varios días.",
+          "Tu café funcional listo para varios días.",
         storyDescription:
-          mainBenefit ||
-          "Abastece tu rutina con café funcional, colágeno marino, vitaminas y cero azúcar para acompañar tus mañanas de enfoque.",
+          "Abastece tu rutina con MASH Coffee+, un café listo con colágeno marino, vitaminas y cero azúcar para acompañar mañanas, oficina, estudio o ruta.",
         desireLine:
-          "Pensado para quienes ya integraron MASH Coffee+ a su día y quieren tenerlo siempre a mano.",
+          "Pensado para quienes ya integraron MASH Coffee+ a su día y quieren tenerlo siempre a mano sin comprar una lata a la vez.",
         ctaMicrocopy:
           "Abastece tu rutina funcional.",
       }
     }
 
-    if (isSixPack) {
+    if (coffeeVariant === "sixPack") {
       return {
         storyTitle:
-          "Una semana de café funcional sin complicarte.",
+          "Seis momentos para probar tu ritual funcional.",
         storyDescription:
-          mainBenefit ||
-          "Seis latas listas para acompañar mañanas de oficina, estudio o rutina activa con café, colágeno marino y vitaminas.",
+          "Un pack pensado para probar MASH Coffee+ durante la semana: café listo, colágeno marino, vitaminas, cero azúcar y uso simple.",
         desireLine:
-          "Ideal para probar el hábito y convertir tu café en un momento más inteligente del día.",
+          "Ideal para descubrir si el café funcional encaja en tu mañana, trabajo, estudio o rutina activa.",
         ctaMicrocopy:
           "Empieza tu semana funcional.",
       }
