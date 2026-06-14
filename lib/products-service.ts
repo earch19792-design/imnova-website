@@ -2979,6 +2979,23 @@ export type StrategicNicheWithSubniches =
     subniches: StrategicSubniche[]
   }
 
+export type ProductSubniche = {
+  id: string
+  product_id: string
+  subniche_id: string
+  is_primary: boolean | null
+  created_at: string | null
+  strategic_subniches?:
+    | StrategicSubniche
+    | StrategicSubniche[]
+    | null
+}
+
+export type UpdateProductSubnichesResult = {
+  success: boolean
+  error: string | null
+}
+
 export async function getPublicStrategicNiches(): Promise<StrategicNiche[]> {
 
   const { data, error } =
@@ -3154,7 +3171,7 @@ export async function getStrategicNiches() {
 
 export async function getProductSubniches(
   productId: string
-) {
+): Promise<ProductSubniche[]> {
 
   const { data, error } =
     await supabase
@@ -3185,7 +3202,109 @@ export async function getProductSubniches(
 
   }
 
-  return data || []
+  return (data || []) as ProductSubniche[]
+
+}
+
+export async function updateProductSubniches(
+  productId: string,
+  subnicheIds: string[],
+  primarySubnicheId?: string | null
+): Promise<UpdateProductSubnichesResult> {
+
+  const uniqueSubnicheIds =
+    Array.from(
+      new Set(
+        [
+          ...(primarySubnicheId
+            ? [primarySubnicheId]
+            : []),
+          ...subnicheIds,
+        ]
+          .map(subnicheId =>
+            subnicheId.trim()
+          )
+          .filter(Boolean)
+      )
+    )
+
+  const { error: deleteError } =
+    await supabase
+      .from("product_subniches")
+      .delete()
+      .eq(
+        "product_id",
+        productId
+      )
+
+  if (deleteError) {
+    console.error(
+      "DELETE PRODUCT SUBNICHES ERROR:",
+      deleteError
+    )
+
+    return {
+      success: false,
+      error:
+        formatSupabaseErrorMessage(
+          deleteError
+        ) ||
+        "No se pudieron limpiar los subnichos del producto.",
+    }
+  }
+
+  if (uniqueSubnicheIds.length === 0) {
+    return {
+      success: true,
+      error: null,
+    }
+  }
+
+  const rows =
+    uniqueSubnicheIds.map(
+      subnicheId => ({
+        product_id:
+          productId,
+        subniche_id:
+          subnicheId,
+        is_primary:
+          Boolean(
+            primarySubnicheId &&
+            subnicheId === primarySubnicheId
+          ),
+      })
+    )
+
+  const { error: insertError } =
+    await supabase
+      .from("product_subniches")
+      .insert(rows)
+
+  if (insertError) {
+    console.error(
+      "INSERT PRODUCT SUBNICHES ERROR:",
+      {
+        error:
+          insertError,
+        productId,
+        rows,
+      }
+    )
+
+    return {
+      success: false,
+      error:
+        formatSupabaseErrorMessage(
+          insertError
+        ) ||
+        "No se pudieron guardar los subnichos del producto.",
+    }
+  }
+
+  return {
+    success: true,
+    error: null,
+  }
 
 }
 

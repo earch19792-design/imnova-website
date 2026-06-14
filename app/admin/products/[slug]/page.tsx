@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useState,
 } from "react"
 
@@ -19,8 +20,10 @@ import {
   getDistributionLocationsByProduct,
   getCommunitySurveysByProduct,
   getNotificationLogsByProduct,
+  getProductSubniches,
   getProductBySlug,
   getProductStates,
+  getPublicNichesWithSubniches,
   getSocialSignalsByProduct,
   getSurveyResponsesByProduct,
   updateDistributionLocation,
@@ -28,8 +31,10 @@ import {
   type DistributionLocation,
   type NotificationLog,
   type SocialSignal,
+  type StrategicNicheWithSubniches,
   type SurveyResponse,
   updateProduct,
+  updateProductSubniches,
 } from "@/lib/products-service"
 
 import {
@@ -245,6 +250,8 @@ type FormData = {
   price: string
   currency: string
   state_id: string
+  strategic_niche_id: string
+  primary_subniche_id: string
   nicho: string
   problema_resuelve: string
   expected_benefit: string
@@ -285,6 +292,8 @@ type ProductUpdateData = {
   price: number | null
   currency: string | null
   state_id: string | null
+  strategic_niche_id?: string | null
+  primary_subniche_id?: string | null
   nicho?: string | null
   problema_resuelve?: string | null
   expected_benefit?: string | null
@@ -415,7 +424,7 @@ const productDetailFlowSteps = [
   {
     label: "Validacion",
     description:
-      "Registra nicho, problema humano, encuestas, senales y decision estrategica.",
+      "Registra nicho normalizado, subnichos, problema humano, encuestas, senales y decision estrategica.",
   },
   {
     label: "Contenido",
@@ -440,7 +449,7 @@ const productSectionGuides = {
   estado:
     "Cambia etapa solo cuando la informacion del producto acompane ese avance.",
   validacion:
-    "Esta seccion decide si una idea merece avanzar, ajustarse, pausarse o descartarse.",
+    "Esta seccion conecta nicho normalizado, subnichos y validacion para decidir si una idea merece avanzar.",
   comercializacion:
     "Completa canales y promocion antes de que un producto Disponible sea protagonista en tienda.",
   contenido:
@@ -827,6 +836,10 @@ function getInitialFormData(
       product.currency || "USD",
     state_id:
       product.state_id || "",
+    strategic_niche_id:
+      product.strategic_niche_id || "",
+    primary_subniche_id:
+      product.primary_subniche_id || "",
     nicho:
       product.nicho || "",
     problema_resuelve:
@@ -1107,6 +1120,16 @@ export default function ProductDetailPage() {
   const [states, setStates] =
     useState<ProductState[]>([])
 
+  const [
+    nichesWithSubniches,
+    setNichesWithSubniches,
+  ] = useState<StrategicNicheWithSubniches[]>([])
+
+  const [
+    selectedSecondarySubnicheIds,
+    setSelectedSecondarySubnicheIds,
+  ] = useState<string[]>([])
+
   const [activeSection, setActiveSection] =
     useState("general")
 
@@ -1124,6 +1147,8 @@ export default function ProductDetailPage() {
       price: "",
       currency: "USD",
       state_id: "",
+      strategic_niche_id: "",
+      primary_subniche_id: "",
       nicho: "",
       problema_resuelve: "",
       expected_benefit: "",
@@ -1155,6 +1180,43 @@ export default function ProductDetailPage() {
       distribution_channels: "",
       commercial_notes: "",
     })
+
+  const selectedStrategicNiche =
+    useMemo(
+      () =>
+        nichesWithSubniches.find(
+          niche =>
+            niche.id ===
+            formData.strategic_niche_id
+        ) || null,
+      [
+        formData.strategic_niche_id,
+        nichesWithSubniches,
+      ]
+    )
+
+  const selectedNicheSubniches =
+    selectedStrategicNiche?.subniches || []
+
+  const selectedNicheSubnicheIds =
+    useMemo(
+      () =>
+        new Set(
+          selectedNicheSubniches.map(
+            subniche =>
+              subniche.id
+          )
+        ),
+      [selectedNicheSubniches]
+    )
+
+  const selectedSecondarySubniches =
+    selectedNicheSubniches.filter(
+      subniche =>
+        selectedSecondarySubnicheIds.includes(
+          subniche.id
+        )
+    )
 
   const [isSaving, setIsSaving] =
     useState(false)
@@ -1393,6 +1455,71 @@ export default function ProductDetailPage() {
       []
     )
 
+  const loadProductSubniches =
+    useCallback(
+      async (
+        productId: string,
+        currentProduct?: Product | null
+      ) => {
+        try {
+          const productSubniches =
+            await getProductSubniches(
+              productId
+            )
+
+          const primaryRelation =
+            productSubniches.find(
+              relation =>
+                relation.is_primary
+            )
+
+          const primarySubnicheId =
+            currentProduct?.primary_subniche_id ||
+            primaryRelation?.subniche_id ||
+            ""
+
+          const secondarySubnicheIds =
+            productSubniches
+              .filter(
+                relation =>
+                  relation.subniche_id !==
+                  primarySubnicheId
+              )
+              .map(
+                relation =>
+                  relation.subniche_id
+              )
+              .filter(Boolean)
+
+          setSelectedSecondarySubnicheIds(
+            Array.from(
+              new Set(
+                secondarySubnicheIds
+              )
+            )
+          )
+
+          if (primarySubnicheId) {
+            setFormData(
+              current => ({
+                ...current,
+                primary_subniche_id:
+                  current.primary_subniche_id ||
+                  primarySubnicheId,
+              })
+            )
+          }
+        } catch (error) {
+          console.error(
+            "LOAD PRODUCT SUBNICHES ERROR:",
+            error
+          )
+          setSelectedSecondarySubnicheIds([])
+        }
+      },
+      []
+    )
+
   useEffect(() => {
     let isMounted = true
 
@@ -1426,14 +1553,22 @@ export default function ProductDetailPage() {
     if (!isAuthenticated) return
 
     async function loadData() {
-      const productData =
-        await getProductBySlug(slug)
-
-      const statesData =
-        await getProductStates()
+      const [
+        productData,
+        statesData,
+        nichesData,
+      ] =
+        await Promise.all([
+          getProductBySlug(slug),
+          getProductStates(),
+          getPublicNichesWithSubniches(),
+        ])
 
       setProduct(productData)
       setStates(statesData)
+      setNichesWithSubniches(
+        nichesData || []
+      )
     }
 
     loadData()
@@ -1446,6 +1581,24 @@ export default function ProductDetailPage() {
       getInitialFormData(product)
     )
   }, [product])
+
+  useEffect(() => {
+    const productId =
+      product?.id
+
+    if (!productId) {
+      setSelectedSecondarySubnicheIds([])
+      return
+    }
+
+    void loadProductSubniches(
+      productId,
+      product
+    )
+  }, [
+    loadProductSubniches,
+    product,
+  ])
 
   useEffect(() => {
     const productId =
@@ -1533,6 +1686,130 @@ export default function ProductDetailPage() {
           ...current,
           [field]: value,
         })
+      )
+
+      setSaveMessage("")
+      setSaveError("")
+    }
+
+  const updateStrategicNiche =
+    (nicheId: string) => {
+      const nextNiche =
+        nichesWithSubniches.find(
+          niche =>
+            niche.id === nicheId
+        )
+
+      const allowedSubnicheIds =
+        new Set(
+          (nextNiche?.subniches || []).map(
+            subniche =>
+              subniche.id
+          )
+        )
+
+      setFormData(
+        current => ({
+          ...current,
+          strategic_niche_id:
+            nicheId,
+          primary_subniche_id:
+            allowedSubnicheIds.has(
+              current.primary_subniche_id
+            )
+              ? current.primary_subniche_id
+              : "",
+        })
+      )
+
+      setSelectedSecondarySubnicheIds(
+        currentSubnicheIds =>
+          currentSubnicheIds.filter(
+            subnicheId =>
+              allowedSubnicheIds.has(
+                subnicheId
+              )
+          )
+      )
+
+      setSaveMessage("")
+      setSaveError("")
+    }
+
+  const updatePrimarySubniche =
+    (subnicheId: string) => {
+      if (
+        subnicheId &&
+        !selectedNicheSubnicheIds.has(
+          subnicheId
+        )
+      ) {
+        setSaveMessage("")
+        setSaveError(
+          "El subnicho principal debe pertenecer al nicho seleccionado."
+        )
+        return
+      }
+
+      setFormData(
+        current => ({
+          ...current,
+          primary_subniche_id:
+            subnicheId,
+        })
+      )
+
+      setSelectedSecondarySubnicheIds(
+        currentSubnicheIds =>
+          currentSubnicheIds.filter(
+            currentSubnicheId =>
+              currentSubnicheId !== subnicheId
+          )
+      )
+
+      setSaveMessage("")
+      setSaveError("")
+    }
+
+  const toggleSecondarySubniche =
+    (subnicheId: string) => {
+      if (
+        !selectedNicheSubnicheIds.has(
+          subnicheId
+        )
+      ) {
+        setSaveMessage("")
+        setSaveError(
+          "El subnicho secundario debe pertenecer al nicho seleccionado."
+        )
+        return
+      }
+
+      if (
+        subnicheId ===
+        formData.primary_subniche_id
+      ) {
+        setSaveMessage("")
+        setSaveError(
+          "El subnicho principal ya queda asociado como primario."
+        )
+        return
+      }
+
+      setSelectedSecondarySubnicheIds(
+        currentSubnicheIds =>
+          currentSubnicheIds.includes(
+            subnicheId
+          )
+            ? currentSubnicheIds.filter(
+                currentSubnicheId =>
+                  currentSubnicheId !==
+                  subnicheId
+              )
+            : [
+                ...currentSubnicheIds,
+                subnicheId,
+              ]
       )
 
       setSaveMessage("")
@@ -2646,6 +2923,46 @@ export default function ProductDetailPage() {
         return
       }
 
+      if (
+        formData.primary_subniche_id &&
+        !formData.strategic_niche_id
+      ) {
+        setSaveMessage("")
+        setSaveError(
+          "Selecciona un nicho principal antes del subnicho principal."
+        )
+        return
+      }
+
+      if (
+        formData.primary_subniche_id &&
+        !selectedNicheSubnicheIds.has(
+          formData.primary_subniche_id
+        )
+      ) {
+        setSaveMessage("")
+        setSaveError(
+          "El subnicho principal debe pertenecer al nicho seleccionado."
+        )
+        return
+      }
+
+      const invalidSecondarySubniche =
+        selectedSecondarySubnicheIds.find(
+          subnicheId =>
+            !selectedNicheSubnicheIds.has(
+              subnicheId
+            )
+        )
+
+      if (invalidSecondarySubniche) {
+        setSaveMessage("")
+        setSaveError(
+          "Todos los subnichos secundarios deben pertenecer al nicho seleccionado."
+        )
+        return
+      }
+
       const selectedStateName =
         states.find(
           state =>
@@ -2741,6 +3058,10 @@ export default function ProductDetailPage() {
           formData.currency.trim() || null,
         state_id:
           formData.state_id || null,
+        strategic_niche_id:
+          formData.strategic_niche_id || null,
+        primary_subniche_id:
+          formData.primary_subniche_id || null,
         expected_benefit:
           formData.expected_benefit.trim() ||
           null,
@@ -2851,6 +3172,34 @@ export default function ProductDetailPage() {
         if (!result) {
           setSaveError(
             "Error al actualizar el producto."
+          )
+          return
+        }
+
+        const productSubnicheIds =
+          Array.from(
+            new Set([
+              ...(
+                formData.primary_subniche_id
+                  ? [
+                      formData.primary_subniche_id,
+                    ]
+                  : []
+              ),
+              ...selectedSecondarySubnicheIds,
+            ])
+          )
+
+        const productSubnichesResult =
+          await updateProductSubniches(
+            product.id,
+            productSubnicheIds,
+            formData.primary_subniche_id || null
+          )
+
+        if (!productSubnichesResult.success) {
+          setSaveError(
+            `Producto actualizado, pero no se pudieron guardar los subnichos: ${productSubnichesResult.error}`
           )
           return
         }
@@ -3615,15 +3964,167 @@ export default function ProductDetailPage() {
             </div>
 
             <div className="mt-8 grid gap-5 lg:grid-cols-2">
+              <div className="rounded-3xl border border-cyan-300/15 bg-cyan-300/[0.04] p-5 lg:col-span-2">
+                <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/60">
+                  Nicho estrategico
+                </p>
+                <p className="mt-3 text-sm leading-6 text-white/50">
+                  Clasificacion oficial del producto dentro de IMNOVA OS.
+                </p>
+                <FieldGuide>
+                  Usa nicho y subnichos normalizados para cruzar productos con demanda, comunidad y futuras encuestas.
+                </FieldGuide>
+
+                <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Nicho principal
+                    </span>
+                    <select
+                      value={formData.strategic_niche_id}
+                      onChange={(event) =>
+                        updateStrategicNiche(
+                          event.target.value
+                        )
+                      }
+                      className={inputClassName}
+                    >
+                      <option value="">
+                        Sin nicho principal
+                      </option>
+                      {nichesWithSubniches.map(
+                        niche => (
+                          <option
+                            key={niche.id}
+                            value={niche.id}
+                          >
+                            {niche.public_name || niche.name}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </label>
+
+                  <label>
+                    <span className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                      Subnicho principal
+                    </span>
+                    <select
+                      value={formData.primary_subniche_id}
+                      onChange={(event) =>
+                        updatePrimarySubniche(
+                          event.target.value
+                        )
+                      }
+                      disabled={
+                        !formData.strategic_niche_id ||
+                        selectedNicheSubniches.length === 0
+                      }
+                      className={inputClassName}
+                    >
+                      <option value="">
+                        Sin subnicho principal
+                      </option>
+                      {selectedNicheSubniches.map(
+                        subniche => (
+                          <option
+                            key={subniche.id}
+                            value={subniche.id}
+                          >
+                            {subniche.public_name || subniche.name}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="mt-5">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.20em] text-white/35">
+                        Subnichos secundarios
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-white/35">
+                        Agrega subnichos relacionados sin cambiar el subnicho principal.
+                      </p>
+                    </div>
+                    <span className="text-[10px] uppercase tracking-[0.16em] text-cyan-100/45">
+                      {selectedSecondarySubniches.length} seleccionados
+                    </span>
+                  </div>
+
+                  {!formData.strategic_niche_id ? (
+                    <p className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-4 text-sm text-white/45">
+                      Selecciona un nicho principal para ver subnichos.
+                    </p>
+                  ) : selectedNicheSubniches.length === 0 ? (
+                    <p className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-4 text-sm text-white/45">
+                      Este nicho no tiene subnichos publicos disponibles.
+                    </p>
+                  ) : (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {selectedNicheSubniches.map(
+                        subniche => {
+                          const isPrimary =
+                            formData.primary_subniche_id ===
+                            subniche.id
+
+                          const isSelected =
+                            selectedSecondarySubnicheIds.includes(
+                              subniche.id
+                            )
+
+                          return (
+                            <button
+                              key={subniche.id}
+                              type="button"
+                              disabled={isPrimary}
+                              onClick={() =>
+                                toggleSecondarySubniche(
+                                  subniche.id
+                                )
+                              }
+                              className={`
+                                rounded-full
+                                border
+                                px-4
+                                py-2
+                                text-xs
+                                font-semibold
+                                transition-all
+                                duration-300
+                                ${
+                                  isPrimary
+                                    ? "cursor-not-allowed border-cyan-300/30 bg-cyan-300/[0.10] text-cyan-50/70"
+                                    : isSelected
+                                    ? "border-cyan-300/45 bg-cyan-300/[0.14] text-cyan-50"
+                                    : "border-white/10 bg-white/[0.04] text-white/62 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08]"
+                                }
+                              `}
+                            >
+                              {subniche.public_name || subniche.name}
+                              {isPrimary
+                                ? " - principal"
+                                : ""}
+                            </button>
+                          )
+                        }
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="rounded-3xl border border-white/10 bg-black/25 p-5">
                 <p className="text-[10px] uppercase tracking-[0.24em] text-white/35">
-                  Nicho
+                  Nicho legacy
                 </p>
                 <p className="mt-3 text-sm leading-6 text-white/50">
                   Segmento o mercado al que responde esta idea.
                 </p>
                 <FieldGuide>
-                  Ejemplo abstracto: necesidad principal + contexto de usuario.
+                  Este campo se mantiene por compatibilidad. La clasificacion oficial usa nicho y subnichos normalizados.
                 </FieldGuide>
                 {"nicho" in product ? (
                   <input
