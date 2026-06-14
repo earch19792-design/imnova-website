@@ -596,11 +596,31 @@ const socialPlatforms = [
 ]
 
 const socialSentiments = [
-  "positive",
-  "neutral",
-  "negative",
-  "mixed",
+  {
+    value: "positive",
+    label: "Positivo",
+  },
+  {
+    value: "neutral",
+    label: "Neutral",
+  },
+  {
+    value: "negative",
+    label: "Negativo",
+  },
+  {
+    value: "mixed",
+    label: "Mixto",
+  },
 ]
+
+const getSocialSentimentLabel = (
+  sentiment?: string | null
+) =>
+  socialSentiments.find(
+    option => option.value === sentiment
+  )?.label ?? "Neutral"
+
 
 const distributionChannelCategories = [
   {
@@ -5692,8 +5712,8 @@ export default function ProductDetailPage() {
                         Sentimiento
                       </span>
                       <FieldGuide>
-                        Lectura cualitativa: positive, neutral, negative o
-                        mixed.
+                        Lectura cualitativa de la reaccion: positivo,
+                        neutral, negativo o mixto.
                       </FieldGuide>
                       <select
                         value={socialSignalFormData.sentiment}
@@ -5708,10 +5728,10 @@ export default function ProductDetailPage() {
                         {socialSentiments.map(
                           sentiment => (
                             <option
-                              key={sentiment}
-                              value={sentiment}
+                              key={sentiment.value}
+                              value={sentiment.value}
                             >
-                              {sentiment}
+                              {sentiment.label}
                             </option>
                           )
                         )}
@@ -5925,7 +5945,9 @@ export default function ProductDetailPage() {
                               </span>
                             </div>
                             <p className="mt-3 text-[11px] uppercase tracking-[0.16em] text-white/30">
-                              {signal.sentiment || "neutral"} -{" "}
+                              {getSocialSentimentLabel(
+                                signal.sentiment
+                              )} -{" "}
                               {formatNotificationDate(
                                 signal.captured_at
                               )}

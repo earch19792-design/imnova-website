@@ -30,6 +30,7 @@ import {
   getTopCommunitySubniches,
   getProductStates,
   createTrendRadarSignal,
+  updateTrendRadarSignal,
   type CommunitySubscriberStats,
   type CommunitySubscriberWithInterests,
   type CommunityIdeaVoteSummary,
@@ -729,6 +730,11 @@ export default function AdminPage() {
   ] = useState(false)
 
   const [
+    candidateTrendRadarSignalId,
+    setCandidateTrendRadarSignalId,
+  ] = useState<string | null>(null)
+
+  const [
     communityMessage,
     setCommunityMessage,
   ] = useState("")
@@ -1176,6 +1182,76 @@ export default function AdminPage() {
         )
       } finally {
         setIsSavingTrendRadarSignal(false)
+      }
+    }
+
+  const handleMarkTrendRadarSignalAsCandidate =
+    async (
+      signal: TrendRadarSignal
+    ) => {
+      setTrendRadarMessage("")
+      setTrendRadarError("")
+
+      const canMarkAsCandidate =
+        signal.status === "new" ||
+        signal.status === "under_review"
+
+      if (!canMarkAsCandidate) {
+        setTrendRadarError(
+          "Esta senal no se puede marcar como candidata desde su estado actual."
+        )
+        return
+      }
+
+      setCandidateTrendRadarSignalId(
+        signal.id
+      )
+
+      try {
+        const updatedSignal =
+          await updateTrendRadarSignal(
+            signal.id,
+            {
+              status:
+                "candidate",
+              reviewed_by_admin:
+                true,
+            }
+          )
+
+        if (!updatedSignal) {
+          throw new Error(
+            "trend_radar_signal_not_updated"
+          )
+        }
+
+        setTrendRadarSignals(
+          currentSignals =>
+            currentSignals.map(
+              currentSignal =>
+                currentSignal.id ===
+                updatedSignal.id
+                  ? updatedSignal
+                  : currentSignal
+            )
+        )
+
+        setTrendRadarMessage(
+          "Esta senal fue marcada como candidata para revision estrategica. Aun no se ha convertido en idea ni producto."
+        )
+
+        await loadCommunitySubscribers()
+      } catch (error) {
+        console.error(
+          "MARK TREND RADAR SIGNAL CANDIDATE UI ERROR:",
+          error
+        )
+
+        setTrendRadarError(
+          "No se pudo marcar la senal como candidata. Verifica permisos Admin y que la migracion del Radar este aplicada."
+        )
+      } finally {
+        setCandidateTrendRadarSignalId(null)
       }
     }
 
@@ -6309,13 +6385,65 @@ export default function AdminPage() {
                                     )}
 
                                     <div className="mt-4 flex flex-wrap gap-2">
-                                      <span className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-white/30">
-                                        Marcar como candidata
-                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleMarkTrendRadarSignalAsCandidate(
+                                            signal
+                                          )
+                                        }
+                                        disabled={
+                                          !(
+                                            signal.status ===
+                                              "new" ||
+                                            signal.status ===
+                                              "under_review"
+                                          ) ||
+                                          candidateTrendRadarSignalId ===
+                                            signal.id
+                                        }
+                                        className={`
+                                          rounded-full
+                                          border
+                                          px-3
+                                          py-2
+                                          text-[10px]
+                                          uppercase
+                                          tracking-[0.14em]
+                                          transition
+                                          ${
+                                            signal.status ===
+                                              "new" ||
+                                            signal.status ===
+                                              "under_review"
+                                              ? "border-emerald-300/25 bg-emerald-300/[0.08] text-emerald-100 hover:border-emerald-200/50 hover:bg-emerald-300/[0.14]"
+                                              : "cursor-not-allowed border-white/10 bg-white/[0.035] text-white/30"
+                                          }
+                                        `}
+                                      >
+                                        {candidateTrendRadarSignalId ===
+                                        signal.id
+                                          ? "Marcando..."
+                                          : signal.status ===
+                                              "candidate"
+                                            ? "Ya es candidata"
+                                            : signal.status ===
+                                                "dismissed" ||
+                                              signal.status ===
+                                                "converted_to_idea"
+                                              ? "No disponible"
+                                              : "Marcar como candidata"}
+                                      </button>
                                       <span className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-white/30">
                                         Convertir en idea
                                       </span>
                                     </div>
+
+                                    {signal.status === "candidate" && (
+                                      <p className="mt-3 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.06] px-3 py-2 text-xs leading-5 text-emerald-50/65">
+                                        Esta senal fue marcada como candidata para revision estrategica. Aun no se ha convertido en idea ni producto.
+                                      </p>
+                                    )}
                                   </article>
                                 )
                               )}
