@@ -32,12 +32,12 @@ const officialPillars = [
   {
     label: "Quiénes somos",
     text:
-      "IMNOVA es un ecosistema de tecnología, nutrición funcional y bienestar creado para desarrollar soluciones útiles para la vida diaria.",
+      "IMNOVA es un ecosistema de innovación que une comunidad, datos, formulación y tecnología para crear productos funcionales con demanda real.",
   },
   {
     label: "Nuestro objetivo",
     text:
-      "Ayudar a las personas a vivir mejor, rendir más y construir una rutina simple, saludable y equilibrada.",
+      "Convertir bienestar, nutrición y rendimiento diario en decisiones simples, útiles y fáciles de adoptar.",
   },
   {
     label: "Cómo evoluciona",
@@ -576,11 +576,10 @@ export function HeroSection({
               "
             >
 
-              Creamos soluciones inteligentes que integran
-              tecnología, nutrición y bienestar para ayudar
-              a las personas a vivir mejor, rendir más y
-              construir una rutina diaria más simple,
-              saludable y equilibrada.
+              Un ecosistema de innovación que convierte
+              comunidad, datos y bienestar funcional en
+              productos útiles, simples y listos para la vida
+              diaria.
 
             </motion.p>
 
