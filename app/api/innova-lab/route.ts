@@ -8,10 +8,20 @@ import {
 } from "@supabase/supabase-js"
 
 import {
+  sendWhatsAppDistributionChannel,
   sendWhatsAppUpdate,
 } from "../../../lib/whatsapp"
 
+import {
+  sendDistributionChannelEmail,
+  sendProductLaunchEmail,
+} from "../../../lib/email"
+
 type InnovaLabRequestBody = {
+  notificationType?:
+    | "product_update"
+    | "product_launch"
+    | "distribution_channel"
   productId?: string | null
   product?: string
   status?: string
@@ -20,6 +30,18 @@ type InnovaLabRequestBody = {
   source?: string
   triggeredBy?: string
   force?: boolean
+  distributionLocation?: {
+    id?: string | null
+    name?: string | null
+    city?: string | null
+    area?: string | null
+    address?: string | null
+    productUrl?: string | null
+    mapUrl?: string | null
+    availabilityStatus?: string | null
+    isAuthorized?: boolean | null
+    isActive?: boolean | null
+  } | null
 }
 
 type ProductLaunchTargeting = {
@@ -31,11 +53,23 @@ type ProductLaunchTargeting = {
   subnicheIds: string[]
   subscriberIds: string[]
   phoneCount: number
+  emailCount: number
   warning?: string
 }
 
 type WhatsAppResult =
   Awaited<ReturnType<typeof sendWhatsAppUpdate>>
+
+type ProductLaunchEmailResult =
+  Awaited<ReturnType<typeof sendProductLaunchEmail>>
+
+type DistributionChannelEmailResult =
+  Awaited<ReturnType<typeof sendDistributionChannelEmail>>
+
+type NotificationResult =
+  | WhatsAppResult
+  | ProductLaunchEmailResult
+  | DistributionChannelEmailResult
 
 type JsonRecord =
   Record<string, unknown>
@@ -52,9 +86,22 @@ type AdminAuthResult =
       error: string
     }
 
-function getTemplateName(
+function getTemplateName({
+  status,
+  notificationType,
+}: {
   status?: string
+  notificationType?: InnovaLabRequestBody["notificationType"]
+}
 ) {
+
+  if (
+    notificationType ===
+    "distribution_channel"
+  ) {
+    return process.env.WHATSAPP_DISTRIBUTION_CHANNEL_TEMPLATE_NAME?.trim() ||
+      "imnova_distribution_channel"
+  }
 
   return status === "Disponible"
     ? process.env.WHATSAPP_PRODUCT_LAUNCH_TEMPLATE_NAME?.trim() ||
@@ -76,7 +123,7 @@ function asRecord(
 }
 
 function getResultNumber(
-  result: WhatsAppResult,
+  result: NotificationResult,
   key: "total" | "successful" | "failed"
 ) {
 
@@ -90,7 +137,7 @@ function getResultNumber(
 }
 
 function getSafeErrorMessage(
-  result: WhatsAppResult
+  result: NotificationResult
 ) {
 
   if (result.success) {
@@ -272,7 +319,7 @@ async function validateAdminRequest(
 async function saveNotificationLog(
   supabaseClient: SupabaseClient,
   body: InnovaLabRequestBody,
-  result: WhatsAppResult
+  result: NotificationResult
 ) {
 
   const total =
@@ -294,7 +341,12 @@ async function saveNotificationLog(
           channel:
             "whatsapp",
           template_name:
-            getTemplateName(body.status),
+            getTemplateName({
+              status:
+                body.status,
+              notificationType:
+                body.notificationType,
+            }),
           status_name:
             body.status || null,
           progress:
@@ -348,6 +400,84 @@ async function saveNotificationLog(
 
 }
 
+async function saveEmailNotificationLog(
+  supabaseClient: SupabaseClient,
+  body: InnovaLabRequestBody,
+  result: ProductLaunchEmailResult
+) {
+  const total =
+    getResultNumber(
+      result,
+      "total"
+    )
+
+  try {
+    const { error } =
+      await supabaseClient
+        .from("notification_logs")
+        .insert({
+          product_id:
+            body.productId || null,
+          product_name:
+            body.product || null,
+          channel:
+            "email",
+          template_name:
+            body.notificationType ===
+            "distribution_channel"
+              ? "distribution_channel_email"
+              : "product_launch_email",
+          status_name:
+            body.status || null,
+          progress:
+            body.progress || null,
+          image_url:
+            body.imageUrl || null,
+          success:
+            Boolean(result.success),
+          total,
+          successful:
+            getResultNumber(
+              result,
+              "successful"
+            ),
+          failed:
+            getResultNumber(
+              result,
+              "failed"
+            ),
+          meta_response:
+            result,
+          error_message:
+            getSafeErrorMessage(result),
+          triggered_by:
+            body.triggeredBy || "admin",
+          source:
+            body.source || "api",
+          phone_count:
+            total,
+        })
+
+    if (error) {
+      console.error(
+        "EMAIL NOTIFICATION LOG ERROR:",
+        error
+      )
+
+      return error.message
+    }
+  } catch (error) {
+    console.error(
+      "EMAIL NOTIFICATION LOG ERROR:",
+      error
+    )
+
+    return String(error)
+  }
+
+  return null
+}
+
 async function getCommunityRecipientPhones(
   supabaseClient: SupabaseClient
 ) {
@@ -383,6 +513,7 @@ async function getProductLaunchRecipientPhones(
   productId?: string | null
 ): Promise<{
   phones: string[]
+  emails: string[]
   targeting: ProductLaunchTargeting
 }> {
   const emptyTargeting: ProductLaunchTargeting = {
@@ -390,11 +521,13 @@ async function getProductLaunchRecipientPhones(
     subnicheIds: [],
     subscriberIds: [],
     phoneCount: 0,
+    emailCount: 0,
   }
 
   if (!productId) {
     return {
       phones: [],
+      emails: [],
       targeting: {
         ...emptyTargeting,
         warning:
@@ -423,6 +556,7 @@ async function getProductLaunchRecipientPhones(
 
     return {
       phones: [],
+      emails: [],
       targeting: {
         ...emptyTargeting,
         warning:
@@ -514,6 +648,7 @@ async function getProductLaunchRecipientPhones(
   if (subnicheIds.length === 0) {
     return {
       phones: [],
+      emails: [],
       targeting: {
         ...emptyTargeting,
         warning:
@@ -540,11 +675,13 @@ async function getProductLaunchRecipientPhones(
 
     return {
       phones: [],
+      emails: [],
       targeting: {
         mode,
         subnicheIds,
         subscriberIds: [],
         phoneCount: 0,
+        emailCount: 0,
         warning:
           "product_launch_interests_lookup_failed",
       },
@@ -568,11 +705,13 @@ async function getProductLaunchRecipientPhones(
   if (subscriberIds.length === 0) {
     return {
       phones: [],
+      emails: [],
       targeting: {
         mode,
         subnicheIds,
         subscriberIds: [],
         phoneCount: 0,
+        emailCount: 0,
         warning:
           "no_interested_subscribers_for_product_launch",
       },
@@ -585,10 +724,8 @@ async function getProductLaunchRecipientPhones(
   } =
     await supabaseClient
       .from("subscribers")
-      .select("id, telefono")
+      .select("id, telefono, email")
       .in("id", subscriberIds)
-      .not("telefono", "is", null)
-      .neq("telefono", "")
       .limit(1000)
 
   if (subscribersError) {
@@ -599,11 +736,13 @@ async function getProductLaunchRecipientPhones(
 
     return {
       phones: [],
+      emails: [],
       targeting: {
         mode,
         subnicheIds,
         subscriberIds,
         phoneCount: 0,
+        emailCount: 0,
         warning:
           "product_launch_subscribers_lookup_failed",
       },
@@ -624,18 +763,39 @@ async function getProductLaunchRecipientPhones(
       )
     )
 
+  const emails =
+    Array.from(
+      new Set(
+        (subscribers || [])
+          .map(subscriber =>
+            typeof subscriber.email ===
+            "string"
+              ? subscriber.email.trim().toLowerCase()
+              : ""
+          )
+          .filter(email =>
+            Boolean(email) &&
+            email.includes("@")
+          )
+      )
+    )
+
   return {
     phones,
+    emails,
     targeting: {
       mode,
       subnicheIds,
       subscriberIds,
       phoneCount:
         phones.length,
-      ...(phones.length === 0
+      emailCount:
+        emails.length,
+      ...(phones.length === 0 &&
+        emails.length === 0
         ? {
             warning:
-              "interested_subscribers_without_whatsapp",
+              "interested_subscribers_without_contact_channels",
           }
         : {}),
     },
@@ -660,7 +820,12 @@ async function hasSuccessfulProductLaunchNotification(
       .eq("product_id", productId)
       .eq(
         "template_name",
-        getTemplateName("Disponible")
+        getTemplateName({
+          status:
+            "Disponible",
+          notificationType:
+            "product_launch",
+        })
       )
       .eq("success", true)
       .limit(1)
@@ -669,6 +834,108 @@ async function hasSuccessfulProductLaunchNotification(
   if (error) {
     console.error(
       "CHECK PRODUCT LAUNCH NOTIFICATION ERROR:",
+      error
+    )
+    return false
+  }
+
+  return Boolean(data?.id)
+}
+
+function getDistributionLocationLabel(
+  location:
+    InnovaLabRequestBody["distributionLocation"]
+) {
+  const parts =
+    [
+      location?.area,
+      location?.city,
+      location?.address,
+    ]
+      .map(value =>
+        typeof value === "string"
+          ? value.trim()
+          : ""
+      )
+      .filter(Boolean)
+
+  return parts.length > 0
+    ? parts.join(", ")
+    : "ubicacion disponible"
+}
+
+async function hasSuccessfulDistributionChannelNotification(
+  supabaseClient: SupabaseClient,
+  productId?: string | null,
+  source?: string
+) {
+  if (!productId) {
+    return false
+  }
+
+  const thirtyDaysAgo =
+    new Date(
+      Date.now() -
+        30 *
+          24 *
+          60 *
+          60 *
+          1000
+    ).toISOString()
+
+  const templateName =
+    getTemplateName({
+      notificationType:
+        "distribution_channel",
+    })
+
+  const recentResult =
+    await supabaseClient
+      .from("notification_logs")
+      .select("id")
+      .eq("product_id", productId)
+      .eq(
+        "template_name",
+        templateName
+      )
+      .eq("success", true)
+      .gte("created_at", thirtyDaysAgo)
+      .limit(1)
+      .maybeSingle()
+
+  if (recentResult.error) {
+    console.error(
+      "CHECK RECENT DISTRIBUTION CHANNEL NOTIFICATION ERROR:",
+      recentResult.error
+    )
+  } else if (recentResult.data?.id) {
+    return true
+  }
+
+  if (!source) {
+    return false
+  }
+
+  const {
+    data,
+    error,
+  } =
+    await supabaseClient
+      .from("notification_logs")
+      .select("id")
+      .eq("product_id", productId)
+      .eq(
+        "template_name",
+        templateName
+      )
+      .eq("source", source)
+      .eq("success", true)
+      .limit(1)
+      .maybeSingle()
+
+  if (error) {
+    console.error(
+      "CHECK DISTRIBUTION CHANNEL NOTIFICATION ERROR:",
       error
     )
     return false
@@ -707,6 +974,7 @@ export async function POST(
       await req.json()
 
     const {
+      notificationType,
       productId,
       product,
       status,
@@ -715,6 +983,7 @@ export async function POST(
       source,
       triggeredBy,
       force,
+      distributionLocation,
     } = body
 
     const authenticatedTriggeredBy =
@@ -722,8 +991,21 @@ export async function POST(
       triggeredBy ||
       "admin"
 
+    const isDistributionChannelNotification =
+      notificationType ===
+      "distribution_channel"
+
+    const isProductLaunchNotification =
+      !isDistributionChannelNotification &&
+      status === "Disponible"
+
+    const distributionLocationLabel =
+      getDistributionLocationLabel(
+        distributionLocation
+      )
+
     if (
-      status === "Disponible" &&
+      isProductLaunchNotification &&
       productId &&
       force !== true &&
       await hasSuccessfulProductLaunchNotification(
@@ -745,13 +1027,42 @@ export async function POST(
       })
     }
 
+    if (
+      isDistributionChannelNotification &&
+      productId &&
+      source &&
+      force !== true &&
+      await hasSuccessfulDistributionChannelNotification(
+        adminAuth.supabaseClient,
+        productId,
+        source
+      )
+    ) {
+      return NextResponse.json({
+        success: true,
+        warning:
+          "distribution_channel_already_notified",
+        result: {
+          success: true,
+          total: 0,
+          successful: 0,
+          failed: 0,
+          results: [],
+        },
+      })
+    }
+
     let targeting:
       | ProductLaunchTargeting
       | null = null
 
     let communityRecipientPhones: string[]
+    let communityRecipientEmails: string[] = []
 
-    if (status === "Disponible") {
+    if (
+      isProductLaunchNotification ||
+      isDistributionChannelNotification
+    ) {
       const launchRecipients =
         await getProductLaunchRecipientPhones(
           adminAuth.supabaseClient,
@@ -760,6 +1071,8 @@ export async function POST(
 
       communityRecipientPhones =
         launchRecipients.phones
+      communityRecipientEmails =
+        launchRecipients.emails
       targeting =
         launchRecipients.targeting
     } else {
@@ -774,13 +1087,24 @@ export async function POST(
     try {
 
       result =
-        await sendWhatsAppUpdate(
-          product || "",
-          status || "",
-          progress || "",
-          imageUrl || "",
-          communityRecipientPhones
-        )
+        isDistributionChannelNotification
+          ? await sendWhatsAppDistributionChannel({
+              product:
+                product || "",
+              channelName:
+                distributionLocation?.name || "",
+              locationLabel:
+                distributionLocationLabel,
+              recipientPhones:
+                communityRecipientPhones,
+            })
+          : await sendWhatsAppUpdate(
+              product || "",
+              status || "",
+              progress || "",
+              imageUrl || "",
+              communityRecipientPhones
+            )
 
     } catch (error) {
 
@@ -804,6 +1128,8 @@ export async function POST(
             progress,
             imageUrl,
             source,
+            notificationType,
+            distributionLocation,
             triggeredBy:
               authenticatedTriggeredBy,
           },
@@ -846,11 +1172,85 @@ export async function POST(
           progress,
           imageUrl,
           source,
+          notificationType,
+          distributionLocation,
           triggeredBy:
             authenticatedTriggeredBy,
         },
         result
       )
+
+    let emailResult:
+      | ProductLaunchEmailResult
+      | DistributionChannelEmailResult
+      | null = null
+
+    let emailLogError:
+      string | null = null
+
+    if (isDistributionChannelNotification) {
+      emailResult =
+        await sendDistributionChannelEmail({
+          emails:
+            communityRecipientEmails,
+          product:
+            product || "",
+          channelName:
+            distributionLocation?.name || "",
+          locationLabel:
+            distributionLocationLabel,
+          productUrl:
+            distributionLocation?.productUrl || undefined,
+          mapUrl:
+            distributionLocation?.mapUrl || undefined,
+        })
+
+      emailLogError =
+        await saveEmailNotificationLog(
+          adminAuth.supabaseClient,
+          {
+            productId,
+            product,
+            status,
+            progress,
+            imageUrl,
+            source,
+            notificationType,
+            distributionLocation,
+            triggeredBy:
+              authenticatedTriggeredBy,
+          },
+          emailResult
+        )
+    } else if (isProductLaunchNotification) {
+      emailResult =
+        await sendProductLaunchEmail({
+          emails:
+            communityRecipientEmails,
+          product:
+            product || "",
+          imageUrl:
+            imageUrl || "",
+        })
+
+      emailLogError =
+        await saveEmailNotificationLog(
+          adminAuth.supabaseClient,
+          {
+            productId,
+            product,
+            status,
+            progress,
+            imageUrl,
+            source,
+            notificationType,
+            distributionLocation,
+            triggeredBy:
+              authenticatedTriggeredBy,
+          },
+          emailResult
+        )
+    }
 
     if (
       process.env.NODE_ENV ===
@@ -867,9 +1267,16 @@ export async function POST(
     return NextResponse.json({
 
       success:
-        result.success,
+        result.success ||
+        Boolean(emailResult?.success),
 
       result,
+
+      ...(emailResult
+        ? {
+            emailResult,
+          }
+        : {}),
 
       ...(targeting
         ? {
@@ -883,6 +1290,15 @@ export async function POST(
               "NOTIFICATION_LOG_FAILED",
             log_error:
               logError,
+          }
+        : {}),
+
+      ...(emailLogError
+        ? {
+            email_warning:
+              "EMAIL_NOTIFICATION_LOG_FAILED",
+            email_log_error:
+              emailLogError,
           }
         : {}),
 

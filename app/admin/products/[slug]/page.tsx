@@ -2441,11 +2441,185 @@ export default function ProductDetailPage() {
           return
         }
 
+        const productStatusName =
+          states.find(
+            state =>
+              state.id ===
+              product.state_id
+          )?.name || ""
+
+        const shouldNotifyDistributionChannel =
+          normalizeLabel(
+            productStatusName
+          ).includes("disponible") &&
+          createdLocation.is_active === true &&
+          createdLocation.is_authorized === true &&
+          normalizeLabel(
+            createdLocation.availability_status ||
+              ""
+          ).includes("activo")
+
+        let notificationSummary =
+          ""
+
+        if (shouldNotifyDistributionChannel) {
+          try {
+            const {
+              data: sessionData,
+              error: sessionError,
+            } =
+              await supabase.auth.getSession()
+
+            const accessToken =
+              sessionData.session?.access_token
+
+            if (
+              sessionError ||
+              !accessToken
+            ) {
+              notificationSummary =
+                " No se envio aviso porque la sesion Admin expiro."
+            } else {
+              const response =
+                await fetch(
+                  "/api/innova-lab",
+                  {
+                    method:
+                      "POST",
+                    headers: {
+                      "Content-Type":
+                        "application/json",
+                      Authorization:
+                        `Bearer ${accessToken}`,
+                    },
+                    body:
+                      JSON.stringify({
+                        notificationType:
+                          "distribution_channel",
+                        productId:
+                          product.id,
+                        product:
+                          product.name,
+                        status:
+                          productStatusName,
+                        progress:
+                          "100%",
+                        imageUrl:
+                          product.image_url ||
+                          product.image ||
+                          "",
+                        source:
+                          `distribution_location_added:${createdLocation.id}`,
+                        triggeredBy:
+                          "admin",
+                        distributionLocation: {
+                          id:
+                            createdLocation.id,
+                          name:
+                            createdLocation.name,
+                          city:
+                            createdLocation.city,
+                          area:
+                            createdLocation.area,
+                          address:
+                            createdLocation.address,
+                          productUrl:
+                            createdLocation.product_url,
+                          mapUrl:
+                            createdLocation.map_url,
+                          availabilityStatus:
+                            createdLocation.availability_status,
+                          isAuthorized:
+                            createdLocation.is_authorized,
+                          isActive:
+                            createdLocation.is_active,
+                        },
+                      }),
+                  }
+                )
+
+              const text =
+                await response.text()
+
+              let payload:
+                | {
+                    success?: boolean
+                    warning?: string
+                    error?: string
+                    targeting?: {
+                      phoneCount?: number
+                      emailCount?: number
+                    }
+                    result?: {
+                      error?: string
+                      successful?: number
+                    }
+                    emailResult?: {
+                      error?: string
+                      successful?: number
+                    }
+                  }
+                | null = null
+
+              if (text) {
+                try {
+                  payload =
+                    JSON.parse(text)
+                } catch {
+                  payload = null
+                }
+              }
+
+              if (
+                response.ok &&
+                payload?.success === true
+              ) {
+                if (
+                  payload.warning ===
+                  "distribution_channel_already_notified"
+                ) {
+                  notificationSummary =
+                    " No se envio aviso porque este producto ya notifico nuevos distribuidores durante los ultimos 30 dias."
+                } else {
+                  const phoneCount =
+                    payload.targeting?.phoneCount ??
+                    0
+                  const emailCount =
+                    payload.targeting?.emailCount ??
+                    0
+                  const whatsappSent =
+                    payload.result?.successful ??
+                    0
+                  const emailSent =
+                    payload.emailResult?.successful ??
+                    0
+
+                  notificationSummary =
+                    ` Aviso enviado a la comunidad interesada: ${whatsappSent} WhatsApp de ${phoneCount} telefono${phoneCount === 1 ? "" : "s"} y ${emailSent} correo${emailCount === 1 ? "" : "s"} de ${emailCount}.`
+                }
+              } else {
+                notificationSummary =
+                  ` Canal agregado, pero no se pudo enviar aviso automatico: ${payload?.error || payload?.result?.error || payload?.emailResult?.error || "Meta o correo no confirmaron el envio."}`
+              }
+            }
+          } catch (error) {
+            console.error(
+              "DISTRIBUTION CHANNEL NOTIFICATION ERROR:",
+              error
+            )
+            notificationSummary =
+              " Canal agregado, pero hubo error de conexion al enviar el aviso automatico."
+          }
+        } else {
+          notificationSummary =
+            " No se envio aviso porque el producto no esta Disponible o el canal no esta activo/autorizado."
+        }
+
         setDistributionLocationFormData(
           defaultDistributionLocationFormData
         )
         setDistributionLocationMessage(
-          "Canal autorizado agregado correctamente."
+          `Canal autorizado agregado correctamente.${notificationSummary}`
         )
         await loadDistributionLocations(product.id)
       } catch (error) {
@@ -3567,9 +3741,16 @@ export default function ProductDetailPage() {
                     error?: string
                     targeting?: {
                       phoneCount?: number
+                      emailCount?: number
                     }
                     result?: {
                       error?: string
+                    }
+                    emailResult?: {
+                      error?: string
+                      total?: number
+                      successful?: number
+                      failed?: number
                     }
                   }
                 | null = null
@@ -3597,9 +3778,13 @@ export default function ProductDetailPage() {
                 } else {
                   const segmentedPhoneCount =
                     payload.targeting?.phoneCount
+                  const segmentedEmailCount =
+                    payload.targeting?.emailCount
+                  const emailSuccessfulCount =
+                    payload.emailResult?.successful
 
                   setNotificationMessage(
-                    `WhatsApp de lanzamiento enviado automaticamente. Audiencia de comunidad por intereses: ${segmentedPhoneCount ?? 0} telefono${segmentedPhoneCount === 1 ? "" : "s"}.`
+                    `Lanzamiento enviado automaticamente. Audiencia por intereses: ${segmentedPhoneCount ?? 0} telefono${segmentedPhoneCount === 1 ? "" : "s"} y ${segmentedEmailCount ?? 0} correo${segmentedEmailCount === 1 ? "" : "s"}. Correos enviados: ${emailSuccessfulCount ?? 0}.`
                   )
                 }
               } else {
@@ -3742,9 +3927,16 @@ export default function ProductDetailPage() {
               targeting?: {
                 mode?: string
                 phoneCount?: number
+                emailCount?: number
                 warning?: string
               }
               result?: {
+                error?: string
+                total?: number
+                successful?: number
+                failed?: number
+              }
+              emailResult?: {
                 error?: string
                 total?: number
                 successful?: number
@@ -3786,11 +3978,15 @@ export default function ProductDetailPage() {
 
         const segmentedPhoneCount =
           payload?.targeting?.phoneCount
+        const segmentedEmailCount =
+          payload?.targeting?.emailCount
+        const emailSuccessfulCount =
+          payload?.emailResult?.successful
 
         setNotificationMessage(
           savedState.name ===
             "Disponible"
-            ? `WhatsApp de lanzamiento enviado correctamente. Audiencia de comunidad por intereses: ${segmentedPhoneCount ?? 0} telefono${segmentedPhoneCount === 1 ? "" : "s"}.`
+            ? `Lanzamiento enviado correctamente. Audiencia por intereses: ${segmentedPhoneCount ?? 0} telefono${segmentedPhoneCount === 1 ? "" : "s"} y ${segmentedEmailCount ?? 0} correo${segmentedEmailCount === 1 ? "" : "s"}. Correos enviados: ${emailSuccessfulCount ?? 0}.`
             : `WhatsApp enviado correctamente${typeof successfulCount === "number" && typeof totalCount === "number" ? `: ${successfulCount} de ${totalCount}.` : "."}`
         )
       } catch {

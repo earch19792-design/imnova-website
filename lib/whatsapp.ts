@@ -64,6 +64,23 @@ function getWhatsAppRecipientPhones(
 
 }
 
+function getNormalizedRecipientPhones(
+  recipientPhones: string[] = []
+) {
+  return Array.from(
+    new Set(
+      recipientPhones
+        .map((phone) =>
+          normalizeWhatsAppPhone(phone)
+        )
+        .filter(
+          (phone): phone is string =>
+            Boolean(phone)
+        )
+    )
+  )
+}
+
 export function isValidAbsoluteUrl(
   imageUrl?: string
 ) {
@@ -255,8 +272,11 @@ export async function sendWhatsAppUpdate(
           setTimeout(resolve, 300)
       )
 
-      const selectedTemplate =
+      const isProductLaunch =
         status === "Disponible"
+
+      const selectedTemplate =
+        isProductLaunch
           ? process.env.WHATSAPP_PRODUCT_LAUNCH_TEMPLATE_NAME?.trim() ||
             "imnova_product_launch"
           : "imnova_update"
@@ -267,7 +287,7 @@ export async function sendWhatsAppUpdate(
           : fallbackLaunchImageUrl
 
       const template =
-        selectedTemplate === "imnova_product_launch"
+        isProductLaunch
           ? {
               name:
                 selectedTemplate,
@@ -462,6 +482,213 @@ export async function sendWhatsAppUpdate(
 
       console.error(
         "WHATSAPP ERROR:",
+        phone,
+        error
+      )
+
+      results.push({
+        phone,
+        success:
+          false,
+        error:
+          String(error),
+      })
+
+    }
+
+  }
+
+  const successful =
+    results.filter(
+      (result) =>
+        result.success
+    ).length
+
+  return {
+    success:
+      successful > 0,
+    total:
+      phones.length,
+    successful,
+    failed:
+      phones.length -
+      successful,
+    results,
+  }
+
+}
+
+export async function sendWhatsAppDistributionChannel({
+  product,
+  channelName,
+  locationLabel,
+  recipientPhones,
+}: {
+  product: string
+  channelName: string
+  locationLabel: string
+  recipientPhones: string[]
+}) {
+
+  const token =
+    process.env.WHATSAPP_ACCESS_TOKEN?.trim()
+
+  const phoneId =
+    process.env.WHATSAPP_PHONE_NUMBER_ID?.trim()
+
+  const templateName =
+    process.env.WHATSAPP_DISTRIBUTION_CHANNEL_TEMPLATE_NAME?.trim() ||
+    "imnova_distribution_channel"
+
+  const phones =
+    getNormalizedRecipientPhones(
+      recipientPhones
+    )
+
+  if (!token || !phoneId || !templateName) {
+
+    console.error(
+      "FALTAN VARIABLES DE ENTORNO WHATSAPP PARA CANAL DE DISTRIBUCION"
+    )
+
+    return {
+      success: false,
+      error:
+        "WHATSAPP_DISTRIBUTION_CHANNEL_NOT_CONFIGURED",
+      total:
+        phones.length,
+      successful: 0,
+      failed:
+        phones.length,
+      results: [],
+    }
+
+  }
+
+  if (phones.length === 0) {
+    return {
+      success: false,
+      error:
+        "NO_DISTRIBUTION_CHANNEL_WHATSAPP_RECIPIENTS",
+      total: 0,
+      successful: 0,
+      failed: 0,
+      results: [],
+    }
+  }
+
+  const results = []
+
+  for (const phone of phones) {
+
+    try {
+
+      await new Promise(
+        (resolve) =>
+          setTimeout(resolve, 300)
+      )
+
+      const payload = {
+        messaging_product:
+          "whatsapp",
+        to:
+          phone,
+        type:
+          "template",
+        template: {
+          name:
+            templateName,
+          language: {
+            code:
+              "es",
+          },
+          components: [
+            {
+              type:
+                "body",
+              parameters: [
+                {
+                  type:
+                    "text",
+                  text:
+                    product || "Producto IMNOVA",
+                },
+                {
+                  type:
+                    "text",
+                  text:
+                    channelName || "nuevo distribuidor IMNOVA",
+                },
+                {
+                  type:
+                    "text",
+                  text:
+                    locationLabel || "ubicacion disponible",
+                },
+              ],
+            },
+          ],
+        },
+      }
+
+      const response =
+        await fetch(
+          `https://graph.facebook.com/v25.0/${phoneId}/messages`,
+          {
+            method:
+              "POST",
+            headers: {
+              Authorization:
+                `Bearer ${token}`,
+              "Content-Type":
+                "application/json",
+            },
+            body:
+              JSON.stringify(payload),
+          }
+        )
+
+      const text =
+        await response.text()
+
+      let data
+
+      try {
+        data =
+          JSON.parse(text)
+      } catch {
+        data =
+          text
+      }
+
+      if (!response.ok) {
+        console.error(
+          "WHATSAPP DISTRIBUTION CHANNEL META ERROR:",
+          {
+            status:
+              response.status,
+            ok:
+              response.ok,
+            phone,
+            responseBody:
+              data,
+          }
+        )
+      }
+
+      results.push({
+        phone,
+        success:
+          response.ok,
+        status:
+          response.status,
+        data,
+      })
+
+    } catch (error) {
+
+      console.error(
+        "WHATSAPP DISTRIBUTION CHANNEL ERROR:",
         phone,
         error
       )
