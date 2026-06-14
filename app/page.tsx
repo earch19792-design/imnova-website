@@ -21,6 +21,7 @@ import { GlobalSection } from "@/components/global-section"
 import { HeroSection } from "@/components/hero-section"
 import { ImnovaGuidesSection } from "@/components/imnova-guides-section"
 import { ImnovaOsFlowSection } from "@/components/imnova-os-flow-section"
+import { ImnovaTrendRadarSection } from "@/components/imnova-trend-radar-section"
 import { InnovationsSection } from "@/components/innovations-section"
 import InnovaPopup from "@/components/imnova-popup"
 import { Navigation } from "@/components/navigation"
@@ -126,6 +127,9 @@ export default function IMNOVAPage() {
       />
       <GlobalSection />
       <ImnovaOsFlowSection
+        onJoinCommunity={openCommunity}
+      />
+      <ImnovaTrendRadarSection
         onJoinCommunity={openCommunity}
       />
       <InnovationsSection />
