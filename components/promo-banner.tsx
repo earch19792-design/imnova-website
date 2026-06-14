@@ -12,6 +12,8 @@ import {
 
 import {
   ArrowUpRight,
+  ChevronLeft,
+  ChevronRight,
   Sparkles,
 } from "lucide-react"
 
@@ -514,6 +516,37 @@ export function PromoBanner() {
       now
     )
 
+  const productCount =
+    products.length
+
+  const activeProductNumber =
+    (activeIndex % productCount) + 1
+
+  const showPreviousProduct =
+    () => {
+      setActiveIndex(
+        current =>
+          (
+            current -
+            1 +
+            productCount
+          ) %
+          productCount
+      )
+    }
+
+  const showNextProduct =
+    () => {
+      setActiveIndex(
+        current =>
+          (
+            current +
+            1
+          ) %
+          productCount
+      )
+    }
+
   return (
     <section
       id="available-now"
@@ -692,6 +725,26 @@ export function PromoBanner() {
                     ? "Promo configurada"
                     : "Lanzamiento activo"}
                 </span>
+
+                {productCount > 1 && (
+                  <span
+                    className="
+                      rounded-full
+                      border
+                      border-white/10
+                      bg-white/[0.04]
+                      px-4
+                      py-2
+                      text-[10px]
+                      font-black
+                      uppercase
+                      tracking-[0.16em]
+                      text-white/55
+                    "
+                  >
+                    Producto {activeProductNumber} de {productCount}
+                  </span>
+                )}
 
               </div>
 
@@ -954,6 +1007,29 @@ export function PromoBanner() {
 
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(251,191,36,0.18),transparent_62%)]" />
 
+              <div
+                className="
+                  absolute
+                  left-5
+                  top-5
+                  z-20
+                  rounded-full
+                  border
+                  border-amber-200/25
+                  bg-black/55
+                  px-4
+                  py-2
+                  text-[10px]
+                  font-black
+                  uppercase
+                  tracking-[0.18em]
+                  text-amber-100
+                  backdrop-blur-xl
+                "
+              >
+                Producto seleccionado
+              </div>
+
               <motion.img
                 key={getProductImage(activeProduct)}
                 src={getProductImage(activeProduct)}
@@ -993,38 +1069,184 @@ export function PromoBanner() {
                 relative
                 z-10
                 mt-8
-                flex
-                flex-wrap
-                items-center
-                justify-center
-                gap-3
+                rounded-[32px]
+                border
+                border-amber-300/15
+                bg-black/35
+                p-4
+                backdrop-blur-xl
+                md:p-5
               "
             >
 
-              {products.map(
-                (product, index) => (
+              <div
+                className="
+                  flex
+                  flex-col
+                  gap-4
+                  md:flex-row
+                  md:items-center
+                  md:justify-between
+                "
+              >
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-200/70">
+                    Cambiar producto disponible
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-white/45">
+                    El producto seleccionado se muestra arriba. Cambia manualmente para revisar precio, beneficio y compra.
+                  </p>
+                </div>
 
-                <button
-                  key={product.id}
-                  type="button"
-                  onClick={() =>
-                    setActiveIndex(index)
-                  }
-                  aria-label={`Ver lanzamiento ${product.name}`}
-                  className={`
-                    h-2.5
-                    rounded-full
-                    transition-all
-                    duration-300
-                    ${
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={showPreviousProduct}
+                    aria-label="Ver producto anterior"
+                    className="
+                      flex
+                      h-11
+                      w-11
+                      items-center
+                      justify-center
+                      rounded-2xl
+                      border
+                      border-white/10
+                      bg-white/[0.04]
+                      text-white/70
+                      transition
+                      hover:border-amber-200/35
+                      hover:bg-amber-200/[0.10]
+                      hover:text-amber-100
+                    "
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+
+                  <span className="min-w-[92px] rounded-2xl border border-white/10 bg-black/35 px-4 py-3 text-center text-[10px] font-black uppercase tracking-[0.16em] text-white/50">
+                    {activeProductNumber} / {productCount}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={showNextProduct}
+                    aria-label="Ver siguiente producto"
+                    className="
+                      flex
+                      h-11
+                      w-11
+                      items-center
+                      justify-center
+                      rounded-2xl
+                      border
+                      border-white/10
+                      bg-white/[0.04]
+                      text-white/70
+                      transition
+                      hover:border-amber-200/35
+                      hover:bg-amber-200/[0.10]
+                      hover:text-amber-100
+                    "
+                  >
+                    <ChevronRight className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div
+                className="
+                  mt-5
+                  flex
+                  gap-3
+                  overflow-x-auto
+                  pb-2
+                "
+              >
+                {products.map(
+                  (product, index) => {
+                    const isActive =
                       index === activeIndex
-                        ? "w-10 bg-amber-300"
-                        : "w-2.5 bg-white/20 hover:bg-white/40"
-                    }
-                  `}
-                />
 
-              ))}
+                    return (
+                      <button
+                        key={product.id}
+                        type="button"
+                        onClick={() =>
+                          setActiveIndex(index)
+                        }
+                        aria-label={`Ver producto disponible ${product.name}`}
+                        aria-pressed={isActive}
+                        className={`
+                          grid
+                          min-w-[235px]
+                          grid-cols-[56px_1fr]
+                          items-center
+                          gap-3
+                          rounded-2xl
+                          border
+                          p-3
+                          text-left
+                          transition-all
+                          duration-300
+                          ${
+                            isActive
+                              ? "border-amber-200/45 bg-amber-200/[0.12] shadow-[0_0_38px_rgba(251,191,36,0.16)]"
+                              : "border-white/10 bg-white/[0.035] hover:border-amber-200/25 hover:bg-amber-200/[0.07]"
+                          }
+                        `}
+                      >
+                        <span
+                          className="
+                            flex
+                            h-14
+                            w-14
+                            items-center
+                            justify-center
+                            overflow-hidden
+                            rounded-xl
+                            border
+                            border-white/10
+                            bg-black/45
+                          "
+                        >
+                          <img
+                            src={getProductImage(product)}
+                            alt=""
+                            className="h-full w-full object-contain p-1"
+                          />
+                        </span>
+
+                        <span className="min-w-0">
+                          <span
+                            className={`
+                              block
+                              text-[9px]
+                              font-black
+                              uppercase
+                              tracking-[0.18em]
+                              ${
+                                isActive
+                                  ? "text-amber-100"
+                                  : "text-white/35"
+                              }
+                            `}
+                          >
+                            {isActive
+                              ? "Seleccionado"
+                              : "Ver producto"}
+                          </span>
+                          <span className="mt-1 block truncate text-sm font-black text-white">
+                            {product.name}
+                          </span>
+                          <span className="mt-1 block truncate text-[11px] text-white/42">
+                            {product.category || "Producto IMNOVA"}
+                          </span>
+                        </span>
+                      </button>
+                    )
+                  }
+                )}
+              </div>
 
             </div>
 
