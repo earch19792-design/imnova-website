@@ -7,6 +7,7 @@ import {
   useTransform,
   useMotionValue,
   useSpring,
+  useReducedMotion,
 } from "framer-motion"
 
 import {
@@ -83,6 +84,9 @@ export function HeroSection({
     setCurrentImage,
   ] = useState(0)
 
+  const prefersReducedMotion =
+    useReducedMotion()
+
   /* =================================================
   SCROLL SYSTEM
   ================================================= */
@@ -94,14 +98,14 @@ export function HeroSection({
     useTransform(
       scrollY,
       [0, 700],
-      [0, 40]
+      [0, 12]
     )
 
   const opacity =
     useTransform(
       scrollY,
       [0, 400],
-      [1, 0.94]
+      [1, 0.98]
     )
 
   /* =================================================
@@ -146,6 +150,12 @@ export function HeroSection({
 
   useEffect(() => {
 
+    if (prefersReducedMotion) {
+
+      return
+
+    }
+
     const interval =
       setInterval(() => {
 
@@ -155,18 +165,24 @@ export function HeroSection({
             heroImages.length
         )
 
-      }, 8000)
+      }, 18000)
 
     return () =>
       clearInterval(interval)
 
-  }, [])
+  }, [prefersReducedMotion])
 
   /* =================================================
   GLOBAL MOUSE TRACKING
   ================================================= */
 
   useEffect(() => {
+
+    if (prefersReducedMotion) {
+
+      return
+
+    }
 
     const handleMouseMove =
       (e: MouseEvent) => {
@@ -201,7 +217,11 @@ export function HeroSection({
 
     }
 
-  }, [mouseX, mouseY])
+  }, [
+    mouseX,
+    mouseY,
+    prefersReducedMotion,
+  ])
 
   return (
 
@@ -228,17 +248,21 @@ export function HeroSection({
             key={currentImage}
             initial={{
               opacity: 0,
-              scale: 1.12,
+              scale: prefersReducedMotion
+                ? 1
+                : 1.04,
             }}
             animate={{
               opacity: 1,
-              scale: 1.02,
+              scale: 1,
             }}
             exit={{
               opacity: 0,
             }}
             transition={{
-              duration: 2,
+              duration: prefersReducedMotion
+                ? 0
+                : 1.2,
               ease: [0.22, 1, 0.36, 1],
             }}
             className="
@@ -297,7 +321,11 @@ export function HeroSection({
         <motion.div
           style={{
             background:
-              `radial-gradient(circle at ${glowX} ${glowY},
+              prefersReducedMotion
+                ? `radial-gradient(circle at 50% 45%,
+              rgba(255,255,255,0.06),
+              transparent 36%)`
+                : `radial-gradient(circle at ${glowX} ${glowY},
               rgba(255,255,255,0.08),
               transparent 35%)`,
           }}
@@ -315,13 +343,22 @@ export function HeroSection({
         ================================================= */}
 
         <motion.div
-          animate={{
-            opacity: [0.25, 0.45, 0.25],
-            scale: [1, 1.08, 1],
-          }}
+          animate={
+            prefersReducedMotion
+              ? {
+                  opacity: 0.28,
+                  scale: 1,
+                }
+              : {
+                  opacity: [0.25, 0.36, 0.25],
+                  scale: [1, 1.03, 1],
+                }
+          }
           transition={{
-            duration: 10,
-            repeat: Infinity,
+            duration: 14,
+            repeat: prefersReducedMotion
+              ? 0
+              : Infinity,
             ease: "easeInOut",
           }}
           className="
@@ -358,12 +395,20 @@ export function HeroSection({
       ================================================= */}
 
       <motion.div
-        animate={{
-          y: [-10, 10, -10],
-        }}
+        animate={
+          prefersReducedMotion
+            ? {
+                y: 0,
+              }
+            : {
+                y: [-4, 4, -4],
+              }
+        }
         transition={{
-          duration: 6,
-          repeat: Infinity,
+          duration: 14,
+          repeat: prefersReducedMotion
+            ? 0
+            : Infinity,
           ease: "easeInOut",
         }}
         className="
@@ -394,12 +439,20 @@ export function HeroSection({
       </motion.div>
 
       <motion.div
-        animate={{
-          y: [10, -10, 10],
-        }}
+        animate={
+          prefersReducedMotion
+            ? {
+                y: 0,
+              }
+            : {
+                y: [4, -4, 4],
+              }
+        }
         transition={{
-          duration: 8,
-          repeat: Infinity,
+          duration: 16,
+          repeat: prefersReducedMotion
+            ? 0
+            : Infinity,
           ease: "easeInOut",
         }}
         className="
@@ -424,8 +477,12 @@ export function HeroSection({
 
       <motion.div
         style={{
-          y,
-          opacity,
+          y: prefersReducedMotion
+            ? 0
+            : y,
+          opacity: prefersReducedMotion
+            ? 1
+            : opacity,
         }}
         className="
           relative
@@ -452,8 +509,12 @@ export function HeroSection({
             <motion.div
               initial={{
                 opacity: 0,
-                y: 24,
-                filter: "blur(8px)",
+                y: prefersReducedMotion
+                  ? 0
+                  : 10,
+                filter: prefersReducedMotion
+                  ? "blur(0px)"
+                  : "blur(4px)",
               }}
               animate={{
                 opacity: 1,
@@ -491,8 +552,12 @@ export function HeroSection({
             <motion.h1
               initial={{
                 opacity: 0,
-                y: 50,
-                filter: "blur(12px)",
+                y: prefersReducedMotion
+                  ? 0
+                  : 16,
+                filter: prefersReducedMotion
+                  ? "blur(0px)"
+                  : "blur(6px)",
               }}
               animate={{
                 opacity: 1,
@@ -553,8 +618,12 @@ export function HeroSection({
             <motion.p
               initial={{
                 opacity: 0,
-                y: 30,
-                filter: "blur(10px)",
+                y: prefersReducedMotion
+                  ? 0
+                  : 12,
+                filter: prefersReducedMotion
+                  ? "blur(0px)"
+                  : "blur(4px)",
               }}
               animate={{
                 opacity: 1,
@@ -586,7 +655,9 @@ export function HeroSection({
             <motion.div
               initial={{
                 opacity: 0,
-                y: 18,
+                y: prefersReducedMotion
+                  ? 0
+                  : 10,
               }}
               animate={{
                 opacity: 1,
@@ -625,7 +696,9 @@ export function HeroSection({
             <motion.div
               initial={{
                 opacity: 0,
-                y: 24,
+                y: prefersReducedMotion
+                  ? 0
+                  : 12,
               }}
               animate={{
                 opacity: 1,
@@ -672,8 +745,12 @@ export function HeroSection({
           <motion.div
             initial={{
               opacity: 0,
-              x: 34,
-              filter: "blur(10px)",
+              x: prefersReducedMotion
+                ? 0
+                : 14,
+              filter: prefersReducedMotion
+                ? "blur(0px)"
+                : "blur(4px)",
             }}
             animate={{
               opacity: 1,
@@ -721,12 +798,20 @@ export function HeroSection({
       ================================================= */}
 
       <motion.div
-        animate={{
-          y: [0, 10, 0],
-        }}
+        animate={
+          prefersReducedMotion
+            ? {
+                y: 0,
+              }
+            : {
+                y: [0, 4, 0],
+              }
+        }
         transition={{
-          duration: 2,
-          repeat: Infinity,
+          duration: 2.8,
+          repeat: prefersReducedMotion
+            ? 0
+            : Infinity,
         }}
         className="
           absolute

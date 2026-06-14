@@ -434,33 +434,6 @@ export function PromoBanner() {
 
   }, [])
 
-  useEffect(() => {
-
-    if (products.length <= 1) {
-
-      return
-
-    }
-
-    const interval =
-      window.setInterval(
-        () => {
-
-          setActiveIndex(
-            (current) =>
-              (current + 1) %
-              products.length
-          )
-
-        },
-        6000
-      )
-
-    return () =>
-      window.clearInterval(interval)
-
-  }, [products.length])
-
   const promotionProducts =
     useMemo(
       () =>
