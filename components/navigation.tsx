@@ -18,13 +18,8 @@ import {
 
 const primaryNavItems = [
   {
-    name: "Quiénes somos",
-    shortName: "IMNOVA",
-    href: "#hero",
-  },
-  {
-    name: "Lanzamientos",
-    shortName: "Lanzamientos",
+    name: "Productos",
+    shortName: "Productos",
     href: "#available-now",
   },
   {
@@ -33,27 +28,32 @@ const primaryNavItems = [
     href: "#imnova-guides",
   },
   {
-    name: "Dónde comprar",
-    shortName: "Dónde comprar",
-    href: "#where-to-buy",
-  },
-  {
     name: "Innovaciones",
     shortName: "Innovaciones",
     href: "#innovations",
   },
+  {
+    name: "Comunidad",
+    shortName: "Comunidad",
+    href: "#contact",
+  },
 ]
 
 const secondaryNavItems = [
+  {
+    name: "Dónde comprar",
+    shortName: "Dónde comprar",
+    href: "#where-to-buy",
+  },
   {
     name: "Ecosistema",
     shortName: "Ecosistema",
     href: "#working",
   },
   {
-    name: "Comunidad",
-    shortName: "Comunidad",
-    href: "#contact",
+    name: "Radar IMNOVA",
+    shortName: "Radar",
+    href: "#trend-radar",
   },
 ]
 
@@ -64,11 +64,6 @@ const mobileNavItems = [
     name: "Tienda",
     shortName: "Tienda",
     href: "/store",
-  },
-  {
-    name: "Admin",
-    shortName: "Admin",
-    href: "/admin",
   },
 ]
 
@@ -176,13 +171,6 @@ export function Navigation() {
               className="hidden whitespace-nowrap rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100 transition-all duration-300 hover:border-cyan-300/35 hover:bg-cyan-400/20 hover:text-white sm:inline-flex"
             >
               Tienda
-            </Link>
-
-            <Link
-              href="/admin"
-              className="hidden whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.015] px-4 py-3 text-[10px] font-medium uppercase tracking-[0.18em] text-white/45 transition-all duration-300 hover:border-white/20 hover:bg-white/[0.06] hover:text-white md:inline-flex"
-            >
-              Admin
             </Link>
 
             <motion.button

@@ -2255,8 +2255,8 @@ useEffect(() => {
     loading
       ? "PROCESANDO..."
       : registrationStep === "interests"
-        ? "CONTINUAR"
-        : "UNIRME COMO MIEMBRO FUNDADOR"
+        ? "CONTINUAR A MIS DATOS"
+        : "QUIERO VOTAR LO PRÓXIMO"
   }
 
 </button>
@@ -2273,7 +2273,7 @@ useEffect(() => {
     "
   >
 
-    Sin spam. Solo avances, encuestas y oportunidades conectadas a tus intereses.
+    Sin spam. Usamos tus datos solo para enviarte avances, encuestas y oportunidades conectadas a tus intereses.
 
   </p>
 

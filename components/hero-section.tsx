@@ -16,6 +16,7 @@ import {
 
 import {
   ChevronDown,
+  MessageCircle,
   MapPin,
   ShoppingBag,
   Sparkles,
@@ -45,6 +46,10 @@ const officialPillars = [
   },
 ]
 
+type HeroSectionProps = {
+  onJoinCommunity?: () => void
+}
+
 const heroJourney = [
   {
     label: "Compra hoy",
@@ -62,14 +67,16 @@ const heroJourney = [
   },
   {
     label: "Lo que viene",
-    title: "Innovación",
-    text: "Explora ideas y próximos productos que IMNOVA valida antes de llegar al mercado.",
+    title: "Validación",
+    text: "Explora ideas que la comunidad puede ayudar a ajustar, pausar o convertir en producto.",
     href: "#innovations",
     icon: Sparkles,
   },
 ]
 
-export function HeroSection() {
+export function HeroSection({
+  onJoinCommunity,
+}: HeroSectionProps) {
 
   const [
     currentImage,
@@ -596,21 +603,23 @@ export function HeroSection() {
                 href="#available-now"
                 className="inline-flex items-center justify-center rounded-2xl border border-cyan-200/25 bg-cyan-300/[0.14] px-6 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-50 transition hover:border-cyan-200/45 hover:bg-cyan-300/[0.20]"
               >
-                Ver productos
+                Ver productos disponibles
               </a>
 
-              <a
-                href="#imnova-guides"
+              <button
+                type="button"
+                onClick={onJoinCommunity}
                 className="inline-flex items-center justify-center rounded-2xl border border-white/15 bg-white/[0.06] px-6 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-white/82 transition hover:border-white/25 hover:bg-white/[0.09] hover:text-white"
               >
-                Ideas de uso
-              </a>
+                Unirme a la comunidad
+                <MessageCircle className="ml-2 h-4 w-4" />
+              </button>
 
               <a
                 href="#innovations"
                 className="inline-flex items-center justify-center rounded-2xl border border-amber-200/20 bg-amber-200/[0.10] px-6 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-amber-50 transition hover:border-amber-200/40 hover:bg-amber-200/[0.16]"
               >
-                Participar
+                Ver ideas en validación
               </a>
             </motion.div>
 

@@ -49,16 +49,16 @@ const footerLinks = {
       href: "/store",
     },
     {
-      name: "Admin",
-      href: "/admin",
-    },
-    {
       name: "Contacto",
       href: "/contact",
     },
     {
       name: "Privacidad",
       href: "/privacy-policy",
+    },
+    {
+      name: "Términos",
+      href: "/terms",
     },
   ],
 }

@@ -1481,7 +1481,7 @@ export function InnovationsSection() {
                   href="#contact"
                   className="relative mt-5 inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-amber-200/25 bg-amber-200/[0.10] px-5 py-4 text-[10px] font-black uppercase tracking-[0.18em] text-amber-50 transition hover:border-amber-100/45 hover:bg-amber-200/[0.16]"
                 >
-                  Participar en la validación
+                  Votar intereses
                   <MessageCircle className="h-4 w-4" />
                 </a>
 
@@ -1540,7 +1540,7 @@ export function InnovationsSection() {
                         href="#contact"
                         className="inline-flex items-center justify-center gap-2 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-cyan-50 transition hover:border-cyan-100/40 hover:bg-cyan-300/[0.13]"
                       >
-                        Participar ahora
+                        Recibir aviso
                         <Vote className="h-4 w-4" />
                       </a>
                     </div>

@@ -119,7 +119,9 @@ export default function IMNOVAPage() {
       <div className="pointer-events-none absolute inset-0 opacity-[0.015] mix-blend-soft-light bg-[url('/noise.png')]" />
 
       <Navigation />
-      <HeroSection />
+      <HeroSection
+        onJoinCommunity={openCommunity}
+      />
 
       <PromoBanner />
       <ImnovaGuidesSection
@@ -157,13 +159,13 @@ export default function IMNOVAPage() {
               </div>
 
               <h2 className="mt-8 max-w-4xl text-4xl font-black leading-[1.02] tracking-[-0.045em] text-white md:text-6xl lg:text-7xl">
-                Votá los próximos lanzamientos de IMNOVA.
+                Tus intereses pueden decidir lo próximo de IMNOVA.
               </h2>
 
               <p className="mt-7 max-w-3xl text-base leading-8 text-zinc-400 md:text-lg">
-                Únete como miembro fundador, elige tus intereses y participa en
-                encuestas que ayudan a decidir qué productos avanzan, se ajustan
-                o llegan al mercado.
+                Únete como miembro fundador, elige los temas que te importan y
+                recibe encuestas que ayudan a decidir qué productos avanzan, se
+                ajustan o llegan al mercado.
               </p>
 
               <div className="mt-9 grid gap-3 sm:grid-cols-3">
@@ -205,7 +207,7 @@ export default function IMNOVAPage() {
                   onClick={openCommunity}
                   className="group inline-flex items-center justify-center gap-3 rounded-3xl border border-cyan-200/45 bg-gradient-to-r from-cyan-200 to-white px-8 py-5 text-xs font-black uppercase tracking-[0.18em] text-black shadow-[0_0_45px_rgba(34,211,238,0.22)] transition-all duration-500 hover:-translate-y-0.5 hover:border-white hover:shadow-[0_0_65px_rgba(34,211,238,0.34)]"
                 >
-                  Únete como miembro fundador
+                  Votar próximos productos
                   <ArrowUpRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
                 </button>
 
@@ -213,14 +215,14 @@ export default function IMNOVAPage() {
                   href="#innovations"
                   className="inline-flex items-center justify-center gap-3 rounded-3xl border border-white/10 bg-white/[0.035] px-8 py-5 text-xs font-black uppercase tracking-[0.18em] text-white/70 transition-all duration-500 hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/[0.07] hover:text-white"
                 >
-                  Ver ideas activas
+                  Ver ideas en validación
                   <Sparkles className="h-4 w-4" />
                 </a>
               </div>
 
               <p className="mt-5 max-w-2xl text-xs uppercase leading-6 tracking-[0.18em] text-zinc-600">
-                Sin spam. Solo avances, encuestas y oportunidades conectadas a
-                tus intereses.
+                Sin spam. Tus datos se usan para enviarte encuestas, avances y
+                oportunidades conectadas a tus intereses.
               </p>
             </div>
 
@@ -237,7 +239,7 @@ export default function IMNOVAPage() {
                     {[
                       "Elegís hasta 3 áreas de interés que realmente te importan.",
                       "IMNOVA te envía encuestas y pruebas conectadas a esos temas.",
-                      "Tu señal ayuda a decidir si un producto avanza, se ajusta o se pausa.",
+                      "Tu señal ayuda a decidir si una idea avanza, se ajusta o se pausa.",
                     ].map((item, index) => (
                       <div
                         key={item}
@@ -363,7 +365,7 @@ export default function IMNOVAPage() {
           Miembro fundador
         </span>
 
-        Votá lanzamientos
+        Votar lo próximo
 
         <ArrowUpRight className="h-4 w-4" />
 
