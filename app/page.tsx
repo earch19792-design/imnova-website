@@ -1,7 +1,6 @@
 "use client"
 
 import {
-  useEffect,
   useState,
 } from "react"
 
@@ -44,73 +43,6 @@ export default function IMNOVAPage() {
       setShowPopup(false)
     }
 
-  useEffect(
-    () => {
-      const timeouts: number[] = []
-
-      const scrollToHash =
-        () => {
-          const targetId =
-            window.location.hash.replace(
-              "#",
-              ""
-            )
-
-          if (!targetId) {
-            return
-          }
-
-          const target =
-            document.getElementById(targetId)
-
-          if (!target) {
-            return
-          }
-
-          target.scrollIntoView({
-            behavior: "smooth",
-            block: "start",
-          })
-        }
-
-      const scheduleHashScroll =
-        () => {
-          ;[
-            80,
-            350,
-            900,
-          ].forEach(delay => {
-            const timeout =
-              window.setTimeout(
-                scrollToHash,
-                delay
-              )
-
-            timeouts.push(timeout)
-          })
-        }
-
-      scheduleHashScroll()
-
-      window.addEventListener(
-        "hashchange",
-        scheduleHashScroll
-      )
-
-      return () => {
-        timeouts.forEach(timeout => {
-          window.clearTimeout(timeout)
-        })
-
-        window.removeEventListener(
-          "hashchange",
-          scheduleHashScroll
-        )
-      }
-    },
-    []
-  )
-
   return (
     <main className="relative isolate overflow-hidden bg-gradient-to-b from-black via-[#050505] to-black text-white">
       <div className="pointer-events-none absolute left-1/2 top-0 h-[700px] w-[700px] -translate-x-1/2 rounded-full bg-cyan-400/10 blur-3xl" />
@@ -134,7 +66,9 @@ export default function IMNOVAPage() {
       <ImnovaTrendRadarSection
         onJoinCommunity={openCommunity}
       />
-      <InnovationsSection />
+      <InnovationsSection
+        onJoinCommunity={openCommunity}
+      />
       <WorkingSection />
 
       <section
@@ -356,16 +290,20 @@ export default function IMNOVAPage() {
             border
             border-black/10
             bg-black/[0.08]
+            inline-flex
+            items-center
+            gap-2
             px-2.5
             py-1
             text-[9px]
             tracking-[0.14em]
           "
         >
-          Miembro fundador
+          <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_14px_rgba(16,185,129,0.75)]" />
+          Idea activa
         </span>
 
-        Votar lo próximo
+        Votar interés
 
         <ArrowUpRight className="h-4 w-4" />
 

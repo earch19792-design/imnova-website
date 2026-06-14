@@ -801,11 +801,30 @@ function getOfficialFlowPercent(
   )}%`
 }
 
-export function InnovationsSection() {
+type InnovationsSectionProps = {
+  onJoinCommunity?: () => void
+}
+
+export function InnovationsSection({
+  onJoinCommunity,
+}: InnovationsSectionProps) {
   const [
     products,
     setProducts,
   ] = useState<LiveProduct[]>([])
+
+  const handleVotingInterestClick = () => {
+    if (onJoinCommunity) {
+      onJoinCommunity()
+      return
+    }
+
+    document
+      .getElementById("contact")
+      ?.scrollIntoView({
+        behavior: "smooth",
+      })
+  }
 
   useEffect(() => {
     async function loadProducts() {
@@ -1085,6 +1104,55 @@ export function InnovationsSection() {
             vale la pena construirla y solo lo que demuestra interés real
             avanza hacia desarrollo.
           </p>
+
+          {featuredComingSoonProduct && (
+            <motion.div
+              initial={{
+                opacity: 0,
+                y: 18,
+              }}
+              whileInView={{
+                opacity: 1,
+                y: 0,
+              }}
+              transition={{
+                duration: 0.7,
+                delay: 0.12,
+              }}
+              viewport={{ once: true }}
+              className="mx-auto mt-9 flex max-w-4xl flex-col gap-4 rounded-[28px] border border-amber-200/25 bg-[linear-gradient(135deg,rgba(251,191,36,0.14),rgba(34,211,238,0.08),rgba(255,255,255,0.035))] p-4 text-left shadow-[0_22px_90px_rgba(251,191,36,0.10)] backdrop-blur-2xl sm:flex-row sm:items-center sm:justify-between sm:p-5"
+            >
+              <div className="flex min-w-0 items-start gap-4">
+                <span className="relative mt-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-amber-100/35 bg-amber-200/[0.16] text-amber-50 shadow-[0_0_32px_rgba(251,191,36,0.22)]">
+                  <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-emerald-400 shadow-[0_0_18px_rgba(16,185,129,0.8)]" />
+                  <Vote className="h-5 w-5" />
+                </span>
+
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-100">
+                    Idea activa en votación
+                  </p>
+                  <h3 className="mt-2 truncate text-xl font-black leading-tight text-white sm:text-2xl">
+                    {featuredComingSoonProduct.name}
+                  </h3>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-300">
+                    Queremos saber si hay interés real antes de avanzar. Tu voto
+                    ayuda a decidir si esta idea se ajusta, se pausa o pasa al
+                    siguiente nivel.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleVotingInterestClick}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-2xl border border-cyan-200/25 bg-cyan-200 px-5 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-black transition hover:-translate-y-0.5 hover:bg-white"
+              >
+                Votar interés
+                <MessageCircle className="h-4 w-4" />
+              </button>
+            </motion.div>
+          )}
         </motion.div>
 
         <div className="mt-16 space-y-24">

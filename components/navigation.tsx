@@ -65,6 +65,11 @@ const mobileNavItems = [
     shortName: "Tienda",
     href: "/store",
   },
+  {
+    name: "Admin",
+    shortName: "Admin",
+    href: "/admin",
+  },
 ]
 
 export function Navigation() {
@@ -171,6 +176,13 @@ export function Navigation() {
               className="hidden whitespace-nowrap rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100 transition-all duration-300 hover:border-cyan-300/35 hover:bg-cyan-400/20 hover:text-white sm:inline-flex"
             >
               Tienda
+            </Link>
+
+            <Link
+              href="/admin"
+              className="hidden whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.015] px-3 py-3 text-[9px] font-medium uppercase tracking-[0.16em] text-white/35 transition-all duration-300 hover:border-white/15 hover:bg-white/[0.04] hover:text-white/65 lg:inline-flex"
+            >
+              Admin
             </Link>
 
             <motion.button
