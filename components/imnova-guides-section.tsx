@@ -208,6 +208,94 @@ function profileIncludes(
   )
 }
 
+function profileHasWord(
+  profile: string,
+  word: string
+) {
+  return new RegExp(
+    `(^|[^a-z0-9])${word}([^a-z0-9]|$)`
+  ).test(profile)
+}
+
+function isPancakeGuideProduct(
+  product: Product,
+  profile = getProductProfile(product)
+) {
+  const identity =
+    normalizeText(
+      [
+        product.slug,
+        product.name,
+        product.category,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    )
+
+  return (
+    identity.includes("pancake") ||
+    identity.includes("panqueque") ||
+    profileIncludes(
+      profile,
+      [
+        "pancake",
+        "waffle",
+      ]
+    )
+  )
+}
+
+function isBreadGuideProduct(
+  product: Product,
+  profile = getProductProfile(product)
+) {
+  const identity =
+    normalizeText(
+      [
+        product.slug,
+        product.name,
+        product.category,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    )
+
+  if (
+    identity.includes("pancake") ||
+    identity.includes("waffle")
+  ) {
+    return false
+  }
+
+  return (
+    identity.includes("mash-nutri-pan") ||
+    identity.includes("mash nutri pan") ||
+    identity.includes("mash nutra") ||
+    identity.includes("harina para pan") ||
+    identity.includes("bread") ||
+    profileIncludes(
+      profile,
+      [
+        "harina para pan",
+        "bread",
+      ]
+    ) ||
+    (profileHasWord(
+      identity,
+      "pan"
+    ) &&
+      profileIncludes(
+        profile,
+        [
+          "nutra",
+          "prote",
+          "konjac",
+          "carbo",
+        ]
+      ))
+  )
+}
+
 function getFirstText(
   values: Array<string | null | undefined>
 ) {
@@ -240,15 +328,6 @@ function isAvailableStatus(
 function getUsageMoment(
   product: Product
 ) {
-  const configuredMoment =
-    getFirstText([
-      product.usage_moment,
-    ])
-
-  if (configuredMoment) {
-    return configuredMoment
-  }
-
   const profile =
     getProductProfile(product)
 
@@ -263,36 +342,25 @@ function getUsageMoment(
       ]
     )
   ) {
-    return "Mañana, oficina o estudio"
+    return "Mañana, oficina o estudio: ideal cuando quieres café, enfoque y una pausa funcional sin preparar una rutina complicada."
   }
 
   if (
-    profileIncludes(
-      profile,
-      [
-        "pancake",
-        "waffle",
-      ]
+    isPancakeGuideProduct(
+      product,
+      profile
     )
   ) {
-    return "Desayuno, gym o snack saludable"
+    return "Desayuno, después del gym o snack completo: cuando quieres algo rico, saciante y fácil de preparar como pancake o waffle."
   }
 
   if (
-    profileIncludes(
-      profile,
-      [
-        "pancake",
-        "pan",
-        "bread",
-        "nutri",
-        "prote",
-        "konjac",
-        "carbo",
-      ]
+    isBreadGuideProduct(
+      product,
+      profile
     )
   ) {
-    return "Desayuno, comida o snack saludable"
+    return "Desayuno, tostadas, sándwich o acompañamiento: cuando quieres pan casero funcional listo para comidas simples."
   }
 
   if (
@@ -306,7 +374,7 @@ function getUsageMoment(
       ]
     )
   ) {
-    return "Rutina fitness"
+    return "Antes o después de una rutina activa: útil cuando buscas apoyar energía, recuperación o consistencia diaria."
   }
 
   if (
@@ -320,7 +388,7 @@ function getUsageMoment(
       ]
     )
   ) {
-    return "Enfoque mental"
+    return "Trabajo, estudio o bloques de concentración: pensado para acompañar momentos donde necesitas claridad y constancia."
   }
 
   if (
@@ -333,15 +401,45 @@ function getUsageMoment(
       ]
     )
   ) {
-    return "Merienda funcional"
+    return "Merienda o antojo inteligente: una opción práctica para sumar a tu rutina sin complicarte."
   }
 
-  return "Rutina diaria"
+  const configuredMoment =
+    getFirstText([
+      product.usage_moment,
+    ])
+
+  if (configuredMoment) {
+    return configuredMoment
+  }
+
+  return "Rutina diaria: elige un momento real de tu día y usa el producto de forma constante, simple y fácil de repetir."
 }
 
 function getHowToUse(
   product: Product
 ) {
+  const profile =
+    getProductProfile(product)
+
+  if (
+    isPancakeGuideProduct(
+      product,
+      profile
+    )
+  ) {
+    return "Usa el paquete completo: mezcla 1 huevo con 150 g de leche, agrega 150 g de High Protein Pancake Flour y cocina la mezcla en waflera durante 10 minutos."
+  }
+
+  if (
+    isBreadGuideProduct(
+      product,
+      profile
+    )
+  ) {
+    return "Prepáralo en máquina de pan con 200 g de agua, 200 g de harina para pan, 3 g de levadura y 25 g de mantequilla cuando la mezcla ya esté integrada."
+  }
+
   const configuredUsage =
     getFirstText([
       product.how_to_use,
@@ -352,9 +450,6 @@ function getHowToUse(
   if (configuredUsage) {
     return configuredUsage
   }
-
-  const profile =
-    getProductProfile(product)
 
   if (
     profileIncludes(
@@ -369,44 +464,97 @@ function getHowToUse(
     return "Café funcional con vitaminas, colágeno marino y extractos herbales para apoyar bienestar diario."
   }
 
-  if (
-    profileIncludes(
-      profile,
-      [
-        "pancake",
-        "waffle",
-      ]
-    )
-  ) {
-    return "Prepáralo como pancake o waffle. Mezcla con leche y huevo, cocina hasta que quede doradito y acompáñalo con frutas, yogurt o tu topping favorito."
-  }
-
-  if (
-    profileIncludes(
-      profile,
-      [
-        "pancake",
-        "pan",
-        "bread",
-        "nutri",
-        "prote",
-        "konjac",
-        "carbo",
-      ]
-    )
-  ) {
-    return "Prepáralo como pan casero. Mezcla con agua, levadura y un poco de mantequilla. Hornea hasta que quede suave y doradito. Disfrútalo como tostada, sándwich o acompañamiento."
-  }
-
   return (
     product.description ||
     "Úsalo como parte de tu rutina diaria para apoyar bienestar de forma práctica."
   )
 }
 
+function getIngredientsAndStorage(
+  product: Product
+) {
+  const configuredSummary =
+    getFirstText([
+      product.ingredients_summary,
+    ])
+
+  const profile =
+    getProductProfile(product)
+
+  if (
+    isPancakeGuideProduct(
+      product,
+      profile
+    )
+  ) {
+    return [
+      "Ingredientes por paquete: 150 g de High Protein Pancake Flour, 1 huevo y 150 g de leche.",
+      "Vida útil: 12 meses.",
+      "Almacenamiento: guardar en lugar fresco y seco, lejos de luz fuerte y calor.",
+    ].join(" ")
+  }
+
+  if (
+    isBreadGuideProduct(
+      product,
+      profile
+    )
+  ) {
+    return [
+      "Ingredientes para preparar: 200 g de agua, 200 g de harina para pan, 3 g de levadura y 25 g de mantequilla.",
+      "Vida útil: 18 meses.",
+      "Almacenamiento: guardar en lugar fresco y seco, lejos de luz fuerte y calor.",
+    ].join(" ")
+  }
+
+  return configuredSummary
+}
+
 function getRitualSteps(
   product: Product
 ) {
+  const profile =
+    getProductProfile(product)
+
+  if (
+    isPancakeGuideProduct(
+      product,
+      profile
+    )
+  ) {
+    return [
+      "Coloca 1 huevo en un bowl.",
+      "Agrega 150 g de leche.",
+      "Mezcla bien hasta que el huevo y la leche queden uniformes.",
+      "Agrega los 150 g de harina para pancake.",
+      "Mezcla hasta obtener una masa pareja, sin grumos grandes.",
+      "Precalienta la waflera.",
+      "Vierte la mezcla en la waflera.",
+      "Cocina durante 10 minutos.",
+      "Retira, sirve y disfruta.",
+    ]
+  }
+
+  if (
+    isBreadGuideProduct(
+      product,
+      profile
+    )
+  ) {
+    return [
+      "Pesa 200 g de agua.",
+      "Pesa 200 g de harina para pan.",
+      "Pesa 3 g de levadura.",
+      "Coloca el agua, la harina y la levadura dentro de la máquina de pan.",
+      "Enciende la máquina de pan.",
+      "Cuando la harina y el agua ya estén bien mezcladas, agrega 25 g de mantequilla.",
+      "Deja que la máquina termine el amasado, fermentación y horneado.",
+      "Cuando finalice, retira el pan.",
+      "Déjalo reposar unos minutos antes de cortarlo.",
+      "Sirve y disfruta.",
+    ]
+  }
+
   const configuredSteps =
     normalizeStringList(
       product.routine_suggestion
@@ -415,9 +563,6 @@ function getRitualSteps(
   if (configuredSteps.length > 0) {
     return configuredSteps
   }
-
-  const profile =
-    getProductProfile(product)
 
   if (
     profileIncludes(
@@ -433,46 +578,7 @@ function getRitualSteps(
       "Agítalo bien antes de tomar.",
       "Sírvelo frío sobre hielo.",
       "Añade leche regular, almendra, avena o coco.",
-      "Disfrútalo en la mañana, oficina o estudio.",
-    ]
-  }
-
-  if (
-    profileIncludes(
-      profile,
-      [
-        "pancake",
-        "waffle",
-      ]
-    )
-  ) {
-    return [
-      "Mezcla con leche y huevo.",
-      "Revuelve hasta que quede suave.",
-      "Cocina como pancake o waffle.",
-      "Sirve con frutas o tu topping favorito.",
-    ]
-  }
-
-  if (
-    profileIncludes(
-      profile,
-      [
-        "pancake",
-        "pan",
-        "bread",
-        "nutri",
-        "prote",
-        "konjac",
-        "carbo",
-      ]
-    )
-  ) {
-    return [
-      "Mezcla con agua y levadura.",
-      "Agrega un poco de mantequilla.",
-      "Hornea hasta que quede doradito.",
-      "Disfrútalo como tostada o sándwich.",
+      "Tómalo en la mañana, oficina o estudio como una pausa funcional.",
     ]
   }
 
@@ -1140,6 +1246,10 @@ function LifestyleVisual({
     shouldUseSceneAsMain &&
     Boolean(selectedScene)
 
+  const momentBadge =
+    guide.moment.split(":")[0] ||
+    guide.moment
+
   return (
     <div
       className={`relative overflow-hidden rounded-[28px] border border-white/10 bg-black/55 ${
@@ -1244,7 +1354,7 @@ function LifestyleVisual({
                 Disponible
               </span>
               <span className="rounded-full border border-white/10 bg-black/55 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.20em] text-white/60 backdrop-blur-xl">
-                {guide.moment}
+                {momentBadge}
               </span>
             </div>
           </div>
@@ -1266,7 +1376,7 @@ function LifestyleVisual({
             Disponible
           </span>
           <span className="rounded-full border border-white/10 bg-black/55 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.20em] text-white/60 backdrop-blur-xl">
-            {guide.moment}
+            {momentBadge}
           </span>
         </div>
       )}
@@ -1386,7 +1496,7 @@ function ProductGuideCard({
               >
                 Momento de uso
               </p>
-              <p className="mt-3 text-xl font-black text-white">
+              <p className="mt-3 text-base font-semibold leading-7 text-white md:text-lg">
                 {guide.moment}
               </p>
             </div>
@@ -1419,7 +1529,7 @@ function ProductGuideCard({
               <p
                 className={`text-[10px] font-semibold uppercase tracking-[0.24em] ${getAccentClasses(guide.accent).text}`}
               >
-                Ingredientes funcionales
+                Ingredientes y conservación
               </p>
               <p className="mt-3 text-sm leading-7 text-zinc-300">
                 {guide.ingredientsSummary}
@@ -1615,9 +1725,7 @@ export function ImnovaGuidesSection({
                 steps:
                   getRitualSteps(product),
                 ingredientsSummary:
-                  getFirstText([
-                    product.ingredients_summary,
-                  ]),
+                  getIngredientsAndStorage(product),
                 image:
                   guideImage.image,
                 productImage:
@@ -1967,7 +2075,7 @@ export function ImnovaGuidesSection({
                     >
                       Momento de uso
                     </p>
-                    <p className="mt-3 text-xl font-black text-white">
+                    <p className="mt-3 text-base font-semibold leading-7 text-white md:text-lg">
                       {featuredGuide.moment}
                     </p>
                   </div>
@@ -2000,7 +2108,7 @@ export function ImnovaGuidesSection({
                     <p
                       className={`text-[10px] font-semibold uppercase tracking-[0.24em] ${getAccentClasses(featuredGuide.accent).text}`}
                     >
-                      Ingredientes funcionales
+                      Ingredientes y conservación
                     </p>
                     <p className="mt-3 text-sm leading-7 text-zinc-300">
                       {featuredGuide.ingredientsSummary}
