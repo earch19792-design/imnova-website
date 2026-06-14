@@ -6,6 +6,9 @@ import {
   createClient,
   type SupabaseClient,
 } from "@supabase/supabase-js"
+import {
+  sendWhatsAppWelcome,
+} from "@/lib/whatsapp"
 
 type CommunityRegisterPayload = {
   name?: unknown
@@ -18,6 +21,10 @@ type CommunityRegisterPayload = {
   source?: unknown
   honeypot?: unknown
 }
+
+type CommunityRegisterSource =
+  | "community_popup"
+  | "admin_manual"
 
 type PublicSubniche = {
   id: string
@@ -89,7 +96,7 @@ function getSupabaseServerClient() {
 function getWelcomeWarnings() {
   const warnings: string[] = []
 
-  if (!process.env.WHATSAPP_WELCOME_TEMPLATE_NAME) {
+  if (!hasWhatsAppWelcomeConfig()) {
     warnings.push(
       "whatsapp_welcome_not_configured"
     )
@@ -105,6 +112,14 @@ function getWelcomeWarnings() {
   }
 
   return warnings
+}
+
+function hasWhatsAppWelcomeConfig() {
+  return Boolean(
+    process.env.WHATSAPP_ACCESS_TOKEN?.trim() &&
+    process.env.WHATSAPP_PHONE_NUMBER_ID?.trim() &&
+    process.env.WHATSAPP_WELCOME_TEMPLATE_NAME?.trim()
+  )
 }
 
 function getString(
@@ -160,12 +175,22 @@ function getCanonicalPublicInterestName(
 
 function normalizeSource(
   value: unknown
-) {
+): CommunityRegisterSource | null {
   const source =
     getString(value)
 
-  return source ||
-    "community_popup"
+  if (!source) {
+    return "community_popup"
+  }
+
+  if (
+    source === "community_popup" ||
+    source === "admin_manual"
+  ) {
+    return source
+  }
+
+  return null
 }
 
 function normalizeEmail(
@@ -265,6 +290,129 @@ async function getValidPublicSubniches(
   return (data || []) as PublicSubniche[]
 }
 
+function getBearerToken(
+  req: Request
+) {
+  const authorization =
+    req.headers.get("authorization") ||
+    ""
+
+  const [
+    scheme,
+    token,
+  ] =
+    authorization.split(" ")
+
+  if (
+    scheme?.toLowerCase() !== "bearer" ||
+    !token
+  ) {
+    return ""
+  }
+
+  return token.trim()
+}
+
+function getSupabaseAuthenticatedClient(
+  token: string
+) {
+  const supabaseUrl =
+    process.env.NEXT_PUBLIC_SUPABASE_URL
+
+  const supabaseAnonKey =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error(
+      "Supabase Auth no esta configurado para validar Admin."
+    )
+  }
+
+  return createClient(
+    supabaseUrl,
+    supabaseAnonKey,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+      global: {
+        headers: {
+          Authorization:
+            `Bearer ${token}`,
+        },
+      },
+    }
+  )
+}
+
+async function validateAdminRegisterRequest(
+  req: Request
+) {
+  const token =
+    getBearerToken(req)
+
+  if (!token) {
+    return {
+      ok: false,
+      status: 401,
+      error:
+        "admin_token_required",
+    }
+  }
+
+  const authenticatedSupabase =
+    getSupabaseAuthenticatedClient(
+      token
+    )
+
+  const {
+    data: userData,
+    error: userError,
+  } =
+    await authenticatedSupabase.auth.getUser(
+      token
+    )
+
+  if (
+    userError ||
+    !userData.user
+  ) {
+    return {
+      ok: false,
+      status: 401,
+      error:
+        "admin_unauthorized",
+    }
+  }
+
+  const {
+    data: isAdmin,
+    error: adminError,
+  } =
+    await authenticatedSupabase.rpc(
+      "is_admin"
+    )
+
+  if (
+    adminError ||
+    isAdmin !== true
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      error:
+        "admin_forbidden",
+    }
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    error: null,
+  }
+}
+
 async function getExistingSubscriberId(
   supabase: SupabaseClient,
   email: string,
@@ -333,10 +481,24 @@ export async function POST(
     )
   }
 
-  const warnings =
-    getWelcomeWarnings()
+  const source =
+    normalizeSource(body.source)
 
-  if (getString(body.honeypot)) {
+  if (!source) {
+    return createErrorResponse(
+      "invalid_source"
+    )
+  }
+
+  const warnings =
+    source === "community_popup"
+      ? getWelcomeWarnings()
+      : []
+
+  if (
+    source === "community_popup" &&
+    getString(body.honeypot)
+  ) {
     return NextResponse.json({
       success: false,
       warnings: [
@@ -344,6 +506,20 @@ export async function POST(
         "spam_detected",
       ],
     })
+  }
+
+  if (source === "admin_manual") {
+    const adminValidation =
+      await validateAdminRegisterRequest(
+        req
+      )
+
+    if (!adminValidation.ok) {
+      return createErrorResponse(
+        adminValidation.error,
+        adminValidation.status,
+      )
+    }
   }
 
   const name =
@@ -358,9 +534,6 @@ export async function POST(
       body.country
     )
 
-  const source =
-    normalizeSource(body.source)
-
   const objective =
     getString(body.objective) ||
     "Registro comunidad IMNOVA"
@@ -370,18 +543,24 @@ export async function POST(
       body.selectedSubnicheIds
     )
 
-  const selectedSubnicheNames =
+  const rawSelectedSubnicheNames =
     getUniqueStringArray(
       body.selectedSubnicheNames
     )
-      .map(getCanonicalPublicInterestName)
-      .filter(
-        (
-          name
-        ): name is string =>
-          Boolean(name)
-      )
-      .slice(
+
+  const selectedSubnicheNames =
+    (
+      source === "admin_manual"
+        ? rawSelectedSubnicheNames
+        : rawSelectedSubnicheNames
+            .map(getCanonicalPublicInterestName)
+            .filter(
+              (
+                name
+              ): name is string =>
+                Boolean(name)
+            )
+    ).slice(
       0,
       MAX_LEGACY_INTEREST_NAMES
     )
@@ -489,44 +668,14 @@ export async function POST(
         objective,
     }
 
-    const {
-      data: createdSubscriber,
-      error: subscriberError,
-    } =
-      await supabase
-        .from("subscribers")
-        .insert(subscriberPayload)
-        .select("id")
-        .single()
-
     let subscriberId =
-      createdSubscriber?.id
-        ? String(createdSubscriber.id)
-        : ""
+      await getExistingSubscriberId(
+        supabase,
+        email,
+        whatsapp
+      ) || ""
 
-    if (subscriberError) {
-      console.error(
-        "COMMUNITY REGISTER SUBSCRIBER ERROR:",
-        subscriberError
-      )
-
-      const existingSubscriberId =
-        await getExistingSubscriberId(
-          supabase,
-          email,
-          whatsapp
-        )
-
-      if (!existingSubscriberId) {
-        return createErrorResponse(
-          "subscriber_create_failed",
-          500
-        )
-      }
-
-      subscriberId =
-        existingSubscriberId
-
+    if (subscriberId) {
       warnings.push(
         "subscriber_already_registered"
       )
@@ -548,6 +697,49 @@ export async function POST(
 
         warnings.push(
           "subscriber_update_not_applied"
+        )
+      }
+    } else {
+      const {
+        data: createdSubscriber,
+        error: subscriberError,
+      } =
+        await supabase
+          .from("subscribers")
+          .insert(subscriberPayload)
+          .select("id")
+          .single()
+
+      subscriberId =
+        createdSubscriber?.id
+          ? String(createdSubscriber.id)
+          : ""
+
+      if (subscriberError) {
+        console.error(
+          "COMMUNITY REGISTER SUBSCRIBER ERROR:",
+          subscriberError
+        )
+
+        const existingSubscriberId =
+          await getExistingSubscriberId(
+            supabase,
+            email,
+            whatsapp
+          )
+
+        if (!existingSubscriberId) {
+          return createErrorResponse(
+            "subscriber_create_failed",
+            500
+          )
+        }
+
+        subscriberId =
+          existingSubscriberId
+
+        warnings.push(
+          "subscriber_already_registered"
         )
       }
     }
@@ -594,6 +786,39 @@ export async function POST(
 
         warnings.push(
           "subscriber_interests_not_saved"
+        )
+      }
+    }
+
+    if (
+      source === "community_popup" &&
+      whatsapp
+    ) {
+      if (hasWhatsAppWelcomeConfig()) {
+        const welcomeResult =
+          await sendWhatsAppWelcome({
+            phone:
+              whatsapp,
+            name,
+          })
+
+        if (!welcomeResult.success) {
+          console.error(
+            "COMMUNITY REGISTER WHATSAPP WELCOME ERROR:",
+            welcomeResult
+          )
+
+          warnings.push(
+            "whatsapp_welcome_failed"
+          )
+        }
+      } else if (
+        !warnings.includes(
+          "whatsapp_welcome_not_configured"
+        )
+      ) {
+        warnings.push(
+          "whatsapp_welcome_not_configured"
         )
       }
     }

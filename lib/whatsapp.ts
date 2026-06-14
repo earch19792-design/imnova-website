@@ -75,6 +75,142 @@ export function isValidAbsoluteUrl(
 
 }
 
+export async function sendWhatsAppWelcome({
+  phone,
+  name: _name,
+}: {
+  phone: string
+  name?: string | null
+}) {
+
+  const token =
+    process.env.WHATSAPP_ACCESS_TOKEN?.trim()
+
+  const phoneId =
+    process.env.WHATSAPP_PHONE_NUMBER_ID?.trim()
+
+  const templateName =
+    process.env.WHATSAPP_WELCOME_TEMPLATE_NAME?.trim()
+
+  const normalizedPhone =
+    normalizeWhatsAppPhone(phone)
+
+  if (
+    !token ||
+    !phoneId ||
+    !templateName
+  ) {
+    return {
+      success: false,
+      error:
+        "WHATSAPP_WELCOME_NOT_CONFIGURED",
+    }
+  }
+
+  if (!normalizedPhone) {
+    return {
+      success: false,
+      error:
+        "INVALID_WHATSAPP_PHONE",
+    }
+  }
+
+  const payload = {
+    messaging_product:
+      "whatsapp",
+    to:
+      normalizedPhone,
+    type:
+      "template",
+    template: {
+      name:
+        templateName,
+      language: {
+        code:
+          "es",
+      },
+    },
+  }
+
+  try {
+    const response =
+      await fetch(
+        `https://graph.facebook.com/v25.0/${phoneId}/messages`,
+        {
+          method:
+            "POST",
+          headers: {
+            Authorization:
+              `Bearer ${token}`,
+            "Content-Type":
+              "application/json",
+          },
+          body:
+            JSON.stringify(payload),
+        }
+      )
+
+    const responseText =
+      await response.text()
+
+    let data
+
+    try {
+      data =
+        JSON.parse(responseText)
+    } catch {
+      data =
+        responseText
+    }
+
+    if (!response.ok) {
+      console.error(
+        "WHATSAPP WELCOME META ERROR:",
+        {
+          status:
+            response.status,
+          phone:
+            normalizedPhone,
+          data,
+        }
+      )
+
+      return {
+        success: false,
+        status:
+          response.status,
+        error:
+          "WHATSAPP_WELCOME_FAILED",
+        data,
+      }
+    }
+
+    return {
+      success: true,
+      status:
+        response.status,
+      phone:
+        normalizedPhone,
+      messageId:
+        data?.messages?.[0]?.id ||
+        null,
+      data,
+    }
+  } catch (error) {
+    console.error(
+      "WHATSAPP WELCOME ERROR:",
+      error
+    )
+
+    return {
+      success: false,
+      error:
+        String(error),
+    }
+  }
+
+}
+
 export async function sendWhatsAppUpdate(
   product: string,
   status: string,

@@ -13,17 +13,28 @@ import {
 } from "framer-motion"
 
 import {
-  createManualCommunitySubscriber,
   getAdminDashboardMetrics,
   getAdminProductPage,
   getAdminPriorityProducts,
   getAdminProductSuggestions,
-  getRecentCommunitySubscribers,
+  getCommunitySubscriberStats,
+  getPublicNichesWithSubniches,
+  getRecentSubscribersWithInterests,
   getAdminValidationActionProducts,
+  getTopCommunityNiches,
+  getTopCommunitySubniches,
   getProductStates,
-  type CommunitySubscriber,
+  type CommunitySubscriberStats,
+  type CommunitySubscriberWithInterests,
+  type StrategicNicheWithSubniches,
+  type TopCommunityNiche,
+  type TopCommunitySubniche,
   updateProduct,
 } from "@/lib/products-service"
+
+import {
+  supabase,
+} from "@/lib/supabase"
 
 import {
   signOutAdmin,
@@ -142,6 +153,13 @@ const EMPTY_DASHBOARD_METRICS: AdminDashboardMetrics = {
     EMPTY_VALIDATION_SUMMARY,
 }
 
+const EMPTY_COMMUNITY_SUBSCRIBER_STATS: CommunitySubscriberStats = {
+  totalSubscribers: 0,
+  subscribersWithInterests: 0,
+  percentWithWhatsapp: 0,
+  percentWithEmail: 0,
+}
+
 const EMPTY_VALIDATION_ACTION_PRODUCTS: ValidationActionProducts = {
   readyToAdvance: [],
   pendingDecision: [],
@@ -179,8 +197,43 @@ function getValidNumber(
     : null
 }
 
+function formatCommunityPercent(
+  value: number
+) {
+  return `${Math.round(value)}%`
+}
+
+function formatCommunityDate(
+  value?: string | null
+) {
+  if (!value) {
+    return "Sin fecha"
+  }
+
+  try {
+    return new Intl.DateTimeFormat(
+      "es-NI",
+      {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone:
+          "America/Managua",
+      }
+    ).format(
+      new Date(value)
+    )
+  } catch {
+    return "Fecha no disponible"
+  }
+}
+
 const ADMIN_PRODUCT_LIST_BATCH_SIZE =
   24
+
+const MAX_MANUAL_COMMUNITY_INTERESTS =
+  5
 
 const adminMenuGuides = {
   dashboard: {
@@ -224,16 +277,16 @@ const adminMenuGuides = {
   },
   community: {
     title:
-      "Crece la comunidad con registros ordenados.",
+      "Lee comunidad e intereses antes de decidir.",
     description:
-      "Agrega contactos WhatsApp manuales cuando el cliente dio permiso fuera de la web.",
+      "Usa esta vista para registrar miembros, normalizar intereses y detectar donde hay mayor demanda.",
     steps: [
-      "Registra nombre y WhatsApp en formato nacional o internacional.",
-      "Agrega nichos o interes para segmentar mejor la comunidad.",
-      "Usa estos contactos en notificaciones manuales y futuras campanas.",
+      "Revisa las metricas de comunidad e identifica los nichos con mas seleccion.",
+      "Registra contactos manuales solo con consentimiento y selecciona intereses reales.",
+      "Usa los rankings para priorizar encuestas, pruebas y futuras oportunidades.",
     ],
     reminder:
-      "Solo agrega contactos con consentimiento. La comunidad debe crecer con confianza.",
+      "subscriber_interests es la fuente principal; subscribers.nichos queda solo como legacy.",
   },
   analytics: {
     title:
@@ -368,7 +421,34 @@ export default function AdminPage() {
   const [
     communitySubscribers,
     setCommunitySubscribers,
-  ] = useState<CommunitySubscriber[]>([])
+  ] = useState<CommunitySubscriberWithInterests[]>([])
+
+  const [
+    communityStats,
+    setCommunityStats,
+  ] = useState<CommunitySubscriberStats>(
+    EMPTY_COMMUNITY_SUBSCRIBER_STATS
+  )
+
+  const [
+    topCommunityNiches,
+    setTopCommunityNiches,
+  ] = useState<TopCommunityNiche[]>([])
+
+  const [
+    topCommunitySubniches,
+    setTopCommunitySubniches,
+  ] = useState<TopCommunitySubniche[]>([])
+
+  const [
+    communityNichesWithSubniches,
+    setCommunityNichesWithSubniches,
+  ] = useState<StrategicNicheWithSubniches[]>([])
+
+  const [
+    selectedManualSubnicheIds,
+    setSelectedManualSubnicheIds,
+  ] = useState<string[]>([])
 
   const [
     manualSubscriberForm,
@@ -603,11 +683,39 @@ export default function AdminPage() {
       setIsLoadingCommunity(true)
 
       try {
-        const subscribers =
-          await getRecentCommunitySubscribers(10)
+        const [
+          stats,
+          niches,
+          subniches,
+          subscribers,
+          nichesWithSubniches,
+        ] =
+          await Promise.all([
+            getCommunitySubscriberStats(),
+            getTopCommunityNiches(5),
+            getTopCommunitySubniches(5),
+            getRecentSubscribersWithInterests(10),
+            getPublicNichesWithSubniches(),
+          ])
+
+        setCommunityStats(
+          stats
+        )
+
+        setTopCommunityNiches(
+          niches || []
+        )
+
+        setTopCommunitySubniches(
+          subniches || []
+        )
 
         setCommunitySubscribers(
           subscribers || []
+        )
+
+        setCommunityNichesWithSubniches(
+          nichesWithSubniches || []
         )
       } catch (error) {
         console.error(
@@ -615,7 +723,14 @@ export default function AdminPage() {
           error
         )
 
+        setCommunityStats(
+          EMPTY_COMMUNITY_SUBSCRIBER_STATS
+        )
+
+        setTopCommunityNiches([])
+        setTopCommunitySubniches([])
         setCommunitySubscribers([])
+        setCommunityNichesWithSubniches([])
       } finally {
         setIsLoadingCommunity(false)
       }
@@ -635,6 +750,96 @@ export default function AdminPage() {
       )
     }
 
+  const manualSubnichesById =
+    useMemo(
+      () => {
+        const subnichesById =
+          new Map<
+            string,
+            StrategicNicheWithSubniches["subniches"][number]
+          >()
+
+        communityNichesWithSubniches.forEach(
+          (niche) => {
+            niche.subniches.forEach(
+              (subniche) => {
+                subnichesById.set(
+                  subniche.id,
+                  subniche
+                )
+              }
+            )
+          }
+        )
+
+        return subnichesById
+      },
+      [communityNichesWithSubniches]
+    )
+
+  const selectedManualSubnicheNames =
+    useMemo(
+      () =>
+        selectedManualSubnicheIds
+          .map(
+            (subnicheId) => {
+              const subniche =
+                manualSubnichesById.get(
+                  subnicheId
+                )
+
+              return subniche
+                ? subniche.public_name ||
+                    subniche.name
+                : ""
+            }
+          )
+          .filter(Boolean),
+      [
+        manualSubnichesById,
+        selectedManualSubnicheIds,
+      ]
+    )
+
+  const toggleManualSubniche =
+    (subnicheId: string) => {
+      const isSelected =
+        selectedManualSubnicheIds.includes(
+          subnicheId
+        )
+
+      if (!isSelected) {
+        setCommunityError("")
+      }
+
+      if (
+        !isSelected &&
+        selectedManualSubnicheIds.length >=
+          MAX_MANUAL_COMMUNITY_INTERESTS
+      ) {
+        setCommunityError(
+          `Selecciona maximo ${MAX_MANUAL_COMMUNITY_INTERESTS} intereses.`
+        )
+        return
+      }
+
+      setSelectedManualSubnicheIds(
+        currentSubnicheIds =>
+          currentSubnicheIds.includes(
+            subnicheId
+          )
+            ? currentSubnicheIds.filter(
+                currentSubnicheId =>
+                  currentSubnicheId !==
+                  subnicheId
+              )
+            : [
+                ...currentSubnicheIds,
+                subnicheId,
+              ]
+      )
+    }
+
   const handleCreateManualSubscriber =
     async () => {
 
@@ -647,9 +852,27 @@ export default function AdminPage() {
       const phone =
         manualSubscriberForm.telefono.trim()
 
-      if (!name || !phone) {
+      const email =
+        manualSubscriberForm.email.trim()
+
+      if (
+        !name ||
+        (
+          !phone &&
+          !email
+        )
+      ) {
         setCommunityError(
-          "Nombre y WhatsApp son obligatorios."
+          "Nombre y al menos WhatsApp o email son obligatorios."
+        )
+        return
+      }
+
+      if (
+        selectedManualSubnicheIds.length === 0
+      ) {
+        setCommunityError(
+          "Selecciona al menos un interes normalizado."
         )
         return
       }
@@ -657,7 +880,7 @@ export default function AdminPage() {
       setIsSavingCommunitySubscriber(true)
 
       try {
-        const niches =
+        const legacyNiches =
           manualSubscriberForm.nichos
             .split(",")
             .map((niche) =>
@@ -665,26 +888,86 @@ export default function AdminPage() {
             )
             .filter(Boolean)
 
-        const result =
-          await createManualCommunitySubscriber({
-            nombre: name,
-            telefono: phone,
-            email:
-              manualSubscriberForm.email,
-            nichos: niches,
-            objetivo_principal:
-              manualSubscriberForm.objetivo_principal,
-          })
+        const selectedSubnicheNames =
+          Array.from(
+            new Set([
+              ...selectedManualSubnicheNames,
+              ...legacyNiches,
+            ])
+          )
 
-        if (!result.subscriber) {
+        const {
+          data: sessionData,
+          error: sessionError,
+        } =
+          await supabase.auth.getSession()
+
+        const accessToken =
+          sessionData.session?.access_token
+
+        if (
+          sessionError ||
+          !accessToken
+        ) {
           throw new Error(
-            result.error ||
-              "No se pudo registrar el numero WhatsApp."
+            "No se pudo validar la sesion Admin."
+          )
+        }
+
+        const response =
+          await fetch(
+            "/api/community/register",
+            {
+              method:
+                "POST",
+              headers: {
+                "Content-Type":
+                  "application/json",
+                Authorization:
+                  `Bearer ${accessToken}`,
+              },
+              body:
+                JSON.stringify({
+                  name,
+                  email,
+                  whatsapp:
+                    phone,
+                  country:
+                    "505",
+                  selectedSubnicheIds:
+                    selectedManualSubnicheIds,
+                  selectedSubnicheNames,
+                  source:
+                    "admin_manual",
+                  objective:
+                    manualSubscriberForm.objetivo_principal,
+                }),
+            }
+          )
+
+        const result =
+          await response.json()
+            .catch(() => null)
+
+        if (
+          !response.ok ||
+          !result?.success
+        ) {
+          throw new Error(
+            result?.error ||
+              "No se pudo registrar el contacto."
+          )
+        }
+
+        if (result.warnings?.length) {
+          console.warn(
+            "ADMIN MANUAL COMMUNITY REGISTER WARNINGS:",
+            result.warnings
           )
         }
 
         setCommunityMessage(
-          "Contacto WhatsApp agregado a la comunidad."
+          "Contacto agregado a la comunidad con intereses normalizados."
         )
 
         setManualSubscriberForm({
@@ -695,6 +978,8 @@ export default function AdminPage() {
           objetivo_principal:
             "Registro manual para comunidad WhatsApp IMNOVA.",
         })
+
+        setSelectedManualSubnicheIds([])
 
         await loadCommunitySubscribers()
       } catch (error) {
@@ -1230,6 +1515,103 @@ export default function AdminPage() {
         "Active"
     ).length
 
+  const topCommunityNiche =
+    topCommunityNiches[0]
+
+  const topCommunitySubniche =
+    topCommunitySubniches[0]
+
+  const topCommunityNicheName =
+    topCommunityNiche?.niche_public_name ||
+    topCommunityNiche?.niche_name ||
+    "Sin datos"
+
+  const topCommunitySubnicheName =
+    topCommunitySubniche?.subniche_public_name ||
+    topCommunitySubniche?.subniche_name ||
+    "Sin datos"
+
+  const maxTopCommunityNicheCount =
+    Math.max(
+      1,
+      ...topCommunityNiches.map(
+        (niche) =>
+          niche.count
+      )
+    )
+
+  const maxTopCommunitySubnicheCount =
+    Math.max(
+      1,
+      ...topCommunitySubniches.map(
+        (subniche) =>
+          subniche.count
+      )
+    )
+
+  const communityMetricCards = [
+    {
+      label:
+        "Total miembros",
+      value:
+        communityStats.totalSubscribers.toLocaleString(
+          "es-NI"
+        ),
+      detail:
+        "Registros en subscribers",
+    },
+    {
+      label:
+        "Con intereses",
+      value:
+        communityStats.subscribersWithInterests.toLocaleString(
+          "es-NI"
+        ),
+      detail:
+        "Fuente: subscriber_interests",
+    },
+    {
+      label:
+        "Nicho mas popular",
+      value:
+        topCommunityNicheName,
+      detail:
+        topCommunityNiche
+          ? `${topCommunityNiche.count} selecciones`
+          : "Pendiente de datos",
+    },
+    {
+      label:
+        "Subnicho mas popular",
+      value:
+        topCommunitySubnicheName,
+      detail:
+        topCommunitySubniche
+          ? `${topCommunitySubniche.count} selecciones`
+          : "Pendiente de datos",
+    },
+    {
+      label:
+        "% con WhatsApp",
+      value:
+        formatCommunityPercent(
+          communityStats.percentWithWhatsapp
+        ),
+      detail:
+        "Contacto directo disponible",
+    },
+    {
+      label:
+        "% con email",
+      value:
+        formatCommunityPercent(
+          communityStats.percentWithEmail
+        ),
+      detail:
+        "Canal correo disponible",
+    },
+  ]
+
   if (!isAuthenticated) {
 
     return (
@@ -1402,7 +1784,7 @@ export default function AdminPage() {
                   : selectedMenu === "analytics"
                   ? "Métricas, rendimiento y crecimiento del ecosistema."
                   : selectedMenu === "community"
-                  ? "Registro manual de contactos WhatsApp para crecer la comunidad IMNOVA."
+                  ? "Resumen de miembros, intereses normalizados y demanda de la comunidad IMNOVA."
                   : "IMNOVA OS"
               }
             </p>
@@ -4267,8 +4649,326 @@ export default function AdminPage() {
 
             <div className="mt-16">
 
+              <section
+                className="
+                  rounded-[34px]
+                  border
+                  border-cyan-300/15
+                  bg-white/[0.035]
+                  p-6
+                  md:p-8
+                "
+              >
+                <div
+                  className="
+                    flex
+                    flex-col
+                    gap-5
+                    xl:flex-row
+                    xl:items-end
+                    xl:justify-between
+                  "
+                >
+                  <div>
+                    <p
+                      className="
+                        text-xs
+                        uppercase
+                        tracking-[0.32em]
+                        text-cyan-100/60
+                      "
+                    >
+                      Comunidad e intereses
+                    </p>
+
+                    <h2
+                      className="
+                        mt-4
+                        text-4xl
+                        font-black
+                        tracking-[-0.04em]
+                        text-white
+                      "
+                    >
+                      Demanda real de la comunidad
+                    </h2>
+
+                    <p
+                      className="
+                        mt-3
+                        max-w-3xl
+                        text-sm
+                        leading-7
+                        text-white/50
+                      "
+                    >
+                      Que temas esta eligiendo la comunidad y donde hay mayor demanda.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={loadCommunitySubscribers}
+                    disabled={isLoadingCommunity}
+                    className="
+                      w-full
+                      rounded-2xl
+                      border
+                      border-cyan-300/20
+                      bg-cyan-300/10
+                      px-5
+                      py-3
+                      text-xs
+                      font-bold
+                      uppercase
+                      tracking-[0.22em]
+                      text-cyan-100
+                      transition-all
+                      duration-300
+                      hover:border-cyan-200/40
+                      hover:bg-cyan-300/15
+                      disabled:cursor-not-allowed
+                      disabled:opacity-50
+                      sm:w-auto
+                    "
+                  >
+                    {isLoadingCommunity
+                      ? "Actualizando"
+                      : "Actualizar"}
+                  </button>
+                </div>
+
+                {communityStats.totalSubscribers === 0 ? (
+                  <div
+                    className="
+                      mt-8
+                      rounded-3xl
+                      border
+                      border-white/10
+                      bg-black/30
+                      p-6
+                      text-sm
+                      text-white/50
+                    "
+                  >
+                    No hay miembros registrados todavia.
+                  </div>
+                ) : (
+                  <>
+                    {communityStats.subscribersWithInterests === 0 && (
+                      <div
+                        className="
+                          mt-8
+                          rounded-3xl
+                          border
+                          border-amber-200/15
+                          bg-amber-200/[0.06]
+                          p-5
+                          text-sm
+                          leading-6
+                          text-amber-100/80
+                        "
+                      >
+                        Los intereses apareceran cuando la comunidad seleccione subnichos desde el popup.
+                      </div>
+                    )}
+
+                    <div
+                      className="
+                        mt-8
+                        grid
+                        grid-cols-1
+                        gap-4
+                        md:grid-cols-2
+                        xl:grid-cols-3
+                      "
+                    >
+                      {communityMetricCards.map(
+                        (metric) => (
+                          <div
+                            key={metric.label}
+                            className="
+                              rounded-3xl
+                              border
+                              border-white/10
+                              bg-black/30
+                              p-5
+                            "
+                          >
+                            <p className="text-[10px] uppercase tracking-[0.24em] text-white/40">
+                              {metric.label}
+                            </p>
+
+                            <p
+                              className="
+                                mt-4
+                                min-h-[64px]
+                                text-2xl
+                                font-black
+                                leading-tight
+                                break-words
+                                text-white
+                              "
+                            >
+                              {metric.value}
+                            </p>
+
+                            <p className="mt-3 text-xs leading-5 text-white/40">
+                              {metric.detail}
+                            </p>
+                          </div>
+                        )
+                      )}
+                    </div>
+
+                    <div
+                      className="
+                        mt-6
+                        grid
+                        grid-cols-1
+                        gap-6
+                        xl:grid-cols-2
+                      "
+                    >
+                      <div
+                        className="
+                          rounded-3xl
+                          border
+                          border-white/10
+                          bg-black/25
+                          p-6
+                        "
+                      >
+                        <p className="text-xs uppercase tracking-[0.28em] text-white/45">
+                          Top 5 nichos
+                        </p>
+
+                        <div className="mt-6 space-y-4">
+                          {topCommunityNiches.length === 0 ? (
+                            <p className="rounded-2xl border border-white/10 bg-black/30 p-5 text-sm text-white/45">
+                              Los intereses apareceran cuando la comunidad seleccione subnichos desde el popup.
+                            </p>
+                          ) : (
+                            topCommunityNiches.map(
+                              (niche) => {
+                                const width =
+                                  Math.max(
+                                    8,
+                                    Math.round(
+                                      (
+                                        niche.count /
+                                        maxTopCommunityNicheCount
+                                      ) * 100
+                                    )
+                                  )
+
+                                return (
+                                  <div
+                                    key={niche.niche_id}
+                                    className="space-y-2"
+                                  >
+                                    <div className="flex items-center justify-between gap-4 text-sm">
+                                      <span className="min-w-0 break-words font-semibold text-white/80">
+                                        {niche.niche_public_name || niche.niche_name}
+                                      </span>
+                                      <span className="text-white/45">
+                                        {niche.count}
+                                      </span>
+                                    </div>
+
+                                    <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                                      <div
+                                        className="h-full rounded-full bg-cyan-300"
+                                        style={{
+                                          width:
+                                            `${width}%`,
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+                                )
+                              }
+                            )
+                          )}
+                        </div>
+                      </div>
+
+                      <div
+                        className="
+                          rounded-3xl
+                          border
+                          border-white/10
+                          bg-black/25
+                          p-6
+                        "
+                      >
+                        <p className="text-xs uppercase tracking-[0.28em] text-white/45">
+                          Top 5 subnichos
+                        </p>
+
+                        <div className="mt-6 space-y-4">
+                          {topCommunitySubniches.length === 0 ? (
+                            <p className="rounded-2xl border border-white/10 bg-black/30 p-5 text-sm text-white/45">
+                              Los intereses apareceran cuando la comunidad seleccione subnichos desde el popup.
+                            </p>
+                          ) : (
+                            topCommunitySubniches.map(
+                              (subniche) => {
+                                const width =
+                                  Math.max(
+                                    8,
+                                    Math.round(
+                                      (
+                                        subniche.count /
+                                        maxTopCommunitySubnicheCount
+                                      ) * 100
+                                    )
+                                  )
+
+                                return (
+                                  <div
+                                    key={subniche.subniche_id}
+                                    className="space-y-2"
+                                  >
+                                    <div className="flex items-center justify-between gap-4 text-sm">
+                                      <span className="min-w-0 break-words font-semibold text-white/80">
+                                        {subniche.subniche_public_name || subniche.subniche_name}
+                                      </span>
+                                      <span className="text-white/45">
+                                        {subniche.count}
+                                      </span>
+                                    </div>
+
+                                    {subniche.niche_public_name && (
+                                      <p className="text-xs text-cyan-100/45">
+                                        {subniche.niche_public_name}
+                                      </p>
+                                    )}
+
+                                    <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                                      <div
+                                        className="h-full rounded-full bg-cyan-300"
+                                        style={{
+                                          width:
+                                            `${width}%`,
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+                                )
+                              }
+                            )
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </section>
+
               <div
                 className="
+                  mt-8
                   grid
                   grid-cols-1
                   gap-6
@@ -4420,7 +5120,7 @@ export default function AdminPage() {
 
                     <label className="space-y-2">
                       <span className="text-xs uppercase tracking-[0.25em] text-white/45">
-                        Nichos de interes
+                        Legacy / notas de interes
                       </span>
                       <input
                         value={manualSubscriberForm.nichos}
@@ -4444,9 +5144,114 @@ export default function AdminPage() {
                         "
                       />
                       <p className="text-xs leading-5 text-white/35">
-                        Separa intereses por coma para futuras segmentaciones.
+                        Opcional. El selector normalizado de abajo es la fuente principal.
                       </p>
                     </label>
+
+                    <div className="space-y-4 md:col-span-2">
+                      <div>
+                        <span className="text-xs uppercase tracking-[0.25em] text-cyan-100/60">
+                          Intereses normalizados
+                        </span>
+                        <p className="mt-2 text-xs leading-5 text-white/35">
+                          Selecciona intereses reales de IMNOVA OS. Se guardan en subscriber_interests y tambien como legacy para compatibilidad.
+                        </p>
+                      </div>
+
+                      {communityNichesWithSubniches.length === 0 ? (
+                        <div
+                          className="
+                            rounded-2xl
+                            border
+                            border-white/10
+                            bg-black/30
+                            p-5
+                            text-sm
+                            text-white/45
+                          "
+                        >
+                          No se pudieron cargar los intereses publicos. Actualiza la comunidad o revisa las politicas de lectura.
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          {communityNichesWithSubniches.map(
+                            (niche) => (
+                              <div
+                                key={niche.id}
+                                className="
+                                  rounded-2xl
+                                  border
+                                  border-white/10
+                                  bg-black/25
+                                  p-4
+                                "
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <h4 className="text-sm font-bold text-white/85">
+                                    {niche.public_name || niche.name}
+                                  </h4>
+                                  <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
+                                    {niche.subniches.length} opciones
+                                  </span>
+                                </div>
+
+                                <div className="mt-4 flex flex-wrap gap-2">
+                                  {niche.subniches.map(
+                                    (subniche) => {
+                                      const isSelected =
+                                        selectedManualSubnicheIds.includes(
+                                          subniche.id
+                                        )
+
+                                      const isDisabled =
+                                        !isSelected &&
+                                        selectedManualSubnicheIds.length >=
+                                          MAX_MANUAL_COMMUNITY_INTERESTS
+
+                                      return (
+                                        <button
+                                          key={subniche.id}
+                                          type="button"
+                                          disabled={isDisabled}
+                                          onClick={() =>
+                                            toggleManualSubniche(
+                                              subniche.id
+                                            )
+                                          }
+                                          className={`
+                                            rounded-full
+                                            border
+                                            px-4
+                                            py-2
+                                            text-xs
+                                            font-semibold
+                                            transition-all
+                                            duration-300
+                                            ${
+                                              isSelected
+                                                ? "border-cyan-300/45 bg-cyan-300/[0.14] text-cyan-50"
+                                                : isDisabled
+                                                ? "cursor-not-allowed border-white/5 bg-white/[0.02] text-white/25"
+                                                : "border-white/10 bg-white/[0.04] text-white/62 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08]"
+                                            }
+                                          `}
+                                        >
+                                          {subniche.public_name || subniche.name}
+                                        </button>
+                                      )
+                                    }
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      )}
+
+                      <p className="text-xs leading-5 text-white/40">
+                        {selectedManualSubnicheIds.length}/{MAX_MANUAL_COMMUNITY_INTERESTS} intereses seleccionados.
+                      </p>
+                    </div>
 
                     <label className="space-y-2 md:col-span-2">
                       <span className="text-xs uppercase tracking-[0.25em] text-white/45">
@@ -4578,7 +5383,7 @@ export default function AdminPage() {
                           Comunidad reciente
                         </p>
                         <h3 className="mt-3 text-2xl font-bold text-white">
-                          Ultimos contactos
+                          Ultimos registros
                         </h3>
                       </div>
 
@@ -4608,41 +5413,123 @@ export default function AdminPage() {
                     <div className="mt-6 space-y-3">
                       {communitySubscribers.length === 0 ? (
                         <p className="rounded-2xl border border-white/10 bg-black/30 p-5 text-sm text-white/45">
-                          Aun no hay contactos recientes o no se pudieron leer por politicas RLS.
+                          No hay miembros registrados todavia.
                         </p>
                       ) : (
                         communitySubscribers.map(
-                          (subscriber) => (
-                            <div
-                              key={subscriber.id}
-                              className="
-                                rounded-2xl
-                                border
-                                border-white/10
-                                bg-black/30
-                                p-5
-                              "
-                            >
-                              <div className="flex items-start justify-between gap-4">
-                                <div>
-                                  <h4 className="font-bold text-white">
-                                    {subscriber.nombre || "Contacto IMNOVA"}
-                                  </h4>
-                                  <p className="mt-2 text-sm text-cyan-100/70">
-                                    {subscriber.telefono || "Sin telefono"}
-                                  </p>
+                          (subscriber) => {
+                            const normalizedInterests =
+                              subscriber.interests.map(
+                                (interest) =>
+                                  interest.subniche_public_name ||
+                                  interest.subniche_name
+                              )
+
+                            const legacyInterests =
+                              normalizedInterests.length === 0
+                                ? subscriber.legacy_nichos
+                                : []
+
+                            return (
+                              <div
+                                key={subscriber.id}
+                                className="
+                                  rounded-2xl
+                                  border
+                                  border-white/10
+                                  bg-black/30
+                                  p-5
+                                "
+                              >
+                                <div className="flex items-start justify-between gap-4">
+                                  <div>
+                                    <h4 className="font-bold text-white">
+                                      {subscriber.nombre || "Miembro IMNOVA"}
+                                    </h4>
+                                    <p className="mt-2 text-sm text-cyan-100/70">
+                                      {subscriber.telefono || subscriber.email || "Sin contacto"}
+                                    </p>
+                                    {subscriber.email && subscriber.telefono && (
+                                      <p className="mt-1 text-xs text-white/35">
+                                        {subscriber.email}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <span className="rounded-full border border-cyan-300/20 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-cyan-100/60">
+                                    {formatCommunityDate(
+                                      subscriber.created_at
+                                    )}
+                                  </span>
                                 </div>
-                                <span className="rounded-full border border-cyan-300/20 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-cyan-100/60">
-                                  WhatsApp
-                                </span>
+
+                                {normalizedInterests.length > 0 ? (
+                                  <div className="mt-4 flex flex-wrap gap-2">
+                                    {normalizedInterests
+                                      .slice(
+                                        0,
+                                        4
+                                      )
+                                      .map(
+                                        (interest) => (
+                                          <span
+                                            key={interest}
+                                            className="
+                                              rounded-full
+                                              border
+                                              border-cyan-300/15
+                                              bg-cyan-300/[0.08]
+                                              px-3
+                                              py-1
+                                              text-[11px]
+                                              text-cyan-50/75
+                                            "
+                                          >
+                                            {interest}
+                                          </span>
+                                        )
+                                      )}
+                                  </div>
+                                ) : legacyInterests.length > 0 ? (
+                                  <div className="mt-4 flex flex-wrap gap-2">
+                                    {legacyInterests
+                                      .slice(
+                                        0,
+                                        4
+                                      )
+                                      .map(
+                                        (interest) => (
+                                          <span
+                                            key={interest}
+                                            className="
+                                              rounded-full
+                                              border
+                                              border-white/10
+                                              bg-white/[0.04]
+                                              px-3
+                                              py-1
+                                              text-[11px]
+                                              text-white/45
+                                            "
+                                          >
+                                            Legacy: {interest}
+                                          </span>
+                                        )
+                                      )}
+                                  </div>
+                                ) : (
+                                  <p className="mt-4 text-xs leading-5 text-white/35">
+                                    Sin intereses normalizados todavia.
+                                  </p>
+                                )}
+
+                                {subscriber.objetivo_principal && (
+                                  <p className="mt-4 text-xs leading-5 text-white/40">
+                                    {subscriber.objetivo_principal}
+                                  </p>
+                                )}
                               </div>
-                              {subscriber.objetivo_principal && (
-                                <p className="mt-4 text-xs leading-5 text-white/40">
-                                  {subscriber.objetivo_principal}
-                                </p>
-                              )}
-                            </div>
-                          )
+                            )
+                          }
                         )
                       )}
                     </div>

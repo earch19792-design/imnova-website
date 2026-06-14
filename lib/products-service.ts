@@ -1575,6 +1575,43 @@ export type SubscriberInterest = {
   created_at: string | null
 }
 
+export type CommunitySubscriberStats = {
+  totalSubscribers: number
+  subscribersWithInterests: number
+  percentWithWhatsapp: number
+  percentWithEmail: number
+}
+
+export type TopCommunityNiche = {
+  niche_id: string
+  niche_name: string
+  niche_public_name: string | null
+  count: number
+}
+
+export type TopCommunitySubniche = {
+  subniche_id: string
+  subniche_name: string
+  subniche_public_name: string | null
+  niche_public_name: string | null
+  count: number
+}
+
+export type CommunitySubscriberNormalizedInterest = {
+  subniche_id: string
+  subniche_name: string
+  subniche_public_name: string | null
+  niche_id: string | null
+  niche_name: string | null
+  niche_public_name: string | null
+}
+
+export type CommunitySubscriberWithInterests =
+  CommunitySubscriber & {
+    interests: CommunitySubscriberNormalizedInterest[]
+    legacy_nichos: string[]
+  }
+
 export type CreateSubscriberInterestInput = {
   subscriber_id: string
   subniche_id: string
@@ -1638,6 +1675,205 @@ function getSubscriberInterestSource(
     "community_popup"
 }
 
+type CommunityInterestRow = {
+  subscriber_id: string | null
+  subniche_id: string | null
+  created_at?: string | null
+}
+
+type CommunityStrategicNicheRow = {
+  id: string
+  name: string | null
+  public_name: string | null
+}
+
+type CommunityStrategicSubnicheRow = {
+  id: string
+  niche_id: string | null
+  name: string | null
+  public_name: string | null
+}
+
+const EMPTY_COMMUNITY_SUBSCRIBER_STATS: CommunitySubscriberStats = {
+  totalSubscribers: 0,
+  subscribersWithInterests: 0,
+  percentWithWhatsapp: 0,
+  percentWithEmail: 0,
+}
+
+function getCommunityPercent(
+  value: number,
+  total: number
+) {
+  if (total <= 0) {
+    return 0
+  }
+
+  return Math.round(
+    (value / total) * 100
+  )
+}
+
+function normalizeLegacyNichos(
+  nichos: string[] | string | null
+) {
+  if (Array.isArray(nichos)) {
+    return nichos
+      .map((niche) =>
+        String(niche).trim()
+      )
+      .filter(Boolean)
+  }
+
+  if (!nichos) {
+    return []
+  }
+
+  try {
+    const parsedNichos =
+      JSON.parse(nichos)
+
+    if (Array.isArray(parsedNichos)) {
+      return parsedNichos
+        .map((niche) =>
+          String(niche).trim()
+        )
+        .filter(Boolean)
+    }
+  } catch {
+    // Legacy values can be stored as comma separated text.
+  }
+
+  return nichos
+    .split(",")
+    .map((niche) =>
+      niche.trim()
+    )
+    .filter(Boolean)
+}
+
+async function getCommunityInterestRowsForAdmin(): Promise<CommunityInterestRow[]> {
+
+  const rows: CommunityInterestRow[] = []
+  const pageSize = 1000
+  let from = 0
+
+  while (true) {
+    const { data, error } =
+      await supabase
+        .from("subscriber_interests")
+        .select(`
+          subscriber_id,
+          subniche_id,
+          created_at
+        `)
+        .range(
+          from,
+          from + pageSize - 1
+        )
+
+    if (error) {
+      console.error(
+        "GET COMMUNITY INTEREST ROWS ERROR:",
+        error
+      )
+
+      return []
+    }
+
+    const page =
+      (data || []) as CommunityInterestRow[]
+
+    rows.push(
+      ...page.filter(
+        (row) =>
+          Boolean(row.subscriber_id) &&
+          Boolean(row.subniche_id)
+      )
+    )
+
+    if (page.length < pageSize) {
+      break
+    }
+
+    from += pageSize
+  }
+
+  return rows
+
+}
+
+async function getCommunityStrategicCatalog() {
+
+  const [
+    nichesResult,
+    subnichesResult,
+  ] =
+    await Promise.all([
+      supabase
+        .from("strategic_niches")
+        .select(`
+          id,
+          name,
+          public_name
+        `),
+      supabase
+        .from("strategic_subniches")
+        .select(`
+          id,
+          niche_id,
+          name,
+          public_name
+        `),
+    ])
+
+  if (nichesResult.error) {
+    console.error(
+      "GET COMMUNITY STRATEGIC NICHES ERROR:",
+      nichesResult.error
+    )
+  }
+
+  if (subnichesResult.error) {
+    console.error(
+      "GET COMMUNITY STRATEGIC SUBNICHES ERROR:",
+      subnichesResult.error
+    )
+  }
+
+  const niches =
+    nichesResult.error
+      ? []
+      : (nichesResult.data || []) as CommunityStrategicNicheRow[]
+
+  const subniches =
+    subnichesResult.error
+      ? []
+      : (subnichesResult.data || []) as CommunityStrategicSubnicheRow[]
+
+  return {
+    nichesById:
+      new Map(
+        niches.map(
+          (niche) => [
+            niche.id,
+            niche,
+          ]
+        )
+      ),
+    subnichesById:
+      new Map(
+        subniches.map(
+          (subniche) => [
+            subniche.id,
+            subniche,
+          ]
+        )
+      ),
+  }
+
+}
+
 export async function getRecentCommunitySubscribers(
   limit = 8
 ): Promise<CommunitySubscriber[]> {
@@ -1672,6 +1908,418 @@ export async function getRecentCommunitySubscribers(
   }
 
   return (data || []) as CommunitySubscriber[]
+
+}
+
+export async function getCommunitySubscriberStats(): Promise<CommunitySubscriberStats> {
+
+  const [
+    totalSubscribersResult,
+    subscribersWithWhatsappResult,
+    subscribersWithEmailResult,
+    interestRows,
+  ] =
+    await Promise.all([
+      supabase
+        .from("subscribers")
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        ),
+      supabase
+        .from("subscribers")
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
+        .not(
+          "telefono",
+          "is",
+          null
+        )
+        .neq(
+          "telefono",
+          ""
+        ),
+      supabase
+        .from("subscribers")
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
+        .not(
+          "email",
+          "is",
+          null
+        )
+        .neq(
+          "email",
+          ""
+        ),
+      getCommunityInterestRowsForAdmin(),
+    ])
+
+  if (totalSubscribersResult.error) {
+    console.error(
+      "GET COMMUNITY TOTAL SUBSCRIBERS ERROR:",
+      totalSubscribersResult.error
+    )
+
+    return EMPTY_COMMUNITY_SUBSCRIBER_STATS
+  }
+
+  if (subscribersWithWhatsappResult.error) {
+    console.error(
+      "GET COMMUNITY WHATSAPP SUBSCRIBERS ERROR:",
+      subscribersWithWhatsappResult.error
+    )
+  }
+
+  if (subscribersWithEmailResult.error) {
+    console.error(
+      "GET COMMUNITY EMAIL SUBSCRIBERS ERROR:",
+      subscribersWithEmailResult.error
+    )
+  }
+
+  const totalSubscribers =
+    totalSubscribersResult.count || 0
+
+  const subscribersWithWhatsapp =
+    subscribersWithWhatsappResult.error
+      ? 0
+      : subscribersWithWhatsappResult.count || 0
+
+  const subscribersWithEmail =
+    subscribersWithEmailResult.error
+      ? 0
+      : subscribersWithEmailResult.count || 0
+
+  const subscribersWithInterests =
+    new Set(
+      interestRows
+        .map((row) =>
+          row.subscriber_id
+        )
+        .filter(
+          (subscriberId): subscriberId is string =>
+            Boolean(subscriberId)
+        )
+    ).size
+
+  return {
+    totalSubscribers,
+    subscribersWithInterests,
+    percentWithWhatsapp:
+      getCommunityPercent(
+        subscribersWithWhatsapp,
+        totalSubscribers
+      ),
+    percentWithEmail:
+      getCommunityPercent(
+        subscribersWithEmail,
+        totalSubscribers
+      ),
+  }
+
+}
+
+export async function getTopCommunityNiches(
+  limit = 5
+): Promise<TopCommunityNiche[]> {
+
+  const [
+    interestRows,
+    catalog,
+  ] =
+    await Promise.all([
+      getCommunityInterestRowsForAdmin(),
+      getCommunityStrategicCatalog(),
+    ])
+
+  const countByNicheId =
+    new Map<string, number>()
+
+  interestRows.forEach(
+    (interestRow) => {
+      if (!interestRow.subniche_id) {
+        return
+      }
+
+      const subniche =
+        catalog.subnichesById.get(
+          interestRow.subniche_id
+        )
+
+      const nicheId =
+        subniche?.niche_id ||
+        "unknown"
+
+      countByNicheId.set(
+        nicheId,
+        (
+          countByNicheId.get(
+            nicheId
+          ) || 0
+        ) + 1
+      )
+    }
+  )
+
+  return Array.from(
+    countByNicheId.entries()
+  )
+    .map(
+      ([
+        nicheId,
+        count,
+      ]) => {
+        const niche =
+          catalog.nichesById.get(
+            nicheId
+          )
+
+        return {
+          niche_id:
+            nicheId,
+          niche_name:
+            niche?.name ||
+            "Nicho sin catalogo",
+          niche_public_name:
+            niche?.public_name ||
+            null,
+          count,
+        }
+      }
+    )
+    .sort(
+      (
+        nicheA,
+        nicheB
+      ) =>
+        nicheB.count -
+        nicheA.count
+    )
+    .slice(
+      0,
+      limit
+    )
+
+}
+
+export async function getTopCommunitySubniches(
+  limit = 5
+): Promise<TopCommunitySubniche[]> {
+
+  const [
+    interestRows,
+    catalog,
+  ] =
+    await Promise.all([
+      getCommunityInterestRowsForAdmin(),
+      getCommunityStrategicCatalog(),
+    ])
+
+  const countBySubnicheId =
+    new Map<string, number>()
+
+  interestRows.forEach(
+    (interestRow) => {
+      if (!interestRow.subniche_id) {
+        return
+      }
+
+      countBySubnicheId.set(
+        interestRow.subniche_id,
+        (
+          countBySubnicheId.get(
+            interestRow.subniche_id
+          ) || 0
+        ) + 1
+      )
+    }
+  )
+
+  return Array.from(
+    countBySubnicheId.entries()
+  )
+    .map(
+      ([
+        subnicheId,
+        count,
+      ]) => {
+        const subniche =
+          catalog.subnichesById.get(
+            subnicheId
+          )
+
+        const niche =
+          subniche?.niche_id
+            ? catalog.nichesById.get(
+                subniche.niche_id
+              )
+            : null
+
+        return {
+          subniche_id:
+            subnicheId,
+          subniche_name:
+            subniche?.name ||
+            "Subnicho sin catalogo",
+          subniche_public_name:
+            subniche?.public_name ||
+            null,
+          niche_public_name:
+            niche?.public_name ||
+            niche?.name ||
+            null,
+          count,
+        }
+      }
+    )
+    .sort(
+      (
+        subnicheA,
+        subnicheB
+      ) =>
+        subnicheB.count -
+        subnicheA.count
+    )
+    .slice(
+      0,
+      limit
+    )
+
+}
+
+export async function getRecentSubscribersWithInterests(
+  limit = 10
+): Promise<CommunitySubscriberWithInterests[]> {
+
+  const subscribers =
+    await getRecentCommunitySubscribers(
+      limit
+    )
+
+  if (subscribers.length === 0) {
+    return []
+  }
+
+  const subscriberIds =
+    subscribers.map(
+      (subscriber) =>
+        subscriber.id
+    )
+
+  const [
+    interestsResult,
+    catalog,
+  ] =
+    await Promise.all([
+      supabase
+        .from("subscriber_interests")
+        .select(`
+          subscriber_id,
+          subniche_id,
+          created_at
+        `)
+        .in(
+          "subscriber_id",
+          subscriberIds
+        ),
+      getCommunityStrategicCatalog(),
+    ])
+
+  if (interestsResult.error) {
+    console.error(
+      "GET RECENT SUBSCRIBERS INTERESTS ERROR:",
+      interestsResult.error
+    )
+  }
+
+  const interestRows =
+    interestsResult.error
+      ? []
+      : (interestsResult.data || []) as CommunityInterestRow[]
+
+  const interestsBySubscriberId =
+    new Map<string, CommunitySubscriberNormalizedInterest[]>()
+
+  interestRows.forEach(
+    (interestRow) => {
+      if (
+        !interestRow.subscriber_id ||
+        !interestRow.subniche_id
+      ) {
+        return
+      }
+
+      const subniche =
+        catalog.subnichesById.get(
+          interestRow.subniche_id
+        )
+
+      const niche =
+        subniche?.niche_id
+          ? catalog.nichesById.get(
+              subniche.niche_id
+            )
+          : null
+
+      const subscriberInterests =
+        interestsBySubscriberId.get(
+          interestRow.subscriber_id
+        ) || []
+
+      subscriberInterests.push({
+        subniche_id:
+          interestRow.subniche_id,
+        subniche_name:
+          subniche?.name ||
+          "Subnicho sin catalogo",
+        subniche_public_name:
+          subniche?.public_name ||
+          null,
+        niche_id:
+          subniche?.niche_id ||
+          null,
+        niche_name:
+          niche?.name ||
+          null,
+        niche_public_name:
+          niche?.public_name ||
+          null,
+      })
+
+      interestsBySubscriberId.set(
+        interestRow.subscriber_id,
+        subscriberInterests
+      )
+    }
+  )
+
+  return subscribers.map(
+    (subscriber) => ({
+      ...subscriber,
+      interests:
+        interestsBySubscriberId.get(
+          subscriber.id
+        ) || [],
+      legacy_nichos:
+        normalizeLegacyNichos(
+          subscriber.nichos
+        ),
+    })
+  )
 
 }
 
