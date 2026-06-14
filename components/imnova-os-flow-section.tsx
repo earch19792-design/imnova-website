@@ -24,98 +24,98 @@ const osFlowSteps = [
   {
     id: "community",
     label: "01",
-    title: "La comunidad elige",
-    shortTitle: "Intereses",
+    title: "Tu interes entra al sistema",
+    shortTitle: "Tu interes",
     simple:
-      "La persona selecciona los temas que realmente le importan.",
+      "El visitante se une y elige los temas que realmente le importan.",
     imnova:
-      "IMNOVA convierte esa eleccion en una senal ordenada de comunidad.",
+      "IMNOVA convierte esa eleccion en una senal ordenada, no en un dato perdido.",
     result:
-      "El sistema empieza escuchando, no adivinando.",
+      "La innovacion empieza escuchando a personas reales.",
     icon: UsersRound,
     tone: "cyan",
   },
   {
     id: "demand",
     label: "02",
-    title: "Se mide la demanda",
+    title: "IMNOVA detecta demanda",
     shortTitle: "Demanda",
     simple:
-      "Los intereses se agrupan por nichos y areas de oportunidad.",
+      "Los intereses se agrupan para ver que temas se repiten mas.",
     imnova:
-      "El Admin muestra que temas tienen mas comunidad interesada.",
+      "El Admin muestra donde hay mas comunidad interesada y donde falta oferta.",
     result:
-      "Aparecen oportunidades con producto, sin producto o en validacion.",
+      "Aparecen oportunidades claras antes de invertir tiempo o dinero.",
     icon: BarChart3,
     tone: "emerald",
   },
   {
     id: "idea",
     label: "03",
-    title: "Nace una idea",
+    title: "Una idea toma forma",
     shortTitle: "Idea",
     simple:
-      "Una necesidad clara se convierte en concepto de producto.",
+      "Una necesidad real se convierte en una posible solucion.",
     imnova:
-      "La idea recibe nicho, problema humano y beneficio esperado.",
+      "La idea se conecta con su nicho, problema humano y beneficio esperado.",
     result:
-      "Deja de ser una ocurrencia y entra al sistema IMNOVA OS.",
+      "La idea deja de ser ocurrencia y se vuelve una hipotesis para validar.",
     icon: Lightbulb,
     tone: "amber",
   },
   {
     id: "survey",
     label: "04",
-    title: "Se pregunta antes",
+    title: "La comunidad opina",
     shortTitle: "Encuesta",
     simple:
-      "La comunidad responde preguntas cortas y faciles.",
+      "Las personas responden encuestas cortas sobre ideas y productos.",
     imnova:
-      "Cada encuesta queda conectada al nicho y al producto correcto.",
+      "Cada respuesta queda conectada al tema correcto dentro de IMNOVA OS.",
     result:
-      "La decision se apoya en senales reales, no solo en intuicion.",
+      "La decision se apoya en feedback real, no solo en intuicion.",
     icon: ClipboardCheck,
     tone: "violet",
   },
   {
     id: "decision",
     label: "05",
-    title: "Se decide con criterio",
+    title: "Se decide sin improvisar",
     shortTitle: "Decision",
     simple:
-      "IMNOVA revisa interes, utilidad, riesgo y claridad comercial.",
+      "IMNOVA compara interes, utilidad, riesgo y claridad comercial.",
     imnova:
       "El producto puede avanzar, ajustarse, pausarse o descartarse.",
     result:
-      "Solo avanza lo que demuestra sentido para la comunidad y el mercado.",
+      "No todo se lanza: solo avanza lo que demuestra sentido.",
     icon: FlaskConical,
     tone: "cyan",
   },
   {
     id: "launch",
     label: "06",
-    title: "Se prepara el lanzamiento",
+    title: "El producto se prepara",
     shortTitle: "Producto",
     simple:
-      "El producto se conecta con disponibilidad, canales y comunicacion.",
+      "La idea validada se prepara para disponibilidad, canal y comunicacion.",
     imnova:
-      "Store, distribuidores, encuestas y comunidad trabajan con la misma informacion.",
+      "Store, distribuidores, comunidad y datos trabajan con la misma informacion.",
     result:
-      "El lanzamiento llega con mas claridad y menos improvisacion.",
+      "El producto llega con mas claridad y menos improvisacion.",
     icon: Rocket,
     tone: "emerald",
   },
   {
     id: "learning",
     label: "07",
-    title: "El aprendizaje vuelve",
+    title: "Todo vuelve a mejorar",
     shortTitle: "Aprendizaje",
     simple:
       "Cada encuesta, registro y compra mejora la siguiente decision.",
     imnova:
-      "IMNOVA OS vuelve a alimentar demanda, productos y futuras pruebas.",
+      "IMNOVA OS alimenta nuevas demandas, ajustes, encuestas y productos.",
     result:
-      "El sistema aprende y la innovacion no empieza desde cero.",
+      "Cada ciclo hace que IMNOVA entienda mejor que necesita la comunidad.",
     icon: RefreshCw,
     tone: "amber",
   },
@@ -123,34 +123,34 @@ const osFlowSteps = [
 
 const osSystemStages = [
   {
-    label: "Entrada",
-    title: "Comunidad",
+    label: "Participas",
+    title: "Eliges intereses",
     detail:
-      "Personas, WhatsApp, correo e intereses.",
+      "Te unes y marcas lo que te importa.",
     stepId: "community",
     accent: "bg-cyan-200 text-black",
   },
   {
-    label: "Orden",
-    title: "Nichos + demanda",
+    label: "IMNOVA lee",
+    title: "Detecta demanda",
     detail:
-      "Temas elegidos, prioridad y oportunidades.",
+      "Ordena senales y oportunidades.",
     stepId: "demand",
     accent: "bg-emerald-200 text-black",
   },
   {
-    label: "Prueba",
+    label: "Se valida",
     title: "Ideas + encuestas",
     detail:
-      "Preguntas antes de fabricar o escalar.",
+      "Pregunta antes de fabricar o escalar.",
     stepId: "survey",
     accent: "bg-violet-200 text-black",
   },
   {
-    label: "Salida",
-    title: "Productos",
+    label: "Se decide",
+    title: "Avanzar o ajustar",
     detail:
-      "Avanzar, ajustar, pausar o lanzar.",
+      "Producto, ajuste, pausa o descarte.",
     stepId: "launch",
     accent: "bg-amber-200 text-black",
   },
@@ -168,18 +168,18 @@ const toneClassNames = {
 } as const
 
 const activeStageIds = {
-  Entrada: [
+  Participas: [
     "community",
   ],
-  Orden: [
+  "IMNOVA lee": [
     "demand",
     "idea",
   ],
-  Prueba: [
+  "Se valida": [
     "survey",
     "decision",
   ],
-  Salida: [
+  "Se decide": [
     "launch",
     "learning",
   ],
@@ -235,21 +235,21 @@ export function ImnovaOsFlowSection({
             <div className="inline-flex items-center gap-3 rounded-full border border-cyan-200/20 bg-cyan-300/[0.08] px-5 py-3">
               <Sparkles className="h-4 w-4 text-cyan-100" />
               <span className="text-[10px] font-black uppercase tracking-[0.30em] text-cyan-100/70">
-                Como funciona IMNOVA OS
+                Como IMNOVA decide lo proximo
               </span>
             </div>
 
             <h2 className="mt-8 max-w-4xl text-4xl font-black leading-[0.98] tracking-[-0.045em] text-white md:text-6xl">
-              Un sistema que escucha,
+              Asi decidimos que
               <span className="block bg-gradient-to-r from-cyan-200 via-white to-amber-200 bg-clip-text text-transparent">
-                valida y lanza mejor.
+                productos lanzar.
               </span>
             </h2>
 
             <p className="mt-7 max-w-2xl text-base leading-8 text-zinc-400 md:text-lg">
-              IMNOVA OS conecta comunidad, demanda, encuestas y productos en un
-              circuito simple: primero escuchamos, luego validamos y despues
-              decidimos que debe avanzar.
+              No queremos lanzar productos al azar. IMNOVA OS conecta lo que
+              la comunidad quiere, lo que la demanda muestra y lo que las
+              encuestas validan para decidir con mas inteligencia.
             </p>
           </motion.div>
 
@@ -273,22 +273,22 @@ export function ImnovaOsFlowSection({
           >
             {[
               {
-                label: "Entrada",
-                value: "Intereses",
+                label: "Tu papel",
+                value: "Elegir",
                 detail:
-                  "Lo que la comunidad elige.",
+                  "Dices que temas te importan.",
               },
               {
-                label: "Motor",
-                value: "Demanda",
+                label: "IMNOVA",
+                value: "Validar",
                 detail:
-                  "Lo que IMNOVA analiza.",
+                  "Mide demanda y escucha senales.",
               },
               {
-                label: "Salida",
-                value: "Productos",
+                label: "Resultado",
+                value: "Decidir",
                 detail:
-                  "Lo que puede avanzar.",
+                  "Avanzar, ajustar o pausar.",
               },
             ].map(item => (
               <div
@@ -331,10 +331,10 @@ export function ImnovaOsFlowSection({
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/55">
-                    Mapa simple
+                    Mapa simple para entenderlo
                   </p>
                   <h3 className="mt-3 text-3xl font-black leading-tight tracking-[-0.035em] text-white">
-                    El circuito IMNOVA OS
+                    De tu interes a una decision real
                   </h3>
                 </div>
 
@@ -423,12 +423,12 @@ export function ImnovaOsFlowSection({
               </div>
 
               <div className="mt-6 rounded-[24px] border border-amber-200/15 bg-amber-200/[0.055] p-5">
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-100/60">
-                  En una frase
+                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-100/60">
+                  En una frase clara
                 </p>
                 <p className="mt-3 text-sm leading-7 text-zinc-300">
-                  Comunidad elige intereses, IMNOVA mide demanda, prueba ideas
-                  con encuestas y convierte las mejores senales en productos.
+                  Tu interes ayuda a IMNOVA a saber que probar, que mejorar y
+                  que producto merece llegar al mercado.
                 </p>
               </div>
             </div>
@@ -578,7 +578,7 @@ export function ImnovaOsFlowSection({
                   onClick={onJoinCommunity}
                   className="inline-flex items-center justify-center gap-3 rounded-2xl border border-cyan-200/40 bg-cyan-200 px-5 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-black transition-all duration-300 hover:-translate-y-0.5 hover:bg-white"
                 >
-                  Unirme a la comunidad
+                  Quiero influir en lo proximo
                   <ArrowRight className="h-4 w-4" />
                 </button>
 
@@ -586,7 +586,7 @@ export function ImnovaOsFlowSection({
                   href="#innovations"
                   className="inline-flex items-center justify-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-4 text-[11px] font-black uppercase tracking-[0.18em] text-white/65 transition-all duration-300 hover:border-white/20 hover:bg-white/[0.07] hover:text-white"
                 >
-                  Ver ideas activas
+                  Ver ideas en validacion
                   <Sparkles className="h-4 w-4" />
                 </a>
               </div>
