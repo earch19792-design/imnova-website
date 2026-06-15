@@ -27,8 +27,8 @@ const footerLinks = {
   ],
   ecosystem: [
     {
-      name: "Proceso IMNOVA",
-      href: "#pipeline",
+      name: "Cómo funciona IMNOVA",
+      href: "#imnova-os",
     },
     {
       name: "Ecosistema",

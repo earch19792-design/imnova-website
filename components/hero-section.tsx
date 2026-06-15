@@ -707,7 +707,7 @@ export function HeroSection({
                 duration: 0.9,
                 delay: 0.58,
               }}
-              className="mt-4 flex max-w-3xl flex-wrap gap-2"
+              className="mt-4 hidden max-w-3xl flex-wrap gap-2 sm:flex"
             >
               {[
                 "Producto disponible",
@@ -738,7 +738,7 @@ export function HeroSection({
                 duration: 0.9,
                 delay: 0.68,
               }}
-              className="mt-7 grid max-w-4xl gap-3 sm:grid-cols-3"
+              className="mt-7 hidden max-w-4xl gap-3 sm:grid sm:grid-cols-3"
             >
               {heroJourney.map(item => {
                 const Icon =

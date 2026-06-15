@@ -51,8 +51,8 @@ const secondaryNavItems = [
     href: "#working",
   },
   {
-    name: "Radar IMNOVA",
-    shortName: "Radar",
+    name: "Observatorio IMNOVA",
+    shortName: "Observatorio",
     href: "#trend-radar",
   },
 ]

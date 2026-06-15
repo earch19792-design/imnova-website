@@ -43,6 +43,39 @@ export default function IMNOVAPage() {
       setShowPopup(false)
     }
 
+  const goToActiveIdeaVote =
+    () => {
+      const votePanel =
+        document.getElementById(
+          "idea-vote-panel"
+        )
+
+      if (votePanel) {
+        votePanel.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        })
+
+        return
+      }
+
+      const innovationsSection =
+        document.getElementById(
+          "innovations"
+        )
+
+      if (innovationsSection) {
+        innovationsSection.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        })
+
+        return
+      }
+
+      openCommunity()
+    }
+
   return (
     <main className="relative isolate overflow-hidden bg-gradient-to-b from-black via-[#050505] to-black text-white">
       <div className="pointer-events-none absolute left-1/2 top-0 h-[700px] w-[700px] -translate-x-1/2 rounded-full bg-cyan-400/10 blur-3xl" />
@@ -248,12 +281,12 @@ export default function IMNOVAPage() {
 
       <button
         type="button"
-        onClick={openCommunity}
+        onClick={goToActiveIdeaVote}
         className="
           fixed
-          bottom-3
-          left-3
-          right-3
+          bottom-4
+          left-4
+          right-4
           z-40
           inline-flex
           items-center
@@ -277,6 +310,7 @@ export default function IMNOVAPage() {
           duration-500
           hover:-translate-y-0.5
           hover:shadow-[0_0_75px_rgba(34,211,238,0.38)]
+          sm:bottom-6
           sm:left-auto
           sm:right-6
           sm:w-auto
@@ -302,10 +336,10 @@ export default function IMNOVAPage() {
           "
         >
           <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_14px_rgba(16,185,129,0.75)]" />
-          Idea activa
+          En votación
         </span>
 
-        Votar interés
+        Votar idea activa
 
         <ArrowUpRight className="h-4 w-4" />
 
