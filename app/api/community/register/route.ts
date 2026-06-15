@@ -1376,6 +1376,21 @@ export async function POST(
     let areaInterestsAddedCount =
       0
 
+    let whatsappWelcomeSent =
+      false
+
+    let whatsappWelcomeMessageId:
+      string | null =
+      null
+
+    let whatsappWelcomeStatus:
+      string | null =
+      null
+
+    let whatsappWelcomeTo:
+      string | null =
+      null
+
     let subscriberId =
       await getExistingSubscriberId(
         supabase,
@@ -1589,6 +1604,33 @@ export async function POST(
           warnings.push(
             "whatsapp_welcome_failed"
           )
+        } else {
+          whatsappWelcomeSent =
+            true
+
+          whatsappWelcomeMessageId =
+            welcomeResult.messageId ||
+            null
+
+          whatsappWelcomeStatus =
+            welcomeResult.messageStatus ||
+            welcomeResult.data?.messages?.[0]?.message_status ||
+            null
+
+          whatsappWelcomeTo =
+            welcomeResult.waId ||
+            welcomeResult.phone ||
+            null
+
+          console.info(
+            "COMMUNITY REGISTER WHATSAPP WELCOME SENT:",
+            {
+              subscriberId,
+              whatsappWelcomeTo,
+              whatsappWelcomeMessageId,
+              whatsappWelcomeStatus,
+            }
+          )
         }
       } else if (!isCommunityWelcomeEnabled()) {
         if (
@@ -1630,6 +1672,14 @@ export async function POST(
         preferenceSaveResult.count,
       preferred_channel:
         preferredChannel,
+      whatsapp_welcome_sent:
+        whatsappWelcomeSent,
+      whatsapp_welcome_message_id:
+        whatsappWelcomeMessageId,
+      whatsapp_welcome_status:
+        whatsappWelcomeStatus,
+      whatsapp_welcome_to:
+        whatsappWelcomeTo,
       warnings,
     })
   } catch (error) {

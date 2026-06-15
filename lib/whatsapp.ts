@@ -208,8 +208,14 @@ export async function sendWhatsAppWelcome({
         response.status,
       phone:
         normalizedPhone,
+      waId:
+        data?.contacts?.[0]?.wa_id ||
+        null,
       messageId:
         data?.messages?.[0]?.id ||
+        null,
+      messageStatus:
+        data?.messages?.[0]?.message_status ||
         null,
       data,
     }
