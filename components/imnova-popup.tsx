@@ -263,6 +263,17 @@ export default function InnovaPopup({
 
   const [email, setEmail] =
     useState("")
+
+  const [
+    whatsappOptIn,
+    setWhatsappOptIn,
+  ] = useState(true)
+
+  const [
+    emailOptIn,
+    setEmailOptIn,
+  ] = useState(true)
+
     const [objective, setObjective] =
   useState("")
 
@@ -589,6 +600,9 @@ const [displayText, setDisplayText] =
 
 const interestGroups =
   nichesWithSubniches
+
+const communityConsentText =
+  "Acepto recibir avisos de IMNOVA por los canales seleccionados, conectados a mis intereses. Sin spam ni mensajes genericos."
 
 const normalizeInterestTerm =
   (value: string) =>
@@ -1011,6 +1025,26 @@ useEffect(() => {
                     selectedInterestAreaIds,
                   selectedAreaLabels:
                     selectedInterestNames,
+                  whatsappOptIn:
+                    Boolean(
+                      normalizedPhone &&
+                      whatsappOptIn
+                    ),
+                  emailOptIn:
+                    Boolean(
+                      trimmedEmail &&
+                      emailOptIn
+                    ),
+                  preferredChannel:
+                    normalizedPhone &&
+                    whatsappOptIn
+                      ? "whatsapp"
+                      : trimmedEmail &&
+                        emailOptIn
+                        ? "email"
+                        : "",
+                  consentText:
+                    communityConsentText,
                   objective:
                     effectiveObjective,
                   source:
@@ -1082,6 +1116,8 @@ useEffect(() => {
         setFullName("")
         setPhone("")
         setEmail("")
+        setWhatsappOptIn(true)
+        setEmailOptIn(true)
         setSelectedNiches([])
         setSelectedInterestAreaIds([])
         setRegistrationStep("interests")
@@ -1965,6 +2001,110 @@ useEffect(() => {
       sm:py-4
     "
   />
+
+  <div
+    className="
+      rounded-2xl
+      border
+      border-cyan-300/15
+      bg-cyan-300/[0.05]
+      p-4
+    "
+  >
+    <p
+      className="
+        text-xs
+        font-semibold
+        uppercase
+        tracking-[0.18em]
+        text-cyan-100/75
+      "
+    >
+      Preferencias de contacto
+    </p>
+
+    <div
+      className="
+        mt-3
+        space-y-3
+      "
+    >
+      <label
+        className="
+          flex
+          items-start
+          gap-3
+          text-sm
+          leading-5
+          text-white/70
+        "
+      >
+        <input
+          type="checkbox"
+          checked={whatsappOptIn}
+          onChange={(event) =>
+            setWhatsappOptIn(
+              event.target.checked
+            )
+          }
+          className="
+            mt-1
+            h-4
+            w-4
+            rounded
+            border-white/20
+            accent-cyan-300
+          "
+        />
+        <span>
+          Acepto recibir avisos por WhatsApp sobre ideas, pruebas y lanzamientos conectados a mis intereses.
+        </span>
+      </label>
+
+      <label
+        className="
+          flex
+          items-start
+          gap-3
+          text-sm
+          leading-5
+          text-white/70
+        "
+      >
+        <input
+          type="checkbox"
+          checked={emailOptIn}
+          onChange={(event) =>
+            setEmailOptIn(
+              event.target.checked
+            )
+          }
+          className="
+            mt-1
+            h-4
+            w-4
+            rounded
+            border-white/20
+            accent-cyan-300
+          "
+        />
+        <span>
+          Acepto recibir correos breves de IMNOVA con avances, encuestas y oportunidades relevantes.
+        </span>
+      </label>
+    </div>
+
+    <p
+      className="
+        mt-3
+        text-xs
+        leading-5
+        text-white/45
+      "
+    >
+      Puedes unirte aunque desactives un canal. Usamos tus datos para relevancia, no para mensajes genericos.
+    </p>
+  </div>
 
 </div>
 

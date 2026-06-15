@@ -1651,10 +1651,21 @@ export type CommunitySubscriberAreaInterest = {
   area_description: string | null
 }
 
+export type CommunityCommunicationPreference = {
+  channel: "whatsapp" | "email"
+  opted_in: boolean
+  opted_in_at: string | null
+  opted_out_at: string | null
+  source: string | null
+  consent_text: string | null
+  updated_at: string | null
+}
+
 export type CommunitySubscriberWithInterests =
   CommunitySubscriber & {
     interests: CommunitySubscriberNormalizedInterest[]
     area_interests: CommunitySubscriberAreaInterest[]
+    communication_preferences: CommunityCommunicationPreference[]
     legacy_nichos: string[]
   }
 
@@ -2996,6 +3007,7 @@ export async function getRecentSubscribersWithInterests(
   const [
     interestsResult,
     areaInterestsResult,
+    communicationPreferencesResult,
     catalog,
     areaCatalog,
   ] =
@@ -3017,6 +3029,22 @@ export async function getRecentSubscribersWithInterests(
           subscriber_id,
           area_id,
           created_at
+        `)
+        .in(
+          "subscriber_id",
+          subscriberIds
+        ),
+      supabase
+        .from("communication_preferences")
+        .select(`
+          subscriber_id,
+          channel,
+          opted_in,
+          opted_in_at,
+          opted_out_at,
+          source,
+          consent_text,
+          updated_at
         `)
         .in(
           "subscriber_id",
@@ -3050,11 +3078,30 @@ export async function getRecentSubscribersWithInterests(
       ? []
       : (areaInterestsResult.data || []) as CommunityAreaInterestRow[]
 
+  if (communicationPreferencesResult.error) {
+    console.warn(
+      "GET RECENT SUBSCRIBERS COMMUNICATION PREFERENCES WARNING:",
+      communicationPreferencesResult.error
+    )
+  }
+
+  const communicationPreferenceRows =
+    communicationPreferencesResult.error
+      ? []
+      : (communicationPreferencesResult.data || []) as Array<
+          CommunityCommunicationPreference & {
+            subscriber_id: string | null
+          }
+        >
+
   const interestsBySubscriberId =
     new Map<string, CommunitySubscriberNormalizedInterest[]>()
 
   const areaInterestsBySubscriberId =
     new Map<string, CommunitySubscriberAreaInterest[]>()
+
+  const communicationPreferencesBySubscriberId =
+    new Map<string, CommunityCommunicationPreference[]>()
 
   interestRows.forEach(
     (interestRow) => {
@@ -3149,6 +3196,41 @@ export async function getRecentSubscribersWithInterests(
     }
   )
 
+  communicationPreferenceRows.forEach(
+    (preferenceRow) => {
+      if (!preferenceRow.subscriber_id) {
+        return
+      }
+
+      const subscriberPreferences =
+        communicationPreferencesBySubscriberId.get(
+          preferenceRow.subscriber_id
+        ) || []
+
+      subscriberPreferences.push({
+        channel:
+          preferenceRow.channel,
+        opted_in:
+          preferenceRow.opted_in,
+        opted_in_at:
+          preferenceRow.opted_in_at,
+        opted_out_at:
+          preferenceRow.opted_out_at,
+        source:
+          preferenceRow.source,
+        consent_text:
+          preferenceRow.consent_text,
+        updated_at:
+          preferenceRow.updated_at,
+      })
+
+      communicationPreferencesBySubscriberId.set(
+        preferenceRow.subscriber_id,
+        subscriberPreferences
+      )
+    }
+  )
+
   return subscribers.map(
     (subscriber) => ({
       ...subscriber,
@@ -3158,6 +3240,10 @@ export async function getRecentSubscribersWithInterests(
         ) || [],
       area_interests:
         areaInterestsBySubscriberId.get(
+          subscriber.id
+        ) || [],
+      communication_preferences:
+        communicationPreferencesBySubscriberId.get(
           subscriber.id
         ) || [],
       legacy_nichos:

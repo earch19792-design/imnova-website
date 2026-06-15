@@ -145,6 +145,8 @@ type ManualSubscriberFormData = {
   nombre: string
   telefono: string
   email: string
+  whatsapp_opt_in: boolean
+  email_opt_in: boolean
   objetivo_principal: string
 }
 
@@ -761,6 +763,8 @@ export default function AdminPage() {
     nombre: "",
     telefono: "",
     email: "",
+    whatsapp_opt_in: true,
+    email_opt_in: true,
     objetivo_principal:
       "Registro manual para comunidad WhatsApp IMNOVA.",
   })
@@ -1129,7 +1133,7 @@ export default function AdminPage() {
   const updateManualSubscriberField =
     (
       field: keyof ManualSubscriberFormData,
-      value: string
+      value: string | boolean
     ) => {
       setManualSubscriberForm(
         currentForm => ({
@@ -1574,6 +1578,26 @@ export default function AdminPage() {
                   selectedSubnicheIds:
                     selectedManualSubnicheIds,
                   selectedSubnicheNames,
+                  whatsappOptIn:
+                    Boolean(
+                      phone &&
+                      manualSubscriberForm.whatsapp_opt_in
+                    ),
+                  emailOptIn:
+                    Boolean(
+                      email &&
+                      manualSubscriberForm.email_opt_in
+                    ),
+                  preferredChannel:
+                    phone &&
+                    manualSubscriberForm.whatsapp_opt_in
+                      ? "whatsapp"
+                      : email &&
+                        manualSubscriberForm.email_opt_in
+                        ? "email"
+                        : "",
+                  consentText:
+                    "Admin confirmo permiso para recibir mensajes IMNOVA por los canales seleccionados.",
                   source:
                     "admin_manual",
                   objective:
@@ -1611,6 +1635,8 @@ export default function AdminPage() {
           nombre: "",
           telefono: "",
           email: "",
+          whatsapp_opt_in: true,
+          email_opt_in: true,
           objetivo_principal:
             "Registro manual para comunidad WhatsApp IMNOVA.",
         })
@@ -7290,6 +7316,78 @@ export default function AdminPage() {
                       </p>
                     </div>
 
+                    <div className="space-y-3 md:col-span-2">
+                      <span className="text-xs uppercase tracking-[0.25em] text-white/45">
+                        Permisos de comunicacion
+                      </span>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <label
+                          className="
+                            flex
+                            items-start
+                            gap-3
+                            rounded-2xl
+                            border
+                            border-white/10
+                            bg-black/30
+                            p-4
+                            text-sm
+                            leading-5
+                            text-white/65
+                          "
+                        >
+                          <input
+                            type="checkbox"
+                            checked={manualSubscriberForm.whatsapp_opt_in}
+                            onChange={(event) =>
+                              updateManualSubscriberField(
+                                "whatsapp_opt_in",
+                                event.target.checked
+                              )
+                            }
+                            className="mt-1 h-4 w-4 accent-cyan-300"
+                          />
+                          <span>
+                            Confirmo permiso para recibir avisos por WhatsApp segun sus intereses.
+                          </span>
+                        </label>
+
+                        <label
+                          className="
+                            flex
+                            items-start
+                            gap-3
+                            rounded-2xl
+                            border
+                            border-white/10
+                            bg-black/30
+                            p-4
+                            text-sm
+                            leading-5
+                            text-white/65
+                          "
+                        >
+                          <input
+                            type="checkbox"
+                            checked={manualSubscriberForm.email_opt_in}
+                            onChange={(event) =>
+                              updateManualSubscriberField(
+                                "email_opt_in",
+                                event.target.checked
+                              )
+                            }
+                            className="mt-1 h-4 w-4 accent-cyan-300"
+                          />
+                          <span>
+                            Confirmo permiso para recibir correos breves de IMNOVA.
+                          </span>
+                        </label>
+                      </div>
+                      <p className="text-xs leading-5 text-white/35">
+                        Si un canal no tiene permiso, desactivalo. El contacto se guarda, pero no debe entrar en futuras audiencias de mensajes.
+                      </p>
+                    </div>
+
                     <label className="space-y-2 md:col-span-2">
                       <span className="text-xs uppercase tracking-[0.25em] text-white/45">
                         Contexto / consentimiento
@@ -7471,6 +7569,18 @@ export default function AdminPage() {
                             const legacyInterests =
                               subscriber.legacy_nichos || []
 
+                            const whatsappPreference =
+                              subscriber.communication_preferences.find(
+                                (preference) =>
+                                  preference.channel === "whatsapp"
+                              )
+
+                            const emailPreference =
+                              subscriber.communication_preferences.find(
+                                (preference) =>
+                                  preference.channel === "email"
+                              )
+
                             const countryLabel =
                               getCommunityCountryLabel(
                                 subscriber.telefono
@@ -7505,6 +7615,35 @@ export default function AdminPage() {
                                         {countryLabel}
                                       </p>
                                     )}
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      {subscriber.telefono && (
+                                        <span
+                                          className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.16em] ${
+                                            whatsappPreference?.opted_in
+                                              ? "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-100/75"
+                                              : "border-amber-300/20 bg-amber-300/[0.08] text-amber-100/70"
+                                          }`}
+                                        >
+                                          {whatsappPreference?.opted_in
+                                            ? "WhatsApp autorizado"
+                                            : "WhatsApp sin permiso"}
+                                        </span>
+                                      )}
+
+                                      {subscriber.email && (
+                                        <span
+                                          className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.16em] ${
+                                            emailPreference?.opted_in
+                                              ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100/75"
+                                              : "border-white/10 bg-white/[0.04] text-white/40"
+                                          }`}
+                                        >
+                                          {emailPreference?.opted_in
+                                            ? "Email autorizado"
+                                            : "Email sin permiso"}
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                   <span className="rounded-full border border-cyan-300/20 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-cyan-100/60">
                                     {formatCommunityDate(

@@ -19,6 +19,10 @@ type CommunityRegisterPayload = {
   selectedSubnicheNames?: unknown
   selectedAreaKeys?: unknown
   selectedAreaLabels?: unknown
+  whatsappOptIn?: unknown
+  emailOptIn?: unknown
+  preferredChannel?: unknown
+  consentText?: unknown
   objective?: unknown
   source?: unknown
   honeypot?: unknown
@@ -49,9 +53,20 @@ type CommunitySubscriberPayload = {
   objetivo_principal: string
 }
 
+type CommunicationChannel =
+  | "whatsapp"
+  | "email"
+
+type CommunicationPreferenceInput = {
+  channel: CommunicationChannel
+  optedIn: boolean
+}
+
 const MAX_SELECTED_SUBNICHES = 25
 const MAX_LEGACY_INTEREST_NAMES = 5
 const MAX_SELECTED_AREAS = 3
+const DEFAULT_COMMUNITY_CONSENT_TEXT =
+  "Acepto recibir avisos de IMNOVA por los canales seleccionados, conectados a mis intereses. Sin spam ni mensajes genericos."
 
 const publicInterestAreas = [
   {
@@ -171,6 +186,12 @@ function getSupabaseAdminClient() {
 function getWelcomeWarnings() {
   const warnings: string[] = []
 
+  if (!isCommunityWelcomeEnabled()) {
+    warnings.push(
+      "whatsapp_welcome_disabled"
+    )
+  }
+
   if (!hasWhatsAppWelcomeConfig()) {
     warnings.push(
       "whatsapp_welcome_not_configured"
@@ -187,6 +208,11 @@ function getWelcomeWarnings() {
   }
 
   return warnings
+}
+
+function isCommunityWelcomeEnabled() {
+  return process.env.COMMUNITY_WELCOME_MESSAGES_ENABLED ===
+    "true"
 }
 
 function hasWhatsAppWelcomeConfig() {
@@ -215,6 +241,48 @@ function getStringArray(
   return value
     .map(getString)
     .filter(Boolean)
+}
+
+function getBoolean(
+  value: unknown,
+  fallback = false
+) {
+  if (typeof value === "boolean") {
+    return value
+  }
+
+  if (typeof value === "number") {
+    return value === 1
+  }
+
+  const normalizedValue =
+    getString(value)
+      .toLowerCase()
+
+  if (
+    [
+      "true",
+      "1",
+      "yes",
+      "si",
+      "on",
+    ].includes(normalizedValue)
+  ) {
+    return true
+  }
+
+  if (
+    [
+      "false",
+      "0",
+      "no",
+      "off",
+    ].includes(normalizedValue)
+  ) {
+    return false
+  }
+
+  return fallback
 }
 
 function getUniqueStringArray(
@@ -321,6 +389,39 @@ function isValidWhatsApp(
 
   return digits.length >= 8 &&
     digits.length <= 15
+}
+
+function normalizePreferredChannel(
+  value: unknown,
+  whatsappOptIn: boolean,
+  emailOptIn: boolean
+): CommunicationChannel | null {
+  const preferredChannel =
+    getString(value).toLowerCase()
+
+  if (
+    preferredChannel === "whatsapp" &&
+    whatsappOptIn
+  ) {
+    return "whatsapp"
+  }
+
+  if (
+    preferredChannel === "email" &&
+    emailOptIn
+  ) {
+    return "email"
+  }
+
+  if (whatsappOptIn) {
+    return "whatsapp"
+  }
+
+  if (emailOptIn) {
+    return "email"
+  }
+
+  return null
 }
 
 function createErrorResponse(
@@ -816,6 +917,76 @@ async function createMissingSubscriberAreaInterests(
   }
 }
 
+async function upsertCommunicationPreferences(
+  supabase: SupabaseClient,
+  subscriberId: string,
+  preferences: CommunicationPreferenceInput[],
+  source: CommunityRegisterSource,
+  consentText: string
+) {
+  if (preferences.length === 0) {
+    return {
+      saved: true,
+      count: 0,
+      error: null,
+    }
+  }
+
+  const now =
+    new Date().toISOString()
+
+  const preferenceRows =
+    preferences.map(
+      preference => ({
+        subscriber_id:
+          subscriberId,
+        channel:
+          preference.channel,
+        opted_in:
+          preference.optedIn,
+        opted_in_at:
+          preference.optedIn
+            ? now
+            : null,
+        opted_out_at:
+          preference.optedIn
+            ? null
+            : now,
+        source,
+        consent_text:
+          consentText,
+        updated_at:
+          now,
+      })
+    )
+
+  const { error } =
+    await supabase
+      .from("communication_preferences")
+      .upsert(
+        preferenceRows,
+        {
+          onConflict:
+            "subscriber_id,channel",
+        }
+      )
+
+  if (error) {
+    return {
+      saved: false,
+      count: 0,
+      error,
+    }
+  }
+
+  return {
+    saved: true,
+    count:
+      preferenceRows.length,
+    error: null,
+  }
+}
+
 export async function POST(
   req: Request
 ) {
@@ -883,6 +1054,31 @@ export async function POST(
       body.whatsapp,
       body.country
     )
+
+  const whatsappOptIn =
+    Boolean(whatsapp) &&
+    getBoolean(
+      body.whatsappOptIn,
+      false
+    )
+
+  const emailOptIn =
+    Boolean(email) &&
+    getBoolean(
+      body.emailOptIn,
+      false
+    )
+
+  const preferredChannel =
+    normalizePreferredChannel(
+      body.preferredChannel,
+      whatsappOptIn,
+      emailOptIn
+    )
+
+  const consentText =
+    getString(body.consentText) ||
+    DEFAULT_COMMUNITY_CONSENT_TEXT
 
   const objective =
     getString(body.objective) ||
@@ -1043,6 +1239,30 @@ export async function POST(
       warnings
     )
   }
+
+  const communicationPreferences: CommunicationPreferenceInput[] =
+    [
+      ...(whatsapp
+        ? [
+            {
+              channel:
+                "whatsapp" as const,
+              optedIn:
+                whatsappOptIn,
+            },
+          ]
+        : []),
+      ...(email
+        ? [
+            {
+              channel:
+                "email" as const,
+              optedIn:
+                emailOptIn,
+            },
+          ]
+        : []),
+    ]
 
   if (
     !getSupabaseUrl() ||
@@ -1321,11 +1541,38 @@ export async function POST(
       }
     }
 
+    const preferenceSaveResult =
+      await upsertCommunicationPreferences(
+        supabase,
+        subscriberId,
+        communicationPreferences,
+        source,
+        consentText
+      )
+
+    if (!preferenceSaveResult.saved) {
+      console.warn(
+        "COMMUNITY REGISTER COMMUNICATION PREFERENCES WARNING:",
+        preferenceSaveResult.error
+      )
+
+      warnings.push(
+        "communication_preferences_not_saved"
+      )
+    }
+
     if (
       source === "community_popup" &&
       whatsapp
     ) {
-      if (hasWhatsAppWelcomeConfig()) {
+      if (!whatsappOptIn) {
+        warnings.push(
+          "whatsapp_consent_not_granted"
+        )
+      } else if (
+        isCommunityWelcomeEnabled() &&
+        hasWhatsAppWelcomeConfig()
+      ) {
         const welcomeResult =
           await sendWhatsAppWelcome({
             phone:
@@ -1341,6 +1588,16 @@ export async function POST(
 
           warnings.push(
             "whatsapp_welcome_failed"
+          )
+        }
+      } else if (!isCommunityWelcomeEnabled()) {
+        if (
+          !warnings.includes(
+            "whatsapp_welcome_disabled"
+          )
+        ) {
+          warnings.push(
+            "whatsapp_welcome_disabled"
           )
         }
       } else if (
@@ -1367,6 +1624,12 @@ export async function POST(
         areaInterestsSaved,
       area_interests_added_count:
         areaInterestsAddedCount,
+      communication_preferences_saved:
+        preferenceSaveResult.saved,
+      communication_preferences_count:
+        preferenceSaveResult.count,
+      preferred_channel:
+        preferredChannel,
       warnings,
     })
   } catch (error) {
