@@ -23,7 +23,7 @@ export function Sidebar({
     {
       label: "Dashboard",
       description:
-        "Resumen ejecutivo, alertas y acciones prioritarias.",
+        "Resumen ejecutivo y acciones de hoy.",
       step: "01",
       icon: LayoutDashboard,
       value: "dashboard",
@@ -31,7 +31,7 @@ export function Sidebar({
     {
       label: "Productos",
       description:
-        "Orquesta estados y abre el detalle para configurar.",
+        "Estados, detalle, contenido y canales.",
       step: "02",
       icon: Package,
       value: "products",
@@ -39,15 +39,15 @@ export function Sidebar({
     {
       label: "Campanas",
       description:
-        "Gestiona acciones de validacion y crecimiento.",
+        "Acciones de validacion y crecimiento.",
       step: "03",
       icon: Activity,
       value: "campaigns",
     },
     {
-      label: "Comunidad",
+      label: "Comunidad OS",
       description:
-        "Agrega contactos WhatsApp y crecimiento manual.",
+        "Miembros, intereses, demanda, votos y Radar.",
       step: "04",
       icon: UsersRound,
       value: "community",
@@ -55,7 +55,7 @@ export function Sidebar({
     {
       label: "Analytics",
       description:
-        "Lee senales, rendimiento y aprendizaje operativo.",
+        "Lectura de rendimiento y aprendizaje.",
       step: "05",
       icon: BarChart3,
       value: "analytics",
@@ -305,10 +305,10 @@ export function Sidebar({
             "
           >
             {[
-              "Revisar senales",
-              "Ordenar productos",
-              "Completar detalle",
-              "Notificar manual",
+              "Revisar prioridad",
+              "Completar datos",
+              "Validar demanda",
+              "Comunicar con permiso",
             ].map((step, index) => (
               <div
                 key={step}

@@ -505,35 +505,35 @@ const MAX_MANUAL_COMMUNITY_INTERESTS =
 const adminMenuGuides = {
   dashboard: {
     title:
-      "Empieza por las senales y la prioridad.",
+      "Empieza por prioridad, no por edicion.",
     description:
-      "Usa esta vista para decidir que requiere atencion hoy antes de entrar a editar productos.",
+      "Usa esta vista para decidir que requiere atencion hoy antes de abrir formularios o mover estados.",
     steps: [
-      "Revisa metricas generales y validacion comunitaria.",
-      "Abre los productos listos para avanzar, pendientes o en ajuste.",
-      "Despues entra al detalle para completar informacion y tomar accion.",
+      "Revisa productos, estados, validacion y alertas del sistema.",
+      "Identifica si la accion pertenece a Producto, Comunidad OS o Campanas.",
+      "Entra al detalle solo cuando tengas claro que campo o decision falta.",
     ],
     reminder:
-      "El dashboard orienta decisiones; la edicion profunda vive en el detalle del producto.",
+      "Dashboard orienta; las acciones sensibles se confirman en el modulo correspondiente.",
   },
   products: {
     title:
-      "Ordena el pipeline sin disparar notificaciones.",
+      "Configura productos antes de publicar.",
     description:
-      "Esta lista sirve para encontrar productos, asignar estado y entrar al detalle cuando toque configurar informacion.",
+      "Esta lista sirve para encontrar productos, revisar estados y abrir el detalle para completar clasificacion, contenido, Store y notificaciones.",
     steps: [
       "Filtra por estado o busqueda para ubicar el producto.",
-      "Cambia estado solo cuando la informacion este revisada.",
-      "Usa Ver detalle para configurar validacion, contenido, comercializacion y notificaciones.",
+      "Abre Ver detalle para completar nicho, contenido, precio, canales y uso.",
+      "Cambia a Disponible solo cuando el producto tenga informacion publica suficiente.",
     ],
     reminder:
-      "Guardar estado desde Productos no envia WhatsApp. Las notificaciones son manuales desde el detalle.",
+      "Cambiar estado no debe enviar mensajes automaticos. Las comunicaciones pasan por revision manual.",
   },
   campaigns: {
     title:
-      "Activa campanas con una intencion clara.",
+      "Registra esfuerzos, no decisiones automaticas.",
     description:
-      "Usa Campanas para registrar esfuerzos de validacion, comunidad o crecimiento ligados a ideas y productos.",
+      "Usa Campanas para documentar acciones de validacion, comunidad o crecimiento ligadas a ideas y productos.",
     steps: [
       "Define si la campana valida una idea o impulsa un producto.",
       "Registra canal, estado y leads para mantener lectura operativa.",
@@ -544,22 +544,22 @@ const adminMenuGuides = {
   },
   community: {
     title:
-      "Lee comunidad e intereses antes de decidir.",
+      "Convierte comunidad en inteligencia.",
     description:
-      "Usa esta vista para registrar miembros, normalizar intereses y cruzar demanda real contra productos disponibles.",
+      "Aqui viven miembros, permisos, intereses, demanda vs productos, votaciones reales, Radar de tendencias e Idea Lab interno.",
     steps: [
-      "Revisa las metricas de comunidad e identifica los nichos con mas seleccion.",
-      "Distingue areas generales del popup y subnichos especificos del Admin.",
-      "Usa Demanda vs Productos solo para priorizar con subnichos especificos.",
+      "Revisa miembros, areas generales, subnichos especificos y permisos WhatsApp/email.",
+      "Usa Demanda vs Productos y Votacion real para priorizar oportunidades.",
+      "Registra senales en Radar y convierte solo candidatas en ideas internas.",
     ],
     reminder:
-      "subscriber_area_interests mide intereses generales; subscriber_interests mide subnichos especificos.",
+      "Nada aqui publica Home, crea producto o envia mensajes sin accion manual y consentimiento.",
   },
   analytics: {
     title:
-      "Lee aprendizaje antes de escalar.",
+      "Lee aprendizaje antes de escalar inversion.",
     description:
-      "Analytics resume rendimiento por canal y volumen para detectar que merece mas atencion.",
+      "Analytics resume rendimiento por canal y volumen. Es lectura secundaria para comparar traccion.",
     steps: [
       "Compara canales activos y senales generadas.",
       "Identifica donde hay traccion real antes de invertir mas.",
@@ -820,6 +820,18 @@ export default function AdminPage() {
     trendRadarError,
     setTrendRadarError,
   ] = useState("")
+
+  const [
+    trendRadarFieldErrors,
+    setTrendRadarFieldErrors,
+  ] = useState<
+    Partial<
+      Record<
+        keyof TrendRadarManualFormData,
+        string
+      >
+    >
+  >({})
 
   const [
     validationIdea,
@@ -1148,6 +1160,22 @@ export default function AdminPage() {
       field: keyof TrendRadarManualFormData,
       value: string
     ) => {
+      setTrendRadarFieldErrors(
+        currentErrors => {
+          if (!currentErrors[field]) {
+            return currentErrors
+          }
+
+          const nextErrors = {
+            ...currentErrors,
+          }
+
+          delete nextErrors[field]
+
+          return nextErrors
+        }
+      )
+
       setTrendRadarForm(
         currentForm => ({
           ...currentForm,
@@ -1162,6 +1190,17 @@ export default function AdminPage() {
         })
       )
     }
+
+  const getTrendRadarFieldClassName =
+    (
+      field: keyof TrendRadarManualFormData,
+      extraClassName = ""
+    ) =>
+      `w-full rounded-2xl border bg-black/40 px-4 py-3 text-sm text-white outline-none ${
+        trendRadarFieldErrors[field]
+          ? "border-red-300/60"
+          : "border-white/10"
+      } ${extraClassName}`
 
   const trendRadarSubnicheOptions =
     useMemo(
@@ -1200,12 +1239,44 @@ export default function AdminPage() {
         !summary ||
         !source
       ) {
+        const nextFieldErrors: Partial<
+          Record<
+            keyof TrendRadarManualFormData,
+            string
+          >
+        > = {}
+
+        if (!title) {
+          nextFieldErrors.title =
+            "Completa el titulo de la senal."
+        }
+
+        if (!summary) {
+          nextFieldErrors.summary =
+            "Completa el resumen de la senal."
+        }
+
+        if (!source) {
+          nextFieldErrors.source =
+            "Completa la fuente de la senal."
+        }
+
+        const missingFields = [
+          !title ? "titulo" : "",
+          !summary ? "resumen" : "",
+          !source ? "fuente" : "",
+        ].filter(Boolean)
+
         setTrendRadarError(
-          "Titulo, resumen y fuente son obligatorios."
+          `No se ejecuto la accion "Agregar senal al radar" porque falta completar: ${missingFields.join(", ")}.`
+        )
+        setTrendRadarFieldErrors(
+          nextFieldErrors
         )
         return
       }
 
+      setTrendRadarFieldErrors({})
       setIsSavingTrendRadarSignal(true)
 
       try {
@@ -1249,6 +1320,7 @@ export default function AdminPage() {
         setTrendRadarForm(
           EMPTY_TREND_RADAR_FORM
         )
+        setTrendRadarFieldErrors({})
 
         setTrendRadarMessage(
           "Senal agregada al Radar. Revisala antes de convertirla en idea."
@@ -2573,7 +2645,7 @@ export default function AdminPage() {
                   : selectedMenu === "campaigns"
                   ? "Campañas"
                   : selectedMenu === "community"
-                  ? "Comunidad"
+                  ? "Comunidad OS"
                   : selectedMenu === "analytics"
                   ? "Analytics"
                   : "IMNOVA"
@@ -2598,7 +2670,7 @@ export default function AdminPage() {
                   : selectedMenu === "analytics"
                   ? "Métricas, rendimiento y crecimiento del ecosistema."
                   : selectedMenu === "community"
-                  ? "Resumen de miembros, intereses normalizados y demanda de la comunidad IMNOVA."
+                  ? "Miembros, permisos, intereses, demanda, votaciones, Radar e ideas internas."
                   : "IMNOVA OS"
               }
             </p>
@@ -5467,6 +5539,84 @@ export default function AdminPage() {
                 className="
                   rounded-[34px]
                   border
+                  border-white/10
+                  bg-black/30
+                  p-6
+                  md:p-8
+                "
+              >
+                <p className="text-xs uppercase tracking-[0.32em] text-cyan-100/55">
+                  Mapa de Comunidad OS
+                </p>
+                <h2 className="mt-4 text-3xl font-black text-white">
+                  Orden recomendado para leer esta vista
+                </h2>
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-white/50">
+                  Esta pantalla combina captura, analisis y preparacion de oportunidades. Ningun bloque publica productos, cambia estados o envia mensajes por si solo.
+                </p>
+
+                <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {[
+                    [
+                      "01",
+                      "Comunidad e intereses",
+                      "Cuantos miembros hay, que areas eligen y que permisos de contacto tienen.",
+                    ],
+                    [
+                      "02",
+                      "Demanda vs Productos",
+                      "Cruza subnichos especificos con productos y encuestas para detectar oportunidades.",
+                    ],
+                    [
+                      "03",
+                      "Votacion real",
+                      "Mide intencion directa: me interesa, no me interesa, lo compraria o quiero prueba.",
+                    ],
+                    [
+                      "04",
+                      "Radar de tendencias",
+                      "Registra senales externas o internas. Primero se revisan, luego pueden pasar a candidata.",
+                    ],
+                    [
+                      "05",
+                      "Idea Lab interno",
+                      "Guarda borradores creados desde senales candidatas. No aparecen en Home ni Store.",
+                    ],
+                    [
+                      "06",
+                      "Registro manual",
+                      "Agrega contactos solo con permiso y con intereses normalizados.",
+                    ],
+                  ].map(([step, title, description]) => (
+                    <div
+                      key={step}
+                      className="
+                        rounded-3xl
+                        border
+                        border-white/10
+                        bg-white/[0.035]
+                        p-5
+                      "
+                    >
+                      <span className="text-[10px] uppercase tracking-[0.22em] text-cyan-100/45">
+                        Paso {step}
+                      </span>
+                      <h3 className="mt-3 text-sm font-bold text-white">
+                        {title}
+                      </h3>
+                      <p className="mt-2 text-xs leading-5 text-white/45">
+                        {description}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section
+                className="
+                  mt-8
+                  rounded-[34px]
+                  border
                   border-cyan-300/15
                   bg-white/[0.035]
                   p-6
@@ -6675,7 +6825,7 @@ export default function AdminPage() {
                           <div className="mt-6 space-y-4">
                             <label className="block space-y-2">
                               <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
-                                Titulo
+                                Titulo obligatorio
                               </span>
                               <input
                                 value={trendRadarForm.title}
@@ -6686,13 +6836,23 @@ export default function AdminPage() {
                                   )
                                 }
                                 placeholder="Ej: Cafe funcional con colageno"
-                                className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none"
+                                className={getTrendRadarFieldClassName(
+                                  "title"
+                                )}
                               />
+                              <p className="text-xs leading-5 text-white/35">
+                                Nombre corto de la senal. Debe entenderse en una lectura rapida.
+                              </p>
+                              {trendRadarFieldErrors.title && (
+                                <p className="text-xs leading-5 text-red-200">
+                                  {trendRadarFieldErrors.title}
+                                </p>
+                              )}
                             </label>
 
                             <label className="block space-y-2">
                               <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
-                                Resumen
+                                Resumen obligatorio
                               </span>
                               <textarea
                                 value={trendRadarForm.summary}
@@ -6704,14 +6864,25 @@ export default function AdminPage() {
                                 }
                                 placeholder="Que se esta viendo, por que importa y que evidencia existe."
                                 rows={4}
-                                className="w-full resize-none rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm leading-6 text-white outline-none"
+                                className={getTrendRadarFieldClassName(
+                                  "summary",
+                                  "resize-none leading-6"
+                                )}
                               />
+                              <p className="text-xs leading-5 text-white/35">
+                                Explica que ocurre, por que podria importar y que oportunidad abre para IMNOVA.
+                              </p>
+                              {trendRadarFieldErrors.summary && (
+                                <p className="text-xs leading-5 text-red-200">
+                                  {trendRadarFieldErrors.summary}
+                                </p>
+                              )}
                             </label>
 
                             <div className="grid gap-4 sm:grid-cols-2">
                               <label className="block space-y-2">
                                 <span className="text-[10px] uppercase tracking-[0.18em] text-white/40">
-                                  Fuente
+                                  Fuente obligatoria
                                 </span>
                                 <input
                                   value={trendRadarForm.source}
@@ -6722,8 +6893,18 @@ export default function AdminPage() {
                                     )
                                   }
                                   placeholder="Google Trends, TikTok, Amazon..."
-                                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none"
+                                  className={getTrendRadarFieldClassName(
+                                    "source"
+                                  )}
                                 />
+                                <p className="text-xs leading-5 text-white/35">
+                                  Donde viste la senal: plataforma, reporte, tienda, cliente o comunidad.
+                                </p>
+                                {trendRadarFieldErrors.source && (
+                                  <p className="text-xs leading-5 text-red-200">
+                                    {trendRadarFieldErrors.source}
+                                  </p>
+                                )}
                               </label>
 
                               <label className="block space-y-2">
@@ -6751,6 +6932,9 @@ export default function AdminPage() {
                                     )
                                   )}
                                 </select>
+                                <p className="text-xs leading-5 text-white/35">
+                                  Clasifica que tipo de oportunidad representa para priorizarla mejor.
+                                </p>
                               </label>
                             </div>
 
@@ -6780,6 +6964,9 @@ export default function AdminPage() {
                                     )
                                   )}
                                 </select>
+                                <p className="text-xs leading-5 text-white/35">
+                                  1 = debil o inicial. 5 = repetida, clara y con evidencia fuerte.
+                                </p>
                               </label>
 
                               <label className="block space-y-2">
@@ -6807,6 +6994,9 @@ export default function AdminPage() {
                                     )
                                   )}
                                 </select>
+                                <p className="text-xs leading-5 text-white/35">
+                                  Evalua regulacion, promesas sensibles, costo, evidencia o complejidad.
+                                </p>
                               </label>
                             </div>
 
@@ -6839,6 +7029,9 @@ export default function AdminPage() {
                                     )
                                   )}
                                 </select>
+                                <p className="text-xs leading-5 text-white/35">
+                                  Si sabes a que nicho pertenece, seleccionalo. No es obligatorio.
+                                </p>
                               </label>
 
                               <label className="block space-y-2">
@@ -6870,6 +7063,9 @@ export default function AdminPage() {
                                     )
                                   )}
                                 </select>
+                                <p className="text-xs leading-5 text-white/35">
+                                  Solo aparece despues de elegir nicho. Ayuda a conectar la senal con demanda futura.
+                                </p>
                               </label>
                             </div>
 
@@ -6888,6 +7084,9 @@ export default function AdminPage() {
                                 placeholder="https://..."
                                 className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none"
                               />
+                              <p className="text-xs leading-5 text-white/35">
+                                Link de referencia si existe. No se publica en Home.
+                              </p>
                             </label>
 
                             <label className="block space-y-2">
@@ -6903,8 +7102,12 @@ export default function AdminPage() {
                                   )
                                 }
                                 rows={3}
+                                placeholder="Ej: Se repite en comentarios de usuarios y aparece en productos mejor vendidos."
                                 className="w-full resize-none rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm leading-6 text-white outline-none"
                               />
+                              <p className="text-xs leading-5 text-white/35">
+                                Resume la evidencia de forma humana para que otro Admin pueda entenderla despues.
+                              </p>
                             </label>
 
                             <div className="grid gap-4 sm:grid-cols-2">
@@ -6920,8 +7123,12 @@ export default function AdminPage() {
                                       event.target.value
                                     )
                                   }
+                                  placeholder="Ej: Cafe funcional con colageno y vitaminas"
                                   className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none"
                                 />
+                                <p className="text-xs leading-5 text-white/35">
+                                  Idea posible, no producto oficial todavia.
+                                </p>
                               </label>
 
                               <label className="block space-y-2">
@@ -6936,8 +7143,12 @@ export default function AdminPage() {
                                       event.target.value
                                     )
                                   }
+                                  placeholder="Ej: Marcar como candidata y validar con comunidad."
                                   className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none"
                                 />
+                                <p className="text-xs leading-5 text-white/35">
+                                  Que recomiendas hacer: observar, descartar, investigar o convertir en candidata.
+                                </p>
                               </label>
                             </div>
 
@@ -7491,8 +7702,8 @@ export default function AdminPage() {
                     </p>
                     <div className="mt-6 space-y-3 text-sm text-white/55">
                       <p>1. Confirma permiso para recibir mensajes.</p>
-                      <p>2. Registra WhatsApp y nicho de interes.</p>
-                      <p>3. Usa el detalle del producto para notificaciones manuales.</p>
+                      <p>2. Registra contacto, permisos y subnichos de interes.</p>
+                      <p>3. Envia comunicaciones solo desde el detalle y solo con consentimiento.</p>
                     </div>
                   </div>
 

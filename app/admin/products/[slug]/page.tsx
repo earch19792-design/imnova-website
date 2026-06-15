@@ -3357,14 +3357,7 @@ export default function ProductDetailPage() {
             product.state_id
         )?.name || ""
 
-      const selectedStateProgress =
-        states.find(
-          state =>
-            state.id ===
-            formData.state_id
-        )?.progress || 0
-
-      const shouldAutoSendLaunchNotification =
+      const shouldShowLaunchNotificationPrompt =
         normalizeLabel(
           selectedStateName
         ).includes("disponible") &&
@@ -3694,137 +3687,11 @@ export default function ProductDetailPage() {
           "Producto actualizado correctamente"
         )
 
-        if (shouldAutoSendLaunchNotification) {
-          setIsSendingNotification(true)
-          setNotificationMessage("")
+        if (shouldShowLaunchNotificationPrompt) {
           setNotificationError("")
-
-          try {
-            const {
-              data: sessionData,
-              error: sessionError,
-            } =
-              await supabase.auth.getSession()
-
-            const accessToken =
-              sessionData.session?.access_token
-
-            if (
-              sessionError ||
-              !accessToken
-            ) {
-              setNotificationError(
-                "Producto disponible guardado, pero no se pudo enviar WhatsApp porque la sesion Admin expiro."
-              )
-            } else {
-              const response =
-                await fetch(
-                  "/api/innova-lab",
-                  {
-                    method:
-                      "POST",
-                    headers: {
-                      "Content-Type":
-                        "application/json",
-                      Authorization:
-                        `Bearer ${accessToken}`,
-                    },
-                    body:
-                      JSON.stringify({
-                        productId:
-                          product.id,
-                        product:
-                          name,
-                        status:
-                          selectedStateName,
-                        progress:
-                          `${selectedStateProgress}%`,
-                        imageUrl:
-                          formData.image_url.trim() ||
-                          product.image ||
-                          "",
-                        source:
-                          "admin_product_available_auto",
-                        triggeredBy:
-                          "admin",
-                      }),
-                  }
-                )
-
-              const text =
-                await response.text()
-
-              let payload:
-                | {
-                    success?: boolean
-                    warning?: string
-                    error?: string
-                    targeting?: {
-                      phoneCount?: number
-                      emailCount?: number
-                    }
-                    result?: {
-                      error?: string
-                    }
-                    emailResult?: {
-                      error?: string
-                      total?: number
-                      successful?: number
-                      failed?: number
-                    }
-                  }
-                | null = null
-
-              if (text) {
-                try {
-                  payload =
-                    JSON.parse(text)
-                } catch {
-                  payload = null
-                }
-              }
-
-              if (
-                response.ok &&
-                payload?.success === true
-              ) {
-                if (
-                  payload.warning ===
-                  "product_launch_already_notified"
-                ) {
-                  setNotificationMessage(
-                    "Producto disponible. El lanzamiento ya habia sido notificado antes, no se envio duplicado."
-                  )
-                } else {
-                  const segmentedPhoneCount =
-                    payload.targeting?.phoneCount
-                  const segmentedEmailCount =
-                    payload.targeting?.emailCount
-                  const emailSuccessfulCount =
-                    payload.emailResult?.successful
-
-                  setNotificationMessage(
-                    `Lanzamiento enviado automaticamente. Audiencia por intereses: ${segmentedPhoneCount ?? 0} telefono${segmentedPhoneCount === 1 ? "" : "s"} y ${segmentedEmailCount ?? 0} correo${segmentedEmailCount === 1 ? "" : "s"}. Correos enviados: ${emailSuccessfulCount ?? 0}.`
-                  )
-                }
-              } else {
-                setNotificationError(
-                  payload?.error ||
-                    payload?.result?.error ||
-                    "Producto disponible guardado, pero Meta no confirmo el WhatsApp de lanzamiento."
-                )
-              }
-            }
-          } catch {
-            setNotificationError(
-              "Producto disponible guardado, pero hubo error de conexion al enviar WhatsApp."
-            )
-          } finally {
-            await loadNotificationLogs(
-              product.id
-            )
-            setIsSendingNotification(false)
-          }
+          setNotificationMessage(
+            "Producto disponible guardado. No se envio ningun mensaje automatico. Revisa Notificaciones y usa Envio manual cuando la audiencia, plantilla y consentimiento esten confirmados."
+          )
         }
       } catch {
         setSaveError(
@@ -7074,7 +6941,7 @@ export default function ProductDetailPage() {
               </label>
 
               <label
-                data-product-field="benefits"
+                data-product-field="routine_suggestion"
                 className="rounded-3xl border border-white/10 bg-black/25 p-5"
               >
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
@@ -7094,14 +6961,17 @@ export default function ProductDetailPage() {
                   placeholder={"Agitalo bien antes de tomar.\nSirvelo frio sobre hielo.\nAnade tu leche favorita."}
                   rows={6}
                   className={getValidatedInputClassName(
-                    "benefits",
+                    "routine_suggestion",
                     "resize-none leading-6"
                   )}
                 />
-                {renderFieldError("benefits")}
+                {renderFieldError("routine_suggestion")}
               </label>
 
-              <label className="rounded-3xl border border-white/10 bg-black/25 p-5">
+              <label
+                data-product-field="benefits"
+                className="rounded-3xl border border-white/10 bg-black/25 p-5"
+              >
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">
                   Beneficios
                 </span>
@@ -7119,8 +6989,12 @@ export default function ProductDetailPage() {
                   }
                   placeholder={"Cafe funcional\nVitaminas y colageno marino\nSin azucar"}
                   rows={6}
-                  className={`${inputClassName} resize-none leading-6`}
+                  className={getValidatedInputClassName(
+                    "benefits",
+                    "resize-none leading-6"
+                  )}
                 />
+                {renderFieldError("benefits")}
               </label>
 
               <label className="rounded-3xl border border-white/10 bg-black/25 p-5">
@@ -7348,7 +7222,8 @@ export default function ProductDetailPage() {
                 </p>
                 <p className="mt-3 text-sm leading-6 text-white/55">
                   Usa el estado guardado del producto. Si editas el estado,
-                  primero guarda los cambios.
+                  primero guarda los cambios. La audiencia se filtra por
+                  intereses normalizados y permiso de contacto registrado.
                 </p>
 
                 <button

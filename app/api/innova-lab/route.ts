@@ -57,6 +57,10 @@ type ProductLaunchTargeting = {
   warning?: string
 }
 
+type CommunicationChannel =
+  | "whatsapp"
+  | "email"
+
 type WhatsAppResult =
   Awaited<ReturnType<typeof sendWhatsAppUpdate>>
 
@@ -485,7 +489,7 @@ async function getCommunityRecipientPhones(
   const { data, error } =
     await supabaseClient
       .from("subscribers")
-      .select("telefono")
+      .select("id, telefono")
       .not("telefono", "is", null)
       .limit(500)
 
@@ -498,7 +502,32 @@ async function getCommunityRecipientPhones(
     return []
   }
 
+  const subscriberIds =
+    (data || [])
+      .map(subscriber =>
+        typeof subscriber.id === "string"
+          ? subscriber.id
+          : ""
+      )
+      .filter(Boolean)
+
+  const {
+    subscriberIds:
+      whatsappOptedInSubscriberIds,
+  } =
+    await getOptedInSubscriberIdsByChannel(
+      supabaseClient,
+      subscriberIds,
+      "whatsapp"
+    )
+
   return (data || [])
+    .filter(subscriber =>
+      typeof subscriber.id === "string" &&
+      whatsappOptedInSubscriberIds.has(
+        subscriber.id
+      )
+    )
     .map((subscriber) =>
       typeof subscriber.telefono === "string"
         ? subscriber.telefono
@@ -506,6 +535,66 @@ async function getCommunityRecipientPhones(
     )
     .filter(Boolean)
 
+}
+
+async function getOptedInSubscriberIdsByChannel(
+  supabaseClient: SupabaseClient,
+  subscriberIds: string[],
+  channel: CommunicationChannel
+) {
+  if (subscriberIds.length === 0) {
+    return {
+      subscriberIds:
+        new Set<string>(),
+      warning: null,
+    }
+  }
+
+  const { data, error } =
+    await supabaseClient
+      .from("communication_preferences")
+      .select("subscriber_id")
+      .in(
+        "subscriber_id",
+        subscriberIds
+      )
+      .eq(
+        "channel",
+        channel
+      )
+      .eq(
+        "opted_in",
+        true
+      )
+
+  if (error) {
+    console.error(
+      "GET OPTED-IN COMMUNICATION PREFERENCES ERROR:",
+      error
+    )
+
+    return {
+      subscriberIds:
+        new Set<string>(),
+      warning:
+        "communication_preferences_lookup_failed",
+    }
+  }
+
+  return {
+    subscriberIds:
+      new Set(
+        (data || [])
+          .map(row =>
+            typeof row.subscriber_id ===
+            "string"
+              ? row.subscriber_id
+              : ""
+          )
+          .filter(Boolean)
+      ),
+    warning: null,
+  }
 }
 
 async function getProductLaunchRecipientPhones(
@@ -749,10 +838,38 @@ async function getProductLaunchRecipientPhones(
     }
   }
 
+  const [
+    whatsappOptInResult,
+    emailOptInResult,
+  ] =
+    await Promise.all([
+      getOptedInSubscriberIdsByChannel(
+        supabaseClient,
+        subscriberIds,
+        "whatsapp"
+      ),
+      getOptedInSubscriberIdsByChannel(
+        supabaseClient,
+        subscriberIds,
+        "email"
+      ),
+    ])
+
+  const consentWarning =
+    whatsappOptInResult.warning ||
+    emailOptInResult.warning
+
   const phones =
     Array.from(
       new Set(
         (subscribers || [])
+          .filter(subscriber =>
+            typeof subscriber.id ===
+              "string" &&
+            whatsappOptInResult.subscriberIds.has(
+              subscriber.id
+            )
+          )
           .map(subscriber =>
             typeof subscriber.telefono ===
             "string"
@@ -767,6 +884,13 @@ async function getProductLaunchRecipientPhones(
     Array.from(
       new Set(
         (subscribers || [])
+          .filter(subscriber =>
+            typeof subscriber.id ===
+              "string" &&
+            emailOptInResult.subscriberIds.has(
+              subscriber.id
+            )
+          )
           .map(subscriber =>
             typeof subscriber.email ===
             "string"
@@ -791,11 +915,16 @@ async function getProductLaunchRecipientPhones(
         phones.length,
       emailCount:
         emails.length,
-      ...(phones.length === 0 &&
-        emails.length === 0
+      ...(consentWarning
         ? {
             warning:
-              "interested_subscribers_without_contact_channels",
+              consentWarning,
+          }
+        : phones.length === 0 &&
+          emails.length === 0
+        ? {
+            warning:
+              "interested_subscribers_without_opted_in_channels",
           }
         : {}),
     },
