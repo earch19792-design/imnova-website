@@ -10,6 +10,9 @@ import {
   sendWhatsAppWelcome,
 } from "@/lib/whatsapp"
 
+type WhatsAppWelcomeResult =
+  Awaited<ReturnType<typeof sendWhatsAppWelcome>>
+
 type CommunityRegisterPayload = {
   name?: unknown
   email?: unknown
@@ -245,6 +248,93 @@ function hasWhatsAppWelcomeConfig() {
     process.env.WHATSAPP_PHONE_NUMBER_ID?.trim() &&
     process.env.WHATSAPP_WELCOME_TEMPLATE_NAME?.trim()
   )
+}
+
+function getWhatsAppWelcomeErrorMessage(
+  result: Partial<WhatsAppWelcomeResult>
+) {
+  if (result.success) {
+    return null
+  }
+
+  if (
+    typeof result.error === "string" &&
+    result.error
+  ) {
+    return result.error
+  }
+
+  const metaError =
+    result.data?.error
+
+  if (metaError?.message) {
+    return metaError.message
+  }
+
+  return "whatsapp_welcome_not_confirmed"
+}
+
+async function saveWhatsAppWelcomeNotificationLog(
+  supabase: SupabaseClient,
+  result: Partial<WhatsAppWelcomeResult>,
+  source: CommunityRegisterSource
+) {
+  try {
+    const success =
+      result.success === true
+
+    const { error } =
+      await supabase
+        .from("notification_logs")
+        .insert({
+          product_id:
+            null,
+          product_name:
+            "Comunidad IMNOVA",
+          channel:
+            "whatsapp",
+          template_name:
+            process.env.WHATSAPP_WELCOME_TEMPLATE_NAME?.trim() ||
+            "imnova_welcome",
+          status_name:
+            "Bienvenida comunidad",
+          progress:
+            null,
+          image_url:
+            null,
+          success,
+          total:
+            1,
+          successful:
+            success ? 1 : 0,
+          failed:
+            success ? 0 : 1,
+          meta_response:
+            result,
+          error_message:
+            getWhatsAppWelcomeErrorMessage(
+              result
+            ),
+          triggered_by:
+            source,
+          source:
+            "community_welcome",
+          phone_count:
+            1,
+        })
+
+    if (error) {
+      console.warn(
+        "COMMUNITY REGISTER WHATSAPP WELCOME LOG WARNING:",
+        error
+      )
+    }
+  } catch (error) {
+    console.warn(
+      "COMMUNITY REGISTER WHATSAPP WELCOME LOG WARNING:",
+      error
+    )
+  }
 }
 
 function getString(
@@ -2162,6 +2252,12 @@ export async function POST(
             name,
           })
 
+        await saveWhatsAppWelcomeNotificationLog(
+          supabase,
+          welcomeResult,
+          source
+        )
+
         if (!welcomeResult.success) {
           console.error(
             "COMMUNITY REGISTER WHATSAPP WELCOME ERROR:",
@@ -2209,13 +2305,39 @@ export async function POST(
             "whatsapp_welcome_disabled"
           )
         }
-      } else if (
-        !warnings.includes(
-          "whatsapp_welcome_not_configured"
+
+        await saveWhatsAppWelcomeNotificationLog(
+          supabase,
+          {
+            success:
+              false,
+            error:
+              "whatsapp_welcome_disabled",
+          },
+          source
         )
+      } else if (
+        !hasWhatsAppWelcomeConfig()
       ) {
-        warnings.push(
-          "whatsapp_welcome_not_configured"
+        if (
+          !warnings.includes(
+            "whatsapp_welcome_not_configured"
+          )
+        ) {
+          warnings.push(
+            "whatsapp_welcome_not_configured"
+          )
+        }
+
+        await saveWhatsAppWelcomeNotificationLog(
+          supabase,
+          {
+            success:
+              false,
+            error:
+              "whatsapp_welcome_not_configured",
+          },
+          source
         )
       }
     }

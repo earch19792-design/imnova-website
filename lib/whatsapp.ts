@@ -178,6 +178,10 @@ export async function sendWhatsAppWelcome({
   const memberName =
     name?.trim() || "miembro IMNOVA"
 
+  const templateHasNameParam =
+    process.env.WHATSAPP_WELCOME_TEMPLATE_HAS_NAME_PARAM ===
+    "true"
+
   const baseTemplate = {
     name:
       templateName,
@@ -268,12 +272,22 @@ export async function sendWhatsAppWelcome({
         }
       }
 
+    const firstPayload =
+      templateHasNameParam
+        ? payloadWithName
+        : payloadWithoutParams
+
+    const fallbackPayload =
+      templateHasNameParam
+        ? payloadWithoutParams
+        : payloadWithName
+
     let {
       response,
       data,
     } =
       await sendTemplate(
-        payloadWithName
+        firstPayload
       )
 
     const errorMessage =
@@ -282,33 +296,28 @@ export async function sendWhatsAppWelcome({
         ? data.error.message.toLowerCase()
         : ""
 
-    const shouldRetryWithoutParams =
-      !response.ok &&
-      (
-        errorMessage.includes(
-          "parameter"
-        ) ||
-        errorMessage.includes(
-          "component"
-        ) ||
-        errorMessage.includes(
-          "localizable"
-        ) ||
-        errorMessage.includes(
-          "number of parameters"
-        )
-      )
+    const shouldRetryAlternativePayload =
+      !response.ok
 
-    if (shouldRetryWithoutParams) {
+    if (shouldRetryAlternativePayload) {
       const retryResult =
         await sendTemplate(
-          payloadWithoutParams
+          fallbackPayload
         )
 
-      response =
-        retryResult.response
-      data =
-        retryResult.data
+      if (
+        retryResult.response.ok ||
+        errorMessage.includes("parameter") ||
+        errorMessage.includes("component") ||
+        errorMessage.includes("localizable") ||
+        errorMessage.includes("number of parameters") ||
+        errorMessage.includes("param")
+      ) {
+        response =
+          retryResult.response
+        data =
+          retryResult.data
+      }
     }
 
     if (!response.ok) {
