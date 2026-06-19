@@ -58,6 +58,36 @@ type CommunitySubscriberPayload = {
   objetivo_principal: string
 }
 
+type CommunitySubscriberUpdatePayload =
+  Partial<CommunitySubscriberPayload>
+
+function getExistingSubscriberUpdatePayload(
+  payload: CommunitySubscriberPayload,
+  hasWhatsapp: boolean,
+  hasEmail: boolean
+): CommunitySubscriberUpdatePayload {
+  const updatePayload: CommunitySubscriberUpdatePayload = {
+    nombre:
+      payload.nombre,
+    nichos:
+      payload.nichos,
+    objetivo_principal:
+      payload.objetivo_principal,
+  }
+
+  if (hasWhatsapp) {
+    updatePayload.telefono =
+      payload.telefono
+  }
+
+  if (hasEmail) {
+    updatePayload.email =
+      payload.email
+  }
+
+  return updatePayload
+}
+
 type CommunicationChannel =
   | "whatsapp"
   | "email"
@@ -1057,56 +1087,26 @@ async function createMissingSubscriberAreaInterests(
         area.id
     )
 
-  const {
-    data: existingAreaInterests,
-    error: existingAreaInterestsError,
-  } =
+  const { error: deleteAreaInterestsError } =
     await supabase
       .from("subscriber_area_interests")
-      .select("area_id")
+      .delete()
       .eq(
         "subscriber_id",
         subscriberId
       )
-      .in(
-        "area_id",
-        selectedAreaIds
-      )
 
-  if (existingAreaInterestsError) {
+  if (deleteAreaInterestsError) {
     return {
       saved: false,
       addedCount: 0,
       error:
-        existingAreaInterestsError,
-    }
-  }
-
-  const existingAreaIds =
-    new Set(
-      (existingAreaInterests || [])
-        .map(
-          interest =>
-            String(interest.area_id)
-        )
-    )
-
-  const missingAreas =
-    selectedAreas.filter(
-      area =>
-        !existingAreaIds.has(area.id)
-    )
-
-  if (missingAreas.length === 0) {
-    return {
-      saved: true,
-      addedCount: 0,
-      error: null,
+        deleteAreaInterestsError,
     }
   }
 
   const areaInterestRows =
-    missingAreas.map(
+    selectedAreas.map(
       area => ({
         id:
           randomUUID(),
@@ -1135,7 +1135,7 @@ async function createMissingSubscriberAreaInterests(
   return {
     saved: true,
     addedCount:
-      missingAreas.length,
+      selectedAreaIds.length,
     error: null,
   }
 }
@@ -1922,6 +1922,13 @@ export async function POST(
         objective,
     }
 
+    const existingSubscriberUpdatePayload =
+      getExistingSubscriberUpdatePayload(
+        subscriberPayload,
+        Boolean(whatsapp),
+        Boolean(email)
+      )
+
     let subscriberAlreadyRegistered =
       false
 
@@ -1983,7 +1990,7 @@ export async function POST(
       const { error: subscriberUpdateError } =
         await supabase
           .from("subscribers")
-          .update(subscriberPayload)
+          .update(existingSubscriberUpdatePayload)
           .eq(
             "id",
             subscriberId
@@ -2049,7 +2056,7 @@ export async function POST(
         const { error: subscriberUpdateError } =
           await supabase
             .from("subscribers")
-            .update(subscriberPayload)
+            .update(existingSubscriberUpdatePayload)
             .eq(
               "id",
               subscriberId
@@ -2237,7 +2244,11 @@ export async function POST(
       source === "community_popup" &&
       whatsapp
     ) {
-      if (!whatsappOptIn) {
+      if (subscriberAlreadyRegistered) {
+        warnings.push(
+          "whatsapp_welcome_skipped_existing_member"
+        )
+      } else if (!whatsappOptIn) {
         warnings.push(
           "whatsapp_consent_not_granted"
         )

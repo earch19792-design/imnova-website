@@ -336,6 +336,11 @@ export default function InnovaPopup({
   ] = useState("")
 
   const [
+    memberAlreadyRegistered,
+    setMemberAlreadyRegistered,
+  ] = useState(false)
+
+  const [
     knownMember,
     setKnownMember,
   ] = useState<KnownMemberSummary | null>(null)
@@ -377,6 +382,7 @@ export default function InnovaPopup({
     setRegistrationStep("interests")
     setInterestSaveWarning("")
     setMemberReferralCode("")
+    setMemberAlreadyRegistered(false)
     setSuccess(false)
     setKnownMember(null)
     setShowMemberUpdateForm(false)
@@ -1236,6 +1242,12 @@ useEffect(() => {
             String(registerResult.subscriberId)
           )
         }
+
+        setMemberAlreadyRegistered(
+          Boolean(
+            registerResult?.subscriber_already_registered
+          )
+        )
 
         if (
           !registerResponse.ok ||
@@ -2995,15 +3007,17 @@ setTimeout(() => {
                     "
                   >
 
-                    Ya eres parte de la comunidad IMNOVA. Te enviaremos encuestas, avances y oportunidades según tus intereses.
+                    {memberAlreadyRegistered
+                      ? "Ya encontramos tu registro en IMNOVA. Actualizamos tus preferencias y guardamos este dispositivo como acceso de miembro para que no tengas que repetir tus datos."
+                      : "Ya eres parte de la comunidad IMNOVA. Te enviaremos encuestas, avances y oportunidades según tus intereses."}
 
                     {memberReferralCode && (
                       <span className="mt-3 block rounded-xl border border-cyan-200/20 bg-black/20 px-4 py-3 text-xs leading-5 text-cyan-50/80">
-                        Tu codigo para invitar amigos es{" "}
+                        Tu código para invitar amigos es{" "}
                         <strong className="text-white">
                           {memberReferralCode}
                         </strong>
-                        . Compartelo con quien quiera votar ideas y recibir beneficios.
+                        . Compártelo con quien quiera votar ideas y recibir beneficios.
                       </span>
                     )}
 
