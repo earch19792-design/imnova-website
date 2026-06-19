@@ -140,24 +140,6 @@ const observatorySignals = [
   },
 ]
 
-const fallbackFeaturedProduct: HomeFeaturedProduct = {
-  id: "fallback-mash-coffee",
-  slug: "mash-coffee",
-  name: "MASH Coffee+",
-  category: "Cafe funcional",
-  description:
-    "Producto terminado de IMNOVA disponible para compra.",
-  image:
-    "/images/products/store/mash-coffee/mash-coffee-lata-250ml-frontal.webp",
-  storeHref: "/store",
-  headline:
-    "MASH Coffee+ ya puede comprarse.",
-  badge: "Producto destacado",
-  promoLabel: "Producto disponible",
-  hasActivePromotion: false,
-  discount: 0,
-}
-
 const trustSignals = [
   "Gratis y sin spam",
   "Votas sin crear cuenta",
@@ -311,8 +293,7 @@ async function getHomeFeaturedProduct() {
 
   if (
     !response.ok ||
-    !result?.success ||
-    !result.product
+    !result?.success
   ) {
     throw new Error(
       result?.error ||
@@ -320,7 +301,9 @@ async function getHomeFeaturedProduct() {
     )
   }
 
-  return result.product as HomeFeaturedProduct
+  return result.product
+    ? result.product as HomeFeaturedProduct
+    : null
 }
 
 export default function IMNOVAPage() {
@@ -330,7 +313,7 @@ export default function IMNOVAPage() {
   const [isLoadingPublicIdeas, setIsLoadingPublicIdeas] =
     useState(true)
   const [featuredHomeProduct, setFeaturedHomeProduct] =
-    useState<HomeFeaturedProduct>(fallbackFeaturedProduct)
+    useState<HomeFeaturedProduct | null>(null)
   const [isLoadingFeaturedProduct, setIsLoadingFeaturedProduct] =
     useState(true)
   const [votedIdeas, setVotedIdeas] =
@@ -605,37 +588,58 @@ export default function IMNOVAPage() {
           <div className="relative lg:max-w-[590px] lg:justify-self-end xl:max-w-[650px]">
             <div className="absolute -right-8 -top-8 hidden h-36 w-36 rounded-full bg-amber-300/25 blur-3xl md:block" />
             <div className="relative overflow-hidden rounded-[36px] border border-white/14 bg-white/[0.08] p-4 shadow-[0_32px_90px_rgba(0,0,0,0.32)] backdrop-blur-xl">
-              <div className="relative overflow-hidden rounded-[28px] border border-white/10 bg-stone-950">
-                <img
-                  src={featuredHomeProduct.image}
-                  alt={`${featuredHomeProduct.name} disponible en IMNOVA Store.`}
-                  className="h-[300px] w-full bg-[radial-gradient(circle_at_50%_42%,rgba(245,158,11,0.18),transparent_34%),linear-gradient(135deg,#17110b_0%,#050505_55%,#24190e_100%)] object-contain object-center p-7 md:h-[410px] md:p-9"
-                />
-                <div className="absolute left-5 top-5 rounded-full bg-amber-300 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-stone-950 shadow-sm">
-                  {isLoadingFeaturedProduct
-                    ? "Buscando disponible"
-                    : featuredHomeProduct.badge}
-                </div>
-                <div className="absolute bottom-4 left-4 right-4 rounded-[22px] border border-white/15 bg-stone-950/86 p-4 text-white shadow-[0_18px_48px_rgba(0,0,0,0.28)] backdrop-blur">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-100/80">
-                        IMNOVA Store
-                      </p>
-                      <p className="mt-1 text-lg font-black leading-tight tracking-[-0.035em]">
-                        {featuredHomeProduct.headline}
-                      </p>
+              {featuredHomeProduct ? (
+                <div className="relative overflow-hidden rounded-[28px] border border-white/10 bg-stone-950">
+                  <img
+                    src={featuredHomeProduct.image}
+                    alt={`${featuredHomeProduct.name} disponible en IMNOVA Store.`}
+                    className="h-[300px] w-full bg-[radial-gradient(circle_at_50%_42%,rgba(245,158,11,0.18),transparent_34%),linear-gradient(135deg,#17110b_0%,#050505_55%,#24190e_100%)] object-contain object-center p-7 md:h-[410px] md:p-9"
+                  />
+                  <div className="absolute left-5 top-5 rounded-full bg-amber-300 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-stone-950 shadow-sm">
+                    {isLoadingFeaturedProduct
+                      ? "Buscando disponible"
+                      : featuredHomeProduct.badge}
+                  </div>
+                  <div className="absolute bottom-4 left-4 right-4 rounded-[22px] border border-white/15 bg-stone-950/86 p-4 text-white shadow-[0_18px_48px_rgba(0,0,0,0.28)] backdrop-blur">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-100/80">
+                          IMNOVA Store
+                        </p>
+                        <p className="mt-1 text-lg font-black leading-tight tracking-[-0.035em]">
+                          {featuredHomeProduct.headline}
+                        </p>
+                      </div>
+                      <a
+                        href={featuredHomeProduct.storeHref || "/store"}
+                        className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-white px-4 text-[10px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-200/70"
+                      >
+                        Comprar ahora
+                        <ShoppingBag className="h-3.5 w-3.5" />
+                      </a>
                     </div>
-                    <a
-                      href={featuredHomeProduct.storeHref || "/store"}
-                      className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-white px-4 text-[10px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-200/70"
-                    >
-                      Comprar ahora
-                      <ShoppingBag className="h-3.5 w-3.5" />
-                    </a>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="relative flex min-h-[300px] flex-col justify-between overflow-hidden rounded-[28px] border border-cyan-200/14 bg-[radial-gradient(circle_at_70%_18%,rgba(103,232,249,0.14),transparent_30%),linear-gradient(135deg,#071111_0%,#050505_58%,#15120b_100%)] p-7 text-white md:min-h-[410px] md:p-9">
+                  <div className="w-fit rounded-full border border-cyan-200/24 bg-cyan-200/10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-cyan-50">
+                    {isLoadingFeaturedProduct
+                      ? "Buscando disponible"
+                      : "Sin producto disponible"}
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-100/70">
+                      IMNOVA Store
+                    </p>
+                    <h2 className="mt-3 max-w-md text-3xl font-black leading-tight tracking-[-0.05em] md:text-5xl">
+                      Cuando un producto este listo, aparecera aqui.
+                    </h2>
+                    <p className="mt-4 max-w-md text-sm leading-7 text-white/62">
+                      Los productos en Produccion, Desarrollo o Validacion no se muestran como comprables.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <div
                 id="idea-activa"
@@ -1015,27 +1019,40 @@ export default function IMNOVAPage() {
         <div className="mx-auto grid max-w-7xl gap-8 overflow-hidden rounded-[36px] border border-stone-200 bg-stone-950 p-6 text-white shadow-[0_34px_95px_rgba(15,23,42,0.18)] md:p-8 lg:grid-cols-[0.72fr_1.28fr] lg:items-center">
           <div className="max-w-xl">
             <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/70">
-              {featuredHomeProduct.hasActivePromotion
+              {featuredHomeProduct?.hasActivePromotion
                 ? "Promocion de lanzamiento"
                 : "Producto terminado"}
             </p>
             <h2 className="mt-4 text-3xl font-black leading-tight tracking-[-0.04em] md:text-5xl lg:text-[3.35rem]">
-              {featuredHomeProduct.hasActivePromotion
+              {featuredHomeProduct?.hasActivePromotion
                 ? "Descuento activo cuando el producto ya esta listo."
-                : "La tienda muestra solo lo que ya se puede comprar."}
+                : featuredHomeProduct
+                  ? "La tienda muestra solo lo que ya se puede comprar."
+                  : "Aun no hay producto disponible para compra."}
             </h2>
             <p className="mt-5 text-base leading-8 text-white/68">
-              Un producto disponible ya paso de idea a validacion, canalizacion
-              y producto terminado. Por eso aparece en Store con precio,
-              promocion de lanzamiento cuando aplica y canales claros.
+              {featuredHomeProduct
+                ? "Un producto disponible ya paso de idea a validacion, canalizacion y producto terminado. Por eso aparece en Store con precio, promocion de lanzamiento cuando aplica y canales claros."
+                : "Los productos en Produccion, Desarrollo o Validacion se mantienen fuera de la tienda publica hasta que realmente esten listos para comprarse."}
             </p>
-            <a
-              href="/store"
-              className="mt-8 inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-white px-7 text-[12px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:-translate-y-0.5 hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/80"
-            >
-              Ver tienda
-              <ShoppingBag className="h-4 w-4" />
-            </a>
+            {featuredHomeProduct ? (
+              <a
+                href="/store"
+                className="mt-8 inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-white px-7 text-[12px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:-translate-y-0.5 hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/80"
+              >
+                Ver tienda
+                <ShoppingBag className="h-4 w-4" />
+              </a>
+            ) : (
+              <button
+                type="button"
+                onClick={openCommunity}
+                className="mt-8 inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-cyan-200 px-7 text-[12px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:-translate-y-0.5 hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-300/80"
+              >
+                Recibir aviso cuando este listo
+                <MessageCircle className="h-4 w-4" />
+              </button>
+            )}
 
             <a
               href="#where-to-buy"
@@ -1048,38 +1065,56 @@ export default function IMNOVAPage() {
 
           <div className="grid gap-4">
             <div className="relative overflow-hidden rounded-[32px] border border-white/10 bg-white/[0.08]">
-              <img
-                src={featuredHomeProduct.image}
-                alt={`${featuredHomeProduct.name} disponible en IMNOVA Store.`}
-                className="h-[300px] w-full bg-white object-contain object-center p-5 md:h-[380px] md:p-8"
-              />
-              <div className="absolute inset-0 bg-[linear-gradient(180deg,transparent_20%,rgba(5,5,5,0.88)_100%)]" />
-              <div className="absolute left-5 top-5 flex flex-wrap gap-2">
-                <span className="rounded-full bg-amber-300 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-stone-950 shadow-sm">
-                  {featuredHomeProduct.hasActivePromotion
-                    ? "Promocion de lanzamiento"
-                    : "Producto disponible"}
-                </span>
-                <span className="rounded-full border border-white/20 bg-stone-950/70 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-white backdrop-blur">
-                  {featuredHomeProduct.promoLabel}
-                </span>
-              </div>
-              <div className="absolute bottom-5 left-5 right-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.20em] text-amber-100/80">
-                    Producto terminado
-                  </p>
-                  <h3 className="mt-2 text-3xl font-black tracking-[-0.05em]">
-                    {featuredHomeProduct.name}
-                  </h3>
+              {featuredHomeProduct ? (
+                <>
+                  <img
+                    src={featuredHomeProduct.image}
+                    alt={`${featuredHomeProduct.name} disponible en IMNOVA Store.`}
+                    className="h-[300px] w-full bg-white object-contain object-center p-5 md:h-[380px] md:p-8"
+                  />
+                  <div className="absolute inset-0 bg-[linear-gradient(180deg,transparent_20%,rgba(5,5,5,0.88)_100%)]" />
+                  <div className="absolute left-5 top-5 flex flex-wrap gap-2">
+                    <span className="rounded-full bg-amber-300 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-stone-950 shadow-sm">
+                      {featuredHomeProduct.hasActivePromotion
+                        ? "Promocion de lanzamiento"
+                        : "Producto disponible"}
+                    </span>
+                    <span className="rounded-full border border-white/20 bg-stone-950/70 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-white backdrop-blur">
+                      {featuredHomeProduct.promoLabel}
+                    </span>
+                  </div>
+                  <div className="absolute bottom-5 left-5 right-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.20em] text-amber-100/80">
+                        Producto terminado
+                      </p>
+                      <h3 className="mt-2 text-3xl font-black tracking-[-0.05em]">
+                        {featuredHomeProduct.name}
+                      </h3>
+                    </div>
+                    <a
+                      href={featuredHomeProduct.storeHref || "/store"}
+                      className="inline-flex min-h-11 items-center justify-center rounded-full bg-amber-300 px-5 text-[10px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-200/70"
+                    >
+                      Comprar
+                    </a>
+                  </div>
+                </>
+              ) : (
+                <div className="flex min-h-[300px] flex-col justify-between bg-[radial-gradient(circle_at_70%_20%,rgba(103,232,249,0.16),transparent_32%),linear-gradient(135deg,#061111_0%,#050505_55%,#19140c_100%)] p-6 md:min-h-[380px] md:p-8">
+                  <span className="w-fit rounded-full border border-cyan-200/24 bg-cyan-200/10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-cyan-50">
+                    Esperando disponible
+                  </span>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.20em] text-cyan-100/70">
+                      Producto en proceso
+                    </p>
+                    <h3 className="mt-2 max-w-md text-3xl font-black tracking-[-0.05em]">
+                      Nada se muestra como compra hasta pasar a Disponible.
+                    </h3>
+                  </div>
                 </div>
-                <a
-                  href={featuredHomeProduct.storeHref || "/store"}
-                  className="inline-flex min-h-11 items-center justify-center rounded-full bg-amber-300 px-5 text-[10px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-200/70"
-                >
-                  Comprar
-                </a>
-              </div>
+              )}
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

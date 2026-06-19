@@ -48,9 +48,11 @@ type ProductLaunchTargeting = {
   mode:
     | "segmented_by_product_subniches"
     | "segmented_by_product_niche"
+    | "segmented_by_area_interests"
     | "all_community"
     | "none"
   subnicheIds: string[]
+  areaKeys?: string[]
   subscriberIds: string[]
   phoneCount: number
   emailCount: number
@@ -91,6 +93,113 @@ type AdminAuthResult =
       status: 401 | 403
       error: string
     }
+
+const productLaunchNicheAreaMap:
+  Record<string, string[]> = {
+    bienestar_diario: [
+      "bienestar_salud_natural",
+    ],
+    nutricion_funcional: [
+      "bienestar_salud_natural",
+    ],
+    vida_activa: [
+      "fitness_rendimiento_recuperacion",
+    ],
+    soporte_funcional: [
+      "salud_funcionalidad_especifica",
+    ],
+    digestion_balance: [
+      "salud_funcionalidad_especifica",
+    ],
+    energia_enfoque: [
+      "salud_funcionalidad_especifica",
+    ],
+    belleza_natural: [
+      "cuidado_belleza_natural",
+    ],
+    bienestar_animal: [
+      "bienestar_animal_mascotas",
+    ],
+  }
+
+const productLaunchSubnicheAreaMap:
+  Record<string, string[]> = {
+    cafe_funcional: [
+      "bienestar_salud_natural",
+    ],
+    vitaminas_minerales: [
+      "bienestar_salud_natural",
+    ],
+    proteina_funcional: [
+      "fitness_rendimiento_recuperacion",
+    ],
+    superfoods: [
+      "bienestar_salud_natural",
+    ],
+    colageno: [
+      "cuidado_belleza_natural",
+    ],
+    piel_cabello: [
+      "cuidado_belleza_natural",
+    ],
+    clean_beauty: [
+      "cuidado_belleza_natural",
+    ],
+    digestion: [
+      "salud_funcionalidad_especifica",
+    ],
+    extractos_herbales: [
+      "salud_funcionalidad_especifica",
+    ],
+    detox_suave: [
+      "salud_funcionalidad_especifica",
+    ],
+    energia_natural: [
+      "fitness_rendimiento_recuperacion",
+    ],
+    enfoque_mental: [
+      "salud_funcionalidad_especifica",
+    ],
+    hidratacion: [
+      "fitness_rendimiento_recuperacion",
+    ],
+    recuperacion: [
+      "fitness_rendimiento_recuperacion",
+    ],
+    articulaciones: [
+      "fitness_rendimiento_recuperacion",
+    ],
+    mascotas: [
+      "bienestar_animal_mascotas",
+    ],
+    caballos: [
+      "bienestar_animal_mascotas",
+    ],
+    aves_peces: [
+      "bienestar_animal_mascotas",
+    ],
+    vida_saludable: [
+      "bienestar_salud_natural",
+    ],
+    productos_naturales: [
+      "bienestar_salud_natural",
+    ],
+    bienestar_holistico: [
+      "bienestar_salud_natural",
+    ],
+    defensas: [
+      "salud_funcionalidad_especifica",
+    ],
+    sueno_descanso: [
+      "salud_funcionalidad_especifica",
+    ],
+    estres_balance: [
+      "salud_funcionalidad_especifica",
+    ],
+    longevidad: [
+      "salud_funcionalidad_especifica",
+    ],
+  }
 
 function getTemplateName({
   status,
@@ -599,6 +708,174 @@ async function getOptedInSubscriberIdsByChannel(
   }
 }
 
+async function getProductLaunchAreaKeys({
+  supabaseClient,
+  strategicNicheId,
+  subnicheIds,
+}: {
+  supabaseClient: SupabaseClient
+  strategicNicheId?: string | null
+  subnicheIds: string[]
+}) {
+  const areaKeys =
+    new Set<string>()
+
+  if (strategicNicheId) {
+    const {
+      data: niche,
+      error: nicheError,
+    } =
+      await supabaseClient
+        .from("strategic_niches")
+        .select("slug")
+        .eq("id", strategicNicheId)
+        .maybeSingle()
+
+    if (nicheError) {
+      console.error(
+        "GET PRODUCT LAUNCH NICHE AREA ERROR:",
+        nicheError
+      )
+    }
+
+    const nicheSlug =
+      typeof niche?.slug === "string"
+        ? niche.slug
+        : ""
+
+    productLaunchNicheAreaMap[nicheSlug]
+      ?.forEach(areaKey =>
+        areaKeys.add(areaKey)
+      )
+  }
+
+  if (subnicheIds.length > 0) {
+    const {
+      data: subniches,
+      error: subnichesError,
+    } =
+      await supabaseClient
+        .from("strategic_subniches")
+        .select("slug")
+        .in("id", subnicheIds)
+
+    if (subnichesError) {
+      console.error(
+        "GET PRODUCT LAUNCH SUBNICHE AREA ERROR:",
+        subnichesError
+      )
+    }
+
+    ;(subniches || [])
+      .map(row =>
+        typeof row.slug === "string"
+          ? row.slug
+          : ""
+      )
+      .filter(Boolean)
+      .forEach(slug => {
+        productLaunchSubnicheAreaMap[slug]
+          ?.forEach(areaKey =>
+            areaKeys.add(areaKey)
+          )
+      })
+  }
+
+  return Array.from(areaKeys)
+}
+
+async function getSubscriberIdsByAreaKeys(
+  supabaseClient: SupabaseClient,
+  areaKeys: string[]
+) {
+  if (areaKeys.length === 0) {
+    return {
+      subscriberIds: [] as string[],
+      warning: null as string | null,
+    }
+  }
+
+  const {
+    data: areas,
+    error: areasError,
+  } =
+    await supabaseClient
+      .from("community_interest_areas")
+      .select("id")
+      .in("key", areaKeys)
+      .eq("is_active", true)
+
+  if (areasError) {
+    console.error(
+      "GET PRODUCT LAUNCH AREA LOOKUP ERROR:",
+      areasError
+    )
+
+    return {
+      subscriberIds: [],
+      warning:
+        "product_launch_area_lookup_failed",
+    }
+  }
+
+  const areaIds =
+    (areas || [])
+      .map(row =>
+        typeof row.id === "string"
+          ? row.id
+          : ""
+      )
+      .filter(Boolean)
+
+  if (areaIds.length === 0) {
+    return {
+      subscriberIds: [],
+      warning:
+        "product_launch_area_not_found",
+    }
+  }
+
+  const {
+    data: areaInterests,
+    error: areaInterestsError,
+  } =
+    await supabaseClient
+      .from("subscriber_area_interests")
+      .select("subscriber_id")
+      .in("area_id", areaIds)
+      .limit(1000)
+
+  if (areaInterestsError) {
+    console.error(
+      "GET PRODUCT LAUNCH AREA INTERESTS ERROR:",
+      areaInterestsError
+    )
+
+    return {
+      subscriberIds: [],
+      warning:
+        "product_launch_area_interests_lookup_failed",
+    }
+  }
+
+  return {
+    subscriberIds:
+      Array.from(
+        new Set(
+          (areaInterests || [])
+            .map(row =>
+              typeof row.subscriber_id ===
+              "string"
+                ? row.subscriber_id
+                : ""
+            )
+            .filter(Boolean)
+        )
+      ),
+    warning: null,
+  }
+}
+
 async function getProductLaunchRecipientPhones(
   supabaseClient: SupabaseClient,
   productId?: string | null
@@ -779,7 +1056,10 @@ async function getProductLaunchRecipientPhones(
     }
   }
 
-  const subscriberIds =
+  let areaKeys:
+    string[] = []
+
+  let subscriberIds =
     Array.from(
       new Set(
         (interestRows || [])
@@ -793,6 +1073,42 @@ async function getProductLaunchRecipientPhones(
       )
     )
 
+  let areaFallbackWarning:
+    string | null = null
+
+  if (subscriberIds.length === 0) {
+    areaKeys =
+      await getProductLaunchAreaKeys({
+        supabaseClient,
+        strategicNicheId:
+          typeof product?.strategic_niche_id ===
+          "string"
+            ? product.strategic_niche_id
+            : null,
+        subnicheIds,
+      })
+
+    const areaSubscriberResult =
+      await getSubscriberIdsByAreaKeys(
+        supabaseClient,
+        areaKeys
+      )
+
+    areaFallbackWarning =
+      areaSubscriberResult.warning
+
+    if (
+      areaSubscriberResult.subscriberIds.length >
+      0
+    ) {
+      subscriberIds =
+        areaSubscriberResult.subscriberIds
+
+      mode =
+        "segmented_by_area_interests"
+    }
+  }
+
   if (subscriberIds.length === 0) {
     return {
       phones: [],
@@ -800,10 +1116,12 @@ async function getProductLaunchRecipientPhones(
       targeting: {
         mode,
         subnicheIds,
+        areaKeys,
         subscriberIds: [],
         phoneCount: 0,
         emailCount: 0,
         warning:
+          areaFallbackWarning ||
           "no_interested_subscribers_for_product_launch",
       },
     }
@@ -912,6 +1230,7 @@ async function getProductLaunchRecipientPhones(
     targeting: {
       mode,
       subnicheIds,
+      areaKeys,
       subscriberIds,
       phoneCount:
         phones.length,
