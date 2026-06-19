@@ -9,6 +9,7 @@ import {
   Gift,
   HeartHandshake,
   Mail,
+  MapPin,
   MessageCircle,
   ShieldCheck,
   ShoppingBag,
@@ -303,20 +304,21 @@ export default function IMNOVAPage() {
 
       <section
         id="hero"
-        className="relative overflow-hidden px-6 pb-16 pt-32 md:pb-24 md:pt-40"
+        className="relative isolate min-h-[760px] overflow-hidden px-6 pb-16 pt-32 md:pb-24 md:pt-40"
       >
-        <div className="pointer-events-none absolute inset-y-0 right-0 -z-10 w-full lg:w-[58%]">
+        <div className="pointer-events-none absolute inset-y-0 right-0 z-0 w-full lg:w-[62%]">
           <img
             src="/images/mash-coffee.png"
             alt=""
             aria-hidden="true"
-            className="h-full w-full object-cover object-center opacity-30 blur-[0.2px] lg:opacity-90"
+            className="h-full w-full scale-[1.04] object-cover object-center opacity-42 blur-[0.1px] lg:opacity-95"
           />
-          <div className="absolute inset-0 bg-[linear-gradient(90deg,#f6f1e8_0%,rgba(246,241,232,0.92)_36%,rgba(246,241,232,0.48)_72%,rgba(246,241,232,0.08)_100%)]" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_78%_48%,rgba(15,23,42,0.08),transparent_42%)]" />
+          <div className="absolute inset-0 bg-[linear-gradient(90deg,#f6f1e8_0%,rgba(246,241,232,0.94)_30%,rgba(246,241,232,0.58)_58%,rgba(246,241,232,0.12)_100%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_78%_48%,rgba(15,23,42,0.10),transparent_44%)]" />
+          <div className="absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[#f6f1e8] to-transparent" />
         </div>
 
-        <div className="mx-auto grid max-w-7xl items-center gap-10 lg:grid-cols-[1.02fr_0.98fr]">
+        <div className="relative z-10 mx-auto grid max-w-7xl items-center gap-10 lg:grid-cols-[1.02fr_0.98fr]">
           <div>
             <div className="inline-flex items-center gap-3 rounded-full border border-cyan-200 bg-white/70 px-4 py-2 shadow-sm">
               <span className="h-2.5 w-2.5 rounded-full bg-cyan-500" />
@@ -702,6 +704,8 @@ export default function IMNOVAPage() {
             <p className="mt-6 text-base leading-8 text-white/68">
               Las ideas y productos en validacion no se presentan como
               comprables. Cuando algo esta disponible, pasa a Store con claridad.
+              Si tiene promocion de lanzamiento activa, la tienda muestra el
+              descuento y el tiempo restante.
             </p>
             <a
               href="/store"
@@ -710,11 +714,20 @@ export default function IMNOVAPage() {
               Ver tienda
               <ShoppingBag className="h-4 w-4" />
             </a>
+
+            <a
+              href="#where-to-buy"
+              className="mt-3 inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-white/15 px-6 text-[11px] font-black uppercase tracking-[0.14em] text-white/72 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/70"
+            >
+              Donde comprar
+              <MapPin className="h-4 w-4" />
+            </a>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
               "Producto disponible",
+              "Promocion de lanzamiento",
               "Compra clara",
               "Canales autorizados",
             ].map(item => (
@@ -727,6 +740,78 @@ export default function IMNOVAPage() {
                   {item}
                 </p>
               </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="where-to-buy"
+        className="scroll-mt-28 px-6 py-16 md:py-24"
+      >
+        <div className="mx-auto grid max-w-7xl gap-8 rounded-[36px] border border-stone-200 bg-white/72 p-7 shadow-[0_28px_78px_rgba(58,44,28,0.10)] backdrop-blur md:p-10 lg:grid-cols-[0.95fr_1.05fr] lg:items-center">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
+              Donde comprar
+            </p>
+            <h2 className="mt-4 text-4xl font-black leading-tight tracking-[-0.05em] text-stone-950 md:text-6xl">
+              Encuentra productos IMNOVA sin complicarte.
+            </h2>
+            <p className="mt-6 text-base leading-8 text-stone-600 md:text-lg">
+              Primero ve a la tienda para productos disponibles. Cuando existan
+              canales autorizados publicados, aqui se mostrara la forma mas
+              clara de comprar online o encontrar un punto cercano.
+            </p>
+
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <a
+                href="/store"
+                className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-stone-950 px-7 text-[12px] font-black uppercase tracking-[0.14em] text-white transition hover:-translate-y-0.5 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+              >
+                Comprar en Store
+                <ShoppingBag className="h-4 w-4" />
+              </a>
+              <button
+                type="button"
+                onClick={openCommunity}
+                className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full border border-stone-200 bg-white/80 px-7 text-[12px] font-black uppercase tracking-[0.14em] text-stone-800 transition hover:-translate-y-0.5 hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+              >
+                Recibir disponibilidad
+                <MessageCircle className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            {[
+              {
+                icon: ShoppingBag,
+                title: "IMNOVA Store",
+                text: "Compra directa cuando el producto ya esta Disponible.",
+              },
+              {
+                icon: ShieldCheck,
+                title: "Canales autorizados",
+                text: "Solo se mostraran canales confirmados para evitar confusion.",
+              },
+              {
+                icon: MapPin,
+                title: "Distribuidor cercano",
+                text: "La ubicacion debe usarse solo cuando haya puntos fisicos listos para recomendar.",
+              },
+            ].map(item => (
+              <article
+                key={item.title}
+                className="rounded-[28px] border border-stone-200 bg-[#fbf7ef] p-5"
+              >
+                <item.icon className="h-5 w-5 text-cyan-700" />
+                <h3 className="mt-5 text-xl font-black tracking-[-0.04em] text-stone-950">
+                  {item.title}
+                </h3>
+                <p className="mt-3 text-sm leading-6 text-stone-600">
+                  {item.text}
+                </p>
+              </article>
             ))}
           </div>
         </div>
