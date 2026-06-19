@@ -303,8 +303,19 @@ export default function IMNOVAPage() {
 
       <section
         id="hero"
-        className="relative px-6 pb-16 pt-32 md:pb-24 md:pt-40"
+        className="relative overflow-hidden px-6 pb-16 pt-32 md:pb-24 md:pt-40"
       >
+        <div className="pointer-events-none absolute inset-y-0 right-0 -z-10 w-full lg:w-[58%]">
+          <img
+            src="/images/mash-coffee.png"
+            alt=""
+            aria-hidden="true"
+            className="h-full w-full object-cover object-center opacity-30 blur-[0.2px] lg:opacity-90"
+          />
+          <div className="absolute inset-0 bg-[linear-gradient(90deg,#f6f1e8_0%,rgba(246,241,232,0.92)_36%,rgba(246,241,232,0.48)_72%,rgba(246,241,232,0.08)_100%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_78%_48%,rgba(15,23,42,0.08),transparent_42%)]" />
+        </div>
+
         <div className="mx-auto grid max-w-7xl items-center gap-10 lg:grid-cols-[1.02fr_0.98fr]">
           <div>
             <div className="inline-flex items-center gap-3 rounded-full border border-cyan-200 bg-white/70 px-4 py-2 shadow-sm">
@@ -356,14 +367,25 @@ export default function IMNOVAPage() {
           </div>
 
           <div className="relative">
-            <div className="absolute -right-8 -top-8 hidden h-36 w-36 rounded-full bg-cyan-300/25 blur-3xl md:block" />
-            <div className="relative overflow-hidden rounded-[36px] border border-white/70 bg-white/68 p-4 shadow-[0_32px_90px_rgba(58,44,28,0.14)] backdrop-blur">
-              <div className="overflow-hidden rounded-[28px]">
+            <div className="absolute -right-8 -top-8 hidden h-36 w-36 rounded-full bg-amber-300/25 blur-3xl md:block" />
+            <div className="relative overflow-hidden rounded-[36px] border border-white/70 bg-white/64 p-4 shadow-[0_32px_90px_rgba(58,44,28,0.16)] backdrop-blur-xl">
+              <div className="relative overflow-hidden rounded-[28px] bg-stone-950">
                 <img
-                  src="/images/imnova-community-hero.webp"
-                  alt="Comunidad IMNOVA participando en innovacion y seleccion de intereses."
-                  className="h-[260px] w-full object-cover md:h-[360px]"
+                  src="/images/mash-coffee.png"
+                  alt="Lata MASH Coffee+ Collagen Marine de IMNOVA."
+                  className="h-[300px] w-full object-cover object-center md:h-[420px]"
                 />
+                <div className="absolute left-4 top-4 rounded-full bg-white/90 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-stone-950 shadow-sm">
+                  Producto disponible
+                </div>
+                <div className="absolute bottom-4 left-4 right-4 rounded-[22px] border border-white/15 bg-stone-950/78 p-4 text-white backdrop-blur">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-100/80">
+                    IMNOVA Store
+                  </p>
+                  <p className="mt-1 text-lg font-black tracking-[-0.035em]">
+                    MASH Coffee+ ya puede comprarse.
+                  </p>
+                </div>
               </div>
 
               <div className="mt-4 grid gap-3 md:grid-cols-[0.82fr_1.18fr]">
