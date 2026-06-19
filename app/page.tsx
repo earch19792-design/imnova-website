@@ -573,7 +573,7 @@ export default function IMNOVAPage() {
 
       <section
         id="hero"
-        className="relative isolate overflow-hidden bg-stone-950 px-6 pb-16 pt-40 text-white md:pb-24 md:pt-48"
+        className="relative isolate overflow-hidden bg-stone-950 px-5 pb-14 pt-32 text-white sm:px-6 md:pb-20 md:pt-36 lg:min-h-screen lg:pt-32"
       >
         <div className="pointer-events-none absolute inset-0 z-0">
           <img
@@ -588,8 +588,8 @@ export default function IMNOVAPage() {
           <div className="absolute inset-0 opacity-[0.12] bg-[linear-gradient(rgba(255,255,255,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.18)_1px,transparent_1px)] bg-[size:88px_88px]" />
         </div>
 
-        <div className="relative z-10 mx-auto grid min-h-[620px] max-w-7xl items-center gap-10 lg:grid-cols-[0.88fr_1.12fr] xl:gap-14">
-          <div className="max-w-[820px]">
+        <div className="relative z-10 mx-auto grid max-w-7xl items-center gap-9 lg:min-h-[calc(100vh-8rem)] lg:grid-cols-[0.95fr_1.05fr] xl:gap-12">
+          <div className="max-w-[720px]">
             <div className="inline-flex items-center gap-3 rounded-full border border-cyan-300/35 bg-cyan-300/10 px-4 py-2 shadow-[0_18px_46px_rgba(6,182,212,0.08)] backdrop-blur">
               <span className="h-2.5 w-2.5 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(103,232,249,0.9)]" />
               <span className="text-[11px] font-black uppercase tracking-[0.22em] text-cyan-100">
@@ -597,17 +597,17 @@ export default function IMNOVAPage() {
               </span>
             </div>
 
-            <h1 className="mt-7 max-w-[760px] text-4xl font-black leading-[1.02] tracking-[-0.04em] text-white sm:text-5xl md:text-6xl lg:text-[4.45rem] xl:text-[4.95rem]">
+            <h1 className="mt-6 max-w-[720px] text-[3rem] font-black leading-[0.98] tracking-[-0.04em] text-white sm:text-[4rem] md:text-[4.7rem] lg:text-[4.1rem] xl:text-[4.65rem]">
               La comunidad que decide lo próximo del mercado.
             </h1>
 
-            <p className="mt-7 max-w-3xl text-lg leading-8 text-white/72 md:text-xl md:leading-9">
+            <p className="mt-6 max-w-2xl text-base leading-8 text-white/72 md:text-lg md:leading-8">
               Vota ideas, descubre tendencias y recibe beneficios cuando los
               productos llegan primero a IMNOVA. Tu opinión ayuda a decidir qué
               avanza, qué se ajusta y qué se pausa.
             </p>
 
-            <div className="mt-9 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <button
                 type="button"
                 onClick={openCommunity}
@@ -626,7 +626,7 @@ export default function IMNOVAPage() {
               </a>
             </div>
 
-            <div className="mt-8 flex flex-wrap gap-2.5">
+            <div className="mt-7 flex flex-wrap gap-2.5">
               {trustSignals.map(item => (
                 <span
                   key={item}
@@ -638,7 +638,7 @@ export default function IMNOVAPage() {
               ))}
             </div>
 
-            <div className="mt-9 grid max-w-3xl gap-3 sm:grid-cols-3">
+            <div className="mt-7 grid max-w-2xl gap-3 sm:grid-cols-3">
               {[
                 {
                   label: "Participa",
@@ -655,12 +655,12 @@ export default function IMNOVAPage() {
               ].map(item => (
                 <div
                   key={item.label}
-                  className="rounded-[24px] border border-white/10 bg-white/[0.07] p-4 backdrop-blur"
+                  className="rounded-[22px] border border-white/10 bg-white/[0.07] p-3.5 backdrop-blur"
                 >
                   <p className="text-[10px] font-black uppercase tracking-[0.20em] text-cyan-100/70">
                     {item.label}
                   </p>
-                  <p className="mt-2 text-xl font-black tracking-[-0.04em] text-white">
+                  <p className="mt-2 text-lg font-black tracking-[-0.04em] text-white">
                     {item.value}
                   </p>
                 </div>
@@ -668,28 +668,28 @@ export default function IMNOVAPage() {
             </div>
           </div>
 
-          <div className="relative lg:max-w-[590px] lg:justify-self-end xl:max-w-[650px]">
+          <div className="relative w-full lg:max-w-[570px] lg:justify-self-end xl:max-w-[620px]">
             <div className="absolute -right-8 -top-8 hidden h-36 w-36 rounded-full bg-amber-300/25 blur-3xl md:block" />
-            <div className="relative overflow-hidden rounded-[36px] border border-white/14 bg-white/[0.08] p-4 shadow-[0_32px_90px_rgba(0,0,0,0.32)] backdrop-blur-xl">
+            <div className="relative overflow-hidden rounded-[32px] border border-white/14 bg-white/[0.08] p-3.5 shadow-[0_32px_90px_rgba(0,0,0,0.32)] backdrop-blur-xl md:p-4">
               {featuredHomeProduct ? (
                 <div className="relative overflow-hidden rounded-[28px] border border-white/10 bg-stone-950">
                   <img
                     src={featuredHomeProduct.image}
                     alt={`${featuredHomeProduct.name} disponible en IMNOVA Store.`}
-                    className="h-[300px] w-full bg-[radial-gradient(circle_at_50%_42%,rgba(245,158,11,0.18),transparent_34%),linear-gradient(135deg,#17110b_0%,#050505_55%,#24190e_100%)] object-contain object-center p-7 md:h-[410px] md:p-9"
+                    className="h-[270px] w-full bg-[radial-gradient(circle_at_50%_42%,rgba(245,158,11,0.18),transparent_34%),linear-gradient(135deg,#17110b_0%,#050505_55%,#24190e_100%)] object-contain object-center p-6 sm:h-[300px] md:h-[350px] md:p-8 xl:h-[380px]"
                   />
-                  <div className="absolute left-5 top-5 rounded-full bg-amber-300 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-stone-950 shadow-sm">
+                  <div className="absolute left-4 top-4 rounded-full bg-amber-300 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-stone-950 shadow-sm">
                     {isLoadingFeaturedProduct
                       ? "Buscando disponible"
                       : featuredHomeProduct.badge}
                   </div>
-                  <div className="absolute bottom-4 left-4 right-4 rounded-[22px] border border-white/15 bg-stone-950/86 p-4 text-white shadow-[0_18px_48px_rgba(0,0,0,0.28)] backdrop-blur">
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="absolute bottom-3 left-3 right-3 rounded-[22px] border border-white/15 bg-stone-950/86 p-3.5 text-white shadow-[0_18px_48px_rgba(0,0,0,0.28)] backdrop-blur md:p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-100/80">
                           IMNOVA Store
                         </p>
-                        <p className="mt-1 text-lg font-black leading-tight tracking-[-0.035em]">
+                        <p className="mt-1 text-base font-black leading-tight tracking-[-0.035em] md:text-lg">
                           {featuredHomeProduct.headline}
                         </p>
                       </div>
@@ -704,7 +704,7 @@ export default function IMNOVAPage() {
                   </div>
                 </div>
               ) : (
-                <div className="relative flex min-h-[300px] flex-col justify-between overflow-hidden rounded-[28px] border border-cyan-200/14 bg-[radial-gradient(circle_at_70%_18%,rgba(103,232,249,0.14),transparent_30%),linear-gradient(135deg,#071111_0%,#050505_58%,#15120b_100%)] p-7 text-white md:min-h-[410px] md:p-9">
+                <div className="relative flex min-h-[270px] flex-col justify-between overflow-hidden rounded-[28px] border border-cyan-200/14 bg-[radial-gradient(circle_at_70%_18%,rgba(103,232,249,0.14),transparent_30%),linear-gradient(135deg,#071111_0%,#050505_58%,#15120b_100%)] p-6 text-white md:min-h-[350px] md:p-8 xl:min-h-[380px]">
                   <div className="w-fit rounded-full border border-cyan-200/24 bg-cyan-200/10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-cyan-50">
                     {isLoadingFeaturedProduct
                       ? "Buscando disponible"
@@ -714,7 +714,7 @@ export default function IMNOVAPage() {
                     <p className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-100/70">
                       IMNOVA Store
                     </p>
-                    <h2 className="mt-3 max-w-md text-3xl font-black leading-tight tracking-[-0.05em] md:text-5xl">
+                    <h2 className="mt-3 max-w-md text-3xl font-black leading-tight tracking-[-0.05em] md:text-4xl">
                       Cuando un producto esté listo, aparecerá aquí.
                     </h2>
                     <p className="mt-4 max-w-md text-sm leading-7 text-white/62">
@@ -726,7 +726,7 @@ export default function IMNOVAPage() {
 
               <div
                 id="idea-activa"
-                className="mt-4 scroll-mt-28 rounded-[24px] border border-cyan-200/14 bg-stone-950/82 p-5 text-white"
+                className="mt-3 scroll-mt-28 rounded-[24px] border border-cyan-200/14 bg-stone-950/82 p-4 text-white"
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-[10px] font-black uppercase tracking-[0.20em] text-cyan-100/70">
@@ -739,16 +739,16 @@ export default function IMNOVAPage() {
                   </span>
                 </div>
 
-                <h2 className="mt-3 text-2xl font-black tracking-[-0.04em]">
+                <h2 className="mt-3 text-xl font-black tracking-[-0.04em] md:text-2xl">
                   {featuredIdea.title}
                 </h2>
-                <p className="mt-3 text-sm leading-6 text-white/65">
+                <p className="mt-2 text-sm leading-6 text-white/65">
                   Revisa el problema, la solución propuesta y vota en la sección
                   completa de ideas.
                 </p>
                 <a
                   href="#ideas-activas"
-                  className="mt-5 inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-cyan-200 px-4 text-[10px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-200/70"
+                  className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-cyan-200 px-4 text-[10px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-200/70"
                 >
                   Votar ideas
                   <Vote className="h-3.5 w-3.5" />
