@@ -346,6 +346,8 @@ export default function IMNOVAPage() {
     useState(true)
   const [votedIdeas, setVotedIdeas] =
     useState<Record<string, PublicVoteType>>({})
+  const [memberAssociatedVotes, setMemberAssociatedVotes] =
+    useState<Record<string, boolean>>({})
   const [votingIdeaKey, setVotingIdeaKey] = useState<string | null>(null)
   const [voteError, setVoteError] = useState("")
 
@@ -480,6 +482,8 @@ export default function IMNOVAPage() {
 
       let { response, result } =
         await sendVote(storedSubscriberId)
+      let voteAssociatedWithMember =
+        Boolean(storedSubscriberId)
 
       if (
         !response.ok &&
@@ -490,6 +494,8 @@ export default function IMNOVAPage() {
         )
       ) {
         clearStoredCommunitySubscriberId()
+        voteAssociatedWithMember =
+          false
         ;({ response, result } =
           await sendVote())
       }
@@ -501,6 +507,12 @@ export default function IMNOVAPage() {
       setVotedIdeas(current => ({
         ...current,
         [idea.key]: voteType,
+      }))
+
+      setMemberAssociatedVotes(current => ({
+        ...current,
+        [idea.key]:
+          voteAssociatedWithMember,
       }))
 
       if (typeof window !== "undefined") {
@@ -970,15 +982,26 @@ export default function IMNOVAPage() {
                       aria-live="polite"
                       className="mt-4 rounded-2xl border border-cyan-200 bg-cyan-50 px-5 py-4 text-sm leading-7 text-cyan-900"
                     >
-                      Gracias. Tu respuesta ayuda a decidir los próximos
-                      lanzamientos.
-                      <button
-                        type="button"
-                        onClick={openCommunity}
-                        className="mt-3 inline-flex font-black text-cyan-900 underline decoration-cyan-400 underline-offset-4"
-                      >
-                        Unirme a la comunidad para recibir avances
-                      </button>
+                      {memberAssociatedVotes[idea.key]
+                        ? "Gracias. Tu voto quedó asociado a tu membresía IMNOVA y suma a tu participación."
+                        : "Gracias. Tu respuesta ayuda a decidir los próximos lanzamientos."}
+
+                      {memberAssociatedVotes[idea.key] ? (
+                        <a
+                          href="/miembro"
+                          className="mt-3 inline-flex font-black text-cyan-900 underline decoration-cyan-400 underline-offset-4"
+                        >
+                          Ver mi área de miembro
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={openCommunity}
+                          className="mt-3 inline-flex font-black text-cyan-900 underline decoration-cyan-400 underline-offset-4"
+                        >
+                          Unirme a la comunidad para recibir avances
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
