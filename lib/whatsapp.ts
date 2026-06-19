@@ -94,7 +94,7 @@ export function isValidAbsoluteUrl(
 
 export async function sendWhatsAppWelcome({
   phone,
-  name: _name,
+  name,
 }: {
   phone: string
   name?: string | null
@@ -132,7 +132,19 @@ export async function sendWhatsAppWelcome({
     }
   }
 
-  const payload = {
+  const memberName =
+    name?.trim() || "miembro IMNOVA"
+
+  const baseTemplate = {
+    name:
+      templateName,
+    language: {
+      code:
+        "es",
+    },
+  }
+
+  const payloadWithName = {
     messaging_product:
       "whatsapp",
     to:
@@ -140,44 +152,120 @@ export async function sendWhatsAppWelcome({
     type:
       "template",
     template: {
-      name:
-        templateName,
-      language: {
-        code:
-          "es",
-      },
+      ...baseTemplate,
+      components: [
+        {
+          type:
+            "body",
+          parameters: [
+            {
+              type:
+                "text",
+              text:
+                memberName,
+            },
+          ],
+        },
+      ],
+    },
+  }
+
+  const payloadWithoutParams = {
+    messaging_product:
+      "whatsapp",
+    to:
+      normalizedPhone,
+    type:
+      "template",
+    template: {
+      ...baseTemplate,
     },
   }
 
   try {
-    const response =
-      await fetch(
-        `https://graph.facebook.com/v25.0/${phoneId}/messages`,
-        {
-          method:
-            "POST",
-          headers: {
-            Authorization:
-              `Bearer ${token}`,
-            "Content-Type":
-              "application/json",
-          },
-          body:
-            JSON.stringify(payload),
+    const sendTemplate =
+      async (
+        payload:
+          typeof payloadWithName |
+          typeof payloadWithoutParams
+      ) => {
+        const response =
+          await fetch(
+            `https://graph.facebook.com/v25.0/${phoneId}/messages`,
+            {
+              method:
+                "POST",
+              headers: {
+                Authorization:
+                  `Bearer ${token}`,
+                "Content-Type":
+                  "application/json",
+              },
+              body:
+                JSON.stringify(payload),
+            }
+          )
+
+        const responseText =
+          await response.text()
+
+        let data
+
+        try {
+          data =
+            JSON.parse(responseText)
+        } catch {
+          data =
+            responseText
         }
+
+        return {
+          response,
+          data,
+        }
+      }
+
+    let {
+      response,
+      data,
+    } =
+      await sendTemplate(
+        payloadWithName
       )
 
-    const responseText =
-      await response.text()
+    const errorMessage =
+      typeof data?.error?.message ===
+      "string"
+        ? data.error.message.toLowerCase()
+        : ""
 
-    let data
+    const shouldRetryWithoutParams =
+      !response.ok &&
+      (
+        errorMessage.includes(
+          "parameter"
+        ) ||
+        errorMessage.includes(
+          "component"
+        ) ||
+        errorMessage.includes(
+          "localizable"
+        ) ||
+        errorMessage.includes(
+          "number of parameters"
+        )
+      )
 
-    try {
+    if (shouldRetryWithoutParams) {
+      const retryResult =
+        await sendTemplate(
+          payloadWithoutParams
+        )
+
+      response =
+        retryResult.response
       data =
-        JSON.parse(responseText)
-    } catch {
-      data =
-        responseText
+        retryResult.data
     }
 
     if (!response.ok) {
