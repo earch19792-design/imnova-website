@@ -872,6 +872,15 @@ export async function sendWhatsAppDistributionChannel({
       recipientPhones
     )
 
+  const productTemplateText =
+    ` ${product?.trim() || "Producto IMNOVA"}`
+
+  const channelTemplateText =
+    ` ${channelName?.trim() || "nuevo distribuidor IMNOVA"}`
+
+  const locationTemplateText =
+    ` ${locationLabel?.trim() || "ubicacion disponible"}`
+
   if (!token || !phoneId || !templateName) {
 
     console.error(
@@ -951,45 +960,19 @@ export async function sendWhatsAppDistributionChannel({
                     type:
                       "text",
                     text:
-                      product || "Producto IMNOVA",
+                      productTemplateText,
                   },
                   {
                     type:
                       "text",
                     text:
-                      channelName || "nuevo distribuidor IMNOVA",
+                      channelTemplateText,
                   },
                   {
                     type:
                       "text",
                     text:
-                      locationLabel || "ubicacion disponible",
-                  },
-                ],
-              },
-            ],
-          }),
-          buildPayload({
-            name:
-              templateName,
-            language:
-              baseLanguage,
-            components: [
-              {
-                type:
-                  "body",
-                parameters: [
-                  {
-                    type:
-                      "text",
-                    text:
-                      product || "Producto IMNOVA",
-                  },
-                  {
-                    type:
-                      "text",
-                    text:
-                      channelName || "nuevo distribuidor IMNOVA",
+                      locationTemplateText,
                   },
                 ],
               },
@@ -1009,7 +992,33 @@ export async function sendWhatsAppDistributionChannel({
                     type:
                       "text",
                     text:
-                      product || "Producto IMNOVA",
+                      productTemplateText,
+                  },
+                  {
+                    type:
+                      "text",
+                    text:
+                      channelTemplateText,
+                  },
+                ],
+              },
+            ],
+          }),
+          buildPayload({
+            name:
+              templateName,
+            language:
+              baseLanguage,
+            components: [
+              {
+                type:
+                  "body",
+                parameters: [
+                  {
+                    type:
+                      "text",
+                    text:
+                      productTemplateText,
                   },
                 ],
               },

@@ -380,6 +380,11 @@ export function GlobalSection() {
   ] = useState<UserLocation | null>(null)
 
   const [
+    hasLocatorIntent,
+    setHasLocatorIntent,
+  ] = useState(false)
+
+  const [
     locationStatus,
     setLocationStatus,
   ] = useState<
@@ -410,7 +415,7 @@ export function GlobalSection() {
 
       setLocationStatus("loading")
       setLocationMessage(
-        "Buscando el canal mas cercano..."
+        "Buscando el distribuidor mas cercano..."
       )
 
       navigator.geolocation.getCurrentPosition(
@@ -550,6 +555,47 @@ export function GlobalSection() {
     }
 
   }, [loadDistribution])
+
+  useEffect(() => {
+
+    const params =
+      new URLSearchParams(
+        window.location.search
+      )
+
+    const locator =
+      params.get("locator")
+
+    const source =
+      params.get("source") ||
+      params.get("utm_source")
+
+    const hasIntent =
+      locator === "nearest" ||
+      locator === "distribuidor" ||
+      source === "whatsapp"
+
+    if (!hasIntent) {
+      return
+    }
+
+    setHasLocatorIntent(true)
+    setLocationMessage(
+      "Vienes desde WhatsApp. Toca el boton para permitir ubicacion y ver tu distribuidor IMNOVA mas cercano."
+    )
+
+    window.setTimeout(() => {
+      document
+        .getElementById(
+          "where-to-buy-map"
+        )
+        ?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        })
+    }, 450)
+
+  }, [])
 
   const distribution =
     useMemo<DistributionItem[]>(
@@ -992,10 +1038,38 @@ export function GlobalSection() {
             listos para compra y rutas reales cuando quieras llegar.
           </p>
 
+          {hasLocatorIntent && (
+            <div className="mt-6 rounded-[28px] border border-cyan-500/25 bg-cyan-50/80 p-5 shadow-[0_18px_50px_rgba(34,211,238,0.16)] backdrop-blur">
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-800">
+                Vienes desde WhatsApp
+              </p>
+              <p className="mt-2 text-sm font-bold leading-6 text-stone-700">
+                Pulsa el boton resaltado para permitir ubicacion y calcular el
+                distribuidor autorizado mas cercano a ti.
+              </p>
+            </div>
+          )}
+
           <div className="mt-8 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={requestUserLocation}
+              disabled={locationStatus === "loading"}
+              className={`inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-cyan-200 px-7 text-xs font-black uppercase tracking-[0.16em] text-stone-950 shadow-[0_18px_42px_rgba(34,211,238,0.24)] transition hover:-translate-y-0.5 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 ${
+                hasLocatorIntent
+                  ? "ring-4 ring-cyan-300/45"
+                  : ""
+              }`}
+            >
+              <Navigation className="h-4 w-4" />
+              {locationStatus === "loading"
+                ? "Buscando..."
+                : "Distribuidor mas cercano"}
+            </button>
+
             <Link
               href="/store"
-              className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-stone-950 px-7 text-xs font-black uppercase tracking-[0.16em] text-white shadow-[0_18px_42px_rgba(15,23,42,0.22)] transition hover:-translate-y-0.5 hover:bg-cyan-800"
+              className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-stone-950 px-7 text-xs font-black uppercase tracking-[0.16em] text-white shadow-[0_18px_42px_rgba(15,23,42,0.22)] transition hover:-translate-y-0.5 hover:bg-stone-800"
             >
               <ShoppingBag className="h-4 w-4" />
               Comprar en Store
@@ -1227,7 +1301,7 @@ export function GlobalSection() {
                   <Navigation className="h-4 w-4" />
                   {locationStatus === "loading"
                     ? "Detectando..."
-                    : "Usar mi ubicacion"}
+                    : "Encontrar distribuidor mas cercano"}
                 </button>
 
                 {locationStatus === "ready" &&

@@ -1367,6 +1367,25 @@ function getDistributionLocationLabel(
     : "ubicacion disponible"
 }
 
+function getDistributionLocationWhatsAppLabel(
+  location:
+    InnovaLabRequestBody["distributionLocation"]
+) {
+  const label =
+    getDistributionLocationLabel(location)
+
+  const mapUrl =
+    typeof location?.mapUrl === "string"
+      ? location.mapUrl.trim()
+      : ""
+
+  if (!mapUrl) {
+    return label
+  }
+
+  return `${label}\nMapa: ${mapUrl}`
+}
+
 async function hasSuccessfulDistributionChannelNotification(
   supabaseClient: SupabaseClient,
   productId?: string | null,
@@ -1510,6 +1529,11 @@ export async function POST(
         distributionLocation
       )
 
+    const distributionLocationWhatsAppLabel =
+      getDistributionLocationWhatsAppLabel(
+        distributionLocation
+      )
+
     if (
       isProductLaunchNotification &&
       productId &&
@@ -1600,7 +1624,7 @@ export async function POST(
               channelName:
                 distributionLocation?.name || "",
               locationLabel:
-                distributionLocationLabel,
+                distributionLocationWhatsAppLabel,
               recipientPhones:
                 communityRecipientPhones,
             })
