@@ -18,6 +18,10 @@ import {
 } from "@/lib/products-service"
 
 import {
+  supabase,
+} from "@/lib/supabase"
+
+import {
   useToast,
 } from "@/hooks/use-toast"
 
@@ -483,6 +487,28 @@ export function ProductCard({
       })
 
       try {
+        const {
+          data: sessionData,
+          error: sessionError,
+        } =
+          await supabase.auth.getSession()
+
+        const accessToken =
+          sessionData.session?.access_token
+
+        if (
+          sessionError ||
+          !accessToken
+        ) {
+          toast({
+            title:
+              "Sesion Admin expirada",
+            description:
+              "Inicia sesion nuevamente antes de enviar WhatsApp.",
+          })
+
+          return false
+        }
 
         const response =
           await fetch(
@@ -493,9 +519,14 @@ export function ProductCard({
               headers: {
                 "Content-Type":
                   "application/json",
+                Authorization:
+                  `Bearer ${accessToken}`,
               },
 
               body: JSON.stringify({
+                productId:
+                  product.id,
+
                 product:
                   product.name,
 
@@ -509,6 +540,12 @@ export function ProductCard({
                   product.image_url ||
                   product.image ||
                   "",
+
+                source:
+                  "admin_product_card",
+
+                triggeredBy:
+                  "admin",
               }),
             }
           )
