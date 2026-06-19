@@ -6160,6 +6160,10 @@ export async function updateProduct(
     image_url?: string | null
     price?: number | null
     currency?: string | null
+    visible?: boolean
+    is_public?: boolean
+    is_active?: boolean
+    featured?: boolean
     direct_url?: string | null
     amazon_url?: string | null
     ebay_url?: string | null
