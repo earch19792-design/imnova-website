@@ -39,6 +39,7 @@ type PublicIdea = {
   signal: string
   problem: string
   solution: string
+  total_votes?: number
 }
 
 type HomeFeaturedProduct = {
@@ -352,6 +353,8 @@ export default function IMNOVAPage() {
   const [voteError, setVoteError] = useState("")
 
   const featuredIdea = publicIdeas[0]
+  const featuredIdeaVoteCount =
+    Number(featuredIdea?.total_votes || 0)
 
   useEffect(() => {
     let isMounted =
@@ -514,6 +517,20 @@ export default function IMNOVAPage() {
         [idea.key]:
           voteAssociatedWithMember,
       }))
+
+      if (result?.created) {
+        setPublicIdeas(current =>
+          current.map(currentIdea =>
+            currentIdea.key === idea.key
+              ? {
+                  ...currentIdea,
+                  total_votes:
+                    Number(currentIdea.total_votes || 0) + 1,
+                }
+              : currentIdea
+          )
+        )
+      }
 
       if (typeof window !== "undefined") {
         window.dispatchEvent(
@@ -735,7 +752,12 @@ export default function IMNOVAPage() {
                   <span className="rounded-full border border-cyan-200/20 bg-cyan-200/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-cyan-50">
                     {isLoadingPublicIdeas
                       ? "Cargando"
-                      : `${publicIdeas.length} en votación`}
+                      : `${publicIdeas.length} ideas activas`}
+                  </span>
+                  <span className="rounded-full border border-amber-200/25 bg-amber-200/12 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-amber-100">
+                    {isLoadingPublicIdeas
+                      ? "Votos"
+                      : `${featuredIdeaVoteCount} votos`}
                   </span>
                 </div>
 
@@ -943,6 +965,9 @@ export default function IMNOVAPage() {
                     </span>
                     <span className="rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-800">
                       {idea.tag}
+                    </span>
+                    <span className="rounded-full border border-cyan-200 bg-cyan-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-cyan-800">
+                      {Number(idea.total_votes || 0)} votos
                     </span>
                   </div>
 

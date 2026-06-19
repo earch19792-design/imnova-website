@@ -188,6 +188,71 @@ function mapProductIdea(
   }
 }
 
+type PublicIdea = ReturnType<typeof mapProductIdea>
+
+function parseContentRangeCount(
+  value: string | null
+) {
+  const rawCount =
+    value?.split("/")?.[1]
+
+  const count =
+    Number(rawCount)
+
+  return Number.isFinite(count)
+    ? count
+    : 0
+}
+
+async function getIdeaVoteCount(
+  restUrl: string,
+  idea: PublicIdea
+) {
+  const field =
+    idea.id
+      ? "product_id"
+      : "idea_key"
+
+  const value =
+    idea.id ||
+    idea.key
+
+  if (!value) {
+    return 0
+  }
+
+  const response =
+    await fetch(
+      `${restUrl}/community_idea_votes?select=id&${field}=eq.${encodeURIComponent(value)}`,
+      {
+        method: "HEAD",
+        headers: {
+          ...getRestHeaders(),
+          Prefer: "count=exact",
+        },
+        cache: "no-store",
+      }
+    )
+
+  if (!response.ok) {
+    const details =
+      await response
+        .text()
+        .catch(() => "")
+
+    console.error(
+      "GET COMMUNITY IDEAS VOTE COUNT ERROR:",
+      details
+    )
+
+    return 0
+  }
+
+  return parseContentRangeCount(
+    response.headers.get("content-range")
+  )
+}
+
 export async function GET() {
   try {
     const supabaseUrl =
@@ -285,9 +350,24 @@ export async function GET() {
         .json()
         .catch(() => []) as ProductIdeaRow[]
 
+    const ideas =
+      products.map(mapProductIdea)
+
+    const ideasWithVoteCounts =
+      await Promise.all(
+        ideas.map(async idea => ({
+          ...idea,
+          total_votes:
+            await getIdeaVoteCount(
+              restUrl,
+              idea
+            ),
+        }))
+      )
+
     return NextResponse.json({
       success: true,
-      ideas: products.map(mapProductIdea),
+      ideas: ideasWithVoteCounts,
     })
   } catch (error) {
     console.error(
