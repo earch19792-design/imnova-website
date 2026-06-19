@@ -921,6 +921,15 @@ export function GlobalSection() {
     activeType !== "Todos" ||
     searchTerm.trim().length > 0
 
+  const mapPreviewItems =
+    filteredDistribution
+      .filter(item =>
+        Boolean(
+          getChannelCoordinates(item)
+        )
+      )
+      .slice(0, 5)
+
   return (
     <section
       id="where-to-buy"
@@ -930,16 +939,16 @@ export function GlobalSection() {
         isolate
         scroll-mt-28
         overflow-hidden
-        bg-black
-        py-36
+        bg-[#f4efe6]
+        py-24
         md:scroll-mt-32
-        md:py-44
+        md:py-32
       "
     >
 
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.10),transparent_44%)]" />
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/20 to-transparent" />
-      <div className="absolute inset-0 opacity-[0.018] bg-[linear-gradient(rgba(255,255,255,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.12)_1px,transparent_1px)] bg-[size:76px_76px]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_10%,rgba(34,211,238,0.18),transparent_30%),radial-gradient(circle_at_82%_18%,rgba(245,158,11,0.16),transparent_28%),linear-gradient(180deg,#f8f4ec_0%,#efe6d7_100%)]" />
+      <div className="absolute inset-0 opacity-[0.32] bg-[linear-gradient(rgba(15,23,42,0.055)_1px,transparent_1px),linear-gradient(90deg,rgba(15,23,42,0.055)_1px,transparent_1px)] bg-[size:64px_64px]" />
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-stone-300 to-transparent" />
 
       <div className="relative z-10 mx-auto max-w-7xl px-6">
 
@@ -959,34 +968,34 @@ export function GlobalSection() {
           transition={{
             duration: 0.9,
           }}
-          className="mx-auto max-w-5xl text-center"
+          className="mx-auto grid max-w-6xl gap-10 lg:grid-cols-[0.92fr_1.08fr] lg:items-end"
         >
 
-          <div className="inline-flex items-center gap-3 rounded-full border border-cyan-300/20 bg-cyan-300/[0.06] px-5 py-3 backdrop-blur-2xl">
-            <Rocket className="h-4 w-4 text-cyan-300" />
-            <span className="text-xs uppercase tracking-[0.35em] text-cyan-200">
-              Canales de compra
-            </span>
-          </div>
+          <div>
+            <div className="inline-flex items-center gap-3 rounded-full border border-cyan-700/20 bg-white/70 px-5 py-3 shadow-sm backdrop-blur-2xl">
+              <Rocket className="h-4 w-4 text-cyan-700" />
+              <span className="text-xs font-black uppercase tracking-[0.35em] text-cyan-800">
+                IMNOVA Locator
+              </span>
+            </div>
 
-          <h2 className="mx-auto mt-10 max-w-6xl text-5xl font-black leading-[1.02] tracking-[-0.04em] text-white sm:text-6xl lg:text-7xl">
-            Encuentra dónde comprar
-            <span className="block bg-gradient-to-r from-cyan-200 via-cyan-400 to-white bg-clip-text text-transparent">
-              productos IMNOVA
+          <h2 className="mt-8 max-w-4xl text-5xl font-black leading-[0.98] tracking-[-0.05em] text-stone-950 sm:text-6xl lg:text-7xl">
+            Encuentra tu punto
+            <span className="block text-cyan-800">
+              IMNOVA mas cercano.
             </span>
           </h2>
 
-          <p className="mx-auto mt-9 max-w-4xl text-xl leading-9 text-zinc-300">
-            Selecciona país, ciudad y canal para encontrar marketplaces,
-            mercados o establecimientos donde ya puedes comprar productos
-            disponibles. La sección está preparada para crecer por mercado sin
-            perder orden.
+          <p className="mt-7 max-w-3xl text-lg leading-9 text-stone-600">
+            Activa tu ubicacion o filtra por ciudad para ver canales
+            autorizados con productos disponibles. Solo mostramos productos
+            listos para compra y rutas reales cuando quieras llegar.
           </p>
 
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+          <div className="mt-8 flex flex-wrap gap-3">
             <Link
               href="/store"
-              className="inline-flex items-center justify-center gap-3 rounded-2xl border border-cyan-300/25 bg-cyan-300/[0.10] px-6 py-4 text-xs font-black uppercase tracking-[0.18em] text-cyan-100 transition hover:border-cyan-200/45 hover:bg-cyan-300/[0.16]"
+              className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-stone-950 px-7 text-xs font-black uppercase tracking-[0.16em] text-white shadow-[0_18px_42px_rgba(15,23,42,0.22)] transition hover:-translate-y-0.5 hover:bg-cyan-800"
             >
               <ShoppingBag className="h-4 w-4" />
               Comprar en Store
@@ -994,33 +1003,148 @@ export function GlobalSection() {
 
             <a
               href="#where-to-buy-map"
-              className="inline-flex items-center justify-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-6 py-4 text-xs font-black uppercase tracking-[0.18em] text-zinc-300 transition hover:border-white/20 hover:bg-white/[0.08]"
+              className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full border border-stone-300 bg-white/80 px-7 text-xs font-black uppercase tracking-[0.16em] text-stone-900 shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:bg-white"
             >
               <MapPin className="h-4 w-4" />
               Ver canales
             </a>
           </div>
 
-          <div className="mx-auto mt-8 grid max-w-3xl gap-3 text-left md:grid-cols-3">
+          <div className="mt-8 grid gap-3 text-left sm:grid-cols-3">
             {[
-              "Selecciona país",
-              "Elige ciudad",
-              "Compra online o encuentra punto físico",
+              "Activa ubicacion",
+              "Compara canales",
+              "Abre la ruta real",
             ].map(
               (step, index) => (
                 <div
                   key={step}
-                  className="rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3"
+                  className="rounded-[24px] border border-stone-200 bg-white/70 px-4 py-4 shadow-sm backdrop-blur"
                 >
-                  <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-100/50">
+                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-700">
                     Paso 0{index + 1}
                   </p>
-                  <p className="mt-2 text-sm font-semibold text-white/85">
+                  <p className="mt-2 text-sm font-black text-stone-900">
                     {step}
                   </p>
                 </div>
               )
             )}
+          </div>
+
+          <div className="mt-6 flex flex-wrap gap-2">
+            {[
+              "Canales autorizados",
+              "Producto disponible",
+              "Ruta real en Maps",
+              "Compra clara",
+            ].map(item => (
+              <span
+                key={item}
+                className="rounded-full border border-stone-300 bg-white/65 px-4 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-stone-700 shadow-sm backdrop-blur"
+              >
+                {item}
+              </span>
+            ))}
+          </div>
+          </div>
+
+          <div className="relative overflow-hidden rounded-[42px] border border-stone-200 bg-stone-950 p-4 shadow-[0_34px_100px_rgba(15,23,42,0.28)]">
+            <div className="relative min-h-[420px] overflow-hidden rounded-[32px] border border-white/10 bg-[radial-gradient(circle_at_20%_20%,rgba(34,211,238,0.20),transparent_28%),radial-gradient(circle_at_72%_32%,rgba(245,158,11,0.18),transparent_24%),linear-gradient(135deg,#071312_0%,#050505_58%,#1d160b_100%)]">
+              <div className="absolute inset-0 opacity-[0.12] bg-[linear-gradient(rgba(255,255,255,0.22)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.22)_1px,transparent_1px)] bg-[size:48px_48px]" />
+              <div className="absolute left-[12%] right-[12%] top-[45%] h-px rotate-[-12deg] bg-gradient-to-r from-transparent via-cyan-200/80 to-transparent" />
+              <div className="absolute left-[26%] right-[18%] top-[60%] h-px rotate-[14deg] bg-gradient-to-r from-transparent via-amber-200/60 to-transparent" />
+
+              <div className="absolute left-5 top-5 rounded-full border border-cyan-200/20 bg-black/45 px-4 py-2 text-[10px] font-black uppercase tracking-[0.20em] text-cyan-100 backdrop-blur">
+                IMNOVA Locator
+              </div>
+
+              <div className="absolute right-5 top-5 rounded-full border border-emerald-200/20 bg-emerald-300/10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.20em] text-emerald-100 backdrop-blur">
+                {filteredDistribution.length} canal
+                {filteredDistribution.length === 1
+                  ? ""
+                  : "es"}{" "}
+                activo
+                {filteredDistribution.length === 1
+                  ? ""
+                  : "s"}
+              </div>
+
+              {mapPreviewItems.map(
+                (item, index) => {
+                  const positions = [
+                    "left-[18%] top-[30%]",
+                    "left-[58%] top-[24%]",
+                    "left-[72%] top-[54%]",
+                    "left-[34%] top-[68%]",
+                    "left-[48%] top-[44%]",
+                  ]
+                  const isFeatured =
+                    featuredDistribution &&
+                    item.id === featuredDistribution.id &&
+                    item.productId === featuredDistribution.productId
+
+                  return (
+                    <div
+                      key={`${item.productId}-${item.id}-map`}
+                      className={`absolute ${positions[index % positions.length]}`}
+                    >
+                      <div
+                        className={`relative flex h-12 w-12 items-center justify-center rounded-full border backdrop-blur-xl ${
+                          isFeatured
+                            ? "border-amber-200 bg-amber-300 text-stone-950 shadow-[0_0_42px_rgba(251,191,36,0.45)]"
+                            : "border-cyan-200/45 bg-cyan-300/20 text-cyan-50 shadow-[0_0_32px_rgba(34,211,238,0.20)]"
+                        }`}
+                      >
+                        {isFeatured && (
+                          <span className="absolute inset-0 rounded-full bg-amber-200/40 animate-ping" />
+                        )}
+                        <MapPin className="h-5 w-5" />
+                        <span className="absolute -right-1 -top-1 h-4 w-4 rounded-full border border-white/35 bg-cyan-200" />
+                      </div>
+                    </div>
+                  )
+                }
+              )}
+
+              <div className="absolute bottom-5 left-5 right-5 rounded-[28px] border border-white/10 bg-black/60 p-5 backdrop-blur-2xl">
+                <p className="text-[10px] font-black uppercase tracking-[0.20em] text-cyan-100/70">
+                  {featuredDistance !== null
+                    ? "Distribuidor mas cercano"
+                    : "Canal destacado"}
+                </p>
+                <h3 className="mt-3 line-clamp-1 text-2xl font-black tracking-[-0.04em] text-white">
+                  {featuredDistribution?.name ||
+                    "Activa ubicacion para ver el mas cercano"}
+                </h3>
+                <p className="mt-2 line-clamp-1 text-sm font-semibold text-white/65">
+                  {featuredDistribution?.productName ||
+                    "Los canales aparecen cuando hay productos disponibles."}
+                </p>
+                <p className="mt-3 text-xs leading-5 text-white/45">
+                  Solo mostramos canales confirmados y productos que ya estan
+                  disponibles para compra.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {featuredDistance !== null && (
+                    <span className="rounded-full border border-emerald-200/20 bg-emerald-300/10 px-3 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-emerald-100">
+                      {formatDistance(featuredDistance)} aprox.
+                    </span>
+                  )}
+                  {featuredDistribution && (
+                    <a
+                      href={getDirectionsUrl(featuredDistribution)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:bg-cyan-100"
+                    >
+                      Como llegar
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
 
         </motion.div>
@@ -1066,17 +1190,17 @@ export function GlobalSection() {
                 </div>
                 <div>
                   <p className="text-[10px] uppercase tracking-[0.30em] text-cyan-200/60">
-                    Buscador
+                    Ruta guiada
                   </p>
                   <h3 className="mt-1 text-2xl font-black text-white">
-                    Encuentra tu canal
+                    Encuentra tu punto
                   </h3>
                 </div>
               </div>
 
               <p className="mt-3 text-sm leading-6 text-zinc-500">
-                Sigue el orden natural de compra. La lista se actualiza con los
-                canales disponibles registrados desde Admin.
+                Primero localizamos canales autorizados. Luego eliges si compras
+                en Store, marketplace o visitas un punto fisico cercano.
               </p>
 
               <div className="mt-6 rounded-[24px] border border-cyan-300/20 bg-cyan-300/[0.06] p-4">
@@ -1086,7 +1210,7 @@ export function GlobalSection() {
                   </div>
                   <div>
                     <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-100/65">
-                      Distribuidor cercano
+                      Punto mas cercano
                     </p>
                     <p className="mt-2 text-sm leading-6 text-zinc-400">
                       {locationMessage}
@@ -1324,7 +1448,7 @@ export function GlobalSection() {
                   <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
                     <div>
                       <p className="text-[10px] uppercase tracking-[0.28em] text-cyan-100/55">
-                        Canales disponibles
+                        Canales autorizados
                       </p>
                       <h3 className="mt-2 text-3xl font-black text-white">
                         {filteredDistribution.length} resultado

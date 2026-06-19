@@ -26,6 +26,7 @@ import {
 } from "lucide-react"
 
 import { Footer } from "@/components/footer"
+import { GlobalSection } from "@/components/global-section"
 import InnovaPopup from "@/components/imnova-popup"
 import { Navigation } from "@/components/navigation"
 
@@ -1139,77 +1140,7 @@ export default function IMNOVAPage() {
         </div>
       </section>
 
-      <section
-        id="where-to-buy"
-        className="scroll-mt-28 px-6 py-16 md:py-24"
-      >
-        <div className="mx-auto grid max-w-7xl gap-8 rounded-[36px] border border-stone-200 bg-white/72 p-7 shadow-[0_28px_78px_rgba(58,44,28,0.10)] backdrop-blur md:p-10 lg:grid-cols-[0.95fr_1.05fr] lg:items-center">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
-              Donde comprar
-            </p>
-            <h2 className="mt-4 text-4xl font-black leading-tight tracking-[-0.05em] text-stone-950 md:text-6xl">
-              Encuentra productos IMNOVA sin complicarte.
-            </h2>
-            <p className="mt-6 text-base leading-8 text-stone-600 md:text-lg">
-              Primero ve a la tienda para comprar productos disponibles. Cuando
-              un canal autorizado este confirmado, aqui se mostrara como
-              alternativa para compra online o punto fisico.
-            </p>
-
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <a
-                href="/store"
-                className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-stone-950 px-7 text-[12px] font-black uppercase tracking-[0.14em] text-white transition hover:-translate-y-0.5 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
-              >
-                Comprar en Store
-                <ShoppingBag className="h-4 w-4" />
-              </a>
-              <button
-                type="button"
-                onClick={openCommunity}
-                className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full border border-stone-200 bg-white/80 px-7 text-[12px] font-black uppercase tracking-[0.14em] text-stone-800 transition hover:-translate-y-0.5 hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
-              >
-                Recibir disponibilidad
-                <MessageCircle className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-3">
-            {[
-              {
-                icon: ShoppingBag,
-                title: "IMNOVA Store",
-                text: "Compra directa cuando el producto ya esta Disponible.",
-              },
-              {
-                icon: ShieldCheck,
-                title: "Canales autorizados",
-                text: "Solo se mostraran canales confirmados para evitar confusion.",
-              },
-              {
-                icon: MapPin,
-                title: "Distribuidor cercano",
-                text: "La busqueda por ubicacion se activara cuando los puntos fisicos tengan coordenadas publicadas.",
-              },
-            ].map(item => (
-              <article
-                key={item.title}
-                className="rounded-[28px] border border-stone-200 bg-[#fbf7ef] p-5"
-              >
-                <item.icon className="h-5 w-5 text-cyan-700" />
-                <h3 className="mt-5 text-xl font-black tracking-[-0.04em] text-stone-950">
-                  {item.title}
-                </h3>
-                <p className="mt-3 text-sm leading-6 text-stone-600">
-                  {item.text}
-                </p>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
+      <GlobalSection />
 
       <section
         id="transparencia"

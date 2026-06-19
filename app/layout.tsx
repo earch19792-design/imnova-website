@@ -145,6 +145,7 @@ export default function RootLayout({
     >
 
       <body
+        suppressHydrationWarning
         className={`
           ${orbitron.className}
           relative
