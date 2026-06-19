@@ -6,6 +6,7 @@ type ProductsQueryOptions = {
   to?: number
   orderBy?: string
   ascending?: boolean
+  availableOnly?: boolean
 }
 
 type AdminProductPageOptions = {
@@ -191,6 +192,30 @@ function getStateIdsByNames(
 export async function getPublicProducts(
   options: ProductsQueryOptions = {}
 ) {
+  const states =
+    options.availableOnly === false
+      ? []
+      : await getProductStates()
+
+  const availableStateIds =
+    options.availableOnly === false
+      ? []
+      : getStateIdsByNames(
+          states as Array<{
+            id: string
+            name: string
+          }>,
+          [
+            "Disponible",
+          ]
+        )
+
+  if (
+    options.availableOnly !== false &&
+    availableStateIds.length === 0
+  ) {
+    return []
+  }
 
   let query =
     supabase
@@ -205,6 +230,14 @@ export async function getPublicProducts(
             false,
         }
       )
+
+  if (options.availableOnly !== false) {
+    query =
+      query.in(
+        "state_id",
+        availableStateIds
+      )
+  }
 
   if (
     typeof options.from === "number" &&
@@ -246,6 +279,24 @@ export async function getPublicProductBySlug(
   slug: string
 ) {
 
+  const states =
+    await getProductStates()
+
+  const availableStateIds =
+    getStateIdsByNames(
+      states as Array<{
+        id: string
+        name: string
+      }>,
+      [
+        "Disponible",
+      ]
+    )
+
+  if (availableStateIds.length === 0) {
+    return null
+  }
+
   const { data, error } =
     await supabase
       .from("public_products")
@@ -254,7 +305,11 @@ export async function getPublicProductBySlug(
         "slug",
         slug
       )
-      .single()
+      .in(
+        "state_id",
+        availableStateIds
+      )
+      .maybeSingle()
 
   if (error) {
 
@@ -1584,6 +1639,45 @@ export type CommunitySubscriberStats = {
   percentWithEmail: number
 }
 
+export type CommunityGrowthLevelCount = {
+  level_key: string
+  level_label: string | null
+  count: number
+}
+
+export type CommunityGrowthSummary = {
+  totalReferralCodes: number
+  totalReferrals: number
+  totalPointsAwarded: number
+  vipMembers: number
+  activeRewards: number
+  transparencyItems: number
+  levelCounts: CommunityGrowthLevelCount[]
+}
+
+export type TransparencyWallItemStatus =
+  | "idea_proposed"
+  | "idea_in_validation"
+  | "product_in_development"
+  | "product_launched"
+
+export type TransparencyWallItem = {
+  id: string
+  title: string
+  summary: string | null
+  status: TransparencyWallItemStatus
+  product_id: string | null
+  idea_lab_item_id: string | null
+  trend_signal_id: string | null
+  source: string | null
+  is_public: boolean | null
+  is_active: boolean | null
+  display_order: number | null
+  published_at: string | null
+  created_at: string | null
+  updated_at?: string | null
+}
+
 export type TopCommunityNiche = {
   niche_id: string
   niche_name: string
@@ -1797,6 +1891,16 @@ const EMPTY_COMMUNITY_SUBSCRIBER_STATS: CommunitySubscriberStats = {
   subscribersWithSubnicheInterests: 0,
   percentWithWhatsapp: 0,
   percentWithEmail: 0,
+}
+
+const EMPTY_COMMUNITY_GROWTH_SUMMARY: CommunityGrowthSummary = {
+  totalReferralCodes: 0,
+  totalReferrals: 0,
+  totalPointsAwarded: 0,
+  vipMembers: 0,
+  activeRewards: 0,
+  transparencyItems: 0,
+  levelCounts: [],
 }
 
 function getCommunityPercent(
@@ -2324,6 +2428,295 @@ export async function getCommunitySubscriberStats(): Promise<CommunitySubscriber
       ),
   }
 
+}
+
+async function getSafeTableCount(
+  tableName: string,
+  applyFilters?: (query: any) => any
+) {
+  let query =
+    supabase
+      .from(tableName)
+      .select(
+        "id",
+        {
+          count: "exact",
+          head: true,
+        }
+      )
+
+  if (applyFilters) {
+    query =
+      applyFilters(query)
+  }
+
+  const { count, error } =
+    await query
+
+  if (error) {
+    console.warn(
+      "GET SAFE TABLE COUNT WARNING:",
+      tableName,
+      error
+    )
+
+    return 0
+  }
+
+  return count || 0
+}
+
+export async function getCommunityGrowthSummary(): Promise<CommunityGrowthSummary> {
+  try {
+    const [
+      totalReferralCodes,
+      totalReferrals,
+      activeRewards,
+      transparencyItems,
+      statusResult,
+      pointsResult,
+      levelsResult,
+    ] =
+      await Promise.all([
+        getSafeTableCount(
+          "community_referral_codes"
+        ),
+        getSafeTableCount(
+          "community_referrals"
+        ),
+        getSafeTableCount(
+          "community_vip_rewards",
+          query =>
+            query.eq(
+              "is_active",
+              true
+            )
+        ),
+        getSafeTableCount(
+          "transparency_wall_items",
+          query =>
+            query.eq(
+              "is_active",
+              true
+            )
+        ),
+        supabase
+          .from("community_member_status")
+          .select(
+            "level_key,is_vip,points_total"
+          ),
+        supabase
+          .from("community_points_ledger")
+          .select("points"),
+        supabase
+          .from("community_levels")
+          .select("key,label")
+          .eq(
+            "is_active",
+            true
+          ),
+      ])
+
+    if (statusResult.error) {
+      console.warn(
+        "GET COMMUNITY MEMBER STATUS SUMMARY WARNING:",
+        statusResult.error
+      )
+    }
+
+    if (pointsResult.error) {
+      console.warn(
+        "GET COMMUNITY POINTS SUMMARY WARNING:",
+        pointsResult.error
+      )
+    }
+
+    if (levelsResult.error) {
+      console.warn(
+        "GET COMMUNITY LEVELS SUMMARY WARNING:",
+        levelsResult.error
+      )
+    }
+
+    const levelLabels =
+      new Map(
+        (levelsResult.data || []).map(
+          (level: any) => [
+            String(level.key),
+            level.label
+              ? String(level.label)
+              : null,
+          ]
+        )
+      )
+
+    const levelCountsMap =
+      new Map<string, number>()
+
+    const memberStatusRows =
+      statusResult.error
+        ? []
+        : statusResult.data || []
+
+    memberStatusRows.forEach(
+      (row: any) => {
+        const levelKey =
+          String(
+            row.level_key ||
+            "miembro"
+          )
+
+        levelCountsMap.set(
+          levelKey,
+          (
+            levelCountsMap.get(
+              levelKey
+            ) || 0
+          ) + 1
+        )
+      }
+    )
+
+    const totalPointsAwarded =
+      pointsResult.error
+        ? 0
+        : (pointsResult.data || []).reduce(
+            (
+              total: number,
+              row: any
+            ) =>
+              total +
+              Number(row.points || 0),
+            0
+          )
+
+    const vipMembers =
+      memberStatusRows.filter(
+        (row: any) =>
+          Boolean(row.is_vip)
+      ).length
+
+    return {
+      totalReferralCodes,
+      totalReferrals,
+      totalPointsAwarded,
+      vipMembers,
+      activeRewards,
+      transparencyItems,
+      levelCounts:
+        Array.from(
+          levelCountsMap.entries()
+        ).map(
+          ([levelKey, count]) => ({
+            level_key:
+              levelKey,
+            level_label:
+              levelLabels.get(
+                levelKey
+              ) || null,
+            count,
+          })
+        ),
+    }
+  } catch (error) {
+    console.warn(
+      "GET COMMUNITY GROWTH SUMMARY WARNING:",
+      error
+    )
+
+    return EMPTY_COMMUNITY_GROWTH_SUMMARY
+  }
+}
+
+const transparencyWallSelect = `
+  id,
+  title,
+  summary,
+  status,
+  product_id,
+  idea_lab_item_id,
+  trend_signal_id,
+  source,
+  is_public,
+  is_active,
+  display_order,
+  published_at,
+  created_at,
+  updated_at
+`
+
+export async function getPublicTransparencyWallItems(
+  limit = 12
+): Promise<TransparencyWallItem[]> {
+  const { data, error } =
+    await supabase
+      .from("transparency_wall_items")
+      .select(transparencyWallSelect)
+      .eq(
+        "is_public",
+        true
+      )
+      .eq(
+        "is_active",
+        true
+      )
+      .order(
+        "display_order",
+        {
+          ascending: true,
+        }
+      )
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
+      .limit(limit)
+
+  if (error) {
+    console.warn(
+      "GET PUBLIC TRANSPARENCY WALL ITEMS WARNING:",
+      error
+    )
+
+    return []
+  }
+
+  return (data || []) as TransparencyWallItem[]
+}
+
+export async function getAdminTransparencyWallItems(
+  limit = 20
+): Promise<TransparencyWallItem[]> {
+  const { data, error } =
+    await supabase
+      .from("transparency_wall_items")
+      .select(transparencyWallSelect)
+      .order(
+        "display_order",
+        {
+          ascending: true,
+        }
+      )
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
+      .limit(limit)
+
+  if (error) {
+    console.warn(
+      "GET ADMIN TRANSPARENCY WALL ITEMS WARNING:",
+      error
+    )
+
+    return []
+  }
+
+  return (data || []) as TransparencyWallItem[]
 }
 
 export async function getTopCommunityNiches(

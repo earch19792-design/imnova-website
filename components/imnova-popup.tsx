@@ -274,6 +274,11 @@ export default function InnovaPopup({
     setEmailOptIn,
   ] = useState(true)
 
+  const [
+    frequencyPreference,
+    setFrequencyPreference,
+  ] = useState("important_only")
+
     const [objective, setObjective] =
   useState("")
 
@@ -318,6 +323,11 @@ export default function InnovaPopup({
   const [success, setSuccess] =
     useState(false)
 
+  const [
+    memberReferralCode,
+    setMemberReferralCode,
+  ] = useState("")
+
   
 
   const [mounted, setMounted] =
@@ -341,6 +351,7 @@ export default function InnovaPopup({
 
     setRegistrationStep("interests")
     setInterestSaveWarning("")
+    setMemberReferralCode("")
     setSuccess(false)
 
   }, [isOpen])
@@ -994,8 +1005,15 @@ useEffect(() => {
             selectedInterestAreaIds
           )
 
-        const normalizedSubnicheIds =
+        const normalizedSubnicheIds: string[] =
           []
+
+        const referralCode =
+          typeof window !== "undefined"
+            ? new URLSearchParams(
+                window.location.search
+              ).get("ref") || ""
+            : ""
 
         const registerResponse =
           await fetch(
@@ -1043,10 +1061,12 @@ useEffect(() => {
                         emailOptIn
                         ? "email"
                         : "",
+                  frequencyPreference,
                   consentText:
                     communityConsentText,
                   objective:
                     effectiveObjective,
+                  referralCode,
                   source:
                     "community_popup",
                   honeypot:
@@ -1058,6 +1078,22 @@ useEffect(() => {
         const registerResult =
           await registerResponse.json()
             .catch(() => null)
+
+        if (
+          typeof window !== "undefined" &&
+          registerResult?.community_referral_code
+        ) {
+          setMemberReferralCode(
+            String(
+              registerResult.community_referral_code
+            )
+          )
+
+          window.localStorage.setItem(
+            "imnova_community_referral_code",
+            registerResult.community_referral_code
+          )
+        }
 
         if (
           !registerResponse.ok ||
@@ -1112,12 +1148,13 @@ useEffect(() => {
 
   router.push("/")
 
-}, 1800)
+}, 3600)
         setFullName("")
         setPhone("")
         setEmail("")
         setWhatsappOptIn(true)
         setEmailOptIn(true)
+        setFrequencyPreference("important_only")
         setSelectedNiches([])
         setSelectedInterestAreaIds([])
         setRegistrationStep("interests")
@@ -2094,6 +2131,52 @@ useEffect(() => {
       </label>
     </div>
 
+    <label
+      className="
+        mt-4
+        block
+        text-xs
+        font-semibold
+        uppercase
+        tracking-[0.18em]
+        text-white/55
+      "
+    >
+      Frecuencia preferida
+    </label>
+
+    <select
+      value={frequencyPreference}
+      onChange={(event) =>
+        setFrequencyPreference(
+          event.target.value
+        )
+      }
+      className="
+        mt-2
+        w-full
+        rounded-2xl
+        border
+        border-white/10
+        bg-black/50
+        px-4
+        py-3
+        text-sm
+        text-white
+        outline-none
+      "
+    >
+      <option value="important_only">
+        Solo novedades importantes
+      </option>
+      <option value="weekly">
+        Semanal
+      </option>
+      <option value="twice_monthly">
+        Dos veces al mes
+      </option>
+    </select>
+
     <p
       className="
         mt-3
@@ -2539,6 +2622,16 @@ useEffect(() => {
                   >
 
                     Ya eres parte de la comunidad IMNOVA. Te enviaremos encuestas, avances y oportunidades según tus intereses.
+
+                    {memberReferralCode && (
+                      <span className="mt-3 block rounded-xl border border-cyan-200/20 bg-black/20 px-4 py-3 text-xs leading-5 text-cyan-50/80">
+                        Tu codigo para invitar amigos es{" "}
+                        <strong className="text-white">
+                          {memberReferralCode}
+                        </strong>
+                        . Compartelo con quien quiera votar ideas y recibir beneficios.
+                      </span>
+                    )}
 
                   </motion.div>
 

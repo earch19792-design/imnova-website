@@ -1,69 +1,54 @@
 "use client"
 
 import Link from "next/link"
-import {
-  useEffect,
-  useState,
-} from "react"
+import { useEffect, useState } from "react"
 
-import {
-  AnimatePresence,
-  motion,
-} from "framer-motion"
-
-import {
-  Menu,
-  X,
-} from "lucide-react"
+import { AnimatePresence, motion } from "framer-motion"
+import { Menu, X } from "lucide-react"
 
 const primaryNavItems = [
   {
-    name: "Productos",
-    shortName: "Productos",
-    href: "#available-now",
+    name: "Mision y vision",
+    shortName: "Mision",
+    href: "#mision-vision",
   },
   {
-    name: "Ideas de Uso",
-    shortName: "Ideas de Uso",
-    href: "#imnova-guides",
+    name: "Como funciona",
+    shortName: "Como funciona",
+    href: "#como-funciona",
   },
   {
-    name: "Innovaciones",
-    shortName: "Innovaciones",
-    href: "#innovations",
+    name: "Ideas en votacion",
+    shortName: "Ideas",
+    href: "#ideas",
+  },
+  {
+    name: "Beneficios",
+    shortName: "Beneficios",
+    href: "#beneficios",
   },
   {
     name: "Comunidad",
     shortName: "Comunidad",
-    href: "#contact",
+    href: "#comunidad",
   },
 ]
 
 const secondaryNavItems = [
   {
-    name: "Dónde comprar",
-    shortName: "Dónde comprar",
-    href: "#where-to-buy",
-  },
-  {
-    name: "Ecosistema",
-    shortName: "Ecosistema",
-    href: "#working",
-  },
-  {
-    name: "Observatorio IMNOVA",
-    shortName: "Observatorio",
-    href: "#trend-radar",
-  },
-]
-
-const mobileNavItems = [
-  ...primaryNavItems,
-  ...secondaryNavItems,
-  {
     name: "Tienda",
     shortName: "Tienda",
     href: "/store",
+  },
+  {
+    name: "Sobre nosotros",
+    shortName: "Nosotros",
+    href: "/about",
+  },
+  {
+    name: "Contacto",
+    shortName: "Contacto",
+    href: "/contact",
   },
   {
     name: "Admin",
@@ -72,16 +57,14 @@ const mobileNavItems = [
   },
 ]
 
-export function Navigation() {
-  const [
-    isScrolled,
-    setIsScrolled,
-  ] = useState(false)
+const mobileNavItems = [
+  ...primaryNavItems,
+  ...secondaryNavItems,
+]
 
-  const [
-    isMenuOpen,
-    setIsMenuOpen,
-  ] = useState(false)
+export function Navigation() {
+  const [isScrolled, setIsScrolled] = useState(false)
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
 
   useEffect(() => {
     const handleScroll = () => {
@@ -90,16 +73,9 @@ export function Navigation() {
 
     handleScroll()
 
-    window.addEventListener(
-      "scroll",
-      handleScroll
-    )
+    window.addEventListener("scroll", handleScroll)
 
-    return () =>
-      window.removeEventListener(
-        "scroll",
-        handleScroll
-      )
+    return () => window.removeEventListener("scroll", handleScroll)
   }, [])
 
   return (
@@ -153,7 +129,7 @@ export function Navigation() {
                 IMNOVA
               </div>
               <div className="mt-1 whitespace-nowrap text-[7px] uppercase tracking-[0.16em] text-white/45 md:text-[8px] md:tracking-[0.22em] lg:tracking-[0.28em]">
-                Tecnología - Nutrición - Bienestar
+                Comunidad - Ideas - Beneficios
               </div>
             </div>
           </Link>
@@ -172,31 +148,20 @@ export function Navigation() {
 
           <div className="flex shrink-0 items-center justify-end gap-2">
             <Link
-              href="/store"
+              href="#comunidad"
               className="hidden whitespace-nowrap rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100 transition-all duration-300 hover:border-cyan-300/35 hover:bg-cyan-400/20 hover:text-white sm:inline-flex"
             >
-              Tienda
-            </Link>
-
-            <Link
-              href="/admin"
-              className="hidden whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.015] px-3 py-3 text-[9px] font-medium uppercase tracking-[0.16em] text-white/35 transition-all duration-300 hover:border-white/15 hover:bg-white/[0.04] hover:text-white/65 lg:inline-flex"
-            >
-              Admin
+              Unirme gratis
             </Link>
 
             <motion.button
               type="button"
-              aria-label="Abrir menú"
+              aria-label="Abrir menu"
               aria-expanded={isMenuOpen}
               whileTap={{
                 scale: 0.96,
               }}
-              onClick={() =>
-                setIsMenuOpen(
-                  current => !current
-                )
-              }
+              onClick={() => setIsMenuOpen(current => !current)}
               className="inline-flex items-center justify-center rounded-2xl border border-white/10 bg-white/[0.035] p-3 text-white transition hover:bg-white/[0.07]"
             >
               {isMenuOpen ? (
@@ -233,25 +198,29 @@ export function Navigation() {
                   <Link
                     key={item.name}
                     href={item.href}
-                    onClick={() =>
-                      setIsMenuOpen(false)
-                    }
-                    className="rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-[11px] font-semibold uppercase tracking-[0.20em] text-white/75 transition hover:bg-white/[0.06] hover:text-white"
+                    onClick={() => setIsMenuOpen(false)}
+                    className={`rounded-2xl border px-5 py-4 text-[11px] font-semibold uppercase tracking-[0.20em] transition ${
+                      item.name === "Admin"
+                        ? "border-white/5 bg-white/[0.015] text-white/35 hover:border-white/10 hover:bg-white/[0.035] hover:text-white/60"
+                        : "border-white/10 bg-white/[0.03] text-white/75 hover:bg-white/[0.06] hover:text-white"
+                    }`}
                   >
                     {item.name}
                   </Link>
                 ))}
               </div>
 
-              <div className="hidden gap-3 xl:grid xl:grid-cols-3">
+              <div className="hidden gap-3 xl:grid xl:grid-cols-4">
                 {secondaryNavItems.map(item => (
                   <Link
                     key={item.name}
                     href={item.href}
-                    onClick={() =>
-                      setIsMenuOpen(false)
-                    }
-                    className="rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-[11px] font-semibold uppercase tracking-[0.20em] text-white/75 transition hover:bg-white/[0.06] hover:text-white"
+                    onClick={() => setIsMenuOpen(false)}
+                    className={`rounded-2xl border px-5 py-4 text-[11px] font-semibold uppercase tracking-[0.20em] transition ${
+                      item.name === "Admin"
+                        ? "border-white/5 bg-white/[0.015] text-white/35 hover:border-white/10 hover:bg-white/[0.035] hover:text-white/60"
+                        : "border-white/10 bg-white/[0.03] text-white/75 hover:bg-white/[0.06] hover:text-white"
+                    }`}
                   >
                     {item.name}
                   </Link>

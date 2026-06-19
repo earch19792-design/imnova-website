@@ -2,52 +2,50 @@
 
 import { motion } from "framer-motion"
 import Link from "next/link"
-import {
-  ArrowUpRight,
-} from "lucide-react"
+import { ArrowUpRight } from "lucide-react"
 
 const footerLinks = {
   explore: [
     {
-      name: "Lanzamientos",
-      href: "#available-now",
+      name: "Mision y vision",
+      href: "#mision-vision",
     },
     {
-      name: "Innovaciones",
-      href: "#innovations",
+      name: "Como funciona",
+      href: "#como-funciona",
     },
     {
-      name: "Ideas de Uso",
-      href: "#imnova-guides",
+      name: "Ideas en votacion",
+      href: "#ideas",
     },
     {
-      name: "Dónde comprar",
-      href: "#where-to-buy",
-    },
-  ],
-  ecosystem: [
-    {
-      name: "Cómo funciona IMNOVA",
-      href: "#imnova-os",
-    },
-    {
-      name: "Ecosistema",
-      href: "#working",
+      name: "Beneficios",
+      href: "#beneficios",
     },
     {
       name: "Comunidad",
-      href: "#contact",
-    },
-    {
-      name: "Sobre Nosotros",
-      href: "/about",
+      href: "#comunidad",
     },
   ],
-  access: [
+  community: [
+    {
+      name: "Unirme gratis",
+      href: "#comunidad",
+    },
+    {
+      name: "Votar ideas",
+      href: "#ideas",
+    },
+    {
+      name: "Sobre nosotros",
+      href: "/about",
+    },
     {
       name: "Tienda",
       href: "/store",
     },
+  ],
+  access: [
     {
       name: "Contacto",
       href: "/contact",
@@ -57,8 +55,12 @@ const footerLinks = {
       href: "/privacy-policy",
     },
     {
-      name: "Términos",
+      name: "Terminos",
       href: "/terms",
+    },
+    {
+      name: "Admin",
+      href: "/admin",
     },
   ],
 }
@@ -70,8 +72,8 @@ export function Footer() {
       links: footerLinks.explore,
     },
     {
-      title: "Ecosistema",
-      links: footerLinks.ecosystem,
+      title: "Comunidad",
+      links: footerLinks.community,
     },
     {
       title: "Accesos",
@@ -105,32 +107,31 @@ export function Footer() {
                     IMNOVA
                   </div>
                   <div className="mt-1 text-[10px] uppercase tracking-[0.26em] text-cyan-100/55">
-                    Tecnología · Nutrición · Bienestar
+                    Comunidad que decide lo proximo
                   </div>
                 </div>
               </motion.div>
             </Link>
 
             <p className="mt-8 max-w-xl text-base leading-8 text-zinc-400">
-              Creamos soluciones inteligentes para ayudar a las personas a
-              vivir mejor, rendir más y construir rutinas más simples,
-              saludables y equilibradas.
+              IMNOVA une comunidad, ideas y beneficios para crear productos
+              que nacen desde intereses reales, no desde suposiciones.
             </p>
 
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
-                href="/store"
+                href="#comunidad"
                 className="inline-flex items-center gap-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.10] px-5 py-4 text-xs font-black uppercase tracking-[0.16em] text-cyan-50 transition hover:border-cyan-200/40 hover:bg-cyan-300/[0.16]"
               >
-                Ir a la tienda
+                Unirme gratis
                 <ArrowUpRight className="h-4 w-4" />
               </Link>
 
               <Link
-                href="#contact"
+                href="#ideas"
                 className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.035] px-5 py-4 text-xs font-black uppercase tracking-[0.16em] text-white/70 transition hover:bg-white/[0.07] hover:text-white"
               >
-                Comunidad
+                Votar ideas
               </Link>
             </div>
           </div>
@@ -150,7 +151,11 @@ export function Footer() {
                     <li key={link.name}>
                       <Link
                         href={link.href}
-                        className="group inline-flex items-center gap-2 text-sm text-zinc-400 transition hover:text-white"
+                        className={`group inline-flex items-center gap-2 text-sm transition hover:text-white ${
+                          link.name === "Admin"
+                            ? "text-zinc-700 hover:text-zinc-400"
+                            : "text-zinc-400"
+                        }`}
                       >
                         <span>{link.name}</span>
                         <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition group-hover:opacity-100" />

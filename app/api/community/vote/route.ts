@@ -357,6 +357,150 @@ function createDedupeKey({
   }
 }
 
+async function awardSubscriberVotePoints(
+  supabase: SupabaseClient,
+  subscriberId: string,
+  voteId: string,
+  source: string
+) {
+  if (
+    !subscriberId ||
+    !voteId
+  ) {
+    return {
+      awarded: false,
+      error: null,
+    }
+  }
+
+  try {
+    const idempotencyKey =
+      `vote:${subscriberId}:${voteId}`
+
+    const { error } =
+      await supabase
+        .from("community_points_ledger")
+        .upsert(
+          {
+            subscriber_id:
+              subscriberId,
+            event_type:
+              "vote",
+            points:
+              5,
+            source,
+            source_table:
+              "community_idea_votes",
+            source_id:
+              voteId,
+            idempotency_key:
+              idempotencyKey,
+            description:
+              "Voto en idea IMNOVA",
+          },
+          {
+            onConflict:
+              "idempotency_key",
+            ignoreDuplicates:
+              true,
+          }
+        )
+
+    if (error) {
+      return {
+        awarded: false,
+        error,
+      }
+    }
+
+    const { data: pointRows } =
+      await supabase
+        .from("community_points_ledger")
+        .select("points")
+        .eq(
+          "subscriber_id",
+          subscriberId
+        )
+
+    const pointsTotal =
+      (pointRows || []).reduce(
+        (total, row: any) =>
+          total + Number(row.points || 0),
+        0
+      )
+
+    const { data: levels } =
+      await supabase
+        .from("community_levels")
+        .select("key,min_points")
+        .eq(
+          "is_active",
+          true
+        )
+        .order(
+          "min_points",
+          {
+            ascending: false,
+          }
+        )
+
+    const levelKey =
+      levels?.find(
+        (level: any) =>
+          pointsTotal >=
+          Number(level.min_points || 0)
+      )?.key || "miembro"
+
+    const { data: referralCode } =
+      await supabase
+        .from("community_referral_codes")
+        .select("code")
+        .eq(
+          "subscriber_id",
+          subscriberId
+        )
+        .maybeSingle()
+
+    const { error: statusError } =
+      await supabase
+        .from("community_member_status")
+        .upsert(
+          {
+            subscriber_id:
+              subscriberId,
+            points_total:
+              pointsTotal,
+            level_key:
+              levelKey,
+            is_vip:
+              levelKey === "vip",
+            referral_code:
+              referralCode?.code || null,
+            last_activity_at:
+              new Date().toISOString(),
+            updated_at:
+              new Date().toISOString(),
+          },
+          {
+            onConflict:
+              "subscriber_id",
+          }
+        )
+
+    return {
+      awarded:
+        !statusError,
+      error:
+        statusError || null,
+    }
+  } catch (error) {
+    return {
+      awarded: false,
+      error,
+    }
+  }
+}
+
 export async function POST(
   req: Request
 ) {
@@ -743,9 +887,11 @@ export async function POST(
       }
 
       return NextResponse.json({
+        success: true,
         ok: true,
         created: false,
         updated: true,
+        points_awarded: false,
         vote_type:
           voteType,
         idea_title:
@@ -775,6 +921,7 @@ export async function POST(
     }
 
     return NextResponse.json({
+      success: true,
       ok: true,
       created: true,
       updated: false,
@@ -787,6 +934,37 @@ export async function POST(
         ideaTitle,
       dedupe_strategy:
         dedupeStrategy,
+      ...(
+        await (async () => {
+          const createdVoteId =
+            (createdVote as ExistingVote | null)?.id ||
+            ""
+
+          const pointsResult =
+            await awardSubscriberVotePoints(
+              supabase,
+              subscriberId,
+              createdVoteId,
+              source
+            )
+
+          if (pointsResult.error) {
+            console.warn(
+              "COMMUNITY IDEA VOTE POINTS WARNING:",
+              pointsResult.error
+            )
+          }
+
+          return {
+            points_awarded:
+              pointsResult.awarded,
+            points_warning:
+              pointsResult.error
+                ? "community_vote_points_not_saved"
+                : null,
+          }
+        })()
+      ),
     })
   } catch (error) {
     console.error(
