@@ -43,6 +43,13 @@ type PublicInterestArea = {
   highlightIndex: number
 }
 
+type KnownMemberSummary = {
+  name: string
+  levelLabel: string
+  pointsTotal: number
+  referralCode: string
+}
+
 const communityRegisterErrorMessages:
   Record<string, string> = {
     subscriber_create_failed:
@@ -328,6 +335,21 @@ export default function InnovaPopup({
     setMemberReferralCode,
   ] = useState("")
 
+  const [
+    knownMember,
+    setKnownMember,
+  ] = useState<KnownMemberSummary | null>(null)
+
+  const [
+    checkingKnownMember,
+    setCheckingKnownMember,
+  ] = useState(false)
+
+  const [
+    showMemberUpdateForm,
+    setShowMemberUpdateForm,
+  ] = useState(false)
+
   
 
   const [mounted, setMounted] =
@@ -349,10 +371,120 @@ export default function InnovaPopup({
       return
     }
 
+    let cancelled =
+      false
+
     setRegistrationStep("interests")
     setInterestSaveWarning("")
     setMemberReferralCode("")
     setSuccess(false)
+    setKnownMember(null)
+    setShowMemberUpdateForm(false)
+
+    if (typeof window === "undefined") {
+      return
+    }
+
+    const subscriberId =
+      window.localStorage
+        .getItem("imnova_community_subscriber_id")
+        ?.trim() || ""
+
+    const referralCode =
+      window.localStorage
+        .getItem("imnova_community_referral_code")
+        ?.trim() || ""
+
+    if (
+      !subscriberId ||
+      !referralCode
+    ) {
+      return
+    }
+
+    async function loadKnownMember() {
+      setCheckingKnownMember(true)
+
+      try {
+        const response =
+          await fetch(
+            "/api/community/member",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+              body:
+                JSON.stringify({
+                  subscriberId,
+                  referralCode,
+                }),
+            }
+          )
+
+        const result =
+          await response
+            .json()
+            .catch(() => null)
+
+        if (
+          !response.ok ||
+          !result?.success ||
+          !result?.member
+        ) {
+          if (
+            result?.error === "member_not_found" ||
+            result?.error === "member_identity_required"
+          ) {
+            window.localStorage.removeItem(
+              "imnova_community_subscriber_id"
+            )
+            window.localStorage.removeItem(
+              "imnova_community_referral_code"
+            )
+          }
+
+          return
+        }
+
+        if (cancelled) {
+          return
+        }
+
+        setKnownMember({
+          name:
+            result.member.name ||
+            "Miembro IMNOVA",
+          levelLabel:
+            result.member.level?.label ||
+            "Miembro",
+          pointsTotal:
+            Number(
+              result.member.points_total || 0
+            ),
+          referralCode:
+            result.member.referral?.code ||
+            referralCode,
+        })
+      } catch (error) {
+        console.warn(
+          "KNOWN COMMUNITY MEMBER LOOKUP WARNING:",
+          error
+        )
+      } finally {
+        if (!cancelled) {
+          setCheckingKnownMember(false)
+        }
+      }
+    }
+
+    loadKnownMember()
+
+    return () => {
+      cancelled =
+        true
+    }
 
   }, [isOpen])
 
@@ -1216,6 +1348,23 @@ setTimeout(() => {
 
     }
 
+  const handleGoToMemberArea = () => {
+    onClose()
+    router.push("/miembro")
+  }
+
+  const handleGoToIdeas = () => {
+    onClose()
+    router.push("/#ideas-activas")
+  }
+
+  const returningMemberMode =
+    Boolean(
+      knownMember &&
+      !showMemberUpdateForm &&
+      !success
+    )
+
   if (!mounted) return null
 
   return (
@@ -1584,14 +1733,16 @@ setTimeout(() => {
                 >
 
                   {
-                    isLogin
-                      ? "Bienvenido de nuevo"
-                      : "Decide los próximos lanzamientos de IMNOVA"
+                    returningMemberMode
+                      ? "Ya eres parte de IMNOVA"
+                      : isLogin
+                        ? "Bienvenido de nuevo"
+                        : "Decide los próximos lanzamientos de IMNOVA"
                   }
 
                 </h3>
 
-                {!isLogin && (
+                {!isLogin && !returningMemberMode && (
 
                   <p
                     className="
@@ -1607,7 +1758,7 @@ setTimeout(() => {
                   </p>
 
                 )}
-{!isLogin && (
+{!isLogin && !returningMemberMode && (
 
   <div
     className="
@@ -1679,7 +1830,215 @@ setTimeout(() => {
 
 )}
 
-{!isLogin && (
+{checkingKnownMember && !knownMember && (
+
+  <div
+    className="
+      mt-4
+      rounded-2xl
+      border
+      border-cyan-300/15
+      bg-cyan-300/[0.06]
+      p-4
+      text-sm
+      leading-6
+      text-cyan-50/75
+    "
+  >
+
+    Revisando si ya eres miembro de IMNOVA...
+
+  </div>
+
+)}
+
+{returningMemberMode && knownMember && (
+
+  <motion.div
+    initial={{
+      opacity: 0,
+      y: 10,
+    }}
+    animate={{
+      opacity: 1,
+      y: 0,
+    }}
+    className="
+      mt-5
+      rounded-[28px]
+      border
+      border-cyan-300/20
+      bg-gradient-to-br
+      from-cyan-300/[0.12]
+      via-white/[0.04]
+      to-black/30
+      p-5
+      shadow-[0_0_60px_rgba(34,211,238,0.10)]
+    "
+  >
+
+    <p
+      className="
+        text-sm
+        leading-6
+        text-cyan-50/80
+      "
+    >
+      Hola, {knownMember.name.split(" ")[0] || "miembro"}. Ya tenemos tu registro, tus intereses y tu codigo de referido. No necesitas volver a llenar tus datos para participar.
+    </p>
+
+    <div
+      className="
+        mt-5
+        grid
+        gap-3
+        sm:grid-cols-3
+      "
+    >
+
+      <div
+        className="
+          rounded-2xl
+          border
+          border-white/10
+          bg-black/25
+          p-4
+        "
+      >
+        <p className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+          Nivel
+        </p>
+        <p className="mt-2 text-sm font-black text-white">
+          {knownMember.levelLabel}
+        </p>
+      </div>
+
+      <div
+        className="
+          rounded-2xl
+          border
+          border-white/10
+          bg-black/25
+          p-4
+        "
+      >
+        <p className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+          Puntos
+        </p>
+        <p className="mt-2 text-sm font-black text-white">
+          {knownMember.pointsTotal.toLocaleString("es-NI")}
+        </p>
+      </div>
+
+      <div
+        className="
+          rounded-2xl
+          border
+          border-white/10
+          bg-black/25
+          p-4
+        "
+      >
+        <p className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+          Codigo
+        </p>
+        <p className="mt-2 truncate text-sm font-black text-white">
+          {knownMember.referralCode}
+        </p>
+      </div>
+
+    </div>
+
+    <div
+      className="
+        mt-5
+        grid
+        gap-3
+        sm:grid-cols-2
+      "
+    >
+      <button
+        type="button"
+        onClick={handleGoToMemberArea}
+        className="
+          rounded-2xl
+          border
+          border-cyan-300/25
+          bg-cyan-300
+          px-5
+          py-4
+          text-xs
+          font-black
+          uppercase
+          tracking-[0.18em]
+          text-black
+          transition-all
+          duration-300
+          hover:scale-[1.01]
+        "
+      >
+        Ir a mi area
+      </button>
+
+      <button
+        type="button"
+        onClick={handleGoToIdeas}
+        className="
+          rounded-2xl
+          border
+          border-white/10
+          bg-white/[0.06]
+          px-5
+          py-4
+          text-xs
+          font-black
+          uppercase
+          tracking-[0.18em]
+          text-white
+          transition-all
+          duration-300
+          hover:border-cyan-300/25
+          hover:bg-cyan-300/[0.08]
+          hover:text-cyan-50
+        "
+      >
+        Votar ideas
+      </button>
+    </div>
+
+    <button
+      type="button"
+      onClick={() =>
+        setShowMemberUpdateForm(true)
+      }
+      className="
+        mt-4
+        w-full
+        rounded-2xl
+        border
+        border-white/10
+        bg-transparent
+        px-5
+        py-3
+        text-xs
+        font-bold
+        uppercase
+        tracking-[0.16em]
+        text-white/45
+        transition-all
+        duration-300
+        hover:border-white/20
+        hover:text-white/75
+      "
+    >
+      Actualizar datos o intereses
+    </button>
+
+  </motion.div>
+
+)}
+
+{!isLogin && !returningMemberMode && (
 
   <div
     className="
@@ -1724,7 +2083,7 @@ setTimeout(() => {
 
 )}
 
-{!isLogin && (
+{!isLogin && !returningMemberMode && (
 
   <div
     className="
@@ -1829,7 +2188,7 @@ setTimeout(() => {
 
 </div>
 
-{surveyIntent && !isLogin && (
+{surveyIntent && !isLogin && !returningMemberMode && (
 
   <div
     className="
@@ -1879,7 +2238,8 @@ setTimeout(() => {
 
 <div
   className={
-    registrationStep === "contact"
+    registrationStep === "contact" &&
+    !returningMemberMode
       ? "mt-6 space-y-4"
       : "hidden"
   }
@@ -2203,7 +2563,7 @@ setTimeout(() => {
 
 {/* NICHES */}
 
-{!isLogin && registrationStep === "interests" && (
+{!isLogin && !returningMemberMode && registrationStep === "interests" && (
 
   <div
     className="
@@ -2479,7 +2839,7 @@ setTimeout(() => {
 
 {/* BUTTON */}
 
-{registrationStep === "contact" && !isLogin && (
+{registrationStep === "contact" && !isLogin && !returningMemberMode && (
 
   <button
     type="button"
@@ -2513,6 +2873,8 @@ setTimeout(() => {
   </button>
 
 )}
+
+{!returningMemberMode && (
 
 <button
   type="button"
@@ -2559,7 +2921,9 @@ setTimeout(() => {
 
 </button>
 
-{!isLogin && (
+)}
+
+{!isLogin && !returningMemberMode && (
 
   <p
     className="
