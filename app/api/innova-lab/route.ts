@@ -49,6 +49,7 @@ type ProductLaunchTargeting = {
     | "segmented_by_product_subniches"
     | "segmented_by_product_niche"
     | "segmented_by_area_interests"
+    | "segmented_by_product_interests_and_areas"
     | "all_community"
     | "none"
   subnicheIds: string[]
@@ -1051,7 +1052,21 @@ async function getProductLaunchRecipientPhones(
         : "none"
   }
 
-  if (subnicheIds.length === 0) {
+  const areaKeys =
+    await getProductLaunchAreaKeys({
+      supabaseClient,
+      strategicNicheId:
+        typeof product?.strategic_niche_id ===
+        "string"
+          ? product.strategic_niche_id
+          : null,
+      subnicheIds,
+    })
+
+  if (
+    subnicheIds.length === 0 &&
+    areaKeys.length === 0
+  ) {
     return {
       phones: [],
       emails: [],
@@ -1067,11 +1082,16 @@ async function getProductLaunchRecipientPhones(
     data: interestRows,
     error: interestsError,
   } =
-    await supabaseClient
-      .from("subscriber_interests")
-      .select("subscriber_id")
-      .in("subniche_id", subnicheIds)
-      .limit(1000)
+    subnicheIds.length > 0
+      ? await supabaseClient
+          .from("subscriber_interests")
+          .select("subscriber_id")
+          .in("subniche_id", subnicheIds)
+          .limit(1000)
+      : {
+          data: [],
+          error: null,
+        }
 
   if (interestsError) {
     console.error(
@@ -1094,10 +1114,7 @@ async function getProductLaunchRecipientPhones(
     }
   }
 
-  let areaKeys:
-    string[] = []
-
-  let subscriberIds =
+  const specificSubscriberIds =
     Array.from(
       new Set(
         (interestRows || [])
@@ -1111,40 +1128,38 @@ async function getProductLaunchRecipientPhones(
       )
     )
 
-  let areaFallbackWarning:
+  let areaInterestWarning:
     string | null = null
 
-  if (subscriberIds.length === 0) {
-    areaKeys =
-      await getProductLaunchAreaKeys({
-        supabaseClient,
-        strategicNicheId:
-          typeof product?.strategic_niche_id ===
-          "string"
-            ? product.strategic_niche_id
-            : null,
-        subnicheIds,
-      })
+  const areaSubscriberResult =
+    await getSubscriberIdsByAreaKeys(
+      supabaseClient,
+      areaKeys
+    )
 
-    const areaSubscriberResult =
-      await getSubscriberIdsByAreaKeys(
-        supabaseClient,
-        areaKeys
-      )
+  areaInterestWarning =
+    areaSubscriberResult.warning
 
-    areaFallbackWarning =
-      areaSubscriberResult.warning
+  const areaSubscriberIds =
+    areaSubscriberResult.subscriberIds
 
-    if (
-      areaSubscriberResult.subscriberIds.length >
-      0
-    ) {
-      subscriberIds =
-        areaSubscriberResult.subscriberIds
+  const subscriberIds =
+    Array.from(
+      new Set([
+        ...specificSubscriberIds,
+        ...areaSubscriberIds,
+      ])
+    )
 
-      mode =
+  if (
+    specificSubscriberIds.length > 0 &&
+    areaSubscriberIds.length > 0
+  ) {
+    mode =
+      "segmented_by_product_interests_and_areas"
+  } else if (areaSubscriberIds.length > 0) {
+    mode =
         "segmented_by_area_interests"
-    }
   }
 
   if (subscriberIds.length === 0) {
@@ -1159,7 +1174,7 @@ async function getProductLaunchRecipientPhones(
         phoneCount: 0,
         emailCount: 0,
         warning:
-          areaFallbackWarning ||
+          areaInterestWarning ||
           "no_interested_subscribers_for_product_launch",
       },
     }
