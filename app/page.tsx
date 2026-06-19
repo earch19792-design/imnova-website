@@ -250,6 +250,33 @@ function getClientVoteKey() {
   return newKey
 }
 
+function getStoredCommunitySubscriberId() {
+  if (typeof window === "undefined") {
+    return ""
+  }
+
+  const subscriberId =
+    window.localStorage
+      .getItem("imnova_community_subscriber_id")
+      ?.trim() || ""
+
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    subscriberId
+  )
+    ? subscriberId
+    : ""
+}
+
+function clearStoredCommunitySubscriberId() {
+  if (typeof window === "undefined") {
+    return
+  }
+
+  window.localStorage.removeItem(
+    "imnova_community_subscriber_id"
+  )
+}
+
 async function getPublicIdeas() {
   const response =
     await fetch(
@@ -402,12 +429,13 @@ export default function IMNOVAPage() {
     setVotingIdeaKey(idea.key)
 
     try {
-      const response = await fetch("/api/community/vote", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+      const clientVoteKey =
+        getClientVoteKey()
+
+      const storedSubscriberId =
+        getStoredCommunitySubscriberId()
+
+      const baseVotePayload = {
           product_id:
             idea.id ||
             undefined,
@@ -418,11 +446,53 @@ export default function IMNOVAPage() {
           idea_title: idea.title,
           vote_type: voteType,
           source: "public_home",
-          client_vote_key: getClientVoteKey(),
-        }),
-      })
+          client_vote_key:
+            clientVoteKey,
+      }
 
-      const result = await response.json().catch(() => null)
+      const sendVote = async (
+        subscriberId?: string
+      ) => {
+        const response = await fetch("/api/community/vote", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            ...baseVotePayload,
+            ...(subscriberId
+              ? {
+                  subscriber_id:
+                    subscriberId,
+                }
+              : {}),
+          }),
+        })
+
+        const result =
+          await response.json().catch(() => null)
+
+        return {
+          response,
+          result,
+        }
+      }
+
+      let { response, result } =
+        await sendVote(storedSubscriberId)
+
+      if (
+        !response.ok &&
+        storedSubscriberId &&
+        (
+          result?.error === "subscriber_not_found" ||
+          result?.error === "invalid_subscriber_id"
+        )
+      ) {
+        clearStoredCommunitySubscriberId()
+        ;({ response, result } =
+          await sendVote())
+      }
 
       if (!response.ok || !result?.success) {
         throw new Error(result?.error || "vote_failed")

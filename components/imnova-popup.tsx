@@ -1096,6 +1096,16 @@ useEffect(() => {
         }
 
         if (
+          typeof window !== "undefined" &&
+          registerResult?.subscriberId
+        ) {
+          window.localStorage.setItem(
+            "imnova_community_subscriber_id",
+            String(registerResult.subscriberId)
+          )
+        }
+
+        if (
           !registerResponse.ok ||
           !registerResult?.success
         ) {
@@ -1142,11 +1152,11 @@ useEffect(() => {
 
         setSuccess(true)
 
-       setTimeout(() => {
+setTimeout(() => {
 
   onClose()
 
-  router.push("/")
+  router.push("/miembro")
 
 }, 3600)
         setFullName("")
