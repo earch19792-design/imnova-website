@@ -32,6 +32,10 @@ type Product = {
   name: string
   image?: string
   image_url?: string
+  visible?: boolean | null
+  is_public?: boolean | null
+  is_active?: boolean | null
+  featured?: boolean | null
   category: string
   commercial_category?: string | null
   strategic_niche_id?: string | null
@@ -230,6 +234,19 @@ function getChannelNameOptions(
 
   return []
 
+}
+
+function normalizeStateLabel(
+  value: string
+) {
+  return value
+    .normalize("NFD")
+    .replace(
+      /[\u0300-\u036f]/g,
+      ""
+    )
+    .toLowerCase()
+    .trim()
 }
 
 function createMarketplaceChannel(
@@ -697,6 +714,19 @@ export function ProductCard({
         >[1] = {
           state_id:
             selectedStateId,
+        }
+
+        if (
+          normalizeStateLabel(
+            selectedState?.name || ""
+          ).includes("disponible")
+        ) {
+          updates.visible = true
+          updates.is_public = true
+          updates.is_active = true
+        } else {
+          updates.visible = false
+          updates.is_public = false
         }
 
         if ("nicho" in product) {

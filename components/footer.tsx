@@ -3,6 +3,10 @@
 import Link from "next/link"
 import { ArrowUpRight } from "lucide-react"
 
+type FooterProps = {
+  onOpenCommunity?: () => void
+}
+
 const footerLinks = [
   {
     name: "Inicio",
@@ -10,7 +14,7 @@ const footerLinks = [
   },
   {
     name: "Ideas",
-    href: "#ideas",
+    href: "#ideas-activas",
   },
   {
     name: "Como funciona",
@@ -38,7 +42,12 @@ const footerLinks = [
   },
 ]
 
-export function Footer() {
+export function Footer({
+  onOpenCommunity,
+}: FooterProps) {
+  const communityCtaClassName =
+    "inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-stone-950 px-6 text-[12px] font-black uppercase tracking-[0.14em] text-white transition hover:-translate-y-0.5 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+
   return (
     <footer className="relative overflow-hidden border-t border-stone-200 bg-[#f4efe6] px-6 py-14 text-stone-900 md:py-20">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(14,165,183,0.10),transparent_30%),radial-gradient(circle_at_90%_30%,rgba(245,158,11,0.10),transparent_28%)]" />
@@ -71,16 +80,27 @@ export function Footer() {
             </p>
 
             <div className="mt-8 flex flex-wrap gap-3">
-              <Link
-                href="#comunidad"
-                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-stone-950 px-6 text-[12px] font-black uppercase tracking-[0.14em] text-white transition hover:-translate-y-0.5 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
-              >
-                Unirme gratis
-                <ArrowUpRight className="h-4 w-4" />
-              </Link>
+              {onOpenCommunity ? (
+                <button
+                  type="button"
+                  onClick={onOpenCommunity}
+                  className={communityCtaClassName}
+                >
+                  Unirme gratis
+                  <ArrowUpRight className="h-4 w-4" />
+                </button>
+              ) : (
+                <Link
+                  href="#comunidad"
+                  className={communityCtaClassName}
+                >
+                  Unirme gratis
+                  <ArrowUpRight className="h-4 w-4" />
+                </Link>
+              )}
 
               <Link
-                href="#ideas"
+                href="#ideas-activas"
                 className="inline-flex min-h-12 items-center justify-center rounded-full border border-stone-200 bg-white/70 px-6 text-[12px] font-black uppercase tracking-[0.14em] text-stone-800 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
               >
                 Votar ideas

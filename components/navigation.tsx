@@ -6,13 +6,17 @@ import { useEffect, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { ArrowUpRight, Menu, X } from "lucide-react"
 
+type NavigationProps = {
+  onOpenCommunity?: () => void
+}
+
 const primaryNavItems = [
   {
     name: "Inicio",
     href: "#hero",
   },
   {
-    name: "Votar",
+    name: "Votar ideas",
     href: "#ideas-activas",
   },
   {
@@ -52,7 +56,9 @@ const supportNavItems = [
   },
 ]
 
-export function Navigation() {
+export function Navigation({
+  onOpenCommunity,
+}: NavigationProps) {
   const [isScrolled, setIsScrolled] = useState(false)
   const [isMenuOpen, setIsMenuOpen] = useState(false)
 
@@ -79,6 +85,17 @@ export function Navigation() {
       document.body.style.overflow = originalOverflow
     }
   }, [isMenuOpen])
+
+  const handleOpenCommunity = () => {
+    setIsMenuOpen(false)
+    onOpenCommunity?.()
+  }
+
+  const communityCtaClassName = `hidden min-h-11 items-center justify-center rounded-full px-5 text-[11px] font-black uppercase tracking-[0.14em] shadow-[0_14px_38px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/60 sm:inline-flex ${
+    isScrolled
+      ? "bg-stone-950 text-white hover:bg-cyan-700"
+      : "bg-cyan-200 text-stone-950 hover:bg-white"
+  }`
 
   return (
     <motion.header
@@ -157,16 +174,22 @@ export function Navigation() {
           </nav>
 
           <div className="flex items-center justify-end gap-2">
-            <Link
-              href="#comunidad"
-              className={`hidden min-h-11 items-center justify-center rounded-full px-5 text-[11px] font-black uppercase tracking-[0.14em] shadow-[0_14px_38px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/60 sm:inline-flex ${
-                isScrolled
-                  ? "bg-stone-950 text-white hover:bg-cyan-700"
-                  : "bg-cyan-200 text-stone-950 hover:bg-white"
-              }`}
-            >
-              Unirme gratis
-            </Link>
+            {onOpenCommunity ? (
+              <button
+                type="button"
+                onClick={handleOpenCommunity}
+                className={communityCtaClassName}
+              >
+                Unirme gratis
+              </button>
+            ) : (
+              <Link
+                href="#comunidad"
+                className={communityCtaClassName}
+              >
+                Unirme gratis
+              </Link>
+            )}
 
             <button
               type="button"
@@ -240,14 +263,25 @@ export function Navigation() {
                 ))}
               </div>
 
-              <Link
-                href="#comunidad"
-                onClick={() => setIsMenuOpen(false)}
-                className="mt-4 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-stone-950 px-5 text-[12px] font-black uppercase tracking-[0.14em] text-white transition hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
-              >
-                Unirme gratis
-                <ArrowUpRight className="h-4 w-4" />
-              </Link>
+              {onOpenCommunity ? (
+                <button
+                  type="button"
+                  onClick={handleOpenCommunity}
+                  className="mt-4 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-stone-950 px-5 text-[12px] font-black uppercase tracking-[0.14em] text-white transition hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                >
+                  Unirme gratis
+                  <ArrowUpRight className="h-4 w-4" />
+                </button>
+              ) : (
+                <Link
+                  href="#comunidad"
+                  onClick={() => setIsMenuOpen(false)}
+                  className="mt-4 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-stone-950 px-5 text-[12px] font-black uppercase tracking-[0.14em] text-white transition hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                >
+                  Unirme gratis
+                  <ArrowUpRight className="h-4 w-4" />
+                </Link>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

@@ -82,6 +82,10 @@ type Product = {
   description?: string
   image_url?: string
   image?: string
+  visible?: boolean | null
+  is_public?: boolean | null
+  is_active?: boolean | null
+  featured?: boolean | null
   price?: number
   currency?: string
   direct_url?: string
@@ -105,6 +109,13 @@ type ProductState = {
   name: string
   progress: number
   sort_order?: number
+  is_active?: boolean
+}
+
+type ProductPublicStateUpdates = {
+  state_id: string | null
+  visible: boolean
+  is_public: boolean
   is_active?: boolean
 }
 
@@ -262,6 +273,19 @@ function normalizeValidationValue(
   return (
     value || "pendiente"
   )
+    .toLowerCase()
+    .trim()
+}
+
+function normalizeStateLabel(
+  value: string
+) {
+  return value
+    .normalize("NFD")
+    .replace(
+      /[\u0300-\u036f]/g,
+      ""
+    )
     .toLowerCase()
     .trim()
 }
@@ -1811,14 +1835,35 @@ export default function AdminPage() {
       setProductStateError("")
 
       try {
+        const nextState =
+          productStates.find(
+            state =>
+              state.id === normalizedStateId
+          )
+
+        const isNextStateAvailable =
+          normalizeStateLabel(
+            nextState?.name || ""
+          ).includes("disponible")
+
+        const stateUpdates:
+          ProductPublicStateUpdates = {
+          state_id:
+            normalizedStateId,
+          visible:
+            isNextStateAvailable,
+          is_public:
+            isNextStateAvailable,
+        }
+
+        if (isNextStateAvailable) {
+          stateUpdates.is_active = true
+        }
 
         const result =
           await updateProduct(
             product.id,
-            {
-              state_id:
-                normalizedStateId,
-            }
+            stateUpdates
           )
 
         if (!result) {
@@ -1834,8 +1879,7 @@ export default function AdminPage() {
                 currentProduct.id === product.id
                   ? {
                       ...currentProduct,
-                      state_id:
-                        normalizedStateId,
+                      ...stateUpdates,
                     }
                   : currentProduct
             )
@@ -1848,8 +1892,7 @@ export default function AdminPage() {
                 currentProduct.id === product.id
                   ? {
                       ...currentProduct,
-                      state_id:
-                        normalizedStateId,
+                      ...stateUpdates,
                     }
                   : currentProduct
             )

@@ -486,7 +486,7 @@ export default function IMNOVAPage() {
       <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_12%_0%,rgba(14,165,183,0.14),transparent_34%),radial-gradient(circle_at_86%_8%,rgba(245,158,11,0.12),transparent_30%),linear-gradient(180deg,#fbf7ef_0%,#f6f1e8_48%,#efe7db_100%)]" />
       <div className="pointer-events-none fixed inset-0 -z-10 opacity-[0.18] bg-[linear-gradient(rgba(92,73,47,0.10)_1px,transparent_1px),linear-gradient(90deg,rgba(92,73,47,0.10)_1px,transparent_1px)] bg-[size:104px_104px]" />
 
-      <Navigation />
+      <Navigation onOpenCommunity={openCommunity} />
 
       <section
         id="hero"
@@ -538,7 +538,7 @@ export default function IMNOVAPage() {
                 href="#ideas-activas"
                 className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full border border-white/18 bg-white/8 px-8 text-[12px] font-black uppercase tracking-[0.14em] text-white shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/14 focus:outline-none focus:ring-2 focus:ring-cyan-200/50"
               >
-                Ver ideas activas
+                Votar ideas
                 <Vote className="h-4 w-4" />
               </a>
             </div>
@@ -667,7 +667,7 @@ export default function IMNOVAPage() {
                   href="#ideas-activas"
                   className="mt-5 inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-cyan-200 px-4 text-[10px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-200/70"
                 >
-                  Ver y votar ideas
+                  Votar ideas
                   <Vote className="h-3.5 w-3.5" />
                 </a>
               </div>
@@ -950,7 +950,7 @@ export default function IMNOVAPage() {
               href="#ideas-activas"
               className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-cyan-200 bg-cyan-50 px-6 text-[12px] font-black uppercase tracking-[0.14em] text-cyan-800 transition hover:-translate-y-0.5 hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
             >
-              Ver ideas activas
+              Votar ideas
               <Vote className="h-4 w-4" />
             </a>
           </div>
@@ -1327,21 +1327,31 @@ export default function IMNOVAPage() {
         </div>
       </section>
 
-      <button
-        type="button"
-        onClick={openCommunity}
-        className="fixed bottom-4 left-4 right-4 z-40 inline-flex min-h-[52px] items-center justify-center gap-2 rounded-full bg-stone-950 px-5 text-[11px] font-black uppercase tracking-[0.14em] text-white shadow-[0_18px_48px_rgba(15,23,42,0.20)] transition hover:-translate-y-0.5 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60 sm:left-auto sm:right-5 sm:w-auto lg:hidden"
-      >
-        Unirme gratis
-        <ArrowUpRight className="h-4 w-4" />
-      </button>
+      <div className="fixed bottom-4 left-4 right-4 z-40 grid grid-cols-[0.82fr_1.18fr] gap-2 rounded-full border border-stone-200 bg-white/88 p-1.5 shadow-[0_18px_48px_rgba(15,23,42,0.20)] backdrop-blur lg:hidden">
+        <a
+          href="#ideas-activas"
+          className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-full border border-stone-200 bg-white px-4 text-[10px] font-black uppercase tracking-[0.12em] text-stone-800 transition hover:bg-cyan-50 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+        >
+          Votar ideas
+          <Vote className="h-3.5 w-3.5" />
+        </a>
+
+        <button
+          type="button"
+          onClick={openCommunity}
+          className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-full bg-stone-950 px-4 text-[10px] font-black uppercase tracking-[0.12em] text-white transition hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+        >
+          Unirme gratis
+          <ArrowUpRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
 
       <InnovaPopup
         isOpen={showPopup}
         onClose={closePopup}
       />
 
-      <Footer />
+      <Footer onOpenCommunity={openCommunity} />
     </main>
   )
 }
