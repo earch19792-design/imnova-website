@@ -76,6 +76,18 @@ const DEFAULT_COMMUNITY_CONSENT_TEXT =
   "Acepto recibir avisos de IMNOVA por los canales seleccionados, conectados a mis intereses. Sin spam ni mensajes genericos."
 const DEFAULT_COMMUNICATION_FREQUENCY: CommunicationFrequencyPreference =
   "important_only"
+const REGISTER_RATE_LIMIT_WINDOW_MS =
+  60 * 1000
+const REGISTER_RATE_LIMIT_MAX =
+  10
+
+type RateLimitBucket = {
+  count: number
+  resetAt: number
+}
+
+const registerRateLimitBuckets =
+  new Map<string, RateLimitBucket>()
 
 const publicInterestAreas = [
   {
@@ -241,6 +253,64 @@ function getString(
   return typeof value === "string"
     ? value.trim()
     : ""
+}
+
+function getRequestIp(
+  req: Request
+) {
+  return req.headers
+    .get("x-forwarded-for")
+    ?.split(",")[0]
+    ?.trim() ||
+    req.headers
+      .get("x-real-ip")
+      ?.trim() ||
+    "unknown"
+}
+
+function isRegisterRateLimited(
+  req: Request
+) {
+  const now =
+    Date.now()
+
+  const key =
+    getRequestIp(req)
+
+  const current =
+    registerRateLimitBuckets.get(key)
+
+  if (
+    !current ||
+    current.resetAt <= now
+  ) {
+    registerRateLimitBuckets.set(
+      key,
+      {
+        count: 1,
+        resetAt:
+          now + REGISTER_RATE_LIMIT_WINDOW_MS,
+      }
+    )
+
+    return false
+  }
+
+  current.count += 1
+
+  if (
+    current.count >
+    REGISTER_RATE_LIMIT_MAX
+  ) {
+    return true
+  }
+
+  registerRateLimitBuckets.set(
+    key,
+    current
+  )
+
+  return false
 }
 
 function getStringArray(
@@ -1384,6 +1454,13 @@ export async function POST(
     )
   }
 
+  if (isRegisterRateLimited(req)) {
+    return createErrorResponse(
+      "too_many_registration_attempts",
+      429
+    )
+  }
+
   const source =
     normalizeSource(body.source)
 
@@ -2104,7 +2181,7 @@ export async function POST(
 
           whatsappWelcomeStatus =
             welcomeResult.messageStatus ||
-            welcomeResult.data?.messages?.[0]?.message_status ||
+            welcomeResult.data?.messageStatus ||
             null
 
           whatsappWelcomeTo =

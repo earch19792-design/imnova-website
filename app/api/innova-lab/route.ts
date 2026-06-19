@@ -61,19 +61,21 @@ type CommunicationChannel =
   | "whatsapp"
   | "email"
 
-type WhatsAppResult =
-  Awaited<ReturnType<typeof sendWhatsAppUpdate>>
+type NotificationResult = {
+  success: boolean
+  error?: string
+  total?: number
+  successful?: number
+  failed?: number
+  results?: unknown[]
+  [key: string]: unknown
+}
 
 type ProductLaunchEmailResult =
   Awaited<ReturnType<typeof sendProductLaunchEmail>>
 
 type DistributionChannelEmailResult =
   Awaited<ReturnType<typeof sendDistributionChannelEmail>>
-
-type NotificationResult =
-  | WhatsAppResult
-  | ProductLaunchEmailResult
-  | DistributionChannelEmailResult
 
 type JsonRecord =
   Record<string, unknown>
@@ -1094,13 +1096,16 @@ export async function POST(
     )
   }
 
-  let body:
+  let requestBody:
     InnovaLabRequestBody | null = null
 
   try {
 
-    body =
-      await req.json()
+    const body =
+      await req.json() as InnovaLabRequestBody
+
+    requestBody =
+      body
 
     const {
       notificationType,
@@ -1211,7 +1216,7 @@ export async function POST(
         )
     }
 
-    let result: WhatsAppResult
+    let result: NotificationResult
 
     try {
 
@@ -1435,14 +1440,14 @@ export async function POST(
 
   } catch (error) {
 
-    if (body) {
+    if (requestBody) {
       await saveNotificationLog(
         adminAuth.supabaseClient,
         {
-          ...body,
+          ...requestBody,
           triggeredBy:
             adminAuth.triggeredBy ||
-            body.triggeredBy,
+            requestBody.triggeredBy,
         },
         {
           success: false,

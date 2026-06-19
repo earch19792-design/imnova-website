@@ -46,6 +46,18 @@ const allowedVoteTypes: CommunityIdeaVoteType[] = [
   "would_buy",
   "wants_trial",
 ]
+const VOTE_RATE_LIMIT_WINDOW_MS =
+  60 * 1000
+const VOTE_RATE_LIMIT_MAX =
+  30
+
+type RateLimitBucket = {
+  count: number
+  resetAt: number
+}
+
+const voteRateLimitBuckets =
+  new Map<string, RateLimitBucket>()
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -59,6 +71,64 @@ function getString(
   return typeof value === "string"
     ? value.trim()
     : ""
+}
+
+function getRequestIp(
+  req: Request
+) {
+  return req.headers
+    .get("x-forwarded-for")
+    ?.split(",")[0]
+    ?.trim() ||
+    req.headers
+      .get("x-real-ip")
+      ?.trim() ||
+    "unknown"
+}
+
+function isVoteRateLimited(
+  req: Request
+) {
+  const now =
+    Date.now()
+
+  const key =
+    getRequestIp(req)
+
+  const current =
+    voteRateLimitBuckets.get(key)
+
+  if (
+    !current ||
+    current.resetAt <= now
+  ) {
+    voteRateLimitBuckets.set(
+      key,
+      {
+        count: 1,
+        resetAt:
+          now + VOTE_RATE_LIMIT_WINDOW_MS,
+      }
+    )
+
+    return false
+  }
+
+  current.count += 1
+
+  if (
+    current.count >
+    VOTE_RATE_LIMIT_MAX
+  ) {
+    return true
+  }
+
+  voteRateLimitBuckets.set(
+    key,
+    current
+  )
+
+  return false
 }
 
 function normalizeEmail(
@@ -516,6 +586,13 @@ export async function POST(
     )
   }
 
+  if (isVoteRateLimited(req)) {
+    return createErrorResponse(
+      "too_many_vote_attempts",
+      429
+    )
+  }
+
   if (getString(body.honeypot)) {
     return createErrorResponse(
       "honeypot_not_empty",
@@ -838,10 +915,12 @@ export async function POST(
         ideaTitle,
       subscriber_id:
         subscriberId || null,
+      // No guardamos correo o telefono crudos en votos. La identidad queda
+      // deduplicada por hash y, si aplica, por subscriber_id.
       email:
-        email || null,
+        null,
       phone:
-        phone || null,
+        null,
       vote_type:
         voteType,
       source,

@@ -12,8 +12,8 @@ const primaryNavItems = [
     href: "#hero",
   },
   {
-    name: "Ideas",
-    href: "#ideas",
+    name: "Votar",
+    href: "#ideas-activas",
   },
   {
     name: "Como funciona",
@@ -100,7 +100,7 @@ export function Navigation() {
         className={`relative overflow-hidden rounded-[24px] border transition-all duration-300 ${
           isScrolled
             ? "border-stone-200/80 bg-[#fbf7ef]/92 shadow-[0_18px_55px_rgba(58,44,28,0.12)] backdrop-blur-2xl"
-            : "border-white/70 bg-[#fbf7ef]/78 shadow-[0_12px_36px_rgba(58,44,28,0.08)] backdrop-blur-xl"
+            : "border-white/12 bg-stone-950/58 shadow-[0_18px_58px_rgba(0,0,0,0.24)] backdrop-blur-2xl"
         }`}
       >
         <div className="relative z-10 grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-3 md:px-4">
@@ -109,15 +109,29 @@ export function Navigation() {
             className="flex min-w-0 items-center gap-3 rounded-2xl pr-2 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
             onClick={() => setIsMenuOpen(false)}
           >
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-stone-950 text-base font-black text-white shadow-[0_12px_35px_rgba(15,23,42,0.18)]">
+            <div
+              className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-base font-black shadow-[0_12px_35px_rgba(15,23,42,0.18)] ${
+                isScrolled
+                  ? "bg-stone-950 text-white"
+                  : "bg-white text-stone-950"
+              }`}
+            >
               I
             </div>
 
             <div className="hidden min-w-0 sm:block">
-              <div className="text-base font-black tracking-[-0.04em] text-stone-950">
+              <div
+                className={`text-base font-black tracking-[-0.04em] ${
+                  isScrolled ? "text-stone-950" : "text-white"
+                }`}
+              >
                 IMNOVA
               </div>
-              <div className="mt-0.5 whitespace-nowrap text-[8px] font-bold uppercase tracking-[0.22em] text-stone-500">
+              <div
+                className={`mt-0.5 whitespace-nowrap text-[8px] font-bold uppercase tracking-[0.22em] ${
+                  isScrolled ? "text-stone-500" : "text-white/48"
+                }`}
+              >
                 Comunidad que decide
               </div>
             </div>
@@ -131,7 +145,11 @@ export function Navigation() {
               <Link
                 key={item.name}
                 href={item.href}
-                className="rounded-full px-3 py-2.5 text-[11px] font-black uppercase tracking-[0.14em] text-stone-600 transition hover:bg-white/75 hover:text-stone-950 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 xl:px-4"
+                className={`rounded-full px-3 py-2.5 text-[11px] font-black uppercase tracking-[0.14em] transition focus:outline-none focus:ring-2 focus:ring-cyan-500/50 xl:px-4 ${
+                  isScrolled
+                    ? "text-stone-600 hover:bg-white/75 hover:text-stone-950"
+                    : "text-white/62 hover:bg-white/10 hover:text-white"
+                }`}
               >
                 {item.name}
               </Link>
@@ -141,7 +159,11 @@ export function Navigation() {
           <div className="flex items-center justify-end gap-2">
             <Link
               href="#comunidad"
-              className="hidden min-h-11 items-center justify-center rounded-full bg-stone-950 px-5 text-[11px] font-black uppercase tracking-[0.14em] text-white shadow-[0_14px_38px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60 sm:inline-flex"
+              className={`hidden min-h-11 items-center justify-center rounded-full px-5 text-[11px] font-black uppercase tracking-[0.14em] shadow-[0_14px_38px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/60 sm:inline-flex ${
+                isScrolled
+                  ? "bg-stone-950 text-white hover:bg-cyan-700"
+                  : "bg-cyan-200 text-stone-950 hover:bg-white"
+              }`}
             >
               Unirme gratis
             </Link>
@@ -151,7 +173,11 @@ export function Navigation() {
               aria-label={isMenuOpen ? "Cerrar menu" : "Abrir menu"}
               aria-expanded={isMenuOpen}
               onClick={() => setIsMenuOpen(current => !current)}
-              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border border-stone-200 bg-white/75 text-stone-950 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+              className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-cyan-500/60 ${
+                isScrolled
+                  ? "border-stone-200 bg-white/75 text-stone-950 hover:bg-white"
+                  : "border-white/15 bg-white/10 text-white hover:bg-white/16"
+              }`}
             >
               {isMenuOpen ? (
                 <X className="h-5 w-5" />

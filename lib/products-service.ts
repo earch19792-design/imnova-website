@@ -9,6 +9,11 @@ type ProductsQueryOptions = {
   availableOnly?: boolean
 }
 
+type PublicProductsPageOptions =
+  ProductsQueryOptions & {
+    page?: number
+  }
+
 type AdminProductPageOptions = {
   search?: string
   stateId?: string
@@ -406,6 +411,124 @@ export async function getPublicProductsWithStatesByStateNames(
   return {
     products: data || [],
     states,
+  }
+
+}
+
+export async function getPublicProductsPageWithStatesByStateNames(
+  stateNames: string[],
+  options: PublicProductsPageOptions = {}
+) {
+
+  const states =
+    await getProductStates()
+
+  const stateIds =
+    getStateIdsByNames(
+      states as Array<{
+        id: string
+        name: string
+      }>,
+      stateNames
+    )
+
+  const limit =
+    Math.min(
+      Math.max(
+        Math.floor(
+          Number(options.limit || 24)
+        ),
+        1
+      ),
+      100
+    )
+
+  const page =
+    Math.max(
+      Math.floor(
+        Number(options.page || 0)
+      ),
+      0
+    )
+
+  const from =
+    page * limit
+
+  const to =
+    from + limit - 1
+
+  if (stateIds.length === 0) {
+    return {
+      products: [],
+      states,
+      count: 0,
+      page,
+      limit,
+      hasMore: false,
+      error: false,
+    }
+  }
+
+  const { data, error, count } =
+    await supabase
+      .from("public_products")
+      .select(
+        publicProductSelect,
+        {
+          count: "exact",
+        }
+      )
+      .in(
+        "state_id",
+        stateIds
+      )
+      .order(
+        options.orderBy ||
+          "created_at",
+        {
+          ascending:
+            options.ascending ??
+            false,
+        }
+      )
+      .range(
+        from,
+        to
+      )
+
+  if (error) {
+
+    console.error(
+      "GET PUBLIC PRODUCTS PAGE WITH STATES BY STATE NAMES ERROR:",
+      error
+    )
+
+    return {
+      products: [],
+      states,
+      count: 0,
+      page,
+      limit,
+      hasMore: false,
+      error: true,
+    }
+
+  }
+
+  const total =
+    count || 0
+
+  return {
+    products:
+      data || [],
+    states,
+    count:
+      total,
+    page,
+    limit,
+    hasMore:
+      to + 1 < total,
+    error: false,
   }
 
 }

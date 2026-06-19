@@ -81,6 +81,49 @@ function getNormalizedRecipientPhones(
   )
 }
 
+function maskPhone(
+  phone?: string | null
+) {
+  const digits =
+    (phone || "").replace(/\D/g, "")
+
+  if (digits.length <= 4) {
+    return "****"
+  }
+
+  return `***${digits.slice(-4)}`
+}
+
+function getSafeWhatsAppData(
+  data: any
+) {
+  return {
+    messageId:
+      data?.messages?.[0]?.id ||
+      null,
+    messageStatus:
+      data?.messages?.[0]?.message_status ||
+      null,
+    waId:
+      data?.contacts?.[0]?.wa_id
+        ? maskPhone(
+            data.contacts[0].wa_id
+          )
+        : null,
+    error:
+      data?.error
+        ? {
+            message:
+              data.error.message,
+            type:
+              data.error.type,
+            code:
+              data.error.code,
+          }
+        : null,
+  }
+}
+
 export function isValidAbsoluteUrl(
   imageUrl?: string
 ) {
@@ -275,8 +318,11 @@ export async function sendWhatsAppWelcome({
           status:
             response.status,
           phone:
-            normalizedPhone,
-          data,
+            maskPhone(
+              normalizedPhone
+            ),
+          data:
+            getSafeWhatsAppData(data),
         }
       )
 
@@ -286,7 +332,8 @@ export async function sendWhatsAppWelcome({
           response.status,
         error:
           "WHATSAPP_WELCOME_FAILED",
-        data,
+        data:
+          getSafeWhatsAppData(data),
       }
     }
 
@@ -295,17 +342,23 @@ export async function sendWhatsAppWelcome({
       status:
         response.status,
       phone:
-        normalizedPhone,
+        maskPhone(
+          normalizedPhone
+        ),
       waId:
-        data?.contacts?.[0]?.wa_id ||
-        null,
+        data?.contacts?.[0]?.wa_id
+          ? maskPhone(
+              data.contacts[0].wa_id
+            )
+          : null,
       messageId:
         data?.messages?.[0]?.id ||
         null,
       messageStatus:
         data?.messages?.[0]?.message_status ||
         null,
-      data,
+      data:
+        getSafeWhatsAppData(data),
     }
   } catch (error) {
     console.error(
@@ -470,19 +523,6 @@ export async function sendWhatsAppUpdate(
         template,
       }
 
-      console.log("WHATSAPP PRODUCT:", product)
-      console.log("WHATSAPP STATUS:", status)
-      console.log("WHATSAPP PROGRESS:", progress)
-      console.log(
-        "WHATSAPP TEMPLATE SELECTED:",
-        selectedTemplate
-      )
-
-      console.log(
-        "WHATSAPP PAYLOAD:",
-        JSON.stringify(payload, null, 2)
-      )
-
       const response =
         await fetch(
           `https://graph.facebook.com/v25.0/${phoneId}/messages`,
@@ -521,28 +561,16 @@ export async function sendWhatsAppUpdate(
       }
 
       console.log(
-        "WAMID:",
-        data?.messages?.[0]?.id
-      )
-
-      console.log(
-        "META RESPONSE:",
-        JSON.stringify(
-          data,
-          null,
-          2
-        )
-      )
-
-      console.log(
         "WHATSAPP META RESPONSE:",
         {
-          phone,
+          phone:
+            maskPhone(phone),
           status:
             response.status,
           ok:
             response.ok,
-          data,
+          data:
+            getSafeWhatsAppData(data),
         }
       )
 
@@ -555,33 +583,37 @@ export async function sendWhatsAppUpdate(
               response.status,
             ok:
               response.ok,
-            phone,
+            phone:
+              maskPhone(phone),
             responseBody:
-              data,
+              getSafeWhatsAppData(data),
           }
         )
 
       }
 
       results.push({
-        phone,
+        phone:
+          maskPhone(phone),
         success:
           response.ok,
         status:
           response.status,
-        data,
+        data:
+          getSafeWhatsAppData(data),
       })
 
     } catch (error) {
 
       console.error(
         "WHATSAPP ERROR:",
-        phone,
+        maskPhone(phone),
         error
       )
 
       results.push({
-        phone,
+        phone:
+          maskPhone(phone),
         success:
           false,
         error:
@@ -763,32 +795,36 @@ export async function sendWhatsAppDistributionChannel({
               response.status,
             ok:
               response.ok,
-            phone,
+            phone:
+              maskPhone(phone),
             responseBody:
-              data,
+              getSafeWhatsAppData(data),
           }
         )
       }
 
       results.push({
-        phone,
+        phone:
+          maskPhone(phone),
         success:
           response.ok,
         status:
           response.status,
-        data,
+        data:
+          getSafeWhatsAppData(data),
       })
 
     } catch (error) {
 
       console.error(
         "WHATSAPP DISTRIBUTION CHANNEL ERROR:",
-        phone,
+        maskPhone(phone),
         error
       )
 
       results.push({
-        phone,
+        phone:
+          maskPhone(phone),
         success:
           false,
         error:
