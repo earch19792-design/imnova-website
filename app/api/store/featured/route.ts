@@ -1,6 +1,7 @@
 export const runtime = "nodejs"
 
 import { NextResponse } from "next/server"
+import { createClient } from "@supabase/supabase-js"
 
 type StoreFeaturedProductRow = {
   id: string
@@ -47,15 +48,40 @@ function getSupabaseServiceRoleKey() {
   return process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || ""
 }
 
-function getRestHeaders() {
+function getSupabaseAdminClient() {
+  const supabaseUrl =
+    getSupabaseUrl()
+
   const serviceRoleKey =
     getSupabaseServiceRoleKey()
 
-  return {
-    apikey: serviceRoleKey,
-    Authorization: `Bearer ${serviceRoleKey}`,
-    "Content-Type": "application/json",
+  if (
+    !supabaseUrl ||
+    !serviceRoleKey
+  ) {
+    return null
   }
+
+  return createClient(
+    supabaseUrl,
+    serviceRoleKey,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    }
+  )
+}
+
+function normalizeStateName(
+  name: string
+) {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
 }
 
 function getNumberValue(
@@ -232,7 +258,7 @@ function getPromoLabel(
 }
 
 async function fetchAvailableProducts(
-  restUrl: string,
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
   availableStateId: string,
   includeOptionalColumns: boolean
 ) {
@@ -241,24 +267,40 @@ async function fetchAvailableProducts(
       ? ",short_description,visible,is_public,is_active,featured"
       : ",short_description,visible,is_public,is_active"
 
-  const response =
-    await fetch(
-      `${restUrl}/products?select=id,slug,name,category,description,image_url,image,price,currency,state_id,launch_promo_enabled,launch_discount_percent,launch_promo_start_at,launch_promo_end_at,launch_promo_duration_days,created_at${optionalColumns}&state_id=eq.${encodeURIComponent(availableStateId)}&visible=is.true&is_public=is.true&is_active=is.true&order=created_at.desc`,
-      {
-        headers: getRestHeaders(),
-        cache: "no-store",
-      }
-    )
+  const productColumns =
+    `id,slug,name,category,description,image_url,image,price,currency,state_id,launch_promo_enabled,launch_discount_percent,launch_promo_start_at,launch_promo_end_at,launch_promo_duration_days,created_at${optionalColumns}`
 
-  if (!response.ok) {
-    const details =
-      await response
-        .text()
-        .catch(() => "")
+  const { data, error } =
+    await supabase
+      .from("products")
+      .select(productColumns)
+      .eq(
+        "state_id",
+        availableStateId
+      )
+      .eq(
+        "visible",
+        true
+      )
+      .eq(
+        "is_public",
+        true
+      )
+      .eq(
+        "is_active",
+        true
+      )
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
 
+  if (error) {
     if (includeOptionalColumns) {
       return fetchAvailableProducts(
-        restUrl,
+        supabase,
         availableStateId,
         false
       )
@@ -266,7 +308,7 @@ async function fetchAvailableProducts(
 
     console.error(
       "GET STORE FEATURED PRODUCTS ERROR:",
-      details
+      error
     )
 
     throw new Error(
@@ -274,49 +316,42 @@ async function fetchAvailableProducts(
     )
   }
 
-  return response
-    .json()
-    .catch(() => []) as Promise<StoreFeaturedProductRow[]>
+  return (data || []) as unknown as StoreFeaturedProductRow[]
 }
 
 export async function GET() {
   try {
-    const supabaseUrl =
-      getSupabaseUrl()
+    const supabase =
+      getSupabaseAdminClient()
 
-    const serviceRoleKey =
-      getSupabaseServiceRoleKey()
-
-    if (
-      !supabaseUrl ||
-      !serviceRoleKey
-    ) {
+    if (!supabase) {
       throw new Error(
         "store_featured_backend_not_configured"
       )
     }
 
-    const restUrl =
-      `${supabaseUrl}/rest/v1`
+    const {
+      data: states,
+      error: statesError,
+    } =
+      await supabase
+        .from("product_states")
+        .select("id,name")
+        .eq(
+          "is_active",
+          true
+        )
+        .order(
+          "sort_order",
+          {
+            ascending: true,
+          }
+        )
 
-    const stateResponse =
-      await fetch(
-        `${restUrl}/product_states?select=id,name&name=eq.Disponible&limit=1`,
-        {
-          headers: getRestHeaders(),
-          cache: "no-store",
-        }
-      )
-
-    if (!stateResponse.ok) {
-      const details =
-        await stateResponse
-          .text()
-          .catch(() => "")
-
+    if (statesError) {
       console.error(
         "GET STORE FEATURED STATE ERROR:",
-        details
+        statesError
       )
 
       return NextResponse.json({
@@ -326,16 +361,18 @@ export async function GET() {
       })
     }
 
-    const states =
-      await stateResponse
-        .json()
-        .catch(() => []) as Array<{
-          id?: string
-          name?: string
-        }>
-
     const availableState =
-      states[0]
+      (states || []).find(
+        state =>
+          normalizeStateName(
+            state.name || ""
+          ) === "disponible" ||
+          normalizeStateName(
+            state.name || ""
+          ).includes(
+            "disponible"
+          )
+      )
 
     if (!availableState?.id) {
       return NextResponse.json({
@@ -349,7 +386,7 @@ export async function GET() {
 
     const products =
       await fetchAvailableProducts(
-        restUrl,
+        supabase,
         availableState.id,
         true
       )
