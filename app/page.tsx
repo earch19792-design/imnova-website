@@ -5,14 +5,15 @@ import { useState } from "react"
 import {
   ArrowUpRight,
   CheckCircle2,
+  Eye,
   Gift,
   HeartHandshake,
   Mail,
   MessageCircle,
   ShieldCheck,
+  ShoppingBag,
   Sparkles,
   Star,
-  Eye,
   Target,
   Trophy,
   UsersRound,
@@ -67,7 +68,7 @@ const publicIdeas: PublicIdea[] = [
     tag: "Energia + belleza",
     description:
       "Una idea para unir energia diaria, cuidado personal y rutina simple en un formato facil de adoptar.",
-    signal: "Ideal para votar si te interesan cafe funcional, enfoque y belleza natural.",
+    signal: "Ideal si te interesan cafe funcional, enfoque y belleza natural.",
   },
   {
     key: "high-protein-breakfast",
@@ -75,7 +76,7 @@ const publicIdeas: PublicIdea[] = [
     tag: "Nutricion practica",
     description:
       "Mezclas listas para preparar pancakes, waffles o pan funcional sin complicar la rutina.",
-    signal: "Pensado para quienes buscan saciedad, conveniencia y mejor nutricion diaria.",
+    signal: "Pensado para saciedad, conveniencia y mejor nutricion diaria.",
   },
   {
     key: "daily-digestive-balance",
@@ -83,30 +84,37 @@ const publicIdeas: PublicIdea[] = [
     tag: "Bienestar diario",
     description:
       "Productos suaves para apoyar digestion, hidratacion y bienestar cotidiano sin promesas agresivas.",
-    signal: "Una oportunidad para personas que priorizan salud natural y constancia.",
+    signal: "Una oportunidad para quienes priorizan salud natural y constancia.",
   },
+]
+
+const trustSignals = [
+  "Registro gratis",
+  "Consentimiento claro",
+  "Votos sin login",
+  "Solo productos disponibles en tienda",
 ]
 
 const howItWorks = [
   {
     icon: UsersRound,
-    title: "Entras como visitante",
-    text: "Entiendes IMNOVA rapido y decides unirte gratis a la comunidad.",
+    title: "Te unes",
+    text: "Dejas tus datos basicos, aceptas el consentimiento y eliges hasta 3 intereses.",
   },
   {
-    icon: MessageCircle,
-    title: "Te unes a la comunidad",
-    text: "Dejas nombre, WhatsApp o email y eliges hasta 3 intereses.",
+    icon: Target,
+    title: "Eliges intereses",
+    text: "IMNOVA usa esos intereses para enviarte ideas, encuestas y novedades relevantes.",
   },
   {
     icon: Vote,
-    title: "Participas y votas",
-    text: "Tu voto ayuda a decidir que ideas merecen seguir avanzando.",
+    title: "Votas ideas",
+    text: "Tu respuesta ayuda a decidir si una oportunidad avanza, se ajusta o se pausa.",
   },
   {
-    icon: Trophy,
-    title: "Recibes beneficios VIP",
-    text: "Cuando algo llega al mercado, la comunidad recibe acceso temprano, recompra y oportunidades para recomendar.",
+    icon: Gift,
+    title: "Recibes beneficios",
+    text: "Cuando algo llega al mercado, la comunidad recibe acceso temprano y beneficios disponibles.",
   },
 ]
 
@@ -127,53 +135,43 @@ const missionVision = [
 
 const benefits = [
   {
-    icon: Gift,
-    title: "Descuentos VIP",
-    text: "Beneficios especiales cuando una idea se convierte en lanzamiento.",
+    icon: Vote,
+    title: "Decides con tu voto",
+    text: "Tu opinion ayuda a priorizar ideas antes de que se conviertan en productos.",
   },
   {
     icon: Zap,
     title: "Acceso temprano",
-    text: "Primero enterado cuando haya pruebas, preventas o productos disponibles.",
+    text: "Recibe novedades, pruebas o preventas cuando una oportunidad avance.",
   },
   {
     icon: Sparkles,
-    title: "Tendencias",
-    text: "Recibe senales breves sobre categorias que estan creciendo.",
-  },
-  {
-    icon: Vote,
-    title: "Votaciones",
-    text: "Tu opinion ayuda a decidir si una idea avanza, se ajusta o se pausa.",
-  },
-  {
-    icon: Star,
-    title: "Sorteos",
-    text: "Participa en oportunidades exclusivas de la comunidad IMNOVA.",
+    title: "Tendencias utiles",
+    text: "Conoce senales simples sobre bienestar, nutricion, belleza y vida activa.",
   },
   {
     icon: HeartHandshake,
-    title: "Referido / Embajador",
-    text: "Los miembros mas activos podran recomendar, invitar y recibir beneficios futuros.",
+    title: "Beneficios VIP",
+    text: "Los miembros activos podran acceder a recompensas, referidos y oportunidades futuras.",
   },
 ]
 
 const transparencyStages = [
   {
     title: "Ideas propuestas",
-    text: "La comunidad ve oportunidades simples y puede mostrar interes sin crear cuenta.",
+    text: "Oportunidades simples que la comunidad puede entender y votar.",
   },
   {
     title: "Ideas en validacion",
-    text: "Las ideas con mas senales reciben votos, encuestas y lectura de demanda.",
+    text: "Las mejores senales pasan por votos, encuestas y lectura de demanda.",
   },
   {
     title: "Productos en desarrollo",
-    text: "Solo las mejores oportunidades pasan a preparacion interna de IMNOVA.",
+    text: "IMNOVA prepara solo lo que tiene sentido para comunidad y mercado.",
   },
   {
     title: "Productos lanzados",
-    text: "Cuando un producto esta listo, la comunidad recibe acceso y beneficios primero.",
+    text: "Cuando un producto esta listo, aparece en tienda y puede comprarse.",
   },
 ]
 
@@ -201,12 +199,13 @@ function getClientVoteKey() {
 
 export default function IMNOVAPage() {
   const [showPopup, setShowPopup] = useState(false)
-  const [
-    votedIdeas,
-    setVotedIdeas,
-  ] = useState<Record<string, PublicVoteType>>({})
+  const [votedIdeas, setVotedIdeas] =
+    useState<Record<string, PublicVoteType>>({})
   const [votingIdeaKey, setVotingIdeaKey] = useState<string | null>(null)
   const [voteError, setVoteError] = useState("")
+
+  const featuredIdea = publicIdeas[0]
+  const secondaryIdeas = publicIdeas.slice(1, 3)
 
   const openCommunity = () => {
     setShowPopup(true)
@@ -251,17 +250,14 @@ export default function IMNOVAPage() {
 
       if (typeof window !== "undefined") {
         window.dispatchEvent(
-          new CustomEvent(
-            "imnova:public_idea_vote",
-            {
-              detail: {
-                idea_key: idea.key,
-                idea_title: idea.title,
-                vote_type: voteType,
-                source: "public_home",
-              },
-            }
-          )
+          new CustomEvent("imnova:public_idea_vote", {
+            detail: {
+              idea_key: idea.key,
+              idea_title: idea.title,
+              vote_type: voteType,
+              source: "public_home",
+            },
+          })
         )
       }
     } catch (error) {
@@ -274,67 +270,85 @@ export default function IMNOVAPage() {
     }
   }
 
+  const renderVoteButtons = (idea: PublicIdea) => (
+    <div className="grid gap-2 sm:grid-cols-2">
+      {publicVoteOptions.map(option => {
+        const isSelected = votedIdeas[idea.key] === option.type
+
+        return (
+          <button
+            key={option.type}
+            type="button"
+            onClick={() => handleIdeaVote(idea, option.type)}
+            disabled={votingIdeaKey === idea.key}
+            className={`min-h-12 rounded-2xl px-4 py-3 text-[11px] font-black uppercase tracking-[0.12em] transition focus:outline-none focus:ring-2 focus:ring-cyan-500/50 ${
+              isSelected
+                ? "bg-stone-950 text-white shadow-[0_14px_34px_rgba(15,23,42,0.18)]"
+                : "border border-stone-200 bg-white/75 text-stone-700 hover:border-cyan-300 hover:bg-white hover:text-stone-950"
+            } disabled:cursor-not-allowed disabled:opacity-60`}
+          >
+            {votingIdeaKey === idea.key ? "Guardando..." : option.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+
   return (
-    <main className="relative isolate overflow-hidden bg-black text-white">
-      <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_50%_0%,rgba(34,211,238,0.12),transparent_34%),linear-gradient(180deg,#000000_0%,#050505_48%,#000000_100%)]" />
-      <div className="pointer-events-none fixed inset-0 -z-10 opacity-[0.025] bg-[linear-gradient(rgba(255,255,255,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.18)_1px,transparent_1px)] bg-[size:84px_84px]" />
-      <div className="pointer-events-none fixed inset-0 -z-10 opacity-[0.018] bg-[url('/noise.png')]" />
+    <main className="relative isolate overflow-hidden bg-[#f6f1e8] text-stone-950">
+      <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_12%_0%,rgba(14,165,183,0.16),transparent_34%),radial-gradient(circle_at_90%_10%,rgba(245,158,11,0.16),transparent_32%),linear-gradient(180deg,#fbf7ef_0%,#f6f1e8_46%,#efe7db_100%)]" />
+      <div className="pointer-events-none fixed inset-0 -z-10 opacity-[0.24] bg-[linear-gradient(rgba(92,73,47,0.10)_1px,transparent_1px),linear-gradient(90deg,rgba(92,73,47,0.10)_1px,transparent_1px)] bg-[size:96px_96px]" />
 
       <Navigation />
 
       <section
         id="hero"
-        className="relative overflow-hidden px-6 pb-20 pt-36 md:pb-28 md:pt-44"
+        className="relative px-6 pb-16 pt-32 md:pb-24 md:pt-40"
       >
-        <div className="mx-auto grid max-w-7xl items-center gap-12 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="mx-auto grid max-w-7xl items-center gap-10 lg:grid-cols-[1.02fr_0.98fr]">
           <div>
-            <div className="inline-flex items-center gap-3 rounded-full border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-2">
-              <span className="h-2 w-2 rounded-full bg-cyan-200 shadow-[0_0_22px_rgba(34,211,238,0.75)]" />
-              <span className="text-[10px] font-black uppercase tracking-[0.26em] text-cyan-100/75">
-                Comunidad IMNOVA
+            <div className="inline-flex items-center gap-3 rounded-full border border-cyan-200 bg-white/70 px-4 py-2 shadow-sm">
+              <span className="h-2.5 w-2.5 rounded-full bg-cyan-500" />
+              <span className="text-[11px] font-black uppercase tracking-[0.22em] text-cyan-800">
+                Innovacion guiada por comunidad
               </span>
             </div>
 
-            <h1 className="mt-8 max-w-5xl text-5xl font-black leading-[0.98] tracking-[-0.055em] text-white md:text-7xl lg:text-8xl">
-              La comunidad que decide los proximos productos del mercado
+            <h1 className="mt-7 max-w-5xl text-5xl font-black leading-[0.98] tracking-[-0.055em] text-stone-950 md:text-7xl lg:text-8xl">
+              Los proximos productos no se adivinan. Se deciden en comunidad.
             </h1>
 
-            <p className="mt-7 max-w-3xl text-lg leading-8 text-zinc-300 md:text-xl">
-              Vota ideas, descubre tendencias y recibe beneficios exclusivos
-              antes que nadie.
+            <p className="mt-7 max-w-3xl text-lg leading-8 text-stone-600 md:text-xl md:leading-9">
+              Descubre ideas, comparte tu intencion y ayuda a convertir las
+              mejores oportunidades en productos reales.
             </p>
 
             <div className="mt-9 flex flex-col gap-3 sm:flex-row">
               <button
                 type="button"
                 onClick={openCommunity}
-                className="group inline-flex items-center justify-center gap-3 rounded-3xl border border-cyan-100/60 bg-gradient-to-r from-cyan-200 to-white px-8 py-5 text-xs font-black uppercase tracking-[0.18em] text-black shadow-[0_0_55px_rgba(34,211,238,0.24)] transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_0_75px_rgba(34,211,238,0.36)]"
+                className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-stone-950 px-8 text-[12px] font-black uppercase tracking-[0.14em] text-white shadow-[0_22px_58px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
               >
                 Unirme gratis
-                <ArrowUpRight className="h-4 w-4 transition duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                <ArrowUpRight className="h-4 w-4" />
               </button>
 
               <a
                 href="#ideas"
-                className="inline-flex items-center justify-center gap-3 rounded-3xl border border-white/12 bg-white/[0.04] px-8 py-5 text-xs font-black uppercase tracking-[0.18em] text-white/75 transition duration-300 hover:-translate-y-0.5 hover:border-white/25 hover:bg-white/[0.08] hover:text-white"
+                className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full border border-stone-200 bg-white/75 px-8 text-[12px] font-black uppercase tracking-[0.14em] text-stone-800 shadow-sm transition hover:-translate-y-0.5 hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
               >
                 Ver ideas en votacion
                 <Vote className="h-4 w-4" />
               </a>
             </div>
 
-            <div className="mt-8 flex flex-wrap gap-3">
-              {[
-                "Gratis",
-                "Sin spam",
-                "Hasta 3 intereses",
-                "Beneficios VIP",
-              ].map(item => (
+            <div className="mt-8 flex flex-wrap gap-2.5">
+              {trustSignals.map(item => (
                 <span
                   key={item}
-                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.035] px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60"
+                  className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white/60 px-4 py-2 text-[11px] font-bold text-stone-600 shadow-sm"
                 >
-                  <CheckCircle2 className="h-3.5 w-3.5 text-cyan-100" />
+                  <CheckCircle2 className="h-3.5 w-3.5 text-cyan-700" />
                   {item}
                 </span>
               ))}
@@ -342,68 +356,121 @@ export default function IMNOVAPage() {
           </div>
 
           <div className="relative">
-            <div className="overflow-hidden rounded-[34px] border border-cyan-200/15 bg-white/[0.035] shadow-[0_30px_120px_rgba(34,211,238,0.12)]">
-              <img
-                src="/images/imnova-community-hero.webp"
-                alt="Comunidad IMNOVA participando en ideas, tendencias y beneficios exclusivos."
-                className="h-[360px] w-full object-cover md:h-[500px]"
-              />
-              <div className="border-t border-white/10 bg-black/70 p-6 backdrop-blur-xl">
-                <p className="text-[10px] font-black uppercase tracking-[0.26em] text-cyan-100/60">
-                  Ruta simple
-                </p>
-                <p className="mt-3 text-2xl font-black tracking-[-0.04em] text-white">
-                  Te unes. Votas. Recibes primero.
-                </p>
+            <div className="absolute -right-8 -top-8 hidden h-36 w-36 rounded-full bg-cyan-300/25 blur-3xl md:block" />
+            <div className="relative overflow-hidden rounded-[36px] border border-white/70 bg-white/68 p-4 shadow-[0_32px_90px_rgba(58,44,28,0.14)] backdrop-blur">
+              <div className="overflow-hidden rounded-[28px]">
+                <img
+                  src="/images/imnova-community-hero.webp"
+                  alt="Comunidad IMNOVA participando en innovacion y seleccion de intereses."
+                  className="h-[260px] w-full object-cover md:h-[360px]"
+                />
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-[0.82fr_1.18fr]">
+                <div className="rounded-[24px] bg-stone-950 p-5 text-white">
+                  <p className="text-[10px] font-black uppercase tracking-[0.20em] text-cyan-100/70">
+                    Idea activa
+                  </p>
+                  <h2 className="mt-3 text-2xl font-black tracking-[-0.04em]">
+                    {featuredIdea.title}
+                  </h2>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    Tu voto ayuda a decidir si esta idea avanza.
+                  </p>
+                </div>
+
+                <div className="grid gap-2">
+                  {publicVoteOptions.slice(0, 3).map(option => (
+                    <div
+                      key={option.type}
+                      className="flex items-center justify-between rounded-2xl border border-stone-200 bg-white/80 px-4 py-3 text-sm font-bold text-stone-700"
+                    >
+                      <span>{option.label}</span>
+                      <span className="h-2 w-2 rounded-full bg-cyan-500" />
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
         </div>
       </section>
 
+      <section className="px-6 pb-14">
+        <div className="mx-auto grid max-w-7xl gap-3 rounded-[30px] border border-stone-200 bg-white/60 p-4 shadow-[0_18px_55px_rgba(58,44,28,0.06)] backdrop-blur md:grid-cols-4">
+          {[
+            {
+              label: "Comunidad",
+              value: "Primero la participacion",
+            },
+            {
+              label: "Votacion",
+              value: "Senales reales",
+            },
+            {
+              label: "Store",
+              value: "Solo disponible",
+            },
+            {
+              label: "Mensajes",
+              value: "Con consentimiento",
+            },
+          ].map(item => (
+            <div
+              key={item.label}
+              className="rounded-[22px] bg-[#fbf7ef] px-5 py-4"
+            >
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-700">
+                {item.label}
+              </p>
+              <p className="mt-2 text-lg font-black tracking-[-0.03em] text-stone-950">
+                {item.value}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section
         id="mision-vision"
-        className="px-6 pb-20 md:pb-24"
+        className="px-6 py-16 md:py-20"
       >
         <div className="mx-auto max-w-7xl">
-          <div className="rounded-[34px] border border-white/10 bg-white/[0.025] p-6 shadow-[0_24px_120px_rgba(34,211,238,0.08)] md:p-8">
-            <div className="grid gap-5 lg:grid-cols-[0.8fr_1.2fr] lg:items-stretch">
-              <div className="rounded-[28px] border border-cyan-200/15 bg-cyan-300/[0.055] p-6">
-                <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/60">
-                  Quienes somos
-                </p>
-                <h2 className="mt-4 text-3xl font-black leading-tight tracking-[-0.045em] text-white md:text-5xl">
-                  IMNOVA crea con la comunidad, no a espaldas del mercado.
-                </h2>
-                <p className="mt-5 text-sm leading-7 text-zinc-300 md:text-base">
-                  La pagina publica debe ser simple: entender la idea, votar lo
-                  que interesa y unirse para recibir beneficios antes que nadie.
-                </p>
-              </div>
+          <div className="grid gap-5 lg:grid-cols-[0.86fr_1.14fr]">
+            <div className="rounded-[34px] border border-stone-200 bg-stone-950 p-7 text-white shadow-[0_28px_80px_rgba(15,23,42,0.16)] md:p-9">
+              <p className="text-[10px] font-black uppercase tracking-[0.26em] text-cyan-100/70">
+                Quienes somos
+              </p>
+              <h2 className="mt-5 text-4xl font-black leading-tight tracking-[-0.05em] md:text-6xl">
+                IMNOVA crea con la comunidad, no a espaldas del mercado.
+              </h2>
+              <p className="mt-6 text-base leading-8 text-white/68">
+                El sistema es simple: personas comparten intereses, votan ideas
+                y ayudan a priorizar que oportunidades merecen convertirse en
+                productos reales.
+              </p>
+            </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                {missionVision.map(item => (
-                  <div
-                    key={item.label}
-                    className="rounded-[28px] border border-white/10 bg-black/45 p-6"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08]">
-                        <item.icon className="h-5 w-5 text-cyan-100" />
-                      </div>
-                      <span className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-100/60">
-                        {item.label}
-                      </span>
-                    </div>
-                    <h3 className="mt-6 text-2xl font-black leading-tight tracking-[-0.04em] text-white md:text-3xl">
-                      {item.title}
-                    </h3>
-                    <p className="mt-4 text-sm leading-7 text-zinc-400">
-                      {item.text}
-                    </p>
+            <div className="grid gap-4 md:grid-cols-2">
+              {missionVision.map(item => (
+                <article
+                  key={item.label}
+                  className="rounded-[30px] border border-stone-200 bg-white/70 p-6 shadow-[0_20px_55px_rgba(58,44,28,0.07)] backdrop-blur"
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-50 text-cyan-700">
+                    <item.icon className="h-5 w-5" />
                   </div>
-                ))}
-              </div>
+                  <p className="mt-6 text-[10px] font-black uppercase tracking-[0.24em] text-cyan-700">
+                    {item.label}
+                  </p>
+                  <h3 className="mt-3 text-2xl font-black leading-tight tracking-[-0.04em] text-stone-950">
+                    {item.title}
+                  </h3>
+                  <p className="mt-4 text-sm leading-7 text-stone-600">
+                    {item.text}
+                  </p>
+                </article>
+              ))}
             </div>
           </div>
         </div>
@@ -411,39 +478,39 @@ export default function IMNOVAPage() {
 
       <section
         id="como-funciona"
-        className="border-y border-white/10 bg-white/[0.025] px-6 py-20 md:py-24"
+        className="px-6 py-16 md:py-24"
       >
         <div className="mx-auto max-w-7xl">
           <div className="max-w-3xl">
-            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/55">
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
               Como funciona
             </p>
-            <h2 className="mt-4 text-4xl font-black tracking-[-0.045em] text-white md:text-6xl">
-              Una ruta facil de entender y facil de usar.
+            <h2 className="mt-4 text-4xl font-black tracking-[-0.05em] text-stone-950 md:text-6xl">
+              Un flujo claro para cualquier visitante.
             </h2>
           </div>
 
-          <div className="mt-12 grid gap-4 md:grid-cols-4">
+          <div className="mt-11 grid gap-4 md:grid-cols-4">
             {howItWorks.map((step, index) => (
-              <div
+              <article
                 key={step.title}
-                className="relative rounded-[28px] border border-white/10 bg-black/45 p-6"
+                className="relative rounded-[30px] border border-stone-200 bg-white/68 p-6 shadow-[0_20px_55px_rgba(58,44,28,0.07)] backdrop-blur"
               >
                 <div className="flex items-center justify-between gap-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08]">
-                    <step.icon className="h-5 w-5 text-cyan-100" />
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-stone-950 text-white">
+                    <step.icon className="h-5 w-5" />
                   </div>
-                  <span className="text-xs font-black text-white/25">
+                  <span className="text-sm font-black text-stone-300">
                     0{index + 1}
                   </span>
                 </div>
-                <h3 className="mt-7 text-2xl font-black tracking-[-0.04em] text-white">
+                <h3 className="mt-7 text-2xl font-black tracking-[-0.04em] text-stone-950">
                   {step.title}
                 </h3>
-                <p className="mt-4 text-sm leading-7 text-zinc-400">
+                <p className="mt-4 text-sm leading-7 text-stone-600">
                   {step.text}
                 </p>
-              </div>
+              </article>
             ))}
           </div>
         </div>
@@ -451,109 +518,114 @@ export default function IMNOVAPage() {
 
       <section
         id="ideas"
-        className="px-6 py-20 md:py-28"
+        className="px-6 py-16 md:py-24"
       >
         <div className="mx-auto max-w-7xl">
           <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
             <div className="max-w-3xl">
-              <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/55">
+              <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
                 Ideas en votacion
               </p>
-              <h2 className="mt-4 text-4xl font-black tracking-[-0.045em] text-white md:text-6xl">
-                Vota lo que te gustaria ver nacer.
+              <h2 className="mt-4 text-4xl font-black tracking-[-0.05em] text-stone-950 md:text-6xl">
+                Dinos que harias si IMNOVA lanza estas ideas.
               </h2>
-              <p className="mt-5 text-base leading-8 text-zinc-400 md:text-lg">
-                Mostramos solo algunas ideas destacadas. Tu voto ayuda a
-                entender si una oportunidad merece avanzar.
+              <p className="mt-5 text-base leading-8 text-stone-600 md:text-lg">
+                La votacion mide intencion. No necesitas cuenta para responder,
+                y puedes cambiar tu voto desde el mismo navegador.
               </p>
             </div>
 
             <button
               type="button"
               onClick={openCommunity}
-              className="inline-flex items-center justify-center gap-3 rounded-3xl border border-cyan-200/30 bg-cyan-300/[0.10] px-6 py-4 text-xs font-black uppercase tracking-[0.16em] text-cyan-50 transition hover:border-cyan-100/50 hover:bg-cyan-300/[0.16]"
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-cyan-200 bg-cyan-50 px-6 text-[12px] font-black uppercase tracking-[0.14em] text-cyan-800 transition hover:-translate-y-0.5 hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
             >
               Recibir avances
               <MessageCircle className="h-4 w-4" />
             </button>
           </div>
 
-          <div className="mt-12 grid gap-5 lg:grid-cols-3">
-            {publicIdeas.slice(0, 3).map(idea => (
-              <article
-                key={idea.key}
-                className="flex min-h-[360px] flex-col rounded-[30px] border border-white/10 bg-white/[0.035] p-6 transition duration-300 hover:-translate-y-1 hover:border-cyan-200/25 hover:bg-cyan-300/[0.055]"
-              >
-                <span className="w-fit rounded-full border border-amber-200/20 bg-amber-300/[0.08] px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-100/80">
-                  {idea.tag}
+          <div className="mt-12 grid gap-5 lg:grid-cols-[1.08fr_0.92fr]">
+            <article className="rounded-[34px] border border-stone-200 bg-white/75 p-6 shadow-[0_30px_80px_rgba(58,44,28,0.10)] backdrop-blur md:p-8">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="rounded-full bg-stone-950 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-white">
+                  Idea destacada
                 </span>
-                <h3 className="mt-7 text-3xl font-black leading-tight tracking-[-0.04em] text-white">
-                  {idea.title}
-                </h3>
-                <p className="mt-5 text-sm leading-7 text-zinc-400">
-                  {idea.description}
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-800">
+                  {featuredIdea.tag}
+                </span>
+              </div>
+              <h3 className="mt-7 max-w-3xl text-4xl font-black leading-tight tracking-[-0.05em] text-stone-950 md:text-6xl">
+                {featuredIdea.title}
+              </h3>
+              <p className="mt-6 max-w-2xl text-base leading-8 text-stone-600 md:text-lg">
+                {featuredIdea.description}
+              </p>
+              <p className="mt-5 rounded-2xl border border-cyan-200 bg-cyan-50 px-5 py-4 text-sm leading-7 text-cyan-900">
+                {featuredIdea.signal}
+              </p>
+
+              <div className="mt-8">
+                <p className="mb-3 text-[11px] font-black uppercase tracking-[0.18em] text-stone-500">
+                  Que harias si IMNOVA lanza esta idea?
                 </p>
-                <p className="mt-5 text-xs leading-6 text-cyan-100/60">
-                  {idea.signal}
-                </p>
+                {renderVoteButtons(featuredIdea)}
+              </div>
 
-                <div className="mt-auto pt-8">
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/45">
-                    Que harias si IMNOVA lanza esta idea?
-                  </p>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    {publicVoteOptions.map(option => {
-                      const isSelected =
-                        votedIdeas[idea.key] ===
-                        option.type
-
-                      return (
-                        <button
-                          key={option.type}
-                          type="button"
-                          onClick={() =>
-                            handleIdeaVote(
-                              idea,
-                              option.type
-                            )
-                          }
-                          disabled={
-                            votingIdeaKey === idea.key
-                          }
-                          className={`inline-flex min-h-[48px] items-center justify-center rounded-2xl px-4 py-3 text-[10px] font-black uppercase tracking-[0.14em] transition ${
-                            isSelected
-                              ? "border border-cyan-100/45 bg-cyan-200 text-black"
-                              : "border border-white/10 bg-white/[0.05] text-white/70 hover:border-cyan-200/35 hover:bg-cyan-300/[0.12] hover:text-white"
-                          } disabled:cursor-not-allowed disabled:opacity-60`}
-                        >
-                          {votingIdeaKey === idea.key
-                            ? "Guardando..."
-                            : option.label}
-                        </button>
-                      )
-                    })}
-                  </div>
-
-                  {votedIdeas[idea.key] && (
-                    <p className="mt-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-4 py-3 text-xs leading-5 text-cyan-50/75">
-                      Gracias. Tu voto quedo registrado y puedes cambiarlo cuando quieras.
-                    </p>
-                  )}
-
+              {votedIdeas[featuredIdea.key] && (
+                <div
+                  aria-live="polite"
+                  className="mt-4 rounded-2xl border border-cyan-200 bg-cyan-50 px-5 py-4 text-sm leading-7 text-cyan-900"
+                >
+                  Gracias. Tu respuesta ayuda a decidir los proximos
+                  lanzamientos.
                   <button
                     type="button"
                     onClick={openCommunity}
-                    className="mt-3 inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] px-5 py-4 text-xs font-black uppercase tracking-[0.16em] text-cyan-50 transition hover:border-cyan-100/45 hover:bg-cyan-300/[0.14]"
+                    className="mt-3 inline-flex font-black text-cyan-900 underline decoration-cyan-400 underline-offset-4"
                   >
-                    Unirme gratis
+                    Unirme a la comunidad para recibir avances
                   </button>
                 </div>
-              </article>
-            ))}
+              )}
+            </article>
+
+            <div className="grid gap-5">
+              {secondaryIdeas.map(idea => (
+                <article
+                  key={idea.key}
+                  className="rounded-[30px] border border-stone-200 bg-white/68 p-6 shadow-[0_20px_55px_rgba(58,44,28,0.07)] backdrop-blur"
+                >
+                  <span className="rounded-full border border-stone-200 bg-[#fbf7ef] px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-stone-600">
+                    {idea.tag}
+                  </span>
+                  <h3 className="mt-5 text-3xl font-black leading-tight tracking-[-0.04em] text-stone-950">
+                    {idea.title}
+                  </h3>
+                  <p className="mt-4 text-sm leading-7 text-stone-600">
+                    {idea.description}
+                  </p>
+                  <div className="mt-6">
+                    {renderVoteButtons(idea)}
+                  </div>
+                  {votedIdeas[idea.key] && (
+                    <p
+                      aria-live="polite"
+                      className="mt-3 rounded-2xl bg-cyan-50 px-4 py-3 text-xs leading-6 text-cyan-900"
+                    >
+                      Voto guardado. Puedes actualizarlo si cambias de opinion.
+                    </p>
+                  )}
+                </article>
+              ))}
+            </div>
           </div>
 
           {voteError && (
-            <p className="mt-6 rounded-2xl border border-amber-200/20 bg-amber-300/[0.08] px-5 py-4 text-sm text-amber-100/85">
+            <p
+              aria-live="assertive"
+              className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900"
+            >
               {voteError}
             </p>
           )}
@@ -561,36 +633,76 @@ export default function IMNOVAPage() {
       </section>
 
       <section
-        id="transparencia"
-        className="border-y border-white/10 bg-white/[0.025] px-6 py-20 md:py-24"
+        id="beneficios"
+        className="px-6 py-16 md:py-24"
       >
         <div className="mx-auto max-w-7xl">
           <div className="max-w-3xl">
-            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/55">
-              Muro de transparencia
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
+              Beneficios
             </p>
-            <h2 className="mt-4 text-4xl font-black tracking-[-0.045em] text-white md:text-6xl">
-              Ves como una idea puede llegar al mercado.
+            <h2 className="mt-4 text-4xl font-black tracking-[-0.05em] text-stone-950 md:text-6xl">
+              Por que vale la pena unirse.
             </h2>
-            <p className="mt-5 text-base leading-8 text-zinc-400 md:text-lg">
-              IMNOVA no quiere lanzar por intuicion. Queremos que la comunidad vea el camino: propuesta, validacion, preparacion y lanzamiento.
-            </p>
           </div>
 
-          <div className="mt-12 grid gap-4 md:grid-cols-4">
-            {transparencyStages.map((stage, index) => (
-              <div
-                key={stage.title}
-                className="rounded-[28px] border border-white/10 bg-black/45 p-6"
+          <div className="mt-11 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {benefits.map(benefit => (
+              <article
+                key={benefit.title}
+                className="rounded-[30px] border border-stone-200 bg-white/68 p-6 shadow-[0_20px_55px_rgba(58,44,28,0.07)] backdrop-blur"
               >
-                <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.08] text-sm font-black text-cyan-100">
-                  {index + 1}
-                </span>
-                <h3 className="mt-6 text-2xl font-black tracking-[-0.04em] text-white">
-                  {stage.title}
+                <benefit.icon className="h-6 w-6 text-cyan-700" />
+                <h3 className="mt-5 text-2xl font-black tracking-[-0.04em] text-stone-950">
+                  {benefit.title}
                 </h3>
-                <p className="mt-4 text-sm leading-7 text-zinc-400">
-                  {stage.text}
+                <p className="mt-4 text-sm leading-7 text-stone-600">
+                  {benefit.text}
+                </p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="store-preview"
+        className="px-6 py-16 md:py-24"
+      >
+        <div className="mx-auto grid max-w-7xl gap-8 rounded-[36px] border border-stone-200 bg-stone-950 p-7 text-white shadow-[0_34px_95px_rgba(15,23,42,0.18)] md:p-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/70">
+              Productos disponibles
+            </p>
+            <h2 className="mt-4 text-4xl font-black leading-tight tracking-[-0.05em] md:text-6xl">
+              La tienda muestra solo lo que ya se puede comprar.
+            </h2>
+            <p className="mt-6 text-base leading-8 text-white/68">
+              Las ideas y productos en validacion no se presentan como
+              comprables. Cuando algo esta disponible, pasa a Store con claridad.
+            </p>
+            <a
+              href="/store"
+              className="mt-8 inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-white px-7 text-[12px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:-translate-y-0.5 hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/80"
+            >
+              Ver tienda
+              <ShoppingBag className="h-4 w-4" />
+            </a>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            {[
+              "Producto disponible",
+              "Compra clara",
+              "Canales autorizados",
+            ].map(item => (
+              <div
+                key={item}
+                className="rounded-[26px] border border-white/10 bg-white/[0.08] p-5"
+              >
+                <CheckCircle2 className="h-5 w-5 text-cyan-100" />
+                <p className="mt-5 text-xl font-black tracking-[-0.04em]">
+                  {item}
                 </p>
               </div>
             ))}
@@ -599,33 +711,39 @@ export default function IMNOVAPage() {
       </section>
 
       <section
-        id="beneficios"
-        className="px-6 py-20 md:py-24"
+        id="transparencia"
+        className="px-6 py-16 md:py-24"
       >
         <div className="mx-auto max-w-7xl">
           <div className="max-w-3xl">
-            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/55">
-              Beneficios
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
+              Transparencia
             </p>
-            <h2 className="mt-4 text-4xl font-black tracking-[-0.045em] text-white md:text-6xl">
-              Por que vale la pena unirse.
+            <h2 className="mt-4 text-4xl font-black tracking-[-0.05em] text-stone-950 md:text-6xl">
+              Una idea no aparece en tienda por magia.
             </h2>
+            <p className="mt-5 text-base leading-8 text-stone-600 md:text-lg">
+              IMNOVA separa la participacion publica de las decisiones internas:
+              la comunidad senala interes, y el Admin decide que avanza.
+            </p>
           </div>
 
-          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {benefits.map(benefit => (
-              <div
-                key={benefit.title}
-                className="rounded-[28px] border border-white/10 bg-black/45 p-6"
+          <div className="mt-11 grid gap-4 md:grid-cols-4">
+            {transparencyStages.map((stage, index) => (
+              <article
+                key={stage.title}
+                className="rounded-[30px] border border-stone-200 bg-white/68 p-6 shadow-[0_20px_55px_rgba(58,44,28,0.07)] backdrop-blur"
               >
-                <benefit.icon className="h-6 w-6 text-cyan-100" />
-                <h3 className="mt-5 text-2xl font-black tracking-[-0.04em] text-white">
-                  {benefit.title}
+                <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan-700 text-sm font-black text-white">
+                  {index + 1}
+                </span>
+                <h3 className="mt-6 text-2xl font-black tracking-[-0.04em] text-stone-950">
+                  {stage.title}
                 </h3>
-                <p className="mt-4 text-sm leading-7 text-zinc-400">
-                  {benefit.text}
+                <p className="mt-4 text-sm leading-7 text-stone-600">
+                  {stage.text}
                 </p>
-              </div>
+              </article>
             ))}
           </div>
         </div>
@@ -633,25 +751,25 @@ export default function IMNOVAPage() {
 
       <section
         id="comunidad"
-        className="px-6 py-20 md:py-28"
+        className="px-6 py-16 md:py-24"
       >
-        <div className="mx-auto grid max-w-7xl gap-8 rounded-[34px] border border-cyan-200/15 bg-cyan-300/[0.055] p-7 shadow-[0_30px_140px_rgba(34,211,238,0.10)] md:p-10 lg:grid-cols-[0.95fr_1.05fr]">
+        <div className="mx-auto grid max-w-7xl gap-8 rounded-[36px] border border-cyan-200 bg-white/72 p-7 shadow-[0_34px_95px_rgba(58,44,28,0.12)] backdrop-blur md:p-10 lg:grid-cols-[0.95fr_1.05fr]">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/65">
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
               Formulario de comunidad
             </p>
-            <h2 className="mt-4 text-4xl font-black leading-tight tracking-[-0.045em] text-white md:text-6xl">
-              Unirte toma menos de un minuto.
+            <h2 className="mt-4 text-4xl font-black leading-tight tracking-[-0.05em] text-stone-950 md:text-6xl">
+              Tu opinion puede ayudar a decidir lo que viene.
             </h2>
-            <p className="mt-6 text-base leading-8 text-zinc-300 md:text-lg">
-              Te pedimos solo lo necesario para enviarte encuestas, avances y
-              beneficios conectados a tus intereses.
+            <p className="mt-6 text-base leading-8 text-stone-600 md:text-lg">
+              Unirte toma menos de un minuto. Elegis hasta 3 areas, aceptas el
+              consentimiento y eliges como quieres recibir novedades.
             </p>
 
             <button
               type="button"
               onClick={openCommunity}
-              className="mt-8 inline-flex items-center justify-center gap-3 rounded-3xl border border-cyan-100/60 bg-white px-8 py-5 text-xs font-black uppercase tracking-[0.18em] text-black transition hover:-translate-y-0.5 hover:shadow-[0_0_70px_rgba(255,255,255,0.22)]"
+              className="mt-8 inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-stone-950 px-8 text-[12px] font-black uppercase tracking-[0.14em] text-white transition hover:-translate-y-0.5 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
             >
               Unirme gratis
               <ArrowUpRight className="h-4 w-4" />
@@ -663,46 +781,46 @@ export default function IMNOVAPage() {
               {
                 icon: UsersRound,
                 title: "Nombre",
-                text: "Para tratarte como miembro de la comunidad, no como un registro frio.",
+                text: "Para tratarte como miembro de comunidad.",
               },
               {
                 icon: MessageCircle,
                 title: "WhatsApp",
-                text: "Para avisos importantes, pruebas y lanzamientos relevantes.",
+                text: "Solo con consentimiento para novedades relevantes.",
               },
               {
                 icon: Mail,
                 title: "Email",
-                text: "Para recibir encuestas, resumenes y beneficios sin perderlos.",
+                text: "Para encuestas, avances y beneficios que puedas revisar.",
               },
               {
                 icon: Star,
                 title: "Hasta 3 intereses",
-                text: "Para que tus votos y mensajes sean mas relevantes.",
+                text: "Para no recibir mensajes genericos.",
               },
               {
                 icon: ShieldCheck,
-                title: "Consentimiento explicito",
+                title: "Consentimiento",
                 text: "Sin spam. Tu participacion debe ser clara y voluntaria.",
               },
               {
-                icon: CheckCircle2,
-                title: "Beneficios VIP",
-                text: "La comunidad recibe oportunidades antes que el publico general.",
+                icon: Trophy,
+                title: "Beneficios",
+                text: "Acceso temprano y oportunidades cuando esten disponibles.",
               },
             ].map(item => (
-              <div
+              <article
                 key={item.title}
-                className="rounded-[26px] border border-white/10 bg-black/38 p-5"
+                className="rounded-[26px] border border-stone-200 bg-[#fbf7ef] p-5"
               >
-                <item.icon className="h-5 w-5 text-cyan-100" />
-                <h3 className="mt-4 text-xl font-black tracking-[-0.035em] text-white">
+                <item.icon className="h-5 w-5 text-cyan-700" />
+                <h3 className="mt-4 text-xl font-black tracking-[-0.035em] text-stone-950">
                   {item.title}
                 </h3>
-                <p className="mt-3 text-sm leading-6 text-zinc-400">
+                <p className="mt-3 text-sm leading-6 text-stone-600">
                   {item.text}
                 </p>
-              </div>
+              </article>
             ))}
           </div>
         </div>
@@ -711,7 +829,7 @@ export default function IMNOVAPage() {
       <button
         type="button"
         onClick={openCommunity}
-        className="fixed bottom-5 right-5 z-40 inline-flex items-center gap-3 rounded-full border border-cyan-100/40 bg-cyan-200 px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em] text-black shadow-[0_0_45px_rgba(34,211,238,0.32)] transition hover:-translate-y-0.5 md:bottom-7 md:right-7"
+        className="fixed bottom-4 left-4 right-4 z-40 inline-flex min-h-[52px] items-center justify-center gap-2 rounded-full bg-stone-950 px-5 text-[11px] font-black uppercase tracking-[0.14em] text-white shadow-[0_18px_48px_rgba(15,23,42,0.20)] transition hover:-translate-y-0.5 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60 sm:left-auto sm:right-5 sm:w-auto"
       >
         Unirme gratis
         <ArrowUpRight className="h-4 w-4" />

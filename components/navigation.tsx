@@ -4,62 +4,52 @@ import Link from "next/link"
 import { useEffect, useState } from "react"
 
 import { AnimatePresence, motion } from "framer-motion"
-import { Menu, X } from "lucide-react"
+import { ArrowUpRight, Menu, X } from "lucide-react"
 
 const primaryNavItems = [
   {
-    name: "Mision y vision",
-    shortName: "Mision",
-    href: "#mision-vision",
+    name: "Inicio",
+    href: "#hero",
   },
   {
-    name: "Como funciona",
-    shortName: "Como funciona",
-    href: "#como-funciona",
-  },
-  {
-    name: "Ideas en votacion",
-    shortName: "Ideas",
+    name: "Ideas",
     href: "#ideas",
   },
   {
+    name: "Como funciona",
+    href: "#como-funciona",
+  },
+  {
     name: "Beneficios",
-    shortName: "Beneficios",
     href: "#beneficios",
   },
   {
-    name: "Comunidad",
-    shortName: "Comunidad",
-    href: "#comunidad",
+    name: "Tienda",
+    href: "/store",
   },
 ]
 
-const secondaryNavItems = [
+const supportNavItems = [
   {
-    name: "Tienda",
-    shortName: "Tienda",
-    href: "/store",
-  },
-  {
-    name: "Sobre nosotros",
-    shortName: "Nosotros",
-    href: "/about",
+    name: "Mision y vision",
+    href: "#mision-vision",
   },
   {
     name: "Contacto",
-    shortName: "Contacto",
     href: "/contact",
   },
   {
+    name: "Privacidad",
+    href: "/privacy-policy",
+  },
+  {
+    name: "Terminos",
+    href: "/terms",
+  },
+  {
     name: "Admin",
-    shortName: "Admin",
     href: "/admin",
   },
-]
-
-const mobileNavItems = [
-  ...primaryNavItems,
-  ...secondaryNavItems,
 ]
 
 export function Navigation() {
@@ -68,20 +58,32 @@ export function Navigation() {
 
   useEffect(() => {
     const handleScroll = () => {
-      setIsScrolled(window.scrollY > 40)
+      setIsScrolled(window.scrollY > 32)
     }
 
     handleScroll()
-
-    window.addEventListener("scroll", handleScroll)
+    window.addEventListener("scroll", handleScroll, { passive: true })
 
     return () => window.removeEventListener("scroll", handleScroll)
   }, [])
 
+  useEffect(() => {
+    if (!isMenuOpen) {
+      return
+    }
+
+    const originalOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+
+    return () => {
+      document.body.style.overflow = originalOverflow
+    }
+  }, [isMenuOpen])
+
   return (
     <motion.header
       initial={{
-        y: -120,
+        y: -80,
         opacity: 0,
       }}
       animate={{
@@ -89,87 +91,74 @@ export function Navigation() {
         opacity: 1,
       }}
       transition={{
-        duration: 0.9,
+        duration: 0.55,
         ease: [0.22, 1, 0.36, 1],
       }}
-      className="fixed left-1/2 top-4 z-50 w-full max-w-[1440px] -translate-x-1/2 px-4 sm:px-6"
+      className="fixed left-1/2 top-3 z-50 w-full max-w-[1440px] -translate-x-1/2 px-3 sm:px-5"
     >
       <div
-        className={`
-          relative
-          overflow-hidden
-          rounded-[26px]
-          border
-          border-white/10
-          transition-all
-          duration-500
-          ${
-            isScrolled
-              ? "bg-black/78 shadow-[0_10px_60px_rgba(0,0,0,0.45)] backdrop-blur-2xl"
-              : "bg-black/42 backdrop-blur-xl"
-          }
-        `}
+        className={`relative overflow-hidden rounded-[24px] border transition-all duration-300 ${
+          isScrolled
+            ? "border-stone-200/80 bg-[#fbf7ef]/92 shadow-[0_18px_55px_rgba(58,44,28,0.12)] backdrop-blur-2xl"
+            : "border-white/70 bg-[#fbf7ef]/78 shadow-[0_12px_36px_rgba(58,44,28,0.08)] backdrop-blur-xl"
+        }`}
       >
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_60%)]" />
-        <div className="pointer-events-none absolute inset-0 opacity-[0.015] bg-[url('/noise.png')]" />
-
-        <div className="relative z-10 grid grid-cols-[auto_1fr_auto] items-center gap-4 px-4 py-3 lg:gap-6 lg:px-5">
+        <div className="relative z-10 grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-3 md:px-4">
           <Link
             href="#hero"
-            className="flex min-w-0 shrink-0 items-center gap-3"
+            className="flex min-w-0 items-center gap-3 rounded-2xl pr-2 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+            onClick={() => setIsMenuOpen(false)}
           >
-            <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.05]">
-              <span className="text-base font-black text-white">
-                I
-              </span>
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-stone-950 text-base font-black text-white shadow-[0_12px_35px_rgba(15,23,42,0.18)]">
+              I
             </div>
 
             <div className="hidden min-w-0 sm:block">
-              <div className="text-[1.05rem] font-black tracking-[-0.035em] text-white">
+              <div className="text-base font-black tracking-[-0.04em] text-stone-950">
                 IMNOVA
               </div>
-              <div className="mt-1 whitespace-nowrap text-[7px] uppercase tracking-[0.16em] text-white/45 md:text-[8px] md:tracking-[0.22em] lg:tracking-[0.28em]">
-                Comunidad - Ideas - Beneficios
+              <div className="mt-0.5 whitespace-nowrap text-[8px] font-bold uppercase tracking-[0.22em] text-stone-500">
+                Comunidad que decide
               </div>
             </div>
           </Link>
 
-          <nav className="hidden min-w-0 items-center justify-center gap-1 overflow-hidden xl:flex 2xl:gap-2">
+          <nav
+            aria-label="Principal"
+            className="hidden items-center justify-center gap-1 lg:flex"
+          >
             {primaryNavItems.map(item => (
               <Link
                 key={item.name}
                 href={item.href}
-                className="whitespace-nowrap rounded-full px-2.5 py-2 text-[9px] font-medium uppercase tracking-[0.14em] text-white/68 transition-all duration-300 hover:bg-white/[0.05] hover:text-white 2xl:px-3 2xl:text-[10px]"
+                className="rounded-full px-3 py-2.5 text-[11px] font-black uppercase tracking-[0.14em] text-stone-600 transition hover:bg-white/75 hover:text-stone-950 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 xl:px-4"
               >
-                {item.shortName}
+                {item.name}
               </Link>
             ))}
           </nav>
 
-          <div className="flex shrink-0 items-center justify-end gap-2">
+          <div className="flex items-center justify-end gap-2">
             <Link
               href="#comunidad"
-              className="hidden whitespace-nowrap rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100 transition-all duration-300 hover:border-cyan-300/35 hover:bg-cyan-400/20 hover:text-white sm:inline-flex"
+              className="hidden min-h-11 items-center justify-center rounded-full bg-stone-950 px-5 text-[11px] font-black uppercase tracking-[0.14em] text-white shadow-[0_14px_38px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60 sm:inline-flex"
             >
               Unirme gratis
             </Link>
 
-            <motion.button
+            <button
               type="button"
-              aria-label="Abrir menu"
+              aria-label={isMenuOpen ? "Cerrar menu" : "Abrir menu"}
               aria-expanded={isMenuOpen}
-              whileTap={{
-                scale: 0.96,
-              }}
               onClick={() => setIsMenuOpen(current => !current)}
-              className="inline-flex items-center justify-center rounded-2xl border border-white/10 bg-white/[0.035] p-3 text-white transition hover:bg-white/[0.07]"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border border-stone-200 bg-white/75 text-stone-950 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
             >
               {isMenuOpen ? (
                 <X className="h-5 w-5" />
               ) : (
                 <Menu className="h-5 w-5" />
               )}
-            </motion.button>
+            </button>
           </div>
         </div>
 
@@ -178,7 +167,7 @@ export function Navigation() {
             <motion.div
               initial={{
                 opacity: 0,
-                y: -10,
+                y: -8,
               }}
               animate={{
                 opacity: 1,
@@ -186,23 +175,38 @@ export function Navigation() {
               }}
               exit={{
                 opacity: 0,
-                y: -10,
+                y: -8,
               }}
               transition={{
-                duration: 0.25,
+                duration: 0.2,
               }}
-              className="relative z-20 border-t border-white/10 px-5 py-5"
+              role="dialog"
+              aria-label="Menu principal"
+              className="relative z-20 border-t border-stone-200/80 bg-[#fbf7ef]/96 px-4 py-4"
             >
-              <div className="grid gap-3 sm:grid-cols-2 xl:hidden">
-                {mobileNavItems.map(item => (
+              <div className="grid gap-2 sm:grid-cols-2 lg:hidden">
+                {primaryNavItems.map(item => (
                   <Link
                     key={item.name}
                     href={item.href}
                     onClick={() => setIsMenuOpen(false)}
-                    className={`rounded-2xl border px-5 py-4 text-[11px] font-semibold uppercase tracking-[0.20em] transition ${
+                    className="min-h-12 rounded-2xl border border-stone-200 bg-white/70 px-5 py-4 text-[12px] font-black uppercase tracking-[0.14em] text-stone-800 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                  >
+                    {item.name}
+                  </Link>
+                ))}
+              </div>
+
+              <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                {supportNavItems.map(item => (
+                  <Link
+                    key={item.name}
+                    href={item.href}
+                    onClick={() => setIsMenuOpen(false)}
+                    className={`min-h-11 rounded-2xl border px-4 py-3 text-[11px] font-bold uppercase tracking-[0.13em] transition focus:outline-none focus:ring-2 focus:ring-cyan-500/50 ${
                       item.name === "Admin"
-                        ? "border-white/5 bg-white/[0.015] text-white/35 hover:border-white/10 hover:bg-white/[0.035] hover:text-white/60"
-                        : "border-white/10 bg-white/[0.03] text-white/75 hover:bg-white/[0.06] hover:text-white"
+                        ? "border-stone-200/60 bg-transparent text-stone-400 hover:bg-white/60 hover:text-stone-600"
+                        : "border-stone-200 bg-white/55 text-stone-600 hover:bg-white hover:text-stone-900"
                     }`}
                   >
                     {item.name}
@@ -210,22 +214,14 @@ export function Navigation() {
                 ))}
               </div>
 
-              <div className="hidden gap-3 xl:grid xl:grid-cols-4">
-                {secondaryNavItems.map(item => (
-                  <Link
-                    key={item.name}
-                    href={item.href}
-                    onClick={() => setIsMenuOpen(false)}
-                    className={`rounded-2xl border px-5 py-4 text-[11px] font-semibold uppercase tracking-[0.20em] transition ${
-                      item.name === "Admin"
-                        ? "border-white/5 bg-white/[0.015] text-white/35 hover:border-white/10 hover:bg-white/[0.035] hover:text-white/60"
-                        : "border-white/10 bg-white/[0.03] text-white/75 hover:bg-white/[0.06] hover:text-white"
-                    }`}
-                  >
-                    {item.name}
-                  </Link>
-                ))}
-              </div>
+              <Link
+                href="#comunidad"
+                onClick={() => setIsMenuOpen(false)}
+                className="mt-4 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-stone-950 px-5 text-[12px] font-black uppercase tracking-[0.14em] text-white transition hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+              >
+                Unirme gratis
+                <ArrowUpRight className="h-4 w-4" />
+              </Link>
             </motion.div>
           )}
         </AnimatePresence>
