@@ -1625,6 +1625,8 @@ export async function POST(
                 distributionLocation?.name || "",
               locationLabel:
                 distributionLocationWhatsAppLabel,
+              imageUrl:
+                imageUrl || "",
               recipientPhones:
                 communityRecipientPhones,
             })

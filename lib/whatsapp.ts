@@ -849,11 +849,13 @@ export async function sendWhatsAppDistributionChannel({
   product,
   channelName,
   locationLabel,
+  imageUrl,
   recipientPhones,
 }: {
   product: string
   channelName: string
   locationLabel: string
+  imageUrl?: string
   recipientPhones: string[]
 }) {
 
@@ -880,6 +882,11 @@ export async function sendWhatsAppDistributionChannel({
 
   const locationTemplateText =
     ` ${locationLabel?.trim() || "ubicacion disponible"}`
+
+  const selectedImageUrl =
+    isValidAbsoluteUrl(imageUrl)
+      ? imageUrl
+      : fallbackLaunchImageUrl
 
   if (!token || !phoneId || !templateName) {
 
@@ -946,6 +953,52 @@ export async function sendWhatsAppDistributionChannel({
 
       const payloadVariants =
         [
+          buildPayload({
+            name:
+              templateName,
+            language:
+              baseLanguage,
+            components: [
+              {
+                type:
+                  "header",
+                parameters: [
+                  {
+                    type:
+                      "image",
+                    image: {
+                      link:
+                        selectedImageUrl,
+                    },
+                  },
+                ],
+              },
+              {
+                type:
+                  "body",
+                parameters: [
+                  {
+                    type:
+                      "text",
+                    text:
+                      productTemplateText,
+                  },
+                  {
+                    type:
+                      "text",
+                    text:
+                      channelTemplateText,
+                  },
+                  {
+                    type:
+                      "text",
+                    text:
+                      locationTemplateText,
+                  },
+                ],
+              },
+            ],
+          }),
           buildPayload({
             name:
               templateName,
