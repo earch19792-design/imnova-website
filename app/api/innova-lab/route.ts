@@ -90,7 +90,7 @@ type AdminAuthResult =
     }
   | {
       ok: false
-      status: 401 | 403
+      status: 401 | 403 | 500
       error: string
     }
 
@@ -349,6 +349,32 @@ function getBearerToken(
 
 }
 
+function getSupabaseServerClient() {
+  const supabaseUrl =
+    process.env.NEXT_PUBLIC_SUPABASE_URL
+
+  const serviceRoleKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (
+    !supabaseUrl ||
+    !serviceRoleKey
+  ) {
+    return null
+  }
+
+  return createClient(
+    supabaseUrl,
+    serviceRoleKey,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    }
+  )
+}
+
 async function validateAdminRequest(
   req: Request
 ): Promise<AdminAuthResult> {
@@ -420,13 +446,25 @@ async function validateAdminRequest(
     }
   }
 
+  const serverSupabase =
+    getSupabaseServerClient()
+
+  if (!serverSupabase) {
+    return {
+      ok: false,
+      status: 500,
+      error:
+        "server_supabase_service_role_not_configured",
+    }
+  }
+
   return {
     ok: true,
     triggeredBy:
       userData.user.email ||
       userData.user.id,
     supabaseClient:
-      authenticatedSupabase,
+      serverSupabase,
   }
 
 }
