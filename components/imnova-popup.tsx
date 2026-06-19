@@ -46,19 +46,19 @@ type PublicInterestArea = {
 const communityRegisterErrorMessages:
   Record<string, string> = {
     subscriber_create_failed:
-      "No pudimos completar tu registro en este momento. Intentalo de nuevo en unos segundos.",
+      "No pudimos completar tu registro en este momento. Inténtalo de nuevo en unos segundos.",
     subscriber_id_not_returned:
-      "Te registramos, pero no pudimos confirmar el registro. Intentalo de nuevo.",
+      "Te registramos, pero no pudimos confirmar el registro. Inténtalo de nuevo.",
     subscriber_interests_create_failed:
-      "Te registramos, pero no pudimos guardar tus intereses. Intentalo de nuevo.",
+      "Te registramos, pero no pudimos guardar tus intereses. Inténtalo de nuevo.",
     invalid_subniches:
-      "Algunos intereses ya no estan disponibles. Cambia tus intereses e intentalo de nuevo.",
+      "Algunos intereses ya no están disponibles. Cambia tus intereses e inténtalo de nuevo.",
     too_many_subniches:
-      "Selecciona menos areas e intentalo de nuevo.",
+      "Selecciona menos áreas e inténtalo de nuevo.",
     too_many_area_interests:
-      "Selecciona hasta 3 areas e intentalo de nuevo.",
+      "Selecciona hasta 3 áreas e inténtalo de nuevo.",
     invalid_area_interests:
-      "Algunas areas ya no estan disponibles. Cambia tus intereses e intentalo de nuevo.",
+      "Algunas áreas ya no están disponibles. Cambia tus intereses e inténtalo de nuevo.",
     invalid_email:
       "Revisa el formato de tu correo.",
     invalid_whatsapp:
@@ -79,7 +79,7 @@ function getCommunityRegisterErrorMessage(
     return communityRegisterErrorMessages[error]
   }
 
-  return "Error registrando tu participacion"
+  return "Error registrando tu participación"
 }
 
 const publicInterestAreas: PublicInterestArea[] = [
@@ -89,7 +89,7 @@ const publicInterestAreas: PublicInterestArea[] = [
     title:
       "Bienestar y Salud Natural",
     description:
-      "Vida saludable, productos naturales y nutricion funcional para el dia a dia.",
+      "Vida saludable, productos naturales y nutrición funcional para el día a día.",
     icon:
       "✦",
     nicheSlugs: [
@@ -104,9 +104,9 @@ const publicInterestAreas: PublicInterestArea[] = [
     id:
       "fitness_rendimiento_recuperacion",
     title:
-      "Fitness, Rendimiento y Recuperacion",
+      "Fitness, Rendimiento y Recuperación",
     description:
-      "Energia, hidratacion, proteina y recuperacion para una vida activa.",
+      "Energía, hidratación, proteína y recuperación para una vida activa.",
     icon:
       "◆",
     nicheSlugs: [
@@ -123,9 +123,9 @@ const publicInterestAreas: PublicInterestArea[] = [
     id:
       "salud_funcionalidad_especifica",
     title:
-      "Salud y Funcionalidad Especifica",
+      "Salud y Funcionalidad Específica",
     description:
-      "Digestión, defensas, descanso, enfoque, estres y soporte funcional.",
+      "Digestión, defensas, descanso, enfoque, estrés y soporte funcional.",
     icon:
       "◉",
     nicheSlugs: [
@@ -143,7 +143,7 @@ const publicInterestAreas: PublicInterestArea[] = [
     title:
       "Cuidado Personal y Belleza Natural",
     description:
-      "Colageno, piel, cabello y cuidado natural con enfoque funcional.",
+      "Colágeno, piel, cabello y cuidado natural con enfoque funcional.",
     icon:
       "✧",
     nicheSlugs: [
@@ -428,10 +428,10 @@ export default function InnovaPopup({
 
   {
     title:
-      "Fitness, Rendimiento y Recuperacion",
+      "Fitness, Rendimiento y Recuperación",
 
     subtitle:
-      "Vida activa, energia y recuperacion",
+      "Vida activa, energía y recuperación",
 
     status:
       "Detectando alto rendimiento...",
@@ -489,7 +489,7 @@ export default function InnovaPopup({
       "Bienestar y Salud Natural",
 
     subtitle:
-      "Habitos, nutricion y vida saludable",
+      "Hábitos, nutrición y vida saludable",
 
     status:
       "Modo enfoque sincronizado...",
@@ -518,7 +518,7 @@ export default function InnovaPopup({
       "Bienestar y Salud Natural",
 
     subtitle:
-      "Productos naturales para el dia a dia",
+      "Productos naturales para el día a día",
 
     status:
       "Sincronizando vida inteligente...",
@@ -547,7 +547,7 @@ export default function InnovaPopup({
       "Cuidado Personal y Belleza Natural",
 
     subtitle:
-      "Colageno, piel, cabello y cuidado natural",
+      "Colágeno, piel, cabello y cuidado natural",
 
     status:
       "Glow premium activado...",
@@ -613,7 +613,7 @@ const interestGroups =
   nichesWithSubniches
 
 const communityConsentText =
-  "Acepto recibir avisos de IMNOVA por los canales seleccionados, conectados a mis intereses. Sin spam ni mensajes genericos."
+  "Acepto recibir avisos de IMNOVA por los canales seleccionados, conectados a mis intereses. Sin spam ni mensajes genéricos."
 
 const normalizeInterestTerm =
   (value: string) =>
@@ -756,7 +756,7 @@ const toggleInterestArea =
         MAX_SELECTED_AREAS
     ) {
       setInterestsError(
-        "Puedes seleccionar hasta 3 areas."
+        "Puedes seleccionar hasta 3 áreas."
       )
       return
     }
@@ -989,7 +989,7 @@ useEffect(() => {
         ) {
 
           alert(
-            "Selecciona al menos un area de interes"
+            "Selecciona al menos un área de interés"
           )
 
           return
@@ -1202,7 +1202,7 @@ setTimeout(() => {
       if (registrationStep === "interests") {
         if (selectedInterestAreaIds.length === 0) {
           alert(
-            "Selecciona al menos un area de interes"
+            "Selecciona al menos un área de interés"
           )
 
           return
@@ -1586,7 +1586,7 @@ setTimeout(() => {
                   {
                     isLogin
                       ? "Bienvenido de nuevo"
-                      : "Decidí los próximos lanzamientos de IMNOVA"
+                      : "Decide los próximos lanzamientos de IMNOVA"
                   }
 
                 </h3>
@@ -1693,8 +1693,8 @@ setTimeout(() => {
 
     {[
       "Sin spam",
-      "Hasta 3 areas",
-      "Vota lo proximo",
+      "Hasta 3 áreas",
+      "Vota lo próximo",
     ].map(item => (
 
       <span
@@ -2195,7 +2195,7 @@ setTimeout(() => {
         text-white/45
       "
     >
-      Puedes unirte aunque desactives un canal. Usamos tus datos para relevancia, no para mensajes genericos.
+      Puedes unirte aunque desactives un canal. Usamos tus datos para relevancia, no para mensajes genéricos.
     </p>
   </div>
 
@@ -2235,7 +2235,7 @@ setTimeout(() => {
         "
       >
 
-        Selecciona hasta 3 areas generales. Esto nos ayuda a enviarte encuestas y lanzamientos relevantes sin hacerte escoger subnichos técnicos.
+        Selecciona hasta 3 áreas generales. Esto nos ayuda a enviarte encuestas y lanzamientos relevantes sin hacerte escoger subnichos técnicos.
 
       </p>
 
@@ -2457,7 +2457,7 @@ setTimeout(() => {
       "
     >
 
-      {selectedInterestAreaIds.length}/{MAX_SELECTED_AREAS} areas seleccionadas
+      {selectedInterestAreaIds.length}/{MAX_SELECTED_AREAS} áreas seleccionadas
 
     </p>
 
@@ -2469,7 +2469,7 @@ setTimeout(() => {
       "
     >
 
-      Mostramos areas simples para que elijas rapido. La segmentacion detallada queda organizada internamente por IMNOVA.
+      Mostramos áreas simples para que elijas rápido. La segmentación detallada queda organizada internamente por IMNOVA.
 
     </p>
 

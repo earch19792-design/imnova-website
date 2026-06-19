@@ -17,12 +17,20 @@ const footerLinks = [
     href: "#ideas-activas",
   },
   {
-    name: "Como funciona",
+    name: "Cómo funciona",
     href: "#como-funciona",
+  },
+  {
+    name: "Dónde comprar",
+    href: "#where-to-buy",
   },
   {
     name: "Beneficios",
     href: "#beneficios",
+  },
+  {
+    name: "Miembro",
+    href: "/miembro",
   },
   {
     name: "Tienda",
@@ -33,7 +41,7 @@ const footerLinks = [
     href: "/privacy-policy",
   },
   {
-    name: "Terminos",
+    name: "Términos",
     href: "/terms",
   },
   {
@@ -68,7 +76,7 @@ export function Footer({
                   IMNOVA
                 </div>
                 <div className="mt-1 text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">
-                  Comunidad que decide lo proximo
+                  Comunidad que decide lo próximo
                 </div>
               </div>
             </Link>
@@ -76,7 +84,7 @@ export function Footer({
             <p className="mt-7 max-w-xl text-base leading-8 text-stone-600">
               IMNOVA convierte intereses reales de comunidad en ideas que se
               validan, se ajustan y pueden llegar al mercado como productos
-              utiles.
+              útiles.
             </p>
 
             <div className="mt-8 flex flex-wrap gap-3">

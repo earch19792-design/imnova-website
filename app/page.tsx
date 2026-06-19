@@ -72,7 +72,7 @@ const publicVoteOptions: Array<{
   },
   {
     type: "would_buy",
-    label: "Lo compraria",
+    label: "Lo compraría",
   },
   {
     type: "wants_trial",
@@ -87,57 +87,57 @@ const publicVoteOptions: Array<{
 const fallbackPublicIdeas: PublicIdea[] = [
   {
     key: "functional-coffee-collagen",
-    title: "Cafe funcional con colageno",
-    tag: "Energia + belleza",
+    title: "Café funcional con colágeno",
+    tag: "Energía + belleza",
     description:
-      "Una idea para unir energia diaria, cuidado personal y rutina simple en un formato facil de adoptar.",
-    signal: "Ideal si te interesan cafe funcional, enfoque y belleza natural.",
+      "Una idea para unir energía diaria, cuidado personal y rutina simple en un formato fácil de adoptar.",
+    signal: "Ideal si te interesan café funcional, enfoque y belleza natural.",
     problem:
-      "Personas que quieren cafe, energia y cuidado personal, pero no desean agregar mas pasos ni productos sueltos a su rutina diaria.",
+      "Personas que quieren café, energía y cuidado personal, pero no desean agregar más pasos ni productos sueltos a su rutina diaria.",
     solution:
-      "Un cafe funcional con enfoque en energia, belleza y practicidad para validar si la comunidad quiere una opcion lista para incorporar a su dia.",
+      "Un café funcional con enfoque en energía, belleza y practicidad para validar si la comunidad quiere una opción lista para incorporar a su día.",
   },
   {
     key: "high-protein-breakfast",
-    title: "Desayuno alto en proteina",
-    tag: "Nutricion practica",
+    title: "Desayuno alto en proteína",
+    tag: "Nutrición práctica",
     description:
       "Mezclas listas para preparar pancakes, waffles o pan funcional sin complicar la rutina.",
-    signal: "Pensado para saciedad, conveniencia y mejor nutricion diaria.",
+    signal: "Pensado para saciedad, conveniencia y mejor nutrición diaria.",
     problem:
-      "Muchas personas quieren desayunar mejor, pero terminan eligiendo opciones rapidas con poca proteina o demasiada azucar.",
+      "Muchas personas quieren desayunar mejor, pero terminan eligiendo opciones rápidas con poca proteína o demasiada azúcar.",
     solution:
-      "Una mezcla funcional facil de preparar que permita disfrutar un desayuno rico, practico y con mejor perfil nutricional.",
+      "Una mezcla funcional fácil de preparar que permita disfrutar un desayuno rico, práctico y con mejor perfil nutricional.",
   },
   {
     key: "daily-digestive-balance",
     title: "Balance digestivo diario",
     tag: "Bienestar diario",
     description:
-      "Productos suaves para apoyar digestion, hidratacion y bienestar cotidiano sin promesas agresivas.",
+      "Productos suaves para apoyar digestión, hidratación y bienestar cotidiano sin promesas agresivas.",
     signal: "Una oportunidad para quienes priorizan salud natural y constancia.",
     problem:
-      "El bienestar digestivo suele sentirse complicado, tecnico o dificil de sostener todos los dias.",
+      "El bienestar digestivo suele sentirse complicado, técnico o difícil de sostener todos los días.",
     solution:
-      "Una propuesta simple para convertir el balance digestivo en un habito claro, suave y facil de repetir.",
+      "Una propuesta simple para convertir el balance digestivo en un hábito claro, suave y fácil de repetir.",
   },
 ]
 
 const observatorySignals = [
   {
-    title: "Cafe funcional",
-    label: "Senal semanal",
-    text: "El radar observa conversaciones sobre energia practica, enfoque y rutinas con cafe funcional.",
+    title: "Café funcional",
+    label: "Señal semanal",
+    text: "Observamos conversaciones sobre energía práctica, enfoque y rutinas con café funcional.",
   },
   {
-    title: "Desayunos altos en proteina",
+    title: "Desayunos altos en proteína",
     label: "Tendencia social",
-    text: "La comunidad digital busca opciones faciles para desayunar mejor sin complicar la preparacion.",
+    text: "La comunidad digital busca opciones fáciles para desayunar mejor sin complicar la preparación.",
   },
   {
-    title: "Belleza desde la nutricion",
+    title: "Belleza desde la nutrición",
     label: "Oportunidad emergente",
-    text: "Aparecen senales de interes por colageno, piel, cabello y beneficios funcionales faciles de entender.",
+    text: "Aparecen señales de interés por colágeno, piel, cabello y beneficios funcionales fáciles de entender.",
   },
 ]
 
@@ -145,19 +145,19 @@ const trustSignals = [
   "Gratis y sin spam",
   "Votas sin crear cuenta",
   "Beneficios por participar",
-  "Compra solo cuando esta disponible",
+  "Compra solo cuando está disponible",
 ]
 
 const howItWorks = [
   {
     icon: UsersRound,
     title: "Te unes",
-    text: "Dejas tus datos basicos, aceptas el consentimiento y eliges hasta 3 intereses.",
+    text: "Dejas tus datos básicos, aceptas el consentimiento y eliges hasta 3 intereses.",
   },
   {
     icon: Target,
     title: "Eliges intereses",
-    text: "IMNOVA usa esos intereses para enviarte ideas, encuestas y novedades relevantes.",
+    text: "IMNOVA usa esos intereses para enviarte ideas, encuestas y novedades que sí tengan relación contigo.",
   },
   {
     icon: Vote,
@@ -167,21 +167,21 @@ const howItWorks = [
   {
     icon: Gift,
     title: "Recibes beneficios",
-    text: "Cuando algo llega al mercado, la comunidad recibe acceso temprano y beneficios disponibles.",
+    text: "Cuando algo llega al mercado, la comunidad puede recibir acceso temprano y beneficios disponibles.",
   },
 ]
 
 const missionVision = [
   {
     icon: Target,
-    label: "Mision",
+    label: "Misión",
     title: "Crear productos guiados por necesidades reales.",
-    text: "IMNOVA une comunidad, tendencias y validacion para desarrollar productos funcionales que ayuden a vivir mejor, elegir mejor y acceder primero a soluciones utiles.",
+    text: "IMNOVA une comunidad, tendencias y validación para desarrollar productos funcionales que ayuden a vivir mejor, elegir mejor y acceder primero a soluciones útiles.",
   },
   {
     icon: Eye,
-    label: "Vision",
-    title: "Convertir a la comunidad en el motor de lo proximo.",
+    label: "Visión",
+    title: "Convertir a la comunidad en el motor de lo próximo.",
     text: "Queremos que cada lanzamiento nazca de una lectura clara del mercado: personas que votan, ideas que se validan y productos que llegan solo cuando tienen sentido real.",
   },
 ]
@@ -190,7 +190,7 @@ const benefits = [
   {
     icon: Vote,
     title: "Decides con tu voto",
-    text: "Tu opinion ayuda a priorizar ideas antes de que IMNOVA invierta tiempo y recursos.",
+    text: "Tu opinión ayuda a priorizar ideas antes de que IMNOVA invierta tiempo y recursos.",
   },
   {
     icon: Zap,
@@ -199,8 +199,8 @@ const benefits = [
   },
   {
     icon: Sparkles,
-    title: "Tendencias utiles",
-    text: "Descubre senales simples sobre bienestar, nutricion, belleza y vida activa.",
+    title: "Tendencias útiles",
+    text: "Descubre señales simples sobre bienestar, nutrición, belleza y vida activa.",
   },
   {
     icon: HeartHandshake,
@@ -215,8 +215,8 @@ const transparencyStages = [
     text: "Oportunidades simples que la comunidad puede entender y votar.",
   },
   {
-    title: "Ideas en validacion",
-    text: "Las mejores senales pasan por votos, encuestas y lectura de demanda.",
+    title: "Ideas en validación",
+    text: "Las mejores señales pasan por votos, encuestas y lectura de demanda.",
   },
   {
     title: "Productos en desarrollo",
@@ -224,7 +224,7 @@ const transparencyStages = [
   },
   {
     title: "Productos lanzados",
-    text: "Cuando un producto esta listo, aparece en tienda y puede comprarse.",
+    text: "Cuando un producto está listo, aparece en tienda y puede comprarse.",
   },
 ]
 
@@ -585,14 +585,14 @@ export default function IMNOVAPage() {
               </span>
             </div>
 
-            <h1 className="mt-7 max-w-[760px] text-4xl font-black leading-[1.02] tracking-[-0.04em] text-white sm:text-5xl md:text-6xl lg:text-[4.75rem] xl:text-[5.25rem]">
-              La comunidad que decide lo proximo del mercado.
+            <h1 className="mt-7 max-w-[760px] text-4xl font-black leading-[1.02] tracking-[-0.04em] text-white sm:text-5xl md:text-6xl lg:text-[4.45rem] xl:text-[4.95rem]">
+              La comunidad que decide lo próximo del mercado.
             </h1>
 
             <p className="mt-7 max-w-3xl text-lg leading-8 text-white/72 md:text-xl md:leading-9">
-              Vota ideas, descubre tendencias y recibe beneficios exclusivos
-              antes que nadie. IMNOVA convierte senales reales en productos que
-              la comunidad entiende, valida y espera.
+              Vota ideas, descubre tendencias y recibe beneficios cuando los
+              productos llegan primero a IMNOVA. Tu opinión ayuda a decidir qué
+              avanza, qué se ajusta y qué se pausa.
             </p>
 
             <div className="mt-9 flex flex-col gap-3 sm:flex-row">
@@ -703,10 +703,10 @@ export default function IMNOVAPage() {
                       IMNOVA Store
                     </p>
                     <h2 className="mt-3 max-w-md text-3xl font-black leading-tight tracking-[-0.05em] md:text-5xl">
-                      Cuando un producto este listo, aparecera aqui.
+                      Cuando un producto esté listo, aparecerá aquí.
                     </h2>
                     <p className="mt-4 max-w-md text-sm leading-7 text-white/62">
-                      Los productos en Produccion, Desarrollo o Validacion no se muestran como comprables.
+                      Los productos en producción, desarrollo o validación no se muestran como comprables.
                     </p>
                   </div>
                 </div>
@@ -718,12 +718,12 @@ export default function IMNOVAPage() {
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-[10px] font-black uppercase tracking-[0.20em] text-cyan-100/70">
-                    Idea activa destacada
+                    Votación abierta
                   </p>
                   <span className="rounded-full border border-cyan-200/20 bg-cyan-200/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-cyan-50">
                     {isLoadingPublicIdeas
                       ? "Cargando"
-                      : `${publicIdeas.length} en votacion`}
+                      : `${publicIdeas.length} en votación`}
                   </span>
                 </div>
 
@@ -731,8 +731,8 @@ export default function IMNOVAPage() {
                   {featuredIdea.title}
                 </h2>
                 <p className="mt-3 text-sm leading-6 text-white/65">
-                  Revisa el problema, la solucion propuesta y vota en la seccion
-                  completa de ideas activas.
+                  Revisa el problema, la solución propuesta y vota en la sección
+                  completa de ideas.
                 </p>
                 <a
                   href="#ideas-activas"
@@ -752,11 +752,11 @@ export default function IMNOVAPage() {
           {[
             {
               label: "Comunidad",
-              value: "Primero la participacion",
+              value: "Primero la participación",
             },
             {
-              label: "Votacion",
-              value: "Senales reales",
+              label: "Votación",
+              value: "Señales reales",
             },
             {
               label: "Store",
@@ -792,14 +792,14 @@ export default function IMNOVAPage() {
               <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-cyan-300/16 blur-3xl" />
               <div className="pointer-events-none absolute -bottom-24 left-12 h-56 w-56 rounded-full bg-amber-300/12 blur-3xl" />
               <p className="text-[10px] font-black uppercase tracking-[0.26em] text-cyan-100/70">
-                Quienes somos
+                Quiénes somos
               </p>
               <h2 className="mt-5 text-4xl font-black leading-tight tracking-[-0.05em] md:text-6xl">
                 IMNOVA crea con la comunidad, no a espaldas del mercado.
               </h2>
               <p className="mt-6 text-base leading-8 text-white/68">
                 El sistema es simple: personas comparten intereses, votan ideas
-                y ayudan a priorizar que oportunidades merecen convertirse en
+                y ayudan a priorizar qué oportunidades merecen convertirse en
                 productos reales.
               </p>
               <div className="mt-8 grid gap-3 sm:grid-cols-3">
@@ -848,10 +848,10 @@ export default function IMNOVAPage() {
         <div className="mx-auto max-w-7xl">
           <div className="max-w-3xl">
             <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
-              Como funciona
+              Cómo funciona
             </p>
             <h2 className="mt-4 text-4xl font-black tracking-[-0.05em] text-stone-950 md:text-6xl">
-              Un flujo claro para cualquier visitante.
+              Así participa la comunidad.
             </h2>
           </div>
 
@@ -890,14 +890,14 @@ export default function IMNOVAPage() {
           <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
             <div className="max-w-3xl">
               <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
-                Ideas activas en votacion
+                Ideas activas en votación
               </p>
               <h2 className="mt-4 text-4xl font-black tracking-[-0.05em] text-stone-950 md:text-6xl">
-                Estas oportunidades ya salieron del radar y necesitan tu voto.
+                Estas ideas ya están listas para recibir tu voto.
               </h2>
               <p className="mt-5 text-base leading-8 text-stone-600 md:text-lg">
-                Cada idea muestra el problema que detectamos y la solucion que
-                IMNOVA podria desarrollar. Tu respuesta ayuda a decidir si
+                Cada idea muestra el problema que detectamos y la solución que
+                IMNOVA podría desarrollar. Tu respuesta ayuda a decidir si
                 avanza, se ajusta o se pausa.
               </p>
               {isLoadingPublicIdeas && (
@@ -950,7 +950,7 @@ export default function IMNOVAPage() {
 
                     <div className="rounded-[24px] border border-cyan-200 bg-cyan-50 p-5">
                       <p className="text-[10px] font-black uppercase tracking-[0.20em] text-cyan-800">
-                        Solucion propuesta
+                        Solución propuesta
                       </p>
                       <p className="mt-3 text-sm leading-7 text-cyan-950">
                         {idea.solution}
@@ -960,7 +960,7 @@ export default function IMNOVAPage() {
 
                   <div className="mt-7">
                     <p className="mb-3 text-[11px] font-black uppercase tracking-[0.18em] text-stone-500">
-                      Que harias si IMNOVA desarrolla esta idea?
+                      ¿Qué harías si IMNOVA desarrolla esta idea?
                     </p>
                     {renderIdeaCardVoteButtons(idea)}
                   </div>
@@ -970,7 +970,7 @@ export default function IMNOVAPage() {
                       aria-live="polite"
                       className="mt-4 rounded-2xl border border-cyan-200 bg-cyan-50 px-5 py-4 text-sm leading-7 text-cyan-900"
                     >
-                      Gracias. Tu respuesta ayuda a decidir los proximos
+                      Gracias. Tu respuesta ayuda a decidir los próximos
                       lanzamientos.
                       <button
                         type="button"
@@ -1008,12 +1008,12 @@ export default function IMNOVAPage() {
                 Observatorio IMNOVA
               </p>
               <h2 className="mt-4 text-4xl font-black tracking-[-0.05em] text-stone-950 md:text-6xl">
-                Senales que el radar observa antes de convertirlas en ideas.
+                Tendencias que observamos antes de convertirlas en ideas.
               </h2>
               <p className="mt-5 text-base leading-8 text-stone-600 md:text-lg">
                 Esta parte muestra tendencias, conversaciones y oportunidades
-                que IMNOVA esta observando. Todavia no son ideas votables; si
-                una senal tiene sentido, pasa al bloque de ideas activas.
+                que IMNOVA está observando. Todavía no son ideas votables; si
+                una señal tiene sentido, pasa al bloque de ideas activas.
               </p>
             </div>
 
@@ -1021,7 +1021,7 @@ export default function IMNOVAPage() {
               href="#ideas-activas"
               className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-cyan-200 bg-cyan-50 px-6 text-[12px] font-black uppercase tracking-[0.14em] text-cyan-800 transition hover:-translate-y-0.5 hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
             >
-              Votar ideas
+              Ver ideas votables
               <Vote className="h-4 w-4" />
             </a>
           </div>
@@ -1042,7 +1042,7 @@ export default function IMNOVAPage() {
                   {signal.text}
                 </p>
                 <p className="mt-5 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-xs font-bold leading-6 text-cyan-900">
-                  Senal observada. Aun no es una idea activa para votar.
+                  Señal observada. Aún no es una idea activa para votar.
                 </p>
               </article>
             ))}
@@ -1060,7 +1060,7 @@ export default function IMNOVAPage() {
               Beneficios
             </p>
             <h2 className="mt-4 text-4xl font-black tracking-[-0.05em] text-stone-950 md:text-6xl">
-              Por que vale la pena unirse.
+              Por qué vale la pena unirse.
             </h2>
           </div>
 
@@ -1091,20 +1091,20 @@ export default function IMNOVAPage() {
           <div className="max-w-xl">
             <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/70">
               {featuredHomeProduct?.hasActivePromotion
-                ? "Promocion de lanzamiento"
+                ? "Promoción de lanzamiento"
                 : "Producto terminado"}
             </p>
             <h2 className="mt-4 text-3xl font-black leading-tight tracking-[-0.04em] md:text-5xl lg:text-[3.35rem]">
               {featuredHomeProduct?.hasActivePromotion
-                ? "Descuento activo cuando el producto ya esta listo."
+                ? "Descuento activo cuando el producto ya está listo."
                 : featuredHomeProduct
                   ? "La tienda muestra solo lo que ya se puede comprar."
-                  : "Aun no hay producto disponible para compra."}
+                  : "Aún no hay producto disponible para compra."}
             </h2>
             <p className="mt-5 text-base leading-8 text-white/68">
               {featuredHomeProduct
-                ? "Un producto disponible ya paso de idea a validacion, canalizacion y producto terminado. Por eso aparece en Store con precio, promocion de lanzamiento cuando aplica y canales claros."
-                : "Los productos en Produccion, Desarrollo o Validacion se mantienen fuera de la tienda publica hasta que realmente esten listos para comprarse."}
+                ? "Un producto disponible ya pasó de idea a validación, canalización y producto terminado. Por eso aparece en Store con precio, promoción de lanzamiento cuando aplica y canales claros."
+                : "Los productos en producción, desarrollo o validación se mantienen fuera de la tienda pública hasta que realmente estén listos para comprarse."}
             </p>
             {featuredHomeProduct ? (
               <a
@@ -1120,7 +1120,7 @@ export default function IMNOVAPage() {
                 onClick={openCommunity}
                 className="mt-8 inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-cyan-200 px-7 text-[12px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:-translate-y-0.5 hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-300/80"
               >
-                Recibir aviso cuando este listo
+                Recibir aviso cuando esté listo
                 <MessageCircle className="h-4 w-4" />
               </button>
             )}
@@ -1129,7 +1129,7 @@ export default function IMNOVAPage() {
               href="#where-to-buy"
               className="mt-3 inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-white/15 px-6 text-[11px] font-black uppercase tracking-[0.14em] text-white/72 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/70"
             >
-              Donde comprar
+              Dónde comprar
               <MapPin className="h-4 w-4" />
             </a>
           </div>
@@ -1147,7 +1147,7 @@ export default function IMNOVAPage() {
                   <div className="absolute left-5 top-5 flex flex-wrap gap-2">
                     <span className="rounded-full bg-amber-300 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-stone-950 shadow-sm">
                       {featuredHomeProduct.hasActivePromotion
-                        ? "Promocion de lanzamiento"
+                        ? "Promoción de lanzamiento"
                         : "Producto disponible"}
                     </span>
                     <span className="rounded-full border border-white/20 bg-stone-950/70 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-white backdrop-blur">
@@ -1191,7 +1191,7 @@ export default function IMNOVAPage() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {[
                 "Producto terminado",
-                "Promocion de lanzamiento",
+                "Promoción de lanzamiento",
                 "Compra clara",
                 "Canales autorizados",
               ].map(item => (
@@ -1225,8 +1225,8 @@ export default function IMNOVAPage() {
               Una idea no aparece en tienda por magia.
             </h2>
             <p className="mt-5 text-base leading-8 text-stone-600 md:text-lg">
-              IMNOVA separa la participacion publica de la decision comercial:
-              la comunidad senala interes, y el equipo IMNOVA decide que avanza.
+              IMNOVA separa la participación pública de la decisión comercial:
+              la comunidad señala interés, y el equipo IMNOVA decide qué avanza.
             </p>
           </div>
 
@@ -1261,11 +1261,11 @@ export default function IMNOVAPage() {
               Formulario de comunidad
             </p>
             <h2 className="mt-4 text-4xl font-black leading-tight tracking-[-0.05em] text-stone-950 md:text-6xl">
-              Tu opinion puede ayudar a decidir lo que viene.
+              Tu opinión puede ayudar a decidir lo que viene.
             </h2>
             <p className="mt-6 text-base leading-8 text-stone-600 md:text-lg">
-              Unirte toma menos de un minuto. Elegis hasta 3 areas, aceptas el
-              consentimiento y eliges como quieres recibir novedades.
+              Unirte toma menos de un minuto. Eliges hasta 3 áreas, aceptas el
+              consentimiento y eliges cómo quieres recibir novedades.
             </p>
 
             <button
@@ -1298,17 +1298,17 @@ export default function IMNOVAPage() {
               {
                 icon: Star,
                 title: "Hasta 3 intereses",
-                text: "Para no recibir mensajes genericos.",
+                text: "Para no recibir mensajes genéricos.",
               },
               {
                 icon: ShieldCheck,
                 title: "Consentimiento",
-                text: "Sin spam. Tu participacion debe ser clara y voluntaria.",
+                text: "Sin spam. Tu participación debe ser clara y voluntaria.",
               },
               {
                 icon: Trophy,
                 title: "Beneficios",
-                text: "Acceso temprano y oportunidades cuando esten disponibles.",
+                text: "Acceso temprano y oportunidades cuando estén disponibles.",
               },
             ].map(item => (
               <article

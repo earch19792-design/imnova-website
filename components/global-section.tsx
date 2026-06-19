@@ -399,7 +399,7 @@ export function GlobalSection() {
     locationMessage,
     setLocationMessage,
   ] = useState(
-    "Activa tu ubicacion para encontrar el distribuidor fisico mas cercano."
+    "Activa tu ubicación para encontrar el distribuidor físico más cercano."
   )
 
   const requestUserLocation =
@@ -408,14 +408,14 @@ export function GlobalSection() {
       if (!("geolocation" in navigator)) {
         setLocationStatus("unsupported")
         setLocationMessage(
-          "Tu navegador no permite usar ubicacion. Puedes buscar manualmente por pais y ciudad."
+          "Tu navegador no permite usar ubicación. Puedes buscar manualmente por país y ciudad."
         )
         return
       }
 
       setLocationStatus("loading")
       setLocationMessage(
-        "Buscando el distribuidor mas cercano..."
+        "Buscando el distribuidor más cercano..."
       )
 
       navigator.geolocation.getCurrentPosition(
@@ -428,13 +428,13 @@ export function GlobalSection() {
           })
           setLocationStatus("ready")
           setLocationMessage(
-            "Ubicacion detectada. Calculamos el distribuidor mas cercano con coordenadas registradas."
+            "Ubicación detectada. Calculamos el distribuidor más cercano con coordenadas registradas."
           )
         },
         () => {
           setLocationStatus("error")
           setLocationMessage(
-            "No pudimos acceder a tu ubicacion. Usa los filtros para buscar por pais, ciudad o canal."
+            "No pudimos acceder a tu ubicación. Usa los filtros para buscar por país, ciudad o canal."
           )
         },
         {
@@ -581,7 +581,7 @@ export function GlobalSection() {
 
     setHasLocatorIntent(true)
     setLocationMessage(
-      "Vienes desde WhatsApp. Toca el boton para permitir ubicacion y ver tu distribuidor IMNOVA mas cercano."
+      "Vienes desde WhatsApp. Toca el botón para permitir ubicación y ver tu distribuidor IMNOVA más cercano."
     )
 
     window.setTimeout(() => {
@@ -640,7 +640,7 @@ export function GlobalSection() {
                   location.name,
                 location:
                   locationText ||
-                  "Ubicacion registrada",
+                  "Ubicación registrada",
                 status:
                   location.availability_status ||
                   "activo",
@@ -1028,12 +1028,12 @@ export function GlobalSection() {
           <h2 className="mt-8 max-w-4xl text-5xl font-black leading-[0.98] tracking-[-0.05em] text-stone-950 sm:text-6xl lg:text-7xl">
             Encuentra tu punto
             <span className="block text-cyan-800">
-              IMNOVA mas cercano.
+              IMNOVA más cercano.
             </span>
           </h2>
 
           <p className="mt-7 max-w-3xl text-lg leading-9 text-stone-600">
-            Activa tu ubicacion o filtra por ciudad para ver canales
+            Activa tu ubicación o filtra por ciudad para ver canales
             autorizados con productos disponibles. Solo mostramos productos
             listos para compra y rutas reales cuando quieras llegar.
           </p>
@@ -1044,8 +1044,8 @@ export function GlobalSection() {
                 Vienes desde WhatsApp
               </p>
               <p className="mt-2 text-sm font-bold leading-6 text-stone-700">
-                Pulsa el boton resaltado para permitir ubicacion y calcular el
-                distribuidor autorizado mas cercano a ti.
+                Pulsa el botón resaltado para permitir ubicación y calcular el
+                distribuidor autorizado más cercano a ti.
               </p>
             </div>
           )}
@@ -1064,7 +1064,7 @@ export function GlobalSection() {
               <Navigation className="h-4 w-4" />
               {locationStatus === "loading"
                 ? "Buscando..."
-                : "Distribuidor mas cercano"}
+                : "Distribuidor más cercano"}
             </button>
 
             <Link
@@ -1086,7 +1086,7 @@ export function GlobalSection() {
 
           <div className="mt-8 grid gap-3 text-left sm:grid-cols-3">
             {[
-              "Activa ubicacion",
+              "Activa ubicación",
               "Compara canales",
               "Abre la ruta real",
             ].map(
@@ -1184,19 +1184,19 @@ export function GlobalSection() {
               <div className="absolute bottom-5 left-5 right-5 rounded-[28px] border border-white/10 bg-black/60 p-5 backdrop-blur-2xl">
                 <p className="text-[10px] font-black uppercase tracking-[0.20em] text-cyan-100/70">
                   {featuredDistance !== null
-                    ? "Distribuidor mas cercano"
+                    ? "Distribuidor más cercano"
                     : "Canal destacado"}
                 </p>
                 <h3 className="mt-3 line-clamp-1 text-2xl font-black tracking-[-0.04em] text-white">
                   {featuredDistribution?.name ||
-                    "Activa ubicacion para ver el mas cercano"}
+                    "Activa ubicación para ver el más cercano"}
                 </h3>
                 <p className="mt-2 line-clamp-1 text-sm font-semibold text-white/65">
                   {featuredDistribution?.productName ||
                     "Los canales aparecen cuando hay productos disponibles."}
                 </p>
                 <p className="mt-3 text-xs leading-5 text-white/45">
-                  Solo mostramos canales confirmados y productos que ya estan
+                  Solo mostramos canales confirmados y productos que ya están
                   disponibles para compra.
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2">
@@ -1212,7 +1212,7 @@ export function GlobalSection() {
                       rel="noreferrer"
                       className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:bg-cyan-100"
                     >
-                      Como llegar
+                      Cómo llegar
                       <ExternalLink className="h-3.5 w-3.5" />
                     </a>
                   )}
@@ -1274,7 +1274,7 @@ export function GlobalSection() {
 
               <p className="mt-3 text-sm leading-6 text-zinc-500">
                 Primero localizamos canales autorizados. Luego eliges si compras
-                en Store, marketplace o visitas un punto fisico cercano.
+                en Store, marketplace o visitas un punto físico cercano.
               </p>
 
               <div className="mt-6 rounded-[24px] border border-cyan-300/20 bg-cyan-300/[0.06] p-4">
@@ -1284,7 +1284,7 @@ export function GlobalSection() {
                   </div>
                   <div>
                     <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-100/65">
-                      Punto mas cercano
+                      Punto más cercano
                     </p>
                     <p className="mt-2 text-sm leading-6 text-zinc-400">
                       {locationMessage}
@@ -1301,14 +1301,14 @@ export function GlobalSection() {
                   <Navigation className="h-4 w-4" />
                   {locationStatus === "loading"
                     ? "Detectando..."
-                    : "Encontrar distribuidor mas cercano"}
+                    : "Encontrar distribuidor más cercano"}
                 </button>
 
                 {locationStatus === "ready" &&
                   nearestDistribution && (
                     <div className="mt-4 rounded-2xl border border-emerald-200/20 bg-emerald-300/[0.08] p-4">
                       <p className="text-[10px] uppercase tracking-[0.18em] text-emerald-100/70">
-                        Mas cercano
+                        Más cercano
                       </p>
                       <p className="mt-2 line-clamp-1 text-lg font-black text-white">
                         {nearestDistribution.item.name}
@@ -1331,7 +1331,7 @@ export function GlobalSection() {
                         rel="noreferrer"
                         className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-100 px-4 py-3 text-[10px] font-black uppercase tracking-[0.16em] text-black transition hover:bg-white"
                       >
-                        Como llegar
+                        Cómo llegar
                         <ExternalLink className="h-3.5 w-3.5" />
                       </a>
                     </div>
@@ -1340,8 +1340,8 @@ export function GlobalSection() {
                 {locationStatus === "ready" &&
                   !nearestDistribution && (
                     <p className="mt-4 rounded-2xl border border-amber-200/15 bg-amber-200/[0.06] p-3 text-xs leading-5 text-amber-100/75">
-                      Todavia no hay puntos fisicos con coordenadas para este
-                      filtro. Puedes buscar manualmente por pais y ciudad.
+                      Todavía no hay puntos físicos con coordenadas para este
+                      filtro. Puedes buscar manualmente por país y ciudad.
                     </p>
                   )}
               </div>
@@ -1574,7 +1574,7 @@ export function GlobalSection() {
                               <span className="inline-flex items-center gap-2 rounded-full border border-cyan-200/20 bg-cyan-300/[0.12] px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-cyan-100">
                                 <Icon className="h-3.5 w-3.5" />
                                 {featuredDistance !== null
-                                  ? "Distribuidor mas cercano"
+                                  ? "Distribuidor más cercano"
                                   : "Mejor coincidencia"}
                               </span>
                               <span className="rounded-full border border-white/10 bg-black/25 px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-zinc-300">
@@ -1623,7 +1623,7 @@ export function GlobalSection() {
                                 rel="noreferrer"
                                 className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/25 px-5 py-3 text-xs font-black uppercase tracking-[0.16em] text-cyan-50 transition hover:border-cyan-200/25 hover:bg-cyan-300/[0.10]"
                               >
-                                Como llegar
+                                Cómo llegar
                                 <MapPin className="h-3.5 w-3.5" />
                               </a>
                             )}
@@ -1792,7 +1792,7 @@ export function GlobalSection() {
                                           rel="noreferrer"
                                           className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.035] px-5 py-3 text-xs font-black uppercase tracking-[0.16em] text-cyan-100 transition-colors hover:border-cyan-300/25 hover:bg-cyan-300/10"
                                         >
-                                          Como llegar
+                                          Cómo llegar
                                           <MapPin className="h-3.5 w-3.5" />
                                         </a>
                                       )}

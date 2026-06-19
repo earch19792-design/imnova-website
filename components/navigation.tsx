@@ -20,12 +20,12 @@ const primaryNavItems = [
     href: "#ideas-activas",
   },
   {
-    name: "Como funciona",
+    name: "Cómo funciona",
     href: "#como-funciona",
   },
   {
-    name: "Beneficios",
-    href: "#beneficios",
+    name: "Dónde comprar",
+    href: "#where-to-buy",
   },
   {
     name: "Tienda",
@@ -35,8 +35,16 @@ const primaryNavItems = [
 
 const supportNavItems = [
   {
-    name: "Mision y vision",
+    name: "Misión y visión",
     href: "#mision-vision",
+  },
+  {
+    name: "Beneficios",
+    href: "#beneficios",
+  },
+  {
+    name: "Miembro",
+    href: "/miembro",
   },
   {
     name: "Contacto",
@@ -47,7 +55,7 @@ const supportNavItems = [
     href: "/privacy-policy",
   },
   {
-    name: "Terminos",
+    name: "Términos",
     href: "/terms",
   },
   {
@@ -193,7 +201,7 @@ export function Navigation({
 
             <button
               type="button"
-              aria-label={isMenuOpen ? "Cerrar menu" : "Abrir menu"}
+              aria-label={isMenuOpen ? "Cerrar menú" : "Abrir menú"}
               aria-expanded={isMenuOpen}
               onClick={() => setIsMenuOpen(current => !current)}
               className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-cyan-500/60 ${
@@ -230,7 +238,7 @@ export function Navigation({
                 duration: 0.2,
               }}
               role="dialog"
-              aria-label="Menu principal"
+              aria-label="Menú principal"
               className="relative z-20 border-t border-stone-200/80 bg-[#fbf7ef]/96 px-4 py-4"
             >
               <div className="grid gap-2 sm:grid-cols-2 lg:hidden">
@@ -246,7 +254,7 @@ export function Navigation({
                 ))}
               </div>
 
-              <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-7">
                 {supportNavItems.map(item => (
                   <Link
                     key={item.name}
