@@ -265,7 +265,7 @@ async function fetchAvailableProducts(
   const optionalColumns =
     includeOptionalColumns
       ? ",short_description,visible,is_public,is_active,featured"
-      : ",short_description,visible,is_public,is_active"
+      : ",visible,is_public,is_active"
 
   const productColumns =
     `id,slug,name,category,description,image_url,image,price,currency,state_id,launch_promo_enabled,launch_discount_percent,launch_promo_start_at,launch_promo_end_at,launch_promo_duration_days,created_at${optionalColumns}`
