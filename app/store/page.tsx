@@ -51,6 +51,9 @@ type Product = {
   currency?: string | null
   category?: string | null
   main_benefit?: string | null
+  usage_moment?: string | null
+  usage_description?: string | null
+  how_to_use?: string | null
   bullets?: string[] | null
   launch_promo_enabled?: boolean | null
   launch_discount_percent?: number | string | null
@@ -373,6 +376,18 @@ function getProductBenefit(
     profile.headline ||
     product.description ||
     "Producto IMNOVA diseñado para apoyar una rutina diaria más simple, saludable y equilibrada."
+  )
+}
+
+function getProductUsageIdea(
+  product: Product,
+  profile: ProductCommerceProfile
+) {
+  return (
+    product.usage_moment ||
+    product.usage_description ||
+    product.how_to_use ||
+    profile.bestFor
   )
 }
 
@@ -1326,6 +1341,11 @@ export default function StorePage() {
                   getProductBenefit(
                     product
                   )
+                const usageIdea =
+                  getProductUsageIdea(
+                    product,
+                    profile
+                  )
                 const productPromotion =
                   getLaunchPromotion(
                     product,
@@ -1387,6 +1407,22 @@ export default function StorePage() {
                       <p className="mt-4 min-h-20 text-sm leading-6 text-zinc-600">
                         {benefit}
                       </p>
+
+                      <div className="mt-5 overflow-hidden rounded-[22px] border border-zinc-200 bg-gradient-to-br from-[#fbf8ef] via-white to-cyan-50/55 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+                        <div className="flex items-stretch">
+                          <div className="flex w-14 shrink-0 items-center justify-center border-r border-zinc-200/80 bg-white/55 text-cyan-700">
+                            <Sparkles className="h-5 w-5" />
+                          </div>
+                          <div className="min-w-0 px-4 py-3.5">
+                            <p className="text-[9px] font-black uppercase tracking-[0.20em] text-cyan-800">
+                              Momento de uso
+                            </p>
+                            <p className="mt-1.5 line-clamp-2 text-sm font-semibold leading-6 text-zinc-700">
+                              {usageIdea}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
 
                       <div className="mt-5 flex flex-wrap gap-2">
                         {profile.chips

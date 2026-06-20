@@ -20,6 +20,10 @@ import {
   useEffect,
 } from "react"
 
+import {
+  supabase,
+} from "@/lib/supabase"
+
 const pipelineSteps = [
   {
     title: "IDEA",
@@ -661,6 +665,25 @@ return (
          onClick={async () => {
 
   try {
+    const {
+      data: sessionData,
+      error: sessionError,
+    } =
+      await supabase.auth.getSession()
+
+    const accessToken =
+      sessionData.session?.access_token
+
+    if (
+      sessionError ||
+      !accessToken
+    ) {
+      alert(
+        "Sesion Admin requerida para enviar WhatsApp"
+      )
+
+      return
+    }
 
     const response =
       await fetch(
@@ -671,6 +694,8 @@ return (
           headers: {
             "Content-Type":
               "application/json",
+            Authorization:
+              `Bearer ${accessToken}`,
           },
 
           body: JSON.stringify({
@@ -682,6 +707,12 @@ return (
 
             progress:
               "72%",
+
+            source:
+              "imnova_labs_component",
+
+            triggeredBy:
+              "admin",
           }),
         }
       )

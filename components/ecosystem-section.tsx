@@ -142,7 +142,7 @@ export function EcosystemSection() {
         )
 
       const updatedProducts =
-        (products as Product[]).map(
+        (products as unknown as Product[]).map(
           (product) => {
 
             const state =

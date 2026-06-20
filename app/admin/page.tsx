@@ -18,7 +18,9 @@ import {
   getAdminPriorityProducts,
   getAdminProductSuggestions,
   getCommunitySubscriberStats,
+  getCommunityGrowthSummary,
   getCommunityIdeaVoteTargetSummaries,
+  getAdminTransparencyWallItems,
   getPublicNichesWithSubniches,
   getRecentSubscribersWithInterests,
   getAdminValidationActionProducts,
@@ -35,8 +37,10 @@ import {
   updateTrendRadarSignal,
   createIdeaLabItemFromTrendSignal,
   type CommunitySubscriberStats,
+  type CommunityGrowthSummary,
   type CommunitySubscriberWithInterests,
   type CommunityIdeaVoteSummary,
+  type TransparencyWallItem,
   type IdeaLabItem,
   type IdeaLabItemSummary,
   type StrategicNicheWithSubniches,
@@ -62,6 +66,9 @@ import {
 
 import { Sidebar } from "@/app/admin/sidebar"
 import { Metrics } from "@/app/admin/metrics"
+import {
+  MarketRadarPanel,
+} from "@/components/admin/market-radar-panel"
 
 type Product = {
   id: string
@@ -78,6 +85,10 @@ type Product = {
   description?: string
   image_url?: string
   image?: string
+  visible?: boolean | null
+  is_public?: boolean | null
+  is_active?: boolean | null
+  featured?: boolean | null
   price?: number
   currency?: string
   direct_url?: string
@@ -101,6 +112,13 @@ type ProductState = {
   name: string
   progress: number
   sort_order?: number
+  is_active?: boolean
+}
+
+type ProductPublicStateUpdates = {
+  state_id: string | null
+  visible: boolean
+  is_public: boolean
   is_active?: boolean
 }
 
@@ -197,6 +215,16 @@ const EMPTY_COMMUNITY_SUBSCRIBER_STATS: CommunitySubscriberStats = {
   percentWithEmail: 0,
 }
 
+const EMPTY_COMMUNITY_GROWTH_SUMMARY: CommunityGrowthSummary = {
+  totalReferralCodes: 0,
+  totalReferrals: 0,
+  totalPointsAwarded: 0,
+  vipMembers: 0,
+  activeRewards: 0,
+  transparencyItems: 0,
+  levelCounts: [],
+}
+
 const EMPTY_VALIDATION_ACTION_PRODUCTS: ValidationActionProducts = {
   readyToAdvance: [],
   pendingDecision: [],
@@ -248,6 +276,19 @@ function normalizeValidationValue(
   return (
     value || "pendiente"
   )
+    .toLowerCase()
+    .trim()
+}
+
+function normalizeStateLabel(
+  value: string
+) {
+  return value
+    .normalize("NFD")
+    .replace(
+      /[\u0300-\u036f]/g,
+      ""
+    )
     .toLowerCase()
     .trim()
 }
@@ -503,18 +544,31 @@ const MAX_MANUAL_COMMUNITY_INTERESTS =
   5
 
 const adminMenuGuides = {
-  dashboard: {
+  community: {
     title:
-      "Empieza por prioridad, no por edicion.",
+      "Primero entiende a la comunidad.",
     description:
-      "Usa esta vista para decidir que requiere atencion hoy antes de abrir formularios o mover estados.",
+      "Aqui se revisan miembros, consentimientos, intereses generales, miembros activos, referidos y VIP.",
     steps: [
-      "Revisa productos, estados, validacion y alertas del sistema.",
-      "Identifica si la accion pertenece a Producto, Comunidad OS o Campanas.",
-      "Entra al detalle solo cuando tengas claro que campo o decision falta.",
+      "Confirma cuantos miembros hay y cuantos dejaron WhatsApp o email.",
+      "Revisa si tienen consentimiento para recibir mensajes.",
+      "Usa intereses generales para entender que temas atraen a la comunidad.",
     ],
     reminder:
-      "Dashboard orienta; las acciones sensibles se confirman en el modulo correspondiente.",
+      "Comunidad no debe enviar mensajes por si sola. Solo organiza personas, permisos e intereses.",
+  },
+  opportunities: {
+    title:
+      "Convierte senales en oportunidades revisables.",
+    description:
+      "Aqui viven Radar de tendencias, ideas detectadas, encuestas, senales sociales y demanda no cubierta.",
+    steps: [
+      "Revisa tendencias y demanda antes de crear una idea interna.",
+      "Compara votos, encuestas y productos asociados para no decidir por intuicion.",
+      "Marca oportunidades como candidatas solo cuando tengan evidencia suficiente.",
+    ],
+    reminder:
+      "Nada se publica automaticamente: no crea productos, no muestra Home, no envia WhatsApp y no cambia estados.",
   },
   products: {
     title:
@@ -529,31 +583,18 @@ const adminMenuGuides = {
     reminder:
       "Cambiar estado no debe enviar mensajes automaticos. Las comunicaciones pasan por revision manual.",
   },
-  campaigns: {
+  communication: {
     title:
-      "Registra esfuerzos, no decisiones automaticas.",
+      "Comunica solo con permiso y prueba primero.",
     description:
-      "Usa Campanas para documentar acciones de validacion, comunidad o crecimiento ligadas a ideas y productos.",
+      "Aqui se organizan WhatsApp, email, campanas, plantillas, DryRun obligatorio y logs de envio.",
     steps: [
-      "Define si la campana valida una idea o impulsa un producto.",
-      "Registra canal, estado y leads para mantener lectura operativa.",
-      "Cruza los resultados con validacion comunitaria antes de avanzar etapas.",
+      "Antes de enviar, confirma plantilla aprobada, audiencia correcta y consentimiento.",
+      "Ejecuta DryRun antes de cualquier comunicacion real.",
+      "Revisa logs para saber que se envio, a quien y con que resultado.",
     ],
     reminder:
-      "Las campanas ayudan a generar senales, pero no mueven estados automaticamente.",
-  },
-  community: {
-    title:
-      "Convierte comunidad en inteligencia.",
-    description:
-      "Aqui viven miembros, permisos, intereses, demanda vs productos, votaciones reales, Radar de tendencias e Idea Lab interno.",
-    steps: [
-      "Revisa miembros, areas generales, subnichos especificos y permisos WhatsApp/email.",
-      "Usa Demanda vs Productos y Votacion real para priorizar oportunidades.",
-      "Registra senales en Radar y convierte solo candidatas en ideas internas.",
-    ],
-    reminder:
-      "Nada aqui publica Home, crea producto o envia mensajes sin accion manual y consentimiento.",
+      "Si no hay DryRun, no se envia. Si no hay permiso, no se contacta.",
   },
   analytics: {
     title:
@@ -568,7 +609,33 @@ const adminMenuGuides = {
     reminder:
       "Los numeros deben apoyar decisiones, no reemplazar la revision estrategica.",
   },
+  "market-radar": {
+    title:
+      "Detecta movimiento antes de crear listings.",
+    description:
+      "Market Radar monitorea fuentes externas, cambios de stock, precio y ofertas para priorizar productos con evidencia.",
+    steps: [
+      "Ejecuta Sync Luna para guardar un snapshot nuevo.",
+      "Revisa eventos y score antes de marcar un producto como candidato.",
+      "Pasa a eBay solo cuando haya margen, stock y reglas claras.",
+    ],
+    reminder:
+      "Market Radar no publica en eBay todavia. Primero genera evidencia y ranking para decision manual.",
+  },
 }
+
+const imnovaOperationalFlow = [
+  "Visitante",
+  "Comunidad",
+  "Participacion",
+  "Votacion",
+  "Validacion",
+  "Desarrollo",
+  "Producto disponible",
+  "Compra",
+  "Recompra",
+  "Referido / Embajador",
+]
 
 export default function AdminPage() {
 
@@ -606,7 +673,7 @@ export default function AdminPage() {
   const [
     selectedMenu,
     setSelectedMenu,
-  ] = useState("dashboard")
+  ] = useState("community")
 
   const [
     productSearchTerm,
@@ -696,6 +763,18 @@ export default function AdminPage() {
   ] = useState<CommunitySubscriberStats>(
     EMPTY_COMMUNITY_SUBSCRIBER_STATS
   )
+
+  const [
+    communityGrowthSummary,
+    setCommunityGrowthSummary,
+  ] = useState<CommunityGrowthSummary>(
+    EMPTY_COMMUNITY_GROWTH_SUMMARY
+  )
+
+  const [
+    transparencyWallItems,
+    setTransparencyWallItems,
+  ] = useState<TransparencyWallItem[]>([])
 
   const [
     topCommunityNiches,
@@ -1036,6 +1115,8 @@ export default function AdminPage() {
       try {
         const [
           stats,
+          growthSummary,
+          transparencyItems,
           areas,
           niches,
           subniches,
@@ -1050,6 +1131,8 @@ export default function AdminPage() {
         ] =
           await Promise.all([
             getCommunitySubscriberStats(),
+            getCommunityGrowthSummary(),
+            getAdminTransparencyWallItems(20),
             getTopCommunityAreas(5),
             getTopCommunityNiches(5),
             getTopCommunitySubniches(5),
@@ -1065,6 +1148,15 @@ export default function AdminPage() {
 
         setCommunityStats(
           stats
+        )
+
+        setCommunityGrowthSummary(
+          growthSummary ||
+            EMPTY_COMMUNITY_GROWTH_SUMMARY
+        )
+
+        setTransparencyWallItems(
+          transparencyItems || []
         )
 
         setTopCommunityAreas(
@@ -1122,6 +1214,11 @@ export default function AdminPage() {
           EMPTY_COMMUNITY_SUBSCRIBER_STATS
         )
 
+        setCommunityGrowthSummary(
+          EMPTY_COMMUNITY_GROWTH_SUMMARY
+        )
+
+        setTransparencyWallItems([])
         setTopCommunityNiches([])
         setTopCommunitySubniches([])
         setCommunitySubscribers([])
@@ -1754,14 +1851,35 @@ export default function AdminPage() {
       setProductStateError("")
 
       try {
+        const nextState =
+          productStates.find(
+            state =>
+              state.id === normalizedStateId
+          )
+
+        const isNextStateAvailable =
+          normalizeStateLabel(
+            nextState?.name || ""
+          ).includes("disponible")
+
+        const stateUpdates:
+          ProductPublicStateUpdates = {
+          state_id:
+            normalizedStateId,
+          visible:
+            isNextStateAvailable,
+          is_public:
+            isNextStateAvailable,
+        }
+
+        if (isNextStateAvailable) {
+          stateUpdates.is_active = true
+        }
 
         const result =
           await updateProduct(
             product.id,
-            {
-              state_id:
-                normalizedStateId,
-            }
+            stateUpdates
           )
 
         if (!result) {
@@ -1777,8 +1895,7 @@ export default function AdminPage() {
                 currentProduct.id === product.id
                   ? {
                       ...currentProduct,
-                      state_id:
-                        normalizedStateId,
+                      ...stateUpdates,
                     }
                   : currentProduct
             )
@@ -1791,8 +1908,7 @@ export default function AdminPage() {
                 currentProduct.id === product.id
                   ? {
                       ...currentProduct,
-                      state_id:
-                        normalizedStateId,
+                      ...stateUpdates,
                     }
                   : currentProduct
             )
@@ -1939,7 +2055,10 @@ export default function AdminPage() {
 
     if (
       !isAuthenticated ||
-      selectedMenu !== "community"
+      (
+        selectedMenu !== "community" &&
+        selectedMenu !== "opportunities"
+      )
     ) {
       return
     }
@@ -2071,6 +2190,22 @@ export default function AdminPage() {
       ]
     )
 
+  const getProductStateCount =
+    (keywords: string[]) =>
+      stateSummaries
+        .filter(state =>
+          keywords.some(keyword =>
+            state.name
+              .toLowerCase()
+              .includes(keyword)
+          )
+        )
+        .reduce(
+          (total, state) =>
+            total + state.count,
+          0
+        )
+
   const validationSummary =
     dashboardMetrics.validationSummary ||
     EMPTY_VALIDATION_SUMMARY
@@ -2192,7 +2327,7 @@ export default function AdminPage() {
   const activeAdminGuide =
     adminMenuGuides[
       selectedMenu as keyof typeof adminMenuGuides
-    ] || adminMenuGuides.dashboard
+    ] || adminMenuGuides.community
 
   const dashboardProducts =
     useMemo(
@@ -2624,7 +2759,7 @@ export default function AdminPage() {
                 backdrop-blur-md
               "
             >
-              IMNOVA LABS • CORE SYSTEM
+              IMNOVA OS - Panel operativo
             </div>
 
             <h1
@@ -2638,17 +2773,19 @@ export default function AdminPage() {
               "
             >
               {
-                selectedMenu === "dashboard"
-                  ? "IMNOVA Admin"
+                selectedMenu === "community"
+                  ? "Comunidad"
+                  : selectedMenu === "opportunities"
+                  ? "Oportunidades"
                   : selectedMenu === "products"
                   ? "Productos"
-                  : selectedMenu === "campaigns"
-                  ? "Campañas"
-                  : selectedMenu === "community"
-                  ? "Comunidad OS"
+                  : selectedMenu === "communication"
+                  ? "Comunicacion"
                   : selectedMenu === "analytics"
                   ? "Analytics"
-                  : "IMNOVA"
+                  : selectedMenu === "market-radar"
+                  ? "Market Radar"
+                  : "Comunidad"
               }
             </h1>
 
@@ -2661,17 +2798,19 @@ export default function AdminPage() {
               "
             >
               {
-                selectedMenu === "dashboard"
-                  ? "Centro de control para productos, estados, validación y comercialización."
+                selectedMenu === "community"
+                  ? "Miembros, consentimientos, intereses generales, referidos y segmento VIP."
+                  : selectedMenu === "opportunities"
+                  ? "Radar de tendencias, ideas detectadas, encuestas, senales sociales y demanda no cubierta."
                   : selectedMenu === "products"
-                  ? "Gestión centralizada de productos y proyectos."
-                  : selectedMenu === "campaigns"
-                  ? "Centro de gestión de campañas y generación de leads."
+                  ? "Validacion, desarrollo, produccion, disponibilidad y lectura comercial por producto."
+                  : selectedMenu === "communication"
+                  ? "WhatsApp, email, campanas, plantillas, DryRun obligatorio y logs de envio."
                   : selectedMenu === "analytics"
-                  ? "Métricas, rendimiento y crecimiento del ecosistema."
-                  : selectedMenu === "community"
-                  ? "Miembros, permisos, intereses, demanda, votaciones, Radar e ideas internas."
-                  : "IMNOVA OS"
+                  ? "Conversion, votos, ventas, engagement, referidos, errores e indice de demanda IMNOVA."
+                  : selectedMenu === "market-radar"
+                  ? "Monitoreo de productos externos, cambios de stock, precios, ofertas y senales de rotacion."
+                  : "Miembros, consentimientos e intereses."
               }
             </p>
 
@@ -2733,15 +2872,7 @@ export default function AdminPage() {
 
           </div>
 
-          <motion.div
-            animate={{
-              y: [-4, 4, -4],
-            }}
-            transition={{
-              duration: 5,
-              repeat: Infinity,
-              ease: "easeInOut",
-            }}
+          <div
             className="
               relative
               overflow-hidden
@@ -2773,7 +2904,7 @@ export default function AdminPage() {
                   text-white/40
                 "
               >
-                SYSTEM STATUS
+                ESTADO OPERATIVO
               </p>
 
               <div
@@ -2802,14 +2933,14 @@ export default function AdminPage() {
                     text-white
                   "
                 >
-                  IMNOVA CORE ACTIVE
+                  Listo para operar
                 </p>
 
               </div>
 
             </div>
 
-          </motion.div>
+          </div>
 
         </div>
 
@@ -2908,6 +3039,50 @@ export default function AdminPage() {
                       text-white/65
                     "
                   >
+                    {step}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div
+            className="
+              mt-6
+              rounded-3xl
+              border
+              border-white/10
+              bg-black/25
+              p-5
+            "
+          >
+            <p
+              className="
+                text-[10px]
+                uppercase
+                tracking-[0.28em]
+                text-cyan-100/45
+              "
+            >
+              Flujo principal IMNOVA OS
+            </p>
+
+            <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              {imnovaOperationalFlow.map((step, index) => (
+                <div
+                  key={step}
+                  className="
+                    rounded-2xl
+                    border
+                    border-white/10
+                    bg-white/[0.035]
+                    p-3
+                  "
+                >
+                  <span className="text-[9px] uppercase tracking-[0.18em] text-cyan-100/35">
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
+                  <p className="mt-2 text-xs font-bold leading-5 text-white/70">
                     {step}
                   </p>
                 </div>
@@ -3804,7 +3979,7 @@ export default function AdminPage() {
                             <button
                               type="button"
                               onClick={() => {
-                                setSelectedMenu("campaigns")
+                                setSelectedMenu("communication")
                                 setShowCampaignModal(true)
                               }}
                               className="
@@ -4290,8 +4465,82 @@ export default function AdminPage() {
                   text-white/50
                 "
               >
-                Catálogo central de productos IMNOVA.
+                Catalogo central de productos IMNOVA.
               </p>
+
+              <section
+                className="
+                  mt-8
+                  rounded-[34px]
+                  border
+                  border-cyan-300/15
+                  bg-cyan-300/[0.04]
+                  p-6
+                  md:p-8
+                "
+              >
+                <p className="text-xs uppercase tracking-[0.32em] text-cyan-100/60">
+                  Flujo de Productos
+                </p>
+                <h3 className="mt-4 text-3xl font-black tracking-[-0.04em] text-white">
+                  De validacion a recompra
+                </h3>
+                <p className="mt-3 max-w-4xl text-sm leading-7 text-white/55">
+                  Usa estas etapas para saber donde esta cada producto antes de editar detalle,
+                  lanzar comunicacion o tomar decisiones comerciales.
+                </p>
+
+                <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                  {[
+                    {
+                      title: "Validacion",
+                      value: validationSummary.pendingDecision + validationSummary.readyToAdvance + validationSummary.needsAdjustment,
+                      detail: "Ideas y productos con senales por revisar",
+                    },
+                    {
+                      title: "Desarrollo",
+                      value: getProductStateCount(["desarrollo", "develop"]),
+                      detail: "Preparacion de producto y contenido",
+                    },
+                    {
+                      title: "Produccion",
+                      value: getProductStateCount(["produccion", "production"]),
+                      detail: "Compra, fabricacion o abastecimiento",
+                    },
+                    {
+                      title: "Disponible",
+                      value: getProductStateCount(["disponible", "available"]),
+                      detail: "Listo para venta o canales",
+                    },
+                    {
+                      title: "Ventas / recompra",
+                      value: activeCampaigns,
+                      detail: "Campanas activas como senal comercial",
+                    },
+                  ].map(card => (
+                    <div
+                      key={card.title}
+                      className="
+                        rounded-3xl
+                        border
+                        border-white/10
+                        bg-black/30
+                        p-5
+                      "
+                    >
+                      <p className="text-[10px] uppercase tracking-[0.22em] text-white/40">
+                        {card.title}
+                      </p>
+                      <p className="mt-4 text-3xl font-black text-white">
+                        {card.value}
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-white/45">
+                        {card.detail}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
 
               <div
                 className="
@@ -5302,9 +5551,468 @@ export default function AdminPage() {
         }
 
         {
-          selectedMenu === "campaigns" && (
+          selectedMenu === "opportunities" && (
+
+            <div className="mt-16 space-y-8">
+
+              <section
+                className="
+                  rounded-[34px]
+                  border
+                  border-cyan-300/15
+                  bg-cyan-300/[0.04]
+                  p-6
+                  md:p-8
+                "
+              >
+                <p className="text-xs uppercase tracking-[0.32em] text-cyan-100/60">
+                  Centro de oportunidades
+                </p>
+                <h2 className="mt-4 text-4xl font-black tracking-[-0.04em] text-white">
+                  De senal a idea, sin publicar automaticamente
+                </h2>
+                <p className="mt-4 max-w-4xl text-sm leading-7 text-white/55">
+                  Esta vista separa lo operativo de lo publico: aqui se revisan tendencias, ideas internas,
+                  encuestas, senales sociales y demanda no cubierta antes de decidir cualquier accion.
+                </p>
+
+                <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                  {[
+                    {
+                      title: "Radar de tendencias",
+                      value: trendRadarSummary.total_signals,
+                      detail: `${trendRadarSummary.candidate_signals} candidatas`,
+                    },
+                    {
+                      title: "Ideas detectadas",
+                      value: ideaLabSummary.total_items,
+                      detail: `${ideaLabSummary.ready_for_validation_items} listas para validar`,
+                    },
+                    {
+                      title: "Encuestas",
+                      value: dashboardMetrics.validationSummary.activeSurveys,
+                      detail: "Activas o en lectura",
+                    },
+                    {
+                      title: "Senales sociales",
+                      value:
+                        dashboardMetrics.validationSummary.averageSocialScore === null
+                          ? "Pendiente"
+                          : dashboardMetrics.validationSummary.averageSocialScore,
+                      detail: "Promedio disponible",
+                    },
+                    {
+                      title: "Demanda no cubierta",
+                      value:
+                        subnicheDemandWithProducts.filter(
+                          item =>
+                            item.opportunity_status ===
+                            "alta_demanda_sin_producto"
+                        ).length,
+                      detail: "Subnichos sin producto",
+                    },
+                  ].map(card => (
+                    <div
+                      key={card.title}
+                      className="
+                        rounded-3xl
+                        border
+                        border-white/10
+                        bg-black/30
+                        p-5
+                      "
+                    >
+                      <p className="text-[10px] uppercase tracking-[0.22em] text-white/40">
+                        {card.title}
+                      </p>
+                      <p className="mt-4 text-3xl font-black text-white">
+                        {card.value}
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-white/45">
+                        {card.detail}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section
+                className="
+                  rounded-[34px]
+                  border
+                  border-white/10
+                  bg-white/[0.03]
+                  p-6
+                  md:p-8
+                "
+              >
+                <p className="text-xs uppercase tracking-[0.32em] text-amber-100/55">
+                  Flujo seguro de oportunidad
+                </p>
+                <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                  {[
+                    [
+                      "01",
+                      "Radar",
+                      "Registrar tendencia o senal con fuente y evidencia.",
+                    ],
+                    [
+                      "02",
+                      "Idea detectada",
+                      "Marcar candidata solo si merece revision estrategica.",
+                    ],
+                    [
+                      "03",
+                      "Encuesta",
+                      "Validar interes antes de desarrollar o comprar inventario.",
+                    ],
+                    [
+                      "04",
+                      "Demanda no cubierta",
+                      "Detectar subnichos con comunidad interesada y sin producto.",
+                    ],
+                    [
+                      "05",
+                      "Decision manual",
+                      "Avanzar, ajustar o pausar sin automatizar estados.",
+                    ],
+                  ].map(([step, title, description]) => (
+                    <div
+                      key={step}
+                      className="
+                        rounded-3xl
+                        border
+                        border-white/10
+                        bg-black/25
+                        p-5
+                      "
+                    >
+                      <span className="text-[10px] uppercase tracking-[0.22em] text-amber-100/50">
+                        {step}
+                      </span>
+                      <h3 className="mt-4 text-lg font-black text-white">
+                        {title}
+                      </h3>
+                      <p className="mt-3 text-xs leading-5 text-white/45">
+                        {description}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section
+                className="
+                  rounded-[34px]
+                  border
+                  border-white/10
+                  bg-black/30
+                  p-6
+                  md:p-8
+                "
+              >
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.32em] text-cyan-100/55">
+                      Muro de transparencia
+                    </p>
+                    <h3 className="mt-4 text-3xl font-black text-white">
+                      De propuesta a lanzamiento
+                    </h3>
+                    <p className="mt-3 max-w-3xl text-sm leading-7 text-white/50">
+                      Lista interna para preparar contenido publico claro: ideas propuestas, ideas en validacion, productos en desarrollo y productos lanzados.
+                    </p>
+                  </div>
+
+                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">
+                    {communityGrowthSummary.transparencyItems} items activos
+                  </span>
+                </div>
+
+                <div className="mt-6 grid gap-4 md:grid-cols-4">
+                  {[
+                    {
+                      key: "idea_proposed",
+                      label: "Ideas propuestas",
+                    },
+                    {
+                      key: "idea_in_validation",
+                      label: "Ideas en validacion",
+                    },
+                    {
+                      key: "product_in_development",
+                      label: "Productos en desarrollo",
+                    },
+                    {
+                      key: "product_launched",
+                      label: "Productos lanzados",
+                    },
+                  ].map(stage => {
+                    const count =
+                      transparencyWallItems.filter(
+                        item =>
+                          item.status === stage.key
+                      ).length
+
+                    return (
+                      <div
+                        key={stage.key}
+                        className="rounded-3xl border border-white/10 bg-white/[0.035] p-5"
+                      >
+                        <p className="text-[10px] uppercase tracking-[0.22em] text-white/40">
+                          {stage.label}
+                        </p>
+                        <p className="mt-4 text-3xl font-black text-white">
+                          {count}
+                        </p>
+                        <p className="mt-2 text-xs leading-5 text-white/45">
+                          Lectura para transparencia, no accion automatica.
+                        </p>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div className="mt-6 space-y-3">
+                  {transparencyWallItems.length === 0 ? (
+                    <p className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 text-sm text-white/45">
+                      Aun no hay items en el muro. Se podran publicar manualmente cuando Admin decida que una idea o producto debe mostrarse con claridad.
+                    </p>
+                  ) : (
+                    transparencyWallItems.slice(0, 5).map(item => (
+                      <div
+                        key={item.id}
+                        className="rounded-3xl border border-white/10 bg-white/[0.03] p-5"
+                      >
+                        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                          <div>
+                            <p className="text-sm font-bold text-white">
+                              {item.title}
+                            </p>
+                            {item.summary && (
+                              <p className="mt-2 text-xs leading-5 text-white/45">
+                                {item.summary}
+                              </p>
+                            )}
+                          </div>
+                          <span className="rounded-full border border-cyan-300/20 bg-cyan-300/[0.08] px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-cyan-100">
+                            {item.status.replace(/_/g, " ")}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+
+              <div className="grid gap-8 xl:grid-cols-[1.05fr_0.95fr]">
+                <section
+                  className="
+                    rounded-[34px]
+                    border
+                    border-white/10
+                    bg-black/30
+                    p-6
+                    md:p-8
+                  "
+                >
+                  <p className="text-xs uppercase tracking-[0.32em] text-cyan-100/55">
+                    Demanda no cubierta
+                  </p>
+                  <h3 className="mt-4 text-3xl font-black text-white">
+                    Subnichos con oportunidad
+                  </h3>
+
+                  <div className="mt-6 space-y-4">
+                    {subnicheDemandWithProducts.length === 0 ? (
+                      <p className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 text-sm text-white/45">
+                        Aun no hay suficiente informacion para cruzar demanda, productos y encuestas.
+                      </p>
+                    ) : (
+                      subnicheDemandWithProducts.slice(0, 5).map(item => (
+                        <div
+                          key={item.subniche_id}
+                          className="
+                            rounded-3xl
+                            border
+                            border-white/10
+                            bg-white/[0.03]
+                            p-5
+                          "
+                        >
+                          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                            <div>
+                              <h4 className="text-lg font-black text-white">
+                                {item.subniche_public_name || item.subniche_name}
+                              </h4>
+                              <p className="mt-1 text-xs uppercase tracking-[0.18em] text-white/35">
+                                {item.niche_public_name || item.niche_name}
+                              </p>
+                            </div>
+                            <span className="rounded-full border border-cyan-300/20 bg-cyan-300/[0.08] px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-cyan-100">
+                              {item.opportunity_status.replace(/_/g, " ")}
+                            </span>
+                          </div>
+                          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                            <p className="rounded-2xl bg-black/30 p-3 text-xs text-white/55">
+                              Miembros: <strong className="text-white">{item.interested_members_count}</strong>
+                            </p>
+                            <p className="rounded-2xl bg-black/30 p-3 text-xs text-white/55">
+                              Productos: <strong className="text-white">{item.products_count}</strong>
+                            </p>
+                            <p className="rounded-2xl bg-black/30 p-3 text-xs text-white/55">
+                              Encuestas activas: <strong className="text-white">{item.active_surveys_count}</strong>
+                            </p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+
+                <section
+                  className="
+                    rounded-[34px]
+                    border
+                    border-white/10
+                    bg-black/30
+                    p-6
+                    md:p-8
+                  "
+                >
+                  <p className="text-xs uppercase tracking-[0.32em] text-cyan-100/55">
+                    Radar e ideas internas
+                  </p>
+                  <h3 className="mt-4 text-3xl font-black text-white">
+                    Senales recientes
+                  </h3>
+
+                  <div className="mt-6 space-y-4">
+                    {trendRadarSignals.length === 0 ? (
+                      <p className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 text-sm text-white/45">
+                        Aun no hay senales registradas. Usa Radar para cargar la primera.
+                      </p>
+                    ) : (
+                      trendRadarSignals.slice(0, 5).map(signal => (
+                        <div
+                          key={signal.id}
+                          className="
+                            rounded-3xl
+                            border
+                            border-white/10
+                            bg-white/[0.03]
+                            p-5
+                          "
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`
+                                rounded-full
+                                border
+                                px-3
+                                py-1
+                                text-[10px]
+                                uppercase
+                                tracking-[0.16em]
+                                ${trendRadarStatusClassNames[signal.status] || trendRadarStatusClassNames.new}
+                              `}
+                            >
+                              {trendRadarStatusLabels[signal.status] || signal.status}
+                            </span>
+                            <span className="rounded-full border border-white/10 bg-black/25 px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-white/40">
+                              Fuerza {signal.signal_strength}/5
+                            </span>
+                          </div>
+                          <h4 className="mt-4 text-lg font-black text-white">
+                            {signal.title}
+                          </h4>
+                          <p className="mt-2 line-clamp-2 text-xs leading-5 text-white/45">
+                            {signal.summary}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+              </div>
+
+            </div>
+
+          )
+        }
+
+        {
+          selectedMenu === "communication" && (
 
             <div className="mt-16">
+
+              <section
+                className="
+                  rounded-[34px]
+                  border
+                  border-cyan-300/15
+                  bg-cyan-300/[0.04]
+                  p-6
+                  md:p-8
+                "
+              >
+                <p className="text-xs uppercase tracking-[0.32em] text-cyan-100/60">
+                  Mapa de Comunicacion
+                </p>
+                <h2 className="mt-4 text-4xl font-black tracking-[-0.04em] text-white">
+                  Enviar mensajes requiere permiso, plantilla y DryRun
+                </h2>
+                <p className="mt-4 max-w-4xl text-sm leading-7 text-white/55">
+                  Esta area organiza WhatsApp, email, campanas, plantillas y logs. Ningun bloque debe enviar mensajes masivos sin prueba previa y consentimiento registrado.
+                </p>
+
+                <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+                  {[
+                    [
+                      "WhatsApp",
+                      `${formatCommunityPercent(communityStats.percentWithWhatsapp)} con telefono`,
+                    ],
+                    [
+                      "Email",
+                      `${formatCommunityPercent(communityStats.percentWithEmail)} con correo`,
+                    ],
+                    [
+                      "Campanas",
+                      `${campaigns.length} registradas`,
+                    ],
+                    [
+                      "Plantillas",
+                      "Revisar aprobacion",
+                    ],
+                    [
+                      "DryRun obligatorio",
+                      "Antes de enviar",
+                    ],
+                    [
+                      "Logs de envio",
+                      "Auditoria futura",
+                    ],
+                  ].map(([title, detail]) => (
+                    <div
+                      key={title}
+                      className="
+                        rounded-3xl
+                        border
+                        border-white/10
+                        bg-black/30
+                        p-5
+                      "
+                    >
+                      <p className="text-[10px] uppercase tracking-[0.22em] text-white/40">
+                        {title}
+                      </p>
+                      <p className="mt-4 text-sm font-bold leading-6 text-white/75">
+                        {detail}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
 
               <div
                 className="
@@ -5325,7 +6033,7 @@ export default function AdminPage() {
                     p-6
                   "
                 >
-                  <h3>Total Campañas</h3>
+                  <h3>Total Campanas</h3>
 
                   <p className="mt-3 text-4xl font-bold">
                     {campaigns.length}
@@ -5406,7 +6114,7 @@ export default function AdminPage() {
                       text-white
                     "
                   >
-                    Campañas Activas
+                    Campanas Activas
                   </h3>
 
                   <button
@@ -5426,7 +6134,7 @@ export default function AdminPage() {
                       text-cyan-300
                     "
                   >
-                    + Nueva Campaña
+                    + Nueva Campana
                   </button>
 
                 </div>
@@ -5444,7 +6152,7 @@ export default function AdminPage() {
                     >
 
                       <th className="p-5 text-white/60">
-                        Campaña
+                        Campana
                       </th>
 
                       <th className="p-5 text-white/60">
@@ -5533,6 +6241,354 @@ export default function AdminPage() {
         {
           selectedMenu === "community" && (
 
+            <div className="mt-16 space-y-8">
+
+              <section
+                className="
+                  rounded-[34px]
+                  border
+                  border-cyan-300/15
+                  bg-cyan-300/[0.04]
+                  p-6
+                  md:p-8
+                "
+              >
+                <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.32em] text-cyan-100/60">
+                      Comunidad
+                    </p>
+                    <h2 className="mt-4 text-4xl font-black tracking-[-0.04em] text-white">
+                      Miembros, permisos e intereses
+                    </h2>
+                    <p className="mt-4 max-w-4xl text-sm leading-7 text-white/55">
+                      Vista simple para operar comunidad sin mezclar radar, productos o campanas.
+                      Oportunidades y comunicaciones viven en sus propios menus.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={loadCommunitySubscribers}
+                    disabled={isLoadingCommunity}
+                    className="
+                      rounded-2xl
+                      border
+                      border-cyan-300/20
+                      bg-cyan-300/10
+                      px-5
+                      py-3
+                      text-xs
+                      font-bold
+                      uppercase
+                      tracking-[0.22em]
+                      text-cyan-100
+                      transition-all
+                      duration-300
+                      hover:border-cyan-200/40
+                      hover:bg-cyan-300/15
+                      disabled:cursor-not-allowed
+                      disabled:opacity-50
+                    "
+                  >
+                    {isLoadingCommunity ? "Actualizando" : "Actualizar"}
+                  </button>
+                </div>
+
+                <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+                  {[
+                    {
+                      title: "Miembros totales",
+                      value: communityStats.totalSubscribers,
+                      detail: "Base total",
+                    },
+                    {
+                      title: "Nuevos miembros",
+                      value: communitySubscribers.length,
+                      detail: "Ultimos registros cargados",
+                    },
+                    {
+                      title: "Miembros activos",
+                      value: communityStats.subscribersWithInterests,
+                      detail: "Con intereses registrados",
+                    },
+                    {
+                      title: "Referidos",
+                      value: communityGrowthSummary.totalReferrals,
+                      detail: `${communityGrowthSummary.totalReferralCodes} codigos activos`,
+                    },
+                    {
+                      title: "VIP",
+                      value: communityGrowthSummary.vipMembers,
+                      detail: `${communityGrowthSummary.activeRewards} recompensas activas`,
+                    },
+                    {
+                      title: "Consentimientos",
+                      value: `${formatCommunityPercent(communityStats.percentWithWhatsapp)} / ${formatCommunityPercent(communityStats.percentWithEmail)}`,
+                      detail: "WhatsApp / Email",
+                    },
+                  ].map(card => (
+                    <div
+                      key={card.title}
+                      className="
+                        rounded-3xl
+                        border
+                        border-white/10
+                        bg-black/30
+                        p-5
+                      "
+                    >
+                      <p className="text-[10px] uppercase tracking-[0.22em] text-white/40">
+                        {card.title}
+                      </p>
+                      <p className="mt-4 text-3xl font-black text-white">
+                        {card.value}
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-white/45">
+                        {card.detail}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section
+                className="
+                  rounded-[34px]
+                  border
+                  border-white/10
+                  bg-black/30
+                  p-6
+                  md:p-8
+                "
+              >
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.32em] text-cyan-100/55">
+                      Crecimiento organico
+                    </p>
+                    <h3 className="mt-4 text-3xl font-black text-white">
+                      Referidos, puntos y niveles
+                    </h3>
+                    <p className="mt-3 max-w-3xl text-sm leading-7 text-white/50">
+                      Esta capa mide participacion: unirse suma puntos, cada miembro recibe codigo unico y los referidos alimentan niveles como Miembro, Colaborador, Validador, Embajador y VIP.
+                    </p>
+                  </div>
+
+                  <span className="rounded-full border border-cyan-300/20 bg-cyan-300/[0.08] px-4 py-2 text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-100">
+                    Canjes VIP preparados, no automaticos
+                  </span>
+                </div>
+
+                <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                  {[
+                    {
+                      title: "Codigos",
+                      value: communityGrowthSummary.totalReferralCodes,
+                      detail: "Codigos unicos creados",
+                    },
+                    {
+                      title: "Referidos",
+                      value: communityGrowthSummary.totalReferrals,
+                      detail: "Invitaciones registradas",
+                    },
+                    {
+                      title: "Puntos",
+                      value: communityGrowthSummary.totalPointsAwarded,
+                      detail: "Puntos acumulados",
+                    },
+                    {
+                      title: "VIP",
+                      value: communityGrowthSummary.vipMembers,
+                      detail: "Miembros en nivel VIP",
+                    },
+                    {
+                      title: "Recompensas",
+                      value: communityGrowthSummary.activeRewards,
+                      detail: "Descuentos/canjes activos",
+                    },
+                  ].map(card => (
+                    <div
+                      key={card.title}
+                      className="rounded-3xl border border-white/10 bg-white/[0.035] p-5"
+                    >
+                      <p className="text-[10px] uppercase tracking-[0.22em] text-white/40">
+                        {card.title}
+                      </p>
+                      <p className="mt-4 text-3xl font-black text-white">
+                        {card.value}
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-white/45">
+                        {card.detail}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-6 grid gap-3 md:grid-cols-5">
+                  {[
+                    "Miembro",
+                    "Colaborador",
+                    "Validador",
+                    "Embajador",
+                    "VIP",
+                  ].map(levelLabel => {
+                    const levelCount =
+                      communityGrowthSummary.levelCounts.find(
+                        level =>
+                          (
+                            level.level_label ||
+                            level.level_key
+                          ).toLowerCase() ===
+                          levelLabel.toLowerCase()
+                      )?.count || 0
+
+                    return (
+                      <div
+                        key={levelLabel}
+                        className="rounded-2xl border border-white/10 bg-black/25 p-4"
+                      >
+                        <p className="text-sm font-bold text-white">
+                          {levelLabel}
+                        </p>
+                        <p className="mt-2 text-xs text-white/45">
+                          {levelCount} miembros
+                        </p>
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+
+              <div className="grid gap-8 xl:grid-cols-[0.95fr_1.05fr]">
+                <section
+                  className="
+                    rounded-[34px]
+                    border
+                    border-white/10
+                    bg-black/30
+                    p-6
+                    md:p-8
+                  "
+                >
+                  <p className="text-xs uppercase tracking-[0.32em] text-cyan-100/55">
+                    Intereses generales
+                  </p>
+                  <h3 className="mt-4 text-3xl font-black text-white">
+                    Top areas elegidas
+                  </h3>
+
+                  <div className="mt-6 space-y-3">
+                    {topCommunityAreas.length === 0 ? (
+                      <p className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 text-sm text-white/45">
+                        Aun no hay areas suficientes. Apareceran cuando visitantes se unan desde el popup.
+                      </p>
+                    ) : (
+                      topCommunityAreas.map(area => (
+                        <div
+                          key={area.area_key}
+                          className="flex items-center justify-between gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5"
+                        >
+                          <div>
+                            <p className="text-sm font-bold text-white">
+                              {area.area_label || area.area_key}
+                            </p>
+                            <p className="mt-1 text-xs text-white/40">
+                              Interes general de comunidad
+                            </p>
+                          </div>
+                          <span className="rounded-full border border-cyan-300/20 bg-cyan-300/[0.08] px-4 py-2 text-sm font-black text-cyan-100">
+                            {area.count}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+
+                <section
+                  className="
+                    rounded-[34px]
+                    border
+                    border-white/10
+                    bg-black/30
+                    p-6
+                    md:p-8
+                  "
+                >
+                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.32em] text-cyan-100/55">
+                        Miembros recientes
+                      </p>
+                      <h3 className="mt-4 text-3xl font-black text-white">
+                        Ultimos registros
+                      </h3>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMenu("legacy-community")}
+                      className="
+                        rounded-2xl
+                        border
+                        border-white/10
+                        bg-white/[0.04]
+                        px-4
+                        py-3
+                        text-[10px]
+                        font-bold
+                        uppercase
+                        tracking-[0.18em]
+                        text-white/55
+                        transition
+                        hover:bg-white/[0.07]
+                        hover:text-white
+                      "
+                    >
+                      Modo avanzado
+                    </button>
+                  </div>
+
+                  <div className="mt-6 space-y-3">
+                    {communitySubscribers.length === 0 ? (
+                      <p className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 text-sm text-white/45">
+                        No hay miembros recientes para mostrar todavia.
+                      </p>
+                    ) : (
+                      communitySubscribers.slice(0, 5).map(subscriber => (
+                        <div
+                          key={subscriber.id}
+                          className="rounded-3xl border border-white/10 bg-white/[0.03] p-5"
+                        >
+                          <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                            <div>
+                              <p className="text-sm font-bold text-white">
+                                {subscriber.nombre || "Miembro IMNOVA"}
+                              </p>
+                              <p className="mt-1 text-xs text-white/40">
+                                {subscriber.email || subscriber.telefono || "Sin contacto visible"}
+                              </p>
+                            </div>
+                            <span className="text-xs text-white/35">
+                              {formatCommunityDate(subscriber.created_at)}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+              </div>
+
+            </div>
+
+          )
+        }
+
+        {
+          selectedMenu === "legacy-community" && (
+
             <div className="mt-16">
 
               <section
@@ -5546,46 +6602,46 @@ export default function AdminPage() {
                 "
               >
                 <p className="text-xs uppercase tracking-[0.32em] text-cyan-100/55">
-                  Mapa de Comunidad OS
+                  Mapa de Comunidad
                 </p>
                 <h2 className="mt-4 text-3xl font-black text-white">
-                  Orden recomendado para leer esta vista
+                  Personas, permisos e intereses
                 </h2>
                 <p className="mt-3 max-w-3xl text-sm leading-7 text-white/50">
-                  Esta pantalla combina captura, analisis y preparacion de oportunidades. Ningun bloque publica productos, cambia estados o envia mensajes por si solo.
+                  Esta vista debe responder quien esta en la comunidad, como podemos contactarlo y que intereses eligio.
                 </p>
 
                 <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {[
                     [
                       "01",
-                      "Comunidad e intereses",
-                      "Cuantos miembros hay, que areas eligen y que permisos de contacto tienen.",
+                      "Miembros totales",
+                      "Cuantos registros existen y cuantos miembros tienen datos completos.",
                     ],
                     [
                       "02",
-                      "Demanda vs Productos",
-                      "Cruza subnichos especificos con productos y encuestas para detectar oportunidades.",
+                      "Nuevos miembros",
+                      "Ultimos registros que entraron desde popup, Admin o eventos.",
                     ],
                     [
                       "03",
-                      "Votacion real",
-                      "Mide intencion directa: me interesa, no me interesa, lo compraria o quiero prueba.",
+                      "Miembros activos",
+                      "Personas con intereses, votos, permisos o actividad reciente.",
                     ],
                     [
                       "04",
-                      "Radar de tendencias",
-                      "Registra senales externas o internas. Primero se revisan, luego pueden pasar a candidata.",
+                      "Referidos",
+                      "Codigos unicos, invitaciones registradas y crecimiento organico de comunidad.",
                     ],
                     [
                       "05",
-                      "Idea Lab interno",
-                      "Guarda borradores creados desde senales candidatas. No aparecen en Home ni Store.",
+                      "VIP",
+                      "Nivel de alta participacion conectado a puntos, recompensas y beneficios canjeables.",
                     ],
                     [
                       "06",
-                      "Registro manual",
-                      "Agrega contactos solo con permiso y con intereses normalizados.",
+                      "Consentimientos",
+                      "Permisos de WhatsApp y email antes de cualquier comunicacion.",
                     ],
                   ].map(([step, title, description]) => (
                     <div
@@ -7984,9 +9040,87 @@ export default function AdminPage() {
         }
 
         {
+          selectedMenu === "market-radar" && (
+            <MarketRadarPanel />
+          )
+        }
+
+        {
           selectedMenu === "analytics" && (
 
             <div className="mt-16">
+
+              <section
+                className="
+                  rounded-[34px]
+                  border
+                  border-cyan-300/15
+                  bg-cyan-300/[0.04]
+                  p-6
+                  md:p-8
+                "
+              >
+                <p className="text-xs uppercase tracking-[0.32em] text-cyan-100/60">
+                  Mapa de Analytics
+                </p>
+                <h2 className="mt-4 text-4xl font-black tracking-[-0.04em] text-white">
+                  Lectura ejecutiva para decidir mejor
+                </h2>
+                <p className="mt-4 max-w-4xl text-sm leading-7 text-white/55">
+                  Analytics no ejecuta acciones. Resume conversion, votos, ventas, engagement, referidos, errores e indice de demanda IMNOVA para priorizar.
+                </p>
+
+                <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-7">
+                  {[
+                    [
+                      "Conversion",
+                      "Pendiente de embudo",
+                    ],
+                    [
+                      "Votos",
+                      communityIdeaVoteTotals.total_votes,
+                    ],
+                    [
+                      "Ventas",
+                      "Store / canales",
+                    ],
+                    [
+                      "Engagement",
+                      `${campaigns.reduce((total, campaign) => total + campaign.leads, 0)} leads`,
+                    ],
+                    [
+                      "Referidos",
+                      "Pendiente",
+                    ],
+                    [
+                      "Errores",
+                      "Revisar logs",
+                    ],
+                    [
+                      "Indice Demanda",
+                      subnicheDemandWithProducts.length,
+                    ],
+                  ].map(([title, value]) => (
+                    <div
+                      key={title}
+                      className="
+                        rounded-3xl
+                        border
+                        border-white/10
+                        bg-black/30
+                        p-5
+                      "
+                    >
+                      <p className="text-[10px] uppercase tracking-[0.20em] text-white/40">
+                        {title}
+                      </p>
+                      <p className="mt-4 text-lg font-black text-white">
+                        {value}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
 
               <div
                 className="
@@ -8198,7 +9332,7 @@ export default function AdminPage() {
                     text-white
                   "
                 >
-                  Nueva Campaña
+                  Nueva Campana
                 </h2>
 
                 <button
@@ -8428,7 +9562,7 @@ export default function AdminPage() {
                     text-black
                   "
                 >
-                  Crear Campaña
+                  Crear Campana
                 </button>
 
               </div>

@@ -1,11 +1,12 @@
 "use client"
 
 import {
-  LayoutDashboard,
-  Activity,
   Package,
   BarChart3,
   UsersRound,
+  Send,
+  Target,
+  Radar,
 } from "lucide-react"
 
 type SidebarProps = {
@@ -21,44 +22,52 @@ export function Sidebar({
 }: SidebarProps) {
   const items = [
     {
-      label: "Dashboard",
+      label: "Comunidad",
       description:
-        "Resumen ejecutivo y acciones de hoy.",
+        "Miembros, consentimientos, VIP y referidos.",
       step: "01",
-      icon: LayoutDashboard,
-      value: "dashboard",
-    },
-    {
-      label: "Productos",
-      description:
-        "Estados, detalle, contenido y canales.",
-      step: "02",
-      icon: Package,
-      value: "products",
-    },
-    {
-      label: "Campanas",
-      description:
-        "Acciones de validacion y crecimiento.",
-      step: "03",
-      icon: Activity,
-      value: "campaigns",
-    },
-    {
-      label: "Comunidad OS",
-      description:
-        "Miembros, intereses, demanda, votos y Radar.",
-      step: "04",
       icon: UsersRound,
       value: "community",
     },
     {
+      label: "Oportunidades",
+      description:
+        "Radar, ideas, encuestas y demanda no cubierta.",
+      step: "02",
+      icon: Target,
+      value: "opportunities",
+    },
+    {
+      label: "Productos",
+      description:
+        "Validacion, desarrollo, produccion y disponible.",
+      step: "03",
+      icon: Package,
+      value: "products",
+    },
+    {
+      label: "Comunicacion",
+      description:
+        "WhatsApp, email, campanas, plantillas y logs.",
+      step: "04",
+      icon: Send,
+      value: "communication",
+    },
+    {
       label: "Analytics",
       description:
-        "Lectura de rendimiento y aprendizaje.",
+        "Conversion, votos, ventas, engagement y errores.",
       step: "05",
       icon: BarChart3,
       value: "analytics",
+    },
+    {
+      label: "Market Radar",
+      description:
+        "Stock, precios, ofertas y rotacion externa.",
+      step: "06",
+      icon: Radar,
+      value: "market-radar",
     },
   ]
 
@@ -305,10 +314,12 @@ export function Sidebar({
             "
           >
             {[
-              "Revisar prioridad",
-              "Completar datos",
-              "Validar demanda",
-              "Comunicar con permiso",
+              "Comunidad",
+              "Oportunidades",
+              "Productos",
+              "Comunicacion",
+              "Analytics",
+              "Market Radar",
             ].map((step, index) => (
               <div
                 key={step}

@@ -1,277 +1,978 @@
 "use client"
 
 import {
+  useEffect,
   useState,
 } from "react"
 
 import {
   ArrowUpRight,
-  Gift,
   CheckCircle2,
+  Eye,
+  Gift,
+  HeartHandshake,
+  Mail,
+  MapPin,
   MessageCircle,
-  Radio,
+  ShieldCheck,
+  ShoppingBag,
   Sparkles,
+  Star,
+  Target,
+  Trophy,
   UsersRound,
   Vote,
+  Zap,
 } from "lucide-react"
 
 import { Footer } from "@/components/footer"
 import { GlobalSection } from "@/components/global-section"
-import { HeroSection } from "@/components/hero-section"
-import { ImnovaGuidesSection } from "@/components/imnova-guides-section"
-import { ImnovaOsFlowSection } from "@/components/imnova-os-flow-section"
-import { ImnovaTrendRadarSection } from "@/components/imnova-trend-radar-section"
-import { InnovationsSection } from "@/components/innovations-section"
 import InnovaPopup from "@/components/imnova-popup"
 import { Navigation } from "@/components/navigation"
-import { PromoBanner } from "@/components/promo-banner"
-import { WorkingSection } from "@/components/working-section"
+
+type PublicIdea = {
+  id?: string
+  key: string
+  title: string
+  tag: string
+  description: string
+  signal: string
+  problem: string
+  solution: string
+  total_votes?: number
+  interested_count?: number
+  would_buy_count?: number
+  wants_trial_count?: number
+  not_interested_count?: number
+}
+
+type HomeFeaturedProduct = {
+  id: string
+  slug: string | null
+  name: string
+  category: string | null
+  description: string | null
+  image: string
+  storeHref: string
+  headline: string
+  badge: string
+  promoLabel: string
+  hasActivePromotion: boolean
+  discount: number
+}
+
+type PublicVoteType =
+  | "interested"
+  | "would_buy"
+  | "wants_trial"
+  | "not_interested"
+
+type PublicVoteCountKey =
+  | "interested_count"
+  | "would_buy_count"
+  | "wants_trial_count"
+  | "not_interested_count"
+
+const voteCountFieldByType:
+  Record<PublicVoteType, PublicVoteCountKey> = {
+    interested: "interested_count",
+    would_buy: "would_buy_count",
+    wants_trial: "wants_trial_count",
+    not_interested: "not_interested_count",
+  }
+
+const publicVoteOptions: Array<{
+  type: PublicVoteType
+  label: string
+}> = [
+  {
+    type: "interested",
+    label: "Me interesa",
+  },
+  {
+    type: "would_buy",
+    label: "Lo compraría",
+  },
+  {
+    type: "wants_trial",
+    label: "Quiero prueba",
+  },
+  {
+    type: "not_interested",
+    label: "No me interesa",
+  },
+]
+
+const fallbackPublicIdeas: PublicIdea[] = [
+  {
+    key: "functional-coffee-collagen",
+    title: "Café funcional con colágeno",
+    tag: "Energía + belleza",
+    description:
+      "Una idea para unir energía diaria, cuidado personal y rutina simple en un formato fácil de adoptar.",
+    signal: "Ideal si te interesan café funcional, enfoque y belleza natural.",
+    problem:
+      "Personas que quieren café, energía y cuidado personal, pero no desean agregar más pasos ni productos sueltos a su rutina diaria.",
+    solution:
+      "Un café funcional con enfoque en energía, belleza y practicidad para validar si la comunidad quiere una opción lista para incorporar a su día.",
+  },
+  {
+    key: "high-protein-breakfast",
+    title: "Desayuno alto en proteína",
+    tag: "Nutrición práctica",
+    description:
+      "Mezclas listas para preparar pancakes, waffles o pan funcional sin complicar la rutina.",
+    signal: "Pensado para saciedad, conveniencia y mejor nutrición diaria.",
+    problem:
+      "Muchas personas quieren desayunar mejor, pero terminan eligiendo opciones rápidas con poca proteína o demasiada azúcar.",
+    solution:
+      "Una mezcla funcional fácil de preparar que permita disfrutar un desayuno rico, práctico y con mejor perfil nutricional.",
+  },
+  {
+    key: "daily-digestive-balance",
+    title: "Balance digestivo diario",
+    tag: "Bienestar diario",
+    description:
+      "Productos suaves para apoyar digestión, hidratación y bienestar cotidiano sin promesas agresivas.",
+    signal: "Una oportunidad para quienes priorizan salud natural y constancia.",
+    problem:
+      "El bienestar digestivo suele sentirse complicado, técnico o difícil de sostener todos los días.",
+    solution:
+      "Una propuesta simple para convertir el balance digestivo en un hábito claro, suave y fácil de repetir.",
+  },
+]
+
+const observatorySignals = [
+  {
+    title: "Café funcional",
+    label: "Señal semanal",
+    text: "Observamos conversaciones sobre energía práctica, enfoque y rutinas con café funcional.",
+  },
+  {
+    title: "Desayunos altos en proteína",
+    label: "Tendencia social",
+    text: "La comunidad digital busca opciones fáciles para desayunar mejor sin complicar la preparación.",
+  },
+  {
+    title: "Belleza desde la nutrición",
+    label: "Oportunidad emergente",
+    text: "Aparecen señales de interés por colágeno, piel, cabello y beneficios funcionales fáciles de entender.",
+  },
+]
+
+const trustSignals = [
+  "Gratis y sin spam",
+  "Votas como miembro",
+  "Beneficios por participar",
+  "Compra solo cuando está disponible",
+]
+
+const howItWorks = [
+  {
+    icon: UsersRound,
+    title: "Te unes",
+    text: "Dejas tus datos básicos, aceptas el consentimiento y eliges hasta 3 intereses.",
+  },
+  {
+    icon: Target,
+    title: "Eliges intereses",
+    text: "IMNOVA usa esos intereses para enviarte ideas, encuestas y novedades que sí tengan relación contigo.",
+  },
+  {
+    icon: Vote,
+    title: "Votas ideas",
+    text: "Tu respuesta ayuda a decidir si una oportunidad avanza, se ajusta o se pausa.",
+  },
+  {
+    icon: Gift,
+    title: "Recibes beneficios",
+    text: "Cuando algo llega al mercado, la comunidad puede recibir acceso temprano y beneficios disponibles.",
+  },
+]
+
+const missionVision = [
+  {
+    icon: Target,
+    label: "Misión",
+    title: "Crear productos guiados por necesidades reales.",
+    text: "IMNOVA une comunidad, tendencias y validación para desarrollar productos funcionales que ayuden a vivir mejor, elegir mejor y acceder primero a soluciones útiles.",
+  },
+  {
+    icon: Eye,
+    label: "Visión",
+    title: "Convertir a la comunidad en el motor de lo próximo.",
+    text: "Queremos que cada lanzamiento nazca de una lectura clara del mercado: personas que votan, ideas que se validan y productos que llegan solo cuando tienen sentido real.",
+  },
+]
+
+const benefits = [
+  {
+    icon: Vote,
+    title: "Decides con tu voto",
+    text: "Tu opinión ayuda a priorizar ideas antes de que IMNOVA invierta tiempo y recursos.",
+  },
+  {
+    icon: Zap,
+    title: "Acceso temprano",
+    text: "Recibe novedades, pruebas o preventas antes de que una oportunidad llegue al mercado.",
+  },
+  {
+    icon: Sparkles,
+    title: "Tendencias útiles",
+    text: "Descubre señales simples sobre bienestar, nutrición, belleza y vida activa.",
+  },
+  {
+    icon: HeartHandshake,
+    title: "Beneficios VIP",
+    text: "Los miembros activos podran acceder a recompensas, referidos y oportunidades especiales.",
+  },
+]
+
+const transparencyStages = [
+  {
+    title: "Ideas propuestas",
+    text: "Oportunidades simples que la comunidad puede entender y votar.",
+  },
+  {
+    title: "Ideas en validación",
+    text: "Las mejores señales pasan por votos, encuestas y lectura de demanda.",
+  },
+  {
+    title: "Productos en desarrollo",
+    text: "IMNOVA prepara solo lo que tiene sentido para comunidad y mercado.",
+  },
+  {
+    title: "Productos lanzados",
+    text: "Cuando un producto está listo, aparece en tienda y puede comprarse.",
+  },
+]
+
+function getClientVoteKey() {
+  if (typeof window === "undefined") {
+    return ""
+  }
+
+  const storageKey = "imnova_public_vote_client_key"
+  const existingKey = window.localStorage.getItem(storageKey)
+
+  if (existingKey) {
+    return existingKey
+  }
+
+  const newKey =
+    typeof window.crypto?.randomUUID === "function"
+      ? window.crypto.randomUUID()
+      : `public-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+  window.localStorage.setItem(storageKey, newKey)
+
+  return newKey
+}
+
+function getStoredCommunitySubscriberId() {
+  if (typeof window === "undefined") {
+    return ""
+  }
+
+  const subscriberId =
+    window.localStorage
+      .getItem("imnova_community_subscriber_id")
+      ?.trim() || ""
+
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    subscriberId
+  )
+    ? subscriberId
+    : ""
+}
+
+function clearStoredCommunitySubscriberId() {
+  if (typeof window === "undefined") {
+    return
+  }
+
+  window.localStorage.removeItem(
+    "imnova_community_subscriber_id"
+  )
+}
+
+function getIdeaVoteTotal(
+  idea?: PublicIdea
+) {
+  return Number(
+    idea?.total_votes || 0
+  )
+}
+
+function getIdeaStrongIntentVotes(
+  idea?: PublicIdea
+) {
+  return Number(
+    idea?.would_buy_count || 0
+  ) + Number(
+    idea?.wants_trial_count || 0
+  )
+}
+
+async function getPublicIdeas() {
+  const response =
+    await fetch(
+      "/api/community/ideas",
+      {
+        cache: "no-store",
+      }
+    )
+
+  const result =
+    await response
+      .json()
+      .catch(() => null)
+
+  if (
+    !response.ok ||
+    !result?.success ||
+    !Array.isArray(result.ideas)
+  ) {
+    throw new Error(
+      result?.error ||
+      "public_ideas_lookup_failed"
+    )
+  }
+
+  return result.ideas as PublicIdea[]
+}
+
+async function getHomeFeaturedProduct() {
+  const response =
+    await fetch(
+      "/api/store/featured",
+      {
+        cache: "no-store",
+      }
+    )
+
+  const result =
+    await response
+      .json()
+      .catch(() => null)
+
+  if (
+    !response.ok ||
+    !result?.success
+  ) {
+    throw new Error(
+      result?.error ||
+      "home_featured_product_lookup_failed"
+    )
+  }
+
+  return result.product
+    ? result.product as HomeFeaturedProduct
+    : null
+}
 
 export default function IMNOVAPage() {
-  const [
-    showPopup,
-    setShowPopup,
-  ] = useState(false)
+  const [showPopup, setShowPopup] = useState(false)
+  const [communityAfterSuccessHref, setCommunityAfterSuccessHref] =
+    useState("/miembro")
+  const [publicIdeas, setPublicIdeas] =
+    useState<PublicIdea[]>(fallbackPublicIdeas)
+  const [isLoadingPublicIdeas, setIsLoadingPublicIdeas] =
+    useState(true)
+  const [featuredHomeProduct, setFeaturedHomeProduct] =
+    useState<HomeFeaturedProduct | null>(null)
+  const [isLoadingFeaturedProduct, setIsLoadingFeaturedProduct] =
+    useState(true)
+  const [votedIdeas, setVotedIdeas] =
+    useState<Record<string, PublicVoteType>>({})
+  const [votingIdeaKey, setVotingIdeaKey] = useState<string | null>(null)
+  const [voteError, setVoteError] = useState("")
 
-  const openCommunity =
-    () => {
-      setShowPopup(true)
-    }
+  const featuredIdea = publicIdeas[0]
+  const ideaPulseItems =
+    [...publicIdeas]
+      .sort((ideaA, ideaB) =>
+        getIdeaVoteTotal(ideaB) -
+        getIdeaVoteTotal(ideaA)
+      )
+      .slice(0, 3)
+  const leadingIdea =
+    ideaPulseItems[0] ||
+    featuredIdea
+  const leadingIdeaVoteCount =
+    getIdeaVoteTotal(leadingIdea)
+  const leadingIdeaStrongIntentVotes =
+    getIdeaStrongIntentVotes(leadingIdea)
+  const totalPublicIdeaVotes =
+    publicIdeas.reduce(
+      (total, idea) =>
+        total + getIdeaVoteTotal(idea),
+      0
+    )
+  const maxPulseVotes =
+    Math.max(
+      1,
+      ...ideaPulseItems.map(getIdeaVoteTotal)
+    )
 
-  const closePopup =
-    () => {
-      setShowPopup(false)
-    }
+  useEffect(() => {
+    let isMounted =
+      true
 
-  const goToActiveIdeaVote =
-    () => {
-      const votePanel =
-        document.getElementById(
-          "idea-vote-panel"
+    getPublicIdeas()
+      .then(ideas => {
+        if (!isMounted) {
+          return
+        }
+
+        if (ideas.length > 0) {
+          setPublicIdeas(ideas)
+        }
+      })
+      .catch(error => {
+        console.error(
+          "PUBLIC IDEAS LOAD ERROR:",
+          error
         )
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsLoadingPublicIdeas(false)
+        }
+      })
 
-      if (votePanel) {
-        votePanel.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
+    return () => {
+      isMounted =
+        false
+    }
+  }, [])
+
+  useEffect(() => {
+    let isMounted =
+      true
+
+    getHomeFeaturedProduct()
+      .then(product => {
+        if (!isMounted) {
+          return
+        }
+
+        setFeaturedHomeProduct(product)
+      })
+      .catch(error => {
+        console.error(
+          "HOME FEATURED PRODUCT LOAD ERROR:",
+          error
+        )
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsLoadingFeaturedProduct(false)
+        }
+      })
+
+    return () => {
+      isMounted =
+        false
+    }
+  }, [])
+
+  const openCommunity = () => {
+    setCommunityAfterSuccessHref("/miembro")
+    setShowPopup(true)
+  }
+
+  const openCommunityForVoting = () => {
+    setCommunityAfterSuccessHref("/#ideas-activas")
+    setShowPopup(true)
+  }
+
+  const handleMemberAwareCommunityAction = () => {
+    const storedSubscriberId =
+      getStoredCommunitySubscriberId()
+
+    if (storedSubscriberId) {
+      window.location.href = "/miembro"
+      return
+    }
+
+    openCommunity()
+  }
+
+  const closePopup = () => {
+    setShowPopup(false)
+  }
+
+  const handleIdeaVote = async (
+    idea: PublicIdea,
+    voteType: PublicVoteType
+  ) => {
+    setVoteError("")
+    const previousVoteType =
+      votedIdeas[idea.key]
+
+    const storedSubscriberId =
+      getStoredCommunitySubscriberId()
+
+    if (!storedSubscriberId) {
+      setVoteError(
+        "Para votar, primero únete gratis a la comunidad IMNOVA. Así tu voto cuenta una sola vez y suma a tu participación."
+      )
+      openCommunityForVoting()
+      return
+    }
+
+    setVotingIdeaKey(idea.key)
+
+    try {
+      const clientVoteKey =
+        getClientVoteKey()
+
+      const baseVotePayload = {
+          product_id:
+            idea.id ||
+            undefined,
+          idea_key:
+            idea.id
+              ? undefined
+              : idea.key,
+          idea_title: idea.title,
+          vote_type: voteType,
+          source: "public_home",
+          client_vote_key:
+            clientVoteKey,
+      }
+
+      const sendVote = async (
+        subscriberId: string
+      ) => {
+        const response = await fetch("/api/community/vote", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            ...baseVotePayload,
+            subscriber_id:
+              subscriberId,
+          }),
         })
 
+        const result =
+          await response.json().catch(() => null)
+
+        return {
+          response,
+          result,
+        }
+      }
+
+      let { response, result } =
+        await sendVote(storedSubscriberId)
+
+      if (
+        !response.ok &&
+        storedSubscriberId &&
+        (
+          result?.error === "subscriber_not_found" ||
+          result?.error === "invalid_subscriber_id"
+        )
+      ) {
+        clearStoredCommunitySubscriberId()
+        setVoteError(
+          "Necesitamos confirmar tu membresía antes de registrar el voto. Únete o actualiza tu registro y vuelve a votar."
+        )
+        openCommunityForVoting()
         return
       }
 
-      const innovationsSection =
-        document.getElementById(
-          "innovations"
-        )
-
-      if (innovationsSection) {
-        innovationsSection.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        })
-
-        return
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.error || "vote_failed")
       }
 
-      openCommunity()
+      setVotedIdeas(current => ({
+        ...current,
+        [idea.key]: voteType,
+      }))
+
+      if (result?.created) {
+        setPublicIdeas(current =>
+          current.map(currentIdea =>
+            {
+              if (currentIdea.key !== idea.key) {
+                return currentIdea
+              }
+
+              const nextVoteField =
+                voteCountFieldByType[voteType]
+
+              return {
+                ...currentIdea,
+                total_votes:
+                  Number(currentIdea.total_votes || 0) + 1,
+                [nextVoteField]:
+                  Number(currentIdea[nextVoteField] || 0) + 1,
+              }
+            }
+          )
+        )
+      }
+
+      if (
+        result?.updated &&
+        previousVoteType &&
+        previousVoteType !== voteType
+      ) {
+        setPublicIdeas(current =>
+          current.map(currentIdea => {
+            if (currentIdea.key !== idea.key) {
+              return currentIdea
+            }
+
+            const previousVoteField =
+              voteCountFieldByType[previousVoteType]
+            const nextVoteField =
+              voteCountFieldByType[voteType]
+
+            return {
+              ...currentIdea,
+              [previousVoteField]:
+                Math.max(
+                  0,
+                  Number(currentIdea[previousVoteField] || 0) - 1
+                ),
+              [nextVoteField]:
+                Number(currentIdea[nextVoteField] || 0) + 1,
+            }
+          })
+        )
+      }
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("imnova:public_idea_vote", {
+            detail: {
+              product_id:
+                idea.id ||
+                null,
+              idea_key: idea.key,
+              idea_title: idea.title,
+              vote_type: voteType,
+              source: "public_home",
+            },
+          })
+        )
+      }
+    } catch (error) {
+      console.error("PUBLIC IDEA VOTE ERROR:", error)
+      setVoteError(
+        "No pudimos registrar tu voto ahora. Puedes unirte gratis y votar despues."
+      )
+    } finally {
+      setVotingIdeaKey(null)
     }
+  }
+
+  const renderIdeaCardVoteButtons = (idea: PublicIdea) => (
+    <div className="grid gap-2 sm:grid-cols-2">
+      {publicVoteOptions.map(option => {
+        const isSelected = votedIdeas[idea.key] === option.type
+
+        return (
+          <button
+            key={option.type}
+            type="button"
+            onClick={() => handleIdeaVote(idea, option.type)}
+            disabled={votingIdeaKey === idea.key}
+            className={`min-h-12 rounded-2xl px-4 py-3 text-[11px] font-black uppercase tracking-[0.12em] transition focus:outline-none focus:ring-2 focus:ring-cyan-500/50 ${
+              isSelected
+                ? "bg-stone-950 text-white shadow-[0_14px_34px_rgba(15,23,42,0.18)]"
+                : "border border-stone-200 bg-white/82 text-stone-700 shadow-sm hover:-translate-y-0.5 hover:border-cyan-300 hover:bg-white hover:text-stone-950"
+            } disabled:cursor-not-allowed disabled:opacity-60`}
+          >
+            {votingIdeaKey === idea.key ? "Guardando..." : option.label}
+          </button>
+        )
+      })}
+    </div>
+  )
 
   return (
-    <main className="relative isolate overflow-hidden bg-gradient-to-b from-black via-[#050505] to-black text-white">
-      <div className="pointer-events-none absolute left-1/2 top-0 h-[700px] w-[700px] -translate-x-1/2 rounded-full bg-cyan-400/10 blur-3xl" />
-      <div className="pointer-events-none absolute top-[35%] left-1/2 h-[900px] w-[900px] -translate-x-1/2 rounded-full bg-white/[0.03] blur-3xl" />
-      <div className="pointer-events-none absolute bottom-0 left-1/2 h-[700px] w-[700px] -translate-x-1/2 rounded-full bg-cyan-400/5 blur-3xl" />
-      <div className="pointer-events-none absolute inset-0 opacity-[0.015] mix-blend-soft-light bg-[url('/noise.png')]" />
+    <main className="relative isolate overflow-hidden bg-[#f6f1e8] text-stone-950">
+      <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_12%_0%,rgba(14,165,183,0.14),transparent_34%),radial-gradient(circle_at_86%_8%,rgba(245,158,11,0.12),transparent_30%),linear-gradient(180deg,#fbf7ef_0%,#f6f1e8_48%,#efe7db_100%)]" />
+      <div className="pointer-events-none fixed inset-0 -z-10 opacity-[0.18] bg-[linear-gradient(rgba(92,73,47,0.10)_1px,transparent_1px),linear-gradient(90deg,rgba(92,73,47,0.10)_1px,transparent_1px)] bg-[size:104px_104px]" />
 
-      <Navigation />
-      <HeroSection
-        onJoinCommunity={openCommunity}
-      />
-
-      <PromoBanner />
-      <ImnovaGuidesSection
-        onJoinFamily={openCommunity}
-      />
-      <GlobalSection />
-      <ImnovaOsFlowSection
-        onJoinCommunity={openCommunity}
-      />
-      <ImnovaTrendRadarSection
-        onJoinCommunity={openCommunity}
-      />
-      <InnovationsSection
-        onJoinCommunity={openCommunity}
-      />
-      <WorkingSection />
+      <Navigation onOpenCommunity={openCommunity} />
 
       <section
-        id="contact"
-        className="relative z-20 overflow-hidden bg-black px-6 py-24 md:py-32"
+        id="hero"
+        className="relative isolate overflow-hidden bg-stone-950 px-5 pb-14 pt-32 text-white sm:px-6 md:pb-20 md:pt-36 lg:min-h-screen lg:pt-32"
       >
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-200/20 to-transparent" />
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_45%_0%,rgba(34,211,238,0.14),transparent_42%),radial-gradient(circle_at_85%_55%,rgba(251,191,36,0.09),transparent_34%)]" />
-        <div className="pointer-events-none absolute inset-0 opacity-[0.02] bg-[linear-gradient(rgba(255,255,255,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.18)_1px,transparent_1px)] bg-[size:90px_90px]" />
+        <div className="pointer-events-none absolute inset-0 z-0">
+          <img
+            src="/images/mash-coffee.png"
+            alt=""
+            aria-hidden="true"
+            className="absolute inset-y-0 right-0 h-full w-full scale-[1.02] object-cover object-[58%_center] opacity-42 blur-[0.1px] md:opacity-52 lg:w-[68%] lg:object-center lg:opacity-88"
+          />
+          <div className="absolute inset-0 bg-[linear-gradient(90deg,#050505_0%,rgba(5,5,5,0.96)_32%,rgba(5,5,5,0.72)_60%,rgba(5,5,5,0.28)_100%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_74%_42%,rgba(245,158,11,0.20),transparent_31%),radial-gradient(circle_at_17%_16%,rgba(34,211,238,0.22),transparent_34%)]" />
+          <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#f6f1e8] via-[#f6f1e8]/20 to-transparent" />
+          <div className="absolute inset-0 opacity-[0.12] bg-[linear-gradient(rgba(255,255,255,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.18)_1px,transparent_1px)] bg-[size:88px_88px]" />
+        </div>
 
-        <div className="relative mx-auto max-w-7xl overflow-hidden rounded-[34px] border border-cyan-200/15 bg-white/[0.035] shadow-[0_30px_140px_rgba(34,211,238,0.10)] backdrop-blur-2xl">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.18),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(251,191,36,0.12),transparent_44%)]" />
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-200/35 to-transparent" />
-
-          <div className="relative z-10 grid gap-0 lg:grid-cols-[1.1fr_0.9fr]">
-            <div className="p-8 md:p-12 lg:p-14">
-              <div className="inline-flex items-center gap-3 rounded-full border border-cyan-200/20 bg-cyan-300/[0.08] px-5 py-3">
-                <UsersRound className="h-4 w-4 text-cyan-100" />
-                <span className="text-[10px] uppercase tracking-[0.30em] text-cyan-100/70">
-                  Comunidad IMNOVA
-                </span>
-              </div>
-
-              <h2 className="mt-8 max-w-4xl text-4xl font-black leading-[1.02] tracking-[-0.045em] text-white md:text-6xl lg:text-7xl">
-                Tus intereses pueden decidir lo próximo de IMNOVA.
-              </h2>
-
-              <p className="mt-7 max-w-3xl text-base leading-8 text-zinc-400 md:text-lg">
-                Únete como miembro fundador, elige los temas que te importan y
-                recibe encuestas que ayudan a decidir qué productos avanzan, se
-                ajustan o llegan al mercado.
-              </p>
-
-              <div className="mt-9 grid gap-3 sm:grid-cols-3">
-                {[
-                  {
-                    icon: Vote,
-                    label: "Votá antes de fabricar",
-                    text: "Tu señal ayuda a decidir qué ideas merecen avanzar.",
-                  },
-                  {
-                    icon: MessageCircle,
-                    label: "Encuestas relevantes",
-                    text: "Recibí avances según los temas que elegís.",
-                  },
-                  {
-                    icon: Gift,
-                    label: "Acceso anticipado",
-                    text: "Enterate primero de pruebas, lanzamientos y beneficios.",
-                  },
-                ].map(item => (
-                  <div
-                    key={item.label}
-                    className="rounded-3xl border border-white/10 bg-black/35 p-5 transition-all duration-300 hover:border-cyan-200/25 hover:bg-cyan-300/[0.06]"
-                  >
-                    <item.icon className="h-5 w-5 text-cyan-100" />
-                    <p className="mt-4 text-xs font-semibold uppercase leading-6 tracking-[0.14em] text-white/70">
-                      {item.label}
-                    </p>
-                    <p className="mt-3 text-sm leading-6 text-zinc-500">
-                      {item.text}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-10 flex flex-col gap-3 sm:flex-row">
-                <button
-                  type="button"
-                  onClick={openCommunity}
-                  className="group inline-flex items-center justify-center gap-3 rounded-3xl border border-cyan-200/45 bg-gradient-to-r from-cyan-200 to-white px-8 py-5 text-xs font-black uppercase tracking-[0.18em] text-black shadow-[0_0_45px_rgba(34,211,238,0.22)] transition-all duration-500 hover:-translate-y-0.5 hover:border-white hover:shadow-[0_0_65px_rgba(34,211,238,0.34)]"
-                >
-                  Votar próximos productos
-                  <ArrowUpRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
-                </button>
-
-                <a
-                  href="#innovations"
-                  className="inline-flex items-center justify-center gap-3 rounded-3xl border border-white/10 bg-white/[0.035] px-8 py-5 text-xs font-black uppercase tracking-[0.18em] text-white/70 transition-all duration-500 hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/[0.07] hover:text-white"
-                >
-                  Ver ideas en validación
-                  <Sparkles className="h-4 w-4" />
-                </a>
-              </div>
-
-              <p className="mt-5 max-w-2xl text-xs uppercase leading-6 tracking-[0.18em] text-zinc-600">
-                Sin spam. Tus datos se usan para enviarte encuestas, avances y
-                oportunidades conectadas a tus intereses.
-              </p>
+        <div className="relative z-10 mx-auto grid max-w-7xl items-center gap-9 lg:min-h-[calc(100vh-8rem)] lg:grid-cols-[0.88fr_1.12fr] xl:gap-12">
+          <div className="max-w-[680px]">
+            <div className="inline-flex items-center gap-3 rounded-full border border-cyan-300/35 bg-cyan-300/10 px-4 py-2 shadow-[0_18px_46px_rgba(6,182,212,0.08)] backdrop-blur">
+              <span className="h-2.5 w-2.5 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(103,232,249,0.9)]" />
+              <span className="text-[11px] font-black uppercase tracking-[0.22em] text-cyan-100">
+                Comunidad IMNOVA
+              </span>
             </div>
 
-            <div className="relative border-t border-white/10 bg-black/25 p-8 md:p-12 lg:border-l lg:border-t-0">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_25%,rgba(34,211,238,0.18),transparent_38%)]" />
+            <h1 className="mt-6 max-w-[680px] text-[2.8rem] font-black leading-[0.94] tracking-[-0.04em] text-white sm:text-[3.7rem] md:text-[4.55rem] lg:text-[4.2rem] xl:text-[4.75rem]">
+              Vota lo próximo. Compra solo lo que ya está listo.
+            </h1>
 
-              <div className="relative z-10 grid h-full content-center gap-5">
-                <div className="rounded-[28px] border border-cyan-200/15 bg-cyan-300/[0.07] p-6">
-                  <p className="text-[10px] uppercase tracking-[0.28em] text-cyan-100/60">
-                    Cómo participa la comunidad
+            <p className="mt-6 max-w-2xl text-base leading-8 text-white/74 md:text-lg md:leading-8">
+              IMNOVA convierte tendencias e ideas en productos validados por la
+              comunidad. Únete gratis, vota ideas y recibe beneficios cuando
+              los productos llegan al mercado.
+            </p>
+
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+              <button
+                type="button"
+                onClick={openCommunity}
+                className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-cyan-200 px-8 text-[12px] font-black uppercase tracking-[0.14em] text-stone-950 shadow-[0_22px_58px_rgba(34,211,238,0.23)] transition hover:-translate-y-0.5 hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-200/70"
+              >
+                Unirme gratis
+                <ArrowUpRight className="h-4 w-4" />
+              </button>
+
+              <a
+                href="#ideas-activas"
+                className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full border border-white/18 bg-white/8 px-8 text-[12px] font-black uppercase tracking-[0.14em] text-white shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/14 focus:outline-none focus:ring-2 focus:ring-cyan-200/50"
+              >
+                Votar ideas
+                <Vote className="h-4 w-4" />
+              </a>
+
+              <a
+                href="#available-now"
+                className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full border border-amber-200/28 bg-amber-200/10 px-8 text-[12px] font-black uppercase tracking-[0.14em] text-amber-50 shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:bg-amber-200 hover:text-stone-950 focus:outline-none focus:ring-2 focus:ring-amber-200/50"
+              >
+                Ver producto
+                <ShoppingBag className="h-4 w-4" />
+              </a>
+            </div>
+
+            <div className="mt-7 flex flex-wrap gap-2.5">
+              {trustSignals.map(item => (
+                <span
+                  key={item}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/14 bg-white/8 px-4 py-2 text-[11px] font-bold text-white/72 shadow-sm backdrop-blur"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5 text-cyan-200" />
+                  {item}
+                </span>
+              ))}
+            </div>
+
+            <div className="mt-7 grid max-w-2xl gap-3 sm:grid-cols-3">
+              {[
+                {
+                  label: "Participa",
+                  value: "elige intereses",
+                },
+                {
+                  label: "Valida",
+                  value: "vota ideas",
+                },
+                {
+                  label: "Accede",
+                  value: "recibe beneficios",
+                },
+              ].map(item => (
+                <div
+                  key={item.label}
+                  className="rounded-[22px] border border-white/10 bg-white/[0.07] p-3.5 backdrop-blur"
+                >
+                  <p className="text-[10px] font-black uppercase tracking-[0.20em] text-cyan-100/70">
+                    {item.label}
                   </p>
+                  <p className="mt-2 text-lg font-black tracking-[-0.04em] text-white">
+                    {item.value}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
 
-                  <div className="mt-6 grid gap-4">
-                    {[
-                      "Elegís hasta 3 áreas de interés que realmente te importan.",
-                      "IMNOVA te envía encuestas y pruebas conectadas a esos temas.",
-                      "Tu señal ayuda a decidir si una idea avanza, se ajusta o se pausa.",
-                    ].map((item, index) => (
-                      <div
-                        key={item}
-                        className="flex gap-4 rounded-2xl border border-white/10 bg-black/30 p-4"
-                      >
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-cyan-200/20 bg-cyan-300/[0.10] text-xs font-black text-cyan-100">
-                          {index + 1}
-                        </span>
-                        <p className="text-sm leading-6 text-zinc-300">
-                          {item}
+          <div className="relative w-full lg:max-w-[570px] lg:justify-self-end xl:max-w-[620px]">
+            <div className="absolute -right-8 -top-8 hidden h-36 w-36 rounded-full bg-amber-300/25 blur-3xl md:block" />
+            <div className="relative overflow-hidden rounded-[32px] border border-white/14 bg-white/[0.08] p-3.5 shadow-[0_32px_90px_rgba(0,0,0,0.32)] backdrop-blur-xl md:p-4">
+              {featuredHomeProduct ? (
+                <div className="relative overflow-hidden rounded-[28px] border border-white/10 bg-stone-950">
+                  <img
+                    src={featuredHomeProduct.image}
+                    alt={`${featuredHomeProduct.name} disponible en IMNOVA Store.`}
+                    className="h-[270px] w-full bg-[radial-gradient(circle_at_50%_42%,rgba(245,158,11,0.18),transparent_34%),linear-gradient(135deg,#17110b_0%,#050505_55%,#24190e_100%)] object-contain object-center p-6 sm:h-[300px] md:h-[350px] md:p-8 xl:h-[380px]"
+                  />
+                  <div className="absolute left-4 top-4 rounded-full bg-amber-300 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-stone-950 shadow-sm">
+                    {isLoadingFeaturedProduct
+                      ? "Buscando disponible"
+                      : featuredHomeProduct.badge}
+                  </div>
+                  <div className="absolute bottom-3 left-3 right-3 rounded-[22px] border border-white/15 bg-stone-950/86 p-3.5 text-white shadow-[0_18px_48px_rgba(0,0,0,0.28)] backdrop-blur md:p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-100/80">
+                          IMNOVA Store
+                        </p>
+                        <p className="mt-1 text-base font-black leading-tight tracking-[-0.035em] md:text-lg">
+                          {featuredHomeProduct.headline}
                         </p>
                       </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-[28px] border border-white/10 bg-black/35 p-6">
-                  <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">
-                    Intereses que podés elegir
-                  </p>
-                  <div className="mt-5 flex flex-wrap gap-2">
-                    {[
-                      "Energía y enfoque",
-                      "Fitness",
-                      "Nutrición inteligente",
-                      "Belleza funcional",
-                      "Bienestar diario",
-                      "Innovación",
-                    ].map(item => (
-                      <span
-                        key={item}
-                        className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60"
+                      <a
+                        href={featuredHomeProduct.storeHref || "/store"}
+                        className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-white px-4 text-[10px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-200/70"
                       >
-                        {item}
-                      </span>
-                    ))}
+                        Comprar ahora
+                        <ShoppingBag className="h-3.5 w-3.5" />
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="relative flex min-h-[270px] flex-col justify-between overflow-hidden rounded-[28px] border border-cyan-200/14 bg-[radial-gradient(circle_at_70%_18%,rgba(103,232,249,0.14),transparent_30%),linear-gradient(135deg,#071111_0%,#050505_58%,#15120b_100%)] p-6 text-white md:min-h-[350px] md:p-8 xl:min-h-[380px]">
+                  <div className="w-fit rounded-full border border-cyan-200/24 bg-cyan-200/10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-cyan-50">
+                    {isLoadingFeaturedProduct
+                      ? "Buscando disponible"
+                      : "Sin producto disponible"}
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-100/70">
+                      IMNOVA Store
+                    </p>
+                    <h2 className="mt-3 max-w-md text-3xl font-black leading-tight tracking-[-0.05em] md:text-4xl">
+                      Cuando un producto esté listo, aparecerá aquí.
+                    </h2>
+                    <p className="mt-4 max-w-md text-sm leading-7 text-white/62">
+                      Los productos en producción, desarrollo o validación no se muestran como comprables.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div
+                id="idea-activa"
+                className="mt-3 scroll-mt-28 overflow-hidden rounded-[28px] border border-cyan-200/14 bg-[radial-gradient(circle_at_80%_0%,rgba(103,232,249,0.16),transparent_32%),linear-gradient(135deg,rgba(8,12,12,0.96),rgba(24,18,12,0.92))] p-4 text-white shadow-[0_22px_70px_rgba(0,0,0,0.22)]"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.20em] text-cyan-100/70">
+                    Pulso de comunidad
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <span className="rounded-full border border-cyan-200/20 bg-cyan-200/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-cyan-50">
+                      {isLoadingPublicIdeas
+                        ? "Cargando"
+                        : `${publicIdeas.length} ideas activas`}
+                    </span>
+                    <span className="rounded-full border border-amber-200/25 bg-amber-200/12 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-amber-100">
+                      {isLoadingPublicIdeas
+                        ? "Votos"
+                        : `${totalPublicIdeaVotes} votos totales`}
+                    </span>
                   </div>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {[
-                    {
-                      icon: Radio,
-                      label: "Señales reales",
-                      value: "Encuestas + redes",
-                    },
-                    {
-                      icon: CheckCircle2,
-                      label: "Decisión IMNOVA",
-                      value: "Avanzar o ajustar",
-                    },
-                  ].map(item => (
-                    <div
-                      key={item.label}
-                      className="rounded-[26px] border border-white/10 bg-black/35 p-5"
-                    >
-                      <item.icon className="h-5 w-5 text-cyan-100" />
-                      <p className="mt-5 text-[10px] uppercase tracking-[0.22em] text-zinc-500">
-                        {item.label}
-                      </p>
-                      <p className="mt-2 text-lg font-black text-white">
-                        {item.value}
-                      </p>
-                    </div>
-                  ))}
+                <div className="mt-4 grid gap-3 xl:grid-cols-[0.9fr_1.1fr]">
+                  <div className="rounded-[22px] border border-white/10 bg-black/35 p-4">
+                    <p className="text-[10px] font-black uppercase tracking-[0.20em] text-amber-100/80">
+                      Liderando ahora
+                    </p>
+                    <h2 className="mt-3 text-2xl font-black leading-tight tracking-[-0.05em] md:text-3xl">
+                      {leadingIdea.title}
+                    </h2>
+                    <p className="mt-3 text-sm leading-6 text-white/66">
+                      {leadingIdeaVoteCount > 0
+                        ? `${leadingIdeaVoteCount} miembros ya participaron.`
+                        : "Aún no hay votos. Tu participación puede abrir la señal."}
+                    </p>
+                    <p className="mt-3 rounded-2xl border border-cyan-200/16 bg-cyan-200/8 px-4 py-3 text-xs font-bold leading-5 text-cyan-50/78">
+                      {leadingIdeaStrongIntentVotes > 0
+                        ? `${leadingIdeaStrongIntentVotes} marcaron intención fuerte: compraría o quiere prueba.`
+                        : "Cuando votes, IMNOVA sabrá si esta idea debe avanzar, ajustarse o pausarse."}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    {ideaPulseItems.map((idea, index) => {
+                      const ideaVotes =
+                        getIdeaVoteTotal(idea)
+                      const strongIntentVotes =
+                        getIdeaStrongIntentVotes(idea)
+                      const progressWidth =
+                        Math.max(
+                          8,
+                          Math.round(
+                            ideaVotes / maxPulseVotes * 100
+                          )
+                        )
+
+                      return (
+                        <a
+                          key={idea.key}
+                          href="#ideas-activas"
+                          className="group block rounded-[18px] border border-white/10 bg-white/[0.055] px-4 py-3 transition hover:-translate-y-0.5 hover:border-cyan-200/35 hover:bg-white/[0.08] focus:outline-none focus:ring-2 focus:ring-cyan-200/60"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-[9px] font-black uppercase tracking-[0.18em] text-cyan-100/55">
+                                Idea {index + 1}
+                              </p>
+                              <p className="mt-1 truncate text-sm font-black text-white">
+                                {idea.title}
+                              </p>
+                            </div>
+                            <span className="shrink-0 rounded-full bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-white">
+                              {ideaVotes} votos
+                            </span>
+                          </div>
+
+                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-cyan-200 to-amber-200 transition-all"
+                              style={{
+                                width:
+                                  `${progressWidth}%`,
+                              }}
+                            />
+                          </div>
+
+                          <p className="mt-2 text-[11px] leading-5 text-white/56">
+                            {strongIntentVotes > 0
+                              ? `${strongIntentVotes} con intención fuerte`
+                              : "Esperando primeras señales de intención"}
+                          </p>
+                        </a>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs leading-5 text-white/52">
+                    1 voto por miembro. Sin cuenta complicada.
+                  </p>
+                  <a
+                    href="#ideas-activas"
+                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-cyan-200 px-4 text-[10px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-200/70"
+                  >
+                    Votar ideas
+                    <Vote className="h-3.5 w-3.5" />
+                  </a>
                 </div>
               </div>
             </div>
@@ -279,78 +980,616 @@ export default function IMNOVAPage() {
         </div>
       </section>
 
-      <button
-        type="button"
-        onClick={goToActiveIdeaVote}
-        className="
-          fixed
-          bottom-4
-          left-4
-          right-4
-          z-40
-          inline-flex
-          items-center
-          justify-center
-          gap-3
-          rounded-3xl
-          border
-          border-cyan-200/45
-          bg-gradient-to-r
-          from-cyan-200
-          to-white
-          px-4
-          py-3.5
-          text-[11px]
-          font-black
-          uppercase
-          tracking-[0.16em]
-          text-black
-          shadow-[0_0_55px_rgba(34,211,238,0.28)]
-          transition-all
-          duration-500
-          hover:-translate-y-0.5
-          hover:shadow-[0_0_75px_rgba(34,211,238,0.38)]
-          sm:bottom-6
-          sm:left-auto
-          sm:right-6
-          sm:w-auto
-          sm:px-6
-          sm:py-4
-        "
+      <section className="relative z-20 -mt-8 px-6 pb-14">
+        <div className="mx-auto grid max-w-7xl gap-3 rounded-[30px] border border-stone-200 bg-white/76 p-4 shadow-[0_24px_70px_rgba(58,44,28,0.12)] backdrop-blur md:grid-cols-4">
+          {[
+            {
+              label: "Comunidad",
+              value: "Primero la participación",
+            },
+            {
+              label: "Votación",
+              value: "Señales reales",
+            },
+            {
+              label: "Store",
+              value: "Solo disponible",
+            },
+            {
+              label: "Mensajes",
+              value: "Con consentimiento",
+            },
+          ].map(item => (
+            <div
+              key={item.label}
+              className="rounded-[22px] bg-[#fbf7ef] px-5 py-4 shadow-sm"
+            >
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-700">
+                {item.label}
+              </p>
+              <p className="mt-2 text-lg font-black tracking-[-0.03em] text-stone-950">
+                {item.value}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section
+        id="mision-vision"
+        className="px-6 py-16 md:py-20"
       >
+        <div className="mx-auto max-w-7xl">
+          <div className="grid gap-5 lg:grid-cols-[0.86fr_1.14fr]">
+            <div className="relative overflow-hidden rounded-[34px] border border-stone-200 bg-stone-950 p-7 text-white shadow-[0_28px_80px_rgba(15,23,42,0.16)] md:p-9">
+              <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-cyan-300/16 blur-3xl" />
+              <div className="pointer-events-none absolute -bottom-24 left-12 h-56 w-56 rounded-full bg-amber-300/12 blur-3xl" />
+              <p className="text-[10px] font-black uppercase tracking-[0.26em] text-cyan-100/70">
+                Quiénes somos
+              </p>
+              <h2 className="mt-5 text-4xl font-black leading-tight tracking-[-0.05em] md:text-6xl">
+                IMNOVA crea con la comunidad, no a espaldas del mercado.
+              </h2>
+              <p className="mt-6 text-base leading-8 text-white/68">
+                El sistema es simple: personas comparten intereses, votan ideas
+                y ayudan a priorizar qué oportunidades merecen convertirse en
+                productos reales.
+              </p>
+              <div className="mt-8 grid gap-3 sm:grid-cols-3">
+                {["Escuchar", "Validar", "Lanzar"].map(item => (
+                  <div
+                    key={item}
+                    className="rounded-2xl border border-white/10 bg-white/[0.07] px-4 py-3"
+                  >
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-100/75">
+                      {item}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
 
-        <span
-          className="
-            rounded-full
-            border
-            border-black/10
-            bg-black/[0.08]
-            inline-flex
-            items-center
-            gap-2
-            px-2
-            py-1
-            text-[9px]
-            tracking-[0.14em]
-            min-[420px]:px-2.5
-          "
+            <div className="grid gap-4 md:grid-cols-2">
+              {missionVision.map(item => (
+                <article
+                  key={item.label}
+                  className="rounded-[30px] border border-stone-200 bg-white/76 p-6 shadow-[0_20px_55px_rgba(58,44,28,0.07)] backdrop-blur transition hover:-translate-y-1 hover:shadow-[0_24px_70px_rgba(58,44,28,0.10)]"
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-50 text-cyan-700">
+                    <item.icon className="h-5 w-5" />
+                  </div>
+                  <p className="mt-6 text-[10px] font-black uppercase tracking-[0.24em] text-cyan-700">
+                    {item.label}
+                  </p>
+                  <h3 className="mt-3 text-2xl font-black leading-tight tracking-[-0.04em] text-stone-950">
+                    {item.title}
+                  </h3>
+                  <p className="mt-4 text-sm leading-7 text-stone-600">
+                    {item.text}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="como-funciona"
+        className="px-6 py-16 md:py-24"
+      >
+        <div className="mx-auto max-w-7xl">
+          <div className="max-w-3xl">
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
+              Cómo funciona
+            </p>
+            <h2 className="mt-4 text-4xl font-black tracking-[-0.05em] text-stone-950 md:text-6xl">
+              Así participa la comunidad.
+            </h2>
+          </div>
+
+          <div className="mt-11 grid gap-4 md:grid-cols-4">
+            {howItWorks.map((step, index) => (
+              <article
+                key={step.title}
+                className="relative overflow-hidden rounded-[30px] border border-stone-200 bg-white/72 p-6 shadow-[0_20px_55px_rgba(58,44,28,0.07)] backdrop-blur transition hover:-translate-y-1 hover:shadow-[0_24px_70px_rgba(58,44,28,0.10)]"
+              >
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-cyan-300 via-amber-200 to-transparent" />
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-stone-950 text-white">
+                    <step.icon className="h-5 w-5" />
+                  </div>
+                  <span className="text-sm font-black text-stone-300">
+                    0{index + 1}
+                  </span>
+                </div>
+                <h3 className="mt-7 text-2xl font-black tracking-[-0.04em] text-stone-950">
+                  {step.title}
+                </h3>
+                <p className="mt-4 text-sm leading-7 text-stone-600">
+                  {step.text}
+                </p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="ideas-activas"
+        className="px-6 py-16 md:py-24"
+      >
+        <div className="mx-auto max-w-7xl">
+          <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+            <div className="max-w-3xl">
+              <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
+                Ideas activas en votación
+              </p>
+              <h2 className="mt-4 text-4xl font-black tracking-[-0.05em] text-stone-950 md:text-6xl">
+                Estas ideas ya están listas para recibir tu voto.
+              </h2>
+              <p className="mt-5 text-base leading-8 text-stone-600 md:text-lg">
+                Cada idea muestra el problema que detectamos y la solución que
+                IMNOVA podría desarrollar. Tu respuesta ayuda a decidir si
+                avanza, se ajusta o se pausa.
+              </p>
+              {isLoadingPublicIdeas && (
+                <p className="mt-3 text-xs font-black uppercase tracking-[0.16em] text-stone-400">
+                  Cargando ideas activas...
+                </p>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleMemberAwareCommunityAction}
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-cyan-200 bg-cyan-50 px-6 text-[12px] font-black uppercase tracking-[0.14em] text-cyan-800 transition hover:-translate-y-0.5 hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+            >
+              Recibir avances
+              <MessageCircle className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="mt-12 grid gap-5 lg:grid-cols-2">
+            {publicIdeas.map((idea, index) => (
+              <article
+                key={idea.key}
+                className="relative overflow-hidden rounded-[34px] border border-stone-200 bg-white/78 p-6 shadow-[0_26px_72px_rgba(58,44,28,0.09)] backdrop-blur transition hover:-translate-y-1 hover:shadow-[0_30px_90px_rgba(58,44,28,0.12)] md:p-7"
+              >
+                <div className="pointer-events-none absolute -right-24 -top-24 h-56 w-56 rounded-full bg-cyan-200/26 blur-3xl" />
+                <div className="relative">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="rounded-full bg-stone-950 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-white">
+                      Idea activa {index + 1}
+                    </span>
+                    <span className="rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-800">
+                      {idea.tag}
+                    </span>
+                    <span className="rounded-full border border-cyan-200 bg-cyan-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-cyan-800">
+                      {Number(idea.total_votes || 0)} votos
+                    </span>
+                  </div>
+
+                  <h3 className="mt-6 text-4xl font-black leading-tight tracking-[-0.05em] text-stone-950 md:text-5xl">
+                    {idea.title}
+                  </h3>
+
+                  <div className="mt-7 grid gap-3 md:grid-cols-2">
+                    <div className="rounded-[24px] border border-stone-200 bg-[#fbf7ef] p-5">
+                      <p className="text-[10px] font-black uppercase tracking-[0.20em] text-stone-500">
+                        Problema detectado
+                      </p>
+                      <p className="mt-3 text-sm leading-7 text-stone-700">
+                        {idea.problem}
+                      </p>
+                    </div>
+
+                    <div className="rounded-[24px] border border-cyan-200 bg-cyan-50 p-5">
+                      <p className="text-[10px] font-black uppercase tracking-[0.20em] text-cyan-800">
+                        Solución propuesta
+                      </p>
+                      <p className="mt-3 text-sm leading-7 text-cyan-950">
+                        {idea.solution}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-7">
+                    <p className="mb-3 text-[11px] font-black uppercase tracking-[0.18em] text-stone-500">
+                      ¿Qué harías si IMNOVA desarrolla esta idea?
+                    </p>
+                    {renderIdeaCardVoteButtons(idea)}
+                  </div>
+
+                  {votedIdeas[idea.key] && (
+                    <div
+                      aria-live="polite"
+                      className="mt-4 rounded-2xl border border-cyan-200 bg-cyan-50 px-5 py-4 text-sm leading-7 text-cyan-900"
+                    >
+                      Gracias. Tu voto quedó asociado a tu membresía IMNOVA y
+                      suma a tu participación.
+
+                      <a
+                        href="/miembro"
+                        className="mt-3 inline-flex font-black text-cyan-900 underline decoration-cyan-400 underline-offset-4"
+                      >
+                        Ver mi área de miembro
+                      </a>
+                    </div>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+
+          {voteError && (
+            <p
+              aria-live="assertive"
+              className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900"
+            >
+              {voteError}
+            </p>
+          )}
+        </div>
+      </section>
+
+      <section
+        id="observatorio"
+        className="px-6 py-16 md:py-24"
+      >
+        <div className="mx-auto max-w-7xl">
+          <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+            <div className="max-w-3xl">
+              <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
+                Observatorio IMNOVA
+              </p>
+              <h2 className="mt-4 text-4xl font-black tracking-[-0.05em] text-stone-950 md:text-6xl">
+                Tendencias que observamos antes de convertirlas en ideas.
+              </h2>
+              <p className="mt-5 text-base leading-8 text-stone-600 md:text-lg">
+                Esta parte muestra tendencias, conversaciones y oportunidades
+                que IMNOVA está observando. Todavía no son ideas votables; si
+                una señal tiene sentido, pasa al bloque de ideas activas.
+              </p>
+            </div>
+
+            <a
+              href="#ideas-activas"
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-cyan-200 bg-cyan-50 px-6 text-[12px] font-black uppercase tracking-[0.14em] text-cyan-800 transition hover:-translate-y-0.5 hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+            >
+              Ver ideas votables
+              <Vote className="h-4 w-4" />
+            </a>
+          </div>
+
+          <div className="mt-12 grid gap-5 md:grid-cols-3">
+            {observatorySignals.map(signal => (
+              <article
+                key={signal.title}
+                className="rounded-[30px] border border-stone-200 bg-white/72 p-6 shadow-[0_20px_55px_rgba(58,44,28,0.07)] backdrop-blur transition hover:-translate-y-1 hover:shadow-[0_24px_70px_rgba(58,44,28,0.10)]"
+              >
+                <span className="rounded-full border border-stone-200 bg-[#fbf7ef] px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-stone-600">
+                  {signal.label}
+                </span>
+                <h3 className="mt-6 text-3xl font-black leading-tight tracking-[-0.04em] text-stone-950">
+                  {signal.title}
+                </h3>
+                <p className="mt-4 text-sm leading-7 text-stone-600">
+                  {signal.text}
+                </p>
+                <p className="mt-5 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-xs font-bold leading-6 text-cyan-900">
+                  Señal observada. Aún no es una idea activa para votar.
+                </p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="beneficios"
+        className="px-6 py-16 md:py-24"
+      >
+        <div className="mx-auto max-w-7xl">
+          <div className="max-w-3xl">
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
+              Beneficios
+            </p>
+            <h2 className="mt-4 text-4xl font-black tracking-[-0.05em] text-stone-950 md:text-6xl">
+              Por qué vale la pena unirse.
+            </h2>
+          </div>
+
+          <div className="mt-11 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {benefits.map(benefit => (
+              <article
+                key={benefit.title}
+                className="rounded-[30px] border border-stone-200 bg-white/68 p-6 shadow-[0_20px_55px_rgba(58,44,28,0.07)] backdrop-blur"
+              >
+                <benefit.icon className="h-6 w-6 text-cyan-700" />
+                <h3 className="mt-5 text-2xl font-black tracking-[-0.04em] text-stone-950">
+                  {benefit.title}
+                </h3>
+                <p className="mt-4 text-sm leading-7 text-stone-600">
+                  {benefit.text}
+                </p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="store-preview"
+        className="px-6 py-14 md:py-20"
+      >
+        <div className="mx-auto grid max-w-7xl gap-8 overflow-hidden rounded-[36px] border border-stone-200 bg-stone-950 p-6 text-white shadow-[0_34px_95px_rgba(15,23,42,0.18)] md:p-8 lg:grid-cols-[0.72fr_1.28fr] lg:items-center">
+          <div className="max-w-xl">
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/70">
+              {featuredHomeProduct?.hasActivePromotion
+                ? "Promoción de lanzamiento"
+                : "Producto terminado"}
+            </p>
+            <h2 className="mt-4 text-3xl font-black leading-tight tracking-[-0.04em] md:text-5xl lg:text-[3.35rem]">
+              {featuredHomeProduct?.hasActivePromotion
+                ? "Descuento activo cuando el producto ya está listo."
+                : featuredHomeProduct
+                  ? "La tienda muestra solo lo que ya se puede comprar."
+                  : "Aún no hay producto disponible para compra."}
+            </h2>
+            <p className="mt-5 text-base leading-8 text-white/68">
+              {featuredHomeProduct
+                ? "Un producto disponible ya pasó de idea a validación, canalización y producto terminado. Por eso aparece en Store con precio, promoción de lanzamiento cuando aplica y canales claros."
+                : "Los productos en producción, desarrollo o validación se mantienen fuera de la tienda pública hasta que realmente estén listos para comprarse."}
+            </p>
+            {featuredHomeProduct ? (
+              <a
+                href="/store"
+                className="mt-8 inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-white px-7 text-[12px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:-translate-y-0.5 hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/80"
+              >
+                Ver tienda
+                <ShoppingBag className="h-4 w-4" />
+              </a>
+            ) : (
+              <button
+                type="button"
+                onClick={handleMemberAwareCommunityAction}
+                className="mt-8 inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-cyan-200 px-7 text-[12px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:-translate-y-0.5 hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-300/80"
+              >
+                Recibir aviso cuando esté listo
+                <MessageCircle className="h-4 w-4" />
+              </button>
+            )}
+
+            <a
+              href="#where-to-buy"
+              className="mt-3 inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-white/15 px-6 text-[11px] font-black uppercase tracking-[0.14em] text-white/72 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/70"
+            >
+              Dónde comprar
+              <MapPin className="h-4 w-4" />
+            </a>
+          </div>
+
+          <div className="grid gap-4">
+            <div className="relative overflow-hidden rounded-[32px] border border-white/10 bg-white/[0.08]">
+              {featuredHomeProduct ? (
+                <>
+                  <img
+                    src={featuredHomeProduct.image}
+                    alt={`${featuredHomeProduct.name} disponible en IMNOVA Store.`}
+                    className="h-[300px] w-full bg-white object-contain object-center p-5 md:h-[380px] md:p-8"
+                  />
+                  <div className="absolute inset-0 bg-[linear-gradient(180deg,transparent_20%,rgba(5,5,5,0.88)_100%)]" />
+                  <div className="absolute left-5 top-5 flex flex-wrap gap-2">
+                    <span className="rounded-full bg-amber-300 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-stone-950 shadow-sm">
+                      {featuredHomeProduct.hasActivePromotion
+                        ? "Promoción de lanzamiento"
+                        : "Producto disponible"}
+                    </span>
+                    <span className="rounded-full border border-white/20 bg-stone-950/70 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-white backdrop-blur">
+                      {featuredHomeProduct.promoLabel}
+                    </span>
+                  </div>
+                  <div className="absolute bottom-5 left-5 right-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.20em] text-amber-100/80">
+                        Producto terminado
+                      </p>
+                      <h3 className="mt-2 text-3xl font-black tracking-[-0.05em]">
+                        {featuredHomeProduct.name}
+                      </h3>
+                    </div>
+                    <a
+                      href={featuredHomeProduct.storeHref || "/store"}
+                      className="inline-flex min-h-11 items-center justify-center rounded-full bg-amber-300 px-5 text-[10px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-200/70"
+                    >
+                      Comprar
+                    </a>
+                  </div>
+                </>
+              ) : (
+                <div className="flex min-h-[300px] flex-col justify-between bg-[radial-gradient(circle_at_70%_20%,rgba(103,232,249,0.16),transparent_32%),linear-gradient(135deg,#061111_0%,#050505_55%,#19140c_100%)] p-6 md:min-h-[380px] md:p-8">
+                  <span className="w-fit rounded-full border border-cyan-200/24 bg-cyan-200/10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-cyan-50">
+                    Esperando disponible
+                  </span>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.20em] text-cyan-100/70">
+                      Producto en proceso
+                    </p>
+                    <h3 className="mt-2 max-w-md text-3xl font-black tracking-[-0.05em]">
+                      Nada se muestra como compra hasta pasar a Disponible.
+                    </h3>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {[
+                "Producto terminado",
+                "Promoción de lanzamiento",
+                "Compra clara",
+                "Canales autorizados",
+              ].map(item => (
+                <div
+                  key={item}
+                  className="rounded-[24px] border border-white/10 bg-white/[0.08] p-4"
+                >
+                  <CheckCircle2 className="h-5 w-5 text-cyan-100" />
+                  <p className="mt-4 text-base font-black tracking-[-0.035em]">
+                    {item}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <GlobalSection />
+
+      <section
+        id="transparencia"
+        className="px-6 py-16 md:py-24"
+      >
+        <div className="mx-auto max-w-7xl">
+          <div className="max-w-3xl">
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
+              Transparencia
+            </p>
+            <h2 className="mt-4 text-4xl font-black tracking-[-0.05em] text-stone-950 md:text-6xl">
+              Una idea no aparece en tienda por magia.
+            </h2>
+            <p className="mt-5 text-base leading-8 text-stone-600 md:text-lg">
+              IMNOVA separa la participación pública de la decisión comercial:
+              la comunidad señala interés, y el equipo IMNOVA decide qué avanza.
+            </p>
+          </div>
+
+          <div className="mt-11 grid gap-4 md:grid-cols-4">
+            {transparencyStages.map((stage, index) => (
+              <article
+                key={stage.title}
+                className="rounded-[30px] border border-stone-200 bg-white/68 p-6 shadow-[0_20px_55px_rgba(58,44,28,0.07)] backdrop-blur"
+              >
+                <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan-700 text-sm font-black text-white">
+                  {index + 1}
+                </span>
+                <h3 className="mt-6 text-2xl font-black tracking-[-0.04em] text-stone-950">
+                  {stage.title}
+                </h3>
+                <p className="mt-4 text-sm leading-7 text-stone-600">
+                  {stage.text}
+                </p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="comunidad"
+        className="px-6 py-16 md:py-24"
+      >
+        <div className="mx-auto grid max-w-7xl gap-8 rounded-[36px] border border-cyan-200 bg-white/72 p-7 shadow-[0_34px_95px_rgba(58,44,28,0.12)] backdrop-blur md:p-10 lg:grid-cols-[0.95fr_1.05fr]">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-700">
+              Formulario de comunidad
+            </p>
+            <h2 className="mt-4 text-4xl font-black leading-tight tracking-[-0.05em] text-stone-950 md:text-6xl">
+              Tu opinión puede ayudar a decidir lo que viene.
+            </h2>
+            <p className="mt-6 text-base leading-8 text-stone-600 md:text-lg">
+              Unirte toma menos de un minuto. Eliges hasta 3 áreas, aceptas el
+              consentimiento y eliges cómo quieres recibir novedades.
+            </p>
+
+            <button
+              type="button"
+              onClick={openCommunity}
+              className="mt-8 inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-stone-950 px-8 text-[12px] font-black uppercase tracking-[0.14em] text-white transition hover:-translate-y-0.5 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+            >
+              Unirme gratis
+              <ArrowUpRight className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            {[
+              {
+                icon: UsersRound,
+                title: "Nombre",
+                text: "Para tratarte como miembro de comunidad.",
+              },
+              {
+                icon: MessageCircle,
+                title: "WhatsApp",
+                text: "Solo con consentimiento para novedades relevantes.",
+              },
+              {
+                icon: Mail,
+                title: "Email",
+                text: "Para encuestas, avances y beneficios que puedas revisar.",
+              },
+              {
+                icon: Star,
+                title: "Hasta 3 intereses",
+                text: "Para no recibir mensajes genéricos.",
+              },
+              {
+                icon: ShieldCheck,
+                title: "Consentimiento",
+                text: "Sin spam. Tu participación debe ser clara y voluntaria.",
+              },
+              {
+                icon: Trophy,
+                title: "Beneficios",
+                text: "Acceso temprano y oportunidades cuando estén disponibles.",
+              },
+            ].map(item => (
+              <article
+                key={item.title}
+                className="rounded-[26px] border border-stone-200 bg-[#fbf7ef] p-5"
+              >
+                <item.icon className="h-5 w-5 text-cyan-700" />
+                <h3 className="mt-4 text-xl font-black tracking-[-0.035em] text-stone-950">
+                  {item.title}
+                </h3>
+                <p className="mt-3 text-sm leading-6 text-stone-600">
+                  {item.text}
+                </p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <div className="fixed bottom-4 left-4 right-4 z-40 grid grid-cols-[0.82fr_1.18fr] gap-2 rounded-full border border-stone-200 bg-white/88 p-1.5 shadow-[0_18px_48px_rgba(15,23,42,0.20)] backdrop-blur lg:hidden">
+        <a
+          href="#ideas-activas"
+          className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-full border border-stone-200 bg-white px-4 text-[10px] font-black uppercase tracking-[0.12em] text-stone-800 transition hover:bg-cyan-50 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
         >
-          <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_14px_rgba(16,185,129,0.75)]" />
-          En votación
-        </span>
+          Votar ideas
+          <Vote className="h-3.5 w-3.5" />
+        </a>
 
-        Votar idea activa
-
-        <ArrowUpRight className="h-4 w-4" />
-
-      </button>
+        <button
+          type="button"
+          onClick={openCommunity}
+          className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-full bg-stone-950 px-4 text-[10px] font-black uppercase tracking-[0.12em] text-white transition hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+        >
+          Unirme gratis
+          <ArrowUpRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
 
       <InnovaPopup
         isOpen={showPopup}
         onClose={closePopup}
+        successRedirectHref={communityAfterSuccessHref}
       />
 
-      <Footer />
+      <Footer onOpenCommunity={openCommunity} />
     </main>
   )
 }

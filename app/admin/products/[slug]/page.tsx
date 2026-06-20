@@ -80,6 +80,10 @@ type Product = {
   description?: string | null
   image_url?: string | null
   image?: string | null
+  visible?: boolean | null
+  is_public?: boolean | null
+  is_active?: boolean | null
+  featured?: boolean | null
   price?: number | null
   currency?: string | null
   direct_url?: string | null
@@ -334,6 +338,10 @@ type ProductUpdateData = {
   ingredients_summary?: string | null
   lifestyle_image?: string | null
   lifestyle_images?: string[]
+  visible?: boolean
+  is_public?: boolean
+  is_active?: boolean
+  featured?: boolean
   direct_url?: string | null
   amazon_url?: string | null
   ebay_url?: string | null
@@ -3629,6 +3637,16 @@ export default function ProductDetailPage() {
           launchPromoEndAtValue
         updates.launch_promo_duration_days =
           launchDurationDaysValue
+      }
+
+      if (
+        normalizeLabel(
+          selectedStateName
+        ).includes("disponible")
+      ) {
+        updates.visible = true
+        updates.is_public = true
+        updates.is_active = true
       }
 
       try {

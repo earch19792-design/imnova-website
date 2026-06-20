@@ -18,6 +18,10 @@ import {
 } from "@/lib/products-service"
 
 import {
+  supabase,
+} from "@/lib/supabase"
+
+import {
   useToast,
 } from "@/hooks/use-toast"
 
@@ -28,6 +32,10 @@ type Product = {
   name: string
   image?: string
   image_url?: string
+  visible?: boolean | null
+  is_public?: boolean | null
+  is_active?: boolean | null
+  featured?: boolean | null
   category: string
   commercial_category?: string | null
   strategic_niche_id?: string | null
@@ -226,6 +234,19 @@ function getChannelNameOptions(
 
   return []
 
+}
+
+function normalizeStateLabel(
+  value: string
+) {
+  return value
+    .normalize("NFD")
+    .replace(
+      /[\u0300-\u036f]/g,
+      ""
+    )
+    .toLowerCase()
+    .trim()
 }
 
 function createMarketplaceChannel(
@@ -483,6 +504,28 @@ export function ProductCard({
       })
 
       try {
+        const {
+          data: sessionData,
+          error: sessionError,
+        } =
+          await supabase.auth.getSession()
+
+        const accessToken =
+          sessionData.session?.access_token
+
+        if (
+          sessionError ||
+          !accessToken
+        ) {
+          toast({
+            title:
+              "Sesion Admin expirada",
+            description:
+              "Inicia sesion nuevamente antes de enviar WhatsApp.",
+          })
+
+          return false
+        }
 
         const response =
           await fetch(
@@ -493,9 +536,14 @@ export function ProductCard({
               headers: {
                 "Content-Type":
                   "application/json",
+                Authorization:
+                  `Bearer ${accessToken}`,
               },
 
               body: JSON.stringify({
+                productId:
+                  product.id,
+
                 product:
                   product.name,
 
@@ -509,6 +557,12 @@ export function ProductCard({
                   product.image_url ||
                   product.image ||
                   "",
+
+                source:
+                  "admin_product_card",
+
+                triggeredBy:
+                  "admin",
               }),
             }
           )
@@ -660,6 +714,19 @@ export function ProductCard({
         >[1] = {
           state_id:
             selectedStateId,
+        }
+
+        if (
+          normalizeStateLabel(
+            selectedState?.name || ""
+          ).includes("disponible")
+        ) {
+          updates.visible = true
+          updates.is_public = true
+          updates.is_active = true
+        } else {
+          updates.visible = false
+          updates.is_public = false
         }
 
         if ("nicho" in product) {

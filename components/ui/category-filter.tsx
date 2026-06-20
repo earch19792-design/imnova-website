@@ -2,7 +2,17 @@
 
 import { ChevronDown } from "lucide-react"
 
-export function CategoryFilter({ categories, value, onChange }) {
+type CategoryFilterProps = {
+  categories: string[]
+  value: string
+  onChange: (value: string) => void
+}
+
+export function CategoryFilter({
+  categories,
+  value,
+  onChange,
+}: CategoryFilterProps) {
   return (
     <div className="mx-auto mb-8 max-w-3xl">
       <label className="sr-only">Filtrar por categoría</label>

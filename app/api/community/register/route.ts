@@ -10,6 +10,9 @@ import {
   sendWhatsAppWelcome,
 } from "@/lib/whatsapp"
 
+type WhatsAppWelcomeResult =
+  Awaited<ReturnType<typeof sendWhatsAppWelcome>>
+
 type CommunityRegisterPayload = {
   name?: unknown
   email?: unknown
@@ -22,7 +25,9 @@ type CommunityRegisterPayload = {
   whatsappOptIn?: unknown
   emailOptIn?: unknown
   preferredChannel?: unknown
+  frequencyPreference?: unknown
   consentText?: unknown
+  referralCode?: unknown
   objective?: unknown
   source?: unknown
   honeypot?: unknown
@@ -53,6 +58,36 @@ type CommunitySubscriberPayload = {
   objetivo_principal: string
 }
 
+type CommunitySubscriberUpdatePayload =
+  Partial<CommunitySubscriberPayload>
+
+function getExistingSubscriberUpdatePayload(
+  payload: CommunitySubscriberPayload,
+  hasWhatsapp: boolean,
+  hasEmail: boolean
+): CommunitySubscriberUpdatePayload {
+  const updatePayload: CommunitySubscriberUpdatePayload = {
+    nombre:
+      payload.nombre,
+    nichos:
+      payload.nichos,
+    objetivo_principal:
+      payload.objetivo_principal,
+  }
+
+  if (hasWhatsapp) {
+    updatePayload.telefono =
+      payload.telefono
+  }
+
+  if (hasEmail) {
+    updatePayload.email =
+      payload.email
+  }
+
+  return updatePayload
+}
+
 type CommunicationChannel =
   | "whatsapp"
   | "email"
@@ -62,11 +97,30 @@ type CommunicationPreferenceInput = {
   optedIn: boolean
 }
 
+type CommunicationFrequencyPreference =
+  | "important_only"
+  | "weekly"
+  | "twice_monthly"
+
 const MAX_SELECTED_SUBNICHES = 25
 const MAX_LEGACY_INTEREST_NAMES = 5
 const MAX_SELECTED_AREAS = 3
 const DEFAULT_COMMUNITY_CONSENT_TEXT =
   "Acepto recibir avisos de IMNOVA por los canales seleccionados, conectados a mis intereses. Sin spam ni mensajes genericos."
+const DEFAULT_COMMUNICATION_FREQUENCY: CommunicationFrequencyPreference =
+  "important_only"
+const REGISTER_RATE_LIMIT_WINDOW_MS =
+  60 * 1000
+const REGISTER_RATE_LIMIT_MAX =
+  10
+
+type RateLimitBucket = {
+  count: number
+  resetAt: number
+}
+
+const registerRateLimitBuckets =
+  new Map<string, RateLimitBucket>()
 
 const publicInterestAreas = [
   {
@@ -147,6 +201,9 @@ const areaKeyPattern =
 const emailPattern =
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+const referralCodePattern =
+  /^[A-Z0-9]{6,16}$/
+
 function getSupabaseUrl() {
   return process.env.NEXT_PUBLIC_SUPABASE_URL
 }
@@ -223,12 +280,157 @@ function hasWhatsAppWelcomeConfig() {
   )
 }
 
+function getWhatsAppWelcomeErrorMessage(
+  result: Partial<WhatsAppWelcomeResult>
+) {
+  if (result.success) {
+    return null
+  }
+
+  if (
+    typeof result.error === "string" &&
+    result.error
+  ) {
+    return result.error
+  }
+
+  const metaError =
+    result.data?.error
+
+  if (metaError?.message) {
+    return metaError.message
+  }
+
+  return "whatsapp_welcome_not_confirmed"
+}
+
+async function saveWhatsAppWelcomeNotificationLog(
+  supabase: SupabaseClient,
+  result: Partial<WhatsAppWelcomeResult>,
+  source: CommunityRegisterSource
+) {
+  try {
+    const success =
+      result.success === true
+
+    const { error } =
+      await supabase
+        .from("notification_logs")
+        .insert({
+          product_id:
+            null,
+          product_name:
+            "Comunidad IMNOVA",
+          channel:
+            "whatsapp",
+          template_name:
+            process.env.WHATSAPP_WELCOME_TEMPLATE_NAME?.trim() ||
+            "imnova_welcome",
+          status_name:
+            "Bienvenida comunidad",
+          progress:
+            null,
+          image_url:
+            null,
+          success,
+          total:
+            1,
+          successful:
+            success ? 1 : 0,
+          failed:
+            success ? 0 : 1,
+          meta_response:
+            result,
+          error_message:
+            getWhatsAppWelcomeErrorMessage(
+              result
+            ),
+          triggered_by:
+            source,
+          source:
+            "community_welcome",
+          phone_count:
+            1,
+        })
+
+    if (error) {
+      console.warn(
+        "COMMUNITY REGISTER WHATSAPP WELCOME LOG WARNING:",
+        error
+      )
+    }
+  } catch (error) {
+    console.warn(
+      "COMMUNITY REGISTER WHATSAPP WELCOME LOG WARNING:",
+      error
+    )
+  }
+}
+
 function getString(
   value: unknown
 ) {
   return typeof value === "string"
     ? value.trim()
     : ""
+}
+
+function getRequestIp(
+  req: Request
+) {
+  return req.headers
+    .get("x-forwarded-for")
+    ?.split(",")[0]
+    ?.trim() ||
+    req.headers
+      .get("x-real-ip")
+      ?.trim() ||
+    "unknown"
+}
+
+function isRegisterRateLimited(
+  req: Request
+) {
+  const now =
+    Date.now()
+
+  const key =
+    getRequestIp(req)
+
+  const current =
+    registerRateLimitBuckets.get(key)
+
+  if (
+    !current ||
+    current.resetAt <= now
+  ) {
+    registerRateLimitBuckets.set(
+      key,
+      {
+        count: 1,
+        resetAt:
+          now + REGISTER_RATE_LIMIT_WINDOW_MS,
+      }
+    )
+
+    return false
+  }
+
+  current.count += 1
+
+  if (
+    current.count >
+    REGISTER_RATE_LIMIT_MAX
+  ) {
+    return true
+  }
+
+  registerRateLimitBuckets.set(
+    key,
+    current
+  )
+
+  return false
 }
 
 function getStringArray(
@@ -357,6 +559,38 @@ function normalizeEmail(
   return getString(value).toLowerCase()
 }
 
+function normalizeReferralCode(
+  value: unknown
+) {
+  const code =
+    getString(value)
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+
+  return referralCodePattern.test(code)
+    ? code
+    : ""
+}
+
+function generateReferralCode(
+  subscriberId: string,
+  name: string
+) {
+  const namePrefix =
+    normalizePublicInterestName(name)
+      .replace(/[^a-z0-9]/g, "")
+      .slice(0, 4)
+      .toUpperCase() || "IMNV"
+
+  const idSuffix =
+    subscriberId
+      .replace(/-/g, "")
+      .slice(0, 6)
+      .toUpperCase()
+
+  return `${namePrefix}${idSuffix}`.slice(0, 12)
+}
+
 function normalizeWhatsApp(
   whatsapp: unknown,
   country: unknown
@@ -422,6 +656,25 @@ function normalizePreferredChannel(
   }
 
   return null
+}
+
+function normalizeFrequencyPreference(
+  value: unknown
+): CommunicationFrequencyPreference {
+  const frequency =
+    getString(value)
+      .toLowerCase()
+      .replace(/\s+/g, "_")
+
+  if (
+    frequency === "weekly" ||
+    frequency === "twice_monthly" ||
+    frequency === "important_only"
+  ) {
+    return frequency
+  }
+
+  return DEFAULT_COMMUNICATION_FREQUENCY
 }
 
 function createErrorResponse(
@@ -834,56 +1087,26 @@ async function createMissingSubscriberAreaInterests(
         area.id
     )
 
-  const {
-    data: existingAreaInterests,
-    error: existingAreaInterestsError,
-  } =
+  const { error: deleteAreaInterestsError } =
     await supabase
       .from("subscriber_area_interests")
-      .select("area_id")
+      .delete()
       .eq(
         "subscriber_id",
         subscriberId
       )
-      .in(
-        "area_id",
-        selectedAreaIds
-      )
 
-  if (existingAreaInterestsError) {
+  if (deleteAreaInterestsError) {
     return {
       saved: false,
       addedCount: 0,
       error:
-        existingAreaInterestsError,
-    }
-  }
-
-  const existingAreaIds =
-    new Set(
-      (existingAreaInterests || [])
-        .map(
-          interest =>
-            String(interest.area_id)
-        )
-    )
-
-  const missingAreas =
-    selectedAreas.filter(
-      area =>
-        !existingAreaIds.has(area.id)
-    )
-
-  if (missingAreas.length === 0) {
-    return {
-      saved: true,
-      addedCount: 0,
-      error: null,
+        deleteAreaInterestsError,
     }
   }
 
   const areaInterestRows =
-    missingAreas.map(
+    selectedAreas.map(
       area => ({
         id:
           randomUUID(),
@@ -912,7 +1135,7 @@ async function createMissingSubscriberAreaInterests(
   return {
     saved: true,
     addedCount:
-      missingAreas.length,
+      selectedAreaIds.length,
     error: null,
   }
 }
@@ -922,7 +1145,8 @@ async function upsertCommunicationPreferences(
   subscriberId: string,
   preferences: CommunicationPreferenceInput[],
   source: CommunityRegisterSource,
-  consentText: string
+  consentText: string,
+  frequencyPreference: CommunicationFrequencyPreference
 ) {
   if (preferences.length === 0) {
     return {
@@ -955,6 +1179,8 @@ async function upsertCommunicationPreferences(
         source,
         consent_text:
           consentText,
+        frequency_preference:
+          frequencyPreference,
         updated_at:
           now,
       })
@@ -972,6 +1198,52 @@ async function upsertCommunicationPreferences(
       )
 
   if (error) {
+    const errorMessage =
+      [
+        error.message,
+        error.details,
+        error.hint,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+
+    if (
+      errorMessage.includes(
+        "frequency_preference"
+      )
+    ) {
+      const fallbackRows =
+        preferenceRows.map(
+          ({
+            frequency_preference,
+            ...preferenceRow
+          }) => preferenceRow
+        )
+
+      const { error: fallbackError } =
+        await supabase
+          .from("communication_preferences")
+          .upsert(
+            fallbackRows,
+            {
+              onConflict:
+                "subscriber_id,channel",
+            }
+          )
+
+      return {
+        saved:
+          !fallbackError,
+        count:
+          fallbackError
+            ? 0
+            : fallbackRows.length,
+        error:
+          fallbackError || error,
+      }
+    }
+
     return {
       saved: false,
       count: 0,
@@ -987,6 +1259,277 @@ async function upsertCommunicationPreferences(
   }
 }
 
+async function ensureCommunityReferralCode(
+  supabase: SupabaseClient,
+  subscriberId: string,
+  name: string
+) {
+  const code =
+    generateReferralCode(
+      subscriberId,
+      name
+    )
+
+  const { data, error } =
+    await supabase
+      .from("community_referral_codes")
+      .upsert(
+        {
+          subscriber_id:
+            subscriberId,
+          code,
+          is_active:
+            true,
+          updated_at:
+            new Date().toISOString(),
+        },
+        {
+          onConflict:
+            "subscriber_id",
+        }
+      )
+      .select("code")
+      .single()
+
+  if (error) {
+    return {
+      code: "",
+      error,
+    }
+  }
+
+  return {
+    code:
+      String(data?.code || code),
+    error: null,
+  }
+}
+
+async function awardCommunityPoints(
+  supabase: SupabaseClient,
+  subscriberId: string,
+  eventType: string,
+  points: number,
+  source: string,
+  description: string,
+  idempotencyKey: string
+) {
+  const { error } =
+    await supabase
+      .from("community_points_ledger")
+      .upsert(
+        {
+          subscriber_id:
+            subscriberId,
+          event_type:
+            eventType,
+          points,
+          source,
+          description,
+          idempotency_key:
+            idempotencyKey,
+        },
+        {
+          onConflict:
+            "idempotency_key",
+          ignoreDuplicates:
+            true,
+        }
+      )
+
+  if (error) {
+    return {
+      awarded: false,
+      error,
+    }
+  }
+
+  const { data: pointRows } =
+    await supabase
+      .from("community_points_ledger")
+      .select("points")
+      .eq(
+        "subscriber_id",
+        subscriberId
+      )
+
+  const pointsTotal =
+    (pointRows || []).reduce(
+      (total, row) =>
+        total + Number(row.points || 0),
+      0
+    )
+
+  const { data: levels } =
+    await supabase
+      .from("community_levels")
+      .select("key,min_points")
+      .eq(
+        "is_active",
+        true
+      )
+      .order(
+        "min_points",
+        {
+          ascending: false,
+        }
+      )
+
+  const levelKey =
+    levels?.find(
+      level =>
+        pointsTotal >=
+        Number(level.min_points || 0)
+    )?.key || "miembro"
+
+  const { data: referralCode } =
+    await supabase
+      .from("community_referral_codes")
+      .select("code")
+      .eq(
+        "subscriber_id",
+        subscriberId
+      )
+      .maybeSingle()
+
+  const { error: statusError } =
+    await supabase
+      .from("community_member_status")
+      .upsert(
+        {
+          subscriber_id:
+            subscriberId,
+          points_total:
+            pointsTotal,
+          level_key:
+            levelKey,
+          is_vip:
+            levelKey === "vip",
+          referral_code:
+            referralCode?.code || null,
+          last_activity_at:
+            new Date().toISOString(),
+          updated_at:
+            new Date().toISOString(),
+        },
+        {
+          onConflict:
+            "subscriber_id",
+        }
+      )
+
+  return {
+    awarded: !statusError,
+    error:
+      statusError || null,
+  }
+}
+
+async function createCommunityReferralIfNeeded(
+  supabase: SupabaseClient,
+  referralCode: string,
+  referredSubscriberId: string,
+  source: CommunityRegisterSource
+) {
+  if (!referralCode) {
+    return {
+      saved: false,
+      skipped: true,
+      error: null,
+    }
+  }
+
+  const {
+    data: referralCodeRow,
+    error: codeLookupError,
+  } =
+    await supabase
+      .from("community_referral_codes")
+      .select("subscriber_id, code")
+      .eq(
+        "code",
+        referralCode
+      )
+      .eq(
+        "is_active",
+        true
+      )
+      .maybeSingle()
+
+  if (codeLookupError) {
+    return {
+      saved: false,
+      skipped: false,
+      error:
+        codeLookupError,
+    }
+  }
+
+  const referrerSubscriberId =
+    referralCodeRow?.subscriber_id
+      ? String(referralCodeRow.subscriber_id)
+      : ""
+
+  if (
+    !referrerSubscriberId ||
+    referrerSubscriberId === referredSubscriberId
+  ) {
+    return {
+      saved: false,
+      skipped: true,
+      error: null,
+    }
+  }
+
+  const { error: referralError } =
+    await supabase
+      .from("community_referrals")
+      .upsert(
+        {
+          referrer_subscriber_id:
+            referrerSubscriberId,
+          referred_subscriber_id:
+            referredSubscriberId,
+          referral_code:
+            referralCode,
+          source,
+          status:
+            "registered",
+        },
+        {
+          onConflict:
+            "referrer_subscriber_id,referred_subscriber_id",
+          ignoreDuplicates:
+            true,
+        }
+      )
+
+  if (referralError) {
+    return {
+      saved: false,
+      skipped: false,
+      error:
+        referralError,
+    }
+  }
+
+  await awardCommunityPoints(
+    supabase,
+    referrerSubscriberId,
+    "referral",
+    25,
+    source,
+    "Referido registrado en comunidad IMNOVA",
+    `referral:${referrerSubscriberId}:${referredSubscriberId}`
+  )
+
+  return {
+    saved: true,
+    skipped: false,
+    error: null,
+  }
+}
+
 export async function POST(
   req: Request
 ) {
@@ -998,6 +1541,13 @@ export async function POST(
   } catch {
     return createErrorResponse(
       "invalid_json"
+    )
+  }
+
+  if (isRegisterRateLimited(req)) {
+    return createErrorResponse(
+      "too_many_registration_attempts",
+      429
     )
   }
 
@@ -1036,8 +1586,9 @@ export async function POST(
 
     if (!adminValidation.ok) {
       return createErrorResponse(
-        adminValidation.error,
-        adminValidation.status,
+        adminValidation.error ||
+          "admin_validation_failed",
+        adminValidation.status || 403,
         warnings,
       )
     }
@@ -1080,9 +1631,19 @@ export async function POST(
     getString(body.consentText) ||
     DEFAULT_COMMUNITY_CONSENT_TEXT
 
+  const frequencyPreference =
+    normalizeFrequencyPreference(
+      body.frequencyPreference
+    )
+
   const objective =
     getString(body.objective) ||
     "Registro comunidad IMNOVA"
+
+  const referralCode =
+    normalizeReferralCode(
+      body.referralCode
+    )
 
   const rawSelectedSubnicheIds =
     getUniqueStringArray(
@@ -1361,6 +1922,13 @@ export async function POST(
         objective,
     }
 
+    const existingSubscriberUpdatePayload =
+      getExistingSubscriberUpdatePayload(
+        subscriberPayload,
+        Boolean(whatsapp),
+        Boolean(email)
+      )
+
     let subscriberAlreadyRegistered =
       false
 
@@ -1375,6 +1943,19 @@ export async function POST(
 
     let areaInterestsAddedCount =
       0
+
+    let communityReferralCode:
+      string | null =
+        null
+
+    let communityReferralCodeSaved =
+      false
+
+    let communityReferralSaved =
+      false
+
+    let communityJoinPointsAwarded =
+      false
 
     let whatsappWelcomeSent =
       false
@@ -1409,7 +1990,7 @@ export async function POST(
       const { error: subscriberUpdateError } =
         await supabase
           .from("subscribers")
-          .update(subscriberPayload)
+          .update(existingSubscriberUpdatePayload)
           .eq(
             "id",
             subscriberId
@@ -1475,7 +2056,7 @@ export async function POST(
         const { error: subscriberUpdateError } =
           await supabase
             .from("subscribers")
-            .update(subscriberPayload)
+            .update(existingSubscriberUpdatePayload)
             .eq(
               "id",
               subscriberId
@@ -1562,7 +2143,8 @@ export async function POST(
         subscriberId,
         communicationPreferences,
         source,
-        consentText
+        consentText,
+        frequencyPreference
       )
 
     if (!preferenceSaveResult.saved) {
@@ -1576,11 +2158,97 @@ export async function POST(
       )
     }
 
+    try {
+      const referralCodeResult =
+        await ensureCommunityReferralCode(
+          supabase,
+          subscriberId,
+          name
+        )
+
+      if (referralCodeResult.error) {
+        console.warn(
+          "COMMUNITY REGISTER REFERRAL CODE WARNING:",
+          referralCodeResult.error
+        )
+
+        warnings.push(
+          "community_referral_code_not_saved"
+        )
+      } else {
+        communityReferralCode =
+          referralCodeResult.code
+
+        communityReferralCodeSaved =
+          true
+      }
+
+      const pointsResult =
+        await awardCommunityPoints(
+          supabase,
+          subscriberId,
+          "join",
+          10,
+          source,
+          "Registro en comunidad IMNOVA",
+          `join:${subscriberId}`
+        )
+
+      if (pointsResult.error) {
+        console.warn(
+          "COMMUNITY REGISTER POINTS WARNING:",
+          pointsResult.error
+        )
+
+        warnings.push(
+          "community_points_not_saved"
+        )
+      } else {
+        communityJoinPointsAwarded =
+          pointsResult.awarded
+      }
+
+      const referralResult =
+        await createCommunityReferralIfNeeded(
+          supabase,
+          referralCode,
+          subscriberId,
+          source
+        )
+
+      if (referralResult.error) {
+        console.warn(
+          "COMMUNITY REGISTER REFERRAL WARNING:",
+          referralResult.error
+        )
+
+        warnings.push(
+          "community_referral_not_saved"
+        )
+      } else {
+        communityReferralSaved =
+          referralResult.saved
+      }
+    } catch (growthError) {
+      console.warn(
+        "COMMUNITY REGISTER GROWTH WARNING:",
+        growthError
+      )
+
+      warnings.push(
+        "community_growth_not_saved"
+      )
+    }
+
     if (
       source === "community_popup" &&
       whatsapp
     ) {
-      if (!whatsappOptIn) {
+      if (subscriberAlreadyRegistered) {
+        warnings.push(
+          "whatsapp_welcome_skipped_existing_member"
+        )
+      } else if (!whatsappOptIn) {
         warnings.push(
           "whatsapp_consent_not_granted"
         )
@@ -1594,6 +2262,12 @@ export async function POST(
               whatsapp,
             name,
           })
+
+        await saveWhatsAppWelcomeNotificationLog(
+          supabase,
+          welcomeResult,
+          source
+        )
 
         if (!welcomeResult.success) {
           console.error(
@@ -1614,7 +2288,7 @@ export async function POST(
 
           whatsappWelcomeStatus =
             welcomeResult.messageStatus ||
-            welcomeResult.data?.messages?.[0]?.message_status ||
+            welcomeResult.data?.messageStatus ||
             null
 
           whatsappWelcomeTo =
@@ -1642,13 +2316,39 @@ export async function POST(
             "whatsapp_welcome_disabled"
           )
         }
-      } else if (
-        !warnings.includes(
-          "whatsapp_welcome_not_configured"
+
+        await saveWhatsAppWelcomeNotificationLog(
+          supabase,
+          {
+            success:
+              false,
+            error:
+              "whatsapp_welcome_disabled",
+          },
+          source
         )
+      } else if (
+        !hasWhatsAppWelcomeConfig()
       ) {
-        warnings.push(
-          "whatsapp_welcome_not_configured"
+        if (
+          !warnings.includes(
+            "whatsapp_welcome_not_configured"
+          )
+        ) {
+          warnings.push(
+            "whatsapp_welcome_not_configured"
+          )
+        }
+
+        await saveWhatsAppWelcomeNotificationLog(
+          supabase,
+          {
+            success:
+              false,
+            error:
+              "whatsapp_welcome_not_configured",
+          },
+          source
         )
       }
     }
@@ -1672,6 +2372,8 @@ export async function POST(
         preferenceSaveResult.count,
       preferred_channel:
         preferredChannel,
+      frequency_preference:
+        frequencyPreference,
       whatsapp_welcome_sent:
         whatsappWelcomeSent,
       whatsapp_welcome_message_id:
@@ -1680,6 +2382,14 @@ export async function POST(
         whatsappWelcomeStatus,
       whatsapp_welcome_to:
         whatsappWelcomeTo,
+      community_referral_code:
+        communityReferralCode,
+      community_referral_code_saved:
+        communityReferralCodeSaved,
+      community_referral_saved:
+        communityReferralSaved,
+      community_join_points_awarded:
+        communityJoinPointsAwarded,
       warnings,
     })
   } catch (error) {

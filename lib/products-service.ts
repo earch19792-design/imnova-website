@@ -1,4 +1,7 @@
-import { supabase } from "./supabase"
+import {
+  isSupabaseConfigured,
+  supabase,
+} from "./supabase"
 
 type ProductsQueryOptions = {
   limit?: number
@@ -6,7 +9,13 @@ type ProductsQueryOptions = {
   to?: number
   orderBy?: string
   ascending?: boolean
+  availableOnly?: boolean
 }
+
+type PublicProductsPageOptions =
+  ProductsQueryOptions & {
+    page?: number
+  }
 
 type AdminProductPageOptions = {
   search?: string
@@ -191,6 +200,30 @@ function getStateIdsByNames(
 export async function getPublicProducts(
   options: ProductsQueryOptions = {}
 ) {
+  const states =
+    options.availableOnly === false
+      ? []
+      : await getProductStates()
+
+  const availableStateIds =
+    options.availableOnly === false
+      ? []
+      : getStateIdsByNames(
+          states as Array<{
+            id: string
+            name: string
+          }>,
+          [
+            "Disponible",
+          ]
+        )
+
+  if (
+    options.availableOnly !== false &&
+    availableStateIds.length === 0
+  ) {
+    return []
+  }
 
   let query =
     supabase
@@ -205,6 +238,14 @@ export async function getPublicProducts(
             false,
         }
       )
+
+  if (options.availableOnly !== false) {
+    query =
+      query.in(
+        "state_id",
+        availableStateIds
+      )
+  }
 
   if (
     typeof options.from === "number" &&
@@ -246,6 +287,24 @@ export async function getPublicProductBySlug(
   slug: string
 ) {
 
+  const states =
+    await getProductStates()
+
+  const availableStateIds =
+    getStateIdsByNames(
+      states as Array<{
+        id: string
+        name: string
+      }>,
+      [
+        "Disponible",
+      ]
+    )
+
+  if (availableStateIds.length === 0) {
+    return null
+  }
+
   const { data, error } =
     await supabase
       .from("public_products")
@@ -254,7 +313,11 @@ export async function getPublicProductBySlug(
         "slug",
         slug
       )
-      .single()
+      .in(
+        "state_id",
+        availableStateIds
+      )
+      .maybeSingle()
 
   if (error) {
 
@@ -351,6 +414,124 @@ export async function getPublicProductsWithStatesByStateNames(
   return {
     products: data || [],
     states,
+  }
+
+}
+
+export async function getPublicProductsPageWithStatesByStateNames(
+  stateNames: string[],
+  options: PublicProductsPageOptions = {}
+) {
+
+  const states =
+    await getProductStates()
+
+  const stateIds =
+    getStateIdsByNames(
+      states as Array<{
+        id: string
+        name: string
+      }>,
+      stateNames
+    )
+
+  const limit =
+    Math.min(
+      Math.max(
+        Math.floor(
+          Number(options.limit || 24)
+        ),
+        1
+      ),
+      100
+    )
+
+  const page =
+    Math.max(
+      Math.floor(
+        Number(options.page || 0)
+      ),
+      0
+    )
+
+  const from =
+    page * limit
+
+  const to =
+    from + limit - 1
+
+  if (stateIds.length === 0) {
+    return {
+      products: [],
+      states,
+      count: 0,
+      page,
+      limit,
+      hasMore: false,
+      error: false,
+    }
+  }
+
+  const { data, error, count } =
+    await supabase
+      .from("public_products")
+      .select(
+        publicProductSelect,
+        {
+          count: "exact",
+        }
+      )
+      .in(
+        "state_id",
+        stateIds
+      )
+      .order(
+        options.orderBy ||
+          "created_at",
+        {
+          ascending:
+            options.ascending ??
+            false,
+        }
+      )
+      .range(
+        from,
+        to
+      )
+
+  if (error) {
+
+    console.error(
+      "GET PUBLIC PRODUCTS PAGE WITH STATES BY STATE NAMES ERROR:",
+      error
+    )
+
+    return {
+      products: [],
+      states,
+      count: 0,
+      page,
+      limit,
+      hasMore: false,
+      error: true,
+    }
+
+  }
+
+  const total =
+    count || 0
+
+  return {
+    products:
+      data || [],
+    states,
+    count:
+      total,
+    page,
+    limit,
+    hasMore:
+      to + 1 < total,
+    error: false,
   }
 
 }
@@ -1037,6 +1218,14 @@ export async function getAvailableProducts(
 
 export async function getProductStates() {
 
+  if (!isSupabaseConfigured) {
+    console.warn(
+      "GET PRODUCT STATES SKIPPED: Supabase public environment is not configured."
+    )
+
+    return []
+  }
+
   const { data, error } =
     await supabase
       .from("product_states")
@@ -1584,6 +1773,45 @@ export type CommunitySubscriberStats = {
   percentWithEmail: number
 }
 
+export type CommunityGrowthLevelCount = {
+  level_key: string
+  level_label: string | null
+  count: number
+}
+
+export type CommunityGrowthSummary = {
+  totalReferralCodes: number
+  totalReferrals: number
+  totalPointsAwarded: number
+  vipMembers: number
+  activeRewards: number
+  transparencyItems: number
+  levelCounts: CommunityGrowthLevelCount[]
+}
+
+export type TransparencyWallItemStatus =
+  | "idea_proposed"
+  | "idea_in_validation"
+  | "product_in_development"
+  | "product_launched"
+
+export type TransparencyWallItem = {
+  id: string
+  title: string
+  summary: string | null
+  status: TransparencyWallItemStatus
+  product_id: string | null
+  idea_lab_item_id: string | null
+  trend_signal_id: string | null
+  source: string | null
+  is_public: boolean | null
+  is_active: boolean | null
+  display_order: number | null
+  published_at: string | null
+  created_at: string | null
+  updated_at?: string | null
+}
+
 export type TopCommunityNiche = {
   niche_id: string
   niche_name: string
@@ -1797,6 +2025,16 @@ const EMPTY_COMMUNITY_SUBSCRIBER_STATS: CommunitySubscriberStats = {
   subscribersWithSubnicheInterests: 0,
   percentWithWhatsapp: 0,
   percentWithEmail: 0,
+}
+
+const EMPTY_COMMUNITY_GROWTH_SUMMARY: CommunityGrowthSummary = {
+  totalReferralCodes: 0,
+  totalReferrals: 0,
+  totalPointsAwarded: 0,
+  vipMembers: 0,
+  activeRewards: 0,
+  transparencyItems: 0,
+  levelCounts: [],
 }
 
 function getCommunityPercent(
@@ -2324,6 +2562,295 @@ export async function getCommunitySubscriberStats(): Promise<CommunitySubscriber
       ),
   }
 
+}
+
+async function getSafeTableCount(
+  tableName: string,
+  applyFilters?: (query: any) => any
+) {
+  let query =
+    supabase
+      .from(tableName)
+      .select(
+        "id",
+        {
+          count: "exact",
+          head: true,
+        }
+      )
+
+  if (applyFilters) {
+    query =
+      applyFilters(query)
+  }
+
+  const { count, error } =
+    await query
+
+  if (error) {
+    console.warn(
+      "GET SAFE TABLE COUNT WARNING:",
+      tableName,
+      error
+    )
+
+    return 0
+  }
+
+  return count || 0
+}
+
+export async function getCommunityGrowthSummary(): Promise<CommunityGrowthSummary> {
+  try {
+    const [
+      totalReferralCodes,
+      totalReferrals,
+      activeRewards,
+      transparencyItems,
+      statusResult,
+      pointsResult,
+      levelsResult,
+    ] =
+      await Promise.all([
+        getSafeTableCount(
+          "community_referral_codes"
+        ),
+        getSafeTableCount(
+          "community_referrals"
+        ),
+        getSafeTableCount(
+          "community_vip_rewards",
+          query =>
+            query.eq(
+              "is_active",
+              true
+            )
+        ),
+        getSafeTableCount(
+          "transparency_wall_items",
+          query =>
+            query.eq(
+              "is_active",
+              true
+            )
+        ),
+        supabase
+          .from("community_member_status")
+          .select(
+            "level_key,is_vip,points_total"
+          ),
+        supabase
+          .from("community_points_ledger")
+          .select("points"),
+        supabase
+          .from("community_levels")
+          .select("key,label")
+          .eq(
+            "is_active",
+            true
+          ),
+      ])
+
+    if (statusResult.error) {
+      console.warn(
+        "GET COMMUNITY MEMBER STATUS SUMMARY WARNING:",
+        statusResult.error
+      )
+    }
+
+    if (pointsResult.error) {
+      console.warn(
+        "GET COMMUNITY POINTS SUMMARY WARNING:",
+        pointsResult.error
+      )
+    }
+
+    if (levelsResult.error) {
+      console.warn(
+        "GET COMMUNITY LEVELS SUMMARY WARNING:",
+        levelsResult.error
+      )
+    }
+
+    const levelLabels =
+      new Map(
+        (levelsResult.data || []).map(
+          (level: any) => [
+            String(level.key),
+            level.label
+              ? String(level.label)
+              : null,
+          ]
+        )
+      )
+
+    const levelCountsMap =
+      new Map<string, number>()
+
+    const memberStatusRows =
+      statusResult.error
+        ? []
+        : statusResult.data || []
+
+    memberStatusRows.forEach(
+      (row: any) => {
+        const levelKey =
+          String(
+            row.level_key ||
+            "miembro"
+          )
+
+        levelCountsMap.set(
+          levelKey,
+          (
+            levelCountsMap.get(
+              levelKey
+            ) || 0
+          ) + 1
+        )
+      }
+    )
+
+    const totalPointsAwarded =
+      pointsResult.error
+        ? 0
+        : (pointsResult.data || []).reduce(
+            (
+              total: number,
+              row: any
+            ) =>
+              total +
+              Number(row.points || 0),
+            0
+          )
+
+    const vipMembers =
+      memberStatusRows.filter(
+        (row: any) =>
+          Boolean(row.is_vip)
+      ).length
+
+    return {
+      totalReferralCodes,
+      totalReferrals,
+      totalPointsAwarded,
+      vipMembers,
+      activeRewards,
+      transparencyItems,
+      levelCounts:
+        Array.from(
+          levelCountsMap.entries()
+        ).map(
+          ([levelKey, count]) => ({
+            level_key:
+              levelKey,
+            level_label:
+              levelLabels.get(
+                levelKey
+              ) || null,
+            count,
+          })
+        ),
+    }
+  } catch (error) {
+    console.warn(
+      "GET COMMUNITY GROWTH SUMMARY WARNING:",
+      error
+    )
+
+    return EMPTY_COMMUNITY_GROWTH_SUMMARY
+  }
+}
+
+const transparencyWallSelect = `
+  id,
+  title,
+  summary,
+  status,
+  product_id,
+  idea_lab_item_id,
+  trend_signal_id,
+  source,
+  is_public,
+  is_active,
+  display_order,
+  published_at,
+  created_at,
+  updated_at
+`
+
+export async function getPublicTransparencyWallItems(
+  limit = 12
+): Promise<TransparencyWallItem[]> {
+  const { data, error } =
+    await supabase
+      .from("transparency_wall_items")
+      .select(transparencyWallSelect)
+      .eq(
+        "is_public",
+        true
+      )
+      .eq(
+        "is_active",
+        true
+      )
+      .order(
+        "display_order",
+        {
+          ascending: true,
+        }
+      )
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
+      .limit(limit)
+
+  if (error) {
+    console.warn(
+      "GET PUBLIC TRANSPARENCY WALL ITEMS WARNING:",
+      error
+    )
+
+    return []
+  }
+
+  return (data || []) as TransparencyWallItem[]
+}
+
+export async function getAdminTransparencyWallItems(
+  limit = 20
+): Promise<TransparencyWallItem[]> {
+  const { data, error } =
+    await supabase
+      .from("transparency_wall_items")
+      .select(transparencyWallSelect)
+      .order(
+        "display_order",
+        {
+          ascending: true,
+        }
+      )
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
+      .limit(limit)
+
+  if (error) {
+    console.warn(
+      "GET ADMIN TRANSPARENCY WALL ITEMS WARNING:",
+      error
+    )
+
+    return []
+  }
+
+  return (data || []) as TransparencyWallItem[]
 }
 
 export async function getTopCommunityNiches(
@@ -5644,6 +6171,10 @@ export async function updateProduct(
     image_url?: string | null
     price?: number | null
     currency?: string | null
+    visible?: boolean
+    is_public?: boolean
+    is_active?: boolean
+    featured?: boolean
     direct_url?: string | null
     amazon_url?: string | null
     ebay_url?: string | null

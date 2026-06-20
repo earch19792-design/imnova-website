@@ -22,7 +22,8 @@ import {
 
 export function AboutSection() {
 
-  const ref = useRef(null)
+  const ref =
+    useRef<HTMLElement | null>(null)
 
   const isInView = useInView(
     ref,

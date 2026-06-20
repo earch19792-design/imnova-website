@@ -25,6 +25,7 @@ interface InnovaPopupProps {
   isOpen: boolean
   onClose: () => void
   surveyIntent?: InnovaSurveyIntent | null
+  successRedirectHref?: string
 }
 
 const MAX_SELECTED_AREAS = 3
@@ -43,22 +44,29 @@ type PublicInterestArea = {
   highlightIndex: number
 }
 
+type KnownMemberSummary = {
+  name: string
+  levelLabel: string
+  pointsTotal: number
+  referralCode: string
+}
+
 const communityRegisterErrorMessages:
   Record<string, string> = {
     subscriber_create_failed:
-      "No pudimos completar tu registro en este momento. Intentalo de nuevo en unos segundos.",
+      "No pudimos completar tu registro en este momento. Inténtalo de nuevo en unos segundos.",
     subscriber_id_not_returned:
-      "Te registramos, pero no pudimos confirmar el registro. Intentalo de nuevo.",
+      "Te registramos, pero no pudimos confirmar el registro. Inténtalo de nuevo.",
     subscriber_interests_create_failed:
-      "Te registramos, pero no pudimos guardar tus intereses. Intentalo de nuevo.",
+      "Te registramos, pero no pudimos guardar tus intereses. Inténtalo de nuevo.",
     invalid_subniches:
-      "Algunos intereses ya no estan disponibles. Cambia tus intereses e intentalo de nuevo.",
+      "Algunos intereses ya no están disponibles. Cambia tus intereses e inténtalo de nuevo.",
     too_many_subniches:
-      "Selecciona menos areas e intentalo de nuevo.",
+      "Selecciona menos áreas e inténtalo de nuevo.",
     too_many_area_interests:
-      "Selecciona hasta 3 areas e intentalo de nuevo.",
+      "Selecciona hasta 3 áreas e inténtalo de nuevo.",
     invalid_area_interests:
-      "Algunas areas ya no estan disponibles. Cambia tus intereses e intentalo de nuevo.",
+      "Algunas áreas ya no están disponibles. Cambia tus intereses e inténtalo de nuevo.",
     invalid_email:
       "Revisa el formato de tu correo.",
     invalid_whatsapp:
@@ -79,7 +87,7 @@ function getCommunityRegisterErrorMessage(
     return communityRegisterErrorMessages[error]
   }
 
-  return "Error registrando tu participacion"
+  return "Error registrando tu participación"
 }
 
 const publicInterestAreas: PublicInterestArea[] = [
@@ -89,7 +97,7 @@ const publicInterestAreas: PublicInterestArea[] = [
     title:
       "Bienestar y Salud Natural",
     description:
-      "Vida saludable, productos naturales y nutricion funcional para el dia a dia.",
+      "Vida saludable, productos naturales y nutrición funcional para el día a día.",
     icon:
       "✦",
     nicheSlugs: [
@@ -104,9 +112,9 @@ const publicInterestAreas: PublicInterestArea[] = [
     id:
       "fitness_rendimiento_recuperacion",
     title:
-      "Fitness, Rendimiento y Recuperacion",
+      "Fitness, Rendimiento y Recuperación",
     description:
-      "Energia, hidratacion, proteina y recuperacion para una vida activa.",
+      "Energía, hidratación, proteína y recuperación para una vida activa.",
     icon:
       "◆",
     nicheSlugs: [
@@ -123,9 +131,9 @@ const publicInterestAreas: PublicInterestArea[] = [
     id:
       "salud_funcionalidad_especifica",
     title:
-      "Salud y Funcionalidad Especifica",
+      "Salud y Funcionalidad Específica",
     description:
-      "Digestión, defensas, descanso, enfoque, estres y soporte funcional.",
+      "Digestión, defensas, descanso, enfoque, estrés y soporte funcional.",
     icon:
       "◉",
     nicheSlugs: [
@@ -143,7 +151,7 @@ const publicInterestAreas: PublicInterestArea[] = [
     title:
       "Cuidado Personal y Belleza Natural",
     description:
-      "Colageno, piel, cabello y cuidado natural con enfoque funcional.",
+      "Colágeno, piel, cabello y cuidado natural con enfoque funcional.",
     icon:
       "✧",
     nicheSlugs: [
@@ -247,6 +255,7 @@ export default function InnovaPopup({
   isOpen,
   onClose,
   surveyIntent,
+  successRedirectHref = "/miembro",
 }: InnovaPopupProps) {
   const router = useRouter()
 
@@ -273,6 +282,11 @@ export default function InnovaPopup({
     emailOptIn,
     setEmailOptIn,
   ] = useState(true)
+
+  const [
+    frequencyPreference,
+    setFrequencyPreference,
+  ] = useState("important_only")
 
     const [objective, setObjective] =
   useState("")
@@ -318,6 +332,31 @@ export default function InnovaPopup({
   const [success, setSuccess] =
     useState(false)
 
+  const [
+    memberReferralCode,
+    setMemberReferralCode,
+  ] = useState("")
+
+  const [
+    memberAlreadyRegistered,
+    setMemberAlreadyRegistered,
+  ] = useState(false)
+
+  const [
+    knownMember,
+    setKnownMember,
+  ] = useState<KnownMemberSummary | null>(null)
+
+  const [
+    checkingKnownMember,
+    setCheckingKnownMember,
+  ] = useState(false)
+
+  const [
+    showMemberUpdateForm,
+    setShowMemberUpdateForm,
+  ] = useState(false)
+
   
 
   const [mounted, setMounted] =
@@ -339,9 +378,121 @@ export default function InnovaPopup({
       return
     }
 
+    let cancelled =
+      false
+
     setRegistrationStep("interests")
     setInterestSaveWarning("")
+    setMemberReferralCode("")
+    setMemberAlreadyRegistered(false)
     setSuccess(false)
+    setKnownMember(null)
+    setShowMemberUpdateForm(false)
+
+    if (typeof window === "undefined") {
+      return
+    }
+
+    const subscriberId =
+      window.localStorage
+        .getItem("imnova_community_subscriber_id")
+        ?.trim() || ""
+
+    const referralCode =
+      window.localStorage
+        .getItem("imnova_community_referral_code")
+        ?.trim() || ""
+
+    if (
+      !subscriberId ||
+      !referralCode
+    ) {
+      return
+    }
+
+    async function loadKnownMember() {
+      setCheckingKnownMember(true)
+
+      try {
+        const response =
+          await fetch(
+            "/api/community/member",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+              body:
+                JSON.stringify({
+                  subscriberId,
+                  referralCode,
+                }),
+            }
+          )
+
+        const result =
+          await response
+            .json()
+            .catch(() => null)
+
+        if (
+          !response.ok ||
+          !result?.success ||
+          !result?.member
+        ) {
+          if (
+            result?.error === "member_not_found" ||
+            result?.error === "member_identity_required"
+          ) {
+            window.localStorage.removeItem(
+              "imnova_community_subscriber_id"
+            )
+            window.localStorage.removeItem(
+              "imnova_community_referral_code"
+            )
+          }
+
+          return
+        }
+
+        if (cancelled) {
+          return
+        }
+
+        setKnownMember({
+          name:
+            result.member.name ||
+            "Miembro IMNOVA",
+          levelLabel:
+            result.member.level?.label ||
+            "Miembro",
+          pointsTotal:
+            Number(
+              result.member.points_total || 0
+            ),
+          referralCode:
+            result.member.referral?.code ||
+            referralCode,
+        })
+      } catch (error) {
+        console.warn(
+          "KNOWN COMMUNITY MEMBER LOOKUP WARNING:",
+          error
+        )
+      } finally {
+        if (!cancelled) {
+          setCheckingKnownMember(false)
+        }
+      }
+    }
+
+    loadKnownMember()
+
+    return () => {
+      cancelled =
+        true
+    }
 
   }, [isOpen])
 
@@ -417,10 +568,10 @@ export default function InnovaPopup({
 
   {
     title:
-      "Fitness, Rendimiento y Recuperacion",
+      "Fitness, Rendimiento y Recuperación",
 
     subtitle:
-      "Vida activa, energia y recuperacion",
+      "Vida activa, energía y recuperación",
 
     status:
       "Detectando alto rendimiento...",
@@ -478,7 +629,7 @@ export default function InnovaPopup({
       "Bienestar y Salud Natural",
 
     subtitle:
-      "Habitos, nutricion y vida saludable",
+      "Hábitos, nutrición y vida saludable",
 
     status:
       "Modo enfoque sincronizado...",
@@ -507,7 +658,7 @@ export default function InnovaPopup({
       "Bienestar y Salud Natural",
 
     subtitle:
-      "Productos naturales para el dia a dia",
+      "Productos naturales para el día a día",
 
     status:
       "Sincronizando vida inteligente...",
@@ -536,7 +687,7 @@ export default function InnovaPopup({
       "Cuidado Personal y Belleza Natural",
 
     subtitle:
-      "Colageno, piel, cabello y cuidado natural",
+      "Colágeno, piel, cabello y cuidado natural",
 
     status:
       "Glow premium activado...",
@@ -602,7 +753,7 @@ const interestGroups =
   nichesWithSubniches
 
 const communityConsentText =
-  "Acepto recibir avisos de IMNOVA por los canales seleccionados, conectados a mis intereses. Sin spam ni mensajes genericos."
+  "Acepto recibir avisos de IMNOVA por los canales seleccionados, conectados a mis intereses. Sin spam ni mensajes genéricos."
 
 const normalizeInterestTerm =
   (value: string) =>
@@ -745,7 +896,7 @@ const toggleInterestArea =
         MAX_SELECTED_AREAS
     ) {
       setInterestsError(
-        "Puedes seleccionar hasta 3 areas."
+        "Puedes seleccionar hasta 3 áreas."
       )
       return
     }
@@ -978,7 +1129,7 @@ useEffect(() => {
         ) {
 
           alert(
-            "Selecciona al menos un area de interes"
+            "Selecciona al menos un área de interés"
           )
 
           return
@@ -994,8 +1145,15 @@ useEffect(() => {
             selectedInterestAreaIds
           )
 
-        const normalizedSubnicheIds =
+        const normalizedSubnicheIds: string[] =
           []
+
+        const referralCode =
+          typeof window !== "undefined"
+            ? new URLSearchParams(
+                window.location.search
+              ).get("ref") || ""
+            : ""
 
         const registerResponse =
           await fetch(
@@ -1043,10 +1201,12 @@ useEffect(() => {
                         emailOptIn
                         ? "email"
                         : "",
+                  frequencyPreference,
                   consentText:
                     communityConsentText,
                   objective:
                     effectiveObjective,
+                  referralCode,
                   source:
                     "community_popup",
                   honeypot:
@@ -1058,6 +1218,38 @@ useEffect(() => {
         const registerResult =
           await registerResponse.json()
             .catch(() => null)
+
+        if (
+          typeof window !== "undefined" &&
+          registerResult?.community_referral_code
+        ) {
+          setMemberReferralCode(
+            String(
+              registerResult.community_referral_code
+            )
+          )
+
+          window.localStorage.setItem(
+            "imnova_community_referral_code",
+            registerResult.community_referral_code
+          )
+        }
+
+        if (
+          typeof window !== "undefined" &&
+          registerResult?.subscriberId
+        ) {
+          window.localStorage.setItem(
+            "imnova_community_subscriber_id",
+            String(registerResult.subscriberId)
+          )
+        }
+
+        setMemberAlreadyRegistered(
+          Boolean(
+            registerResult?.subscriber_already_registered
+          )
+        )
 
         if (
           !registerResponse.ok ||
@@ -1106,18 +1298,19 @@ useEffect(() => {
 
         setSuccess(true)
 
-       setTimeout(() => {
+setTimeout(() => {
 
   onClose()
 
-  router.push("/")
+  router.push(successRedirectHref)
 
-}, 1800)
+}, 3600)
         setFullName("")
         setPhone("")
         setEmail("")
         setWhatsappOptIn(true)
         setEmailOptIn(true)
+        setFrequencyPreference("important_only")
         setSelectedNiches([])
         setSelectedInterestAreaIds([])
         setRegistrationStep("interests")
@@ -1155,7 +1348,7 @@ useEffect(() => {
       if (registrationStep === "interests") {
         if (selectedInterestAreaIds.length === 0) {
           alert(
-            "Selecciona al menos un area de interes"
+            "Selecciona al menos un área de interés"
           )
 
           return
@@ -1168,6 +1361,23 @@ useEffect(() => {
       await handleSubmit()
 
     }
+
+  const handleGoToMemberArea = () => {
+    onClose()
+    router.push("/miembro")
+  }
+
+  const handleGoToIdeas = () => {
+    onClose()
+    router.push("/#ideas-activas")
+  }
+
+  const returningMemberMode =
+    Boolean(
+      knownMember &&
+      !showMemberUpdateForm &&
+      !success
+    )
 
   if (!mounted) return null
 
@@ -1537,14 +1747,16 @@ useEffect(() => {
                 >
 
                   {
-                    isLogin
-                      ? "Bienvenido de nuevo"
-                      : "Decidí los próximos lanzamientos de IMNOVA"
+                    returningMemberMode
+                      ? "Ya eres parte de IMNOVA"
+                      : isLogin
+                        ? "Bienvenido de nuevo"
+                        : "Decide los próximos lanzamientos de IMNOVA"
                   }
 
                 </h3>
 
-                {!isLogin && (
+                {!isLogin && !returningMemberMode && (
 
                   <p
                     className="
@@ -1560,7 +1772,7 @@ useEffect(() => {
                   </p>
 
                 )}
-{!isLogin && (
+{!isLogin && !returningMemberMode && (
 
   <div
     className="
@@ -1632,7 +1844,215 @@ useEffect(() => {
 
 )}
 
-{!isLogin && (
+{checkingKnownMember && !knownMember && (
+
+  <div
+    className="
+      mt-4
+      rounded-2xl
+      border
+      border-cyan-300/15
+      bg-cyan-300/[0.06]
+      p-4
+      text-sm
+      leading-6
+      text-cyan-50/75
+    "
+  >
+
+    Revisando si ya eres miembro de IMNOVA...
+
+  </div>
+
+)}
+
+{returningMemberMode && knownMember && (
+
+  <motion.div
+    initial={{
+      opacity: 0,
+      y: 10,
+    }}
+    animate={{
+      opacity: 1,
+      y: 0,
+    }}
+    className="
+      mt-5
+      rounded-[28px]
+      border
+      border-cyan-300/20
+      bg-gradient-to-br
+      from-cyan-300/[0.12]
+      via-white/[0.04]
+      to-black/30
+      p-5
+      shadow-[0_0_60px_rgba(34,211,238,0.10)]
+    "
+  >
+
+    <p
+      className="
+        text-sm
+        leading-6
+        text-cyan-50/80
+      "
+    >
+      Hola, {knownMember.name.split(" ")[0] || "miembro"}. Ya tenemos tu registro, tus intereses y tu codigo de referido. No necesitas volver a llenar tus datos para participar.
+    </p>
+
+    <div
+      className="
+        mt-5
+        grid
+        gap-3
+        sm:grid-cols-3
+      "
+    >
+
+      <div
+        className="
+          rounded-2xl
+          border
+          border-white/10
+          bg-black/25
+          p-4
+        "
+      >
+        <p className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+          Nivel
+        </p>
+        <p className="mt-2 text-sm font-black text-white">
+          {knownMember.levelLabel}
+        </p>
+      </div>
+
+      <div
+        className="
+          rounded-2xl
+          border
+          border-white/10
+          bg-black/25
+          p-4
+        "
+      >
+        <p className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+          Puntos
+        </p>
+        <p className="mt-2 text-sm font-black text-white">
+          {knownMember.pointsTotal.toLocaleString("es-NI")}
+        </p>
+      </div>
+
+      <div
+        className="
+          rounded-2xl
+          border
+          border-white/10
+          bg-black/25
+          p-4
+        "
+      >
+        <p className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+          Codigo
+        </p>
+        <p className="mt-2 truncate text-sm font-black text-white">
+          {knownMember.referralCode}
+        </p>
+      </div>
+
+    </div>
+
+    <div
+      className="
+        mt-5
+        grid
+        gap-3
+        sm:grid-cols-2
+      "
+    >
+      <button
+        type="button"
+        onClick={handleGoToMemberArea}
+        className="
+          rounded-2xl
+          border
+          border-cyan-300/25
+          bg-cyan-300
+          px-5
+          py-4
+          text-xs
+          font-black
+          uppercase
+          tracking-[0.18em]
+          text-black
+          transition-all
+          duration-300
+          hover:scale-[1.01]
+        "
+      >
+        Ir a mi area
+      </button>
+
+      <button
+        type="button"
+        onClick={handleGoToIdeas}
+        className="
+          rounded-2xl
+          border
+          border-white/10
+          bg-white/[0.06]
+          px-5
+          py-4
+          text-xs
+          font-black
+          uppercase
+          tracking-[0.18em]
+          text-white
+          transition-all
+          duration-300
+          hover:border-cyan-300/25
+          hover:bg-cyan-300/[0.08]
+          hover:text-cyan-50
+        "
+      >
+        Votar ideas
+      </button>
+    </div>
+
+    <button
+      type="button"
+      onClick={() =>
+        setShowMemberUpdateForm(true)
+      }
+      className="
+        mt-4
+        w-full
+        rounded-2xl
+        border
+        border-white/10
+        bg-transparent
+        px-5
+        py-3
+        text-xs
+        font-bold
+        uppercase
+        tracking-[0.16em]
+        text-white/45
+        transition-all
+        duration-300
+        hover:border-white/20
+        hover:text-white/75
+      "
+    >
+      Actualizar datos o intereses
+    </button>
+
+  </motion.div>
+
+)}
+
+{!isLogin && !returningMemberMode && (
 
   <div
     className="
@@ -1646,8 +2066,8 @@ useEffect(() => {
 
     {[
       "Sin spam",
-      "Hasta 3 areas",
-      "Vota lo proximo",
+      "Hasta 3 áreas",
+      "Vota lo próximo",
     ].map(item => (
 
       <span
@@ -1677,7 +2097,7 @@ useEffect(() => {
 
 )}
 
-{!isLogin && (
+{!isLogin && !returningMemberMode && (
 
   <div
     className="
@@ -1782,7 +2202,7 @@ useEffect(() => {
 
 </div>
 
-{surveyIntent && !isLogin && (
+{surveyIntent && !isLogin && !returningMemberMode && (
 
   <div
     className="
@@ -1832,7 +2252,8 @@ useEffect(() => {
 
 <div
   className={
-    registrationStep === "contact"
+    registrationStep === "contact" &&
+    !returningMemberMode
       ? "mt-6 space-y-4"
       : "hidden"
   }
@@ -2094,6 +2515,52 @@ useEffect(() => {
       </label>
     </div>
 
+    <label
+      className="
+        mt-4
+        block
+        text-xs
+        font-semibold
+        uppercase
+        tracking-[0.18em]
+        text-white/55
+      "
+    >
+      Frecuencia preferida
+    </label>
+
+    <select
+      value={frequencyPreference}
+      onChange={(event) =>
+        setFrequencyPreference(
+          event.target.value
+        )
+      }
+      className="
+        mt-2
+        w-full
+        rounded-2xl
+        border
+        border-white/10
+        bg-black/50
+        px-4
+        py-3
+        text-sm
+        text-white
+        outline-none
+      "
+    >
+      <option value="important_only">
+        Solo novedades importantes
+      </option>
+      <option value="weekly">
+        Semanal
+      </option>
+      <option value="twice_monthly">
+        Dos veces al mes
+      </option>
+    </select>
+
     <p
       className="
         mt-3
@@ -2102,7 +2569,7 @@ useEffect(() => {
         text-white/45
       "
     >
-      Puedes unirte aunque desactives un canal. Usamos tus datos para relevancia, no para mensajes genericos.
+      Puedes unirte aunque desactives un canal. Usamos tus datos para relevancia, no para mensajes genéricos.
     </p>
   </div>
 
@@ -2110,7 +2577,7 @@ useEffect(() => {
 
 {/* NICHES */}
 
-{!isLogin && registrationStep === "interests" && (
+{!isLogin && !returningMemberMode && registrationStep === "interests" && (
 
   <div
     className="
@@ -2142,7 +2609,7 @@ useEffect(() => {
         "
       >
 
-        Selecciona hasta 3 areas generales. Esto nos ayuda a enviarte encuestas y lanzamientos relevantes sin hacerte escoger subnichos técnicos.
+        Selecciona hasta 3 áreas generales. Esto nos ayuda a enviarte encuestas y lanzamientos relevantes sin hacerte escoger subnichos técnicos.
 
       </p>
 
@@ -2364,7 +2831,7 @@ useEffect(() => {
       "
     >
 
-      {selectedInterestAreaIds.length}/{MAX_SELECTED_AREAS} areas seleccionadas
+      {selectedInterestAreaIds.length}/{MAX_SELECTED_AREAS} áreas seleccionadas
 
     </p>
 
@@ -2376,7 +2843,7 @@ useEffect(() => {
       "
     >
 
-      Mostramos areas simples para que elijas rapido. La segmentacion detallada queda organizada internamente por IMNOVA.
+      Mostramos áreas simples para que elijas rápido. La segmentación detallada queda organizada internamente por IMNOVA.
 
     </p>
 
@@ -2386,7 +2853,7 @@ useEffect(() => {
 
 {/* BUTTON */}
 
-{registrationStep === "contact" && !isLogin && (
+{registrationStep === "contact" && !isLogin && !returningMemberMode && (
 
   <button
     type="button"
@@ -2420,6 +2887,8 @@ useEffect(() => {
   </button>
 
 )}
+
+{!returningMemberMode && (
 
 <button
   type="button"
@@ -2466,7 +2935,9 @@ useEffect(() => {
 
 </button>
 
-{!isLogin && (
+)}
+
+{!isLogin && !returningMemberMode && (
 
   <p
     className="
@@ -2538,7 +3009,19 @@ useEffect(() => {
                     "
                   >
 
-                    Ya eres parte de la comunidad IMNOVA. Te enviaremos encuestas, avances y oportunidades según tus intereses.
+                    {memberAlreadyRegistered
+                      ? "Ya encontramos tu registro en IMNOVA. Actualizamos tus preferencias y guardamos este dispositivo como acceso de miembro para que no tengas que repetir tus datos."
+                      : "Ya eres parte de la comunidad IMNOVA. Te enviaremos encuestas, avances y oportunidades según tus intereses."}
+
+                    {memberReferralCode && (
+                      <span className="mt-3 block rounded-xl border border-cyan-200/20 bg-black/20 px-4 py-3 text-xs leading-5 text-cyan-50/80">
+                        Tu código para invitar amigos es{" "}
+                        <strong className="text-white">
+                          {memberReferralCode}
+                        </strong>
+                        . Compártelo con quien quiera votar ideas y recibir beneficios.
+                      </span>
+                    )}
 
                   </motion.div>
 

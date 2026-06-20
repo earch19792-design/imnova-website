@@ -99,7 +99,10 @@ type ToastVariant =
   | "warning"
   | "loading"
 
-type ToasterToast = ToastProps & {
+type ToasterToast = Omit<
+  ToastProps,
+  "variant" | "title"
+> & {
   id: string
   title?: React.ReactNode
   description?: React.ReactNode

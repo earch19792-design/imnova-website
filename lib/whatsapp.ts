@@ -81,6 +81,187 @@ function getNormalizedRecipientPhones(
   )
 }
 
+function maskPhone(
+  phone?: string | null
+) {
+  const digits =
+    (phone || "").replace(/\D/g, "")
+
+  if (digits.length <= 4) {
+    return "****"
+  }
+
+  return `***${digits.slice(-4)}`
+}
+
+function getSafeWhatsAppData(
+  data: any
+) {
+  return {
+    messageId:
+      data?.messages?.[0]?.id ||
+      null,
+    messageStatus:
+      data?.messages?.[0]?.message_status ||
+      null,
+    waId:
+      data?.contacts?.[0]?.wa_id
+        ? maskPhone(
+            data.contacts[0].wa_id
+          )
+        : null,
+    error:
+      data?.error
+        ? {
+            message:
+              data.error.message,
+            type:
+              data.error.type,
+            code:
+              data.error.code,
+          }
+        : null,
+  }
+}
+
+type WhatsAppTemplatePayload = {
+  messaging_product: "whatsapp"
+  to: string
+  type: "template"
+  template: {
+    name: string
+    language: {
+      code: string
+    }
+    components?: Array<{
+      type: string
+      parameters: Array<Record<string, unknown>>
+    }>
+  }
+}
+
+async function sendWhatsAppTemplatePayload({
+  phoneId,
+  token,
+  payload,
+}: {
+  phoneId: string
+  token: string
+  payload: WhatsAppTemplatePayload
+}) {
+  const response =
+    await fetch(
+      `https://graph.facebook.com/v25.0/${phoneId}/messages`,
+      {
+        method:
+          "POST",
+        headers: {
+          Authorization:
+            `Bearer ${token}`,
+          "Content-Type":
+            "application/json",
+        },
+        body:
+          JSON.stringify(payload),
+      }
+    )
+
+  const text =
+    await response.text()
+
+  let data
+
+  try {
+    data =
+      JSON.parse(text)
+  } catch {
+    data =
+      text
+  }
+
+  return {
+    response,
+    data,
+  }
+}
+
+function getWhatsAppTemplatePayloadVariants(
+  payloads: WhatsAppTemplatePayload[]
+) {
+  const seen =
+    new Set<string>()
+
+  return payloads.filter(payload => {
+    const key =
+      JSON.stringify(payload.template)
+
+    if (seen.has(key)) {
+      return false
+    }
+
+    seen.add(key)
+    return true
+  })
+}
+
+async function sendWhatsAppTemplateWithFallbacks({
+  phoneId,
+  token,
+  payloads,
+}: {
+  phoneId: string
+  token: string
+  payloads: WhatsAppTemplatePayload[]
+}) {
+  const variants =
+    getWhatsAppTemplatePayloadVariants(
+      payloads
+    )
+
+  let lastResult:
+    Awaited<ReturnType<typeof sendWhatsAppTemplatePayload>> | null =
+    null
+  let lastVariantIndex =
+    0
+
+  for (
+    let index = 0;
+    index < variants.length;
+    index += 1
+  ) {
+    const result =
+      await sendWhatsAppTemplatePayload({
+        phoneId,
+        token,
+        payload:
+          variants[index],
+      })
+
+    lastResult =
+      result
+    lastVariantIndex =
+      index
+
+    if (result.response.ok) {
+      break
+    }
+  }
+
+  if (!lastResult) {
+    throw new Error(
+      "No WhatsApp template payload was attempted."
+    )
+  }
+
+  return {
+    ...lastResult,
+    variant:
+      lastVariantIndex + 1,
+    variants:
+      variants.length,
+  }
+}
+
 export function isValidAbsoluteUrl(
   imageUrl?: string
 ) {
@@ -94,7 +275,7 @@ export function isValidAbsoluteUrl(
 
 export async function sendWhatsAppWelcome({
   phone,
-  name: _name,
+  name,
 }: {
   phone: string
   name?: string | null
@@ -132,7 +313,23 @@ export async function sendWhatsAppWelcome({
     }
   }
 
-  const payload = {
+  const memberName =
+    name?.trim() || "miembro IMNOVA"
+
+  const templateHasNameParam =
+    process.env.WHATSAPP_WELCOME_TEMPLATE_HAS_NAME_PARAM ===
+    "true"
+
+  const baseTemplate = {
+    name:
+      templateName,
+    language: {
+      code:
+        "es",
+    },
+  }
+
+  const payloadWithName = {
     messaging_product:
       "whatsapp",
     to:
@@ -140,44 +337,125 @@ export async function sendWhatsAppWelcome({
     type:
       "template",
     template: {
-      name:
-        templateName,
-      language: {
-        code:
-          "es",
-      },
+      ...baseTemplate,
+      components: [
+        {
+          type:
+            "body",
+          parameters: [
+            {
+              type:
+                "text",
+              text:
+                memberName,
+            },
+          ],
+        },
+      ],
+    },
+  }
+
+  const payloadWithoutParams = {
+    messaging_product:
+      "whatsapp",
+    to:
+      normalizedPhone,
+    type:
+      "template",
+    template: {
+      ...baseTemplate,
     },
   }
 
   try {
-    const response =
-      await fetch(
-        `https://graph.facebook.com/v25.0/${phoneId}/messages`,
-        {
-          method:
-            "POST",
-          headers: {
-            Authorization:
-              `Bearer ${token}`,
-            "Content-Type":
-              "application/json",
-          },
-          body:
-            JSON.stringify(payload),
+    const sendTemplate =
+      async (
+        payload:
+          typeof payloadWithName |
+          typeof payloadWithoutParams
+      ) => {
+        const response =
+          await fetch(
+            `https://graph.facebook.com/v25.0/${phoneId}/messages`,
+            {
+              method:
+                "POST",
+              headers: {
+                Authorization:
+                  `Bearer ${token}`,
+                "Content-Type":
+                  "application/json",
+              },
+              body:
+                JSON.stringify(payload),
+            }
+          )
+
+        const responseText =
+          await response.text()
+
+        let data
+
+        try {
+          data =
+            JSON.parse(responseText)
+        } catch {
+          data =
+            responseText
         }
+
+        return {
+          response,
+          data,
+        }
+      }
+
+    const firstPayload =
+      templateHasNameParam
+        ? payloadWithName
+        : payloadWithoutParams
+
+    const fallbackPayload =
+      templateHasNameParam
+        ? payloadWithoutParams
+        : payloadWithName
+
+    let {
+      response,
+      data,
+    } =
+      await sendTemplate(
+        firstPayload
       )
 
-    const responseText =
-      await response.text()
+    const errorMessage =
+      typeof data?.error?.message ===
+      "string"
+        ? data.error.message.toLowerCase()
+        : ""
 
-    let data
+    const shouldRetryAlternativePayload =
+      !response.ok
 
-    try {
-      data =
-        JSON.parse(responseText)
-    } catch {
-      data =
-        responseText
+    if (shouldRetryAlternativePayload) {
+      const retryResult =
+        await sendTemplate(
+          fallbackPayload
+        )
+
+      if (
+        retryResult.response.ok ||
+        errorMessage.includes("parameter") ||
+        errorMessage.includes("component") ||
+        errorMessage.includes("localizable") ||
+        errorMessage.includes("number of parameters") ||
+        errorMessage.includes("param")
+      ) {
+        response =
+          retryResult.response
+        data =
+          retryResult.data
+      }
     }
 
     if (!response.ok) {
@@ -187,8 +465,11 @@ export async function sendWhatsAppWelcome({
           status:
             response.status,
           phone:
-            normalizedPhone,
-          data,
+            maskPhone(
+              normalizedPhone
+            ),
+          data:
+            getSafeWhatsAppData(data),
         }
       )
 
@@ -198,7 +479,8 @@ export async function sendWhatsAppWelcome({
           response.status,
         error:
           "WHATSAPP_WELCOME_FAILED",
-        data,
+        data:
+          getSafeWhatsAppData(data),
       }
     }
 
@@ -207,17 +489,23 @@ export async function sendWhatsAppWelcome({
       status:
         response.status,
       phone:
-        normalizedPhone,
+        maskPhone(
+          normalizedPhone
+        ),
       waId:
-        data?.contacts?.[0]?.wa_id ||
-        null,
+        data?.contacts?.[0]?.wa_id
+          ? maskPhone(
+              data.contacts[0].wa_id
+            )
+          : null,
       messageId:
         data?.messages?.[0]?.id ||
         null,
       messageStatus:
         data?.messages?.[0]?.message_status ||
         null,
-      data,
+      data:
+        getSafeWhatsAppData(data),
     }
   } catch (error) {
     console.error(
@@ -369,92 +657,117 @@ export async function sendWhatsAppUpdate(
               ],
             }
 
-      const payload = {
-        messaging_product:
-          "whatsapp",
+      const buildPayload =
+        (
+          templatePayload:
+            WhatsAppTemplatePayload["template"]
+        ): WhatsAppTemplatePayload => ({
+          messaging_product:
+            "whatsapp",
+          to:
+            phone,
+          type:
+            "template",
+          template:
+            templatePayload,
+        })
 
-        to:
-          phone,
+      const payloadVariants:
+        WhatsAppTemplatePayload[] =
+        isProductLaunch
+          ? [
+              buildPayload(template),
+              buildPayload({
+                name:
+                  selectedTemplate,
+                language: {
+                  code:
+                    "es",
+                },
+                components: [
+                  {
+                    type:
+                      "body",
+                    parameters: [
+                      {
+                        type:
+                          "text",
+                        text:
+                          product,
+                      },
+                    ],
+                  },
+                ],
+              }),
+              buildPayload({
+                name:
+                  selectedTemplate,
+                language: {
+                  code:
+                    "es",
+                },
+              }),
+            ]
+          : [
+              buildPayload(template),
+              buildPayload({
+                name:
+                  selectedTemplate,
+                language: {
+                  code:
+                    "es",
+                },
+                components: [
+                  {
+                    type:
+                      "body",
+                    parameters: [
+                      {
+                        type:
+                          "text",
+                        text:
+                          product,
+                      },
+                    ],
+                  },
+                ],
+              }),
+              buildPayload({
+                name:
+                  selectedTemplate,
+                language: {
+                  code:
+                    "es",
+                },
+              }),
+            ]
 
-        type:
-          "template",
-
-        template,
-      }
-
-      console.log("WHATSAPP PRODUCT:", product)
-      console.log("WHATSAPP STATUS:", status)
-      console.log("WHATSAPP PROGRESS:", progress)
-      console.log(
-        "WHATSAPP TEMPLATE SELECTED:",
-        selectedTemplate
-      )
-
-      console.log(
-        "WHATSAPP PAYLOAD:",
-        JSON.stringify(payload, null, 2)
-      )
-
-      const response =
-        await fetch(
-          `https://graph.facebook.com/v25.0/${phoneId}/messages`,
-          {
-            method:
-              "POST",
-
-            headers: {
-              Authorization:
-                `Bearer ${token}`,
-
-              "Content-Type":
-                "application/json",
-            },
-
-            body:
-              JSON.stringify(payload),
-          }
-        )
-
-      const text =
-        await response.text()
-
-      let data
-
-      try {
-
-        data =
-          JSON.parse(text)
-
-      } catch {
-
-        data =
-          text
-
-      }
-
-      console.log(
-        "WAMID:",
-        data?.messages?.[0]?.id
-      )
-
-      console.log(
-        "META RESPONSE:",
-        JSON.stringify(
-          data,
-          null,
-          2
-        )
-      )
+      const {
+        response,
+        data,
+        variant,
+        variants,
+      } =
+        await sendWhatsAppTemplateWithFallbacks({
+          phoneId,
+          token,
+          payloads:
+            payloadVariants,
+        })
 
       console.log(
         "WHATSAPP META RESPONSE:",
         {
-          phone,
+          phone:
+            maskPhone(phone),
           status:
             response.status,
           ok:
             response.ok,
-          data,
+          variant:
+            `${variant}/${variants}`,
+          data:
+            getSafeWhatsAppData(data),
         }
       )
 
@@ -467,33 +780,41 @@ export async function sendWhatsAppUpdate(
               response.status,
             ok:
               response.ok,
-            phone,
+            variant:
+              `${variant}/${variants}`,
+            phone:
+              maskPhone(phone),
             responseBody:
-              data,
+              getSafeWhatsAppData(data),
           }
         )
 
       }
 
       results.push({
-        phone,
+        phone:
+          maskPhone(phone),
         success:
           response.ok,
         status:
           response.status,
-        data,
+        variant,
+        variants,
+        data:
+          getSafeWhatsAppData(data),
       })
 
     } catch (error) {
 
       console.error(
         "WHATSAPP ERROR:",
-        phone,
+        maskPhone(phone),
         error
       )
 
       results.push({
-        phone,
+        phone:
+          maskPhone(phone),
         success:
           false,
         error:
@@ -528,11 +849,13 @@ export async function sendWhatsAppDistributionChannel({
   product,
   channelName,
   locationLabel,
+  imageUrl,
   recipientPhones,
 }: {
   product: string
   channelName: string
   locationLabel: string
+  imageUrl?: string
   recipientPhones: string[]
 }) {
 
@@ -547,9 +870,23 @@ export async function sendWhatsAppDistributionChannel({
     "imnova_distribution_channel"
 
   const phones =
-    getNormalizedRecipientPhones(
+    getWhatsAppRecipientPhones(
       recipientPhones
     )
+
+  const productTemplateText =
+    ` ${product?.trim() || "Producto IMNOVA"}`
+
+  const channelTemplateText =
+    ` ${channelName?.trim() || "nuevo distribuidor IMNOVA"}`
+
+  const locationTemplateText =
+    ` ${locationLabel?.trim() || "ubicacion disponible"}`
+
+  const selectedImageUrl =
+    isValidAbsoluteUrl(imageUrl)
+      ? imageUrl
+      : fallbackLaunchImageUrl
 
   if (!token || !phoneId || !templateName) {
 
@@ -594,78 +931,172 @@ export async function sendWhatsAppDistributionChannel({
           setTimeout(resolve, 300)
       )
 
-      const payload = {
-        messaging_product:
-          "whatsapp",
-        to:
-          phone,
-        type:
-          "template",
-        template: {
-          name:
-            templateName,
-          language: {
-            code:
-              "es",
-          },
-          components: [
-            {
-              type:
-                "body",
-              parameters: [
-                {
-                  type:
-                    "text",
-                  text:
-                    product || "Producto IMNOVA",
-                },
-                {
-                  type:
-                    "text",
-                  text:
-                    channelName || "nuevo distribuidor IMNOVA",
-                },
-                {
-                  type:
-                    "text",
-                  text:
-                    locationLabel || "ubicacion disponible",
-                },
-              ],
-            },
-          ],
-        },
+      const buildPayload =
+        (
+          templatePayload:
+            WhatsAppTemplatePayload["template"]
+        ): WhatsAppTemplatePayload => ({
+          messaging_product:
+            "whatsapp",
+          to:
+            phone,
+          type:
+            "template",
+          template:
+            templatePayload,
+        })
+
+      const baseLanguage = {
+        code:
+          "es",
       }
 
-      const response =
-        await fetch(
-          `https://graph.facebook.com/v25.0/${phoneId}/messages`,
-          {
-            method:
-              "POST",
-            headers: {
-              Authorization:
-                `Bearer ${token}`,
-              "Content-Type":
-                "application/json",
-            },
-            body:
-              JSON.stringify(payload),
-          }
-        )
+      const payloadVariants =
+        [
+          buildPayload({
+            name:
+              templateName,
+            language:
+              baseLanguage,
+            components: [
+              {
+                type:
+                  "header",
+                parameters: [
+                  {
+                    type:
+                      "image",
+                    image: {
+                      link:
+                        selectedImageUrl,
+                    },
+                  },
+                ],
+              },
+              {
+                type:
+                  "body",
+                parameters: [
+                  {
+                    type:
+                      "text",
+                    text:
+                      productTemplateText,
+                  },
+                  {
+                    type:
+                      "text",
+                    text:
+                      channelTemplateText,
+                  },
+                  {
+                    type:
+                      "text",
+                    text:
+                      locationTemplateText,
+                  },
+                ],
+              },
+            ],
+          }),
+          buildPayload({
+            name:
+              templateName,
+            language:
+              baseLanguage,
+            components: [
+              {
+                type:
+                  "body",
+                parameters: [
+                  {
+                    type:
+                      "text",
+                    text:
+                      productTemplateText,
+                  },
+                  {
+                    type:
+                      "text",
+                    text:
+                      channelTemplateText,
+                  },
+                  {
+                    type:
+                      "text",
+                    text:
+                      locationTemplateText,
+                  },
+                ],
+              },
+            ],
+          }),
+          buildPayload({
+            name:
+              templateName,
+            language:
+              baseLanguage,
+            components: [
+              {
+                type:
+                  "body",
+                parameters: [
+                  {
+                    type:
+                      "text",
+                    text:
+                      productTemplateText,
+                  },
+                  {
+                    type:
+                      "text",
+                    text:
+                      channelTemplateText,
+                  },
+                ],
+              },
+            ],
+          }),
+          buildPayload({
+            name:
+              templateName,
+            language:
+              baseLanguage,
+            components: [
+              {
+                type:
+                  "body",
+                parameters: [
+                  {
+                    type:
+                      "text",
+                    text:
+                      productTemplateText,
+                  },
+                ],
+              },
+            ],
+          }),
+          buildPayload({
+            name:
+              templateName,
+            language:
+              baseLanguage,
+          }),
+        ]
 
-      const text =
-        await response.text()
-
-      let data
-
-      try {
-        data =
-          JSON.parse(text)
-      } catch {
-        data =
-          text
-      }
+      const {
+        response,
+        data,
+        variant,
+        variants,
+      } =
+        await sendWhatsAppTemplateWithFallbacks({
+          phoneId,
+          token,
+          payloads:
+            payloadVariants,
+        })
 
       if (!response.ok) {
         console.error(
@@ -675,32 +1106,40 @@ export async function sendWhatsAppDistributionChannel({
               response.status,
             ok:
               response.ok,
-            phone,
+            variant:
+              `${variant}/${variants}`,
+            phone:
+              maskPhone(phone),
             responseBody:
-              data,
+              getSafeWhatsAppData(data),
           }
         )
       }
 
       results.push({
-        phone,
+        phone:
+          maskPhone(phone),
         success:
           response.ok,
         status:
           response.status,
-        data,
+        variant,
+        variants,
+        data:
+          getSafeWhatsAppData(data),
       })
 
     } catch (error) {
 
       console.error(
         "WHATSAPP DISTRIBUTION CHANNEL ERROR:",
-        phone,
+        maskPhone(phone),
         error
       )
 
       results.push({
-        phone,
+        phone:
+          maskPhone(phone),
         success:
           false,
         error:

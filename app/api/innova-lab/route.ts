@@ -48,9 +48,12 @@ type ProductLaunchTargeting = {
   mode:
     | "segmented_by_product_subniches"
     | "segmented_by_product_niche"
+    | "segmented_by_area_interests"
+    | "segmented_by_product_interests_and_areas"
     | "all_community"
     | "none"
   subnicheIds: string[]
+  areaKeys?: string[]
   subscriberIds: string[]
   phoneCount: number
   emailCount: number
@@ -61,19 +64,21 @@ type CommunicationChannel =
   | "whatsapp"
   | "email"
 
-type WhatsAppResult =
-  Awaited<ReturnType<typeof sendWhatsAppUpdate>>
+type NotificationResult = {
+  success: boolean
+  error?: string
+  total?: number
+  successful?: number
+  failed?: number
+  results?: unknown[]
+  [key: string]: unknown
+}
 
 type ProductLaunchEmailResult =
   Awaited<ReturnType<typeof sendProductLaunchEmail>>
 
 type DistributionChannelEmailResult =
   Awaited<ReturnType<typeof sendDistributionChannelEmail>>
-
-type NotificationResult =
-  | WhatsAppResult
-  | ProductLaunchEmailResult
-  | DistributionChannelEmailResult
 
 type JsonRecord =
   Record<string, unknown>
@@ -86,9 +91,116 @@ type AdminAuthResult =
     }
   | {
       ok: false
-      status: 401 | 403
+      status: 401 | 403 | 500
       error: string
     }
+
+const productLaunchNicheAreaMap:
+  Record<string, string[]> = {
+    bienestar_diario: [
+      "bienestar_salud_natural",
+    ],
+    nutricion_funcional: [
+      "bienestar_salud_natural",
+    ],
+    vida_activa: [
+      "fitness_rendimiento_recuperacion",
+    ],
+    soporte_funcional: [
+      "salud_funcionalidad_especifica",
+    ],
+    digestion_balance: [
+      "salud_funcionalidad_especifica",
+    ],
+    energia_enfoque: [
+      "salud_funcionalidad_especifica",
+    ],
+    belleza_natural: [
+      "cuidado_belleza_natural",
+    ],
+    bienestar_animal: [
+      "bienestar_animal_mascotas",
+    ],
+  }
+
+const productLaunchSubnicheAreaMap:
+  Record<string, string[]> = {
+    cafe_funcional: [
+      "bienestar_salud_natural",
+    ],
+    vitaminas_minerales: [
+      "bienestar_salud_natural",
+    ],
+    proteina_funcional: [
+      "fitness_rendimiento_recuperacion",
+    ],
+    superfoods: [
+      "bienestar_salud_natural",
+    ],
+    colageno: [
+      "cuidado_belleza_natural",
+    ],
+    piel_cabello: [
+      "cuidado_belleza_natural",
+    ],
+    clean_beauty: [
+      "cuidado_belleza_natural",
+    ],
+    digestion: [
+      "salud_funcionalidad_especifica",
+    ],
+    extractos_herbales: [
+      "salud_funcionalidad_especifica",
+    ],
+    detox_suave: [
+      "salud_funcionalidad_especifica",
+    ],
+    energia_natural: [
+      "fitness_rendimiento_recuperacion",
+    ],
+    enfoque_mental: [
+      "salud_funcionalidad_especifica",
+    ],
+    hidratacion: [
+      "fitness_rendimiento_recuperacion",
+    ],
+    recuperacion: [
+      "fitness_rendimiento_recuperacion",
+    ],
+    articulaciones: [
+      "fitness_rendimiento_recuperacion",
+    ],
+    mascotas: [
+      "bienestar_animal_mascotas",
+    ],
+    caballos: [
+      "bienestar_animal_mascotas",
+    ],
+    aves_peces: [
+      "bienestar_animal_mascotas",
+    ],
+    vida_saludable: [
+      "bienestar_salud_natural",
+    ],
+    productos_naturales: [
+      "bienestar_salud_natural",
+    ],
+    bienestar_holistico: [
+      "bienestar_salud_natural",
+    ],
+    defensas: [
+      "salud_funcionalidad_especifica",
+    ],
+    sueno_descanso: [
+      "salud_funcionalidad_especifica",
+    ],
+    estres_balance: [
+      "salud_funcionalidad_especifica",
+    ],
+    longevidad: [
+      "salud_funcionalidad_especifica",
+    ],
+  }
 
 function getTemplateName({
   status,
@@ -238,6 +350,32 @@ function getBearerToken(
 
 }
 
+function getSupabaseServerClient() {
+  const supabaseUrl =
+    process.env.NEXT_PUBLIC_SUPABASE_URL
+
+  const serviceRoleKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (
+    !supabaseUrl ||
+    !serviceRoleKey
+  ) {
+    return null
+  }
+
+  return createClient(
+    supabaseUrl,
+    serviceRoleKey,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    }
+  )
+}
+
 async function validateAdminRequest(
   req: Request
 ): Promise<AdminAuthResult> {
@@ -309,13 +447,25 @@ async function validateAdminRequest(
     }
   }
 
+  const serverSupabase =
+    getSupabaseServerClient()
+
+  if (!serverSupabase) {
+    return {
+      ok: false,
+      status: 500,
+      error:
+        "server_supabase_service_role_not_configured",
+    }
+  }
+
   return {
     ok: true,
     triggeredBy:
       userData.user.email ||
       userData.user.id,
     supabaseClient:
-      authenticatedSupabase,
+      serverSupabase,
   }
 
 }
@@ -597,6 +747,174 @@ async function getOptedInSubscriberIdsByChannel(
   }
 }
 
+async function getProductLaunchAreaKeys({
+  supabaseClient,
+  strategicNicheId,
+  subnicheIds,
+}: {
+  supabaseClient: SupabaseClient
+  strategicNicheId?: string | null
+  subnicheIds: string[]
+}) {
+  const areaKeys =
+    new Set<string>()
+
+  if (strategicNicheId) {
+    const {
+      data: niche,
+      error: nicheError,
+    } =
+      await supabaseClient
+        .from("strategic_niches")
+        .select("slug")
+        .eq("id", strategicNicheId)
+        .maybeSingle()
+
+    if (nicheError) {
+      console.error(
+        "GET PRODUCT LAUNCH NICHE AREA ERROR:",
+        nicheError
+      )
+    }
+
+    const nicheSlug =
+      typeof niche?.slug === "string"
+        ? niche.slug
+        : ""
+
+    productLaunchNicheAreaMap[nicheSlug]
+      ?.forEach(areaKey =>
+        areaKeys.add(areaKey)
+      )
+  }
+
+  if (subnicheIds.length > 0) {
+    const {
+      data: subniches,
+      error: subnichesError,
+    } =
+      await supabaseClient
+        .from("strategic_subniches")
+        .select("slug")
+        .in("id", subnicheIds)
+
+    if (subnichesError) {
+      console.error(
+        "GET PRODUCT LAUNCH SUBNICHE AREA ERROR:",
+        subnichesError
+      )
+    }
+
+    ;(subniches || [])
+      .map(row =>
+        typeof row.slug === "string"
+          ? row.slug
+          : ""
+      )
+      .filter(Boolean)
+      .forEach(slug => {
+        productLaunchSubnicheAreaMap[slug]
+          ?.forEach(areaKey =>
+            areaKeys.add(areaKey)
+          )
+      })
+  }
+
+  return Array.from(areaKeys)
+}
+
+async function getSubscriberIdsByAreaKeys(
+  supabaseClient: SupabaseClient,
+  areaKeys: string[]
+) {
+  if (areaKeys.length === 0) {
+    return {
+      subscriberIds: [] as string[],
+      warning: null as string | null,
+    }
+  }
+
+  const {
+    data: areas,
+    error: areasError,
+  } =
+    await supabaseClient
+      .from("community_interest_areas")
+      .select("id")
+      .in("key", areaKeys)
+      .eq("is_active", true)
+
+  if (areasError) {
+    console.error(
+      "GET PRODUCT LAUNCH AREA LOOKUP ERROR:",
+      areasError
+    )
+
+    return {
+      subscriberIds: [],
+      warning:
+        "product_launch_area_lookup_failed",
+    }
+  }
+
+  const areaIds =
+    (areas || [])
+      .map(row =>
+        typeof row.id === "string"
+          ? row.id
+          : ""
+      )
+      .filter(Boolean)
+
+  if (areaIds.length === 0) {
+    return {
+      subscriberIds: [],
+      warning:
+        "product_launch_area_not_found",
+    }
+  }
+
+  const {
+    data: areaInterests,
+    error: areaInterestsError,
+  } =
+    await supabaseClient
+      .from("subscriber_area_interests")
+      .select("subscriber_id")
+      .in("area_id", areaIds)
+      .limit(1000)
+
+  if (areaInterestsError) {
+    console.error(
+      "GET PRODUCT LAUNCH AREA INTERESTS ERROR:",
+      areaInterestsError
+    )
+
+    return {
+      subscriberIds: [],
+      warning:
+        "product_launch_area_interests_lookup_failed",
+    }
+  }
+
+  return {
+    subscriberIds:
+      Array.from(
+        new Set(
+          (areaInterests || [])
+            .map(row =>
+              typeof row.subscriber_id ===
+              "string"
+                ? row.subscriber_id
+                : ""
+            )
+            .filter(Boolean)
+        )
+      ),
+    warning: null,
+  }
+}
+
 async function getProductLaunchRecipientPhones(
   supabaseClient: SupabaseClient,
   productId?: string | null
@@ -734,7 +1052,21 @@ async function getProductLaunchRecipientPhones(
         : "none"
   }
 
-  if (subnicheIds.length === 0) {
+  const areaKeys =
+    await getProductLaunchAreaKeys({
+      supabaseClient,
+      strategicNicheId:
+        typeof product?.strategic_niche_id ===
+        "string"
+          ? product.strategic_niche_id
+          : null,
+      subnicheIds,
+    })
+
+  if (
+    subnicheIds.length === 0 &&
+    areaKeys.length === 0
+  ) {
     return {
       phones: [],
       emails: [],
@@ -750,11 +1082,16 @@ async function getProductLaunchRecipientPhones(
     data: interestRows,
     error: interestsError,
   } =
-    await supabaseClient
-      .from("subscriber_interests")
-      .select("subscriber_id")
-      .in("subniche_id", subnicheIds)
-      .limit(1000)
+    subnicheIds.length > 0
+      ? await supabaseClient
+          .from("subscriber_interests")
+          .select("subscriber_id")
+          .in("subniche_id", subnicheIds)
+          .limit(1000)
+      : {
+          data: [],
+          error: null,
+        }
 
   if (interestsError) {
     console.error(
@@ -777,7 +1114,7 @@ async function getProductLaunchRecipientPhones(
     }
   }
 
-  const subscriberIds =
+  const specificSubscriberIds =
     Array.from(
       new Set(
         (interestRows || [])
@@ -791,6 +1128,40 @@ async function getProductLaunchRecipientPhones(
       )
     )
 
+  let areaInterestWarning:
+    string | null = null
+
+  const areaSubscriberResult =
+    await getSubscriberIdsByAreaKeys(
+      supabaseClient,
+      areaKeys
+    )
+
+  areaInterestWarning =
+    areaSubscriberResult.warning
+
+  const areaSubscriberIds =
+    areaSubscriberResult.subscriberIds
+
+  const subscriberIds =
+    Array.from(
+      new Set([
+        ...specificSubscriberIds,
+        ...areaSubscriberIds,
+      ])
+    )
+
+  if (
+    specificSubscriberIds.length > 0 &&
+    areaSubscriberIds.length > 0
+  ) {
+    mode =
+      "segmented_by_product_interests_and_areas"
+  } else if (areaSubscriberIds.length > 0) {
+    mode =
+        "segmented_by_area_interests"
+  }
+
   if (subscriberIds.length === 0) {
     return {
       phones: [],
@@ -798,10 +1169,12 @@ async function getProductLaunchRecipientPhones(
       targeting: {
         mode,
         subnicheIds,
+        areaKeys,
         subscriberIds: [],
         phoneCount: 0,
         emailCount: 0,
         warning:
+          areaInterestWarning ||
           "no_interested_subscribers_for_product_launch",
       },
     }
@@ -910,6 +1283,7 @@ async function getProductLaunchRecipientPhones(
     targeting: {
       mode,
       subnicheIds,
+      areaKeys,
       subscriberIds,
       phoneCount:
         phones.length,
@@ -991,6 +1365,25 @@ function getDistributionLocationLabel(
   return parts.length > 0
     ? parts.join(", ")
     : "ubicacion disponible"
+}
+
+function getDistributionLocationWhatsAppLabel(
+  location:
+    InnovaLabRequestBody["distributionLocation"]
+) {
+  const label =
+    getDistributionLocationLabel(location)
+
+  const mapUrl =
+    typeof location?.mapUrl === "string"
+      ? location.mapUrl.trim()
+      : ""
+
+  if (!mapUrl) {
+    return label
+  }
+
+  return `${label}\nMapa: ${mapUrl}`
 }
 
 async function hasSuccessfulDistributionChannelNotification(
@@ -1094,13 +1487,16 @@ export async function POST(
     )
   }
 
-  let body:
+  let requestBody:
     InnovaLabRequestBody | null = null
 
   try {
 
-    body =
-      await req.json()
+    const body =
+      await req.json() as InnovaLabRequestBody
+
+    requestBody =
+      body
 
     const {
       notificationType,
@@ -1130,6 +1526,11 @@ export async function POST(
 
     const distributionLocationLabel =
       getDistributionLocationLabel(
+        distributionLocation
+      )
+
+    const distributionLocationWhatsAppLabel =
+      getDistributionLocationWhatsAppLabel(
         distributionLocation
       )
 
@@ -1211,7 +1612,7 @@ export async function POST(
         )
     }
 
-    let result: WhatsAppResult
+    let result: NotificationResult
 
     try {
 
@@ -1223,7 +1624,9 @@ export async function POST(
               channelName:
                 distributionLocation?.name || "",
               locationLabel:
-                distributionLocationLabel,
+                distributionLocationWhatsAppLabel,
+              imageUrl:
+                imageUrl || "",
               recipientPhones:
                 communityRecipientPhones,
             })
@@ -1435,14 +1838,14 @@ export async function POST(
 
   } catch (error) {
 
-    if (body) {
+    if (requestBody) {
       await saveNotificationLog(
         adminAuth.supabaseClient,
         {
-          ...body,
+          ...requestBody,
           triggeredBy:
             adminAuth.triggeredBy ||
-            body.triggeredBy,
+            requestBody.triggeredBy,
         },
         {
           success: false,
