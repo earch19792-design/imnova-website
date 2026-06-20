@@ -6,6 +6,7 @@ import {
   UsersRound,
   Send,
   Target,
+  Radar,
 } from "lucide-react"
 
 type SidebarProps = {
@@ -59,6 +60,14 @@ export function Sidebar({
       step: "05",
       icon: BarChart3,
       value: "analytics",
+    },
+    {
+      label: "Market Radar",
+      description:
+        "Stock, precios, ofertas y rotacion externa.",
+      step: "06",
+      icon: Radar,
+      value: "market-radar",
     },
   ]
 
@@ -310,6 +319,7 @@ export function Sidebar({
               "Productos",
               "Comunicacion",
               "Analytics",
+              "Market Radar",
             ].map((step, index) => (
               <div
                 key={step}

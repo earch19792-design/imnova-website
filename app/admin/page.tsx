@@ -66,6 +66,9 @@ import {
 
 import { Sidebar } from "@/app/admin/sidebar"
 import { Metrics } from "@/app/admin/metrics"
+import {
+  MarketRadarPanel,
+} from "@/components/admin/market-radar-panel"
 
 type Product = {
   id: string
@@ -605,6 +608,19 @@ const adminMenuGuides = {
     ],
     reminder:
       "Los numeros deben apoyar decisiones, no reemplazar la revision estrategica.",
+  },
+  "market-radar": {
+    title:
+      "Detecta movimiento antes de crear listings.",
+    description:
+      "Market Radar monitorea fuentes externas, cambios de stock, precio y ofertas para priorizar productos con evidencia.",
+    steps: [
+      "Ejecuta Sync Luna para guardar un snapshot nuevo.",
+      "Revisa eventos y score antes de marcar un producto como candidato.",
+      "Pasa a eBay solo cuando haya margen, stock y reglas claras.",
+    ],
+    reminder:
+      "Market Radar no publica en eBay todavia. Primero genera evidencia y ranking para decision manual.",
   },
 }
 
@@ -2767,6 +2783,8 @@ export default function AdminPage() {
                   ? "Comunicacion"
                   : selectedMenu === "analytics"
                   ? "Analytics"
+                  : selectedMenu === "market-radar"
+                  ? "Market Radar"
                   : "Comunidad"
               }
             </h1>
@@ -2790,6 +2808,8 @@ export default function AdminPage() {
                   ? "WhatsApp, email, campanas, plantillas, DryRun obligatorio y logs de envio."
                   : selectedMenu === "analytics"
                   ? "Conversion, votos, ventas, engagement, referidos, errores e indice de demanda IMNOVA."
+                  : selectedMenu === "market-radar"
+                  ? "Monitoreo de productos externos, cambios de stock, precios, ofertas y senales de rotacion."
                   : "Miembros, consentimientos e intereses."
               }
             </p>
@@ -9016,6 +9036,12 @@ export default function AdminPage() {
 
             </div>
 
+          )
+        }
+
+        {
+          selectedMenu === "market-radar" && (
+            <MarketRadarPanel />
           )
         }
 
