@@ -487,6 +487,18 @@ export default function IMNOVAPage() {
     setShowPopup(true)
   }
 
+  const handleMemberAwareCommunityAction = () => {
+    const storedSubscriberId =
+      getStoredCommunitySubscriberId()
+
+    if (storedSubscriberId) {
+      window.location.href = "/miembro"
+      return
+    }
+
+    openCommunity()
+  }
+
   const closePopup = () => {
     setShowPopup(false)
   }
@@ -1122,7 +1134,7 @@ export default function IMNOVAPage() {
 
             <button
               type="button"
-              onClick={openCommunity}
+              onClick={handleMemberAwareCommunityAction}
               className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-cyan-200 bg-cyan-50 px-6 text-[12px] font-black uppercase tracking-[0.14em] text-cyan-800 transition hover:-translate-y-0.5 hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
             >
               Recibir avances
@@ -1333,7 +1345,7 @@ export default function IMNOVAPage() {
             ) : (
               <button
                 type="button"
-                onClick={openCommunity}
+                onClick={handleMemberAwareCommunityAction}
                 className="mt-8 inline-flex min-h-14 items-center justify-center gap-3 rounded-full bg-cyan-200 px-7 text-[12px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:-translate-y-0.5 hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-300/80"
               >
                 Recibir aviso cuando esté listo
