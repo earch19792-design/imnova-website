@@ -25,6 +25,7 @@ interface InnovaPopupProps {
   isOpen: boolean
   onClose: () => void
   surveyIntent?: InnovaSurveyIntent | null
+  successRedirectHref?: string
 }
 
 const MAX_SELECTED_AREAS = 3
@@ -254,6 +255,7 @@ export default function InnovaPopup({
   isOpen,
   onClose,
   surveyIntent,
+  successRedirectHref = "/miembro",
 }: InnovaPopupProps) {
   const router = useRouter()
 
@@ -1300,7 +1302,7 @@ setTimeout(() => {
 
   onClose()
 
-  router.push("/miembro")
+  router.push(successRedirectHref)
 
 }, 3600)
         setFullName("")

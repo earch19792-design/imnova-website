@@ -40,6 +40,10 @@ type PublicIdea = {
   problem: string
   solution: string
   total_votes?: number
+  interested_count?: number
+  would_buy_count?: number
+  wants_trial_count?: number
+  not_interested_count?: number
 }
 
 type HomeFeaturedProduct = {
@@ -62,6 +66,20 @@ type PublicVoteType =
   | "would_buy"
   | "wants_trial"
   | "not_interested"
+
+type PublicVoteCountKey =
+  | "interested_count"
+  | "would_buy_count"
+  | "wants_trial_count"
+  | "not_interested_count"
+
+const voteCountFieldByType:
+  Record<PublicVoteType, PublicVoteCountKey> = {
+    interested: "interested_count",
+    would_buy: "would_buy_count",
+    wants_trial: "wants_trial_count",
+    not_interested: "not_interested_count",
+  }
 
 const publicVoteOptions: Array<{
   type: PublicVoteType
@@ -278,6 +296,24 @@ function clearStoredCommunitySubscriberId() {
   )
 }
 
+function getIdeaVoteTotal(
+  idea?: PublicIdea
+) {
+  return Number(
+    idea?.total_votes || 0
+  )
+}
+
+function getIdeaStrongIntentVotes(
+  idea?: PublicIdea
+) {
+  return Number(
+    idea?.would_buy_count || 0
+  ) + Number(
+    idea?.wants_trial_count || 0
+  )
+}
+
 async function getPublicIdeas() {
   const response =
     await fetch(
@@ -337,6 +373,8 @@ async function getHomeFeaturedProduct() {
 
 export default function IMNOVAPage() {
   const [showPopup, setShowPopup] = useState(false)
+  const [communityAfterSuccessHref, setCommunityAfterSuccessHref] =
+    useState("/miembro")
   const [publicIdeas, setPublicIdeas] =
     useState<PublicIdea[]>(fallbackPublicIdeas)
   const [isLoadingPublicIdeas, setIsLoadingPublicIdeas] =
@@ -347,14 +385,35 @@ export default function IMNOVAPage() {
     useState(true)
   const [votedIdeas, setVotedIdeas] =
     useState<Record<string, PublicVoteType>>({})
-  const [memberAssociatedVotes, setMemberAssociatedVotes] =
-    useState<Record<string, boolean>>({})
   const [votingIdeaKey, setVotingIdeaKey] = useState<string | null>(null)
   const [voteError, setVoteError] = useState("")
 
   const featuredIdea = publicIdeas[0]
-  const featuredIdeaVoteCount =
-    Number(featuredIdea?.total_votes || 0)
+  const ideaPulseItems =
+    [...publicIdeas]
+      .sort((ideaA, ideaB) =>
+        getIdeaVoteTotal(ideaB) -
+        getIdeaVoteTotal(ideaA)
+      )
+      .slice(0, 3)
+  const leadingIdea =
+    ideaPulseItems[0] ||
+    featuredIdea
+  const leadingIdeaVoteCount =
+    getIdeaVoteTotal(leadingIdea)
+  const leadingIdeaStrongIntentVotes =
+    getIdeaStrongIntentVotes(leadingIdea)
+  const totalPublicIdeaVotes =
+    publicIdeas.reduce(
+      (total, idea) =>
+        total + getIdeaVoteTotal(idea),
+      0
+    )
+  const maxPulseVotes =
+    Math.max(
+      1,
+      ...ideaPulseItems.map(getIdeaVoteTotal)
+    )
 
   useEffect(() => {
     let isMounted =
@@ -419,6 +478,12 @@ export default function IMNOVAPage() {
   }, [])
 
   const openCommunity = () => {
+    setCommunityAfterSuccessHref("/miembro")
+    setShowPopup(true)
+  }
+
+  const openCommunityForVoting = () => {
+    setCommunityAfterSuccessHref("/#ideas-activas")
     setShowPopup(true)
   }
 
@@ -431,14 +496,25 @@ export default function IMNOVAPage() {
     voteType: PublicVoteType
   ) => {
     setVoteError("")
+    const previousVoteType =
+      votedIdeas[idea.key]
+
+    const storedSubscriberId =
+      getStoredCommunitySubscriberId()
+
+    if (!storedSubscriberId) {
+      setVoteError(
+        "Para votar, primero únete gratis a la comunidad IMNOVA. Así tu voto cuenta una sola vez y suma a tu participación."
+      )
+      openCommunityForVoting()
+      return
+    }
+
     setVotingIdeaKey(idea.key)
 
     try {
       const clientVoteKey =
         getClientVoteKey()
-
-      const storedSubscriberId =
-        getStoredCommunitySubscriberId()
 
       const baseVotePayload = {
           product_id:
@@ -456,7 +532,7 @@ export default function IMNOVAPage() {
       }
 
       const sendVote = async (
-        subscriberId?: string
+        subscriberId: string
       ) => {
         const response = await fetch("/api/community/vote", {
           method: "POST",
@@ -465,12 +541,8 @@ export default function IMNOVAPage() {
           },
           body: JSON.stringify({
             ...baseVotePayload,
-            ...(subscriberId
-              ? {
-                  subscriber_id:
-                    subscriberId,
-                }
-              : {}),
+            subscriber_id:
+              subscriberId,
           }),
         })
 
@@ -485,8 +557,6 @@ export default function IMNOVAPage() {
 
       let { response, result } =
         await sendVote(storedSubscriberId)
-      let voteAssociatedWithMember =
-        Boolean(storedSubscriberId)
 
       if (
         !response.ok &&
@@ -497,10 +567,11 @@ export default function IMNOVAPage() {
         )
       ) {
         clearStoredCommunitySubscriberId()
-        voteAssociatedWithMember =
-          false
-        ;({ response, result } =
-          await sendVote())
+        setVoteError(
+          "Necesitamos confirmar tu membresía antes de registrar el voto. Únete o actualiza tu registro y vuelve a votar."
+        )
+        openCommunityForVoting()
+        return
       }
 
       if (!response.ok || !result?.success) {
@@ -512,23 +583,56 @@ export default function IMNOVAPage() {
         [idea.key]: voteType,
       }))
 
-      setMemberAssociatedVotes(current => ({
-        ...current,
-        [idea.key]:
-          voteAssociatedWithMember,
-      }))
-
       if (result?.created) {
         setPublicIdeas(current =>
           current.map(currentIdea =>
-            currentIdea.key === idea.key
-              ? {
-                  ...currentIdea,
-                  total_votes:
-                    Number(currentIdea.total_votes || 0) + 1,
-                }
-              : currentIdea
+            {
+              if (currentIdea.key !== idea.key) {
+                return currentIdea
+              }
+
+              const nextVoteField =
+                voteCountFieldByType[voteType]
+
+              return {
+                ...currentIdea,
+                total_votes:
+                  Number(currentIdea.total_votes || 0) + 1,
+                [nextVoteField]:
+                  Number(currentIdea[nextVoteField] || 0) + 1,
+              }
+            }
           )
+        )
+      }
+
+      if (
+        result?.updated &&
+        previousVoteType &&
+        previousVoteType !== voteType
+      ) {
+        setPublicIdeas(current =>
+          current.map(currentIdea => {
+            if (currentIdea.key !== idea.key) {
+              return currentIdea
+            }
+
+            const previousVoteField =
+              voteCountFieldByType[previousVoteType]
+            const nextVoteField =
+              voteCountFieldByType[voteType]
+
+            return {
+              ...currentIdea,
+              [previousVoteField]:
+                Math.max(
+                  0,
+                  Number(currentIdea[previousVoteField] || 0) - 1
+                ),
+              [nextVoteField]:
+                Number(currentIdea[nextVoteField] || 0) + 1,
+            }
+          })
         )
       }
 
@@ -743,38 +847,113 @@ export default function IMNOVAPage() {
 
               <div
                 id="idea-activa"
-                className="mt-3 scroll-mt-28 rounded-[24px] border border-cyan-200/14 bg-stone-950/82 p-4 text-white"
+                className="mt-3 scroll-mt-28 overflow-hidden rounded-[28px] border border-cyan-200/14 bg-[radial-gradient(circle_at_80%_0%,rgba(103,232,249,0.16),transparent_32%),linear-gradient(135deg,rgba(8,12,12,0.96),rgba(24,18,12,0.92))] p-4 text-white shadow-[0_22px_70px_rgba(0,0,0,0.22)]"
               >
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-[10px] font-black uppercase tracking-[0.20em] text-cyan-100/70">
-                    Votación abierta
+                    Pulso de comunidad
                   </p>
-                  <span className="rounded-full border border-cyan-200/20 bg-cyan-200/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-cyan-50">
-                    {isLoadingPublicIdeas
-                      ? "Cargando"
-                      : `${publicIdeas.length} ideas activas`}
-                  </span>
-                  <span className="rounded-full border border-amber-200/25 bg-amber-200/12 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-amber-100">
-                    {isLoadingPublicIdeas
-                      ? "Votos"
-                      : `${featuredIdeaVoteCount} votos`}
-                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    <span className="rounded-full border border-cyan-200/20 bg-cyan-200/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-cyan-50">
+                      {isLoadingPublicIdeas
+                        ? "Cargando"
+                        : `${publicIdeas.length} ideas activas`}
+                    </span>
+                    <span className="rounded-full border border-amber-200/25 bg-amber-200/12 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-amber-100">
+                      {isLoadingPublicIdeas
+                        ? "Votos"
+                        : `${totalPublicIdeaVotes} votos totales`}
+                    </span>
+                  </div>
                 </div>
 
-                <h2 className="mt-3 text-xl font-black tracking-[-0.04em] md:text-2xl">
-                  {featuredIdea.title}
-                </h2>
-                <p className="mt-2 text-sm leading-6 text-white/65">
-                  Revisa el problema, la solución propuesta y vota en la sección
-                  completa de ideas.
-                </p>
-                <a
-                  href="#ideas-activas"
-                  className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-cyan-200 px-4 text-[10px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-200/70"
-                >
-                  Votar ideas
-                  <Vote className="h-3.5 w-3.5" />
-                </a>
+                <div className="mt-4 grid gap-3 xl:grid-cols-[0.9fr_1.1fr]">
+                  <div className="rounded-[22px] border border-white/10 bg-black/35 p-4">
+                    <p className="text-[10px] font-black uppercase tracking-[0.20em] text-amber-100/80">
+                      Liderando ahora
+                    </p>
+                    <h2 className="mt-3 text-2xl font-black leading-tight tracking-[-0.05em] md:text-3xl">
+                      {leadingIdea.title}
+                    </h2>
+                    <p className="mt-3 text-sm leading-6 text-white/66">
+                      {leadingIdeaVoteCount > 0
+                        ? `${leadingIdeaVoteCount} miembros ya participaron.`
+                        : "Aún no hay votos. Tu participación puede abrir la señal."}
+                    </p>
+                    <p className="mt-3 rounded-2xl border border-cyan-200/16 bg-cyan-200/8 px-4 py-3 text-xs font-bold leading-5 text-cyan-50/78">
+                      {leadingIdeaStrongIntentVotes > 0
+                        ? `${leadingIdeaStrongIntentVotes} marcaron intención fuerte: compraría o quiere prueba.`
+                        : "Cuando votes, IMNOVA sabrá si esta idea debe avanzar, ajustarse o pausarse."}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    {ideaPulseItems.map((idea, index) => {
+                      const ideaVotes =
+                        getIdeaVoteTotal(idea)
+                      const strongIntentVotes =
+                        getIdeaStrongIntentVotes(idea)
+                      const progressWidth =
+                        Math.max(
+                          8,
+                          Math.round(
+                            ideaVotes / maxPulseVotes * 100
+                          )
+                        )
+
+                      return (
+                        <a
+                          key={idea.key}
+                          href="#ideas-activas"
+                          className="group block rounded-[18px] border border-white/10 bg-white/[0.055] px-4 py-3 transition hover:-translate-y-0.5 hover:border-cyan-200/35 hover:bg-white/[0.08] focus:outline-none focus:ring-2 focus:ring-cyan-200/60"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-[9px] font-black uppercase tracking-[0.18em] text-cyan-100/55">
+                                Idea {index + 1}
+                              </p>
+                              <p className="mt-1 truncate text-sm font-black text-white">
+                                {idea.title}
+                              </p>
+                            </div>
+                            <span className="shrink-0 rounded-full bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-white">
+                              {ideaVotes} votos
+                            </span>
+                          </div>
+
+                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-cyan-200 to-amber-200 transition-all"
+                              style={{
+                                width:
+                                  `${progressWidth}%`,
+                              }}
+                            />
+                          </div>
+
+                          <p className="mt-2 text-[11px] leading-5 text-white/56">
+                            {strongIntentVotes > 0
+                              ? `${strongIntentVotes} con intención fuerte`
+                              : "Esperando primeras señales de intención"}
+                          </p>
+                        </a>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs leading-5 text-white/52">
+                    1 voto por miembro. Sin cuenta complicada.
+                  </p>
+                  <a
+                    href="#ideas-activas"
+                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-cyan-200 px-4 text-[10px] font-black uppercase tracking-[0.14em] text-stone-950 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-200/70"
+                  >
+                    Votar ideas
+                    <Vote className="h-3.5 w-3.5" />
+                  </a>
+                </div>
               </div>
             </div>
           </div>
@@ -1007,26 +1186,15 @@ export default function IMNOVAPage() {
                       aria-live="polite"
                       className="mt-4 rounded-2xl border border-cyan-200 bg-cyan-50 px-5 py-4 text-sm leading-7 text-cyan-900"
                     >
-                      {memberAssociatedVotes[idea.key]
-                        ? "Gracias. Tu voto quedó asociado a tu membresía IMNOVA y suma a tu participación."
-                        : "Gracias. Tu respuesta ayuda a decidir los próximos lanzamientos."}
+                      Gracias. Tu voto quedó asociado a tu membresía IMNOVA y
+                      suma a tu participación.
 
-                      {memberAssociatedVotes[idea.key] ? (
-                        <a
-                          href="/miembro"
-                          className="mt-3 inline-flex font-black text-cyan-900 underline decoration-cyan-400 underline-offset-4"
-                        >
-                          Ver mi área de miembro
-                        </a>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={openCommunity}
-                          className="mt-3 inline-flex font-black text-cyan-900 underline decoration-cyan-400 underline-offset-4"
-                        >
-                          Unirme a la comunidad para recibir avances
-                        </button>
-                      )}
+                      <a
+                        href="/miembro"
+                        className="mt-3 inline-flex font-black text-cyan-900 underline decoration-cyan-400 underline-offset-4"
+                      >
+                        Ver mi área de miembro
+                      </a>
                     </div>
                   )}
                 </div>
@@ -1398,6 +1566,7 @@ export default function IMNOVAPage() {
       <InnovaPopup
         isOpen={showPopup}
         onClose={closePopup}
+        successRedirectHref={communityAfterSuccessHref}
       />
 
       <Footer onOpenCommunity={openCommunity} />

@@ -676,6 +676,13 @@ export async function POST(
     )
   }
 
+  if (!subscriberId) {
+    return createErrorResponse(
+      "community_member_required",
+      401
+    )
+  }
+
   const email =
     normalizeEmail(
       body.email

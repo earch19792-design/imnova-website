@@ -190,46 +190,66 @@ function mapProductIdea(
 
 type PublicIdea = ReturnType<typeof mapProductIdea>
 
-function parseContentRangeCount(
-  value: string | null
-) {
-  const rawCount =
-    value?.split("/")?.[1]
-
-  const count =
-    Number(rawCount)
-
-  return Number.isFinite(count)
-    ? count
-    : 0
+type CommunityIdeaVoteRow = {
+  product_id: string | null
+  idea_key: string | null
+  vote_type: string | null
 }
 
-async function getIdeaVoteCount(
-  restUrl: string,
+type IdeaVoteSummary = {
+  total_votes: number
+  interested_count: number
+  would_buy_count: number
+  wants_trial_count: number
+  not_interested_count: number
+}
+
+function createEmptyVoteSummary(): IdeaVoteSummary {
+  return {
+    total_votes: 0,
+    interested_count: 0,
+    would_buy_count: 0,
+    wants_trial_count: 0,
+    not_interested_count: 0,
+  }
+}
+
+function getIdeaSummaryKey(
   idea: PublicIdea
 ) {
-  const field =
-    idea.id
-      ? "product_id"
-      : "idea_key"
+  return idea.id
+    ? `product:${idea.id}`
+    : `idea:${idea.key}`
+}
 
-  const value =
-    idea.id ||
-    idea.key
+async function getIdeaVoteSummaries(
+  restUrl: string,
+  ideas: PublicIdea[]
+) {
+  const productIds =
+    ideas
+      .map(idea => idea.id)
+      .filter(Boolean) as string[]
 
-  if (!value) {
-    return 0
+  const summaries =
+    new Map<string, IdeaVoteSummary>()
+
+  ideas.forEach(idea => {
+    summaries.set(
+      getIdeaSummaryKey(idea),
+      createEmptyVoteSummary()
+    )
+  })
+
+  if (productIds.length === 0) {
+    return summaries
   }
 
   const response =
     await fetch(
-      `${restUrl}/community_idea_votes?select=id&${field}=eq.${encodeURIComponent(value)}`,
+      `${restUrl}/community_idea_votes?select=product_id,idea_key,vote_type&product_id=in.(${productIds.map(encodeURIComponent).join(",")})`,
       {
-        method: "HEAD",
-        headers: {
-          ...getRestHeaders(),
-          Prefer: "count=exact",
-        },
+        headers: getRestHeaders(),
         cache: "no-store",
       }
     )
@@ -241,16 +261,53 @@ async function getIdeaVoteCount(
         .catch(() => "")
 
     console.error(
-      "GET COMMUNITY IDEAS VOTE COUNT ERROR:",
+      "GET COMMUNITY IDEAS VOTE SUMMARY ERROR:",
       details
     )
 
-    return 0
+    return summaries
   }
 
-  return parseContentRangeCount(
-    response.headers.get("content-range")
-  )
+  const votes =
+    await response
+      .json()
+      .catch(() => []) as CommunityIdeaVoteRow[]
+
+  votes.forEach(vote => {
+    const summaryKey =
+      vote.product_id
+        ? `product:${vote.product_id}`
+        : vote.idea_key
+          ? `idea:${vote.idea_key}`
+          : ""
+
+    const summary =
+      summaries.get(summaryKey)
+
+    if (!summary) {
+      return
+    }
+
+    summary.total_votes += 1
+
+    if (vote.vote_type === "interested") {
+      summary.interested_count += 1
+    }
+
+    if (vote.vote_type === "would_buy") {
+      summary.would_buy_count += 1
+    }
+
+    if (vote.vote_type === "wants_trial") {
+      summary.wants_trial_count += 1
+    }
+
+    if (vote.vote_type === "not_interested") {
+      summary.not_interested_count += 1
+    }
+  })
+
+  return summaries
 }
 
 export async function GET() {
@@ -353,17 +410,19 @@ export async function GET() {
     const ideas =
       products.map(mapProductIdea)
 
-    const ideasWithVoteCounts =
-      await Promise.all(
-        ideas.map(async idea => ({
-          ...idea,
-          total_votes:
-            await getIdeaVoteCount(
-              restUrl,
-              idea
-            ),
-        }))
+    const voteSummaries =
+      await getIdeaVoteSummaries(
+        restUrl,
+        ideas
       )
+
+    const ideasWithVoteCounts =
+      ideas.map(idea => ({
+          ...idea,
+          ...(voteSummaries.get(
+            getIdeaSummaryKey(idea)
+          ) || createEmptyVoteSummary()),
+        }))
 
     return NextResponse.json({
       success: true,
