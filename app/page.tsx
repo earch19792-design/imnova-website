@@ -162,7 +162,7 @@ const observatorySignals = [
 
 const trustSignals = [
   "Gratis y sin spam",
-  "Votas sin crear cuenta",
+  "Votas como miembro",
   "Beneficios por participar",
   "Compra solo cuando está disponible",
 ]
@@ -713,16 +713,16 @@ export default function IMNOVAPage() {
             src="/images/mash-coffee.png"
             alt=""
             aria-hidden="true"
-            className="absolute inset-y-0 right-0 h-full w-full scale-[1.02] object-cover object-center opacity-48 blur-[0.1px] md:opacity-58 lg:w-[64%] lg:opacity-92"
+            className="absolute inset-y-0 right-0 h-full w-full scale-[1.02] object-cover object-[58%_center] opacity-42 blur-[0.1px] md:opacity-52 lg:w-[68%] lg:object-center lg:opacity-88"
           />
-          <div className="absolute inset-0 bg-[linear-gradient(90deg,#050505_0%,rgba(5,5,5,0.96)_34%,rgba(5,5,5,0.70)_62%,rgba(5,5,5,0.22)_100%)]" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_73%_46%,rgba(245,158,11,0.25),transparent_31%),radial-gradient(circle_at_19%_18%,rgba(34,211,238,0.18),transparent_34%)]" />
+          <div className="absolute inset-0 bg-[linear-gradient(90deg,#050505_0%,rgba(5,5,5,0.96)_32%,rgba(5,5,5,0.72)_60%,rgba(5,5,5,0.28)_100%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_74%_42%,rgba(245,158,11,0.20),transparent_31%),radial-gradient(circle_at_17%_16%,rgba(34,211,238,0.22),transparent_34%)]" />
           <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#f6f1e8] via-[#f6f1e8]/20 to-transparent" />
           <div className="absolute inset-0 opacity-[0.12] bg-[linear-gradient(rgba(255,255,255,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.18)_1px,transparent_1px)] bg-[size:88px_88px]" />
         </div>
 
-        <div className="relative z-10 mx-auto grid max-w-7xl items-center gap-9 lg:min-h-[calc(100vh-8rem)] lg:grid-cols-[0.95fr_1.05fr] xl:gap-12">
-          <div className="max-w-[720px]">
+        <div className="relative z-10 mx-auto grid max-w-7xl items-center gap-9 lg:min-h-[calc(100vh-8rem)] lg:grid-cols-[0.88fr_1.12fr] xl:gap-12">
+          <div className="max-w-[680px]">
             <div className="inline-flex items-center gap-3 rounded-full border border-cyan-300/35 bg-cyan-300/10 px-4 py-2 shadow-[0_18px_46px_rgba(6,182,212,0.08)] backdrop-blur">
               <span className="h-2.5 w-2.5 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(103,232,249,0.9)]" />
               <span className="text-[11px] font-black uppercase tracking-[0.22em] text-cyan-100">
@@ -730,17 +730,17 @@ export default function IMNOVAPage() {
               </span>
             </div>
 
-            <h1 className="mt-6 max-w-[720px] text-[3rem] font-black leading-[0.98] tracking-[-0.04em] text-white sm:text-[4rem] md:text-[4.7rem] lg:text-[4.1rem] xl:text-[4.65rem]">
-              La comunidad que decide lo próximo del mercado.
+            <h1 className="mt-6 max-w-[680px] text-[2.8rem] font-black leading-[0.94] tracking-[-0.04em] text-white sm:text-[3.7rem] md:text-[4.55rem] lg:text-[4.2rem] xl:text-[4.75rem]">
+              Vota lo próximo. Compra solo lo que ya está listo.
             </h1>
 
-            <p className="mt-6 max-w-2xl text-base leading-8 text-white/72 md:text-lg md:leading-8">
-              Vota ideas, descubre tendencias y recibe beneficios cuando los
-              productos llegan primero a IMNOVA. Tu opinión ayuda a decidir qué
-              avanza, qué se ajusta y qué se pausa.
+            <p className="mt-6 max-w-2xl text-base leading-8 text-white/74 md:text-lg md:leading-8">
+              IMNOVA convierte tendencias e ideas en productos validados por la
+              comunidad. Únete gratis, vota ideas y recibe beneficios cuando
+              los productos llegan al mercado.
             </p>
 
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
               <button
                 type="button"
                 onClick={openCommunity}
@@ -756,6 +756,14 @@ export default function IMNOVAPage() {
               >
                 Votar ideas
                 <Vote className="h-4 w-4" />
+              </a>
+
+              <a
+                href="#available-now"
+                className="inline-flex min-h-14 items-center justify-center gap-3 rounded-full border border-amber-200/28 bg-amber-200/10 px-8 text-[12px] font-black uppercase tracking-[0.14em] text-amber-50 shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:bg-amber-200 hover:text-stone-950 focus:outline-none focus:ring-2 focus:ring-amber-200/50"
+              >
+                Ver producto
+                <ShoppingBag className="h-4 w-4" />
               </a>
             </div>
 
