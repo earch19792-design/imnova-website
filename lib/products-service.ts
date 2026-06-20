@@ -1,4 +1,7 @@
-import { supabase } from "./supabase"
+import {
+  isSupabaseConfigured,
+  supabase,
+} from "./supabase"
 
 type ProductsQueryOptions = {
   limit?: number
@@ -1214,6 +1217,14 @@ export async function getAvailableProducts(
 }
 
 export async function getProductStates() {
+
+  if (!isSupabaseConfigured) {
+    console.warn(
+      "GET PRODUCT STATES SKIPPED: Supabase public environment is not configured."
+    )
+
+    return []
+  }
 
   const { data, error } =
     await supabase
