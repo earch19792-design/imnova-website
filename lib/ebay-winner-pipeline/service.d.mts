@@ -1,0 +1,2 @@
+export function processRadarCandidateWithPersistence(args: { supabase: any, radarProduct: Record<string, any>, config?: Record<string, any> }): Promise<Record<string, any>>
+export function recordCandidateDecision(args: { supabase: any, candidateId: string, candidateKey: string, action: string, messageId?: string, decidedBy?: string, payload?: Record<string, any> }): Promise<Record<string, any>>
