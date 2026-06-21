@@ -19,9 +19,14 @@ const LUNAPORTEX_COLLECTIONS = [
   "out-of-stock",
 ]
 
+const LUNAPORTEX_AUTH_COOKIE =
+  process.env.LUNAPORTEX_AUTH_COOKIE?.trim() ||
+  ""
+
 const SHOPIFY_PAGE_LIMIT = 250
 const SHOPIFY_MAX_PAGES = 30
 const SHOPIFY_PAGE_DELAY_MS = 250
+const SHOPIFY_AUTH_PRODUCT_DELAY_MS = 150
 const POSTGREST_FILTER_CHUNK_SIZE = 100
 
 type ShopifyVariant = {
@@ -57,6 +62,12 @@ type ShopifyProduct = {
 type ShopifyProductsResponse = {
   products?: ShopifyProduct[]
 }
+
+type ShopifyProductResponse =
+  | ShopifyProduct
+  | {
+      product?: ShopifyProduct
+    }
 
 type AggregatedProduct = ShopifyProduct & {
   collections: Set<string>
@@ -191,6 +202,123 @@ function getInteger(
   }
 
   return Math.trunc(numericValue)
+}
+
+function getLunaPortexRequestHeaders() {
+  const headers: Record<string, string> = {
+    Accept:
+      "application/json",
+    "User-Agent":
+      "IMNOVA-Market-Radar/1.0",
+  }
+
+  if (LUNAPORTEX_AUTH_COOKIE) {
+    headers.Cookie =
+      LUNAPORTEX_AUTH_COOKIE
+  }
+
+  return headers
+}
+
+function hasVariantInventoryQuantity(
+  variant: ShopifyVariant
+) {
+  return typeof variant.inventory_quantity ===
+    "number"
+}
+
+function shouldHydrateProductInventory(
+  product: AggregatedProduct
+) {
+  return Boolean(
+    LUNAPORTEX_AUTH_COOKIE &&
+    getString(product.handle) &&
+    product.variants?.some(
+      variant =>
+        !hasVariantInventoryQuantity(
+          variant
+        )
+    )
+  )
+}
+
+function mergeAuthenticatedVariantInventory(
+  product: AggregatedProduct,
+  authenticatedProduct: ShopifyProduct
+) {
+  const authenticatedVariants =
+    authenticatedProduct.variants || []
+
+  if (authenticatedVariants.length === 0) {
+    return false
+  }
+
+  const authenticatedById =
+    new Map(
+      authenticatedVariants.map(variant => [
+        String(variant.id || ""),
+        variant,
+      ])
+    )
+
+  const authenticatedBySku =
+    new Map(
+      authenticatedVariants
+        .filter(variant =>
+          Boolean(getString(variant.sku))
+        )
+        .map(variant => [
+          getString(variant.sku),
+          variant,
+        ])
+    )
+
+  let changed =
+    false
+
+  product.variants =
+    (product.variants || []).map(variant => {
+      const authenticatedVariant =
+        authenticatedById.get(
+          String(variant.id || "")
+        ) ||
+        authenticatedBySku.get(
+          getString(variant.sku)
+        )
+
+      if (
+        !authenticatedVariant ||
+        !hasVariantInventoryQuantity(
+          authenticatedVariant
+        )
+      ) {
+        return variant
+      }
+
+      changed =
+        true
+
+      return {
+        ...variant,
+        inventory_quantity:
+          authenticatedVariant.inventory_quantity,
+      }
+    })
+
+  return changed
+}
+
+function normalizeAuthenticatedProductPayload(
+  payload: ShopifyProductResponse
+) {
+  if (
+    "product" in payload &&
+    payload.product
+  ) {
+    return payload.product
+  }
+
+  return payload as ShopifyProduct
 }
 
 function normalizeTags(
@@ -373,12 +501,8 @@ async function fetchCollectionProducts(
       await fetch(
         url,
         {
-          headers: {
-            Accept:
-              "application/json",
-            "User-Agent":
-              "IMNOVA-Market-Radar/1.0",
-          },
+          headers:
+            getLunaPortexRequestHeaders(),
           cache:
             "no-store",
         }
@@ -415,6 +539,109 @@ async function fetchCollectionProducts(
       SHOPIFY_PAGE_DELAY_MS
     )
   }
+
+  return products
+}
+
+async function fetchAuthenticatedProductInventory(
+  handle: string
+) {
+  if (!LUNAPORTEX_AUTH_COOKIE) {
+    return null
+  }
+
+  const response =
+    await fetch(
+      `${LUNAPORTEX_BASE_URL}/products/${handle}.js`,
+      {
+        headers:
+          getLunaPortexRequestHeaders(),
+        cache:
+          "no-store",
+      }
+    )
+
+  if (!response.ok) {
+    console.warn(
+      "LUNA PORTEX AUTH PRODUCT INVENTORY FETCH WARNING:",
+      {
+        handle,
+        status:
+          response.status,
+      }
+    )
+
+    return null
+  }
+
+  const payload =
+    await response.json() as ShopifyProductResponse
+
+  return normalizeAuthenticatedProductPayload(
+    payload
+  )
+}
+
+async function hydrateAuthenticatedInventoryQuantities(
+  products: AggregatedProduct[]
+) {
+  if (!LUNAPORTEX_AUTH_COOKIE) {
+    return products
+  }
+
+  let hydratedProducts =
+    0
+
+  for (const product of products) {
+    if (!shouldHydrateProductInventory(product)) {
+      continue
+    }
+
+    const handle =
+      getString(product.handle)
+
+    try {
+      const authenticatedProduct =
+        await fetchAuthenticatedProductInventory(
+          handle
+        )
+
+      if (
+        authenticatedProduct &&
+        mergeAuthenticatedVariantInventory(
+          product,
+          authenticatedProduct
+        )
+      ) {
+        hydratedProducts += 1
+      }
+    } catch (error) {
+      console.warn(
+        "LUNA PORTEX AUTH INVENTORY HYDRATION WARNING:",
+        {
+          handle,
+          error:
+            error instanceof Error
+              ? error.message
+              : String(error),
+        }
+      )
+    }
+
+    await wait(
+      SHOPIFY_AUTH_PRODUCT_DELAY_MS
+    )
+  }
+
+  console.log(
+    "LUNA PORTEX AUTH INVENTORY HYDRATION:",
+    {
+      enabled: true,
+      hydratedProducts,
+      checkedProducts:
+        products.length,
+    }
+  )
 
   return products
 }
@@ -469,8 +696,10 @@ async function fetchLunaPortexProducts() {
     )
   }
 
-  return Array.from(
-    productMap.values()
+  return hydrateAuthenticatedInventoryQuantities(
+    Array.from(
+      productMap.values()
+    )
   )
 }
 
