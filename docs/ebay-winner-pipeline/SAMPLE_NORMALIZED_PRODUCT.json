@@ -1,0 +1,95 @@
+{
+  "candidate_key": "lunaportex:market_radar_product_uuid:supplier_variant_id",
+  "source": {
+    "key": "lunaportex",
+    "name": "Luna Portex",
+    "base_url": "https://lunaportex.com"
+  },
+  "market_radar": {
+    "product_id": "market_radar_product_uuid",
+    "snapshot_id": "market_radar_snapshot_uuid",
+    "supplier_product_id": "1234567890",
+    "supplier_variant_id": "9876543210",
+    "handle": "example-product-handle",
+    "first_seen_at": "2026-06-21T00:00:00.000Z",
+    "last_seen_at": "2026-06-21T00:15:00.000Z",
+    "last_captured_at": "2026-06-21T00:15:00.000Z"
+  },
+  "product": {
+    "sku": "SUPPLIER-SKU-001",
+    "title": "Example Luna Portex Product",
+    "variant_title": "Default Title",
+    "url": "https://lunaportex.com/products/example-product-handle",
+    "brand": "Example Brand",
+    "product_type": "Example Type",
+    "tags": ["tag-a", "tag-b"],
+    "body_html": "<p>Supplier description if available.</p>",
+    "identifiers": {
+      "upc": null,
+      "gtin": null,
+      "mpn": null
+    },
+    "package": {
+      "weight": null,
+      "weight_unit": null,
+      "dimensions": {
+        "length": null,
+        "width": null,
+        "height": null,
+        "unit": null
+      }
+    },
+    "images": {
+      "featured_image_url": "https://cdn.example.com/product-main.jpg",
+      "image_urls": [
+        "https://cdn.example.com/product-main.jpg",
+        "https://cdn.example.com/product-side.jpg"
+      ]
+    }
+  },
+  "supplier_offer": {
+    "cost": 19.99,
+    "compare_at_price": 29.99,
+    "currency": "USD",
+    "available": true,
+    "stock": 12,
+    "collections": ["products", "weekly-deals"],
+    "discount_percent": 33.34
+  },
+  "signals": {
+    "opportunity_score": 72.5,
+    "rotation_score": 20,
+    "price_score": 7,
+    "stock_score": 12,
+    "discount_score": 20,
+    "collection_score": 12,
+    "event_count_24h": 1,
+    "event_count_7d": 5,
+    "restock_count_7d": 1,
+    "out_of_stock_count_7d": 1,
+    "price_change_count_7d": 2,
+    "last_event_at": "2026-06-21T00:10:00.000Z"
+  },
+  "winner_pipeline": {
+    "state": "DETECTED",
+    "winner_score": null,
+    "needs_data": ["gtin_or_mpn", "weight", "dimensions", "ebay_category_id"],
+    "blocked_reason": null,
+    "profit": {
+      "target_price": null,
+      "estimated_fees": null,
+      "estimated_shipping": null,
+      "estimated_profit": null,
+      "estimated_margin_percent": null,
+      "assumptions": {}
+    },
+    "compliance": {
+      "overall_status": "not_checked",
+      "brand_status": "unknown",
+      "restricted_category_status": "unknown",
+      "vero_risk_status": "unknown",
+      "hazmat_status": "unknown"
+    }
+  },
+  "raw_available_in_market_radar_snapshots": true
+}
