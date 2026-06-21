@@ -34,6 +34,17 @@ type MarketRadarApiResponse = {
   success: boolean
   dashboard?: MarketRadarDashboard
   sync?: MarketRadarSyncResult
+  notification?: {
+    success?: boolean
+    total?: number
+    successful?: number
+    failed?: number
+    opportunityCount?: number
+    templateName?: string
+    skipped?: boolean
+    message?: string
+    error?: string
+  }
   error?: string
 }
 
@@ -146,6 +157,21 @@ function formatNumber(
       maximumFractionDigits: 1,
     }
   ).format(numericValue)
+}
+
+function formatInventoryQuantity(
+  value: number | null | undefined
+) {
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return "Cantidad no expuesta"
+  }
+
+  return `${new Intl.NumberFormat(
+    "en-US"
+  ).format(value)} unidades`
 }
 
 function formatDate(
@@ -417,6 +443,12 @@ function ProductRow({
         >
           {getProductStatusLabel(product)}
         </span>
+        <p className="mt-2 text-xs font-semibold text-white/70">
+          {formatInventoryQuantity(product.inventory_quantity)}
+        </p>
+        <p className="mt-1 text-[11px] text-white/35">
+          Cantidad disponible proveedor
+        </p>
       </td>
       <td className="px-4 py-4">
         <div className="flex flex-wrap gap-1.5">
@@ -513,6 +545,11 @@ export function MarketRadarPanel() {
   ] = useState(false)
 
   const [
+    isNotifying,
+    setIsNotifying,
+  ] = useState(false)
+
+  const [
     error,
     setError,
   ] = useState("")
@@ -521,6 +558,11 @@ export function MarketRadarPanel() {
     syncResult,
     setSyncResult,
   ] = useState<MarketRadarSyncResult | null>(null)
+
+  const [
+    notificationResult,
+    setNotificationResult,
+  ] = useState<MarketRadarApiResponse["notification"] | null>(null)
 
   const getAccessToken =
     useCallback(async () => {
@@ -546,7 +588,7 @@ export function MarketRadarPanel() {
   const requestDashboard =
     useCallback(async (
       options?: {
-        sync?: boolean
+        action?: "sync_lunaportex" | "notify_ebay_opportunities"
       }
     ) => {
       const token =
@@ -557,7 +599,7 @@ export function MarketRadarPanel() {
           "/api/admin/market-radar",
           {
             method:
-              options?.sync
+              options?.action
                 ? "POST"
                 : "GET",
             headers: {
@@ -567,10 +609,10 @@ export function MarketRadarPanel() {
                 "application/json",
             },
             body:
-              options?.sync
+              options?.action
                 ? JSON.stringify({
                     action:
-                      "sync_lunaportex",
+                      options.action,
                   })
                 : undefined,
           }
@@ -597,6 +639,13 @@ export function MarketRadarPanel() {
       if (payload.sync) {
         setSyncResult(
           payload.sync
+        )
+        setNotificationResult(null)
+      }
+
+      if (payload.notification) {
+        setNotificationResult(
+          payload.notification
         )
       }
     }, [getAccessToken])
@@ -631,8 +680,8 @@ export function MarketRadarPanel() {
 
       try {
         await requestDashboard({
-          sync:
-            true,
+          action:
+            "sync_lunaportex",
         })
       } catch (syncError) {
         console.error(
@@ -649,6 +698,34 @@ export function MarketRadarPanel() {
         setIsSyncing(false)
       }
     }, [requestDashboard])
+
+
+  const notifyEbayOpportunities =
+    useCallback(async () => {
+      setIsNotifying(true)
+      setError("")
+
+      try {
+        await requestDashboard({
+          action:
+            "notify_ebay_opportunities",
+        })
+      } catch (notifyError) {
+        console.error(
+          "NOTIFY MARKET RADAR ERROR:",
+          notifyError
+        )
+
+        setError(
+          notifyError instanceof Error
+            ? notifyError.message
+            : "No se pudo enviar el analisis por WhatsApp."
+        )
+      } finally {
+        setIsNotifying(false)
+      }
+    }, [requestDashboard])
+
 
   useEffect(() => {
     loadDashboard()
@@ -780,6 +857,38 @@ export function MarketRadarPanel() {
               />
               {isSyncing ? "Sincronizando" : "Sync Luna"}
             </button>
+
+            <button
+              onClick={notifyEbayOpportunities}
+              disabled={isNotifying || isSyncing || isLoading}
+              className="
+                inline-flex
+                items-center
+                gap-2
+                rounded-lg
+                border
+                border-emerald-300/30
+                bg-emerald-300/[0.12]
+                px-4
+                py-3
+                text-sm
+                font-black
+                text-emerald-50
+                transition
+                hover:bg-emerald-300/[0.18]
+                disabled:cursor-not-allowed
+                disabled:opacity-60
+              "
+            >
+              <Activity
+                className={`
+                  h-4
+                  w-4
+                  ${isNotifying ? "animate-pulse" : ""}
+                `}
+              />
+              {isNotifying ? "Enviando analisis" : "WhatsApp eBay"}
+            </button>
           </div>
         </div>
 
@@ -814,6 +923,26 @@ export function MarketRadarPanel() {
             <span>
               Scores: <strong className="text-white">{syncResult.scoredProducts}</strong>
             </span>
+          </div>
+        )}
+
+        {notificationResult && (
+          <div
+            className="
+              mt-5
+              rounded-lg
+              border
+              border-emerald-300/20
+              bg-emerald-300/[0.08]
+              p-4
+              text-xs
+              text-emerald-50/80
+            "
+          >
+            {notificationResult.skipped
+              ? notificationResult.message ||
+                "WhatsApp eBay no se envio porque no hay oportunidades fuertes en este momento."
+              : `WhatsApp eBay enviado con plantilla ${notificationResult.templateName || "imnova_update"}: ${notificationResult.successful || 0} de ${notificationResult.total || 0}. Oportunidades incluidas: ${notificationResult.opportunityCount || 0}.`}
           </div>
         )}
 
@@ -916,7 +1045,7 @@ export function MarketRadarPanel() {
                     Precio
                   </th>
                   <th className="px-4 py-3 font-medium">
-                    Stock
+                    Stock / Cantidad
                   </th>
                   <th className="px-4 py-3 font-medium">
                     Coleccion

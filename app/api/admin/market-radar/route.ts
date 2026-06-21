@@ -9,6 +9,9 @@ import {
   runLunaPortexMarketRadarSync,
 } from "@/lib/market-radar-lunaportex"
 import {
+  sendWhatsAppUpdate,
+} from "@/lib/whatsapp"
+import {
   type MarketRadarDashboard,
   type MarketRadarEventRow,
   type MarketRadarProductRow,
@@ -19,6 +22,100 @@ const LUNAPORTEX_SOURCE_KEY =
   "lunaportex"
 
 const POSTGREST_PAGE_SIZE = 1000
+
+function formatWhatsAppMoney(
+  value: number | string | null | undefined
+) {
+  const numericValue =
+    toNumber(value)
+
+  if (numericValue === null) {
+    return "precio sin dato"
+  }
+
+  return new Intl.NumberFormat(
+    "en-US",
+    {
+      style: "currency",
+      currency: "USD",
+    }
+  ).format(numericValue)
+}
+
+function formatWhatsAppQuantity(
+  value: number | null | undefined
+) {
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return "cantidad no expuesta"
+  }
+
+  return `${new Intl.NumberFormat(
+    "en-US"
+  ).format(value)} unidades`
+}
+
+function buildMarketRadarWhatsAppAnalysis(
+  products: MarketRadarProductRow[]
+) {
+  const opportunities =
+    products
+      .filter(product => {
+        const score =
+          toNumber(
+            product.opportunity_score
+          ) || 0
+
+        return (
+          score >= 70 &&
+          product.available === true
+        )
+      })
+      .slice(
+        0,
+        3
+      )
+
+  if (opportunities.length === 0) {
+    return {
+      product:
+        "Radar eBay IMNOVA",
+      status:
+        "Sin alerta enviada: hoy no hay oportunidades fuertes para eBay.",
+      progress:
+        "El radar no encontro productos con score 70+, stock disponible y precio claro. Recomiendo correr otro sync antes de decidir nuevos listings.",
+      opportunityCount:
+        0,
+      shouldNotify:
+        false,
+    }
+  }
+
+  const lines =
+    opportunities.map((product, index) => {
+      const score =
+        toNumber(
+          product.opportunity_score
+        ) || 0
+
+      return `${index + 1}) ${product.title}: score ${Math.round(score)}, ${formatWhatsAppMoney(product.price)}, ${formatWhatsAppQuantity(product.inventory_quantity)}.`
+    })
+
+  return {
+    product:
+      `Radar eBay: ${opportunities.length} oportunidad${opportunities.length === 1 ? "" : "es"} potencial${opportunities.length === 1 ? "" : "es"}`,
+    status:
+      "Detecte productos con buena senal para revisar como listing de eBay.",
+    progress:
+      `${lines.join(" ")} Mi recomendacion: validar margen, envio, reglas de marca y fotos antes de publicar.`,
+    opportunityCount:
+      opportunities.length,
+    shouldNotify:
+      true,
+  }
+}
 
 function createUnauthorizedResponse(
   error: string,
@@ -474,7 +571,9 @@ export async function POST(
 
     if (
       body.action !==
-      "sync_lunaportex"
+      "sync_lunaportex" &&
+      body.action !==
+      "notify_ebay_opportunities"
     ) {
       return NextResponse.json(
         {
@@ -484,6 +583,69 @@ export async function POST(
         },
         {
           status: 400,
+        }
+      )
+    }
+
+    if (
+      body.action ===
+      "notify_ebay_opportunities"
+    ) {
+      const dashboard =
+        await getMarketRadarDashboard()
+
+      const analysis =
+        buildMarketRadarWhatsAppAnalysis(
+          dashboard.products
+        )
+
+      if (!analysis.shouldNotify) {
+        return NextResponse.json({
+          success: true,
+          dashboard,
+          notification: {
+            success: true,
+            total: 0,
+            successful: 0,
+            failed: 0,
+            opportunityCount:
+              analysis.opportunityCount,
+            templateName:
+              "imnova_update",
+            skipped: true,
+            message:
+              analysis.status,
+          },
+        })
+      }
+
+      const notification =
+        await sendWhatsAppUpdate(
+          analysis.product,
+          analysis.status,
+          analysis.progress
+        )
+
+      const responseBody = {
+        success:
+          notification.success,
+        dashboard,
+        notification: {
+          ...notification,
+          opportunityCount:
+            analysis.opportunityCount,
+          templateName:
+            "imnova_update",
+        },
+      }
+
+      return NextResponse.json(
+        responseBody,
+        {
+          status:
+            notification.success
+              ? 200
+              : 502,
         }
       )
     }
@@ -514,7 +676,7 @@ export async function POST(
       {
         success: false,
         error:
-          "market_radar_sync_failed",
+          "market_radar_action_failed",
       },
       {
         status: 500,
