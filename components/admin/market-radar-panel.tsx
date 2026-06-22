@@ -2,6 +2,7 @@
 
 import {
   type ElementType,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -735,8 +736,8 @@ function PriceInput({
   type?: string
 }) {
   return (
-    <label className="block">
-      <span className="text-[10px] uppercase tracking-[0.16em] text-white/35">
+    <label className="block min-w-0">
+      <span className="block break-words text-[10px] uppercase leading-4 tracking-[0.16em] text-white/35">
         {label}
       </span>
       <input
@@ -778,8 +779,8 @@ function PriceSelect({
   onChange: (value: string) => void
 }) {
   return (
-    <label className="block">
-      <span className="text-[10px] uppercase tracking-[0.16em] text-white/35">
+    <label className="block min-w-0">
+      <span className="block break-words text-[10px] uppercase leading-4 tracking-[0.16em] text-white/35">
         {label}
       </span>
       <select
@@ -816,6 +817,33 @@ function PriceSelect({
   )
 }
 
+function PriceFormGroup({
+  title,
+  children,
+}: {
+  title: string
+  children: ReactNode
+}) {
+  return (
+    <section
+      className="
+        rounded-lg
+        border
+        border-white/10
+        bg-white/[0.025]
+        p-4
+      "
+    >
+      <h4 className="text-xs font-black uppercase tracking-[0.18em] text-white/50">
+        {title}
+      </h4>
+      <div className="mt-4">
+        {children}
+      </div>
+    </section>
+  )
+}
+
 function PriceIntelligenceModal({
   product,
   form,
@@ -835,7 +863,7 @@ function PriceIntelligenceModal({
   onSubmit: () => void
 }) {
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center overflow-hidden bg-black/70 px-3 py-4 backdrop-blur-sm sm:px-5">
       <button
         type="button"
         aria-label="Cerrar Price Intelligence"
@@ -846,31 +874,31 @@ function PriceIntelligenceModal({
         className="
           relative
           z-10
-          max-h-[92vh]
-          w-full
-          max-w-4xl
-          overflow-y-auto
+          flex
+          max-h-[90vh]
+          w-[min(100%,56rem)]
+          max-w-[calc(100vw-1.5rem)]
+          flex-col
+          overflow-hidden
           rounded-lg
           border
           border-white/10
           bg-zinc-950
-          p-5
           shadow-2xl
-          md:p-6
         "
       >
-        <div className="flex items-start justify-between gap-4">
-          <div>
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-white/10 bg-zinc-950 px-5 py-5 md:px-6">
+          <div className="min-w-0">
             <p className="text-[10px] uppercase tracking-[0.26em] text-cyan-100/55">
               Price Intelligence
             </p>
-            <h3 className="mt-3 text-2xl font-black text-white">
+            <h3 className="mt-3 text-xl font-black text-white md:text-2xl">
               Agregar precio de mercado
             </h3>
-            <p className="mt-2 text-sm leading-6 text-white/50">
+            <p className="mt-2 max-w-3xl break-words text-sm leading-6 text-white/55">
               {product.title}
             </p>
-            <p className="mt-1 text-xs text-white/35">
+            <p className="mt-1 break-all text-xs text-white/35">
               SKU: {getStableSupplierSku(product)}
             </p>
           </div>
@@ -883,6 +911,7 @@ function PriceIntelligenceModal({
               border-white/10
               bg-white/[0.04]
               p-2
+              shrink-0
               text-white/60
               transition
               hover:border-cyan-300/25
@@ -894,7 +923,9 @@ function PriceIntelligenceModal({
           </button>
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 md:px-6">
+          <PriceFormGroup title="Fuente y confianza">
+            <div className="grid gap-4 md:grid-cols-3">
           <PriceSelect
             label="source_type"
             value={form.source_type}
@@ -928,22 +959,24 @@ function PriceIntelligenceModal({
               )
             }
           />
-        </div>
+            </div>
 
-        <div className="mt-4">
-          <PriceInput
-            label="search_query"
-            value={form.search_query}
-            onChange={value =>
-              onChange(
-                "search_query",
-                value
-              )
-            }
-          />
-        </div>
+            <div className="mt-4">
+              <PriceInput
+                label="search_query"
+                value={form.search_query}
+                onChange={value =>
+                  onChange(
+                    "search_query",
+                    value
+                  )
+                }
+              />
+            </div>
+          </PriceFormGroup>
 
-        <div className="mt-4 grid gap-4 md:grid-cols-4">
+          <PriceFormGroup title="Precios vendidos">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <PriceInput
             label="sold_avg_price"
             type="number"
@@ -999,6 +1032,11 @@ function PriceIntelligenceModal({
               )
             }
           />
+            </div>
+          </PriceFormGroup>
+
+          <PriceFormGroup title="Precios activos">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <PriceInput
             label="active_avg_price"
             type="number"
@@ -1043,6 +1081,11 @@ function PriceIntelligenceModal({
               )
             }
           />
+            </div>
+          </PriceFormGroup>
+
+          <PriceFormGroup title="Shipping y precio recomendado">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <PriceInput
             label="estimated_shipping_cost"
             type="number"
@@ -1076,9 +1119,11 @@ function PriceIntelligenceModal({
               )
             }
           />
-        </div>
+            </div>
+          </PriceFormGroup>
 
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <PriceFormGroup title="Evidencia y categoria">
+            <div className="grid gap-4 md:grid-cols-2">
           <PriceInput
             label="category_id"
             value={form.category_id}
@@ -1114,8 +1159,8 @@ function PriceIntelligenceModal({
           />
         </div>
 
-        <label className="mt-4 block">
-          <span className="text-[10px] uppercase tracking-[0.16em] text-white/35">
+            <label className="mt-4 block min-w-0">
+          <span className="block break-words text-[10px] uppercase leading-4 tracking-[0.16em] text-white/35">
             evidence_notes
           </span>
           <textarea
@@ -1144,9 +1189,11 @@ function PriceIntelligenceModal({
               focus:border-cyan-300/30
             "
           />
-        </label>
+            </label>
+          </PriceFormGroup>
+        </div>
 
-        <div className="mt-6 flex flex-wrap justify-end gap-3">
+        <div className="sticky bottom-0 z-10 flex flex-col-reverse gap-3 border-t border-white/10 bg-zinc-950 px-5 py-4 sm:flex-row sm:justify-end md:px-6">
           <button
             type="button"
             onClick={onClose}
@@ -1159,6 +1206,7 @@ function PriceIntelligenceModal({
               py-3
               text-sm
               font-semibold
+              sm:min-w-32
               text-white/70
               transition
               hover:border-white/20
@@ -1183,6 +1231,7 @@ function PriceIntelligenceModal({
               py-3
               text-sm
               font-black
+              sm:min-w-56
               text-black
               transition
               hover:bg-cyan-200
