@@ -139,6 +139,32 @@ type EbayAuditLog = {
   created_at?: string | null
 }
 
+type PriceIntelligenceSnapshot = {
+  id: string
+  source_type?: string | null
+  marketplace?: string | null
+  search_query?: string | null
+  product_match_type?: string | null
+  sold_avg_price?: number | string | null
+  sold_median_price?: number | string | null
+  sold_min_price?: number | string | null
+  sold_max_price?: number | string | null
+  sold_comp_count?: number | null
+  active_avg_price?: number | string | null
+  active_min_price?: number | string | null
+  active_max_price?: number | string | null
+  active_comp_count?: number | null
+  estimated_shipping_cost?: number | string | null
+  recommended_sale_price?: number | string | null
+  confidence_score?: number | string | null
+  source_confidence?: string | null
+  category_id?: string | null
+  category_name?: string | null
+  evidence_url?: string | null
+  evidence_notes?: string | null
+  created_at?: string | null
+}
+
 type EbayCandidateDetail = {
   candidate: EbayCandidate
   validation?: EbayValidation | null
@@ -149,6 +175,8 @@ type EbayCandidateDetail = {
   decisions?: EbayDecision[]
   localDraft?: EbayDraft | null
   auditLog?: EbayAuditLog[]
+  priceIntelligence?: PriceIntelligenceSnapshot | null
+  priceIntelligenceSnapshots?: PriceIntelligenceSnapshot[]
 }
 
 type EbayDashboard = {
@@ -281,6 +309,24 @@ function formatDate(
     )
   } catch {
     return "Fecha no disponible"
+  }
+}
+
+function isSafeHttpUrl(
+  value?: string | null
+) {
+  if (!value) {
+    return false
+  }
+
+  try {
+    const url =
+      new URL(value)
+
+    return url.protocol === "http:" ||
+      url.protocol === "https:"
+  } catch {
+    return false
   }
 }
 
@@ -674,6 +720,133 @@ function CandidateDetailDrawer({
               <JsonPreview
                 value={detail.profitScenario?.assumptions}
               />
+            </DetailSection>
+
+            <DetailSection title="Price Intelligence">
+              {detail.priceIntelligence ? (
+                <>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <Field
+                      label="recommended_sale_price"
+                      value={formatCurrency(
+                        detail.priceIntelligence.recommended_sale_price
+                      )}
+                    />
+                    <Field
+                      label="source_type"
+                      value={detail.priceIntelligence.source_type}
+                    />
+                    <Field
+                      label="source_confidence"
+                      value={detail.priceIntelligence.source_confidence}
+                    />
+                    <Field
+                      label="confidence_score"
+                      value={formatNumber(
+                        detail.priceIntelligence.confidence_score
+                      )}
+                    />
+                    <Field
+                      label="sold_median"
+                      value={formatCurrency(
+                        detail.priceIntelligence.sold_median_price
+                      )}
+                    />
+                    <Field
+                      label="sold_avg"
+                      value={formatCurrency(
+                        detail.priceIntelligence.sold_avg_price
+                      )}
+                    />
+                    <Field
+                      label="sold_range"
+                      value={`${formatCurrency(
+                        detail.priceIntelligence.sold_min_price
+                      )} - ${formatCurrency(
+                        detail.priceIntelligence.sold_max_price
+                      )}`}
+                    />
+                    <Field
+                      label="sold_comp_count"
+                      value={detail.priceIntelligence.sold_comp_count}
+                    />
+                    <Field
+                      label="active_avg"
+                      value={formatCurrency(
+                        detail.priceIntelligence.active_avg_price
+                      )}
+                    />
+                    <Field
+                      label="active_range"
+                      value={`${formatCurrency(
+                        detail.priceIntelligence.active_min_price
+                      )} - ${formatCurrency(
+                        detail.priceIntelligence.active_max_price
+                      )}`}
+                    />
+                    <Field
+                      label="active_comp_count"
+                      value={detail.priceIntelligence.active_comp_count}
+                    />
+                    <Field
+                      label="estimated_shipping"
+                      value={formatCurrency(
+                        detail.priceIntelligence.estimated_shipping_cost
+                      )}
+                    />
+                    <Field
+                      label="category"
+                      value={
+                        detail.priceIntelligence.category_name ||
+                        detail.priceIntelligence.category_id
+                      }
+                    />
+                    <Field
+                      label="match_type"
+                      value={detail.priceIntelligence.product_match_type}
+                    />
+                    <Field
+                      label="created_at"
+                      value={formatDate(
+                        detail.priceIntelligence.created_at
+                      )}
+                    />
+                  </div>
+                  <Field
+                    label="search_query"
+                    value={detail.priceIntelligence.search_query}
+                  />
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-white/30">
+                      evidence_url
+                    </p>
+                    {isSafeHttpUrl(
+                      detail.priceIntelligence.evidence_url
+                    ) ? (
+                      <a
+                        href={detail.priceIntelligence.evidence_url || ""}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 inline-flex break-all text-sm font-semibold text-cyan-100 hover:text-cyan-50"
+                      >
+                        {detail.priceIntelligence.evidence_url}
+                      </a>
+                    ) : (
+                      <p className="mt-1 break-words text-sm text-white/70">
+                        {detail.priceIntelligence.evidence_url || "-"}
+                      </p>
+                    )}
+                  </div>
+                  <Field
+                    label="evidence_notes"
+                    value={detail.priceIntelligence.evidence_notes}
+                  />
+                </>
+              ) : (
+                <p className="text-sm text-white/40">
+                  Sin evidencia Price Intelligence registrada.
+                </p>
+              )}
             </DetailSection>
 
             <DetailSection title="Compliance findings">

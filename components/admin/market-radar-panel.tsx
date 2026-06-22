@@ -20,6 +20,7 @@ import {
   Radar,
   RefreshCw,
   TriangleAlert,
+  X,
 } from "lucide-react"
 import {
   supabase,
@@ -75,6 +76,69 @@ type EbayPipelineEvaluationState = {
   candidateKey?: string
   candidateState?: string
 }
+
+type PriceIntelligenceApiResponse = {
+  success: boolean
+  snapshot?: {
+    id?: string
+    recommended_sale_price?: number | string | null
+    source_type?: string | null
+    source_confidence?: string | null
+  }
+  error?: string
+}
+
+type PriceIntelligenceSaveState = {
+  status: "success" | "error"
+  message: string
+  recommendedSalePrice?: number | string | null
+}
+
+type PriceIntelligenceFormState = {
+  source_type: string
+  search_query: string
+  product_match_type: string
+  sold_avg_price: string
+  sold_median_price: string
+  sold_min_price: string
+  sold_max_price: string
+  sold_comp_count: string
+  active_avg_price: string
+  active_min_price: string
+  active_max_price: string
+  active_comp_count: string
+  estimated_shipping_cost: string
+  recommended_sale_price: string
+  source_confidence: string
+  confidence_score: string
+  category_id: string
+  category_name: string
+  evidence_url: string
+  evidence_notes: string
+}
+
+const priceSourceOptions = [
+  "manual",
+  "aiprice",
+  "terapeak",
+  "zik",
+  "ebay_api",
+  "other",
+]
+
+const productMatchOptions = [
+  "exact",
+  "same_model",
+  "similar",
+  "category_only",
+  "unknown",
+]
+
+const sourceConfidenceOptions = [
+  "low",
+  "medium",
+  "high",
+]
 
 const eventLabels: Record<string, string> = {
   new_product:
@@ -405,6 +469,170 @@ function buildEbayPipelineRadarProduct(
   }
 }
 
+function getSupplierSku(
+  product: MarketRadarProductRow
+) {
+  return (
+    product.sku ||
+    product.supplier_variant_id ||
+    product.handle ||
+    product.supplier_product_id ||
+    product.product_id
+  )
+}
+
+function createPriceIntelligenceForm(
+  product: MarketRadarProductRow
+): PriceIntelligenceFormState {
+  return {
+    source_type:
+      "manual",
+    search_query:
+      product.title,
+    product_match_type:
+      "similar",
+    sold_avg_price:
+      "",
+    sold_median_price:
+      "",
+    sold_min_price:
+      "",
+    sold_max_price:
+      "",
+    sold_comp_count:
+      "",
+    active_avg_price:
+      "",
+    active_min_price:
+      "",
+    active_max_price:
+      "",
+    active_comp_count:
+      "",
+    estimated_shipping_cost:
+      "",
+    recommended_sale_price:
+      "",
+    source_confidence:
+      "medium",
+    confidence_score:
+      "",
+    category_id:
+      "",
+    category_name:
+      "",
+    evidence_url:
+      "",
+    evidence_notes:
+      "",
+  }
+}
+
+function getNullableFormValue(
+  value: string
+) {
+  const text =
+    value.trim()
+
+  return text || null
+}
+
+function buildPriceIntelligencePayload(
+  product: MarketRadarProductRow,
+  form: PriceIntelligenceFormState
+) {
+  return {
+    market_radar_product_id:
+      getNullableString(
+        product.product_id
+      ),
+    supplier_sku:
+      getSupplierSku(
+        product
+      ),
+    source_type:
+      form.source_type,
+    marketplace:
+      "ebay",
+    search_query:
+      getNullableFormValue(
+        form.search_query
+      ),
+    product_match_type:
+      getNullableFormValue(
+        form.product_match_type
+      ),
+    sold_avg_price:
+      getNullableFormValue(
+        form.sold_avg_price
+      ),
+    sold_median_price:
+      getNullableFormValue(
+        form.sold_median_price
+      ),
+    sold_min_price:
+      getNullableFormValue(
+        form.sold_min_price
+      ),
+    sold_max_price:
+      getNullableFormValue(
+        form.sold_max_price
+      ),
+    sold_comp_count:
+      getNullableFormValue(
+        form.sold_comp_count
+      ),
+    active_avg_price:
+      getNullableFormValue(
+        form.active_avg_price
+      ),
+    active_min_price:
+      getNullableFormValue(
+        form.active_min_price
+      ),
+    active_max_price:
+      getNullableFormValue(
+        form.active_max_price
+      ),
+    active_comp_count:
+      getNullableFormValue(
+        form.active_comp_count
+      ),
+    estimated_shipping_cost:
+      getNullableFormValue(
+        form.estimated_shipping_cost
+      ),
+    recommended_sale_price:
+      getNullableFormValue(
+        form.recommended_sale_price
+      ),
+    source_confidence:
+      getNullableFormValue(
+        form.source_confidence
+      ),
+    confidence_score:
+      getNullableFormValue(
+        form.confidence_score
+      ),
+    category_id:
+      getNullableFormValue(
+        form.category_id
+      ),
+    category_name:
+      getNullableFormValue(
+        form.category_name
+      ),
+    evidence_url:
+      getNullableFormValue(
+        form.evidence_url
+      ),
+    evidence_notes:
+      getNullableFormValue(
+        form.evidence_notes
+      ),
+  }
+}
+
 function MetricCard({
   title,
   value,
@@ -466,15 +694,503 @@ function EventBadge({
   )
 }
 
+function PriceInput({
+  label,
+  value,
+  onChange,
+  type = "text",
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  type?: string
+}) {
+  return (
+    <label className="block">
+      <span className="text-[10px] uppercase tracking-[0.16em] text-white/35">
+        {label}
+      </span>
+      <input
+        type={type}
+        value={value}
+        onChange={event =>
+          onChange(event.target.value)
+        }
+        className="
+          mt-2
+          w-full
+          rounded-lg
+          border
+          border-white/10
+          bg-black/35
+          px-3
+          py-2
+          text-sm
+          text-white
+          outline-none
+          transition
+          placeholder:text-white/25
+          focus:border-cyan-300/30
+        "
+      />
+    </label>
+  )
+}
+
+function PriceSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: string
+  options: string[]
+  onChange: (value: string) => void
+}) {
+  return (
+    <label className="block">
+      <span className="text-[10px] uppercase tracking-[0.16em] text-white/35">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={event =>
+          onChange(event.target.value)
+        }
+        className="
+          mt-2
+          w-full
+          rounded-lg
+          border
+          border-white/10
+          bg-black/35
+          px-3
+          py-2
+          text-sm
+          text-white
+          outline-none
+          transition
+          focus:border-cyan-300/30
+        "
+      >
+        {options.map(option => (
+          <option
+            key={option}
+            value={option}
+          >
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
+function PriceIntelligenceModal({
+  product,
+  form,
+  isSaving,
+  onChange,
+  onClose,
+  onSubmit,
+}: {
+  product: MarketRadarProductRow
+  form: PriceIntelligenceFormState
+  isSaving: boolean
+  onChange: (
+    field: keyof PriceIntelligenceFormState,
+    value: string
+  ) => void
+  onClose: () => void
+  onSubmit: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <button
+        type="button"
+        aria-label="Cerrar Price Intelligence"
+        onClick={onClose}
+        className="absolute inset-0 cursor-default"
+      />
+      <section
+        className="
+          relative
+          z-10
+          max-h-[92vh]
+          w-full
+          max-w-4xl
+          overflow-y-auto
+          rounded-lg
+          border
+          border-white/10
+          bg-zinc-950
+          p-5
+          shadow-2xl
+          md:p-6
+        "
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.26em] text-cyan-100/55">
+              Price Intelligence
+            </p>
+            <h3 className="mt-3 text-2xl font-black text-white">
+              Agregar precio de mercado
+            </h3>
+            <p className="mt-2 text-sm leading-6 text-white/50">
+              {product.title}
+            </p>
+            <p className="mt-1 text-xs text-white/35">
+              SKU: {getSupplierSku(product)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="
+              rounded-lg
+              border
+              border-white/10
+              bg-white/[0.04]
+              p-2
+              text-white/60
+              transition
+              hover:border-cyan-300/25
+              hover:text-cyan-100
+            "
+            aria-label="Cerrar"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="mt-6 grid gap-4 md:grid-cols-3">
+          <PriceSelect
+            label="source_type"
+            value={form.source_type}
+            options={priceSourceOptions}
+            onChange={value =>
+              onChange(
+                "source_type",
+                value
+              )
+            }
+          />
+          <PriceSelect
+            label="match_type"
+            value={form.product_match_type}
+            options={productMatchOptions}
+            onChange={value =>
+              onChange(
+                "product_match_type",
+                value
+              )
+            }
+          />
+          <PriceSelect
+            label="confidence"
+            value={form.source_confidence}
+            options={sourceConfidenceOptions}
+            onChange={value =>
+              onChange(
+                "source_confidence",
+                value
+              )
+            }
+          />
+        </div>
+
+        <div className="mt-4">
+          <PriceInput
+            label="search_query"
+            value={form.search_query}
+            onChange={value =>
+              onChange(
+                "search_query",
+                value
+              )
+            }
+          />
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-4">
+          <PriceInput
+            label="sold_avg_price"
+            type="number"
+            value={form.sold_avg_price}
+            onChange={value =>
+              onChange(
+                "sold_avg_price",
+                value
+              )
+            }
+          />
+          <PriceInput
+            label="sold_median_price"
+            type="number"
+            value={form.sold_median_price}
+            onChange={value =>
+              onChange(
+                "sold_median_price",
+                value
+              )
+            }
+          />
+          <PriceInput
+            label="sold_min_price"
+            type="number"
+            value={form.sold_min_price}
+            onChange={value =>
+              onChange(
+                "sold_min_price",
+                value
+              )
+            }
+          />
+          <PriceInput
+            label="sold_max_price"
+            type="number"
+            value={form.sold_max_price}
+            onChange={value =>
+              onChange(
+                "sold_max_price",
+                value
+              )
+            }
+          />
+          <PriceInput
+            label="sold_comp_count"
+            type="number"
+            value={form.sold_comp_count}
+            onChange={value =>
+              onChange(
+                "sold_comp_count",
+                value
+              )
+            }
+          />
+          <PriceInput
+            label="active_avg_price"
+            type="number"
+            value={form.active_avg_price}
+            onChange={value =>
+              onChange(
+                "active_avg_price",
+                value
+              )
+            }
+          />
+          <PriceInput
+            label="active_min_price"
+            type="number"
+            value={form.active_min_price}
+            onChange={value =>
+              onChange(
+                "active_min_price",
+                value
+              )
+            }
+          />
+          <PriceInput
+            label="active_max_price"
+            type="number"
+            value={form.active_max_price}
+            onChange={value =>
+              onChange(
+                "active_max_price",
+                value
+              )
+            }
+          />
+          <PriceInput
+            label="active_comp_count"
+            type="number"
+            value={form.active_comp_count}
+            onChange={value =>
+              onChange(
+                "active_comp_count",
+                value
+              )
+            }
+          />
+          <PriceInput
+            label="estimated_shipping_cost"
+            type="number"
+            value={form.estimated_shipping_cost}
+            onChange={value =>
+              onChange(
+                "estimated_shipping_cost",
+                value
+              )
+            }
+          />
+          <PriceInput
+            label="recommended_sale_price"
+            type="number"
+            value={form.recommended_sale_price}
+            onChange={value =>
+              onChange(
+                "recommended_sale_price",
+                value
+              )
+            }
+          />
+          <PriceInput
+            label="confidence_score"
+            type="number"
+            value={form.confidence_score}
+            onChange={value =>
+              onChange(
+                "confidence_score",
+                value
+              )
+            }
+          />
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <PriceInput
+            label="category_id"
+            value={form.category_id}
+            onChange={value =>
+              onChange(
+                "category_id",
+                value
+              )
+            }
+          />
+          <PriceInput
+            label="category_name"
+            value={form.category_name}
+            onChange={value =>
+              onChange(
+                "category_name",
+                value
+              )
+            }
+          />
+        </div>
+
+        <div className="mt-4">
+          <PriceInput
+            label="evidence_url"
+            value={form.evidence_url}
+            onChange={value =>
+              onChange(
+                "evidence_url",
+                value
+              )
+            }
+          />
+        </div>
+
+        <label className="mt-4 block">
+          <span className="text-[10px] uppercase tracking-[0.16em] text-white/35">
+            evidence_notes
+          </span>
+          <textarea
+            value={form.evidence_notes}
+            onChange={event =>
+              onChange(
+                "evidence_notes",
+                event.target.value
+              )
+            }
+            rows={4}
+            className="
+              mt-2
+              w-full
+              rounded-lg
+              border
+              border-white/10
+              bg-black/35
+              px-3
+              py-2
+              text-sm
+              text-white
+              outline-none
+              transition
+              placeholder:text-white/25
+              focus:border-cyan-300/30
+            "
+          />
+        </label>
+
+        <div className="mt-6 flex flex-wrap justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="
+              rounded-lg
+              border
+              border-white/10
+              bg-white/[0.04]
+              px-4
+              py-3
+              text-sm
+              font-semibold
+              text-white/70
+              transition
+              hover:border-white/20
+              hover:text-white
+            "
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={isSaving}
+            className="
+              inline-flex
+              items-center
+              gap-2
+              rounded-lg
+              border
+              border-cyan-300/30
+              bg-cyan-300
+              px-4
+              py-3
+              text-sm
+              font-black
+              text-black
+              transition
+              hover:bg-cyan-200
+              disabled:cursor-not-allowed
+              disabled:opacity-60
+            "
+          >
+            <DollarSign
+              className={`
+                h-4
+                w-4
+                ${isSaving ? "animate-pulse" : ""}
+              `}
+            />
+            {isSaving ? "Guardando" : "Guardar Price Intelligence"}
+          </button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 function ProductRow({
   product,
   evaluation,
+  priceIntelligence,
   isEvaluating,
+  onOpenPriceIntelligence,
   onEvaluate,
 }: {
   product: MarketRadarProductRow
   evaluation?: EbayPipelineEvaluationState
+  priceIntelligence?: PriceIntelligenceSaveState
   isEvaluating?: boolean
+  onOpenPriceIntelligence: (
+    product: MarketRadarProductRow
+  ) => void
   onEvaluate: (
     product: MarketRadarProductRow
   ) => void
@@ -545,42 +1261,97 @@ function ProductRow({
             </p>
 
             <div className="mt-4">
-              <button
-                type="button"
-                onClick={() =>
-                  onEvaluate(product)
-                }
-                disabled={isEvaluating}
-                className="
-                  inline-flex
-                  items-center
-                  gap-2
-                  rounded-lg
-                  border
-                  border-cyan-300/20
-                  bg-cyan-300/[0.08]
-                  px-3
-                  py-2
-                  text-xs
-                  font-bold
-                  text-cyan-50
-                  transition
-                  hover:bg-cyan-300/[0.13]
-                  disabled:cursor-not-allowed
-                  disabled:opacity-50
-                "
-              >
-                <FileSearch
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    onOpenPriceIntelligence(product)
+                  }
+                  className="
+                    inline-flex
+                    items-center
+                    gap-2
+                    rounded-lg
+                    border
+                    border-emerald-300/20
+                    bg-emerald-300/[0.08]
+                    px-3
+                    py-2
+                    text-xs
+                    font-bold
+                    text-emerald-50
+                    transition
+                    hover:bg-emerald-300/[0.13]
+                  "
+                >
+                  <DollarSign className="h-3.5 w-3.5" />
+                  Agregar precio de mercado
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    onEvaluate(product)
+                  }
+                  disabled={isEvaluating}
+                  className="
+                    inline-flex
+                    items-center
+                    gap-2
+                    rounded-lg
+                    border
+                    border-cyan-300/20
+                    bg-cyan-300/[0.08]
+                    px-3
+                    py-2
+                    text-xs
+                    font-bold
+                    text-cyan-50
+                    transition
+                    hover:bg-cyan-300/[0.13]
+                    disabled:cursor-not-allowed
+                    disabled:opacity-50
+                  "
+                >
+                  <FileSearch
+                    className={`
+                      h-3.5
+                      w-3.5
+                      ${isEvaluating ? "animate-pulse" : ""}
+                    `}
+                  />
+                  {isEvaluating
+                    ? "Evaluando"
+                    : "Evaluar en eBay Pipeline (dryRun)"}
+                </button>
+              </div>
+
+              {priceIntelligence && (
+                <div
                   className={`
-                    h-3.5
-                    w-3.5
-                    ${isEvaluating ? "animate-pulse" : ""}
+                    mt-3
+                    rounded-lg
+                    border
+                    p-3
+                    text-xs
+                    leading-5
+                    ${
+                      priceIntelligence.status === "success"
+                        ? "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-50/80"
+                        : "border-red-300/20 bg-red-300/[0.08] text-red-100"
+                    }
                   `}
-                />
-                {isEvaluating
-                  ? "Evaluando"
-                  : "Evaluar en eBay Pipeline (dryRun)"}
-              </button>
+                >
+                  <p>{priceIntelligence.message}</p>
+                  {priceIntelligence.recommendedSalePrice && (
+                    <p className="mt-1 text-white/45">
+                      Recommended: {formatCurrency(
+                        priceIntelligence.recommendedSalePrice
+                      )}
+                    </p>
+                  )}
+                </div>
+              )}
 
               {evaluation && (
                 <div
@@ -774,6 +1545,26 @@ export function MarketRadarPanel() {
     setEbayPipelineEvaluations,
   ] = useState<Record<string, EbayPipelineEvaluationState>>({})
 
+  const [
+    priceIntelligenceProduct,
+    setPriceIntelligenceProduct,
+  ] = useState<MarketRadarProductRow | null>(null)
+
+  const [
+    priceIntelligenceForm,
+    setPriceIntelligenceForm,
+  ] = useState<PriceIntelligenceFormState | null>(null)
+
+  const [
+    isSavingPriceIntelligence,
+    setIsSavingPriceIntelligence,
+  ] = useState(false)
+
+  const [
+    priceIntelligenceResults,
+    setPriceIntelligenceResults,
+  ] = useState<Record<string, PriceIntelligenceSaveState>>({})
+
   const getAccessToken =
     useCallback(async () => {
       const {
@@ -901,6 +1692,142 @@ export function MarketRadarPanel() {
         setIsSyncing(false)
       }
     }, [requestDashboard])
+
+  const openPriceIntelligenceModal =
+    useCallback((
+      product: MarketRadarProductRow
+    ) => {
+      setPriceIntelligenceProduct(
+        product
+      )
+      setPriceIntelligenceForm(
+        createPriceIntelligenceForm(
+          product
+        )
+      )
+    }, [])
+
+  const closePriceIntelligenceModal =
+    useCallback(() => {
+      if (isSavingPriceIntelligence) {
+        return
+      }
+
+      setPriceIntelligenceProduct(null)
+      setPriceIntelligenceForm(null)
+    }, [isSavingPriceIntelligence])
+
+  const updatePriceIntelligenceForm =
+    useCallback((
+      field: keyof PriceIntelligenceFormState,
+      value: string
+    ) => {
+      setPriceIntelligenceForm(current =>
+        current
+          ? {
+              ...current,
+              [field]:
+                value,
+            }
+          : current
+      )
+    }, [])
+
+  const savePriceIntelligence =
+    useCallback(async () => {
+      if (
+        !priceIntelligenceProduct ||
+        !priceIntelligenceForm
+      ) {
+        return
+      }
+
+      const productKey =
+        getProductEvaluationKey(
+          priceIntelligenceProduct
+        )
+
+      setIsSavingPriceIntelligence(true)
+      setError("")
+
+      try {
+        const token =
+          await getAccessToken()
+
+        const response =
+          await fetch(
+            "/api/admin/ebay-winner-pipeline/price-intelligence",
+            {
+              method:
+                "POST",
+              headers: {
+                Authorization:
+                  `Bearer ${token}`,
+                "Content-Type":
+                  "application/json",
+              },
+              body:
+                JSON.stringify(
+                  buildPriceIntelligencePayload(
+                    priceIntelligenceProduct,
+                    priceIntelligenceForm
+                  )
+                ),
+            }
+          )
+
+        const payload =
+          await response.json() as PriceIntelligenceApiResponse
+
+        if (
+          !response.ok ||
+          !payload.success
+        ) {
+          throw new Error(
+            payload.error ||
+            "No se pudo guardar Price Intelligence."
+          )
+        }
+
+        setPriceIntelligenceResults(current => ({
+          ...current,
+          [productKey]: {
+            status:
+              "success",
+            message:
+              "Price Intelligence guardado.",
+            recommendedSalePrice:
+              payload.snapshot?.recommended_sale_price,
+          },
+        }))
+
+        setPriceIntelligenceProduct(null)
+        setPriceIntelligenceForm(null)
+      } catch (saveError) {
+        console.error(
+          "PRICE INTELLIGENCE SAVE ERROR:",
+          saveError
+        )
+
+        setPriceIntelligenceResults(current => ({
+          ...current,
+          [productKey]: {
+            status:
+              "error",
+            message:
+              saveError instanceof Error
+                ? saveError.message
+                : "No se pudo guardar Price Intelligence.",
+          },
+        }))
+      } finally {
+        setIsSavingPriceIntelligence(false)
+      }
+    }, [
+      getAccessToken,
+      priceIntelligenceForm,
+      priceIntelligenceProduct,
+    ])
 
 
   const evaluateInEbayPipeline =
@@ -1035,6 +1962,18 @@ export function MarketRadarPanel() {
 
   return (
     <div className="mt-16 space-y-6">
+      {priceIntelligenceProduct &&
+      priceIntelligenceForm ? (
+        <PriceIntelligenceModal
+          product={priceIntelligenceProduct}
+          form={priceIntelligenceForm}
+          isSaving={isSavingPriceIntelligence}
+          onChange={updatePriceIntelligenceForm}
+          onClose={closePriceIntelligenceModal}
+          onSubmit={savePriceIntelligence}
+        />
+      ) : null}
+
       <section
         className="
           rounded-lg
@@ -1314,12 +2253,20 @@ export function MarketRadarPanel() {
                           )
                         ]
                       }
+                      priceIntelligence={
+                        priceIntelligenceResults[
+                          getProductEvaluationKey(
+                            product
+                          )
+                        ]
+                      }
                       isEvaluating={
                         evaluatingProductKey ===
                         getProductEvaluationKey(
                           product
                         )
                       }
+                      onOpenPriceIntelligence={openPriceIntelligenceModal}
                       onEvaluate={evaluateInEbayPipeline}
                     />
                   ))
