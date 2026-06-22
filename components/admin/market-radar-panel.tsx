@@ -543,6 +543,80 @@ function ProductRow({
             <p className="mt-2 text-[11px] uppercase tracking-[0.16em] text-white/35">
               {product.sku || product.handle}
             </p>
+
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() =>
+                  onEvaluate(product)
+                }
+                disabled={isEvaluating}
+                className="
+                  inline-flex
+                  items-center
+                  gap-2
+                  rounded-lg
+                  border
+                  border-cyan-300/20
+                  bg-cyan-300/[0.08]
+                  px-3
+                  py-2
+                  text-xs
+                  font-bold
+                  text-cyan-50
+                  transition
+                  hover:bg-cyan-300/[0.13]
+                  disabled:cursor-not-allowed
+                  disabled:opacity-50
+                "
+              >
+                <FileSearch
+                  className={`
+                    h-3.5
+                    w-3.5
+                    ${isEvaluating ? "animate-pulse" : ""}
+                  `}
+                />
+                {isEvaluating
+                  ? "Evaluando"
+                  : "Evaluar en eBay Pipeline (dryRun)"}
+              </button>
+
+              {evaluation && (
+                <div
+                  className={`
+                    mt-3
+                    rounded-lg
+                    border
+                    p-3
+                    text-xs
+                    leading-5
+                    ${
+                      evaluation.status === "success"
+                        ? "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-50/80"
+                        : "border-red-300/20 bg-red-300/[0.08] text-red-100"
+                    }
+                  `}
+                >
+                  <p>{evaluation.message}</p>
+                  {evaluation.candidateState && (
+                    <p className="mt-1 text-white/45">
+                      Estado: {evaluation.candidateState}
+                    </p>
+                  )}
+                  {evaluation.candidateKey && (
+                    <p className="mt-1 break-all text-white/35">
+                      {evaluation.candidateKey}
+                    </p>
+                  )}
+                  {evaluation.status === "success" && (
+                    <p className="mt-2 font-semibold text-cyan-100">
+                      Ver en eBay Pipeline
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </td>
@@ -627,79 +701,6 @@ function ProductRow({
         {formatDate(
           product.last_event_at ||
           product.last_captured_at
-        )}
-      </td>
-      <td className="px-4 py-4">
-        <button
-          type="button"
-          onClick={() =>
-            onEvaluate(product)
-          }
-          disabled={isEvaluating}
-          className="
-            inline-flex
-            items-center
-            gap-2
-            rounded-lg
-            border
-            border-cyan-300/20
-            bg-cyan-300/[0.08]
-            px-3
-            py-2
-            text-xs
-            font-bold
-            text-cyan-50
-            transition
-            hover:bg-cyan-300/[0.13]
-            disabled:cursor-not-allowed
-            disabled:opacity-50
-          "
-        >
-          <FileSearch
-            className={`
-              h-3.5
-              w-3.5
-              ${isEvaluating ? "animate-pulse" : ""}
-            `}
-          />
-          {isEvaluating
-            ? "Evaluando"
-            : "Evaluar en eBay Pipeline (dryRun)"}
-        </button>
-
-        {evaluation && (
-          <div
-            className={`
-              mt-3
-              rounded-lg
-              border
-              p-3
-              text-xs
-              leading-5
-              ${
-                evaluation.status === "success"
-                  ? "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-50/80"
-                  : "border-red-300/20 bg-red-300/[0.08] text-red-100"
-              }
-            `}
-          >
-            <p>{evaluation.message}</p>
-            {evaluation.candidateState && (
-              <p className="mt-1 text-white/45">
-                Estado: {evaluation.candidateState}
-              </p>
-            )}
-            {evaluation.candidateKey && (
-              <p className="mt-1 break-all text-white/35">
-                {evaluation.candidateKey}
-              </p>
-            )}
-            {evaluation.status === "success" && (
-              <p className="mt-2 font-semibold text-cyan-100">
-                Ver en eBay Pipeline
-              </p>
-            )}
-          </div>
         )}
       </td>
     </tr>
@@ -1259,7 +1260,7 @@ export function MarketRadarPanel() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] border-collapse text-left">
+            <table className="w-full min-w-[1040px] border-collapse text-left">
               <thead className="bg-white/[0.035] text-[10px] uppercase tracking-[0.18em] text-white/35">
                 <tr>
                   <th className="px-4 py-3 font-medium">
@@ -1280,16 +1281,13 @@ export function MarketRadarPanel() {
                   <th className="px-4 py-3 font-medium">
                     Movimiento
                   </th>
-                  <th className="px-4 py-3 font-medium">
-                    eBay Pipeline
-                  </th>
                 </tr>
               </thead>
               <tbody>
                 {isLoading && !dashboard ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={6}
                       className="px-4 py-12 text-center text-sm text-white/45"
                     >
                       Cargando radar...
@@ -1298,7 +1296,7 @@ export function MarketRadarPanel() {
                 ) : hotProducts.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={6}
                       className="px-4 py-12 text-center text-sm text-white/45"
                     >
                       Ejecuta el primer sync para llenar el ranking.
