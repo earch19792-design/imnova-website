@@ -391,6 +391,24 @@ function getNullableString(
   return text || null
 }
 
+function getRealProductSku(
+  product: MarketRadarProductRow
+) {
+  const optionalProduct =
+    product as MarketRadarProductRow & {
+      supplier_sku?: string | null
+    }
+
+  return (
+    getNullableString(
+      product.sku
+    ) ||
+    getNullableString(
+      optionalProduct.supplier_sku
+    )
+  )
+}
+
 function buildEbayPipelineRadarProduct(
   product: MarketRadarProductRow
 ) {
@@ -429,7 +447,9 @@ function buildEbayPipelineRadarProduct(
       product.sku ||
       "default",
     sku:
-      product.sku,
+      getRealProductSku(
+        product
+      ),
     title:
       product.title,
     product_url:
@@ -469,15 +489,24 @@ function buildEbayPipelineRadarProduct(
   }
 }
 
-function getSupplierSku(
+function getStableSupplierSku(
   product: MarketRadarProductRow
 ) {
+  const optionalProduct =
+    product as MarketRadarProductRow & {
+      id?: string | null
+      supplier_sku?: string | null
+    }
+
   return (
     product.sku ||
+    optionalProduct.supplier_sku ||
     product.supplier_variant_id ||
     product.handle ||
     product.supplier_product_id ||
-    product.product_id
+    product.product_id ||
+    optionalProduct.id ||
+    ""
   )
 }
 
@@ -547,7 +576,7 @@ function buildPriceIntelligencePayload(
         product.product_id
       ),
     supplier_sku:
-      getSupplierSku(
+      getStableSupplierSku(
         product
       ),
     source_type:
@@ -842,7 +871,7 @@ function PriceIntelligenceModal({
               {product.title}
             </p>
             <p className="mt-1 text-xs text-white/35">
-              SKU: {getSupplierSku(product)}
+              SKU: {getStableSupplierSku(product)}
             </p>
           </div>
           <button

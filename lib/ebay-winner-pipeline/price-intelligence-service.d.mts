@@ -102,10 +102,16 @@ export function getLatestPriceIntelligenceForSku(args: {
   supplierSku?: string | null
 }): Promise<PriceIntelligenceSnapshot | null>
 
+export function getLatestPriceIntelligenceForMarketRadarProduct(args: {
+  supabase: unknown
+  marketRadarProductId?: string | null
+}): Promise<PriceIntelligenceSnapshot | null>
+
 export function getPriceIntelligenceForCandidate(args: {
   supabase: unknown
   candidateId?: string | null
   supplierSku?: string | null
+  marketRadarProductId?: string | null
 }): Promise<PriceIntelligenceSnapshot[]>
 
 export function listPriceIntelligenceSnapshots(args?: {
