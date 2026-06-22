@@ -15,6 +15,7 @@ import {
   Clock3,
   DollarSign,
   ExternalLink,
+  FileSearch,
   PackageCheck,
   Radar,
   RefreshCw,
@@ -46,6 +47,33 @@ type MarketRadarApiResponse = {
     error?: string
   }
   error?: string
+}
+
+type EbayPipelineApiResponse = {
+  success: boolean
+  dryRun?: boolean
+  result?: {
+    candidate?: {
+      candidate_key?: string
+      state?: string
+    }
+    persisted?: {
+      candidate?: {
+        id?: string
+        candidate_key?: string
+        state?: string
+      }
+    }
+  }
+  error?: string
+}
+
+type EbayPipelineEvaluationState = {
+  status: "success" | "error"
+  message: string
+  candidateId?: string
+  candidateKey?: string
+  candidateState?: string
 }
 
 const eventLabels: Record<string, string> = {
@@ -277,6 +305,106 @@ function getProductStatusLabel(
   return "Sin dato"
 }
 
+function getProductEvaluationKey(
+  product: MarketRadarProductRow
+) {
+  return [
+    product.product_id,
+    product.supplier_variant_id ||
+      product.sku ||
+      "default",
+  ].join(":")
+}
+
+function getNullableString(
+  value: string | null | undefined
+) {
+  const text =
+    typeof value === "string"
+      ? value.trim()
+      : ""
+
+  return text || null
+}
+
+function buildEbayPipelineRadarProduct(
+  product: MarketRadarProductRow
+) {
+  const imageUrls =
+    product.image_urls || []
+
+  return {
+    source_key:
+      product.source_key,
+    source_name:
+      product.source_name,
+    source_id:
+      getNullableString(
+        product.source_id
+      ),
+    product_id:
+      getNullableString(
+        product.product_id
+      ),
+    market_radar_product_id:
+      getNullableString(
+        product.product_id
+      ),
+    snapshot_id:
+      getNullableString(
+        product.snapshot_id
+      ),
+    market_radar_snapshot_id:
+      getNullableString(
+        product.snapshot_id
+      ),
+    supplier_product_id:
+      product.supplier_product_id,
+    supplier_variant_id:
+      product.supplier_variant_id ||
+      product.sku ||
+      "default",
+    sku:
+      product.sku,
+    title:
+      product.title,
+    product_url:
+      product.product_url,
+    vendor:
+      product.vendor,
+    product_type:
+      product.product_type,
+    tags:
+      product.tags || [],
+    price:
+      product.price,
+    compare_at_price:
+      product.compare_at_price,
+    available:
+      product.available,
+    inventory_quantity:
+      product.inventory_quantity,
+    collections:
+      product.collections || [],
+    featured_image_url:
+      product.featured_image_url,
+    image_urls:
+      imageUrls,
+    images_authorized:
+      false,
+    opportunity_score:
+      product.opportunity_score,
+    restock_count_7d:
+      product.restock_count_7d,
+    out_of_stock_count_7d:
+      product.out_of_stock_count_7d,
+    event_count_7d:
+      product.event_count_7d,
+    last_captured_at:
+      product.last_captured_at,
+  }
+}
+
 function MetricCard({
   title,
   value,
@@ -340,8 +468,16 @@ function EventBadge({
 
 function ProductRow({
   product,
+  evaluation,
+  isEvaluating,
+  onEvaluate,
 }: {
   product: MarketRadarProductRow
+  evaluation?: EbayPipelineEvaluationState
+  isEvaluating?: boolean
+  onEvaluate: (
+    product: MarketRadarProductRow
+  ) => void
 }) {
   const score =
     formatNumber(
@@ -493,6 +629,79 @@ function ProductRow({
           product.last_captured_at
         )}
       </td>
+      <td className="px-4 py-4">
+        <button
+          type="button"
+          onClick={() =>
+            onEvaluate(product)
+          }
+          disabled={isEvaluating}
+          className="
+            inline-flex
+            items-center
+            gap-2
+            rounded-lg
+            border
+            border-cyan-300/20
+            bg-cyan-300/[0.08]
+            px-3
+            py-2
+            text-xs
+            font-bold
+            text-cyan-50
+            transition
+            hover:bg-cyan-300/[0.13]
+            disabled:cursor-not-allowed
+            disabled:opacity-50
+          "
+        >
+          <FileSearch
+            className={`
+              h-3.5
+              w-3.5
+              ${isEvaluating ? "animate-pulse" : ""}
+            `}
+          />
+          {isEvaluating
+            ? "Evaluando"
+            : "Evaluar en eBay Pipeline (dryRun)"}
+        </button>
+
+        {evaluation && (
+          <div
+            className={`
+              mt-3
+              rounded-lg
+              border
+              p-3
+              text-xs
+              leading-5
+              ${
+                evaluation.status === "success"
+                  ? "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-50/80"
+                  : "border-red-300/20 bg-red-300/[0.08] text-red-100"
+              }
+            `}
+          >
+            <p>{evaluation.message}</p>
+            {evaluation.candidateState && (
+              <p className="mt-1 text-white/45">
+                Estado: {evaluation.candidateState}
+              </p>
+            )}
+            {evaluation.candidateKey && (
+              <p className="mt-1 break-all text-white/35">
+                {evaluation.candidateKey}
+              </p>
+            )}
+            {evaluation.status === "success" && (
+              <p className="mt-2 font-semibold text-cyan-100">
+                Ver en eBay Pipeline
+              </p>
+            )}
+          </div>
+        )}
+      </td>
     </tr>
   )
 }
@@ -545,11 +754,6 @@ export function MarketRadarPanel() {
   ] = useState(false)
 
   const [
-    isNotifying,
-    setIsNotifying,
-  ] = useState(false)
-
-  const [
     error,
     setError,
   ] = useState("")
@@ -560,9 +764,14 @@ export function MarketRadarPanel() {
   ] = useState<MarketRadarSyncResult | null>(null)
 
   const [
-    notificationResult,
-    setNotificationResult,
-  ] = useState<MarketRadarApiResponse["notification"] | null>(null)
+    evaluatingProductKey,
+    setEvaluatingProductKey,
+  ] = useState("")
+
+  const [
+    ebayPipelineEvaluations,
+    setEbayPipelineEvaluations,
+  ] = useState<Record<string, EbayPipelineEvaluationState>>({})
 
   const getAccessToken =
     useCallback(async () => {
@@ -640,13 +849,6 @@ export function MarketRadarPanel() {
         setSyncResult(
           payload.sync
         )
-        setNotificationResult(null)
-      }
-
-      if (payload.notification) {
-        setNotificationResult(
-          payload.notification
-        )
       }
     }, [getAccessToken])
 
@@ -700,31 +902,104 @@ export function MarketRadarPanel() {
     }, [requestDashboard])
 
 
-  const notifyEbayOpportunities =
-    useCallback(async () => {
-      setIsNotifying(true)
+  const evaluateInEbayPipeline =
+    useCallback(async (
+      product: MarketRadarProductRow
+    ) => {
+      const productKey =
+        getProductEvaluationKey(
+          product
+        )
+
+      setEvaluatingProductKey(
+        productKey
+      )
       setError("")
 
       try {
-        await requestDashboard({
-          action:
-            "notify_ebay_opportunities",
-        })
-      } catch (notifyError) {
+        const token =
+          await getAccessToken()
+
+        const response =
+          await fetch(
+            "/api/admin/ebay-winner-pipeline",
+            {
+              method:
+                "POST",
+              headers: {
+                Authorization:
+                  `Bearer ${token}`,
+                "Content-Type":
+                  "application/json",
+              },
+              body:
+                JSON.stringify({
+                  action:
+                    "process_radar_candidate",
+                  persist:
+                    true,
+                  radarProduct:
+                    buildEbayPipelineRadarProduct(
+                      product
+                    ),
+                }),
+            }
+          )
+
+        const payload =
+          await response.json() as EbayPipelineApiResponse
+
+        if (
+          !response.ok ||
+          !payload.success
+        ) {
+          throw new Error(
+            payload.error ||
+            "No se pudo evaluar en eBay Pipeline."
+          )
+        }
+
+        const persistedCandidate =
+          payload.result?.persisted?.candidate
+
+        setEbayPipelineEvaluations(current => ({
+          ...current,
+          [productKey]: {
+            status:
+              "success",
+            message:
+              "Candidato enviado al eBay Pipeline en modo dryRun.",
+            candidateId:
+              persistedCandidate?.id,
+            candidateKey:
+              persistedCandidate?.candidate_key ||
+              payload.result?.candidate?.candidate_key,
+            candidateState:
+              persistedCandidate?.state ||
+              payload.result?.candidate?.state,
+          },
+        }))
+      } catch (evaluationError) {
         console.error(
-          "NOTIFY MARKET RADAR ERROR:",
-          notifyError
+          "EBAY PIPELINE DRYRUN EVALUATION ERROR:",
+          evaluationError
         )
 
-        setError(
-          notifyError instanceof Error
-            ? notifyError.message
-            : "No se pudo enviar el analisis por WhatsApp."
-        )
+        setEbayPipelineEvaluations(current => ({
+          ...current,
+          [productKey]: {
+            status:
+              "error",
+            message:
+              evaluationError instanceof Error
+                ? evaluationError.message
+                : "No se pudo evaluar en eBay Pipeline.",
+          },
+        }))
       } finally {
-        setIsNotifying(false)
+        setEvaluatingProductKey("")
       }
-    }, [requestDashboard])
+    }, [getAccessToken])
 
 
   useEffect(() => {
@@ -858,37 +1133,6 @@ export function MarketRadarPanel() {
               {isSyncing ? "Sincronizando" : "Sync Luna"}
             </button>
 
-            <button
-              onClick={notifyEbayOpportunities}
-              disabled={isNotifying || isSyncing || isLoading}
-              className="
-                inline-flex
-                items-center
-                gap-2
-                rounded-lg
-                border
-                border-emerald-300/30
-                bg-emerald-300/[0.12]
-                px-4
-                py-3
-                text-sm
-                font-black
-                text-emerald-50
-                transition
-                hover:bg-emerald-300/[0.18]
-                disabled:cursor-not-allowed
-                disabled:opacity-60
-              "
-            >
-              <Activity
-                className={`
-                  h-4
-                  w-4
-                  ${isNotifying ? "animate-pulse" : ""}
-                `}
-              />
-              {isNotifying ? "Enviando analisis" : "WhatsApp eBay"}
-            </button>
           </div>
         </div>
 
@@ -923,26 +1167,6 @@ export function MarketRadarPanel() {
             <span>
               Scores: <strong className="text-white">{syncResult.scoredProducts}</strong>
             </span>
-          </div>
-        )}
-
-        {notificationResult && (
-          <div
-            className="
-              mt-5
-              rounded-lg
-              border
-              border-emerald-300/20
-              bg-emerald-300/[0.08]
-              p-4
-              text-xs
-              text-emerald-50/80
-            "
-          >
-            {notificationResult.skipped
-              ? notificationResult.message ||
-                "WhatsApp eBay no se envio porque no hay oportunidades fuertes en este momento."
-              : `WhatsApp eBay enviado con plantilla ${notificationResult.templateName || "imnova_update"}: ${notificationResult.successful || 0} de ${notificationResult.total || 0}. Oportunidades incluidas: ${notificationResult.opportunityCount || 0}.`}
           </div>
         )}
 
@@ -1056,13 +1280,16 @@ export function MarketRadarPanel() {
                   <th className="px-4 py-3 font-medium">
                     Movimiento
                   </th>
+                  <th className="px-4 py-3 font-medium">
+                    eBay Pipeline
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {isLoading && !dashboard ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="px-4 py-12 text-center text-sm text-white/45"
                     >
                       Cargando radar...
@@ -1071,7 +1298,7 @@ export function MarketRadarPanel() {
                 ) : hotProducts.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="px-4 py-12 text-center text-sm text-white/45"
                     >
                       Ejecuta el primer sync para llenar el ranking.
@@ -1082,6 +1309,20 @@ export function MarketRadarPanel() {
                     <ProductRow
                       key={`${product.product_id}-${product.supplier_variant_id || "default"}`}
                       product={product}
+                      evaluation={
+                        ebayPipelineEvaluations[
+                          getProductEvaluationKey(
+                            product
+                          )
+                        ]
+                      }
+                      isEvaluating={
+                        evaluatingProductKey ===
+                        getProductEvaluationKey(
+                          product
+                        )
+                      }
+                      onEvaluate={evaluateInEbayPipeline}
                     />
                   ))
                 )}
