@@ -69,6 +69,9 @@ import { Metrics } from "@/app/admin/metrics"
 import {
   MarketRadarPanel,
 } from "@/components/admin/market-radar-panel"
+import {
+  EbayWinnerPipelinePanel,
+} from "@/components/admin/ebay-winner-pipeline-panel"
 
 type Product = {
   id: string
@@ -9042,6 +9045,12 @@ export default function AdminPage() {
         {
           selectedMenu === "market-radar" && (
             <MarketRadarPanel />
+          )
+        }
+
+        {
+          selectedMenu === "ebay-winner-pipeline" && (
+            <EbayWinnerPipelinePanel />
           )
         }
 
