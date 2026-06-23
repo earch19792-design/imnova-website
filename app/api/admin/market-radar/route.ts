@@ -229,7 +229,7 @@ function getInventoryContext(
       inventory_confidence:
         "medium",
       stock_message:
-        "Producto disponible, pero Luna no expone cantidad numérica.",
+        "Luna marca este producto como disponible, pero no expone unidades numéricas. Validar inventario real antes de listar, escalar campaña o crear packs grandes.",
     } as const
   }
 

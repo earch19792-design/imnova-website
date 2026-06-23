@@ -343,7 +343,11 @@ test("radar advisor: availability-only requiere aprobacion y mensaje claro", () 
   assert.equal(alert.required_human_approval, true)
   assert.equal(
     alert.advisor_message,
-    "Producto disponible, pero Luna no expone cantidad numérica. Validar unidades antes de listar, escalar campaña o crear packs grandes."
+    "Luna marca este producto como disponible, pero no expone unidades numéricas. Validar inventario real antes de listar, escalar campaña o crear packs grandes."
+  )
+  assert.equal(
+    alert.proposed_next_step,
+    "Validar inventario real del SKU antes de listar o escalar."
   )
 })
 
