@@ -2,6 +2,30 @@ import {
   supabase,
 } from "./supabase"
 
+const ADMIN_AUTH_TIMEOUT_MS =
+  12000
+
+function withTimeout<T>(
+  promise: PromiseLike<T>,
+  label: string
+): Promise<T> {
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise<T>((_, reject) => {
+      globalThis.setTimeout(
+        () => {
+          reject(
+            new Error(
+              `${label}_timeout`
+            )
+          )
+        },
+        ADMIN_AUTH_TIMEOUT_MS
+      )
+    }),
+  ])
+}
+
 export async function signInAdmin(
   email: string,
   password: string
@@ -10,10 +34,13 @@ export async function signInAdmin(
     data,
     error,
   } =
-    await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    await withTimeout(
+      supabase.auth.signInWithPassword({
+        email,
+        password,
+      }),
+      "admin_sign_in"
+    )
 
   if (error || !data.session) {
     return {
@@ -28,7 +55,10 @@ export async function signInAdmin(
     data: isAdmin,
     error: adminError,
   } =
-    await supabase.rpc("is_admin")
+    await withTimeout(
+      supabase.rpc("is_admin"),
+      "admin_permission_check"
+    )
 
   if (adminError || isAdmin !== true) {
     await supabase.auth.signOut()
@@ -51,7 +81,10 @@ export async function validateAdminSession() {
     data,
     error,
   } =
-    await supabase.auth.getSession()
+    await withTimeout(
+      supabase.auth.getSession(),
+      "admin_session"
+    )
 
   if (error || !data.session) {
     return {
@@ -66,7 +99,10 @@ export async function validateAdminSession() {
     data: isAdmin,
     error: adminError,
   } =
-    await supabase.rpc("is_admin")
+    await withTimeout(
+      supabase.rpc("is_admin"),
+      "admin_permission_check"
+    )
 
   if (adminError || isAdmin !== true) {
     await supabase.auth.signOut()
