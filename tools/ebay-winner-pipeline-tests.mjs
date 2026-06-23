@@ -634,6 +634,61 @@ test("radar advisor: availability-only requiere aprobacion y mensaje claro", () 
   )
 })
 
+test("radar advisor: usa inventario actual del producto sobre stock_context viejo del evento", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "new_product",
+        new_value: {
+          available:
+            true,
+          stock_context: {
+            inventory_quantity:
+              null,
+            inventory_status:
+              "in_stock",
+            inventory_source:
+              "luna_availability",
+            inventory_confidence:
+              "medium",
+            inventory_scope:
+              "availability_only",
+            stock_message:
+              "Disponible, pero Luna no expone cantidad numérica.",
+          },
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          10,
+        inventory_status:
+          "in_stock",
+        inventory_source:
+          "luna_authenticated_html",
+        inventory_confidence:
+          "high",
+        inventory_scope:
+          "variant_level",
+      },
+      null
+    )
+
+  assert.equal(alert.stock_context.inventory_quantity, 10)
+  assert.equal(alert.stock_context.inventory_scope, "variant_level")
+  assert.equal(alert.stock_context.inventory_source, "luna_authenticated_html")
+  assert.equal(
+    alert.stock_context.stock_message,
+    "Stock disponible: 10 unidades."
+  )
+  assert.notEqual(
+    alert.advisor_message,
+    "Luna marca este producto como disponible, pero no expone unidades numéricas. Validar inventario real antes de listar, escalar campaña o crear packs grandes."
+  )
+})
+
 test("radar advisor: quantity alta requiere aprobacion y no asume stock por variante", () => {
   const alert =
     getRadarAdvisorEvent(
