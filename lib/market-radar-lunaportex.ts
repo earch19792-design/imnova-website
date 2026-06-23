@@ -500,6 +500,34 @@ function getProductAdoptionHydrationScore(
     product.collections.has("flash-sale") ||
     product.collections.has("weekly-deals")
 
+  const existingMetadata =
+    getRecord(
+      product.existingMetadata
+    )
+
+  const attemptedAtMs =
+    getTimestampMs(
+      existingMetadata.inventory_hydration_attempted_at
+    )
+
+  const hoursSinceAttempt =
+    attemptedAtMs > 0
+      ? (
+          Date.now() -
+          attemptedAtMs
+        ) /
+        (60 * 60 * 1000)
+      : Number.POSITIVE_INFINITY
+
+  const recentAttemptPenalty =
+    hoursSinceAttempt < 12
+      ? 90
+      : hoursSinceAttempt < 24
+      ? 55
+      : hoursSinceAttempt < 72
+      ? 25
+      : 0
+
   const priceScore =
     minPrice === null
       ? 0
@@ -523,17 +551,8 @@ function getProductAdoptionHydrationScore(
     Math.min(
       variants.length,
       5
-    )
-  )
-}
-
-function getInventoryHydrationAttemptMs(
-  product: AggregatedProduct
-) {
-  return getTimestampMs(
-    getRecord(
-      product.existingMetadata
-    ).inventory_hydration_attempted_at
+    ) -
+    recentAttemptPenalty
   )
 }
 
@@ -1083,20 +1102,6 @@ async function hydrateAuthenticatedInventoryQuantities(
 
         if (leftScore !== rightScore) {
           return rightScore - leftScore
-        }
-
-        const leftAttemptedAt =
-          getInventoryHydrationAttemptMs(
-            left
-          )
-
-        const rightAttemptedAt =
-          getInventoryHydrationAttemptMs(
-            right
-          )
-
-        if (leftAttemptedAt !== rightAttemptedAt) {
-          return leftAttemptedAt - rightAttemptedAt
         }
 
         const leftOutOfStock =
