@@ -107,16 +107,8 @@ type ShopifyProductResponse =
       product?: ShopifyProduct
     }
 
-type InventoryHydrationMetadata = {
-  inventory_hydration_attempted_at?: string | null
-  inventory_hydration_success_at?: string | null
-  inventory_hydration_status?: "success" | "missing_quantity" | "not_attempted"
-}
-
 type AggregatedProduct = ShopifyProduct & {
   collections: Set<string>
-  existingMetadata?: Record<string, unknown>
-  inventoryHydrationMetadata?: InventoryHydrationMetadata
 }
 
 type InventoryHydrationStats = {
@@ -143,7 +135,6 @@ type MarketRadarProductRecord = {
   id: string
   supplier_product_id: string
   handle: string
-  metadata?: Record<string, unknown> | null
 }
 
 type LatestSnapshotRecord = {
@@ -232,18 +223,6 @@ function getString(
     : ""
 }
 
-function getRecord(
-  value: unknown
-): Record<string, unknown> {
-  return (
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value)
-  )
-    ? value as Record<string, unknown>
-    : {}
-}
-
 function getNumber(
   value: unknown
 ) {
@@ -276,24 +255,6 @@ function getInteger(
   }
 
   return Math.trunc(numericValue)
-}
-
-function getTimestampMs(
-  value: unknown
-) {
-  const text =
-    getString(value)
-
-  if (!text) {
-    return 0
-  }
-
-  const timestamp =
-    new Date(text).getTime()
-
-  return Number.isFinite(timestamp)
-    ? timestamp
-    : 0
 }
 
 function getInventoryQuantity(
@@ -500,34 +461,6 @@ function getProductAdoptionHydrationScore(
     product.collections.has("flash-sale") ||
     product.collections.has("weekly-deals")
 
-  const existingMetadata =
-    getRecord(
-      product.existingMetadata
-    )
-
-  const attemptedAtMs =
-    getTimestampMs(
-      existingMetadata.inventory_hydration_attempted_at
-    )
-
-  const hoursSinceAttempt =
-    attemptedAtMs > 0
-      ? (
-          Date.now() -
-          attemptedAtMs
-        ) /
-        (60 * 60 * 1000)
-      : Number.POSITIVE_INFINITY
-
-  const recentAttemptPenalty =
-    hoursSinceAttempt < 12
-      ? 90
-      : hoursSinceAttempt < 24
-      ? 55
-      : hoursSinceAttempt < 72
-      ? 25
-      : 0
-
   const priceScore =
     minPrice === null
       ? 0
@@ -551,8 +484,7 @@ function getProductAdoptionHydrationScore(
     Math.min(
       variants.length,
       5
-    ) -
-    recentAttemptPenalty
+    )
   )
 }
 
@@ -995,71 +927,6 @@ async function fetchProductHtml(
   return response.text()
 }
 
-async function attachExistingProductMetadata(
-  supabase: SupabaseClient,
-  sourceId: string,
-  products: AggregatedProduct[]
-) {
-  const productIds =
-    products
-      .map(product =>
-        String(product.id || "")
-      )
-      .filter(Boolean)
-
-  if (productIds.length === 0) {
-    return
-  }
-
-  const metadataBySupplierProductId =
-    new Map<string, Record<string, unknown>>()
-
-  for (
-    const productIdChunk of chunkArray(
-      productIds,
-      POSTGREST_FILTER_CHUNK_SIZE
-    )
-  ) {
-    const {
-      data,
-      error,
-    } =
-      await supabase
-        .from("market_radar_products")
-        .select("supplier_product_id,metadata")
-        .eq(
-          "source_id",
-          sourceId
-        )
-        .in(
-          "supplier_product_id",
-          productIdChunk
-        )
-
-    if (error) {
-      console.warn(
-        "LUNA PORTEX INVENTORY METADATA WARNING:",
-        error
-      )
-      continue
-    }
-
-    for (const row of data || []) {
-      metadataBySupplierProductId.set(
-        String(row.supplier_product_id || ""),
-        getRecord(row.metadata)
-      )
-    }
-  }
-
-  for (const product of products) {
-    product.existingMetadata =
-      metadataBySupplierProductId.get(
-        String(product.id || "")
-      ) || {}
-  }
-}
-
 async function hydrateAuthenticatedInventoryQuantities(
   products: AggregatedProduct[]
 ): Promise<FetchedLunaPortexProducts> {
@@ -1136,12 +1003,6 @@ async function hydrateAuthenticatedInventoryQuantities(
       getString(product.handle)
 
     try {
-      const attemptedAt =
-        new Date().toISOString()
-
-      let hydratedThisProduct =
-        false
-
       if (LUNAPORTEX_AUTH_COOKIE) {
         const authenticatedProduct =
           await fetchAuthenticatedProductInventory(
@@ -1156,8 +1017,6 @@ async function hydrateAuthenticatedInventoryQuantities(
           )
         ) {
           hydratedProducts += 1
-          hydratedThisProduct =
-            true
         }
       }
 
@@ -1173,24 +1032,7 @@ async function hydrateAuthenticatedInventoryQuantities(
           )
         ) {
           htmlHydratedProducts += 1
-          hydratedThisProduct =
-            true
         }
-      }
-
-      product.inventoryHydrationMetadata = {
-        inventory_hydration_attempted_at:
-          attemptedAt,
-        inventory_hydration_success_at:
-          hydratedThisProduct
-            ? new Date().toISOString()
-            : getString(
-                product.existingMetadata?.inventory_hydration_success_at
-              ) || null,
-        inventory_hydration_status:
-          hydratedThisProduct
-            ? "success"
-            : "missing_quantity",
       }
     } catch (error) {
       console.warn(
@@ -1203,17 +1045,6 @@ async function hydrateAuthenticatedInventoryQuantities(
               : String(error),
         }
       )
-
-      product.inventoryHydrationMetadata = {
-        inventory_hydration_attempted_at:
-          new Date().toISOString(),
-        inventory_hydration_success_at:
-          getString(
-            product.existingMetadata?.inventory_hydration_success_at
-          ) || null,
-        inventory_hydration_status:
-          "missing_quantity",
-      }
     }
 
     await wait(
@@ -1259,10 +1090,7 @@ async function hydrateAuthenticatedInventoryQuantities(
   }
 }
 
-async function fetchLunaPortexProducts(
-  supabase: SupabaseClient,
-  sourceId: string
-): Promise<FetchedLunaPortexProducts> {
+async function fetchLunaPortexProducts(): Promise<FetchedLunaPortexProducts> {
   const productMap =
     new Map<string, AggregatedProduct>()
 
@@ -1312,19 +1140,10 @@ async function fetchLunaPortexProducts(
     )
   }
 
-  const products =
+  return hydrateAuthenticatedInventoryQuantities(
     Array.from(
       productMap.values()
     )
-
-  await attachExistingProductMetadata(
-    supabase,
-    sourceId,
-    products
-  )
-
-  return hydrateAuthenticatedInventoryQuantities(
-    products
   )
 }
 
@@ -1380,21 +1199,6 @@ async function upsertProducts(
       const imageUrls =
         normalizeImageUrls(product)
 
-      const metadata =
-        {
-          ...getRecord(
-            product.existingMetadata
-          ),
-          collections:
-            Array.from(
-              product.collections
-            ),
-          ...(
-            product.inventoryHydrationMetadata ||
-            {}
-          ),
-        }
-
       return {
         source_id:
           sourceId,
@@ -1437,7 +1241,13 @@ async function upsertProducts(
           capturedAt,
         is_active:
           true,
-        metadata,
+        metadata:
+          {
+            collections:
+              Array.from(
+                product.collections
+              ),
+          },
       }
     })
 
@@ -1610,18 +1420,6 @@ function buildSnapshotsAndEvents(
           ? variant.available
           : null
 
-      const latestSnapshot =
-        latestSnapshots.get(
-          `${productId}:${supplierVariantId}`
-        )
-
-      const inventoryQuantity =
-        getInventoryQuantity(
-          variant
-        ) ??
-        latestSnapshot?.inventory_quantity ??
-        null
-
       const snapshotRow: SnapshotInsert = {
         source_id:
           sourceId,
@@ -1640,7 +1438,9 @@ function buildSnapshotsAndEvents(
           compareAtPrice,
         available,
         inventory_quantity:
-          inventoryQuantity,
+          getInventoryQuantity(
+            variant
+          ),
         collections,
         discount_percent:
           getDiscountPercent(
@@ -1659,6 +1459,11 @@ function buildSnapshotsAndEvents(
       snapshotRows.push(
         snapshotRow
       )
+
+      const latestSnapshot =
+        latestSnapshots.get(
+          `${productId}:${supplierVariantId}`
+        )
 
       if (!latestSnapshot) {
         eventRows.push(
@@ -2281,10 +2086,7 @@ export async function runLunaPortexMarketRadarSync(
 
   try {
     const fetched =
-      await fetchLunaPortexProducts(
-        supabase,
-        source.id
-      )
+      await fetchLunaPortexProducts()
 
     const products =
       fetched.products
