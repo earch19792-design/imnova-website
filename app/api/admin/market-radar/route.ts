@@ -160,8 +160,8 @@ function compareMarketRadarProducts(
     return rightRank[index] - leftRank[index]
   }
 
-  return (left.title || "").localeCompare(
-    right.title || ""
+  return left.title.localeCompare(
+    right.title
   )
 }
 
@@ -282,7 +282,22 @@ async function getLatestProductsFromBaseTables(
   } =
     await supabase
       .from("market_radar_products")
-      .select("*")
+      .select(`
+        id,
+        source_id,
+        supplier_product_id,
+        handle,
+        title,
+        vendor,
+        product_type,
+        tags,
+        product_url,
+        featured_image_url,
+        image_urls,
+        first_seen_at,
+        last_seen_at,
+        updated_at_source
+      `)
       .eq(
         "source_id",
         source.id
@@ -320,7 +335,21 @@ async function getLatestProductsFromBaseTables(
   } =
     await supabase
       .from("market_radar_snapshots")
-      .select("*")
+      .select(`
+        id,
+        source_id,
+        product_id,
+        supplier_variant_id,
+        variant_title,
+        sku,
+        price,
+        compare_at_price,
+        available,
+        inventory_quantity,
+        collections,
+        discount_percent,
+        captured_at
+      `)
       .in(
         "product_id",
         productIds
@@ -510,7 +539,17 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
   } =
     await supabase
       .from("market_radar_sources")
-      .select("*")
+      .select(`
+        id,
+        key,
+        name,
+        base_url,
+        is_active,
+        poll_interval_minutes,
+        last_run_at,
+        last_success_at,
+        last_error
+      `)
       .eq(
         "key",
         LUNAPORTEX_SOURCE_KEY
