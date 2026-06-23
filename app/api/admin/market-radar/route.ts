@@ -117,6 +117,53 @@ function buildMarketRadarWhatsAppAnalysis(
   }
 }
 
+function getMarketRadarRankValue(
+  product: MarketRadarProductRow
+) {
+  const hasInventory =
+    product.inventory_quantity !== null &&
+    product.inventory_quantity !== undefined
+
+  return [
+    hasInventory ? 1 : 0,
+    toNumber(product.rotation_score) || 0,
+    product.event_count_7d || 0,
+    product.restock_count_7d || 0,
+    toNumber(product.opportunity_score) || 0,
+    product.last_event_at
+      ? new Date(product.last_event_at).getTime()
+      : 0,
+    product.inventory_quantity || 0,
+  ]
+}
+
+function compareMarketRadarProducts(
+  left: MarketRadarProductRow,
+  right: MarketRadarProductRow
+) {
+  const leftRank =
+    getMarketRadarRankValue(left)
+
+  const rightRank =
+    getMarketRadarRankValue(right)
+
+  for (
+    let index = 0;
+    index < leftRank.length;
+    index += 1
+  ) {
+    if (leftRank[index] === rightRank[index]) {
+      continue
+    }
+
+    return rightRank[index] - leftRank[index]
+  }
+
+  return left.title.localeCompare(
+    right.title
+  )
+}
+
 function createUnauthorizedResponse(
   error: string,
   status: number
@@ -256,20 +303,6 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
           "source_id",
           source.id
         )
-        .order(
-          "opportunity_score",
-          {
-            ascending: false,
-            nullsFirst: false,
-          }
-        )
-        .order(
-          "last_event_at",
-          {
-            ascending: false,
-            nullsFirst: false,
-          }
-        )
         .range(
           from,
           from + POSTGREST_PAGE_SIZE - 1
@@ -297,6 +330,10 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
       break
     }
   }
+
+  latestProducts.sort(
+    compareMarketRadarProducts
+  )
 
   const sevenDaysAgo =
     new Date(
@@ -528,10 +565,18 @@ export async function GET(
     const dashboard =
       await getMarketRadarDashboard()
 
-    return NextResponse.json({
-      success: true,
-      dashboard,
-    })
+    return NextResponse.json(
+      {
+        success: true,
+        dashboard,
+      },
+      {
+        headers: {
+          "Cache-Control":
+            "no-store",
+        },
+      }
+    )
   } catch (error) {
     console.error(
       "GET MARKET RADAR ERROR:",
