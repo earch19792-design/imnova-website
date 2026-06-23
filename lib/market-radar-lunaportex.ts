@@ -137,6 +137,18 @@ type EventAggregateRow = {
   created_at: string
 }
 
+type InventoryHydrationMetrics = {
+  enabled: boolean
+  candidates: number
+  hydratedProducts: number
+  checkedProducts: number
+}
+
+type LunaPortexProductFetchResult = {
+  products: AggregatedProduct[]
+  inventoryHydration: InventoryHydrationMetrics
+}
+
 function wait(
   ms: number
 ) {
@@ -708,9 +720,21 @@ async function fetchAuthenticatedProductInventory(
 
 async function hydrateAuthenticatedInventoryQuantities(
   products: AggregatedProduct[]
-) {
+): Promise<LunaPortexProductFetchResult> {
   if (!LUNAPORTEX_AUTH_COOKIE) {
-    return products
+    return {
+      products,
+      inventoryHydration: {
+        enabled:
+          false,
+        candidates:
+          0,
+        hydratedProducts:
+          0,
+        checkedProducts:
+          products.length,
+      },
+    }
   }
 
   const productsToHydrate =
@@ -797,10 +821,21 @@ async function hydrateAuthenticatedInventoryQuantities(
     }
   )
 
-  return products
+  return {
+    products,
+    inventoryHydration: {
+      enabled:
+        true,
+      candidates:
+        productsToHydrate.length,
+      hydratedProducts,
+      checkedProducts:
+        products.length,
+    },
+  }
 }
 
-async function fetchLunaPortexProducts() {
+async function fetchLunaPortexProducts(): Promise<LunaPortexProductFetchResult> {
   const productMap =
     new Map<string, AggregatedProduct>()
 
@@ -1811,8 +1846,11 @@ export async function runLunaPortexMarketRadarSync(
     )
 
   try {
-    const products =
+    const productFetchResult =
       await fetchLunaPortexProducts()
+
+    const products =
+      productFetchResult.products
 
     const savedProducts =
       await upsertProducts(
@@ -1850,6 +1888,37 @@ export async function runLunaPortexMarketRadarSync(
         supabase,
         snapshotRows
       )
+
+    const inventoryNumericVariants =
+      snapshotRows.filter(snapshot =>
+        snapshot.raw?.inventory_context &&
+        (
+          snapshot.raw.inventory_context as {
+            inventory_source?: string
+          }
+        ).inventory_source === "luna_numeric"
+      ).length
+
+    const inventoryAvailabilityOnlyVariants =
+      snapshotRows.filter(snapshot =>
+        snapshot.raw?.inventory_context &&
+        (
+          snapshot.raw.inventory_context as {
+            inventory_source?: string
+          }
+        ).inventory_source === "luna_availability" &&
+        snapshot.inventory_quantity === null
+      ).length
+
+    const inventoryUnknownVariants =
+      snapshotRows.filter(snapshot =>
+        !snapshot.raw?.inventory_context ||
+        (
+          snapshot.raw.inventory_context as {
+            inventory_source?: string
+          }
+        ).inventory_source === "not_exposed"
+      ).length
 
     const eventsInserted =
       await insertEvents(
@@ -1894,6 +1963,15 @@ export async function runLunaPortexMarketRadarSync(
       snapshotsInserted,
       eventsInserted,
       scoredProducts,
+      inventoryNumericVariants,
+      inventoryAvailabilityOnlyVariants,
+      inventoryUnknownVariants,
+      inventoryHydrationEnabled:
+        productFetchResult.inventoryHydration.enabled,
+      inventoryHydrationCandidates:
+        productFetchResult.inventoryHydration.candidates,
+      inventoryHydratedProducts:
+        productFetchResult.inventoryHydration.hydratedProducts,
       startedAt,
       finishedAt,
     }

@@ -144,6 +144,12 @@ export type MarketRadarSyncResult = {
   snapshotsInserted: number
   eventsInserted: number
   scoredProducts: number
+  inventoryNumericVariants?: number
+  inventoryAvailabilityOnlyVariants?: number
+  inventoryUnknownVariants?: number
+  inventoryHydrationEnabled?: boolean
+  inventoryHydrationCandidates?: number
+  inventoryHydratedProducts?: number
   startedAt: string
   finishedAt: string
 }

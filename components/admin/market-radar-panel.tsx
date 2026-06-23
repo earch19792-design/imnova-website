@@ -4103,6 +4103,61 @@ export function MarketRadarPanel() {
                 Scores: <strong className="text-white">{syncResult.scoredProducts}</strong>
               </span>
             </div>
+            <div
+              className="
+                mt-3
+                grid
+                gap-3
+                rounded-lg
+                border
+                border-white/10
+                bg-black/20
+                p-4
+                text-xs
+                leading-5
+                text-white/55
+                md:grid-cols-3
+              "
+            >
+              <span>
+                Cantidad numérica:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryNumericVariants ?? 0}
+                </strong>
+              </span>
+              <span>
+                Solo disponibilidad:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryAvailabilityOnlyVariants ?? 0}
+                </strong>
+              </span>
+              <span>
+                Sin dato stock:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryUnknownVariants ?? 0}
+                </strong>
+              </span>
+              <span>
+                Cookie Luna:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryHydrationEnabled
+                    ? "activa"
+                    : "no activa"}
+                </strong>
+              </span>
+              <span>
+                Hidratados:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryHydratedProducts ?? 0}
+                </strong>
+              </span>
+              <span>
+                Candidatos hidratación:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryHydrationCandidates ?? 0}
+                </strong>
+              </span>
+            </div>
 
           </>
         )}
