@@ -21,7 +21,15 @@ import {
 const LUNAPORTEX_SOURCE_KEY =
   "lunaportex"
 
-const POSTGREST_PAGE_SIZE = 1000
+const DASHBOARD_PRODUCT_LIMIT = 80
+
+function getCount(
+  count: number | null
+) {
+  return typeof count === "number"
+    ? count
+    : 0
+}
 
 function formatWhatsAppMoney(
   value: number | string | null | undefined
@@ -237,66 +245,45 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
     }
   }
 
-  const latestProducts: MarketRadarProductRow[] =
-    []
-
-  for (
-    let from = 0;
-    ;
-    from += POSTGREST_PAGE_SIZE
-  ) {
-    const {
-      data,
-      error,
-    } =
-      await supabase
-        .from("market_radar_latest_products")
-        .select("*")
-        .eq(
-          "source_id",
-          source.id
-        )
-        .order(
-          "opportunity_score",
-          {
-            ascending: false,
-            nullsFirst: false,
-          }
-        )
-        .order(
-          "last_event_at",
-          {
-            ascending: false,
-            nullsFirst: false,
-          }
-        )
-        .range(
-          from,
-          from + POSTGREST_PAGE_SIZE - 1
-        )
-
-    if (error) {
-      throw new Error(
-        error.message
+  const {
+    data: latestProductsData,
+    error: latestProductsError,
+  } =
+    await supabase
+      .from("market_radar_latest_products")
+      .select("*")
+      .eq(
+        "source_id",
+        source.id
       )
-    }
+      .order(
+        "opportunity_score",
+        {
+          ascending: false,
+          nullsFirst: false,
+        }
+      )
+      .order(
+        "last_event_at",
+        {
+          ascending: false,
+          nullsFirst: false,
+        }
+      )
+      .limit(
+        DASHBOARD_PRODUCT_LIMIT
+      )
 
-    const rows =
-      (
-        data || []
-      ) as MarketRadarProductRow[]
-
-    latestProducts.push(
-      ...rows
+  if (latestProductsError) {
+    throw new Error(
+      latestProductsError.message
     )
-
-    if (
-      rows.length <
-      POSTGREST_PAGE_SIZE
-    ) {
-      break
-    }
   }
+
+  const latestProducts =
+    (
+      latestProductsData || []
+    ) as MarketRadarProductRow[]
 
   const sevenDaysAgo =
     new Date(
@@ -351,88 +338,126 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
     )
   }
 
-  const eventWindow =
-    [] as Array<{
-      event_type: string
-      created_at: string
-    }>
-
-  for (
-    let from = 0;
-    ;
-    from += POSTGREST_PAGE_SIZE
-  ) {
-    const {
-      data,
-      error,
-    } =
-      await supabase
-        .from("market_radar_events")
-        .select(`
-          event_type,
-          created_at
-        `)
+  const [
+    totalProductsResult,
+    highOpportunityProductsResult,
+    priceChanges24hResult,
+    restocks7dResult,
+    stockOuts7dResult,
+  ] =
+    await Promise.all([
+      supabase
+        .from("market_radar_products")
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
+        .eq(
+          "source_id",
+          source.id
+        ),
+      supabase
+        .from("market_radar_scores")
+        .select(
+          "product_id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
         .eq(
           "source_id",
           source.id
         )
         .gte(
+          "opportunity_score",
+          70
+        ),
+      supabase
+        .from("market_radar_events")
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
+        .eq(
+          "source_id",
+          source.id
+        )
+        .in(
+          "event_type",
+          [
+            "price_down",
+            "price_up",
+          ]
+        )
+        .gte(
+          "created_at",
+          oneDayAgo
+        ),
+      supabase
+        .from("market_radar_events")
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
+        .eq(
+          "source_id",
+          source.id
+        )
+        .eq(
+          "event_type",
+          "restocked"
+        )
+        .gte(
           "created_at",
           sevenDaysAgo
+        ),
+      supabase
+        .from("market_radar_events")
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
         )
-        .range(
-          from,
-          from + POSTGREST_PAGE_SIZE - 1
+        .eq(
+          "source_id",
+          source.id
         )
+        .eq(
+          "event_type",
+          "out_of_stock"
+        )
+        .gte(
+          "created_at",
+          sevenDaysAgo
+        ),
+    ])
 
-    if (error) {
-      throw new Error(
-        error.message
-      )
-    }
+  const countErrors = [
+    totalProductsResult.error,
+    highOpportunityProductsResult.error,
+    priceChanges24hResult.error,
+    restocks7dResult.error,
+    stockOuts7dResult.error,
+  ].filter(Boolean)
 
-    const rows =
-      (
-        data || []
-      ) as Array<{
-        event_type: string
-        created_at: string
-      }>
-
-    eventWindow.push(
-      ...rows
+  if (countErrors.length > 0) {
+    throw new Error(
+      countErrors[0]?.message ||
+        "market_radar_count_failed"
     )
-
-    if (
-      rows.length <
-      POSTGREST_PAGE_SIZE
-    ) {
-      break
-    }
   }
-
-  const priceChanges24h =
-    eventWindow.filter(event => {
-      return (
-        (
-          event.event_type === "price_down" ||
-          event.event_type === "price_up"
-        ) &&
-        event.created_at >= oneDayAgo
-      )
-    }).length
-
-  const restocks7d =
-    eventWindow.filter(
-      event =>
-        event.event_type === "restocked"
-    ).length
-
-  const stockOuts7d =
-    eventWindow.filter(
-      event =>
-        event.event_type === "out_of_stock"
-    ).length
 
   const availableProducts =
     latestProducts.filter(
@@ -459,16 +484,6 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
       )
     }).length
 
-  const highOpportunityProducts =
-    latestProducts.filter(product => {
-      const score =
-        toNumber(
-          product.opportunity_score
-        ) || 0
-
-      return score >= 70
-    }).length
-
   const recentEvents =
     (
       (
@@ -492,24 +507,38 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
     summary: {
       source,
       totalProducts:
-        latestProducts.length,
-      availableProducts,
-      outOfStockProducts,
-      discountedProducts,
-      highOpportunityProducts,
-      priceChanges24h,
-      restocks7d,
-      stockOuts7d,
+        getCount(
+          totalProductsResult.count
+        ),
+      availableProducts:
+        availableProducts,
+      outOfStockProducts:
+        outOfStockProducts,
+      discountedProducts:
+        discountedProducts,
+      highOpportunityProducts:
+        getCount(
+          highOpportunityProductsResult.count
+        ),
+      priceChanges24h:
+        getCount(
+          priceChanges24hResult.count
+        ),
+      restocks7d:
+        getCount(
+          restocks7dResult.count
+        ),
+      stockOuts7d:
+        getCount(
+          stockOuts7dResult.count
+        ),
       lastRunAt:
         source.last_run_at,
       lastSuccessAt:
         source.last_success_at,
     },
     products:
-      latestProducts.slice(
-        0,
-        80
-      ),
+      latestProducts,
     recentEvents,
   }
 }
