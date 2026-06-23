@@ -370,9 +370,26 @@ async function getLatestMarketRadarProducts(
     new Map<string, NonNullable<typeof snapshotsData>[number]>()
 
   for (const snapshot of snapshotsData || []) {
-    if (
-      !snapshotByProductId.has(
+    const currentSnapshot =
+      snapshotByProductId.get(
         snapshot.product_id
+      )
+
+    const hasConfirmedQuantity =
+      snapshot.available === true &&
+      snapshot.inventory_quantity !== null &&
+      snapshot.inventory_quantity !== undefined
+
+    const currentHasConfirmedQuantity =
+      currentSnapshot?.available === true &&
+      currentSnapshot.inventory_quantity !== null &&
+      currentSnapshot.inventory_quantity !== undefined
+
+    if (
+      !currentSnapshot ||
+      (
+        hasConfirmedQuantity &&
+        !currentHasConfirmedQuantity
       )
     ) {
       snapshotByProductId.set(
