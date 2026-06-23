@@ -4185,7 +4185,72 @@ export function MarketRadarPanel() {
                   {syncResult.inventoryHydrationWithoutNumericInventory ?? 0}
                 </strong>
               </span>
+              <span>
+                Sesión Luna:{" "}
+                <strong className="text-white">
+                  {syncResult.lunaAuthState || "unknown"}
+                </strong>
+              </span>
             </div>
+
+            {syncResult.lunaAuthState &&
+              syncResult.lunaAuthState !== "approved" && (
+                <div
+                  className="
+                    mt-3
+                    flex
+                    flex-col
+                    gap-3
+                    rounded-lg
+                    border
+                    border-amber-300/25
+                    bg-amber-300/[0.08]
+                    p-4
+                    text-sm
+                    leading-6
+                    text-amber-50
+                    md:flex-row
+                    md:items-center
+                    md:justify-between
+                  "
+                >
+                  <div className="min-w-0">
+                    <p className="font-black">
+                      Cookie Luna requiere actualización
+                    </p>
+                    <p className="mt-1 text-xs text-amber-50/75">
+                      {syncResult.lunaAuthMessage ||
+                        "Actualizar LUNAPORTEX_AUTH_COOKIE con una sesión aprobada."}
+                    </p>
+                  </div>
+                  <a
+                    href="https://lunaportex.com/account"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="
+                      inline-flex
+                      shrink-0
+                      items-center
+                      justify-center
+                      gap-2
+                      rounded-lg
+                      border
+                      border-amber-200/35
+                      bg-amber-200
+                      px-3
+                      py-2
+                      text-xs
+                      font-black
+                      text-black
+                      transition
+                      hover:bg-amber-100
+                    "
+                  >
+                    Abrir Luna
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                </div>
+              )}
 
           </>
         )}
@@ -4430,9 +4495,9 @@ export function MarketRadarPanel() {
 
           <div className="mt-5 space-y-3">
             {dashboard?.advisorAlerts.length ? (
-              dashboard.advisorAlerts.map(alert => (
+              dashboard.advisorAlerts.map((alert, index) => (
                 <RadarAdvisorAlertItem
-                  key={`${alert.product_id}-${alert.event_type}-${alert.created_at}`}
+                  key={`${alert.product_id || "product"}-${alert.supplier_sku || alert.candidate_id || "variant"}-${alert.event_type}-${alert.created_at || "created"}-${index}`}
                   alert={alert}
                 />
               ))

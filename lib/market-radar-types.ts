@@ -153,6 +153,9 @@ export type MarketRadarSyncResult = {
   inventoryHydrationSuccessfulFetches?: number
   inventoryHydrationFailedFetches?: number
   inventoryHydrationWithoutNumericInventory?: number
+  lunaAuthState?: "approved" | "restricted" | "unknown" | "not_configured"
+  lunaAuthMessage?: string
+  lunaAuthCheckedHandle?: string | null
   startedAt: string
   finishedAt: string
 }

@@ -145,6 +145,13 @@ type InventoryHydrationMetrics = {
   failedFetches: number
   productsWithoutNumericInventory: number
   checkedProducts: number
+  authState:
+    | "approved"
+    | "restricted"
+    | "unknown"
+    | "not_configured"
+  authMessage: string
+  authCheckedHandle: string | null
 }
 
 type LunaPortexProductFetchResult = {
@@ -721,6 +728,109 @@ async function fetchAuthenticatedProductInventory(
   )
 }
 
+async function getLunaPortexAuthState(
+  handle: string
+) {
+  if (!LUNAPORTEX_AUTH_COOKIE) {
+    return {
+      authState:
+        "not_configured",
+      authMessage:
+        "Cookie Luna no configurada. Actualizar LUNAPORTEX_AUTH_COOKIE para ver inventario autenticado.",
+      authCheckedHandle:
+        null,
+    } as const
+  }
+
+  if (!handle) {
+    return {
+      authState:
+        "unknown",
+      authMessage:
+        "No hubo producto de muestra para validar la sesión Luna.",
+      authCheckedHandle:
+        null,
+    } as const
+  }
+
+  try {
+    const headers =
+      getLunaPortexRequestHeaders()
+
+    headers.Accept =
+      "text/html"
+
+    const response =
+      await fetch(
+        `${LUNAPORTEX_BASE_URL}/products/${handle}`,
+        {
+          headers,
+          cache:
+            "no-store",
+        }
+      )
+
+    if (!response.ok) {
+      return {
+        authState:
+          "unknown",
+        authMessage:
+          `No se pudo validar sesión Luna. Status ${response.status}.`,
+        authCheckedHandle:
+          handle,
+      } as const
+    }
+
+    const html =
+      await response.text()
+
+    if (/Access Restricted/i.test(html)) {
+      return {
+        authState:
+          "restricted",
+        authMessage:
+          "Cookie Luna vencida o sin aprobación. Actualizar LUNAPORTEX_AUTH_COOKIE con una sesión aprobada.",
+        authCheckedHandle:
+          handle,
+      } as const
+    }
+
+    if (
+      /"customerId"\s*:\s*\d+/.test(html) ||
+      /customerId["']?\s*:\s*\d+/.test(html)
+    ) {
+      return {
+        authState:
+          "approved",
+        authMessage:
+          "Sesión Luna aprobada para inventario autenticado.",
+        authCheckedHandle:
+          handle,
+      } as const
+    }
+
+    return {
+      authState:
+        "unknown",
+      authMessage:
+        "Luna respondió, pero no se pudo confirmar si la sesión está aprobada.",
+      authCheckedHandle:
+        handle,
+    } as const
+  } catch (error) {
+    return {
+      authState:
+        "unknown",
+      authMessage:
+        error instanceof Error
+          ? `No se pudo validar sesión Luna: ${error.message}`
+          : "No se pudo validar sesión Luna.",
+      authCheckedHandle:
+        handle,
+    } as const
+  }
+}
+
 async function hydrateAuthenticatedInventoryQuantities(
   products: AggregatedProduct[]
 ): Promise<LunaPortexProductFetchResult> {
@@ -742,6 +852,12 @@ async function hydrateAuthenticatedInventoryQuantities(
           0,
         checkedProducts:
           products.length,
+        authState:
+          "not_configured",
+        authMessage:
+          "Cookie Luna no configurada. Actualizar LUNAPORTEX_AUTH_COOKIE para ver inventario autenticado.",
+        authCheckedHandle:
+          null,
       },
     }
   }
@@ -753,6 +869,14 @@ async function hydrateAuthenticatedInventoryQuantities(
         0,
         SHOPIFY_AUTH_PRODUCT_LIMIT
       )
+
+  const authState =
+    await getLunaPortexAuthState(
+      getString(
+        productsToHydrate[0]?.handle ||
+          products[0]?.handle
+      )
+    )
 
   let hydratedProducts =
     0
@@ -848,6 +972,8 @@ async function hydrateAuthenticatedInventoryQuantities(
         productsToHydrate.length,
       checkedProducts:
         products.length,
+      authState:
+        authState.authState,
     }
   )
 
@@ -864,6 +990,12 @@ async function hydrateAuthenticatedInventoryQuantities(
       productsWithoutNumericInventory,
       checkedProducts:
         products.length,
+      authState:
+        authState.authState,
+      authMessage:
+        authState.authMessage,
+      authCheckedHandle:
+        authState.authCheckedHandle,
     },
   }
 }
@@ -2011,6 +2143,12 @@ export async function runLunaPortexMarketRadarSync(
         productFetchResult.inventoryHydration.failedFetches,
       inventoryHydrationWithoutNumericInventory:
         productFetchResult.inventoryHydration.productsWithoutNumericInventory,
+      lunaAuthState:
+        productFetchResult.inventoryHydration.authState,
+      lunaAuthMessage:
+        productFetchResult.inventoryHydration.authMessage,
+      lunaAuthCheckedHandle:
+        productFetchResult.inventoryHydration.authCheckedHandle,
       startedAt,
       finishedAt,
     }
