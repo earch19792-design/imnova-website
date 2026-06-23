@@ -124,23 +124,29 @@ type PriceIntelligenceFormState = {
 }
 
 const priceSourceOptions = [
-  "aiprice",
-  "manual",
   "terapeak",
+  "ebay_research",
+  "manual",
+  "aiprice",
   "zik",
+  "serpapi",
   "ebay_api",
   "other",
 ]
 
 const priceSourceLabels: Record<string, string> = {
-  aiprice:
-    "Aiprice",
+  terapeak:
+    "Terapeak / eBay Research",
+  ebay_research:
+    "eBay Research",
   manual:
     "Manual",
-  terapeak:
-    "Terapeak",
+  aiprice:
+    "Aiprice",
   zik:
     "ZIK",
+  serpapi:
+    "SerpAPI",
   ebay_api:
     "eBay API",
   other:
@@ -161,11 +167,19 @@ const priceIntelligenceProviders: Array<{
 }> = [
   {
     key:
+      "terapeak_export",
+    label:
+      "Terapeak / eBay Research",
+    status:
+      "Proxima fuente: Terapeak export",
+  },
+  {
+    key:
       "ebay_api",
     label:
       "eBay API",
     status:
-      "Futuro adapter API-ready",
+      "Proxima fuente: eBay API",
   },
   {
     key:
@@ -173,15 +187,7 @@ const priceIntelligenceProviders: Array<{
     label:
       "Aiprice export",
     status:
-      "Export manual permitido cuando exista",
-  },
-  {
-    key:
-      "terapeak_export",
-    label:
-      "Terapeak export",
-    status:
-      "Importacion futura",
+      "Fuente auxiliar: Aiprice export",
   },
   {
     key:
@@ -189,7 +195,7 @@ const priceIntelligenceProviders: Array<{
     label:
       "ZIK export",
     status:
-      "Importacion futura",
+      "Fuente auxiliar: ZIK export",
   },
   {
     key:
@@ -197,7 +203,7 @@ const priceIntelligenceProviders: Array<{
     label:
       "Captura rapida",
     status:
-      "Fallback temporal",
+      "Respaldo temporal",
   },
 ]
 
@@ -501,15 +507,37 @@ function runPriceAnalysis(
   }
 }
 
+function normalizePriceSourceForPayload(
+  sourceType: string
+) {
+  if (
+    sourceType === "ebay_research" ||
+    sourceType === "serpapi"
+  ) {
+    return sourceType === "ebay_research"
+      ? "terapeak"
+      : "other"
+  }
+
+  return sourceType
+}
+
 function suggestPriceConfidence({
   count,
   productMatchType,
   captureType,
+  sourceType,
 }: {
   count: number
   productMatchType: string
   captureType: "sold" | "active"
+  sourceType: string
 }): SuggestedPriceConfidence {
+  const normalizedSourceType =
+    normalizePriceSourceForPayload(
+      sourceType
+    )
+
   if (productMatchType === "unknown") {
     return {
       source_confidence:
@@ -525,13 +553,27 @@ function suggestPriceConfidence({
       productMatchType === "same_model"
     ) &&
     captureType === "sold" &&
-    count >= 8
+    normalizedSourceType === "terapeak" &&
+    count >= 5
   ) {
     return {
       source_confidence:
         "high",
       confidence_score:
         85,
+    }
+  }
+
+  if (
+    normalizedSourceType === "terapeak" &&
+    captureType === "sold" &&
+    count >= 8
+  ) {
+    return {
+      source_confidence:
+        "high",
+      confidence_score:
+        80,
     }
   }
 
@@ -554,9 +596,13 @@ function suggestPriceConfidence({
   ) {
     return {
       source_confidence:
-        "medium",
+        normalizedSourceType === "aiprice"
+          ? "low"
+          : "medium",
       confidence_score:
-        55,
+        normalizedSourceType === "aiprice"
+          ? 45
+          : 55,
     }
   }
 
@@ -866,7 +912,7 @@ function createPriceIntelligenceForm(
 ): PriceIntelligenceFormState {
   return {
     source_type:
-      "aiprice",
+      "terapeak",
     price_capture_type:
       "sold",
     pasted_price_text:
@@ -935,7 +981,9 @@ function buildPriceIntelligencePayload(
         product
       ),
     source_type:
-      form.source_type,
+      normalizePriceSourceForPayload(
+        form.source_type
+      ),
     marketplace:
       "ebay",
     search_query:
@@ -1268,6 +1316,8 @@ function PriceIntelligenceModal({
             form.product_match_type,
           captureType:
             form.price_capture_type,
+          sourceType:
+            form.source_type,
         })
       : null
 
@@ -1445,11 +1495,17 @@ function PriceIntelligenceModal({
                 <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-100/55">
                   Automation-first
                 </p>
-                <h4 className="mt-2 text-lg font-black text-white">
+                <p className="mt-2 inline-flex rounded-md border border-amber-300/25 bg-amber-300/[0.10] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-100">
                   Fuente automatica aun no configurada
+                </p>
+                <h4 className="mt-2 text-lg font-black text-white">
+                  Fuente recomendada: Terapeak / eBay Research
                 </h4>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-cyan-50/75">
-                  IMNOVA preparara este producto para analisis de precio. Las fuentes automaticas se conectaran por adapters: eBay API, Aiprice export, Terapeak/ZIK export o captura rapida.
+                  Terapeak/eBay Research permite validar precios vendidos, competencia y senales del marketplace desde el ecosistema de eBay. Hasta conectar la API, puedes pegar datos revisados manualmente.
+                </p>
+                <p className="mt-2 max-w-3xl text-xs leading-5 text-cyan-50/55">
+                  Cuando conectemos eBay API, esta capa se llenara automaticamente desde datos oficiales. Aiprice, ZIK y SerpAPI quedan como fuentes auxiliares o puente temporal; manual paste queda solo como fallback.
                 </p>
                 <p className="mt-2 text-xs text-white/40">
                   Estado actual: {automationStatus.status === "not_configured" ? "provider pendiente" : "provider listo"}.
@@ -1543,9 +1599,9 @@ function PriceIntelligenceModal({
             </div>
           </section>
 
-          <PriceFormGroup title="Pegar evidencia rapida">
+          <PriceFormGroup title="Pegar datos de Terapeak/eBay Research">
             <p className="mb-4 text-sm leading-6 text-white/50">
-              Fallback temporal: Aiprice sigue siendo manual. Copia los precios que ves y pegalos aqui; IMNOVA calculara minimo, maximo, promedio, mediana y precio recomendado.
+              Fallback temporal: pega datos desde Terapeak, eBay Research, Aiprice o ZIK. IMNOVA calculara minimo, maximo, promedio, mediana y precio recomendado.
             </p>
             <div className="grid gap-4 md:grid-cols-2">
               <PriceSelect
@@ -1554,7 +1610,7 @@ function PriceIntelligenceModal({
                 value={form.source_type}
                 options={priceSourceOptions}
                 optionLabels={priceSourceLabels}
-                helpText="Aiprice es una fuente manual temporal."
+                helpText="Terapeak/eBay Research es la fuente recomendada. eBay Research se guarda por ahora como Terapeak; SerpAPI se guarda como Other hasta una migracion futura."
                 onChange={value =>
                   onChange(
                     "source_type",
@@ -1622,7 +1678,7 @@ function PriceIntelligenceModal({
                   )
                 }
                 rows={4}
-                placeholder="Pega precios de Aiprice/eBay. Ejemplo: $24.99, $29.99, $31.50, $34.99"
+                placeholder="Pega precios vendidos o datos de Terapeak/eBay Research. Ejemplo: $24.99, $29.99, $31.50, $34.99"
                 className="
                   mt-2
                   w-full
@@ -1669,7 +1725,7 @@ function PriceIntelligenceModal({
                   disabled:opacity-50
                 "
               >
-                Analizar precios pegados
+                Analizar precios
               </button>
               {!quickCaptureAnalysis &&
               form.pasted_price_text.trim() ? (
@@ -1766,7 +1822,7 @@ function PriceIntelligenceModal({
                 value={form.source_confidence}
                 options={sourceConfidenceOptions}
                 optionLabels={sourceConfidenceLabels}
-                helpText="Puedes ajustar la confianza sugerida."
+                helpText="Terapeak con ventas reales, STR alto y mismo producto/modelo debe ser alta. Activos o Aiprice suelen ser media/baja."
                 onChange={value =>
                   onChange(
                     "source_confidence",
@@ -1780,7 +1836,7 @@ function PriceIntelligenceModal({
                 type="number"
                 placeholder="0 a 100"
                 value={form.confidence_score}
-                helpText="Editable: 85 alto, 70 medio, 35-45 bajo."
+                helpText="Editable: ventas reales pesan mas que listados activos."
                 onChange={value =>
                   onChange(
                     "confidence_score",
@@ -1806,7 +1862,7 @@ function PriceIntelligenceModal({
                   )
                 }
                 rows={4}
-                placeholder="Ejemplo: Revisado manualmente en Aiprice/eBay. Mismo part number. 8 vendidos similares."
+                placeholder="Ejemplo: Revisado en Terapeak/eBay Research. Mismo part number. 8 vendidos similares, STR alto."
                 className="
                   mt-2
                   w-full
