@@ -54,6 +54,15 @@ const SHOPIFY_PAGE_DELAY_MS = 250
 const SHOPIFY_AUTH_PRODUCT_DELAY_MS = 150
 const POSTGREST_FILTER_CHUNK_SIZE = 100
 
+const ADOPTION_SCORE_WEIGHTS = {
+  availability: 30,
+  priceViability: 22,
+  discount: 18,
+  commercialSignal: 14,
+  freshness: 8,
+  operationalSimplicity: 8,
+} as const
+
 type ShopifyVariant = {
   id?: number | string | null
   title?: string | null
@@ -436,6 +445,88 @@ function shouldHydrateProductInventory(
   )
 }
 
+function clampScore(
+  value: number,
+  max: number
+) {
+  return Math.max(
+    0,
+    Math.min(
+      value,
+      max
+    )
+  )
+}
+
+function getPriceViabilityScore(
+  minPrice: number | null
+) {
+  if (minPrice === null) {
+    return 0
+  }
+
+  if (minPrice <= 12) {
+    return 12
+  }
+
+  if (minPrice <= 35) {
+    return ADOPTION_SCORE_WEIGHTS.priceViability
+  }
+
+  if (minPrice <= 75) {
+    return 17
+  }
+
+  if (minPrice <= 150) {
+    return 9
+  }
+
+  return 3
+}
+
+function getFreshnessScore(
+  product: AggregatedProduct
+) {
+  const updatedAtMs =
+    getTimestampMs(
+      product.updated_at
+    )
+
+  const createdAtMs =
+    getTimestampMs(
+      product.created_at
+    )
+
+  const signalMs =
+    updatedAtMs ||
+    createdAtMs
+
+  if (!signalMs) {
+    return 0
+  }
+
+  const daysSinceSignal =
+    (
+      Date.now() -
+      signalMs
+    ) /
+    (24 * 60 * 60 * 1000)
+
+  if (daysSinceSignal <= 3) {
+    return ADOPTION_SCORE_WEIGHTS.freshness
+  }
+
+  if (daysSinceSignal <= 14) {
+    return 5
+  }
+
+  if (daysSinceSignal <= 45) {
+    return 2
+  }
+
+  return 0
+}
+
 function getProductAdoptionHydrationScore(
   product: AggregatedProduct
 ) {
@@ -500,30 +591,65 @@ function getProductAdoptionHydrationScore(
     product.collections.has("flash-sale") ||
     product.collections.has("weekly-deals")
 
-  const priceScore =
-    minPrice === null
-      ? 0
-      : minPrice <= 25
-      ? 24
-      : minPrice <= 50
-      ? 18
-      : minPrice <= 100
-      ? 10
-      : 4
+  const availabilityScore =
+    hasAvailableVariant
+      ? ADOPTION_SCORE_WEIGHTS.availability
+      : 0
 
-  return (
-    (hasAvailableVariant ? 35 : 0) +
-    (hasOutOfStockCollection ? -30 : 0) +
-    (isDealCollection ? 18 : 0) +
-    Math.min(
-      bestDiscountPercent,
-      35
-    ) +
-    priceScore +
-    Math.min(
-      variants.length,
-      5
+  const priceViabilityScore =
+    getPriceViabilityScore(
+      minPrice
     )
+
+  const discountScore =
+    clampScore(
+      bestDiscountPercent * 0.6,
+      ADOPTION_SCORE_WEIGHTS.discount
+    )
+
+  const commercialSignalScore =
+    (
+      product.collections.has("flash-sale")
+        ? 8
+        : 0
+    ) +
+    (
+      product.collections.has("weekly-deals")
+        ? 5
+        : 0
+    ) +
+    (
+      isDealCollection
+        ? 1
+        : 0
+    )
+
+  const freshnessScore =
+    getFreshnessScore(
+      product
+    )
+
+  const operationalSimplicityScore =
+    variants.length <= 1
+      ? ADOPTION_SCORE_WEIGHTS.operationalSimplicity
+      : variants.length <= 3
+      ? 5
+      : 2
+
+  const outOfStockPenalty =
+    hasOutOfStockCollection
+      ? 35
+      : 0
+
+  return clampScore(
+    availabilityScore +
+      priceViabilityScore +
+      discountScore +
+      commercialSignalScore +
+      freshnessScore +
+      operationalSimplicityScore -
+      outOfStockPenalty,
+    100
   )
 }
 
