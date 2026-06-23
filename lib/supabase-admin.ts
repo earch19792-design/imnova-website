@@ -118,6 +118,24 @@ function getSupabaseAuthenticatedClient(
   )
 }
 
+function hasAdminMetadata(
+  user: unknown
+) {
+  const metadata =
+    user &&
+    typeof user === "object" &&
+    "app_metadata" in user &&
+    user.app_metadata &&
+    typeof user.app_metadata === "object"
+      ? user.app_metadata as Record<string, unknown>
+      : null
+
+  return (
+    metadata?.is_admin === true ||
+    metadata?.role === "admin"
+  )
+}
+
 export async function validateAdminApiRequest(
   req: Request
 ) {
@@ -169,6 +187,18 @@ export async function validateAdminApiRequest(
       status: 401,
       error:
         "admin_unauthorized",
+    }
+  }
+
+  if (
+    hasAdminMetadata(
+      userData.user
+    )
+  ) {
+    return {
+      ok: true,
+      status: 200,
+      error: null,
     }
   }
 

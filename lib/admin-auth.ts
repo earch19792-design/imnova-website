@@ -49,6 +49,24 @@ function withTimeout<T>(
   ])
 }
 
+function hasAdminMetadata(
+  user: unknown
+) {
+  const metadata =
+    user &&
+    typeof user === "object" &&
+    "app_metadata" in user &&
+    user.app_metadata &&
+    typeof user.app_metadata === "object"
+      ? user.app_metadata as Record<string, unknown>
+      : null
+
+  return (
+    metadata?.is_admin === true ||
+    metadata?.role === "admin"
+  )
+}
+
 export async function signInAdmin(
   email: string,
   password: string
@@ -75,6 +93,13 @@ export async function signInAdmin(
       }
     }
 
+    if (hasAdminMetadata(data.user)) {
+      return {
+        isAdmin: true,
+        error: null,
+      }
+    }
+
     const {
       data: isAdmin,
       error: adminError,
@@ -90,6 +115,7 @@ export async function signInAdmin(
       return {
         isAdmin: false,
         error:
+          adminError?.message ||
           "Este usuario no tiene permisos de administrador.",
       }
     }
@@ -125,6 +151,19 @@ export async function validateAdminSession() {
         session: null,
         error:
           error?.message || "NO_SESSION",
+      }
+    }
+
+    if (
+      hasAdminMetadata(
+        data.session.user
+      )
+    ) {
+      return {
+        isAdmin: true,
+        session:
+          data.session,
+        error: null,
       }
     }
 
