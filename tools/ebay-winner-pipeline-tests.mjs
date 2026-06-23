@@ -204,6 +204,18 @@ test("radar advisor inventory: quantity string se normaliza", () => {
   assert.equal(stockContext.inventory_source, "luna_numeric")
 })
 
+test("radar advisor inventory: quantity invalido no inventa cantidad", () => {
+  const stockContext =
+    getNormalizedInventoryContext({
+      quantity:
+        "18 unidades",
+    })
+
+  assert.equal(stockContext.inventory_quantity, null)
+  assert.equal(stockContext.inventory_status, "unknown")
+  assert.equal(stockContext.inventory_source, "not_exposed")
+})
+
 test("radar advisor inventory: available true sin quantity no inventa unidades", () => {
   const stockContext =
     getNormalizedInventoryContext({
@@ -298,6 +310,43 @@ test("radar advisor: low_stock sin quantity numerico se ignora", () => {
   assert.equal(alert, null)
 })
 
+test("radar advisor: availability-only requiere aprobacion y mensaje claro", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "discount_started",
+        new_value: {
+          available:
+            true,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          null,
+      },
+      {
+        id:
+          "candidate-availability-only",
+        state:
+          "VALIDATED",
+        product_type:
+          "Coffee",
+      }
+    )
+
+  assert.equal(alert.stock_context.inventory_status, "in_stock")
+  assert.equal(alert.stock_context.inventory_source, "luna_availability")
+  assert.equal(alert.stock_context.inventory_quantity, null)
+  assert.equal(alert.required_human_approval, true)
+  assert.equal(
+    alert.advisor_message,
+    "Producto disponible, pero Luna no expone cantidad numérica. Validar unidades antes de listar, escalar campaña o crear packs grandes."
+  )
+})
+
 test("radar advisor: discount_started + consumable signal -> evaluate_pack_strategy", () => {
   const alert =
     getRadarAdvisorEvent(
@@ -362,6 +411,39 @@ test("radar advisor: discount_started consumible sin stock suficiente no sugiere
     )
 
   assert.equal(alert.recommended_action, "recalculate_profit")
+})
+
+test("pricing strategy: pack candidate requiere stock numerico", () => {
+  const recommendation =
+    getPricingStrategyRecommendation({
+      candidate: {
+        state:
+          "VALIDATED",
+        product_type:
+          "Coffee",
+        stock:
+          null,
+      },
+      profitScenario:
+        makeProfitScenario({
+          salePrice:
+            18,
+          lunaCost:
+            12,
+        }),
+      priceIntelligence:
+        makePriceIntelligence({
+          soldMedian:
+            30,
+          domesticLanded:
+            30,
+        }),
+    })
+
+  assert.notEqual(
+    recommendation.launch_strategy,
+    "pack_candidate"
+  )
 })
 
 test("radar advisor: price_up + VALIDATED -> recalculate_before_listing", () => {

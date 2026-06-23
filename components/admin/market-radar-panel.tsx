@@ -602,19 +602,29 @@ function suggestPriceConfidence({
   }
 }
 
-function formatInventoryQuantity(
-  value: number | null | undefined
+function getProductInventoryMessage(
+  product: MarketRadarProductRow
 ) {
   if (
-    value === null ||
-    value === undefined
+    product.inventory_source === "luna_numeric" &&
+    product.inventory_quantity !== null &&
+    product.inventory_quantity !== undefined
   ) {
-    return "Unidades sin confirmar"
+    return `Cantidad: ${new Intl.NumberFormat("en-US").format(product.inventory_quantity)} unidades`
   }
 
-  return `${new Intl.NumberFormat(
-    "en-US"
-  ).format(value)} unidades`
+  if (
+    product.inventory_source === "luna_availability" &&
+    product.inventory_status === "in_stock"
+  ) {
+    return "Disponible, pero Luna no expone cantidad numérica"
+  }
+
+  if (product.inventory_status === "out_of_stock") {
+    return "Sin stock"
+  }
+
+  return "Cantidad no disponible"
 }
 
 function formatDate(
@@ -3213,8 +3223,8 @@ function ProductRow({
         >
           {getProductStatusLabel(product)}
         </span>
-        <p className="mt-2 text-xs font-semibold text-white/70">
-          {formatInventoryQuantity(product.inventory_quantity)}
+        <p className="mt-2 text-xs font-semibold leading-5 text-white/70">
+          {getProductInventoryMessage(product)}
         </p>
         <p className="mt-1 text-[11px] text-white/35">
           {product.inventory_source === "luna_numeric"
@@ -3360,8 +3370,8 @@ function RadarAdvisorAlertItem({
         </div>
       )}
 
-      <div className="mt-4 space-y-4 text-xs leading-5 text-white/45">
-        <div className="min-w-0">
+      <div className="mt-4 grid grid-cols-1 gap-4 text-xs leading-5 text-white/45 lg:grid-cols-2">
+        <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-3">
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
             Recomendacion
           </p>
@@ -3369,7 +3379,7 @@ function RadarAdvisorAlertItem({
             {alert.recommended_action}
           </p>
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-3">
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
             Proximo paso
           </p>

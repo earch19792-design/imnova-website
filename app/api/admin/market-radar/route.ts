@@ -193,18 +193,12 @@ function getInventoryContext(
           ? "in_stock"
           : "out_of_stock",
       inventory_source:
-        value?.raw?.inventory_context?.inventory_source ===
-          "luna_availability"
-          ? "luna_availability"
-          : "luna_numeric",
+        "luna_numeric",
       inventory_confidence:
-        value?.raw?.inventory_context?.inventory_source ===
-          "luna_availability"
-          ? "medium"
-          : "high",
+        "high",
       stock_message:
         inventoryQuantity > 0
-          ? `Stock disponible: ${new Intl.NumberFormat("en-US").format(inventoryQuantity)} unidades.`
+          ? `Cantidad: ${new Intl.NumberFormat("en-US").format(inventoryQuantity)} unidades.`
           : "Producto sin stock. No listar o revisar pausa si ya está en eBay.",
     } as const
   }
