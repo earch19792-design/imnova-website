@@ -107,6 +107,14 @@ export type MarketRadarSyncResult = {
   sourceKey: string
   fetchedProducts: number
   fetchedVariants: number
+  variantsWithQuantity?: number
+  variantsMissingQuantity?: number
+  htmlInventoryHydratedProducts?: number
+  authInventoryHydratedProducts?: number
+  inventoryHydrationCheckedProducts?: number
+  inventoryHydrationTargetProducts?: number
+  requestEmailConfigured?: boolean
+  authCookieConfigured?: boolean
   snapshotsInserted: number
   eventsInserted: number
   scoredProducts: number
