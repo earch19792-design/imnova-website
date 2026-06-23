@@ -180,38 +180,6 @@ function createUnauthorizedResponse(
   )
 }
 
-function createEmptyMarketRadarDashboard(
-  source: MarketRadarSource | null
-): MarketRadarDashboard {
-  return {
-    summary: {
-      source,
-      totalProducts:
-        0,
-      availableProducts:
-        0,
-      outOfStockProducts:
-        0,
-      discountedProducts:
-        0,
-      highOpportunityProducts:
-        0,
-      priceChanges24h:
-        0,
-      restocks7d:
-        0,
-      stockOuts7d:
-        0,
-      lastRunAt:
-        source?.last_run_at || null,
-      lastSuccessAt:
-        source?.last_success_at || null,
-    },
-    products: [],
-    recentEvents: [],
-  }
-}
-
 function toNumber(
   value: number | string | null | undefined
 ) {
@@ -547,7 +515,7 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
         "key",
         LUNAPORTEX_SOURCE_KEY
       )
-      .limit(1)
+      .maybeSingle()
 
   if (sourceError) {
     throw new Error(
@@ -556,33 +524,44 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
   }
 
   const source =
-    (
-      Array.isArray(sourceData)
-        ? sourceData[0] || null
-        : sourceData
-    ) as MarketRadarSource | null
+    sourceData as MarketRadarSource | null
 
   if (!source) {
-    return createEmptyMarketRadarDashboard(
-      null
-    )
+    return {
+      summary: {
+        source:
+          null,
+        totalProducts:
+          0,
+        availableProducts:
+          0,
+        outOfStockProducts:
+          0,
+        discountedProducts:
+          0,
+        highOpportunityProducts:
+          0,
+        priceChanges24h:
+          0,
+        restocks7d:
+          0,
+        stockOuts7d:
+          0,
+        lastRunAt:
+          null,
+        lastSuccessAt:
+          null,
+      },
+      products: [],
+      recentEvents: [],
+    }
   }
 
-  let latestProducts: MarketRadarProductRow[] =
-    []
-
-  try {
-    latestProducts =
-      await getLatestMarketRadarProducts(
-        supabase,
-        source
-      )
-  } catch (error) {
-    console.warn(
-      "MARKET RADAR PRODUCTS WARNING:",
-      error
+  const latestProducts =
+    await getLatestMarketRadarProducts(
+      supabase,
+      source
     )
-  }
 
   latestProducts.sort(
     compareMarketRadarProducts
