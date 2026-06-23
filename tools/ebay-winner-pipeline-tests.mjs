@@ -7,6 +7,7 @@ import {
 } from "../lib/ebay-winner-pipeline/core.mjs"
 import {
   getEbayProductDecisionAdvisor,
+  getPricingStrategyRecommendation,
 } from "../lib/ebay-winner-pipeline/decision-advisor.mjs"
 
 const validRadarProduct = {
@@ -337,5 +338,320 @@ test("IMNOVA free shipping mantiene estimated_shipping_cost como costo interno",
         )
       ).toFixed(2)
     )
+  )
+})
+
+function makeProfitScenario({
+  salePrice = 50,
+  lunaCost = 20,
+  shippingCost = 6.99,
+}) {
+  return calculateProfitScenario(
+    {
+      cost:
+        lunaCost,
+      estimated_sale_price:
+        salePrice,
+      buyer_shipping_charge:
+        0,
+      shipping_cost:
+        shippingCost,
+      fulfillment_cost:
+        1.5,
+      packaging_cost:
+        0.75,
+    },
+    {
+      defaultShippingCost:
+        6.99,
+      ebayFeePercent:
+        13.25,
+      paymentFeePercent:
+        0,
+      advertisingPercent:
+        0,
+      returnReservePercent:
+        3,
+      minimumNetMarginPercent:
+        10,
+    }
+  )
+}
+
+function makePriceIntelligence({
+  soldMedian = 50,
+  domesticLanded = 50,
+  sourceConfidence = "high",
+} = {}) {
+  return {
+    sold_median_price:
+      soldMedian,
+    source_confidence:
+      sourceConfidence,
+    recommended_sale_price:
+      domesticLanded,
+    raw_payload: {
+      shipping_scope_evidence: {
+        shipping_scope:
+          "us_domestic",
+        buyer_location_country:
+          "US",
+        competitor_item_price:
+          domesticLanded,
+        competitor_domestic_shipping_price:
+          0,
+        competitor_domestic_landed_price:
+          domesticLanded,
+      },
+    },
+  }
+}
+
+test("pricing strategy: organico rentable y competitivo -> list_organic", () => {
+  const recommendation =
+    getPricingStrategyRecommendation({
+      candidate: {
+        state:
+          "VALIDATED",
+      },
+      profitScenario:
+        makeProfitScenario({
+          salePrice:
+            50,
+          lunaCost:
+            20,
+        }),
+      priceIntelligence:
+        makePriceIntelligence({
+          soldMedian:
+            50,
+          domesticLanded:
+            50,
+        }),
+    })
+
+  assert.equal(
+    recommendation.launch_strategy,
+    "list_organic"
+  )
+  assert.equal(
+    recommendation.reason,
+    "Listar organico primero. Producto rentable y competitivo."
+  )
+})
+
+test("pricing strategy: organico rentable pero campana rompe margen -> organic_only_no_campaign", () => {
+  const recommendation =
+    getPricingStrategyRecommendation({
+      candidate: {
+        state:
+          "VALIDATED",
+      },
+      profitScenario:
+        makeProfitScenario({
+          salePrice:
+            40,
+          lunaCost:
+            20,
+        }),
+      priceIntelligence:
+        makePriceIntelligence({
+          soldMedian:
+            40,
+          domesticLanded:
+            40,
+        }),
+    })
+
+  assert.equal(
+    recommendation.launch_strategy,
+    "organic_only_no_campaign"
+  )
+  assert.equal(
+    recommendation.campaign_eligible,
+    false
+  )
+})
+
+test("pricing strategy: campana 1%-2% mantiene margen -> list_with_small_campaign", () => {
+  const recommendation =
+    getPricingStrategyRecommendation({
+      candidate: {
+        state:
+          "VALIDATED",
+      },
+      profitScenario:
+        makeProfitScenario({
+          salePrice:
+            40,
+          lunaCost:
+            19.26,
+        }),
+      priceIntelligence:
+        makePriceIntelligence({
+          soldMedian:
+            40,
+          domesticLanded:
+            40,
+        }),
+    })
+
+  assert.equal(
+    recommendation.launch_strategy,
+    "list_with_small_campaign"
+  )
+  assert.equal(
+    recommendation.campaign_eligible,
+    true
+  )
+  assert.equal(
+    recommendation.max_safe_campaign_percent,
+    2
+  )
+})
+
+test("pricing strategy: sin market data -> needs_market_data", () => {
+  const recommendation =
+    getPricingStrategyRecommendation({
+      candidate: {
+        state:
+          "VALIDATED",
+      },
+      profitScenario:
+        makeProfitScenario({}),
+      priceIntelligence:
+        null,
+    })
+
+  assert.equal(
+    recommendation.launch_strategy,
+    "needs_market_data"
+  )
+  assert.equal(
+    recommendation.reason,
+    "Validar Terapeak/eBay Research antes de publicar."
+  )
+})
+
+test("pricing strategy: market data low confidence -> needs_market_data", () => {
+  const recommendation =
+    getPricingStrategyRecommendation({
+      candidate: {
+        state:
+          "VALIDATED",
+      },
+      profitScenario:
+        makeProfitScenario({}),
+      priceIntelligence:
+        makePriceIntelligence({
+          sourceConfidence:
+            "low",
+        }),
+    })
+
+  assert.equal(
+    recommendation.launch_strategy,
+    "needs_market_data"
+  )
+})
+
+test("pricing strategy: precio rentable por encima del mercado -> blocked", () => {
+  const recommendation =
+    getPricingStrategyRecommendation({
+      candidate: {
+        state:
+          "BLOCKED",
+      },
+      profitScenario:
+        makeProfitScenario({
+          salePrice:
+            40,
+          lunaCost:
+            30,
+        }),
+      priceIntelligence:
+        makePriceIntelligence({
+          soldMedian:
+            30,
+          domesticLanded:
+            30,
+        }),
+    })
+
+  assert.equal(
+    recommendation.launch_strategy,
+    "blocked"
+  )
+  assert.equal(
+    recommendation.reason,
+    "Bloqueado como unidad: precio rentable por encima del mercado."
+  )
+})
+
+test("pricing strategy: internacional observado no se usa como mercado USA", () => {
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      {
+        state:
+          "VALIDATED",
+      },
+      makeProfitScenario({}),
+      {
+        raw_payload: {
+          shipping_scope_evidence: {
+            shipping_scope:
+              "international",
+            competitor_item_price:
+              28.99,
+            competitor_international_shipping_price:
+              34.86,
+            competitor_international_landed_price:
+              63.85,
+          },
+        },
+      },
+      null,
+      null
+    )
+
+  assert.equal(
+    advisor.target_price.market_reference_price,
+    null
+  )
+  assert.equal(
+    advisor.pricing_strategy.launch_strategy,
+    "needs_market_data"
+  )
+})
+
+test("pricing strategy: campaign 5 se interpreta como 5%", () => {
+  const recommendation =
+    getPricingStrategyRecommendation({
+      candidate: {
+        state:
+          "VALIDATED",
+      },
+      profitScenario:
+        makeProfitScenario({
+          salePrice:
+            50,
+          lunaCost:
+            20,
+        }),
+      priceIntelligence:
+        makePriceIntelligence({
+          soldMedian:
+            50,
+          domesticLanded:
+            50,
+        }),
+    })
+
+  assert.equal(
+    recommendation.max_safe_campaign_percent,
+    5
+  )
+  assert.ok(
+    recommendation.minimum_price_with_5_percent_campaign < 100
   )
 })

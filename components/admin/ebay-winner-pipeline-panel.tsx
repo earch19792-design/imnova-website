@@ -229,6 +229,23 @@ type CostBreakdown = CostScenario & {
   scenario_with_max_promotion?: CostScenario | null
 }
 
+type PricingStrategyRecommendation = {
+  launch_strategy?: string | null
+  recommended_listing_price?: number | string | null
+  minimum_profitable_price?: number | string | null
+  minimum_price_with_1_percent_campaign?: number | string | null
+  minimum_price_with_2_percent_campaign?: number | string | null
+  minimum_price_with_3_percent_campaign?: number | string | null
+  minimum_price_with_5_percent_campaign?: number | string | null
+  campaign_eligible?: boolean | null
+  max_safe_campaign_percent?: number | string | null
+  reason?: string | null
+  evidence?: string[] | null
+  risk_level?: string | null
+  required_human_approval?: boolean | null
+  proposed_next_step?: string | null
+}
+
 type EbayDecisionAdvisor = {
   decision_label?: string
   human_summary?: string
@@ -260,6 +277,7 @@ type EbayDecisionAdvisor = {
     shipping_strategy?: string | null
   }
   cost_breakdown?: CostBreakdown | null
+  pricing_strategy?: PricingStrategyRecommendation | null
   recommended_next_action?: string
 }
 
@@ -1699,6 +1717,51 @@ function CandidateDetailDrawer({
                       {detail.decisionAdvisor.human_summary}
                     </p>
                   </div>
+
+                  {detail.decisionAdvisor.pricing_strategy ? (
+                    <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.07] p-4">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-100/60">
+                        Estrategia de lanzamiento IMNOVA
+                      </p>
+                      <div className="mt-4 grid gap-3 md:grid-cols-3">
+                        <Field
+                          label="launch_strategy"
+                          value={detail.decisionAdvisor.pricing_strategy.launch_strategy}
+                        />
+                        <Field
+                          label="recommended_listing_price"
+                          value={formatCurrency(
+                            detail.decisionAdvisor.pricing_strategy.recommended_listing_price
+                          )}
+                        />
+                        <Field
+                          label="max_safe_campaign_percent"
+                          value={formatNumber(
+                            detail.decisionAdvisor.pricing_strategy.max_safe_campaign_percent,
+                            "%"
+                          )}
+                        />
+                        <Field
+                          label="risk_level"
+                          value={detail.decisionAdvisor.pricing_strategy.risk_level}
+                        />
+                        <Field
+                          label="campaign_eligible"
+                          value={detail.decisionAdvisor.pricing_strategy.campaign_eligible}
+                        />
+                        <Field
+                          label="human_approval"
+                          value={detail.decisionAdvisor.pricing_strategy.required_human_approval}
+                        />
+                      </div>
+                      <p className="mt-4 text-sm leading-6 text-emerald-50/75">
+                        {detail.decisionAdvisor.pricing_strategy.reason}
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-emerald-50/60">
+                        {detail.decisionAdvisor.pricing_strategy.proposed_next_step}
+                      </p>
+                    </div>
+                  ) : null}
 
                   <div className="grid gap-3 md:grid-cols-3">
                     <Field
