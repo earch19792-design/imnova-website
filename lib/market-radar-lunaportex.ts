@@ -23,6 +23,31 @@ const LUNAPORTEX_AUTH_COOKIE =
   process.env.LUNAPORTEX_AUTH_COOKIE?.trim() ||
   ""
 
+const LUNAPORTEX_REQUEST_EMAIL =
+  process.env.LUNAPORTEX_REQUEST_EMAIL?.trim() ||
+  ""
+
+const LUNAPORTEX_REQUEST_EMAIL_PARAM =
+  process.env.LUNAPORTEX_REQUEST_EMAIL_PARAM?.trim() ||
+  "email"
+
+const LUNAPORTEX_HTML_INVENTORY_MAX_PRODUCTS =
+  Number(
+    process.env.LUNAPORTEX_HTML_INVENTORY_MAX_PRODUCTS ||
+      100
+  )
+
+const LUNAPORTEX_HTML_INVENTORY_HANDLES =
+  (
+    process.env.LUNAPORTEX_HTML_INVENTORY_HANDLES ||
+    ""
+  )
+    .split(",")
+    .map(handle =>
+      handle.trim()
+    )
+    .filter(Boolean)
+
 const SHOPIFY_PAGE_LIMIT = 250
 const SHOPIFY_MAX_PAGES = 30
 const SHOPIFY_PAGE_DELAY_MS = 250
@@ -36,7 +61,20 @@ type ShopifyVariant = {
   price?: string | number | null
   compare_at_price?: string | number | null
   available?: boolean | null
-  inventory_quantity?: number | null
+  inventory_quantity?: number | string | null
+  inventoryQuantity?: number | string | null
+  quantity_available?: number | string | null
+  quantityAvailable?: number | string | null
+  available_quantity?: number | string | null
+  availableQuantity?: number | string | null
+  quantity?: number | string | null
+  inventory?: {
+    available?: number | string | null
+    quantity?: number | string | null
+  } | null
+  inventory_level?: {
+    available?: number | string | null
+  } | null
 }
 
 type ShopifyImage = {
@@ -204,6 +242,62 @@ function getInteger(
   return Math.trunc(numericValue)
 }
 
+function getInventoryQuantity(
+  variant: ShopifyVariant
+) {
+  return [
+    variant.inventory_quantity,
+    variant.inventoryQuantity,
+    variant.quantity_available,
+    variant.quantityAvailable,
+    variant.available_quantity,
+    variant.availableQuantity,
+    variant.quantity,
+    variant.inventory?.quantity,
+    variant.inventory?.available,
+    variant.inventory_level?.available,
+  ].reduce<number | null>(
+    (quantity, value) =>
+      quantity !== null
+        ? quantity
+        : getInteger(value),
+    null
+  )
+}
+
+function getInventoryQuantityFromHtml(
+  html: string
+) {
+  const quantityMatch =
+    html.match(
+      /(\d[\d,]*)\s+units?\s+available/i
+    )
+
+  if (!quantityMatch) {
+    return null
+  }
+
+  return getInteger(
+    quantityMatch[1].replace(
+      /,/g,
+      ""
+    )
+  )
+}
+
+function getSelectedVariantIdFromHtml(
+  html: string
+) {
+  const selectedVariantMatch =
+    html.match(
+      /<input\b(?=[^>]*\bname=["']id["'])(?=[^>]*\bvalue=["']([^"']+)["'])[^>]*>/i
+    )
+
+  return selectedVariantMatch
+    ? getString(selectedVariantMatch[1])
+    : ""
+}
+
 function getLunaPortexRequestHeaders() {
   const headers: Record<string, string> = {
     Accept:
@@ -217,21 +311,43 @@ function getLunaPortexRequestHeaders() {
       LUNAPORTEX_AUTH_COOKIE
   }
 
+  if (LUNAPORTEX_REQUEST_EMAIL) {
+    headers["X-Customer-Email"] =
+      LUNAPORTEX_REQUEST_EMAIL
+  }
+
   return headers
+}
+
+function getLunaPortexRequestUrl(
+  path: string
+) {
+  const url =
+    new URL(
+      path,
+      LUNAPORTEX_BASE_URL
+    )
+
+  if (LUNAPORTEX_REQUEST_EMAIL) {
+    url.searchParams.set(
+      LUNAPORTEX_REQUEST_EMAIL_PARAM,
+      LUNAPORTEX_REQUEST_EMAIL
+    )
+  }
+
+  return url.toString()
 }
 
 function hasVariantInventoryQuantity(
   variant: ShopifyVariant
 ) {
-  return typeof variant.inventory_quantity ===
-    "number"
+  return getInventoryQuantity(variant) !== null
 }
 
 function shouldHydrateProductInventory(
   product: AggregatedProduct
 ) {
   return Boolean(
-    LUNAPORTEX_AUTH_COOKIE &&
     getString(product.handle) &&
     product.variants?.some(
       variant =>
@@ -286,11 +402,70 @@ function mergeAuthenticatedVariantInventory(
           getString(variant.sku)
         )
 
-      if (
-        !authenticatedVariant ||
-        !hasVariantInventoryQuantity(
+      if (!authenticatedVariant) {
+        return variant
+      }
+
+      const inventoryQuantity =
+        getInventoryQuantity(
           authenticatedVariant
         )
+
+      if (inventoryQuantity === null) {
+        return variant
+      }
+
+      changed =
+        true
+
+      return {
+        ...variant,
+        inventory_quantity:
+          inventoryQuantity,
+      }
+    })
+
+  return changed
+}
+
+function mergeHtmlInventoryQuantity(
+  product: AggregatedProduct,
+  html: string
+) {
+  const inventoryQuantity =
+    getInventoryQuantityFromHtml(html)
+
+  if (inventoryQuantity === null) {
+    return false
+  }
+
+  const selectedVariantId =
+    getSelectedVariantIdFromHtml(html)
+
+  const variants =
+    product.variants || []
+
+  if (variants.length === 0) {
+    return false
+  }
+
+  let changed =
+    false
+
+  product.variants =
+    variants.map(variant => {
+      if (hasVariantInventoryQuantity(variant)) {
+        return variant
+      }
+
+      const isSelectedVariant =
+        selectedVariantId &&
+        String(variant.id || "") ===
+          selectedVariantId
+
+      if (
+        variants.length > 1 &&
+        !isSelectedVariant
       ) {
         return variant
       }
@@ -301,7 +476,7 @@ function mergeAuthenticatedVariantInventory(
       return {
         ...variant,
         inventory_quantity:
-          authenticatedVariant.inventory_quantity,
+          inventoryQuantity,
       }
     })
 
@@ -495,7 +670,9 @@ async function fetchCollectionProducts(
     page += 1
   ) {
     const url =
-      `${LUNAPORTEX_BASE_URL}/collections/${collection}/products.json?limit=${SHOPIFY_PAGE_LIMIT}&page=${page}`
+      getLunaPortexRequestUrl(
+        `/collections/${collection}/products.json?limit=${SHOPIFY_PAGE_LIMIT}&page=${page}`
+      )
 
     const response =
       await fetch(
@@ -552,7 +729,9 @@ async function fetchAuthenticatedProductInventory(
 
   const response =
     await fetch(
-      `${LUNAPORTEX_BASE_URL}/products/${handle}.js`,
+      getLunaPortexRequestUrl(
+        `/products/${handle}.js`
+      ),
       {
         headers:
           getLunaPortexRequestHeaders(),
@@ -582,38 +761,134 @@ async function fetchAuthenticatedProductInventory(
   )
 }
 
+async function fetchProductHtml(
+  handle: string
+) {
+  const response =
+    await fetch(
+      getLunaPortexRequestUrl(
+        `/products/${handle}`
+      ),
+      {
+        headers:
+          {
+            ...getLunaPortexRequestHeaders(),
+            Accept:
+              "text/html,application/xhtml+xml",
+          },
+        cache:
+          "no-store",
+      }
+    )
+
+  if (!response.ok) {
+    console.warn(
+      "LUNA PORTEX PRODUCT HTML INVENTORY FETCH WARNING:",
+      {
+        handle,
+        status:
+          response.status,
+      }
+    )
+
+    return null
+  }
+
+  return response.text()
+}
+
 async function hydrateAuthenticatedInventoryQuantities(
   products: AggregatedProduct[]
 ) {
-  if (!LUNAPORTEX_AUTH_COOKIE) {
-    return products
-  }
+  const priorityHandles =
+    new Set(
+      LUNAPORTEX_HTML_INVENTORY_HANDLES
+    )
+
+  const productsNeedingInventory =
+    products
+      .filter(shouldHydrateProductInventory)
+      .sort((left, right) => {
+        const leftPriority =
+          priorityHandles.has(
+            getString(left.handle)
+          )
+            ? 0
+            : 1
+
+        const rightPriority =
+          priorityHandles.has(
+            getString(right.handle)
+          )
+            ? 0
+            : 1
+
+        if (leftPriority !== rightPriority) {
+          return leftPriority - rightPriority
+        }
+
+        const leftOutOfStock =
+          left.collections.has("out-of-stock")
+            ? 1
+            : 0
+
+        const rightOutOfStock =
+          right.collections.has("out-of-stock")
+            ? 1
+            : 0
+
+        return leftOutOfStock - rightOutOfStock
+      })
+
+  const productsToHydrate =
+    productsNeedingInventory.filter((product, index) =>
+      priorityHandles.has(
+        getString(product.handle)
+      ) ||
+      index < LUNAPORTEX_HTML_INVENTORY_MAX_PRODUCTS
+    )
 
   let hydratedProducts =
     0
 
-  for (const product of products) {
-    if (!shouldHydrateProductInventory(product)) {
-      continue
-    }
+  let htmlHydratedProducts =
+    0
 
+  for (const product of productsToHydrate) {
     const handle =
       getString(product.handle)
 
     try {
-      const authenticatedProduct =
-        await fetchAuthenticatedProductInventory(
-          handle
-        )
+      if (LUNAPORTEX_AUTH_COOKIE) {
+        const authenticatedProduct =
+          await fetchAuthenticatedProductInventory(
+            handle
+          )
 
-      if (
-        authenticatedProduct &&
-        mergeAuthenticatedVariantInventory(
-          product,
-          authenticatedProduct
-        )
-      ) {
-        hydratedProducts += 1
+        if (
+          authenticatedProduct &&
+          mergeAuthenticatedVariantInventory(
+            product,
+            authenticatedProduct
+          )
+        ) {
+          hydratedProducts += 1
+        }
+      }
+
+      if (shouldHydrateProductInventory(product)) {
+        const productHtml =
+          await fetchProductHtml(handle)
+
+        if (
+          productHtml &&
+          mergeHtmlInventoryQuantity(
+            product,
+            productHtml
+          )
+        ) {
+          htmlHydratedProducts += 1
+        }
       }
     } catch (error) {
       console.warn(
@@ -634,13 +909,19 @@ async function hydrateAuthenticatedInventoryQuantities(
   }
 
   console.log(
-    "LUNA PORTEX AUTH INVENTORY HYDRATION:",
-    {
+    `LUNA PORTEX AUTH INVENTORY HYDRATION: ${JSON.stringify({
       enabled: true,
       hydratedProducts,
+      htmlHydratedProducts,
       checkedProducts:
         products.length,
-    }
+      productsNeedingInventory:
+        productsNeedingInventory.length,
+      productsToHydrate:
+        productsToHydrate.length,
+      priorityHandles:
+        LUNAPORTEX_HTML_INVENTORY_HANDLES.length,
+    })}`
   )
 
   return products
@@ -994,8 +1275,8 @@ function buildSnapshotsAndEvents(
           compareAtPrice,
         available,
         inventory_quantity:
-          getInteger(
-            variant.inventory_quantity
+          getInventoryQuantity(
+            variant
           ),
         collections,
         discount_percent:
