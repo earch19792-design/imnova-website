@@ -37,6 +37,12 @@ type ShopifyVariant = {
   compare_at_price?: string | number | null
   available?: boolean | null
   inventory_quantity?: number | null
+  inventoryQuantity?: number | string | null
+  available_quantity?: number | string | null
+  availableQuantity?: number | string | null
+  quantity?: number | string | null
+  qty?: number | string | null
+  stock?: number | string | null
 }
 
 type ShopifyImage = {
@@ -223,8 +229,23 @@ function getLunaPortexRequestHeaders() {
 function hasVariantInventoryQuantity(
   variant: ShopifyVariant
 ) {
-  return typeof variant.inventory_quantity ===
-    "number"
+  return getVariantInventoryQuantity(
+    variant
+  ) !== null
+}
+
+function getVariantInventoryQuantity(
+  variant: ShopifyVariant
+) {
+  return getInteger(
+    variant.inventory_quantity ??
+      variant.inventoryQuantity ??
+      variant.available_quantity ??
+      variant.availableQuantity ??
+      variant.quantity ??
+      variant.qty ??
+      variant.stock
+  )
 }
 
 function shouldHydrateProductInventory(
@@ -301,7 +322,9 @@ function mergeAuthenticatedVariantInventory(
       return {
         ...variant,
         inventory_quantity:
-          authenticatedVariant.inventory_quantity,
+          getVariantInventoryQuantity(
+            authenticatedVariant
+          ),
       }
     })
 
@@ -1013,6 +1036,11 @@ function buildSnapshotsAndEvents(
           ? variant.available
           : null
 
+      const inventoryQuantity =
+        getVariantInventoryQuantity(
+          variant
+        )
+
       const snapshotRow: SnapshotInsert = {
         source_id:
           sourceId,
@@ -1031,9 +1059,7 @@ function buildSnapshotsAndEvents(
           compareAtPrice,
         available,
         inventory_quantity:
-          getInteger(
-            variant.inventory_quantity
-          ),
+          inventoryQuantity,
         collections,
         discount_percent:
           getDiscountPercent(
@@ -1074,6 +1100,8 @@ function buildSnapshotsAndEvents(
                 getString(product.title),
               price,
               available,
+              inventory_quantity:
+                inventoryQuantity,
               collections,
             },
             capturedAt
@@ -1112,6 +1140,8 @@ function buildSnapshotsAndEvents(
             },
             {
               available,
+              inventory_quantity:
+                inventoryQuantity,
             },
             capturedAt
           )
