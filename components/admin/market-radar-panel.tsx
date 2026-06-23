@@ -24,6 +24,9 @@ import {
   X,
 } from "lucide-react"
 import {
+  createPortal,
+} from "react-dom"
+import {
   supabase,
 } from "@/lib/supabase"
 import {
@@ -97,6 +100,8 @@ type PriceIntelligenceSaveState = {
 
 type PriceIntelligenceFormState = {
   source_type: string
+  price_capture_type: "sold" | "active"
+  pasted_price_text: string
   search_query: string
   product_match_type: string
   sold_avg_price: string
@@ -119,13 +124,37 @@ type PriceIntelligenceFormState = {
 }
 
 const priceSourceOptions = [
-  "manual",
   "aiprice",
+  "manual",
   "terapeak",
   "zik",
-  "ebay_api",
   "other",
 ]
+
+const priceSourceLabels: Record<string, string> = {
+  aiprice:
+    "Aiprice",
+  manual:
+    "Manual",
+  terapeak:
+    "Terapeak",
+  zik:
+    "ZIK",
+  other:
+    "Otro",
+}
+
+const priceCaptureTypeOptions = [
+  "sold",
+  "active",
+]
+
+const priceCaptureTypeLabels: Record<string, string> = {
+  sold:
+    "Precios vendidos",
+  active:
+    "Precios activos",
+}
 
 const productMatchOptions = [
   "exact",
@@ -135,11 +164,47 @@ const productMatchOptions = [
   "unknown",
 ]
 
+const productMatchLabels: Record<string, string> = {
+  exact:
+    "Mismo producto",
+  same_model:
+    "Muy similar",
+  similar:
+    "Similar",
+  category_only:
+    "Solo misma categoria",
+  unknown:
+    "No estoy seguro",
+}
+
+type ParsedPriceIntelligenceText = {
+  prices: number[]
+  count: number
+  min: number
+  max: number
+  avg: number
+  median: number
+}
+
+type SuggestedPriceConfidence = {
+  source_confidence: string
+  confidence_score: number
+}
+
 const sourceConfidenceOptions = [
   "low",
   "medium",
   "high",
 ]
+
+const sourceConfidenceLabels: Record<string, string> = {
+  low:
+    "Baja",
+  medium:
+    "Media",
+  high:
+    "Alta",
+}
 
 const eventLabels: Record<string, string> = {
   new_product:
@@ -252,6 +317,168 @@ function formatNumber(
   ).format(numericValue)
 }
 
+function roundPriceValue(
+  value: number
+) {
+  return Math.round(
+    (value + 1e-8) * 100
+  ) / 100
+}
+
+function formatPriceFormValue(
+  value: number
+) {
+  return roundPriceValue(value).toFixed(2)
+}
+
+function parsePriceIntelligenceText(
+  text: string
+): ParsedPriceIntelligenceText | null {
+  const prices =
+    Array.from(
+      text.matchAll(
+        /(?:USD\s*)?\$?\s*(-?(?:0x[0-9a-f]+|\d+(?:\.\d+)?(?:e\d+)?|nan|infinity))/gi
+      )
+    )
+      .map(match => {
+        const rawNumber =
+          match[1]
+
+        if (
+          rawNumber.startsWith("-") ||
+          /^(?:nan|infinity)$/i.test(rawNumber) ||
+          /^0x[0-9a-f]+$/i.test(rawNumber) ||
+          /^\d+(?:\.\d+)?e\d+$/i.test(rawNumber)
+        ) {
+          return null
+        }
+
+        const value =
+          Number(rawNumber)
+
+        return Number.isFinite(value) &&
+          value >= 0
+          ? roundPriceValue(value)
+          : null
+      })
+      .filter((value): value is number =>
+        value !== null
+      )
+
+  if (prices.length === 0) {
+    return null
+  }
+
+  const sortedPrices =
+    [...prices].sort(
+      (left, right) => left - right
+    )
+
+  const count =
+    sortedPrices.length
+
+  const avg =
+    roundPriceValue(
+      sortedPrices.reduce(
+        (total, value) => total + value,
+        0
+      ) / count
+    )
+
+  const middleIndex =
+    Math.floor(count / 2)
+
+  const median =
+    count % 2 === 0
+      ? roundPriceValue(
+          (
+            sortedPrices[middleIndex - 1] +
+            sortedPrices[middleIndex]
+          ) / 2
+        )
+      : sortedPrices[middleIndex]
+
+  return {
+    prices:
+      sortedPrices,
+    count,
+    min:
+      sortedPrices[0],
+    max:
+      sortedPrices[count - 1],
+    avg,
+    median:
+      roundPriceValue(median),
+  }
+}
+
+function suggestPriceConfidence({
+  count,
+  productMatchType,
+  captureType,
+}: {
+  count: number
+  productMatchType: string
+  captureType: "sold" | "active"
+}): SuggestedPriceConfidence {
+  if (productMatchType === "unknown") {
+    return {
+      source_confidence:
+        "low",
+      confidence_score:
+        count >= 5 ? 40 : 25,
+    }
+  }
+
+  if (
+    (
+      productMatchType === "exact" ||
+      productMatchType === "same_model"
+    ) &&
+    captureType === "sold" &&
+    count >= 8
+  ) {
+    return {
+      source_confidence:
+        "high",
+      confidence_score:
+        85,
+    }
+  }
+
+  if (
+    productMatchType === "similar" &&
+    captureType === "sold" &&
+    count >= 5
+  ) {
+    return {
+      source_confidence:
+        "medium",
+      confidence_score:
+        70,
+    }
+  }
+
+  if (
+    captureType === "active" &&
+    count >= 8
+  ) {
+    return {
+      source_confidence:
+        "medium",
+      confidence_score:
+        55,
+    }
+  }
+
+  return {
+    source_confidence:
+      "low",
+    confidence_score:
+      count >= 4 ? 45 : 35,
+  }
+}
+
 function formatInventoryQuantity(
   value: number | null | undefined
 ) {
@@ -259,7 +486,7 @@ function formatInventoryQuantity(
     value === null ||
     value === undefined
   ) {
-    return "Cantidad no expuesta"
+    return "Unidades sin confirmar"
   }
 
   return `${new Intl.NumberFormat(
@@ -359,6 +586,16 @@ function getEventValue(
 function getProductStatusLabel(
   product: MarketRadarProductRow
 ) {
+  if (
+    product.available === true &&
+    (
+      product.inventory_quantity === null ||
+      product.inventory_quantity === undefined
+    )
+  ) {
+    return "Disponible sin cantidad"
+  }
+
   if (product.available === true) {
     return "Disponible"
   }
@@ -368,6 +605,30 @@ function getProductStatusLabel(
   }
 
   return "Sin dato"
+}
+
+function getProductStatusClassName(
+  product: MarketRadarProductRow
+) {
+  if (
+    product.available === true &&
+    (
+      product.inventory_quantity === null ||
+      product.inventory_quantity === undefined
+    )
+  ) {
+    return "border-amber-300/25 bg-amber-300/[0.10] text-amber-100"
+  }
+
+  if (product.available === true) {
+    return "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100"
+  }
+
+  if (product.available === false) {
+    return "border-red-300/25 bg-red-300/[0.10] text-red-100"
+  }
+
+  return "border-white/10 bg-white/[0.04] text-white/45"
 }
 
 function getProductEvaluationKey(
@@ -516,7 +777,11 @@ function createPriceIntelligenceForm(
 ): PriceIntelligenceFormState {
   return {
     source_type:
-      "manual",
+      "aiprice",
+    price_capture_type:
+      "sold",
+    pasted_price_text:
+      "",
     search_query:
       product.title,
     product_match_type:
@@ -729,20 +994,32 @@ function PriceInput({
   value,
   onChange,
   type = "text",
+  placeholder,
+  helpText,
+  techName,
 }: {
   label: string
   value: string
   onChange: (value: string) => void
   type?: string
+  placeholder?: string
+  helpText?: string
+  techName?: string
 }) {
   return (
     <label className="block min-w-0">
-      <span className="block break-words text-[10px] uppercase leading-4 tracking-[0.16em] text-white/35">
+      <span className="block break-words text-xs font-bold leading-5 text-white/80">
         {label}
       </span>
+      {techName ? (
+        <span className="mt-0.5 block text-[10px] leading-4 text-white/30">
+          {techName}
+        </span>
+      ) : null}
       <input
         type={type}
         value={value}
+        placeholder={placeholder}
         onChange={event =>
           onChange(event.target.value)
         }
@@ -763,6 +1040,11 @@ function PriceInput({
           focus:border-cyan-300/30
         "
       />
+      {helpText ? (
+        <span className="mt-2 block text-xs leading-5 text-white/40">
+          {helpText}
+        </span>
+      ) : null}
     </label>
   )
 }
@@ -772,17 +1054,28 @@ function PriceSelect({
   value,
   options,
   onChange,
+  optionLabels,
+  helpText,
+  techName,
 }: {
   label: string
   value: string
   options: string[]
   onChange: (value: string) => void
+  optionLabels?: Record<string, string>
+  helpText?: string
+  techName?: string
 }) {
   return (
     <label className="block min-w-0">
-      <span className="block break-words text-[10px] uppercase leading-4 tracking-[0.16em] text-white/35">
+      <span className="block break-words text-xs font-bold leading-5 text-white/80">
         {label}
       </span>
+      {techName ? (
+        <span className="mt-0.5 block text-[10px] leading-4 text-white/30">
+          {techName}
+        </span>
+      ) : null}
       <select
         value={value}
         onChange={event =>
@@ -809,10 +1102,15 @@ function PriceSelect({
             key={option}
             value={option}
           >
-            {option}
+            {optionLabels?.[option] || option}
           </option>
         ))}
       </select>
+      {helpText ? (
+        <span className="mt-2 block text-xs leading-5 text-white/40">
+          {helpText}
+        </span>
+      ) : null}
     </label>
   )
 }
@@ -862,8 +1160,105 @@ function PriceIntelligenceModal({
   onClose: () => void
   onSubmit: () => void
 }) {
+  const [
+    showAdvancedFields,
+    setShowAdvancedFields,
+  ] = useState(false)
+
+  const quickCaptureAnalysis =
+    parsePriceIntelligenceText(
+      form.pasted_price_text
+    )
+
+  const suggestedConfidence =
+    quickCaptureAnalysis
+      ? suggestPriceConfidence({
+          count:
+            quickCaptureAnalysis.count,
+          productMatchType:
+            form.product_match_type,
+          captureType:
+            form.price_capture_type,
+        })
+      : null
+
+  const recommendedQuickPrice =
+    quickCaptureAnalysis
+      ? form.price_capture_type === "sold"
+        ? quickCaptureAnalysis.median
+        : quickCaptureAnalysis.avg
+      : null
+
+  function applyQuickPriceCapture() {
+    if (!quickCaptureAnalysis) {
+      return
+    }
+
+    const captureType =
+      form.price_capture_type
+
+    if (captureType === "sold") {
+      onChange(
+        "sold_min_price",
+        formatPriceFormValue(quickCaptureAnalysis.min)
+      )
+      onChange(
+        "sold_max_price",
+        formatPriceFormValue(quickCaptureAnalysis.max)
+      )
+      onChange(
+        "sold_avg_price",
+        formatPriceFormValue(quickCaptureAnalysis.avg)
+      )
+      onChange(
+        "sold_median_price",
+        formatPriceFormValue(quickCaptureAnalysis.median)
+      )
+      onChange(
+        "sold_comp_count",
+        String(quickCaptureAnalysis.count)
+      )
+      onChange(
+        "recommended_sale_price",
+        formatPriceFormValue(quickCaptureAnalysis.median)
+      )
+    } else {
+      onChange(
+        "active_min_price",
+        formatPriceFormValue(quickCaptureAnalysis.min)
+      )
+      onChange(
+        "active_max_price",
+        formatPriceFormValue(quickCaptureAnalysis.max)
+      )
+      onChange(
+        "active_avg_price",
+        formatPriceFormValue(quickCaptureAnalysis.avg)
+      )
+      onChange(
+        "active_comp_count",
+        String(quickCaptureAnalysis.count)
+      )
+      onChange(
+        "recommended_sale_price",
+        formatPriceFormValue(quickCaptureAnalysis.avg)
+      )
+    }
+
+    if (suggestedConfidence) {
+      onChange(
+        "source_confidence",
+        suggestedConfidence.source_confidence
+      )
+      onChange(
+        "confidence_score",
+        String(suggestedConfidence.confidence_score)
+      )
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center overflow-hidden bg-black/70 px-3 py-4 backdrop-blur-sm sm:px-5">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center overflow-hidden bg-black/80 p-4 backdrop-blur-sm">
       <button
         type="button"
         aria-label="Cerrar Price Intelligence"
@@ -876,8 +1271,8 @@ function PriceIntelligenceModal({
           z-10
           flex
           max-h-[90vh]
-          w-[min(100%,56rem)]
-          max-w-[calc(100vw-1.5rem)]
+          w-full
+          max-w-[960px]
           flex-col
           overflow-hidden
           rounded-lg
@@ -923,62 +1318,317 @@ function PriceIntelligenceModal({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 md:px-6">
-          <PriceFormGroup title="Fuente y confianza">
-            <div className="grid gap-4 md:grid-cols-3">
-          <PriceSelect
-            label="source_type"
-            value={form.source_type}
-            options={priceSourceOptions}
-            onChange={value =>
-              onChange(
-                "source_type",
-                value
-              )
-            }
-          />
-          <PriceSelect
-            label="match_type"
-            value={form.product_match_type}
-            options={productMatchOptions}
-            onChange={value =>
-              onChange(
-                "product_match_type",
-                value
-              )
-            }
-          />
-          <PriceSelect
-            label="confidence"
-            value={form.source_confidence}
-            options={sourceConfidenceOptions}
-            onChange={value =>
-              onChange(
-                "source_confidence",
-                value
-              )
-            }
-          />
-            </div>
+        <div className="min-h-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto px-5 py-5 md:px-6">
+          <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.06] p-4 text-sm leading-6 text-cyan-50/75">
+            Aiprice sigue siendo manual: copia los precios que ves y pegalos aqui. IMNOVA calculara promedio, mediana y precio recomendado.
+          </div>
 
-            <div className="mt-4">
-              <PriceInput
-                label="search_query"
-                value={form.search_query}
+          <PriceFormGroup title="Captura rapida de precios">
+            <div className="grid gap-4 md:grid-cols-2">
+              <PriceSelect
+                label="Fuente del precio"
+                techName="source_type"
+                value={form.source_type}
+                options={priceSourceOptions}
+                optionLabels={priceSourceLabels}
+                helpText="Aiprice es una fuente manual temporal."
                 onChange={value =>
                   onChange(
-                    "search_query",
+                    "source_type",
+                    value
+                  )
+                }
+              />
+              <PriceSelect
+                label="Tipo de precios pegados"
+                techName="price_capture_type"
+                value={form.price_capture_type}
+                options={priceCaptureTypeOptions}
+                optionLabels={priceCaptureTypeLabels}
+                helpText="Usa vendidos para precio recomendado por mediana; activos para promedio."
+                onChange={value =>
+                  onChange(
+                    "price_capture_type",
+                    value
+                  )
+                }
+              />
+              <PriceSelect
+                label="Que tan parecido es"
+                techName="product_match_type"
+                value={form.product_match_type}
+                options={productMatchOptions}
+                optionLabels={productMatchLabels}
+                helpText="Mientras mas parecido sea, mas confiable sera el dato."
+                onChange={value =>
+                  onChange(
+                    "product_match_type",
+                    value
+                  )
+                }
+              />
+              <PriceInput
+                label="Shipping estimado"
+                techName="estimated_shipping_cost"
+                type="number"
+                placeholder="6.99"
+                value={form.estimated_shipping_cost}
+                helpText="Costo de envio estimado o promedio observado."
+                onChange={value =>
+                  onChange(
+                    "estimated_shipping_cost",
                     value
                   )
                 }
               />
             </div>
+
+            <label className="mt-4 block min-w-0">
+              <span className="block break-words text-xs font-bold leading-5 text-white/80">
+                Pegar precios
+              </span>
+              <span className="mt-0.5 block text-[10px] leading-4 text-white/30">
+                pasted_price_text
+              </span>
+              <textarea
+                value={form.pasted_price_text}
+                onChange={event =>
+                  onChange(
+                    "pasted_price_text",
+                    event.target.value
+                  )
+                }
+                rows={4}
+                placeholder="Pega precios de Aiprice/eBay. Ejemplo: $24.99, $29.99, $31.50, $34.99"
+                className="
+                  mt-2
+                  w-full
+                  rounded-lg
+                  border
+                  border-white/10
+                  bg-black/35
+                  px-3
+                  py-2
+                  text-sm
+                  text-white
+                  outline-none
+                  transition
+                  placeholder:text-white/25
+                  focus:border-cyan-300/30
+                "
+              />
+              <span className="mt-2 block text-xs leading-5 text-white/40">
+                Este texto solo se usa en el navegador para calcular los campos. No se envia ni se guarda completo.
+              </span>
+            </label>
+
+            <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <button
+                type="button"
+                onClick={applyQuickPriceCapture}
+                disabled={!quickCaptureAnalysis}
+                className="
+                  inline-flex
+                  items-center
+                  justify-center
+                  rounded-lg
+                  border
+                  border-cyan-300/30
+                  bg-cyan-300
+                  px-4
+                  py-3
+                  text-sm
+                  font-black
+                  text-black
+                  transition
+                  hover:bg-cyan-200
+                  disabled:cursor-not-allowed
+                  disabled:opacity-50
+                "
+              >
+                Analizar precios
+              </button>
+              {!quickCaptureAnalysis &&
+              form.pasted_price_text.trim() ? (
+                <p className="text-xs leading-5 text-amber-100/75">
+                  No se detectaron precios validos. Evita negativos, notacion cientifica, hex, NaN o Infinity.
+                </p>
+              ) : null}
+            </div>
+
+            {quickCaptureAnalysis ? (
+              <div className="mt-4 grid gap-3 rounded-lg border border-white/10 bg-black/25 p-4 text-xs text-white/55 md:grid-cols-3">
+                <span>
+                  Precios detectados: <strong className="text-white">{quickCaptureAnalysis.count}</strong>
+                </span>
+                <span>
+                  Minimo: <strong className="text-white">{formatCurrency(quickCaptureAnalysis.min)}</strong>
+                </span>
+                <span>
+                  Maximo: <strong className="text-white">{formatCurrency(quickCaptureAnalysis.max)}</strong>
+                </span>
+                <span>
+                  Promedio: <strong className="text-white">{formatCurrency(quickCaptureAnalysis.avg)}</strong>
+                </span>
+                <span>
+                  Mediana: <strong className="text-white">{formatCurrency(quickCaptureAnalysis.median)}</strong>
+                </span>
+                <span>
+                  Precio recomendado: <strong className="text-white">{formatCurrency(recommendedQuickPrice)}</strong>
+                </span>
+                <span className="md:col-span-3">
+                  Confianza sugerida: <strong className="text-white">{suggestedConfidence?.source_confidence || "-"}</strong>
+                  {" "}({suggestedConfidence?.confidence_score || 0}/100)
+                </span>
+              </div>
+            ) : null}
+
+            <div className="mt-4 grid gap-4 md:grid-cols-3">
+              <PriceInput
+                label="Precio vendido mediano"
+                techName="sold_median_price"
+                type="number"
+                value={form.sold_median_price}
+                helpText="Campo humano editable despues del analisis."
+                onChange={value =>
+                  onChange(
+                    "sold_median_price",
+                    value
+                  )
+                }
+              />
+              <PriceInput
+                label="Precio vendido promedio"
+                techName="sold_avg_price"
+                type="number"
+                value={form.sold_avg_price}
+                helpText="Campo humano editable despues del analisis."
+                onChange={value =>
+                  onChange(
+                    "sold_avg_price",
+                    value
+                  )
+                }
+              />
+              <PriceInput
+                label="Precio activo promedio"
+                techName="active_avg_price"
+                type="number"
+                value={form.active_avg_price}
+                helpText="Campo humano editable despues del analisis."
+                onChange={value =>
+                  onChange(
+                    "active_avg_price",
+                    value
+                  )
+                }
+              />
+              <PriceInput
+                label="Precio recomendado"
+                techName="recommended_sale_price"
+                type="number"
+                placeholder="29.99"
+                value={form.recommended_sale_price}
+                helpText="Precio que IMNOVA debe usar para calcular rentabilidad."
+                onChange={value =>
+                  onChange(
+                    "recommended_sale_price",
+                    value
+                  )
+                }
+              />
+              <PriceSelect
+                label="Confianza del dato"
+                techName="source_confidence"
+                value={form.source_confidence}
+                options={sourceConfidenceOptions}
+                optionLabels={sourceConfidenceLabels}
+                helpText="Puedes ajustar la confianza sugerida."
+                onChange={value =>
+                  onChange(
+                    "source_confidence",
+                    value
+                  )
+                }
+              />
+              <PriceInput
+                label="Puntaje de confianza"
+                techName="confidence_score"
+                type="number"
+                placeholder="0 a 100"
+                value={form.confidence_score}
+                helpText="Editable: 85 alto, 70 medio, 35-45 bajo."
+                onChange={value =>
+                  onChange(
+                    "confidence_score",
+                    value
+                  )
+                }
+              />
+            </div>
+
+            <label className="mt-4 block min-w-0">
+              <span className="block break-words text-xs font-bold leading-5 text-white/80">
+                Notas de evidencia
+              </span>
+              <span className="mt-0.5 block text-[10px] leading-4 text-white/30">
+                evidence_notes
+              </span>
+              <textarea
+                value={form.evidence_notes}
+                onChange={event =>
+                  onChange(
+                    "evidence_notes",
+                    event.target.value
+                  )
+                }
+                rows={4}
+                placeholder="Ejemplo: Revisado manualmente en Aiprice/eBay. Mismo part number. 8 vendidos similares."
+                className="
+                  mt-2
+                  w-full
+                  rounded-lg
+                  border
+                  border-white/10
+                  bg-black/35
+                  px-3
+                  py-2
+                  text-sm
+                  text-white
+                  outline-none
+                  transition
+                  placeholder:text-white/25
+                  focus:border-cyan-300/30
+                "
+              />
+              <span className="mt-2 block text-xs leading-5 text-white/40">
+                Que viste, que comparaste, si era el mismo modelo o parecido.
+              </span>
+            </label>
           </PriceFormGroup>
 
-          <PriceFormGroup title="Precios vendidos">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <section className="rounded-lg border border-white/10 bg-white/[0.025]">
+            <button
+              type="button"
+              onClick={() =>
+                setShowAdvancedFields(current => !current)
+              }
+              className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left"
+            >
+              <span className="text-xs font-black uppercase tracking-[0.18em] text-white/50">
+                Campos avanzados
+              </span>
+              <span className="text-xs font-bold text-cyan-100/70">
+                {showAdvancedFields ? "Ocultar" : "Mostrar"}
+              </span>
+            </button>
+
+            {showAdvancedFields ? (
+              <div className="border-t border-white/10 p-4">
+            <div className="grid gap-4 md:grid-cols-2">
           <PriceInput
-            label="sold_avg_price"
+            label="Precio vendido promedio"
+            techName="sold_avg_price"
             type="number"
             value={form.sold_avg_price}
             onChange={value =>
@@ -989,18 +1639,8 @@ function PriceIntelligenceModal({
             }
           />
           <PriceInput
-            label="sold_median_price"
-            type="number"
-            value={form.sold_median_price}
-            onChange={value =>
-              onChange(
-                "sold_median_price",
-                value
-              )
-            }
-          />
-          <PriceInput
-            label="sold_min_price"
+            label="Precio minimo vendido"
+            techName="sold_min_price"
             type="number"
             value={form.sold_min_price}
             onChange={value =>
@@ -1011,7 +1651,8 @@ function PriceIntelligenceModal({
             }
           />
           <PriceInput
-            label="sold_max_price"
+            label="Precio maximo vendido"
+            techName="sold_max_price"
             type="number"
             value={form.sold_max_price}
             onChange={value =>
@@ -1022,7 +1663,8 @@ function PriceIntelligenceModal({
             }
           />
           <PriceInput
-            label="sold_comp_count"
+            label="Cantidad de vendidos comparables"
+            techName="sold_comp_count"
             type="number"
             value={form.sold_comp_count}
             onChange={value =>
@@ -1032,24 +1674,9 @@ function PriceIntelligenceModal({
               )
             }
           />
-            </div>
-          </PriceFormGroup>
-
-          <PriceFormGroup title="Precios activos">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <PriceInput
-            label="active_avg_price"
-            type="number"
-            value={form.active_avg_price}
-            onChange={value =>
-              onChange(
-                "active_avg_price",
-                value
-              )
-            }
-          />
-          <PriceInput
-            label="active_min_price"
+            label="Precio activo minimo"
+            techName="active_min_price"
             type="number"
             value={form.active_min_price}
             onChange={value =>
@@ -1060,7 +1687,8 @@ function PriceIntelligenceModal({
             }
           />
           <PriceInput
-            label="active_max_price"
+            label="Precio activo maximo"
+            techName="active_max_price"
             type="number"
             value={form.active_max_price}
             onChange={value =>
@@ -1071,7 +1699,8 @@ function PriceIntelligenceModal({
             }
           />
           <PriceInput
-            label="active_comp_count"
+            label="Cantidad de activos comparables"
+            techName="active_comp_count"
             type="number"
             value={form.active_comp_count}
             onChange={value =>
@@ -1081,51 +1710,31 @@ function PriceIntelligenceModal({
               )
             }
           />
-            </div>
-          </PriceFormGroup>
-
-          <PriceFormGroup title="Shipping y precio recomendado">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <PriceInput
-            label="estimated_shipping_cost"
-            type="number"
-            value={form.estimated_shipping_cost}
+            label="Busqueda usada"
+            techName="search_query"
+            value={form.search_query}
             onChange={value =>
               onChange(
-                "estimated_shipping_cost",
+                "search_query",
                 value
               )
             }
           />
           <PriceInput
-            label="recommended_sale_price"
-            type="number"
-            value={form.recommended_sale_price}
+            label="Link de evidencia"
+            techName="evidence_url"
+            value={form.evidence_url}
             onChange={value =>
               onChange(
-                "recommended_sale_price",
+                "evidence_url",
                 value
               )
             }
           />
           <PriceInput
-            label="confidence_score"
-            type="number"
-            value={form.confidence_score}
-            onChange={value =>
-              onChange(
-                "confidence_score",
-                value
-              )
-            }
-          />
-            </div>
-          </PriceFormGroup>
-
-          <PriceFormGroup title="Evidencia y categoria">
-            <div className="grid gap-4 md:grid-cols-2">
-          <PriceInput
-            label="category_id"
+            label="ID categoria"
+            techName="category_id"
             value={form.category_id}
             onChange={value =>
               onChange(
@@ -1135,7 +1744,8 @@ function PriceIntelligenceModal({
             }
           />
           <PriceInput
-            label="category_name"
+            label="Nombre categoria"
+            techName="category_name"
             value={form.category_name}
             onChange={value =>
               onChange(
@@ -1145,52 +1755,9 @@ function PriceIntelligenceModal({
             }
           />
         </div>
-
-        <div className="mt-4">
-          <PriceInput
-            label="evidence_url"
-            value={form.evidence_url}
-            onChange={value =>
-              onChange(
-                "evidence_url",
-                value
-              )
-            }
-          />
-        </div>
-
-            <label className="mt-4 block min-w-0">
-          <span className="block break-words text-[10px] uppercase leading-4 tracking-[0.16em] text-white/35">
-            evidence_notes
-          </span>
-          <textarea
-            value={form.evidence_notes}
-            onChange={event =>
-              onChange(
-                "evidence_notes",
-                event.target.value
-              )
-            }
-            rows={4}
-            className="
-              mt-2
-              w-full
-              rounded-lg
-              border
-              border-white/10
-              bg-black/35
-              px-3
-              py-2
-              text-sm
-              text-white
-              outline-none
-              transition
-              placeholder:text-white/25
-              focus:border-cyan-300/30
-            "
-          />
-            </label>
-          </PriceFormGroup>
+              </div>
+            ) : null}
+          </section>
         </div>
 
         <div className="sticky bottom-0 z-10 flex flex-col-reverse gap-3 border-t border-white/10 bg-zinc-950 px-5 py-4 sm:flex-row sm:justify-end md:px-6">
@@ -1251,6 +1818,41 @@ function PriceIntelligenceModal({
         </div>
       </section>
     </div>
+  )
+}
+
+function PriceIntelligenceModalPortal({
+  product,
+  form,
+  isSaving,
+  onChange,
+  onClose,
+  onSubmit,
+}: {
+  product: MarketRadarProductRow
+  form: PriceIntelligenceFormState
+  isSaving: boolean
+  onChange: (
+    field: keyof PriceIntelligenceFormState,
+    value: string
+  ) => void
+  onClose: () => void
+  onSubmit: () => void
+}) {
+  if (typeof document === "undefined") {
+    return null
+  }
+
+  return createPortal(
+    <PriceIntelligenceModal
+      product={product}
+      form={form}
+      isSaving={isSaving}
+      onChange={onChange}
+      onClose={onClose}
+      onSubmit={onSubmit}
+    />,
+    document.body
   )
 }
 
@@ -1491,13 +2093,7 @@ function ProductRow({
             text-[10px]
             uppercase
             tracking-[0.14em]
-            ${
-              product.available === true
-                ? "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100"
-                : product.available === false
-                ? "border-red-300/25 bg-red-300/[0.10] text-red-100"
-                : "border-white/10 bg-white/[0.04] text-white/45"
-            }
+            ${getProductStatusClassName(product)}
           `}
         >
           {getProductStatusLabel(product)}
@@ -1506,7 +2102,10 @@ function ProductRow({
           {formatInventoryQuantity(product.inventory_quantity)}
         </p>
         <p className="mt-1 text-[11px] text-white/35">
-          Cantidad disponible proveedor
+          {product.inventory_quantity === null ||
+          product.inventory_quantity === undefined
+            ? "Proveedor no expone unidades"
+            : "Cantidad disponible proveedor"}
         </p>
       </td>
       <td className="px-4 py-4">
@@ -1589,6 +2188,11 @@ function RecentEventItem({
 
 export function MarketRadarPanel() {
   const [
+    isMounted,
+    setIsMounted,
+  ] = useState(false)
+
+  const [
     dashboard,
     setDashboard,
   ] = useState<MarketRadarDashboard | null>(null)
@@ -1643,6 +2247,11 @@ export function MarketRadarPanel() {
     setPriceIntelligenceResults,
   ] = useState<Record<string, PriceIntelligenceSaveState>>({})
 
+  const [
+    stockFilter,
+    setStockFilter,
+  ] = useState<"all" | "confirmed" | "missing">("confirmed")
+
   const getAccessToken =
     useCallback(async () => {
       const {
@@ -1664,6 +2273,10 @@ export function MarketRadarPanel() {
       return data.session.access_token
     }, [])
 
+  useEffect(() => {
+    setIsMounted(true)
+  }, [])
+
   const requestDashboard =
     useCallback(async (
       options?: {
@@ -1681,6 +2294,8 @@ export function MarketRadarPanel() {
               options?.action
                 ? "POST"
                 : "GET",
+            cache:
+              "no-store",
             headers: {
               Authorization:
                 `Bearer ${token}`,
@@ -2023,16 +2638,60 @@ export function MarketRadarPanel() {
       window.clearInterval(interval)
   }, [loadDashboard])
 
+  const inventoryCounts =
+    useMemo(
+      () => {
+        const products =
+          dashboard?.products || []
+
+        const confirmed =
+          products.filter(product =>
+            product.inventory_quantity !== null &&
+            product.inventory_quantity !== undefined
+          ).length
+
+        return {
+          confirmed,
+          missing:
+            products.length - confirmed,
+        }
+      },
+      [dashboard]
+    )
+
   const hotProducts =
     useMemo(
-      () =>
-        (
+      () => {
+        const products =
           dashboard?.products || []
-        ).slice(
+
+        return products
+          .filter(product => {
+            if (stockFilter === "confirmed") {
+              return (
+                product.inventory_quantity !== null &&
+                product.inventory_quantity !== undefined
+              )
+            }
+
+            if (stockFilter === "missing") {
+              return (
+                product.inventory_quantity === null ||
+                product.inventory_quantity === undefined
+              )
+            }
+
+            return true
+          })
+          .slice(
           0,
           25
-        ),
-      [dashboard]
+        )
+      },
+      [
+        dashboard,
+        stockFilter,
+      ]
     )
 
   const summary =
@@ -2040,9 +2699,10 @@ export function MarketRadarPanel() {
 
   return (
     <div className="mt-16 space-y-6">
-      {priceIntelligenceProduct &&
+      {isMounted &&
+      priceIntelligenceProduct &&
       priceIntelligenceForm ? (
-        <PriceIntelligenceModal
+        <PriceIntelligenceModalPortal
           product={priceIntelligenceProduct}
           form={priceIntelligenceForm}
           isSaving={isSavingPriceIntelligence}
@@ -2263,16 +2923,67 @@ export function MarketRadarPanel() {
               <h3 className="mt-2 text-xl font-black text-white">
                 Productos con mayor oportunidad
               </h3>
+              <p className="mt-2 text-xs text-white/40">
+                {inventoryCounts.confirmed} con cantidad confirmada / {inventoryCounts.missing} sin cantidad
+              </p>
             </div>
-            <div className="flex gap-2 text-[11px] text-white/40">
-              <span className="inline-flex items-center gap-1">
-                <ArrowDown className="h-3.5 w-3.5 text-cyan-100" />
-                Baja precio
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <ArrowUp className="h-3.5 w-3.5 text-amber-100" />
-                Sube precio
-              </span>
+            <div className="flex flex-col gap-3 md:items-end">
+              <div className="flex flex-wrap gap-2">
+                {[
+                  {
+                    value:
+                      "all" as const,
+                    label:
+                      "Todos",
+                  },
+                  {
+                    value:
+                      "confirmed" as const,
+                    label:
+                      "Con cantidad",
+                  },
+                  {
+                    value:
+                      "missing" as const,
+                    label:
+                      "Sin cantidad",
+                  },
+                ].map(option => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() =>
+                      setStockFilter(option.value)
+                    }
+                    className={`
+                      rounded-md
+                      border
+                      px-3
+                      py-2
+                      text-xs
+                      font-bold
+                      transition
+                      ${
+                        stockFilter === option.value
+                          ? "border-cyan-300/40 bg-cyan-300 text-black"
+                          : "border-white/10 bg-white/[0.04] text-white/55 hover:border-cyan-300/25 hover:text-white"
+                      }
+                    `}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-2 text-[11px] text-white/40">
+                <span className="inline-flex items-center gap-1">
+                  <ArrowDown className="h-3.5 w-3.5 text-cyan-100" />
+                  Baja precio
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <ArrowUp className="h-3.5 w-3.5 text-amber-100" />
+                  Sube precio
+                </span>
+              </div>
             </div>
           </div>
 
@@ -2316,7 +3027,9 @@ export function MarketRadarPanel() {
                       colSpan={6}
                       className="px-4 py-12 text-center text-sm text-white/45"
                     >
-                      Ejecuta el primer sync para llenar el ranking.
+                      {dashboard
+                        ? "No hay productos para este filtro."
+                        : "Ejecuta el primer sync para llenar el ranking."}
                     </td>
                   </tr>
                 ) : (
