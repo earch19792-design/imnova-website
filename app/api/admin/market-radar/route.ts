@@ -125,41 +125,16 @@ function getMarketRadarRankValue(
     product.inventory_quantity !== null &&
     product.inventory_quantity !== undefined
 
-  const inventoryQuantity =
-    toNumber(
-      product.inventory_quantity
-    ) || 0
-
-  const price =
-    toNumber(
-      product.price
-    )
-
-  const priceBandScore =
-    price === null
-      ? 0
-      : price <= 25
-      ? 4
-      : price <= 50
-      ? 3
-      : price <= 100
-      ? 2
-      : 1
-
   return [
-    product.available === true ? 1 : 0,
-    inventoryQuantity > 0 ? 1 : 0,
     hasInventory ? 1 : 0,
-    toNumber(product.opportunity_score) || 0,
-    toNumber(product.discount_score) || 0,
-    priceBandScore,
     toNumber(product.rotation_score) || 0,
-    product.restock_count_7d || 0,
     product.event_count_7d || 0,
+    product.restock_count_7d || 0,
+    toNumber(product.opportunity_score) || 0,
     product.last_event_at
       ? new Date(product.last_event_at).getTime()
       : 0,
-    inventoryQuantity,
+    product.inventory_quantity || 0,
   ]
 }
 

@@ -397,97 +397,6 @@ function shouldHydrateProductInventory(
   )
 }
 
-function getProductAdoptionHydrationScore(
-  product: AggregatedProduct
-) {
-  const variants =
-    product.variants || []
-
-  const prices =
-    variants
-      .map(variant =>
-        getNumber(variant.price)
-      )
-      .filter(
-        (price): price is number =>
-          price !== null &&
-          price > 0
-      )
-
-  const compareAtPrices =
-    variants
-      .map(variant =>
-        getNumber(variant.compare_at_price)
-      )
-      .filter(
-        (price): price is number =>
-          price !== null &&
-          price > 0
-      )
-
-  const minPrice =
-    prices.length
-      ? Math.min(
-          ...prices
-        )
-      : null
-
-  const maxCompareAtPrice =
-    compareAtPrices.length
-      ? Math.max(
-          ...compareAtPrices
-        )
-      : null
-
-  const bestDiscountPercent =
-    minPrice !== null &&
-    maxCompareAtPrice !== null
-      ? getDiscountPercent(
-          minPrice,
-          maxCompareAtPrice
-        ) || 0
-      : 0
-
-  const hasAvailableVariant =
-    variants.some(
-      variant =>
-        variant.available === true
-    )
-
-  const hasOutOfStockCollection =
-    product.collections.has("out-of-stock")
-
-  const isDealCollection =
-    product.collections.has("flash-sale") ||
-    product.collections.has("weekly-deals")
-
-  const priceScore =
-    minPrice === null
-      ? 0
-      : minPrice <= 25
-      ? 24
-      : minPrice <= 50
-      ? 18
-      : minPrice <= 100
-      ? 10
-      : 4
-
-  return (
-    (hasAvailableVariant ? 35 : 0) +
-    (hasOutOfStockCollection ? -30 : 0) +
-    (isDealCollection ? 18 : 0) +
-    Math.min(
-      bestDiscountPercent,
-      35
-    ) +
-    priceScore +
-    Math.min(
-      variants.length,
-      5
-    )
-  )
-}
-
 function mergeAuthenticatedVariantInventory(
   product: AggregatedProduct,
   authenticatedProduct: ShopifyProduct
@@ -955,20 +864,6 @@ async function hydrateAuthenticatedInventoryQuantities(
 
         if (leftPriority !== rightPriority) {
           return leftPriority - rightPriority
-        }
-
-        const leftScore =
-          getProductAdoptionHydrationScore(
-            left
-          )
-
-        const rightScore =
-          getProductAdoptionHydrationScore(
-            right
-          )
-
-        if (leftScore !== rightScore) {
-          return rightScore - leftScore
         }
 
         const leftOutOfStock =
