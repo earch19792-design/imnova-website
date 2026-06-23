@@ -4157,6 +4157,24 @@ export function MarketRadarPanel() {
                   {syncResult.inventoryHydrationCandidates ?? 0}
                 </strong>
               </span>
+              <span>
+                Fetch OK:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryHydrationSuccessfulFetches ?? 0}
+                </strong>
+              </span>
+              <span>
+                Fetch fallidos:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryHydrationFailedFetches ?? 0}
+                </strong>
+              </span>
+              <span>
+                OK sin cantidad:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryHydrationWithoutNumericInventory ?? 0}
+                </strong>
+              </span>
             </div>
 
           </>

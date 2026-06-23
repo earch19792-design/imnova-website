@@ -141,6 +141,9 @@ type InventoryHydrationMetrics = {
   enabled: boolean
   candidates: number
   hydratedProducts: number
+  successfulFetches: number
+  failedFetches: number
+  productsWithoutNumericInventory: number
   checkedProducts: number
 }
 
@@ -731,6 +734,12 @@ async function hydrateAuthenticatedInventoryQuantities(
           0,
         hydratedProducts:
           0,
+        successfulFetches:
+          0,
+        failedFetches:
+          0,
+        productsWithoutNumericInventory:
+          0,
         checkedProducts:
           products.length,
       },
@@ -746,6 +755,15 @@ async function hydrateAuthenticatedInventoryQuantities(
       )
 
   let hydratedProducts =
+    0
+
+  let successfulFetches =
+    0
+
+  let failedFetches =
+    0
+
+  let productsWithoutNumericInventory =
     0
 
   let nextProductIndex =
@@ -770,16 +788,25 @@ async function hydrateAuthenticatedInventoryQuantities(
             handle
           )
 
-        if (
-          authenticatedProduct &&
-          mergeAuthenticatedVariantInventory(
-            product,
-            authenticatedProduct
-          )
-        ) {
-          hydratedProducts += 1
+        if (authenticatedProduct) {
+          successfulFetches += 1
+
+          if (
+            mergeAuthenticatedVariantInventory(
+              product,
+              authenticatedProduct
+            )
+          ) {
+            hydratedProducts += 1
+          } else {
+            productsWithoutNumericInventory += 1
+          }
+        } else {
+          failedFetches += 1
         }
       } catch (error) {
+        failedFetches += 1
+
         console.warn(
           "LUNA PORTEX AUTH INVENTORY HYDRATION WARNING:",
           {
@@ -812,6 +839,9 @@ async function hydrateAuthenticatedInventoryQuantities(
     {
       enabled: true,
       hydratedProducts,
+      successfulFetches,
+      failedFetches,
+      productsWithoutNumericInventory,
       hydrationLimit:
         SHOPIFY_AUTH_PRODUCT_LIMIT,
       hydrationCandidates:
@@ -829,6 +859,9 @@ async function hydrateAuthenticatedInventoryQuantities(
       candidates:
         productsToHydrate.length,
       hydratedProducts,
+      successfulFetches,
+      failedFetches,
+      productsWithoutNumericInventory,
       checkedProducts:
         products.length,
     },
@@ -1972,6 +2005,12 @@ export async function runLunaPortexMarketRadarSync(
         productFetchResult.inventoryHydration.candidates,
       inventoryHydratedProducts:
         productFetchResult.inventoryHydration.hydratedProducts,
+      inventoryHydrationSuccessfulFetches:
+        productFetchResult.inventoryHydration.successfulFetches,
+      inventoryHydrationFailedFetches:
+        productFetchResult.inventoryHydration.failedFetches,
+      inventoryHydrationWithoutNumericInventory:
+        productFetchResult.inventoryHydration.productsWithoutNumericInventory,
       startedAt,
       finishedAt,
     }

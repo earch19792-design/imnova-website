@@ -150,6 +150,9 @@ export type MarketRadarSyncResult = {
   inventoryHydrationEnabled?: boolean
   inventoryHydrationCandidates?: number
   inventoryHydratedProducts?: number
+  inventoryHydrationSuccessfulFetches?: number
+  inventoryHydrationFailedFetches?: number
+  inventoryHydrationWithoutNumericInventory?: number
   startedAt: string
   finishedAt: string
 }
