@@ -111,21 +111,6 @@ type AggregatedProduct = ShopifyProduct & {
   collections: Set<string>
 }
 
-type InventoryHydrationStats = {
-  authHydratedProducts: number
-  htmlHydratedProducts: number
-  checkedProducts: number
-  productsNeedingInventory: number
-  productsToHydrate: number
-  requestEmailConfigured: boolean
-  authCookieConfigured: boolean
-}
-
-type FetchedLunaPortexProducts = {
-  products: AggregatedProduct[]
-  inventoryHydrationStats: InventoryHydrationStats
-}
-
 type MarketRadarSourceRecord = {
   id: string
   key: string
@@ -814,7 +799,7 @@ async function fetchProductHtml(
 
 async function hydrateAuthenticatedInventoryQuantities(
   products: AggregatedProduct[]
-): Promise<FetchedLunaPortexProducts> {
+) {
   const priorityHandles =
     new Set(
       LUNAPORTEX_HTML_INVENTORY_HANDLES
@@ -939,29 +924,10 @@ async function hydrateAuthenticatedInventoryQuantities(
     })}`
   )
 
-  const inventoryHydrationStats = {
-    authHydratedProducts:
-      hydratedProducts,
-    htmlHydratedProducts,
-    checkedProducts:
-      products.length,
-    productsNeedingInventory:
-      productsNeedingInventory.length,
-    productsToHydrate:
-      productsToHydrate.length,
-    requestEmailConfigured:
-      Boolean(LUNAPORTEX_REQUEST_EMAIL),
-    authCookieConfigured:
-      Boolean(LUNAPORTEX_AUTH_COOKIE),
-  }
-
-  return {
-    products,
-    inventoryHydrationStats,
-  }
+  return products
 }
 
-async function fetchLunaPortexProducts(): Promise<FetchedLunaPortexProducts> {
+async function fetchLunaPortexProducts() {
   const productMap =
     new Map<string, AggregatedProduct>()
 
@@ -1956,11 +1922,8 @@ export async function runLunaPortexMarketRadarSync(
     )
 
   try {
-    const fetched =
-      await fetchLunaPortexProducts()
-
     const products =
-      fetched.products
+      await fetchLunaPortexProducts()
 
     const savedProducts =
       await upsertProducts(
@@ -2014,17 +1977,6 @@ export async function runLunaPortexMarketRadarSync(
         startedAt
       )
 
-    const variantsWithQuantity =
-      snapshotRows.filter(
-        snapshot =>
-          snapshot.inventory_quantity !== null &&
-          snapshot.inventory_quantity !== undefined
-      ).length
-
-    const variantsMissingQuantity =
-      snapshotRows.length -
-      variantsWithQuantity
-
     const finishedAt =
       new Date().toISOString()
 
@@ -2050,20 +2002,6 @@ export async function runLunaPortexMarketRadarSync(
         products.length,
       fetchedVariants:
         snapshotRows.length,
-      variantsWithQuantity,
-      variantsMissingQuantity,
-      htmlInventoryHydratedProducts:
-        fetched.inventoryHydrationStats.htmlHydratedProducts,
-      authInventoryHydratedProducts:
-        fetched.inventoryHydrationStats.authHydratedProducts,
-      inventoryHydrationCheckedProducts:
-        fetched.inventoryHydrationStats.checkedProducts,
-      inventoryHydrationTargetProducts:
-        fetched.inventoryHydrationStats.productsToHydrate,
-      requestEmailConfigured:
-        fetched.inventoryHydrationStats.requestEmailConfigured,
-      authCookieConfigured:
-        fetched.inventoryHydrationStats.authCookieConfigured,
       snapshotsInserted,
       eventsInserted,
       scoredProducts,

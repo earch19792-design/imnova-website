@@ -3470,21 +3470,6 @@ export function MarketRadarPanel() {
             <span>
               Scores: <strong className="text-white">{syncResult.scoredProducts}</strong>
             </span>
-            <span>
-              Con cantidad: <strong className="text-white">{syncResult.variantsWithQuantity ?? 0}</strong>
-            </span>
-            <span>
-              Sin cantidad: <strong className="text-white">{syncResult.variantsMissingQuantity ?? 0}</strong>
-            </span>
-            <span>
-              HTML hidratados: <strong className="text-white">{syncResult.htmlInventoryHydratedProducts ?? 0}</strong>
-            </span>
-            <span>
-              Productos revisados: <strong className="text-white">{syncResult.inventoryHydrationTargetProducts ?? 0}</strong>
-            </span>
-            <span>
-              Email request: <strong className="text-white">{syncResult.requestEmailConfigured ? "configurado" : "no configurado"}</strong>
-            </span>
           </div>
         )}
 
