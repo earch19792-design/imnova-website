@@ -975,6 +975,59 @@ function getPriceFormNumber(
     : null
 }
 
+function getDomesticLandedPriceFromForm(
+  form: PriceIntelligenceFormState
+) {
+  const competitorItemPrice =
+    getPriceFormNumber(
+      form.competitor_item_price
+    )
+
+  const competitorShippingPrice =
+    getPriceFormNumber(
+      form.competitor_shipping_price
+    )
+
+  const domesticShippingPrice =
+    getPriceFormNumber(
+      form.competitor_domestic_shipping_price
+    ) ??
+    (
+      form.shipping_scope === "us_domestic"
+        ? competitorShippingPrice
+        : null
+    )
+
+  return (
+    form.shipping_scope === "us_domestic" ||
+    getPriceFormNumber(
+      form.competitor_domestic_shipping_price
+    ) !== null
+  ) &&
+  (
+    competitorItemPrice !== null ||
+    domesticShippingPrice !== null
+  )
+    ? roundPriceValue(
+        (competitorItemPrice || 0) +
+        (domesticShippingPrice || 0)
+      )
+    : getPriceFormNumber(
+        form.competitor_domestic_landed_price
+      )
+}
+
+function getEffectiveRecommendedSalePrice(
+  form: PriceIntelligenceFormState
+) {
+  return getPriceFormNumber(
+    form.recommended_sale_price
+  ) ??
+    getDomesticLandedPriceFromForm(
+      form
+    )
+}
+
 function getRequiredPriceNumberError(
   value: string,
   label: string
@@ -1017,11 +1070,20 @@ function getPriceIntelligenceFieldErrors(
       competitorShippingError
   }
 
-  const recommendedSalePriceError =
-    getRequiredPriceNumberError(
-      form.recommended_sale_price,
-      "Precio recomendado"
+  const recommendedSalePrice =
+    getEffectiveRecommendedSalePrice(
+      form
     )
+
+  const recommendedSalePriceError =
+    form.recommended_sale_price.trim() &&
+    getPriceFormNumber(
+      form.recommended_sale_price
+    ) === null
+      ? "Precio recomendado debe ser 0 o mayor."
+      : recommendedSalePrice === null
+        ? "Precio recomendado se calcula con precio del competidor + envio USA."
+        : null
 
   if (recommendedSalePriceError) {
     errors.recommended_sale_price =
@@ -1161,6 +1223,11 @@ function buildPriceIntelligencePayload(
             form.competitor_landed_price
           )
 
+  const recommendedSalePrice =
+    getEffectiveRecommendedSalePrice(
+      form
+    )
+
   return {
     market_radar_product_id:
       getNullableString(
@@ -1225,9 +1292,11 @@ function buildPriceIntelligencePayload(
         form.estimated_shipping_cost
       ),
     recommended_sale_price:
-      getNullableFormValue(
-        form.recommended_sale_price
-      ),
+      recommendedSalePrice === null
+        ? null
+        : formatPriceFormValue(
+            recommendedSalePrice
+          ),
     source_confidence:
       getNullableFormValue(
         form.source_confidence
@@ -1687,6 +1756,15 @@ function PriceIntelligenceModal({
             form.competitor_landed_price
           )
 
+  const effectiveRecommendedSalePrice =
+    getEffectiveRecommendedSalePrice(
+      form
+    )
+
+  const isRecommendedSalePriceAuto =
+    !form.recommended_sale_price.trim() &&
+    effectiveRecommendedSalePrice !== null
+
   const competitorShippingStrategy =
     competitorDomesticShippingPrice === null
       ? "unknown"
@@ -2024,7 +2102,7 @@ function PriceIntelligenceModal({
 
           <PriceFormGroup title="Datos minimos para analizar">
             <p className="mb-4 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] p-3 text-sm leading-6 text-cyan-50/75">
-              Llena precio del competidor, envio USA, precio recomendado, confianza y notas. Si algo falta, el campo queda marcado en rojo.
+              Llena precio del competidor, envio USA, confianza y notas. El precio recomendado se calcula solo con precio + envio, y puedes editarlo si quieres.
             </p>
             {missingFieldCount > 0 ? (
               <p className="mb-4 rounded-lg border border-red-400/35 bg-red-950/30 p-3 text-sm font-semibold leading-6 text-red-200">
@@ -2407,14 +2485,23 @@ function PriceIntelligenceModal({
                 }
               />
               <PriceInput
-                label="Precio recomendado"
+                label="Precio recomendado override"
                 techName="recommended_sale_price"
                 type="number"
-                placeholder="29.99"
+                placeholder={
+                  effectiveRecommendedSalePrice === null
+                    ? "Se calcula automatico"
+                    : formatPriceFormValue(
+                        effectiveRecommendedSalePrice
+                      )
+                }
                 value={form.recommended_sale_price}
-                required
                 error={fieldErrors.recommended_sale_price}
-                helpText="Precio que IMNOVA usara para calcular rentabilidad."
+                helpText={
+                  isRecommendedSalePriceAuto
+                    ? `Automatico: ${formatCurrency(effectiveRecommendedSalePrice)}. Escribe aqui solo si quieres cambiarlo.`
+                    : "Override manual. Si lo borras, vuelve a calcularse con precio del competidor + envio USA."
+                }
                 onChange={value =>
                   onChange(
                     "recommended_sale_price",
