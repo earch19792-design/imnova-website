@@ -12,9 +12,13 @@ import {
   sendWhatsAppUpdate,
 } from "@/lib/whatsapp"
 import {
+  getRadarAdvisorEvent,
+} from "@/lib/radar-advisor-events.mjs"
+import {
   type MarketRadarDashboard,
   type MarketRadarEventRow,
   type MarketRadarProductRow,
+  type RadarAdvisorAlert,
   type MarketRadarSource,
 } from "@/lib/market-radar-types"
 
@@ -586,6 +590,7 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
       },
       products: [],
       recentEvents: [],
+      advisorAlerts: [],
     }
   }
 
@@ -813,6 +818,93 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
           : event.product || null,
     })) as MarketRadarEventRow[]
 
+  const productById =
+    new Map(
+      latestProducts.map(product => [
+        product.product_id,
+        product,
+      ])
+    )
+
+  const eventProductIds =
+    Array.from(
+      new Set(
+        recentEvents
+          .map(event => event.product_id)
+          .filter(Boolean)
+      )
+    )
+
+  const candidatesByProductId =
+    new Map<string, Record<string, unknown>>()
+
+  if (eventProductIds.length > 0) {
+    const {
+      data: candidateData,
+      error: candidateError,
+    } =
+      await supabase
+        .from("ebay_product_candidates")
+        .select(`
+          id,
+          market_radar_product_id,
+          supplier_sku,
+          title,
+          product_type,
+          state,
+          blocked_reason,
+          needs_data,
+          updated_at
+        `)
+        .in(
+          "market_radar_product_id",
+          eventProductIds
+        )
+        .order(
+          "updated_at",
+          {
+            ascending: false,
+            nullsFirst: false,
+          }
+        )
+
+    if (candidateError) {
+      console.warn(
+        "RADAR ADVISOR CANDIDATE LOOKUP WARNING:",
+        candidateError.message
+      )
+    } else {
+      ;(
+        candidateData || []
+      ).forEach(candidate => {
+        const productId =
+          candidate.market_radar_product_id
+
+        if (
+          productId &&
+          !candidatesByProductId.has(productId)
+        ) {
+          candidatesByProductId.set(
+            productId,
+            candidate
+          )
+        }
+      })
+    }
+  }
+
+  const advisorAlerts =
+    recentEvents
+      .map(event =>
+        getRadarAdvisorEvent(
+          event,
+          productById.get(event.product_id) || null,
+          candidatesByProductId.get(event.product_id) || null
+        )
+      )
+      .filter(Boolean)
+      .slice(0, 12) as RadarAdvisorAlert[]
+
   return {
     summary: {
       source,
@@ -850,6 +942,7 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
     products:
       latestProducts,
     recentEvents,
+    advisorAlerts,
   }
 }
 

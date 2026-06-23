@@ -33,6 +33,7 @@ import {
   type MarketRadarDashboard,
   type MarketRadarEventRow,
   type MarketRadarProductRow,
+  type RadarAdvisorAlert,
   type MarketRadarSyncResult,
 } from "@/lib/market-radar-types"
 
@@ -52,6 +53,35 @@ type MarketRadarApiResponse = {
     error?: string
   }
   error?: string
+}
+
+async function readJsonResponse<T>(
+  response: Response,
+  fallbackMessage: string
+): Promise<T> {
+  const responseText =
+    await response.text()
+
+  if (!responseText.trim()) {
+    return {
+      success:
+        response.ok,
+    } as T
+  }
+
+  try {
+    return JSON.parse(responseText) as T
+  } catch {
+    const excerpt =
+      responseText
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 180)
+
+    throw new Error(
+      `${fallbackMessage}${excerpt ? ` Respuesta no JSON: ${excerpt}` : ""}`
+    )
+  }
 }
 
 type EbayPipelineApiResponse = {
@@ -665,6 +695,24 @@ function getEventValue(
   }
 
   return "-"
+}
+
+function getAdvisorSeverityClassName(
+  severity: RadarAdvisorAlert["severity"]
+) {
+  if (severity === "critical") {
+    return "border-red-300/30 bg-red-300/[0.12] text-red-100"
+  }
+
+  if (severity === "high") {
+    return "border-amber-300/30 bg-amber-300/[0.12] text-amber-100"
+  }
+
+  if (severity === "medium") {
+    return "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100"
+  }
+
+  return "border-white/10 bg-white/[0.04] text-white/55"
 }
 
 function getProductStatusLabel(
@@ -3171,6 +3219,81 @@ function RecentEventItem({
   )
 }
 
+function RadarAdvisorAlertItem({
+  alert,
+}: {
+  alert: RadarAdvisorAlert
+}) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <span
+          className={`
+            rounded-md
+            border
+            px-2
+            py-1
+            text-[10px]
+            font-bold
+            uppercase
+            tracking-[0.14em]
+            ${getAdvisorSeverityClassName(alert.severity)}
+          `}
+        >
+          {alert.severity}
+        </span>
+        <span className="text-[11px] text-white/35">
+          {formatDate(alert.created_at)}
+        </span>
+      </div>
+
+      <p className="mt-3 line-clamp-2 text-sm font-black leading-5 text-white">
+        {alert.product_title}
+      </p>
+      <p className="mt-2 text-sm leading-6 text-white/70">
+        {alert.advisor_message}
+      </p>
+
+      <div className="mt-4 grid gap-3 text-xs leading-5 text-white/45 md:grid-cols-2">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/30">
+            Recomendacion
+          </p>
+          <p className="mt-1 text-white/70">
+            {alert.recommended_action}
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/30">
+            Proximo paso
+          </p>
+          <p className="mt-1 text-white/70">
+            {alert.proposed_next_step}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.12em]">
+        {alert.candidate_state && (
+          <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-white/45">
+            {alert.candidate_state}
+          </span>
+        )}
+        <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-white/45">
+          {alert.required_human_approval
+            ? "Requiere aprobacion humana"
+            : "Solo recomendacion"}
+        </span>
+        {alert.automation_available && (
+          <span className="rounded-md border border-cyan-300/20 bg-cyan-300/[0.08] px-2 py-1 text-cyan-100/75">
+            Automation L{alert.automation_level}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function MarketRadarPanel() {
   const [
     isMounted,
@@ -3298,7 +3421,10 @@ export function MarketRadarPanel() {
         )
 
       const payload =
-        await response.json() as MarketRadarApiResponse
+        await readJsonResponse<MarketRadarApiResponse>(
+          response,
+          "Market Radar devolvio una respuesta invalida."
+        )
 
       if (
         !response.ok ||
@@ -3455,7 +3581,10 @@ export function MarketRadarPanel() {
           )
 
         const payload =
-          await response.json() as PriceIntelligenceApiResponse
+          await readJsonResponse<PriceIntelligenceApiResponse>(
+            response,
+            "Price Intelligence devolvio una respuesta invalida."
+          )
 
         if (
           !response.ok ||
@@ -3553,7 +3682,10 @@ export function MarketRadarPanel() {
           )
 
         const payload =
-          await response.json() as EbayPipelineApiResponse
+          await readJsonResponse<EbayPipelineApiResponse>(
+            response,
+            "eBay Pipeline devolvio una respuesta invalida."
+          )
 
         if (
           !response.ok ||
@@ -3800,37 +3932,40 @@ export function MarketRadarPanel() {
         </div>
 
         {syncResult && (
-          <div
-            className="
-              mt-5
-              grid
-              gap-3
-              rounded-lg
-              border
-              border-white/10
-              bg-black/25
-              p-4
-              text-xs
-              text-white/55
-              md:grid-cols-5
-            "
-          >
-            <span>
-              Productos: <strong className="text-white">{syncResult.fetchedProducts}</strong>
-            </span>
-            <span>
-              Variantes: <strong className="text-white">{syncResult.fetchedVariants}</strong>
-            </span>
-            <span>
-              Snapshots: <strong className="text-white">{syncResult.snapshotsInserted}</strong>
-            </span>
-            <span>
-              Eventos: <strong className="text-white">{syncResult.eventsInserted}</strong>
-            </span>
-            <span>
-              Scores: <strong className="text-white">{syncResult.scoredProducts}</strong>
-            </span>
-          </div>
+          <>
+            <div
+              className="
+                mt-5
+                grid
+                gap-3
+                rounded-lg
+                border
+                border-white/10
+                bg-black/25
+                p-4
+                text-xs
+                text-white/55
+                md:grid-cols-5
+              "
+            >
+              <span>
+                Productos: <strong className="text-white">{syncResult.fetchedProducts}</strong>
+              </span>
+              <span>
+                Variantes: <strong className="text-white">{syncResult.fetchedVariants}</strong>
+              </span>
+              <span>
+                Snapshots: <strong className="text-white">{syncResult.snapshotsInserted}</strong>
+              </span>
+              <span>
+                Eventos: <strong className="text-white">{syncResult.eventsInserted}</strong>
+              </span>
+              <span>
+                Scores: <strong className="text-white">{syncResult.scoredProducts}</strong>
+              </span>
+            </div>
+
+          </>
         )}
 
         {error && (
@@ -4049,6 +4184,41 @@ export function MarketRadarPanel() {
                 )}
               </tbody>
             </table>
+          </div>
+        </section>
+
+        <section
+          className="
+            rounded-lg
+            border
+            border-white/10
+            bg-black/30
+            p-5
+          "
+        >
+          <p className="text-[10px] uppercase tracking-[0.26em] text-white/40">
+            Advisor
+          </p>
+          <h3 className="mt-2 text-xl font-black text-white">
+            Alertas Advisor del Radar
+          </h3>
+          <p className="mt-2 text-xs leading-5 text-white/40">
+            Eventos traducidos a recomendaciones estrategicas. No ejecutan acciones reales.
+          </p>
+
+          <div className="mt-5 space-y-3">
+            {dashboard?.advisorAlerts.length ? (
+              dashboard.advisorAlerts.map(alert => (
+                <RadarAdvisorAlertItem
+                  key={`${alert.product_id}-${alert.event_type}-${alert.created_at}`}
+                  alert={alert}
+                />
+              ))
+            ) : (
+              <p className="rounded-lg border border-white/10 bg-white/[0.03] p-4 text-sm text-white/45">
+                Sin alertas Advisor por ahora.
+              </p>
+            )}
           </div>
         </section>
 

@@ -9,6 +9,9 @@ import {
   getEbayProductDecisionAdvisor,
   getPricingStrategyRecommendation,
 } from "../lib/ebay-winner-pipeline/decision-advisor.mjs"
+import {
+  getRadarAdvisorEvent,
+} from "../lib/radar-advisor-events.mjs"
 
 const validRadarProduct = {
   source_key: "lunaportex",
@@ -35,6 +38,23 @@ const validRadarProduct = {
   out_of_stock_count_7d: 0,
 }
 
+const baseRadarEvent = {
+  id: "event-1",
+  product_id: "radar-product-1",
+  supplier_variant_id: "variant-1",
+  created_at: "2026-06-23T12:00:00.000Z",
+  old_value: null,
+  new_value: null,
+}
+
+const baseRadarAdvisorProduct = {
+  product_id: "radar-product-1",
+  title: "Functional Coffee Pack",
+  product_type: "Nutrition",
+  tags: ["coffee", "pack"],
+  inventory_quantity: 2,
+}
+
 test("producto válido se evalúa completo y genera WhatsApp dryRun", () => {
   const result = processRadarCandidate(validRadarProduct)
 
@@ -45,6 +65,163 @@ test("producto válido se evalúa completo y genera WhatsApp dryRun", () => {
   assert.equal(result.whatsappDryRunPayload.dryRun, true)
   assert.equal(result.whatsappDryRunPayload.enableRealSend, false)
   assert.equal(result.whatsappDryRunPayload.interactive.action.buttons.length, 4)
+})
+
+test("radar advisor: out_of_stock + DRAFT_CREATED -> review_existing_draft_inventory critical", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "out_of_stock",
+        new_value: {
+          available:
+            false,
+        },
+      },
+      baseRadarAdvisorProduct,
+      {
+        id:
+          "candidate-1",
+        state:
+          "DRAFT_CREATED",
+      }
+    )
+
+  assert.equal(alert.recommended_action, "review_existing_draft_inventory")
+  assert.equal(alert.severity, "critical")
+  assert.equal(alert.required_human_approval, true)
+})
+
+test("radar advisor: restocked + BLOCKED -> resurface_for_reanalysis", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "restocked",
+        new_value: {
+          available:
+            true,
+        },
+      },
+      baseRadarAdvisorProduct,
+      {
+        id:
+          "candidate-2",
+        state:
+          "BLOCKED",
+      }
+    )
+
+  assert.equal(alert.recommended_action, "resurface_for_reanalysis")
+  assert.equal(alert.severity, "medium")
+})
+
+test("radar advisor: price_down -> reprocess_with_updated_cost", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "price_down",
+        old_value: {
+          price:
+            30,
+        },
+        new_value: {
+          price:
+            20,
+        },
+      },
+      baseRadarAdvisorProduct,
+      null
+    )
+
+  assert.equal(alert.recommended_action, "reprocess_with_updated_cost")
+  assert.equal(alert.severity, "medium")
+})
+
+test("radar advisor: low_stock -> prepare_pause_or_reduce_quantity", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "low_stock",
+        new_value: {
+          inventory_quantity:
+            2,
+        },
+      },
+      baseRadarAdvisorProduct,
+      {
+        id:
+          "candidate-3",
+        state:
+          "VALIDATED",
+      }
+    )
+
+  assert.equal(alert.recommended_action, "prepare_pause_or_reduce_quantity")
+  assert.equal(alert.severity, "critical")
+})
+
+test("radar advisor: discount_started + consumable signal -> evaluate_pack_strategy", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "discount_started",
+        new_value: {
+          price:
+            15,
+          compare_at_price:
+            25,
+        },
+      },
+      baseRadarAdvisorProduct,
+      {
+        id:
+          "candidate-4",
+        state:
+          "VALIDATED",
+        product_type:
+          "Coffee",
+      }
+    )
+
+  assert.equal(alert.recommended_action, "evaluate_pack_strategy")
+})
+
+test("radar advisor: price_up + VALIDATED -> recalculate_before_listing", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "price_up",
+        old_value: {
+          price:
+            20,
+        },
+        new_value: {
+          price:
+            30,
+        },
+      },
+      baseRadarAdvisorProduct,
+      {
+        id:
+          "candidate-5",
+        state:
+          "VALIDATED",
+      }
+    )
+
+  assert.equal(alert.recommended_action, "recalculate_before_listing")
+  assert.equal(alert.severity, "high")
 })
 
 test("producto sin stock queda bloqueado", () => {
