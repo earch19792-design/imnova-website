@@ -26,7 +26,8 @@ const LUNAPORTEX_AUTH_COOKIE =
 const SHOPIFY_PAGE_LIMIT = 250
 const SHOPIFY_MAX_PAGES = 30
 const SHOPIFY_PAGE_DELAY_MS = 250
-const SHOPIFY_AUTH_PRODUCT_DELAY_MS = 150
+const SHOPIFY_AUTH_PRODUCT_CONCURRENCY = 6
+const SHOPIFY_AUTH_PRODUCT_LIMIT = 300
 const POSTGREST_FILTER_CHUNK_SIZE = 100
 
 type ShopifyVariant = {
@@ -649,55 +650,85 @@ async function hydrateAuthenticatedInventoryQuantities(
     return products
   }
 
+  const productsToHydrate =
+    products
+      .filter(shouldHydrateProductInventory)
+      .slice(
+        0,
+        SHOPIFY_AUTH_PRODUCT_LIMIT
+      )
+
   let hydratedProducts =
     0
 
-  for (const product of products) {
-    if (!shouldHydrateProductInventory(product)) {
-      continue
-    }
+  let nextProductIndex =
+    0
 
-    const handle =
-      getString(product.handle)
+  async function hydrateNextProduct() {
+    while (
+      nextProductIndex <
+      productsToHydrate.length
+    ) {
+      const product =
+        productsToHydrate[nextProductIndex]
 
-    try {
-      const authenticatedProduct =
-        await fetchAuthenticatedProductInventory(
-          handle
-        )
+      nextProductIndex += 1
 
-      if (
-        authenticatedProduct &&
-        mergeAuthenticatedVariantInventory(
-          product,
-          authenticatedProduct
-        )
-      ) {
-        hydratedProducts += 1
-      }
-    } catch (error) {
-      console.warn(
-        "LUNA PORTEX AUTH INVENTORY HYDRATION WARNING:",
-        {
-          handle,
-          error:
-            error instanceof Error
-              ? error.message
-              : String(error),
+      const handle =
+        getString(product.handle)
+
+      try {
+        const authenticatedProduct =
+          await fetchAuthenticatedProductInventory(
+            handle
+          )
+
+        if (
+          authenticatedProduct &&
+          mergeAuthenticatedVariantInventory(
+            product,
+            authenticatedProduct
+          )
+        ) {
+          hydratedProducts += 1
         }
-      )
+      } catch (error) {
+        console.warn(
+          "LUNA PORTEX AUTH INVENTORY HYDRATION WARNING:",
+          {
+            handle,
+            error:
+              error instanceof Error
+                ? error.message
+                : String(error),
+          }
+        )
+      }
     }
-
-    await wait(
-      SHOPIFY_AUTH_PRODUCT_DELAY_MS
-    )
   }
+
+  await Promise.all(
+    Array.from(
+      {
+        length:
+          Math.min(
+            SHOPIFY_AUTH_PRODUCT_CONCURRENCY,
+            productsToHydrate.length
+          ),
+      },
+      () => hydrateNextProduct()
+    )
+  )
 
   console.log(
     "LUNA PORTEX AUTH INVENTORY HYDRATION:",
     {
       enabled: true,
       hydratedProducts,
+      hydrationLimit:
+        SHOPIFY_AUTH_PRODUCT_LIMIT,
+      hydrationCandidates:
+        productsToHydrate.length,
       checkedProducts:
         products.length,
     }
