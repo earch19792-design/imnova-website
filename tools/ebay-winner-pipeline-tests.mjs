@@ -11,6 +11,7 @@ import {
 } from "../lib/ebay-winner-pipeline/decision-advisor.mjs"
 import {
   getRadarAdvisorEvent,
+  getNormalizedInventoryContext,
 } from "../lib/radar-advisor-events.mjs"
 
 const validRadarProduct = {
@@ -79,7 +80,11 @@ test("radar advisor: out_of_stock + DRAFT_CREATED -> review_existing_draft_inven
             false,
         },
       },
-      baseRadarAdvisorProduct,
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          12,
+      },
       {
         id:
           "candidate-1",
@@ -105,7 +110,11 @@ test("radar advisor: restocked + BLOCKED -> resurface_for_reanalysis", () => {
             true,
         },
       },
-      baseRadarAdvisorProduct,
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          12,
+      },
       {
         id:
           "candidate-2",
@@ -167,6 +176,128 @@ test("radar advisor: low_stock -> prepare_pause_or_reduce_quantity", () => {
   assert.equal(alert.severity, "critical")
 })
 
+test("radar advisor inventory: quantity numerico se propaga", () => {
+  const stockContext =
+    getNormalizedInventoryContext({
+      quantity:
+        24,
+      available:
+        true,
+    })
+
+  assert.equal(stockContext.inventory_quantity, 24)
+  assert.equal(stockContext.inventory_status, "in_stock")
+  assert.equal(stockContext.inventory_source, "luna_numeric")
+  assert.equal(stockContext.inventory_confidence, "high")
+})
+
+test("radar advisor inventory: quantity string se normaliza", () => {
+  const stockContext =
+    getNormalizedInventoryContext({
+      stock:
+        "18",
+      available:
+        true,
+    })
+
+  assert.equal(stockContext.inventory_quantity, 18)
+  assert.equal(stockContext.inventory_source, "luna_numeric")
+})
+
+test("radar advisor inventory: available true sin quantity no inventa unidades", () => {
+  const stockContext =
+    getNormalizedInventoryContext({
+      available:
+        true,
+    })
+
+  assert.equal(stockContext.inventory_quantity, null)
+  assert.equal(stockContext.inventory_status, "in_stock")
+  assert.equal(stockContext.inventory_source, "luna_availability")
+  assert.equal(stockContext.inventory_confidence, "medium")
+})
+
+test("radar advisor inventory: available false queda out_of_stock", () => {
+  const stockContext =
+    getNormalizedInventoryContext({
+      available:
+        false,
+    })
+
+  assert.equal(stockContext.inventory_quantity, 0)
+  assert.equal(stockContext.inventory_status, "out_of_stock")
+  assert.equal(stockContext.inventory_source, "luna_availability")
+})
+
+test("radar advisor inventory: unknown requiere validacion manual", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "new_product",
+        new_value:
+          {},
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          null,
+        available:
+          null,
+      },
+      null
+    )
+
+  assert.equal(alert.stock_context.inventory_status, "unknown")
+  assert.equal(alert.required_human_approval, true)
+})
+
+test("radar advisor: new_product incluye stock_context", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "new_product",
+        new_value: {
+          available:
+            true,
+          inventory_quantity:
+            12,
+        },
+      },
+      baseRadarAdvisorProduct,
+      null
+    )
+
+  assert.equal(alert.stock_context.inventory_quantity, 12)
+  assert.equal(alert.stock_context.inventory_status, "in_stock")
+})
+
+test("radar advisor: low_stock sin quantity numerico se ignora", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "low_stock",
+        new_value: {
+          available:
+            true,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          null,
+      },
+      null
+    )
+
+  assert.equal(alert, null)
+})
+
 test("radar advisor: discount_started + consumable signal -> evaluate_pack_strategy", () => {
   const alert =
     getRadarAdvisorEvent(
@@ -181,7 +312,11 @@ test("radar advisor: discount_started + consumable signal -> evaluate_pack_strat
             25,
         },
       },
-      baseRadarAdvisorProduct,
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          12,
+      },
       {
         id:
           "candidate-4",
@@ -193,6 +328,40 @@ test("radar advisor: discount_started + consumable signal -> evaluate_pack_strat
     )
 
   assert.equal(alert.recommended_action, "evaluate_pack_strategy")
+})
+
+test("radar advisor: discount_started consumible sin stock suficiente no sugiere pack", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "discount_started",
+        new_value: {
+          price:
+            15,
+          compare_at_price:
+            25,
+          available:
+            true,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          null,
+      },
+      {
+        id:
+          "candidate-4b",
+        state:
+          "VALIDATED",
+        product_type:
+          "Coffee",
+      }
+    )
+
+  assert.equal(alert.recommended_action, "recalculate_profit")
 })
 
 test("radar advisor: price_up + VALIDATED -> recalculate_before_listing", () => {

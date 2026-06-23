@@ -727,6 +727,25 @@ function getAdvisorSeverityClassName(
 function getProductStatusLabel(
   product: MarketRadarProductRow
 ) {
+  if (product.inventory_status === "out_of_stock") {
+    return "Agotado"
+  }
+
+  if (
+    product.inventory_status === "in_stock" &&
+    product.inventory_source === "luna_availability"
+  ) {
+    return "Disponible sin cantidad"
+  }
+
+  if (product.inventory_status === "in_stock") {
+    return "Disponible"
+  }
+
+  if (product.inventory_status === "unknown") {
+    return "Sin dato"
+  }
+
   if (
     product.available === true &&
     (
@@ -751,6 +770,28 @@ function getProductStatusLabel(
 function getProductStatusClassName(
   product: MarketRadarProductRow
 ) {
+  if (product.inventory_status === "out_of_stock") {
+    return "border-red-300/25 bg-red-300/[0.10] text-red-100"
+  }
+
+  if (
+    product.inventory_status === "in_stock" &&
+    product.inventory_source === "luna_numeric"
+  ) {
+    return "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100"
+  }
+
+  if (
+    product.inventory_status === "in_stock" &&
+    product.inventory_source === "luna_availability"
+  ) {
+    return "border-amber-300/25 bg-amber-300/[0.10] text-amber-100"
+  }
+
+  if (product.inventory_status === "unknown") {
+    return "border-white/10 bg-white/[0.04] text-white/45"
+  }
+
   if (
     product.available === true &&
     (
@@ -767,6 +808,38 @@ function getProductStatusClassName(
 
   if (product.available === false) {
     return "border-red-300/25 bg-red-300/[0.10] text-red-100"
+  }
+
+  return "border-white/10 bg-white/[0.04] text-white/45"
+}
+
+function getStockContextMessage(
+  stockContext: RadarAdvisorAlert["stock_context"] | null | undefined
+) {
+  if (!stockContext) {
+    return null
+  }
+
+  return stockContext.stock_message
+}
+
+function getStockContextClassName(
+  stockContext: RadarAdvisorAlert["stock_context"] | null | undefined
+) {
+  if (!stockContext) {
+    return "border-white/10 bg-white/[0.04] text-white/45"
+  }
+
+  if (stockContext.inventory_status === "out_of_stock") {
+    return "border-red-300/25 bg-red-300/[0.08] text-red-100"
+  }
+
+  if (stockContext.inventory_source === "luna_numeric") {
+    return "border-emerald-300/25 bg-emerald-300/[0.08] text-emerald-100"
+  }
+
+  if (stockContext.inventory_status === "in_stock") {
+    return "border-amber-300/25 bg-amber-300/[0.08] text-amber-100"
   }
 
   return "border-white/10 bg-white/[0.04] text-white/45"
@@ -3144,10 +3217,11 @@ function ProductRow({
           {formatInventoryQuantity(product.inventory_quantity)}
         </p>
         <p className="mt-1 text-[11px] text-white/35">
-          {product.inventory_quantity === null ||
-          product.inventory_quantity === undefined
-            ? "Proveedor no expone unidades"
-            : "Cantidad disponible proveedor"}
+          {product.inventory_source === "luna_numeric"
+            ? "Cantidad disponible proveedor"
+            : product.inventory_source === "luna_availability"
+              ? "Luna confirma disponibilidad sin unidades"
+              : "Cantidad no expuesta por Luna"}
         </p>
       </td>
       <td className="px-4 py-4">
@@ -3233,6 +3307,11 @@ function RadarAdvisorAlertItem({
 }: {
   alert: RadarAdvisorAlert
 }) {
+  const stockMessage =
+    getStockContextMessage(
+      alert.stock_context
+    )
+
   return (
     <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -3256,33 +3335,51 @@ function RadarAdvisorAlertItem({
         </span>
       </div>
 
-      <p className="mt-3 line-clamp-2 text-sm font-black leading-5 text-white">
+      <p className="mt-3 break-words text-sm font-black leading-5 text-white">
         {alert.product_title}
       </p>
-      <p className="mt-2 text-sm leading-6 text-white/70">
+      <p className="mt-2 break-words text-sm leading-6 text-white/70">
         {alert.advisor_message}
       </p>
 
-      <div className="mt-4 grid gap-3 text-xs leading-5 text-white/45 md:grid-cols-2">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/30">
+      {stockMessage && (
+        <div
+          className={`
+            mt-3
+            rounded-md
+            border
+            px-3
+            py-2
+            text-xs
+            font-semibold
+            leading-5
+            ${getStockContextClassName(alert.stock_context)}
+          `}
+        >
+          {stockMessage}
+        </div>
+      )}
+
+      <div className="mt-4 space-y-4 text-xs leading-5 text-white/45">
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
             Recomendacion
           </p>
-          <p className="mt-1 text-white/70">
+          <p className="mt-1 break-words text-white/70">
             {alert.recommended_action}
           </p>
         </div>
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/30">
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
             Proximo paso
           </p>
-          <p className="mt-1 text-white/70">
+          <p className="mt-1 break-words text-white/70">
             {alert.proposed_next_step}
           </p>
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.12em]">
+      <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.08em]">
         {alert.candidate_state && (
           <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-white/45">
             {alert.candidate_state}

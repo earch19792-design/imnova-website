@@ -44,6 +44,7 @@ type ShopifyVariant = {
   quantity?: number | string | null
   qty?: number | string | null
   stock?: number | string | null
+  inventory?: number | string | null
 }
 
 type ShopifyImage = {
@@ -245,8 +246,70 @@ function getVariantInventoryQuantity(
       variant.availableQuantity ??
       variant.quantity ??
       variant.qty ??
-      variant.stock
+      variant.stock ??
+      variant.inventory
   )
+}
+
+function getNormalizedVariantInventory(
+  variant: ShopifyVariant
+) {
+  const inventoryQuantity =
+    getVariantInventoryQuantity(
+      variant
+    )
+
+  if (inventoryQuantity !== null) {
+    return {
+      inventory_quantity:
+        inventoryQuantity,
+      inventory_status:
+        inventoryQuantity > 0
+          ? "in_stock"
+          : "out_of_stock",
+      inventory_source:
+        "luna_numeric",
+      inventory_confidence:
+        "high",
+    } as const
+  }
+
+  if (variant.available === false) {
+    return {
+      inventory_quantity:
+        0,
+      inventory_status:
+        "out_of_stock",
+      inventory_source:
+        "luna_availability",
+      inventory_confidence:
+        "medium",
+    } as const
+  }
+
+  if (variant.available === true) {
+    return {
+      inventory_quantity:
+        null,
+      inventory_status:
+        "in_stock",
+      inventory_source:
+        "luna_availability",
+      inventory_confidence:
+        "medium",
+    } as const
+  }
+
+  return {
+    inventory_quantity:
+      null,
+    inventory_status:
+      "unknown",
+    inventory_source:
+      "not_exposed",
+    inventory_confidence:
+      "low",
+  } as const
 }
 
 function shouldHydrateProductInventory(
@@ -1068,7 +1131,7 @@ function buildSnapshotsAndEvents(
           : null
 
       const inventoryQuantity =
-        getVariantInventoryQuantity(
+        getNormalizedVariantInventory(
           variant
         )
 
@@ -1090,7 +1153,7 @@ function buildSnapshotsAndEvents(
           compareAtPrice,
         available,
         inventory_quantity:
-          inventoryQuantity,
+          inventoryQuantity.inventory_quantity,
         collections,
         discount_percent:
           getDiscountPercent(
@@ -1104,6 +1167,8 @@ function buildSnapshotsAndEvents(
                 product
               ),
             variant,
+            inventory_context:
+              inventoryQuantity,
           },
         captured_at:
           capturedAt,
@@ -1132,6 +1197,8 @@ function buildSnapshotsAndEvents(
               price,
               available,
               inventory_quantity:
+                inventoryQuantity.inventory_quantity,
+              stock_context:
                 inventoryQuantity,
               collections,
             },
@@ -1172,6 +1239,8 @@ function buildSnapshotsAndEvents(
             {
               available,
               inventory_quantity:
+                inventoryQuantity.inventory_quantity,
+              stock_context:
                 inventoryQuantity,
             },
             capturedAt

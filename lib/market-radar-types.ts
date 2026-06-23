@@ -2,6 +2,9 @@ export type MarketRadarEventType =
   | "new_product"
   | "restocked"
   | "out_of_stock"
+  | "low_stock"
+  | "stock_increased"
+  | "stock_decreased_fast"
   | "price_up"
   | "price_down"
   | "entered_collection"
@@ -46,6 +49,9 @@ export type MarketRadarProductRow = {
   compare_at_price: number | string | null
   available: boolean | null
   inventory_quantity: number | null
+  inventory_status: "in_stock" | "out_of_stock" | "unknown"
+  inventory_source: "luna_numeric" | "luna_availability" | "not_exposed"
+  inventory_confidence: "high" | "medium" | "low"
   collections: string[] | null
   discount_percent: number | string | null
   last_captured_at: string | null
@@ -100,6 +106,13 @@ export type RadarAdvisorAlert = {
   candidate_state: string | null
   candidate_id: string | null
   created_at: string | null
+  stock_context?: {
+    inventory_quantity: number | null
+    inventory_status: "in_stock" | "out_of_stock" | "unknown"
+    inventory_source: "luna_numeric" | "luna_availability" | "not_exposed"
+    inventory_confidence: "high" | "medium" | "low"
+    stock_message: string
+  }
 }
 
 export type MarketRadarSummary = {

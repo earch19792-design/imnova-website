@@ -165,6 +165,94 @@ function toNumber(
     : null
 }
 
+function getInventoryContext(
+  value: {
+    available?: boolean | null
+    inventory_quantity?: number | string | null
+    raw?: {
+      inventory_context?: {
+        inventory_source?: string | null
+      } | null
+    } | null
+  } | null | undefined
+) {
+  const numericQuantity =
+    toNumber(
+      value?.inventory_quantity ?? null
+    )
+
+  if (numericQuantity !== null) {
+    const inventoryQuantity =
+      Math.trunc(numericQuantity)
+
+    return {
+      inventory_quantity:
+        inventoryQuantity,
+      inventory_status:
+        inventoryQuantity > 0
+          ? "in_stock"
+          : "out_of_stock",
+      inventory_source:
+        value?.raw?.inventory_context?.inventory_source ===
+          "luna_availability"
+          ? "luna_availability"
+          : "luna_numeric",
+      inventory_confidence:
+        value?.raw?.inventory_context?.inventory_source ===
+          "luna_availability"
+          ? "medium"
+          : "high",
+      stock_message:
+        inventoryQuantity > 0
+          ? `Stock disponible: ${new Intl.NumberFormat("en-US").format(inventoryQuantity)} unidades.`
+          : "Producto sin stock. No listar o revisar pausa si ya está en eBay.",
+    } as const
+  }
+
+  if (value?.available === false) {
+    return {
+      inventory_quantity:
+        0,
+      inventory_status:
+        "out_of_stock",
+      inventory_source:
+        "luna_availability",
+      inventory_confidence:
+        "medium",
+      stock_message:
+        "Producto sin stock. No listar o revisar pausa si ya está en eBay.",
+    } as const
+  }
+
+  if (value?.available === true) {
+    return {
+      inventory_quantity:
+        null,
+      inventory_status:
+        "in_stock",
+      inventory_source:
+        "luna_availability",
+      inventory_confidence:
+        "medium",
+      stock_message:
+        "Producto disponible, pero Luna no expone cantidad numérica.",
+    } as const
+  }
+
+  return {
+    inventory_quantity:
+      null,
+    inventory_status:
+      "unknown",
+    inventory_source:
+      "not_exposed",
+    inventory_confidence:
+      "low",
+    stock_message:
+      "Cantidad no disponible. Validar manualmente antes de listar.",
+  } as const
+}
+
 function isMissingLatestSnapshotViewError(
   error: unknown
 ) {
@@ -206,6 +294,7 @@ async function getLatestProductSnapshots(
     compare_at_price,
     available,
     inventory_quantity,
+    raw,
     collections,
     discount_percent,
     captured_at
@@ -492,6 +581,11 @@ async function getLatestMarketRadarProducts(
       const score =
         scoreByProductId.get(productId)
 
+      const inventoryContext =
+        getInventoryContext(
+          snapshot
+        )
+
       return {
         product_id:
           product.id,
@@ -540,7 +634,13 @@ async function getLatestMarketRadarProducts(
         available:
           snapshot?.available ?? null,
         inventory_quantity:
-          snapshot?.inventory_quantity ?? null,
+          inventoryContext.inventory_quantity,
+        inventory_status:
+          inventoryContext.inventory_status,
+        inventory_source:
+          inventoryContext.inventory_source,
+        inventory_confidence:
+          inventoryContext.inventory_confidence,
         collections:
           snapshot?.collections || null,
         discount_percent:

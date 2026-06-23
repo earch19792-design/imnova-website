@@ -16,7 +16,18 @@ export type RadarAdvisorEvent = {
   candidate_state: string | null
   candidate_id: string | null
   created_at: string | null
+  stock_context?: {
+    inventory_quantity: number | null
+    inventory_status: "in_stock" | "out_of_stock" | "unknown"
+    inventory_source: "luna_numeric" | "luna_availability" | "not_exposed"
+    inventory_confidence: "high" | "medium" | "low"
+    stock_message: string
+  }
 }
+
+export function getNormalizedInventoryContext(
+  value?: Record<string, any> | null
+): NonNullable<RadarAdvisorEvent["stock_context"]>
 
 export function getRadarAdvisorEvent(
   event: Record<string, any>,
