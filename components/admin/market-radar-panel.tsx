@@ -3485,6 +3485,9 @@ export function MarketRadarPanel() {
             <span>
               Email request: <strong className="text-white">{syncResult.requestEmailConfigured ? "configurado" : "no configurado"}</strong>
             </span>
+            <span>
+              Cookie auth: <strong className="text-white">{syncResult.authCookieConfigured ? "configurada" : "no configurada"}</strong>
+            </span>
           </div>
         )}
 

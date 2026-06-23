@@ -283,10 +283,34 @@ function getInventoryQuantity(
 function getInventoryQuantityFromHtml(
   html: string
 ) {
+  const normalizedHtml =
+    html
+      .replace(
+        /&nbsp;/gi,
+        " "
+      )
+      .replace(
+        /\s+/g,
+        " "
+      )
+
+  const quantityPatterns = [
+    /(\d[\d,]*)\s+units?\s+available/i,
+    /(\d[\d,]*)\s+unidades?\s+disponibles?/i,
+    /cantidad\s+disponible(?:\s+proveedor)?\D{0,40}(\d[\d,]*)/i,
+    /disponible\D{0,40}cantidad\D{0,40}(\d[\d,]*)/i,
+    /available\D{0,40}quantity\D{0,40}(\d[\d,]*)/i,
+    /inventory[_\s-]*quantity["'\s:=]+(\d[\d,]*)/i,
+    /available[_\s-]*quantity["'\s:=]+(\d[\d,]*)/i,
+    /quantity[_\s-]*available["'\s:=]+(\d[\d,]*)/i,
+  ]
+
   const quantityMatch =
-    html.match(
-      /(\d[\d,]*)\s+units?\s+available/i
-    )
+    quantityPatterns
+      .map(pattern =>
+        normalizedHtml.match(pattern)
+      )
+      .find(Boolean)
 
   if (!quantityMatch) {
     return null
