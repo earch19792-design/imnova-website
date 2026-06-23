@@ -32,22 +32,37 @@ export default function AdminLoginPage() {
     setError("")
     setIsLoading(true)
 
-    const result =
-      await signInAdmin(
-        email.trim(),
-        password
+    try {
+      const result =
+        await signInAdmin(
+          email.trim(),
+          password
+        )
+
+      if (!result.isAdmin) {
+        setError(
+          result.error ||
+            "Credenciales incorrectas"
+        )
+        return
+      }
+
+      router.push("/admin")
+    } catch (loginError) {
+      console.error(
+        "ADMIN LOGIN ERROR:",
+        loginError
       )
 
-    if (!result.isAdmin) {
       setError(
-        result.error ||
-          "Credenciales incorrectas"
+        loginError instanceof Error &&
+          loginError.message
+          ? loginError.message
+          : "No se pudo conectar con Supabase para validar el acceso."
       )
+    } finally {
       setIsLoading(false)
-      return
     }
-
-    router.push("/admin")
 
   }
 
@@ -127,6 +142,7 @@ export default function AdminLoginPage() {
           <input
             type="email"
             placeholder="Email"
+            required
             value={email}
             onChange={(e) =>
               setEmail(e.target.value)
@@ -147,6 +163,7 @@ export default function AdminLoginPage() {
           <input
             type="password"
             placeholder="Contraseña"
+            required
             value={password}
             onChange={(e) =>
               setPassword(e.target.value)
