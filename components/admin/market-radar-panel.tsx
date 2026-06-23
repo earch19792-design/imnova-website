@@ -907,6 +907,35 @@ function getStableSupplierSku(
   )
 }
 
+function getProductPreviewImageUrl(
+  product: MarketRadarProductRow
+) {
+  const optionalProduct =
+    product as MarketRadarProductRow & {
+      image_url?: string | null
+      image?: string | null
+      images?: string[] | null
+    }
+
+  return (
+    getNullableString(
+      product.featured_image_url
+    ) ||
+    getNullableString(
+      optionalProduct.image_url
+    ) ||
+    getNullableString(
+      optionalProduct.image
+    ) ||
+    getNullableString(
+      optionalProduct.images?.[0]
+    ) ||
+    getNullableString(
+      product.image_urls?.[0]
+    )
+  )
+}
+
 function createPriceIntelligenceForm(
   product: MarketRadarProductRow
 ): PriceIntelligenceFormState {
@@ -1345,6 +1374,11 @@ function PriceIntelligenceModal({
   const ebaySearchUrl =
     `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(ebaySearchQuery)}`
 
+  const productPreviewImageUrl =
+    getProductPreviewImageUrl(
+      product
+    )
+
   function openEbaySearch() {
     window.open(
       ebaySearchUrl,
@@ -1596,6 +1630,55 @@ function PriceIntelligenceModal({
               >
                 Copiar busqueda
               </button>
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-white/10 bg-white/[0.025] p-4">
+            <div className="flex flex-col gap-4 md:flex-row">
+              <div className="flex h-44 w-full shrink-0 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-black/35 md:h-40 md:w-40">
+                {productPreviewImageUrl ? (
+                  <img
+                    src={productPreviewImageUrl}
+                    alt={product.title}
+                    className="h-full w-full object-contain p-2"
+                  />
+                ) : (
+                  <span className="px-4 text-center text-xs font-semibold uppercase tracking-[0.16em] text-white/35">
+                    Sin imagen disponible
+                  </span>
+                )}
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] uppercase tracking-[0.22em] text-white/35">
+                  Producto de referencia
+                </p>
+                <h4 className="mt-2 break-words text-base font-black leading-6 text-white">
+                  {product.title}
+                </h4>
+                <div className="mt-3 grid gap-2 text-xs text-white/45 sm:grid-cols-2">
+                  <p className="break-all">
+                    SKU: <span className="text-white/70">{getStableSupplierSku(product) || "-"}</span>
+                  </p>
+                  <p>
+                    Costo Luna: <span className="text-white/70">{formatCurrency(product.price)}</span>
+                  </p>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-white/50">
+                  Usa esta imagen para confirmar que los precios comparables corresponden al mismo producto o a uno realmente equivalente.
+                </p>
+                {product.product_url ? (
+                  <a
+                    href={product.product_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-3 inline-flex items-center gap-2 text-xs font-bold text-cyan-100 transition hover:text-cyan-50"
+                  >
+                    Abrir producto fuente
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                ) : null}
+              </div>
             </div>
           </section>
 
