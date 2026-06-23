@@ -356,6 +356,43 @@ function normalizeImageUrls(
   )
 }
 
+function getSnapshotRawProduct(
+  product: AggregatedProduct
+) {
+  const imageUrls =
+    normalizeImageUrls(product)
+
+  const handle =
+    getString(product.handle)
+
+  return {
+    id:
+      product.id || null,
+    title:
+      getString(product.title) || null,
+    handle:
+      handle || null,
+    product_url:
+      handle
+        ? `${LUNAPORTEX_BASE_URL}/products/${handle}`
+        : null,
+    featured_image_url:
+      imageUrls[0] || null,
+    image_urls:
+      imageUrls,
+    vendor:
+      getString(product.vendor) || null,
+    product_type:
+      getString(product.product_type) || null,
+    tags:
+      normalizeTags(product.tags),
+    collections:
+      Array.from(product.collections).sort(),
+    updated_at:
+      getString(product.updated_at) || null,
+  }
+}
+
 function getDiscountPercent(
   price: number | null,
   compareAtPrice: number | null
@@ -1005,7 +1042,10 @@ function buildSnapshotsAndEvents(
           ),
         raw:
           {
-            product,
+            product:
+              getSnapshotRawProduct(
+                product
+              ),
             variant,
           },
         captured_at:

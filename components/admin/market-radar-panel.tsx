@@ -55,6 +55,15 @@ type MarketRadarApiResponse = {
   error?: string
 }
 
+const MARKET_RADAR_REQUEST_TIMEOUT_MS =
+  90000
+
+function getAbortErrorMessage(
+  fallbackMessage: string
+) {
+  return `${fallbackMessage} La sincronización tardó demasiado. Revisa el dashboard en unos minutos o intenta de nuevo.`
+}
+
 async function readJsonResponse<T>(
   response: Response,
   fallbackMessage: string
@@ -3394,31 +3403,64 @@ export function MarketRadarPanel() {
       const token =
         await getAccessToken()
 
-      const response =
-        await fetch(
-          "/api/admin/market-radar",
-          {
-            method:
-              options?.action
-                ? "POST"
-                : "GET",
-            cache:
-              "no-store",
-            headers: {
-              Authorization:
-                `Bearer ${token}`,
-              "Content-Type":
-                "application/json",
-            },
-            body:
-              options?.action
-                ? JSON.stringify({
-                    action:
-                      options.action,
-                  })
-                : undefined,
-          }
+      const controller =
+        new AbortController()
+
+      const timeoutId =
+        window.setTimeout(
+          () =>
+            controller.abort(),
+          MARKET_RADAR_REQUEST_TIMEOUT_MS
         )
+
+      let response: Response
+
+      try {
+        response =
+          await fetch(
+            "/api/admin/market-radar",
+            {
+              method:
+                options?.action
+                  ? "POST"
+                  : "GET",
+              cache:
+                "no-store",
+              signal:
+                controller.signal,
+              headers: {
+                Authorization:
+                  `Bearer ${token}`,
+                "Content-Type":
+                  "application/json",
+              },
+              body:
+                options?.action
+                  ? JSON.stringify({
+                      action:
+                        options.action,
+                    })
+                  : undefined,
+            }
+          )
+      } catch (error) {
+        if (
+          error instanceof DOMException &&
+          error.name === "AbortError"
+        ) {
+          throw new Error(
+            getAbortErrorMessage(
+              "Market Radar no respondió a tiempo."
+            )
+          )
+        }
+
+        throw error
+      } finally {
+        window.clearTimeout(
+          timeoutId
+        )
+      }
 
       const payload =
         await readJsonResponse<MarketRadarApiResponse>(

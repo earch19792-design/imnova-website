@@ -165,6 +165,112 @@ function toNumber(
     : null
 }
 
+function isMissingLatestSnapshotViewError(
+  error: unknown
+) {
+  const typedError =
+    error as {
+      code?: string
+      message?: string
+    } | null
+
+  const message =
+    typedError?.message?.toLowerCase() || ""
+
+  return (
+    typedError?.code === "42P01" ||
+    typedError?.code === "PGRST205" ||
+    (
+      message.includes(
+        "market_radar_latest_snapshots"
+      ) &&
+      (
+        message.includes("does not exist") ||
+        message.includes("not found")
+      )
+    )
+  )
+}
+
+async function getLatestProductSnapshots(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  productIds: string[]
+) {
+  const selectFields = `
+    id,
+    product_id,
+    supplier_variant_id,
+    variant_title,
+    sku,
+    price,
+    compare_at_price,
+    available,
+    inventory_quantity,
+    collections,
+    discount_percent,
+    captured_at
+  `
+
+  const latestResult =
+    await supabase
+      .from("market_radar_latest_snapshots")
+      .select(selectFields)
+      .in(
+        "product_id",
+        productIds
+      )
+      .order(
+        "captured_at",
+        {
+          ascending: false,
+          nullsFirst: false,
+        }
+      )
+
+  if (!latestResult.error) {
+    return latestResult.data || []
+  }
+
+  if (
+    !isMissingLatestSnapshotViewError(
+      latestResult.error
+    )
+  ) {
+    throw new Error(
+      latestResult.error.message
+    )
+  }
+
+  console.warn(
+    "MARKET RADAR LATEST SNAPSHOTS VIEW MISSING; FALLING BACK TO SNAPSHOT HISTORY:",
+    latestResult.error.message
+  )
+
+  const fallbackResult =
+    await supabase
+      .from("market_radar_snapshots")
+      .select(selectFields)
+      .in(
+        "product_id",
+        productIds
+      )
+      .order(
+        "captured_at",
+        {
+          ascending: false,
+          nullsFirst: false,
+        }
+      )
+
+  if (fallbackResult.error) {
+    throw new Error(
+      fallbackResult.error.message
+    )
+  }
+
+  return fallbackResult.data || []
+}
+
 async function getLatestMarketRadarProducts(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   source: MarketRadarSource
@@ -332,43 +438,11 @@ async function getLatestMarketRadarProducts(
       ])
     )
 
-  const {
-    data: snapshotsData,
-    error: snapshotsError,
-  } =
-    await supabase
-      .from("market_radar_snapshots")
-      .select(`
-        id,
-        product_id,
-        supplier_variant_id,
-        variant_title,
-        sku,
-        price,
-        compare_at_price,
-        available,
-        inventory_quantity,
-        collections,
-        discount_percent,
-        captured_at
-      `)
-      .in(
-        "product_id",
-        productIds
-      )
-      .order(
-        "captured_at",
-        {
-          ascending: false,
-          nullsFirst: false,
-        }
-      )
-
-  if (snapshotsError) {
-    throw new Error(
-      snapshotsError.message
+  const snapshotsData =
+    await getLatestProductSnapshots(
+      supabase,
+      productIds
     )
-  }
 
   const snapshotByProductId =
     new Map<string, NonNullable<typeof snapshotsData>[number]>()
