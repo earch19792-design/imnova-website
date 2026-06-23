@@ -128,6 +128,7 @@ const priceSourceOptions = [
   "manual",
   "terapeak",
   "zik",
+  "ebay_api",
   "other",
 ]
 
@@ -140,9 +141,65 @@ const priceSourceLabels: Record<string, string> = {
     "Terapeak",
   zik:
     "ZIK",
+  ebay_api:
+    "eBay API",
   other:
     "Otro",
 }
+
+type PriceIntelligenceProvider =
+  | "manual_paste"
+  | "aiprice_export"
+  | "terapeak_export"
+  | "zik_export"
+  | "ebay_api"
+
+const priceIntelligenceProviders: Array<{
+  key: PriceIntelligenceProvider
+  label: string
+  status: string
+}> = [
+  {
+    key:
+      "ebay_api",
+    label:
+      "eBay API",
+    status:
+      "Futuro adapter API-ready",
+  },
+  {
+    key:
+      "aiprice_export",
+    label:
+      "Aiprice export",
+    status:
+      "Export manual permitido cuando exista",
+  },
+  {
+    key:
+      "terapeak_export",
+    label:
+      "Terapeak export",
+    status:
+      "Importacion futura",
+  },
+  {
+    key:
+      "zik_export",
+    label:
+      "ZIK export",
+    status:
+      "Importacion futura",
+  },
+  {
+    key:
+      "manual_paste",
+    label:
+      "Captura rapida",
+    status:
+      "Fallback temporal",
+  },
+]
 
 const priceCaptureTypeOptions = [
   "sold",
@@ -189,6 +246,12 @@ type ParsedPriceIntelligenceText = {
 type SuggestedPriceConfidence = {
   source_confidence: string
   confidence_score: number
+}
+
+type PriceAnalysisResult = {
+  provider: PriceIntelligenceProvider
+  status: "not_configured" | "ready"
+  metrics: ParsedPriceIntelligenceText | null
 }
 
 const sourceConfidenceOptions = [
@@ -331,40 +394,9 @@ function formatPriceFormValue(
   return roundPriceValue(value).toFixed(2)
 }
 
-function parsePriceIntelligenceText(
-  text: string
+function calculatePriceMetrics(
+  prices: number[]
 ): ParsedPriceIntelligenceText | null {
-  const prices =
-    Array.from(
-      text.matchAll(
-        /(?:USD\s*)?\$?\s*(-?(?:0x[0-9a-f]+|\d+(?:\.\d+)?(?:e\d+)?|nan|infinity))/gi
-      )
-    )
-      .map(match => {
-        const rawNumber =
-          match[1]
-
-        if (
-          rawNumber.startsWith("-") ||
-          /^(?:nan|infinity)$/i.test(rawNumber) ||
-          /^0x[0-9a-f]+$/i.test(rawNumber) ||
-          /^\d+(?:\.\d+)?e\d+$/i.test(rawNumber)
-        ) {
-          return null
-        }
-
-        const value =
-          Number(rawNumber)
-
-        return Number.isFinite(value) &&
-          value >= 0
-          ? roundPriceValue(value)
-          : null
-      })
-      .filter((value): value is number =>
-        value !== null
-      )
-
   if (prices.length === 0) {
     return null
   }
@@ -409,6 +441,63 @@ function parsePriceIntelligenceText(
     avg,
     median:
       roundPriceValue(median),
+  }
+}
+
+function normalizeComparablePrices(
+  text: string
+) {
+  return Array.from(
+    text.matchAll(
+      /(?:USD\s*)?\$?\s*(-?(?:0x[0-9a-f]+|\d+(?:\.\d+)?(?:e\d+)?|nan|infinity))/gi
+    )
+  )
+    .map(match => {
+      const rawNumber =
+        match[1]
+
+      if (
+        rawNumber.startsWith("-") ||
+        /^(?:nan|infinity)$/i.test(rawNumber) ||
+        /^0x[0-9a-f]+$/i.test(rawNumber) ||
+        /^\d+(?:\.\d+)?e\d+$/i.test(rawNumber)
+      ) {
+        return null
+      }
+
+      const value =
+        Number(rawNumber)
+
+      return Number.isFinite(value) &&
+        value >= 0
+        ? roundPriceValue(value)
+        : null
+    })
+    .filter((value): value is number =>
+      value !== null
+    )
+}
+
+function parsePriceIntelligenceText(
+  text: string
+): ParsedPriceIntelligenceText | null {
+  return calculatePriceMetrics(
+    normalizeComparablePrices(text)
+  )
+}
+
+function runPriceAnalysis(
+  _product: MarketRadarProductRow,
+  provider: PriceIntelligenceProvider
+): PriceAnalysisResult {
+  return {
+    provider,
+    status:
+      provider === "manual_paste"
+        ? "ready"
+        : "not_configured",
+    metrics:
+      null,
   }
 }
 
@@ -1189,6 +1278,37 @@ function PriceIntelligenceModal({
         : quickCaptureAnalysis.avg
       : null
 
+  const automationStatus =
+    runPriceAnalysis(
+      product,
+      "ebay_api"
+    )
+
+  const ebaySearchQuery =
+    [
+      product.title,
+      getStableSupplierSku(product),
+    ]
+      .filter(Boolean)
+      .join(" ")
+
+  const ebaySearchUrl =
+    `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(ebaySearchQuery)}`
+
+  function openEbaySearch() {
+    window.open(
+      ebaySearchUrl,
+      "_blank",
+      "noopener,noreferrer"
+    )
+  }
+
+  async function copyEbaySearch() {
+    await navigator.clipboard.writeText(
+      ebaySearchQuery
+    )
+  }
+
   function applyQuickPriceCapture() {
     if (!quickCaptureAnalysis) {
       return
@@ -1288,7 +1408,7 @@ function PriceIntelligenceModal({
               Price Intelligence
             </p>
             <h3 className="mt-3 text-xl font-black text-white md:text-2xl">
-              Agregar precio de mercado
+              Analizar precio de mercado
             </h3>
             <p className="mt-2 max-w-3xl break-words text-sm leading-6 text-white/55">
               {product.title}
@@ -1319,11 +1439,114 @@ function PriceIntelligenceModal({
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto px-5 py-5 md:px-6">
-          <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.06] p-4 text-sm leading-6 text-cyan-50/75">
-            Aiprice sigue siendo manual: copia los precios que ves y pegalos aqui. IMNOVA calculara promedio, mediana y precio recomendado.
-          </div>
+          <section className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.06] p-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-100/55">
+                  Automation-first
+                </p>
+                <h4 className="mt-2 text-lg font-black text-white">
+                  Fuente automatica aun no configurada
+                </h4>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-cyan-50/75">
+                  IMNOVA preparara este producto para analisis de precio. Las fuentes automaticas se conectaran por adapters: eBay API, Aiprice export, Terapeak/ZIK export o captura rapida.
+                </p>
+                <p className="mt-2 text-xs text-white/40">
+                  Estado actual: {automationStatus.status === "not_configured" ? "provider pendiente" : "provider listo"}.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={automationStatus.status === "not_configured"}
+                title="Provider automatico pendiente de configuracion"
+                className="
+                  inline-flex
+                  shrink-0
+                  items-center
+                  justify-center
+                  rounded-lg
+                  border
+                  border-white/10
+                  bg-white/[0.04]
+                  px-4
+                  py-3
+                  text-sm
+                  font-black
+                  text-white
+                  transition
+                  hover:border-cyan-300/25
+                  hover:text-cyan-100
+                  disabled:cursor-not-allowed
+                  disabled:opacity-50
+                "
+              >
+                Analizar precio de mercado
+              </button>
+            </div>
 
-          <PriceFormGroup title="Captura rapida de precios">
+            <div className="mt-4 grid gap-2 md:grid-cols-5">
+              {priceIntelligenceProviders.map(provider => (
+                <div
+                  key={provider.key}
+                  className="rounded-md border border-white/10 bg-black/20 p-3"
+                >
+                  <p className="text-xs font-bold text-white">
+                    {provider.label}
+                  </p>
+                  <p className="mt-1 text-[11px] leading-4 text-white/40">
+                    {provider.status}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={openEbaySearch}
+                className="
+                  rounded-lg
+                  border
+                  border-cyan-300/30
+                  bg-cyan-300
+                  px-4
+                  py-3
+                  text-sm
+                  font-black
+                  text-black
+                  transition
+                  hover:bg-cyan-200
+                "
+              >
+                Abrir busqueda en eBay
+              </button>
+              <button
+                type="button"
+                onClick={copyEbaySearch}
+                className="
+                  rounded-lg
+                  border
+                  border-white/10
+                  bg-white/[0.04]
+                  px-4
+                  py-3
+                  text-sm
+                  font-semibold
+                  text-white/70
+                  transition
+                  hover:border-cyan-300/25
+                  hover:text-white
+                "
+              >
+                Copiar busqueda
+              </button>
+            </div>
+          </section>
+
+          <PriceFormGroup title="Pegar evidencia rapida">
+            <p className="mb-4 text-sm leading-6 text-white/50">
+              Fallback temporal: Aiprice sigue siendo manual. Copia los precios que ves y pegalos aqui; IMNOVA calculara minimo, maximo, promedio, mediana y precio recomendado.
+            </p>
             <div className="grid gap-4 md:grid-cols-2">
               <PriceSelect
                 label="Fuente del precio"
@@ -1446,7 +1669,7 @@ function PriceIntelligenceModal({
                   disabled:opacity-50
                 "
               >
-                Analizar precios
+                Analizar precios pegados
               </button>
               {!quickCaptureAnalysis &&
               form.pasted_price_text.trim() ? (
@@ -1616,7 +1839,7 @@ function PriceIntelligenceModal({
               className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left"
             >
               <span className="text-xs font-black uppercase tracking-[0.18em] text-white/50">
-                Campos avanzados
+                Captura manual avanzada
               </span>
               <span className="text-xs font-bold text-cyan-100/70">
                 {showAdvancedFields ? "Ocultar" : "Mostrar"}
