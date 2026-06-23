@@ -246,6 +246,10 @@ type EbayDecisionAdvisor = {
     market_reference_price?: number | string | null
     market_reference_source?: string | null
     market_confidence?: number | string | null
+    competitor_item_price?: number | string | null
+    competitor_shipping_price?: number | string | null
+    competitor_landed_price?: number | string | null
+    shipping_strategy?: string | null
   }
   cost_breakdown?: CostBreakdown | null
   recommended_next_action?: string
@@ -1694,6 +1698,28 @@ function CandidateDetailDrawer({
                     <Field
                       label="Fuente mercado"
                       value={detail.decisionAdvisor.target_price?.market_reference_source}
+                    />
+                    <Field
+                      label="Item competidor"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.competitor_item_price
+                      )}
+                    />
+                    <Field
+                      label="Envio competidor"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.competitor_shipping_price
+                      )}
+                    />
+                    <Field
+                      label="Total comprador"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.competitor_landed_price
+                      )}
+                    />
+                    <Field
+                      label="Shipping strategy"
+                      value={detail.decisionAdvisor.target_price?.shipping_strategy}
                     />
                   </div>
 

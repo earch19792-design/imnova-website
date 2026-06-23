@@ -102,6 +102,9 @@ type PriceIntelligenceFormState = {
   source_type: string
   price_capture_type: "sold" | "active"
   pasted_price_text: string
+  competitor_item_price: string
+  competitor_shipping_price: string
+  competitor_landed_price: string
   search_query: string
   product_match_type: string
   sold_avg_price: string
@@ -946,6 +949,12 @@ function createPriceIntelligenceForm(
       "sold",
     pasted_price_text:
       "",
+    competitor_item_price:
+      "",
+    competitor_shipping_price:
+      "",
+    competitor_landed_price:
+      "",
     search_query:
       product.title,
     product_match_type:
@@ -996,10 +1005,68 @@ function getNullableFormValue(
   return text || null
 }
 
+function getPriceFormNumber(
+  value: string
+) {
+  const number =
+    toNumber(value)
+
+  return number !== null &&
+    number >= 0
+    ? number
+    : null
+}
+
+function getShippingStrategy(
+  itemPrice: number | null,
+  shippingPrice: number | null
+) {
+  if (shippingPrice === null) {
+    return "unknown"
+  }
+
+  if (shippingPrice === 0) {
+    return "free_shipping"
+  }
+
+  if (
+    itemPrice !== null &&
+    shippingPrice >= itemPrice * 0.75
+  ) {
+    return "high_shipping"
+  }
+
+  return "paid_shipping"
+}
+
 function buildPriceIntelligencePayload(
   product: MarketRadarProductRow,
   form: PriceIntelligenceFormState
 ) {
+  const competitorItemPrice =
+    getPriceFormNumber(
+      form.competitor_item_price
+    )
+
+  const competitorShippingPrice =
+    getPriceFormNumber(
+      form.competitor_shipping_price
+    )
+
+  const competitorLandedPrice =
+    getPriceFormNumber(
+      form.competitor_landed_price
+    ) ??
+    (
+      competitorItemPrice !== null ||
+      competitorShippingPrice !== null
+        ? roundPriceValue(
+            (competitorItemPrice || 0) +
+            (competitorShippingPrice || 0)
+          )
+        : null
+    )
+
   return {
     market_radar_product_id:
       getNullableString(
@@ -1091,6 +1158,31 @@ function buildPriceIntelligencePayload(
       getNullableFormValue(
         form.evidence_notes
       ),
+    competitor_item_price:
+      getNullableFormValue(
+        form.competitor_item_price
+      ),
+    competitor_shipping_price:
+      getNullableFormValue(
+        form.competitor_shipping_price
+      ),
+    competitor_landed_price:
+      competitorLandedPrice === null
+        ? null
+        : formatPriceFormValue(
+            competitorLandedPrice
+          ),
+    shipping_strategy:
+      getShippingStrategy(
+        competitorItemPrice,
+        competitorShippingPrice
+      ),
+    landed_price_source:
+      competitorItemPrice !== null ||
+      competitorShippingPrice !== null ||
+      competitorLandedPrice !== null
+        ? "manual_observed"
+        : null,
   }
 }
 
@@ -1357,6 +1449,37 @@ function PriceIntelligenceModal({
         : quickCaptureAnalysis.avg
       : null
 
+  const competitorItemPrice =
+    getPriceFormNumber(
+      form.competitor_item_price
+    )
+
+  const competitorShippingPrice =
+    getPriceFormNumber(
+      form.competitor_shipping_price
+    )
+
+  const competitorLandedPrice =
+    competitorItemPrice !== null ||
+    competitorShippingPrice !== null
+      ? roundPriceValue(
+          (competitorItemPrice || 0) +
+          (competitorShippingPrice || 0)
+        )
+      : getPriceFormNumber(
+          form.competitor_landed_price
+        )
+
+  const competitorShippingStrategy =
+    competitorShippingPrice === null
+      ? "unknown"
+      : competitorShippingPrice === 0
+        ? "free_shipping"
+        : competitorItemPrice !== null &&
+          competitorShippingPrice >= competitorItemPrice * 0.75
+          ? "high_shipping"
+          : "paid_shipping"
+
   const automationStatus =
     runPriceAnalysis(
       product,
@@ -1457,6 +1580,50 @@ function PriceIntelligenceModal({
       onChange(
         "confidence_score",
         String(suggestedConfidence.confidence_score)
+      )
+    }
+  }
+
+  function applyLandedPriceCapture() {
+    if (competitorLandedPrice === null) {
+      return
+    }
+
+    const landedPrice =
+      formatPriceFormValue(
+        competitorLandedPrice
+      )
+
+    onChange(
+      "competitor_landed_price",
+      landedPrice
+    )
+    onChange(
+      "recommended_sale_price",
+      landedPrice
+    )
+
+    if (form.price_capture_type === "sold") {
+      onChange(
+        "sold_median_price",
+        landedPrice
+      )
+      onChange(
+        "sold_avg_price",
+        landedPrice
+      )
+      onChange(
+        "sold_comp_count",
+        form.sold_comp_count || "1"
+      )
+    } else {
+      onChange(
+        "active_avg_price",
+        landedPrice
+      )
+      onChange(
+        "active_comp_count",
+        form.active_comp_count || "1"
       )
     }
   }
@@ -1686,6 +1853,9 @@ function PriceIntelligenceModal({
             <p className="mb-4 text-sm leading-6 text-white/50">
               Fallback temporal: pega datos desde Terapeak, eBay Research, Aiprice o ZIK. IMNOVA calculara minimo, maximo, promedio, mediana y precio recomendado.
             </p>
+            <p className="mb-4 rounded-lg border border-amber-300/20 bg-amber-300/[0.08] p-3 text-xs leading-5 text-amber-100">
+              No compares solo el precio del articulo. En eBay debes comparar el total que paga el comprador: precio + envio.
+            </p>
             <div className="grid gap-4 md:grid-cols-2">
               <PriceSelect
                 label="Fuente del precio"
@@ -1743,6 +1913,99 @@ function PriceIntelligenceModal({
                   )
                 }
               />
+            </div>
+
+            <div className="mt-4 rounded-lg border border-white/10 bg-black/25 p-4">
+              <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <p className="text-sm font-black text-white">
+                    Precio total comprador
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-white/45">
+                    Ejemplo: el competidor muestra $28.99, pero si cobra $34.86 de envio, el comprador paga $63.85. IMNOVA debe competir contra el total.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={applyLandedPriceCapture}
+                  disabled={competitorLandedPrice === null}
+                  className="
+                    inline-flex
+                    items-center
+                    justify-center
+                    rounded-lg
+                    border
+                    border-cyan-300/30
+                    bg-cyan-300
+                    px-4
+                    py-2
+                    text-xs
+                    font-black
+                    text-black
+                    transition
+                    hover:bg-cyan-200
+                    disabled:cursor-not-allowed
+                    disabled:opacity-50
+                  "
+                >
+                  Usar total comprador
+                </button>
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <PriceInput
+                  label="Precio articulo competidor"
+                  techName="competitor_item_price"
+                  type="number"
+                  placeholder="28.99"
+                  value={form.competitor_item_price}
+                  helpText="Precio visible del item, sin envio."
+                  onChange={value =>
+                    onChange(
+                      "competitor_item_price",
+                      value
+                    )
+                  }
+                />
+                <PriceInput
+                  label="Envio cobrado al comprador"
+                  techName="competitor_shipping_price"
+                  type="number"
+                  placeholder="34.86"
+                  value={form.competitor_shipping_price}
+                  helpText="Este envio es lo que cobra el competidor, no el costo de envio de IMNOVA."
+                  onChange={value =>
+                    onChange(
+                      "competitor_shipping_price",
+                      value
+                    )
+                  }
+                />
+                <PriceInput
+                  label="Total comprador observado sin desglose"
+                  techName="competitor_landed_price"
+                  type="number"
+                  placeholder="63.85"
+                  value={form.competitor_landed_price}
+                  helpText="Usa este campo solo si viste el total comprador, pero no tienes item y envio separados."
+                  onChange={value =>
+                    onChange(
+                      "competitor_landed_price",
+                      value
+                    )
+                  }
+                />
+              </div>
+
+              {competitorLandedPrice !== null ? (
+                <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.04] p-3 text-xs leading-5 text-white/60">
+                  Total comprador detectado: <strong className="text-white">{formatCurrency(competitorLandedPrice)}</strong>
+                  {" "} Estrategia shipping: <strong className="text-white">{competitorShippingStrategy}</strong>.
+                  {competitorShippingStrategy === "high_shipping"
+                    ? " Competidor usa envio alto; valida ventas reales antes de copiar esa estrategia."
+                    : null}
+                </div>
+              ) : null}
             </div>
 
             <label className="mt-4 block min-w-0">
