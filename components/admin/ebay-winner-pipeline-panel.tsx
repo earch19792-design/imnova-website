@@ -65,6 +65,32 @@ type EbayProfitScenario = {
   calculated_at?: string | null
 }
 
+type TargetPriceAdvisor = {
+  current_sale_price?: number | string | null
+  current_net_profit?: number | string | null
+  current_net_margin_percent?: number | string | null
+  minimum_target_margin_percent?: number | string | null
+  variable_rate_percent?: number | string | null
+  fixed_costs?: number | string | null
+  minimum_profitable_price?: number | string | null
+  suggested_target_price?: number | string | null
+  ideal_target_margin_percent?: number | string | null
+  ideal_target_price?: number | string | null
+}
+
+type ProfitAssumptions = {
+  minimumProfitUsd?: number
+  idealProfitUsd?: number
+  minimumRoiPercent?: number
+  minimumNetMarginPercent?: number
+  roiBlocksMinimums?: boolean
+  ebayFeePercent?: number
+  paymentFeePercent?: number
+  advertisingPercent?: number
+  returnReservePercent?: number
+  targetPriceAdvisor?: TargetPriceAdvisor
+}
+
 type EbayCompliance = {
   overall_status?: string | null
   blocker_count?: number | null
@@ -139,6 +165,122 @@ type EbayAuditLog = {
   created_at?: string | null
 }
 
+type PriceIntelligenceSnapshot = {
+  id: string
+  source_type?: string | null
+  marketplace?: string | null
+  search_query?: string | null
+  product_match_type?: string | null
+  sold_avg_price?: number | string | null
+  sold_median_price?: number | string | null
+  sold_min_price?: number | string | null
+  sold_max_price?: number | string | null
+  sold_comp_count?: number | null
+  active_avg_price?: number | string | null
+  active_min_price?: number | string | null
+  active_max_price?: number | string | null
+  active_comp_count?: number | null
+  estimated_shipping_cost?: number | string | null
+  recommended_sale_price?: number | string | null
+  confidence_score?: number | string | null
+  source_confidence?: string | null
+  category_id?: string | null
+  category_name?: string | null
+  evidence_url?: string | null
+  evidence_notes?: string | null
+  raw_payload?: Record<string, unknown> | null
+  created_at?: string | null
+}
+
+type CostScenario = {
+  sale_price?: number | string | null
+  luna_cost?: number | string | null
+  shipping_cost?: number | string | null
+  ebay_fee_percent?: number | string | null
+  ebay_fee_amount?: number | string | null
+  payment_fee_percent?: number | string | null
+  payment_fee_amount?: number | string | null
+  promotion_percent?: number | string | null
+  promotion_amount?: number | string | null
+  fulfillment_cost?: number | string | null
+  packaging_cost?: number | string | null
+  return_reserve_percent?: number | string | null
+  return_reserve_amount?: number | string | null
+  direct_cost?: number | string | null
+  marketplace_cost?: number | string | null
+  operating_cost?: number | string | null
+  total_estimated_cost?: number | string | null
+  net_profit?: number | string | null
+  net_margin_percent?: number | string | null
+  roi_percent?: number | string | null
+  break_even_price?: number | string | null
+  minimum_price_for_10_percent_margin?: number | string | null
+  suggested_target_price?: number | string | null
+  pass_10_percent_margin?: boolean | null
+}
+
+type CostBreakdown = CostScenario & {
+  shipping_source?: string | null
+  shipping_note?: string | null
+  shipping_review_required?: boolean | null
+  minimum_target_margin_percent?: number | string | null
+  scenario_current?: CostScenario | null
+  scenario_without_promotion?: CostScenario | null
+  scenario_with_max_promotion?: CostScenario | null
+}
+
+type PricingStrategyRecommendation = {
+  launch_strategy?: string | null
+  recommended_listing_price?: number | string | null
+  minimum_profitable_price?: number | string | null
+  minimum_price_with_1_percent_campaign?: number | string | null
+  minimum_price_with_2_percent_campaign?: number | string | null
+  minimum_price_with_3_percent_campaign?: number | string | null
+  minimum_price_with_5_percent_campaign?: number | string | null
+  campaign_eligible?: boolean | null
+  max_safe_campaign_percent?: number | string | null
+  reason?: string | null
+  evidence?: string[] | null
+  risk_level?: string | null
+  required_human_approval?: boolean | null
+  proposed_next_step?: string | null
+}
+
+type EbayDecisionAdvisor = {
+  decision_label?: string
+  human_summary?: string
+  block_reasons?: string[]
+  missing_data?: string[]
+  profit_reasons?: string[]
+  market_price_reasons?: string[]
+  target_price?: {
+    current_sale_price?: number | string | null
+    current_net_profit?: number | string | null
+    current_net_margin_percent?: number | string | null
+    minimum_price_for_10_percent_margin?: number | string | null
+    suggested_target_price?: number | string | null
+    ideal_target_price?: number | string | null
+    is_target_price_competitive?: boolean | null
+    market_reference_price?: number | string | null
+    market_reference_source?: string | null
+    market_confidence?: number | string | null
+    competitor_item_price?: number | string | null
+    competitor_shipping_price?: number | string | null
+    competitor_landed_price?: number | string | null
+    competitor_domestic_shipping_price?: number | string | null
+    competitor_domestic_landed_price?: number | string | null
+    competitor_international_shipping_price?: number | string | null
+    competitor_international_landed_price?: number | string | null
+    shipping_scope?: string | null
+    buyer_location_country?: string | null
+    domestic_free_shipping?: boolean | null
+    shipping_strategy?: string | null
+  }
+  cost_breakdown?: CostBreakdown | null
+  pricing_strategy?: PricingStrategyRecommendation | null
+  recommended_next_action?: string
+}
+
 type EbayCandidateDetail = {
   candidate: EbayCandidate
   validation?: EbayValidation | null
@@ -149,6 +291,9 @@ type EbayCandidateDetail = {
   decisions?: EbayDecision[]
   localDraft?: EbayDraft | null
   auditLog?: EbayAuditLog[]
+  priceIntelligence?: PriceIntelligenceSnapshot | null
+  priceIntelligenceSnapshots?: PriceIntelligenceSnapshot[]
+  decisionAdvisor?: EbayDecisionAdvisor | null
 }
 
 type EbayDashboard = {
@@ -168,6 +313,11 @@ type EbayDashboardResponse = {
   dashboard?: EbayDashboard
   detail?: EbayCandidateDetail | null
   error?: string
+}
+
+type ReprocessStatus = {
+  status: "success" | "error"
+  message: string
 }
 
 const candidateStateOptions = [
@@ -200,7 +350,7 @@ const draftOptions = [
 ]
 
 function toNumber(
-  value: number | string | null | undefined
+  value: unknown
 ) {
   if (
     value === null ||
@@ -220,8 +370,31 @@ function toNumber(
     : null
 }
 
+function getObjectValue(
+  value: unknown
+): Record<string, unknown> | null {
+  return value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function getShippingScopeEvidence(
+  snapshot?: PriceIntelligenceSnapshot | null
+) {
+  const rawPayload =
+    getObjectValue(
+      snapshot?.raw_payload
+    )
+
+  return getObjectValue(
+    rawPayload?.shipping_scope_evidence
+  )
+}
+
 function formatNumber(
-  value: number | string | null | undefined,
+  value: unknown,
   suffix = ""
 ) {
   const numericValue =
@@ -240,7 +413,7 @@ function formatNumber(
 }
 
 function formatCurrency(
-  value: number | string | null | undefined
+  value: unknown
 ) {
   const numericValue =
     toNumber(value)
@@ -256,6 +429,239 @@ function formatCurrency(
       currency: "USD",
     }
   ).format(numericValue)
+}
+
+function roundMoney(
+  value: number
+) {
+  return Math.round(
+    (value + 1e-8) * 100
+  ) / 100
+}
+
+function roundUpMarketPrice(
+  value: number | null
+) {
+  if (
+    value === null ||
+    !Number.isFinite(value) ||
+    value <= 0
+  ) {
+    return null
+  }
+
+  return roundMoney(
+    Math.ceil((value + 0.01) / 5) * 5 - 0.01
+  )
+}
+
+function parseEditableNumber(
+  value: string
+) {
+  const parsed =
+    Number(value)
+
+  return Number.isFinite(parsed)
+    ? parsed
+    : null
+}
+
+function calculateEditableCostScenario(
+  base: CostBreakdown,
+  {
+    shippingCost,
+    promotionPercent,
+  }: {
+    shippingCost: number
+    promotionPercent: number
+  }
+): CostScenario {
+  const salePrice =
+    toNumber(base.sale_price) || 0
+
+  const lunaCost =
+    toNumber(base.luna_cost) || 0
+
+  const fulfillmentCost =
+    toNumber(base.fulfillment_cost) || 0
+
+  const packagingCost =
+    toNumber(base.packaging_cost) || 0
+
+  const ebayFeePercent =
+    toNumber(base.ebay_fee_percent) || 0
+
+  const paymentFeePercent =
+    toNumber(base.payment_fee_percent) || 0
+
+  const returnReservePercent =
+    toNumber(base.return_reserve_percent) || 0
+
+  const targetMarginPercent =
+    toNumber(base.minimum_target_margin_percent) || 10
+
+  const safeShippingCost =
+    Math.max(
+      6.99,
+      shippingCost
+    )
+
+  const safePromotionPercent =
+    Math.min(
+      Math.max(
+        promotionPercent,
+        0
+      ),
+      5
+    )
+
+  const ebayFeeAmount =
+    roundMoney(
+      salePrice * (ebayFeePercent / 100)
+    )
+
+  const paymentFeeAmount =
+    roundMoney(
+      salePrice * (paymentFeePercent / 100)
+    )
+
+  const promotionAmount =
+    roundMoney(
+      salePrice * (safePromotionPercent / 100)
+    )
+
+  const returnReserveAmount =
+    roundMoney(
+      salePrice * (returnReservePercent / 100)
+    )
+
+  const directCost =
+    roundMoney(
+      lunaCost + safeShippingCost
+    )
+
+  const marketplaceCost =
+    roundMoney(
+      ebayFeeAmount +
+      paymentFeeAmount +
+      promotionAmount
+    )
+
+  const operatingCost =
+    roundMoney(
+      fulfillmentCost +
+      packagingCost +
+      returnReserveAmount
+    )
+
+  const totalEstimatedCost =
+    roundMoney(
+      directCost +
+      marketplaceCost +
+      operatingCost
+    )
+
+  const netProfit =
+    roundMoney(
+      salePrice - totalEstimatedCost
+    )
+
+  const netMarginPercent =
+    salePrice > 0
+      ? roundMoney(
+          (netProfit / salePrice) * 100
+        )
+      : 0
+
+  const roiPercent =
+    lunaCost > 0
+      ? roundMoney(
+          (netProfit / lunaCost) * 100
+        )
+      : 0
+
+  const variableRate =
+    (
+      ebayFeePercent +
+      paymentFeePercent +
+      safePromotionPercent +
+      returnReservePercent
+    ) / 100
+
+  const fixedCosts =
+    lunaCost +
+    safeShippingCost +
+    fulfillmentCost +
+    packagingCost
+
+  const breakEvenPrice =
+    1 - variableRate > 0
+      ? roundMoney(
+          fixedCosts / (1 - variableRate)
+        )
+      : null
+
+  const minimumPriceForMargin =
+    1 - variableRate - targetMarginPercent / 100 > 0
+      ? roundMoney(
+          fixedCosts /
+            (1 - variableRate - targetMarginPercent / 100)
+        )
+      : null
+
+  return {
+    sale_price:
+      salePrice,
+    luna_cost:
+      lunaCost,
+    shipping_cost:
+      safeShippingCost,
+    ebay_fee_percent:
+      ebayFeePercent,
+    ebay_fee_amount:
+      ebayFeeAmount,
+    payment_fee_percent:
+      paymentFeePercent,
+    payment_fee_amount:
+      paymentFeeAmount,
+    promotion_percent:
+      safePromotionPercent,
+    promotion_amount:
+      promotionAmount,
+    fulfillment_cost:
+      fulfillmentCost,
+    packaging_cost:
+      packagingCost,
+    return_reserve_percent:
+      returnReservePercent,
+    return_reserve_amount:
+      returnReserveAmount,
+    direct_cost:
+      directCost,
+    marketplace_cost:
+      marketplaceCost,
+    operating_cost:
+      operatingCost,
+    total_estimated_cost:
+      totalEstimatedCost,
+    net_profit:
+      netProfit,
+    net_margin_percent:
+      netMarginPercent,
+    roi_percent:
+      roiPercent,
+    break_even_price:
+      breakEvenPrice,
+    minimum_price_for_10_percent_margin:
+      minimumPriceForMargin,
+    suggested_target_price:
+      roundUpMarketPrice(
+        minimumPriceForMargin
+      ),
+    pass_10_percent_margin:
+      netProfit > 0 &&
+      netMarginPercent >= targetMarginPercent,
+  }
 }
 
 function formatDate(
@@ -281,6 +687,24 @@ function formatDate(
     )
   } catch {
     return "Fecha no disponible"
+  }
+}
+
+function isSafeHttpUrl(
+  value?: string | null
+) {
+  if (!value) {
+    return false
+  }
+
+  try {
+    const url =
+      new URL(value)
+
+    return url.protocol === "http:" ||
+      url.protocol === "https:"
+  } catch {
+    return false
   }
 }
 
@@ -502,15 +926,664 @@ function Field({
   )
 }
 
+type HumanBlockReason = {
+  title: string
+  detail: string
+  tone: "danger" | "warning" | "success" | "info"
+}
+
+function unknownToStringArray(
+  value: unknown
+) {
+  if (!value) {
+    return []
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map(item =>
+        typeof item === "string"
+          ? item
+          : JSON.stringify(item)
+      )
+      .filter(Boolean)
+  }
+
+  if (typeof value === "string") {
+    return [
+      value,
+    ]
+  }
+
+  return [
+    JSON.stringify(value),
+  ]
+}
+
+function getComplianceMessages(
+  value: unknown
+) {
+  if (!Array.isArray(value)) {
+    return unknownToStringArray(value)
+  }
+
+  return value
+    .map(item => {
+      if (
+        item &&
+        typeof item === "object"
+      ) {
+        const finding =
+          item as {
+            code?: string
+            message?: string
+          }
+
+        return finding.message ||
+          finding.code ||
+          JSON.stringify(item)
+      }
+
+      return String(item)
+    })
+    .filter(Boolean)
+}
+
+function hasAnyField(
+  fields: string[],
+  patterns: string[]
+) {
+  return fields.some(field =>
+    patterns.some(pattern =>
+      field.toLowerCase().includes(pattern)
+    )
+  )
+}
+
+function getHumanBlockReasons(
+  detail: EbayCandidateDetail
+): HumanBlockReason[] {
+  const reasons: HumanBlockReason[] = []
+  const state =
+    detail.candidate.state
+
+  const missingFields = [
+    ...unknownToStringArray(
+      detail.candidate.needs_data
+    ),
+    ...unknownToStringArray(
+      detail.validation?.missing_fields
+    ),
+  ]
+
+  const criticalReasons =
+    unknownToStringArray(
+      detail.validation?.critical_reasons
+    )
+
+  const complianceMessages =
+    getComplianceMessages(
+      detail.compliance?.findings
+    )
+
+  const netProfit =
+    toNumber(
+      detail.profitScenario?.net_profit
+    )
+
+  const margin =
+    toNumber(
+      detail.profitScenario?.net_margin_percent
+    )
+
+  const assumptions =
+    detail.profitScenario?.assumptions &&
+    typeof detail.profitScenario.assumptions === "object"
+      ? detail.profitScenario.assumptions as {
+          minimumProfitUsd?: number
+          minimumNetMarginPercent?: number
+          roiBlocksMinimums?: boolean
+        }
+      : {}
+
+  if (
+    detail.profitScenario &&
+    detail.profitScenario.passes_minimums === false
+  ) {
+    if (
+      netProfit !== null &&
+      assumptions.minimumProfitUsd !== undefined &&
+      netProfit <= assumptions.minimumProfitUsd
+    ) {
+      reasons.push({
+        title:
+          "Ganancia estimada insuficiente",
+        detail:
+          `Net profit ${formatCurrency(netProfit)} debe ser mayor que ${formatCurrency(assumptions.minimumProfitUsd)}.`,
+        tone:
+          "danger",
+      })
+    }
+
+    if (
+      margin !== null &&
+      assumptions.minimumNetMarginPercent !== undefined &&
+      margin < assumptions.minimumNetMarginPercent
+    ) {
+      reasons.push({
+        title:
+          "Margen neto insuficiente",
+        detail:
+          `Margen ${formatNumber(margin, "%")} esta por debajo del minimo ${formatNumber(assumptions.minimumNetMarginPercent, "%")}.`,
+        tone:
+          "danger",
+      })
+    }
+
+    if (assumptions.roiBlocksMinimums === true) {
+      reasons.push({
+        title:
+          "ROI insuficiente",
+        detail:
+          "La configuracion actual indica que ROI bloquea minimos.",
+        tone:
+          "danger",
+      })
+    }
+  }
+
+  if (missingFields.length > 0) {
+    reasons.push({
+      title:
+        "Datos faltantes",
+      detail:
+        missingFields.join(", "),
+      tone:
+        state === "NEEDS_DATA"
+          ? "warning"
+          : "danger",
+    })
+  }
+
+  if (
+    hasAnyField(
+      missingFields,
+      [
+        "authorized_images",
+        "image",
+      ]
+    )
+  ) {
+    reasons.push({
+      title:
+        "Imagenes no autorizadas",
+      detail:
+        "El pipeline necesita confirmar que las imagenes se pueden usar antes de avanzar.",
+      tone:
+        "warning",
+    })
+  }
+
+  if (
+    hasAnyField(
+      missingFields,
+      [
+        "supplier_sku",
+        "sku",
+      ]
+    )
+  ) {
+    reasons.push({
+      title:
+        "Falta SKU real",
+      detail:
+        "El candidato no tiene una clave/SKU confiable para trazabilidad.",
+      tone:
+        "warning",
+    })
+  }
+
+  if (
+    hasAnyField(
+      missingFields,
+      [
+        "weight",
+        "dimensions",
+        "weight_or_dimensions",
+      ]
+    )
+  ) {
+    reasons.push({
+      title:
+        "Falta peso/dimensiones",
+      detail:
+        "Faltan datos logisticos para estimar costos de fulfillment/shipping con confianza.",
+      tone:
+        "warning",
+    })
+  }
+
+  if (
+    detail.compliance?.overall_status === "blocked" ||
+    complianceMessages.length > 0
+  ) {
+    reasons.push({
+      title:
+        "Riesgo compliance",
+      detail:
+        complianceMessages.length > 0
+          ? complianceMessages.join(" | ")
+          : "Compliance bloqueo o marco el candidato para revision.",
+      tone:
+        detail.compliance?.overall_status === "blocked"
+          ? "danger"
+          : "warning",
+    })
+  }
+
+  if (criticalReasons.length > 0) {
+    reasons.push({
+      title:
+        "Razones criticas de validacion",
+      detail:
+        criticalReasons.join(", "),
+      tone:
+        "danger",
+    })
+  }
+
+  if (
+    detail.priceIntelligence &&
+    state === "BLOCKED"
+  ) {
+    const recommendedPrice =
+      toNumber(
+        detail.priceIntelligence.recommended_sale_price
+      )
+
+    const currentSalePrice =
+      toNumber(
+        detail.profitScenario?.estimated_sale_price
+      )
+
+    reasons.push({
+      title:
+        recommendedPrice !== null &&
+        currentSalePrice !== recommendedPrice
+          ? "Price Intelligence existe pero falta reevaluar"
+          : "Evidencia de precio disponible",
+      detail:
+        "Hay evidencia de precio guardada. Usa 'Reevaluar con Price Intelligence' para recalcular.",
+      tone:
+        "info",
+    })
+  }
+
+  if (
+    !detail.priceIntelligence &&
+    (
+      state === "BLOCKED" ||
+      state === "NEEDS_DATA"
+    )
+  ) {
+    reasons.push({
+      title:
+        "Precio de mercado no aplicado todavia",
+      detail:
+        "Agrega evidencia de precio de mercado antes de decidir.",
+      tone:
+        "warning",
+    })
+  }
+
+  if (
+    state === "VALIDATED" &&
+    reasons.length === 0
+  ) {
+    reasons.push({
+      title:
+        "Candidato validado",
+      detail:
+        detail.score?.explanation ||
+        "El candidato paso las validaciones actuales del pipeline.",
+      tone:
+        "success",
+    })
+  }
+
+  if (
+    reasons.length === 0 &&
+    detail.candidate.blocked_reason
+  ) {
+    reasons.push({
+      title:
+        "Razon registrada",
+      detail:
+        detail.candidate.blocked_reason,
+      tone:
+        "warning",
+    })
+  }
+
+  if (
+    reasons.length === 0 &&
+    detail.score?.explanation
+  ) {
+    reasons.push({
+      title:
+        "Explicacion del score",
+      detail:
+        detail.score.explanation,
+      tone:
+        "info",
+    })
+  }
+
+  return reasons
+}
+
+function getReasonClassName(
+  tone: HumanBlockReason["tone"]
+) {
+  if (tone === "danger") {
+    return "border-red-300/20 bg-red-300/[0.08] text-red-100"
+  }
+
+  if (tone === "warning") {
+    return "border-amber-300/20 bg-amber-300/[0.08] text-amber-100"
+  }
+
+  if (tone === "success") {
+    return "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-100"
+  }
+
+  return "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100"
+}
+
 function CandidateDetailDrawer({
   detail,
   isLoading,
+  isReprocessing,
+  reprocessStatus,
+  onReprocess,
+  onReprocessSuggestedPrice,
   onClose,
 }: {
   detail: EbayCandidateDetail | null
   isLoading: boolean
+  isReprocessing: boolean
+  reprocessStatus: ReprocessStatus | null
+  onReprocess: (
+    detail: EbayCandidateDetail
+  ) => void
+  onReprocessSuggestedPrice: (
+    detail: EbayCandidateDetail
+  ) => void
   onClose: () => void
 }) {
+  const recommendedSalePrice =
+    toNumber(
+      detail?.priceIntelligence?.recommended_sale_price
+    )
+
+  const confidenceScore =
+    toNumber(
+      detail?.priceIntelligence?.confidence_score
+    )
+
+  const hasLowConfidence =
+    confidenceScore !== null &&
+    confidenceScore < 50
+
+  const humanBlockReasons =
+    detail
+      ? getHumanBlockReasons(
+          detail
+        )
+      : []
+
+  const profitAssumptions =
+    detail?.profitScenario?.assumptions &&
+    typeof detail.profitScenario.assumptions === "object"
+      ? detail.profitScenario.assumptions as ProfitAssumptions
+      : {}
+
+  const targetPriceAdvisor =
+    profitAssumptions.targetPriceAdvisor
+
+  const costBreakdown =
+    detail?.decisionAdvisor?.cost_breakdown
+
+  const [
+    editableShippingCost,
+    setEditableShippingCost,
+  ] = useState("")
+
+  const [
+    editablePromotionPercent,
+    setEditablePromotionPercent,
+  ] = useState("")
+
+  useEffect(() => {
+    setEditableShippingCost(
+      costBreakdown?.shipping_cost === null ||
+      costBreakdown?.shipping_cost === undefined
+        ? ""
+        : String(costBreakdown.shipping_cost)
+    )
+    setEditablePromotionPercent(
+      costBreakdown?.promotion_percent === null ||
+      costBreakdown?.promotion_percent === undefined
+        ? "0"
+        : String(costBreakdown.promotion_percent)
+    )
+  }, [
+    detail?.candidate.id,
+    costBreakdown?.shipping_cost,
+    costBreakdown?.promotion_percent,
+  ])
+
+  const parsedEditableShippingCost =
+    parseEditableNumber(
+      editableShippingCost
+    )
+
+  const parsedEditablePromotionPercent =
+    parseEditableNumber(
+      editablePromotionPercent
+    )
+
+  const normalizedEditableShippingCost =
+    Math.max(
+      6.99,
+      parsedEditableShippingCost ??
+        toNumber(costBreakdown?.shipping_cost) ??
+        6.99
+    )
+
+  const normalizedEditablePromotionPercent =
+    Math.min(
+      Math.max(
+        parsedEditablePromotionPercent ??
+          toNumber(costBreakdown?.promotion_percent) ??
+          0,
+        0
+      ),
+      5
+    )
+
+  const editableCurrentScenario =
+    costBreakdown
+      ? calculateEditableCostScenario(
+          costBreakdown,
+          {
+            shippingCost:
+              normalizedEditableShippingCost,
+            promotionPercent:
+              normalizedEditablePromotionPercent,
+          }
+        )
+      : null
+
+  const displayedCostBreakdown =
+    editableCurrentScenario
+      ? {
+          ...costBreakdown,
+          ...editableCurrentScenario,
+        }
+      : costBreakdown
+
+  const costScenarios = [
+    {
+      label:
+        "Escenario actual",
+      value:
+        editableCurrentScenario,
+    },
+    {
+      label:
+        "Sin promocion",
+      value:
+        costBreakdown
+          ? calculateEditableCostScenario(
+              costBreakdown,
+              {
+                shippingCost:
+                  normalizedEditableShippingCost,
+                promotionPercent:
+                  0,
+              }
+            )
+          : null,
+    },
+    {
+      label:
+        "Promo 5%",
+      value:
+        costBreakdown
+          ? calculateEditableCostScenario(
+              costBreakdown,
+              {
+                shippingCost:
+                  normalizedEditableShippingCost,
+                promotionPercent:
+                  5,
+              }
+            )
+          : null,
+    },
+  ].filter(scenario => Boolean(scenario.value))
+
+  const suggestedTargetPrice =
+    toNumber(
+      targetPriceAdvisor?.suggested_target_price
+    )
+
+  const soldMedianPrice =
+    toNumber(
+      detail?.priceIntelligence?.sold_median_price
+    )
+
+  const soldAvgPrice =
+    toNumber(
+      detail?.priceIntelligence?.sold_avg_price
+    )
+
+  const activeAvgPrice =
+    toNumber(
+      detail?.priceIntelligence?.active_avg_price
+    )
+
+  const marketReferencePrice =
+    soldMedianPrice ??
+    soldAvgPrice ??
+    activeAvgPrice
+
+  const marketReferenceLabel =
+    soldMedianPrice !== null
+      ? "sold_median_price"
+      : soldAvgPrice !== null
+        ? "sold_avg_price"
+        : activeAvgPrice !== null
+          ? "active_avg_price"
+          : "sin mercado"
+
+  const soldMinPrice =
+    toNumber(
+      detail?.priceIntelligence?.sold_min_price
+    )
+
+  const soldMaxPrice =
+    toNumber(
+      detail?.priceIntelligence?.sold_max_price
+    )
+
+  const suggestedMarketDifference =
+    suggestedTargetPrice !== null &&
+    marketReferencePrice !== null
+      ? suggestedTargetPrice - marketReferencePrice
+      : null
+
+  const suggestedPriceWithinSoldRange =
+    suggestedTargetPrice !== null &&
+    soldMinPrice !== null &&
+    soldMaxPrice !== null &&
+    suggestedTargetPrice >= soldMinPrice &&
+    suggestedTargetPrice <= soldMaxPrice
+
+  const suggestedPriceNearSoldMedian =
+    suggestedTargetPrice !== null &&
+    soldMedianPrice !== null &&
+    Math.abs(
+      suggestedTargetPrice - soldMedianPrice
+    ) <= soldMedianPrice * 0.1
+
+  const hasSoldMarketEvidence =
+    soldMedianPrice !== null ||
+    soldAvgPrice !== null ||
+    (
+      soldMinPrice !== null &&
+      soldMaxPrice !== null
+    )
+
+  const suggestedPriceMarketMessage =
+    suggestedTargetPrice === null
+      ? "No hay precio sugerido calculado."
+      : !detail?.priceIntelligence
+        ? "No hay Price Intelligence para comparar contra mercado."
+        : suggestedPriceWithinSoldRange ||
+          suggestedPriceNearSoldMedian
+          ? "El precio sugerido esta dentro del rango de mercado o cerca de ventas reales."
+          : hasSoldMarketEvidence &&
+            marketReferencePrice !== null &&
+            suggestedTargetPrice >
+              marketReferencePrice * 1.1
+            ? "El precio sugerido esta por encima del mercado; no competitivo."
+            : activeAvgPrice !== null &&
+              !hasSoldMarketEvidence
+              ? "Solo hay precios activos; revisar evidencia antes de decidir."
+              : "Hace falta mejor evidencia de mercado para evaluar competitividad."
+
+  const suggestedPriceTone =
+    suggestedPriceMarketMessage.includes(
+      "dentro del rango"
+    )
+      ? "success"
+      : suggestedPriceMarketMessage.includes(
+          "por encima"
+        )
+        ? "danger"
+        : "warning"
+
+  const canReprocessSuggestedPrice =
+    suggestedTargetPrice !== null &&
+    detail?.decisionAdvisor?.target_price?.is_target_price_competitive === true
+
+  const shippingScopeEvidence =
+    getShippingScopeEvidence(
+      detail?.priceIntelligence
+    )
+
   return (
     <div className="fixed inset-0 z-[70] flex justify-end bg-black/65 backdrop-blur-sm">
       <button
@@ -538,7 +1611,7 @@ function CandidateDetailDrawer({
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[10px] uppercase tracking-[0.28em] text-cyan-100/55">
-              Detalle read-only
+              Detalle seguro
             </p>
             <h3 className="mt-3 text-2xl font-black text-white">
               {detail?.candidate.title ||
@@ -620,34 +1693,609 @@ function CandidateDetailDrawer({
               </div>
             </DetailSection>
 
+            <DetailSection title="Decision estrategica">
+              {detail.decisionAdvisor ? (
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.08] p-4">
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <Field
+                        label="decision_label"
+                        value={detail.decisionAdvisor.decision_label}
+                      />
+                      <Field
+                        label="next_action"
+                        value={detail.decisionAdvisor.recommended_next_action}
+                      />
+                      <Field
+                        label="target_competitive"
+                        value={
+                          detail.decisionAdvisor.target_price?.is_target_price_competitive
+                        }
+                      />
+                    </div>
+                    <p className="mt-4 text-sm leading-6 text-cyan-50/75">
+                      {detail.decisionAdvisor.human_summary}
+                    </p>
+                  </div>
+
+                  {detail.decisionAdvisor.pricing_strategy ? (
+                    <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.07] p-4">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-100/60">
+                        Estrategia de lanzamiento IMNOVA
+                      </p>
+                      <div className="mt-4 grid gap-3 md:grid-cols-3">
+                        <Field
+                          label="launch_strategy"
+                          value={detail.decisionAdvisor.pricing_strategy.launch_strategy}
+                        />
+                        <Field
+                          label="recommended_listing_price"
+                          value={formatCurrency(
+                            detail.decisionAdvisor.pricing_strategy.recommended_listing_price
+                          )}
+                        />
+                        <Field
+                          label="max_safe_campaign_percent"
+                          value={formatNumber(
+                            detail.decisionAdvisor.pricing_strategy.max_safe_campaign_percent,
+                            "%"
+                          )}
+                        />
+                        <Field
+                          label="risk_level"
+                          value={detail.decisionAdvisor.pricing_strategy.risk_level}
+                        />
+                        <Field
+                          label="campaign_eligible"
+                          value={detail.decisionAdvisor.pricing_strategy.campaign_eligible}
+                        />
+                        <Field
+                          label="human_approval"
+                          value={detail.decisionAdvisor.pricing_strategy.required_human_approval}
+                        />
+                      </div>
+                      <p className="mt-4 text-sm leading-6 text-emerald-50/75">
+                        {detail.decisionAdvisor.pricing_strategy.reason}
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-emerald-50/60">
+                        {detail.decisionAdvisor.pricing_strategy.proposed_next_step}
+                      </p>
+                    </div>
+                  ) : null}
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <Field
+                      label="Precio actual"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.current_sale_price
+                      )}
+                    />
+                    <Field
+                      label="Minimo 10% margen"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.minimum_price_for_10_percent_margin
+                      )}
+                    />
+                    <Field
+                      label="Precio sugerido"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.suggested_target_price
+                      )}
+                    />
+                    <Field
+                      label="Precio ideal"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.ideal_target_price
+                      )}
+                    />
+                    <Field
+                      label="Precio mercado"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.market_reference_price
+                      )}
+                    />
+                    <Field
+                      label="Fuente mercado"
+                      value={detail.decisionAdvisor.target_price?.market_reference_source}
+                    />
+                    <Field
+                      label="Shipping scope"
+                      value={detail.decisionAdvisor.target_price?.shipping_scope}
+                    />
+                    <Field
+                      label="Pais comprador"
+                      value={detail.decisionAdvisor.target_price?.buyer_location_country}
+                    />
+                    <Field
+                      label="Item competidor"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.competitor_item_price
+                      )}
+                    />
+                    <Field
+                      label="Envio domestico USA"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.competitor_domestic_shipping_price
+                      )}
+                    />
+                    <Field
+                      label="Total comprador USA"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.competitor_domestic_landed_price
+                      )}
+                    />
+                    <Field
+                      label="Free shipping USA"
+                      value={detail.decisionAdvisor.target_price?.domestic_free_shipping}
+                    />
+                    <Field
+                      label="Envio internacional"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.competitor_international_shipping_price
+                      )}
+                    />
+                    <Field
+                      label="Total internacional"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.competitor_international_landed_price
+                      )}
+                    />
+                    <Field
+                      label="Shipping strategy"
+                      value={detail.decisionAdvisor.target_price?.shipping_strategy}
+                    />
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="rounded-lg border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-white/40">
+                        Razones
+                      </p>
+                      <ul className="mt-3 space-y-2 text-xs leading-5 text-white/60">
+                        {[
+                          ...(detail.decisionAdvisor.block_reasons || []),
+                          ...(detail.decisionAdvisor.profit_reasons || []),
+                        ].map((reason, index) => (
+                          <li key={`${reason}-${index}`}>
+                            {reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="rounded-lg border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-white/40">
+                        Mercado y datos faltantes
+                      </p>
+                      <ul className="mt-3 space-y-2 text-xs leading-5 text-white/60">
+                        {[
+                          ...(detail.decisionAdvisor.market_price_reasons || []),
+                          ...(detail.decisionAdvisor.missing_data || []),
+                        ].map((reason, index) => (
+                          <li key={`${reason}-${index}`}>
+                            {reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+
+                  {detail.priceIntelligence ? (
+                    <div className="grid gap-3 rounded-lg border border-white/10 bg-white/[0.025] p-3 md:grid-cols-4">
+                      <Field
+                        label="PI source"
+                        value={detail.priceIntelligence.source_type}
+                      />
+                      <Field
+                        label="PI confidence"
+                        value={
+                          detail.priceIntelligence.source_confidence ||
+                          formatNumber(
+                            detail.priceIntelligence.confidence_score
+                          )
+                        }
+                      />
+                      <Field
+                        label="sold comps"
+                        value={detail.priceIntelligence.sold_comp_count}
+                      />
+                      <Field
+                        label="active comps"
+                        value={detail.priceIntelligence.active_comp_count}
+                      />
+                    </div>
+                  ) : (
+                    <p className="rounded-lg border border-amber-300/20 bg-amber-300/[0.08] p-3 text-xs leading-5 text-amber-100">
+                      Falta evidencia de precio de mercado. Recomendado: buscar en Terapeak/eBay Research antes de decidir.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-white/40">
+                  Sin decision estrategica calculada.
+                </p>
+              )}
+            </DetailSection>
+
+            <DetailSection title="Por que esta bloqueado">
+              {humanBlockReasons.length > 0 ? (
+                <div className="space-y-3">
+                  {humanBlockReasons.map(
+                    (reason, index) => (
+                      <div
+                        key={`${reason.title}-${index}`}
+                        className={`
+                          rounded-lg
+                          border
+                          p-3
+                          ${getReasonClassName(reason.tone)}
+                        `}
+                      >
+                        <p className="text-sm font-black">
+                          {reason.title}
+                        </p>
+                        <p className="mt-2 text-xs leading-5 opacity-80">
+                          {reason.detail}
+                        </p>
+                      </div>
+                    )
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-white/40">
+                  No hay razon humana calculada para este candidato.
+                </p>
+              )}
+            </DetailSection>
+
+            <DetailSection title="Desglose de costeo">
+              {costBreakdown ? (
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.06] p-3 text-xs leading-5 text-cyan-50/70">
+                    Regla minima: net profit mayor que $0 y margen neto minimo de {formatNumber(
+                      costBreakdown.minimum_target_margin_percent,
+                      "%"
+                    )}. El envio minimo default es $6.99. La promocion eBay es opcional; este advisor permite simular de 0% a 5%.
+                  </div>
+
+                  <div className="grid gap-3 rounded-lg border border-white/10 bg-black/25 p-3 md:grid-cols-2">
+                    <label className="block">
+                      <span className="text-[10px] uppercase tracking-[0.18em] text-white/30">
+                        Envio estimado editable
+                      </span>
+                      <input
+                        type="number"
+                        min="6.99"
+                        step="0.01"
+                        value={editableShippingCost}
+                        onChange={event =>
+                          setEditableShippingCost(
+                            event.target.value
+                          )
+                        }
+                        className="
+                          mt-2
+                          w-full
+                          rounded-lg
+                          border
+                          border-white/10
+                          bg-zinc-950
+                          px-3
+                          py-2
+                          text-sm
+                          text-white
+                          outline-none
+                          transition
+                          focus:border-cyan-300/50
+                        "
+                      />
+                      <span className="mt-2 block text-xs leading-5 text-white/45">
+                        $6.99 es el minimo estandar. Si el producto es pesado o especial, sube este valor para simular el costo real.
+                      </span>
+                    </label>
+
+                    <label className="block">
+                      <span className="text-[10px] uppercase tracking-[0.18em] text-white/30">
+                        Promocion eBay editable
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="5"
+                        step="0.1"
+                        value={editablePromotionPercent}
+                        onChange={event =>
+                          setEditablePromotionPercent(
+                            event.target.value
+                          )
+                        }
+                        className="
+                          mt-2
+                          w-full
+                          rounded-lg
+                          border
+                          border-white/10
+                          bg-zinc-950
+                          px-3
+                          py-2
+                          text-sm
+                          text-white
+                          outline-none
+                          transition
+                          focus:border-cyan-300/50
+                        "
+                      />
+                      <span className="mt-2 block text-xs leading-5 text-white/45">
+                        La promocion no es obligatoria. El calculo limita el advisor a maximo 5%.
+                      </span>
+                    </label>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <div className="rounded-lg border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-white/40">
+                        Costo directo IMNOVA
+                      </p>
+                      <div className="mt-3 space-y-3">
+                        <Field
+                          label="Costo Luna"
+                          value={formatCurrency(
+                            displayedCostBreakdown?.luna_cost
+                          )}
+                        />
+                        <Field
+                          label="Envio estimado"
+                          value={formatCurrency(
+                            displayedCostBreakdown?.shipping_cost
+                          )}
+                        />
+                        <Field
+                          label="shipping_source"
+                          value={costBreakdown.shipping_source}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-white/40">
+                        Costos marketplace
+                      </p>
+                      <div className="mt-3 space-y-3">
+                        <Field
+                          label="Fee eBay"
+                          value={`${formatCurrency(
+                            displayedCostBreakdown?.ebay_fee_amount
+                          )} (${formatNumber(
+                            displayedCostBreakdown?.ebay_fee_percent,
+                            "%"
+                          )})`}
+                        />
+                        <Field
+                          label="Payment fee"
+                          value={`${formatCurrency(
+                            displayedCostBreakdown?.payment_fee_amount
+                          )} (${formatNumber(
+                            displayedCostBreakdown?.payment_fee_percent,
+                            "%"
+                          )})`}
+                        />
+                        <Field
+                          label="Promocion eBay"
+                          value={`${formatCurrency(
+                            displayedCostBreakdown?.promotion_amount
+                          )} (${formatNumber(
+                            displayedCostBreakdown?.promotion_percent,
+                            "%"
+                          )})`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-white/40">
+                        Operacion y resultado
+                      </p>
+                      <div className="mt-3 space-y-3">
+                        <Field
+                          label="Fulfillment/empaque"
+                          value={`${formatCurrency(
+                            displayedCostBreakdown?.fulfillment_cost
+                          )} / ${formatCurrency(
+                            displayedCostBreakdown?.packaging_cost
+                          )}`}
+                        />
+                        <Field
+                          label="Reserva/devolucion"
+                          value={`${formatCurrency(
+                            displayedCostBreakdown?.return_reserve_amount
+                          )} (${formatNumber(
+                            displayedCostBreakdown?.return_reserve_percent,
+                            "%"
+                          )})`}
+                        />
+                        <Field
+                          label="Costo total"
+                          value={formatCurrency(
+                            displayedCostBreakdown?.total_estimated_cost
+                          )}
+                        />
+                        <Field
+                          label="Ganancia neta"
+                          value={formatCurrency(
+                            displayedCostBreakdown?.net_profit
+                          )}
+                        />
+                        <Field
+                          label="Margen neto"
+                          value={formatNumber(
+                            displayedCostBreakdown?.net_margin_percent,
+                            "%"
+                          )}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    className={`
+                      rounded-lg
+                      border
+                      p-3
+                      text-xs
+                      leading-5
+                      ${getReasonClassName(
+                        costBreakdown.shipping_review_required
+                          ? "warning"
+                          : "info"
+                      )}
+                    `}
+                  >
+                    {costBreakdown.shipping_note ||
+                      "Envio estimado estandar."}
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {costScenarios.map(scenario => (
+                      <div
+                        key={scenario.label}
+                        className={`
+                          rounded-lg
+                          border
+                          p-3
+                          ${getReasonClassName(
+                            scenario.value?.pass_10_percent_margin
+                              ? "success"
+                              : "danger"
+                          )}
+                        `}
+                      >
+                        <p className="text-sm font-black">
+                          {scenario.label}
+                        </p>
+                        <div className="mt-3 space-y-3">
+                          <Field
+                            label="Promocion"
+                            value={formatNumber(
+                              scenario.value?.promotion_percent,
+                              "%"
+                            )}
+                          />
+                          <Field
+                            label="Net profit"
+                            value={formatCurrency(
+                              scenario.value?.net_profit
+                            )}
+                          />
+                          <Field
+                            label="Net margin"
+                            value={formatNumber(
+                              scenario.value?.net_margin_percent,
+                              "%"
+                            )}
+                          />
+                          <Field
+                            label="Pasa 10%"
+                            value={scenario.value?.pass_10_percent_margin}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <Field
+                      label="Break-even"
+                      value={formatCurrency(
+                        displayedCostBreakdown?.break_even_price
+                      )}
+                    />
+                    <Field
+                      label="Minimo 10% margen"
+                      value={formatCurrency(
+                        displayedCostBreakdown?.minimum_price_for_10_percent_margin
+                      )}
+                    />
+                    <Field
+                      label="Precio sugerido"
+                      value={formatCurrency(
+                        displayedCostBreakdown?.suggested_target_price
+                      )}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-white/40">
+                  Sin desglose de costeo calculado.
+                </p>
+              )}
+            </DetailSection>
+
             <DetailSection title="Profit scenario">
+              <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.06] p-3 text-xs leading-5 text-cyan-50/70">
+                Regla minima: net profit mayor que $0 y net margin minimo de 10%. ROI se muestra como metrica, pero no bloquea minimos en esta configuracion.
+              </div>
               <div className="grid gap-3 md:grid-cols-3">
                 <Field
-                  label="sale_price"
+                  label="Sale price"
                   value={formatCurrency(
                     detail.profitScenario?.estimated_sale_price
                   )}
                 />
                 <Field
-                  label="luna_cost"
+                  label="Luna cost"
                   value={formatCurrency(
                     detail.profitScenario?.luna_cost
                   )}
                 />
                 <Field
-                  label="total_cost"
+                  label="Shipping"
+                  value={formatCurrency(
+                    detail.profitScenario?.estimated_shipping_cost
+                  )}
+                />
+                <Field
+                  label="eBay fee"
+                  value={formatCurrency(
+                    detail.profitScenario?.estimated_ebay_fee
+                  )}
+                />
+                <Field
+                  label="Promo/ads"
+                  value={formatCurrency(
+                    detail.profitScenario?.estimated_advertising_cost
+                  )}
+                />
+                <Field
+                  label="Fulfillment"
+                  value={formatCurrency(
+                    detail.profitScenario?.fulfillment_cost
+                  )}
+                />
+                <Field
+                  label="Packaging"
+                  value={formatCurrency(
+                    detail.profitScenario?.packaging_cost
+                  )}
+                />
+                <Field
+                  label="Return reserve"
+                  value={formatCurrency(
+                    detail.profitScenario?.return_reserve
+                  )}
+                />
+                <Field
+                  label="Total cost"
                   value={formatCurrency(
                     detail.profitScenario?.total_estimated_cost
                   )}
                 />
                 <Field
-                  label="net_profit"
+                  label="Net profit"
                   value={formatCurrency(
                     detail.profitScenario?.net_profit
                   )}
                 />
                 <Field
-                  label="margin"
+                  label="Net margin"
                   value={formatNumber(
                     detail.profitScenario?.net_margin_percent,
                     "%"
@@ -661,7 +2309,7 @@ function CandidateDetailDrawer({
                   )}
                 />
                 <Field
-                  label="passes_minimums"
+                  label="Pass minimums"
                   value={detail.profitScenario?.passes_minimums}
                 />
                 <Field
@@ -671,9 +2319,386 @@ function CandidateDetailDrawer({
                   )}
                 />
               </div>
+              {targetPriceAdvisor ? (
+                <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="text-sm font-black text-white">
+                        Precio sugerido para profit
+                      </p>
+                      <p className="mt-2 max-w-2xl text-xs leading-5 text-white/50">
+                        El precio actual no es rentable. Para lograr {formatNumber(
+                          targetPriceAdvisor.minimum_target_margin_percent,
+                          "%"
+                        )} de margen neto, IMNOVA necesita vender aproximadamente a {formatCurrency(
+                          targetPriceAdvisor.suggested_target_price
+                        )}.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onReprocessSuggestedPrice(detail)
+                      }
+                      disabled={
+                        isReprocessing ||
+                        !canReprocessSuggestedPrice
+                      }
+                      className="
+                        inline-flex
+                        items-center
+                        justify-center
+                        gap-2
+                        rounded-lg
+                        border
+                        border-cyan-300/30
+                        bg-cyan-300
+                        px-4
+                        py-3
+                        text-sm
+                        font-black
+                        text-black
+                        transition
+                        hover:bg-cyan-200
+                        disabled:cursor-not-allowed
+                        disabled:opacity-50
+                      "
+                    >
+                      <RefreshCw
+                        className={`
+                          h-4
+                          w-4
+                          ${isReprocessing ? "animate-spin" : ""}
+                        `}
+                      />
+                      {isReprocessing
+                        ? "Reevaluando"
+                        : "Reevaluar con precio sugerido"}
+                    </button>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    <Field
+                      label="Precio actual"
+                      value={formatCurrency(
+                        targetPriceAdvisor.current_sale_price
+                      )}
+                    />
+                    <Field
+                      label="Minimo 10% margen"
+                      value={formatCurrency(
+                        targetPriceAdvisor.minimum_profitable_price
+                      )}
+                    />
+                    <Field
+                      label="Precio ideal sugerido"
+                      value={formatCurrency(
+                        targetPriceAdvisor.suggested_target_price
+                      )}
+                    />
+                    <Field
+                      label="Precio ideal opcional"
+                      value={formatCurrency(
+                        targetPriceAdvisor.ideal_target_price
+                      )}
+                    />
+                    <Field
+                      label="Mercado PI"
+                      value={`${marketReferenceLabel}: ${formatCurrency(
+                        marketReferencePrice
+                      )}`}
+                    />
+                    <Field
+                      label="Diferencia vs mercado"
+                      value={formatCurrency(
+                        suggestedMarketDifference
+                      )}
+                    />
+                  </div>
+
+                  <div
+                    className={`
+                      mt-4
+                      rounded-lg
+                      border
+                      p-3
+                      text-xs
+                      leading-5
+                      ${getReasonClassName(suggestedPriceTone)}
+                    `}
+                  >
+                    {suggestedPriceMarketMessage}
+                  </div>
+                  {hasLowConfidence ? (
+                    <p className="mt-3 rounded-md border border-amber-300/25 bg-amber-300/[0.10] px-3 py-2 text-xs text-amber-100">
+                      Confidence bajo: hace falta mejor evidencia antes de tomar decision comercial.
+                    </p>
+                  ) : null}
+                  {!canReprocessSuggestedPrice ? (
+                    <p className="mt-3 rounded-md border border-amber-300/25 bg-amber-300/[0.10] px-3 py-2 text-xs text-amber-100">
+                      La reevaluacion con precio sugerido queda deshabilitada hasta que Price Intelligence indique que el precio esta dentro del mercado.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               <JsonPreview
                 value={detail.profitScenario?.assumptions}
               />
+            </DetailSection>
+
+            <DetailSection title="Price Intelligence">
+              {detail.priceIntelligence ? (
+                <>
+                  <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.06] p-4">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <p className="text-sm font-bold text-white">
+                          Reevaluar con Price Intelligence
+                        </p>
+                        <p className="mt-2 text-xs leading-5 text-white/50">
+                          Usara el precio recomendado guardado como estimated_sale_price.
+                        </p>
+                        {hasLowConfidence ? (
+                          <p className="mt-2 inline-flex items-center gap-2 rounded-md border border-amber-300/25 bg-amber-300/[0.10] px-2 py-1 text-xs text-amber-100">
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                            Evidencia de precio con baja confianza.
+                          </p>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onReprocess(detail)
+                        }
+                        disabled={
+                          isReprocessing ||
+                          recommendedSalePrice === null
+                        }
+                        className="
+                          inline-flex
+                          items-center
+                          justify-center
+                          gap-2
+                          rounded-lg
+                          border
+                          border-cyan-300/30
+                          bg-cyan-300
+                          px-4
+                          py-3
+                          text-sm
+                          font-black
+                          text-black
+                          transition
+                          hover:bg-cyan-200
+                          disabled:cursor-not-allowed
+                          disabled:opacity-50
+                        "
+                      >
+                        <RefreshCw
+                          className={`
+                            h-4
+                            w-4
+                            ${isReprocessing ? "animate-spin" : ""}
+                          `}
+                        />
+                        {isReprocessing
+                          ? "Reevaluando"
+                          : "Reevaluar con Price Intelligence"}
+                      </button>
+                    </div>
+                    {recommendedSalePrice === null ? (
+                      <p className="mt-3 text-xs leading-5 text-amber-100/75">
+                        Este snapshot no tiene recommended_sale_price.
+                      </p>
+                    ) : null}
+                    {reprocessStatus ? (
+                      <p
+                        className={`
+                          mt-3
+                          rounded-md
+                          border
+                          px-3
+                          py-2
+                          text-xs
+                          ${
+                            reprocessStatus.status === "success"
+                              ? "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-100"
+                              : "border-red-300/20 bg-red-300/[0.08] text-red-100"
+                          }
+                        `}
+                      >
+                        {reprocessStatus.message}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <Field
+                      label="recommended_sale_price"
+                      value={formatCurrency(
+                        detail.priceIntelligence.recommended_sale_price
+                      )}
+                    />
+                    <Field
+                      label="source_type"
+                      value={detail.priceIntelligence.source_type}
+                    />
+                    <Field
+                      label="source_confidence"
+                      value={detail.priceIntelligence.source_confidence}
+                    />
+                    <Field
+                      label="confidence_score"
+                      value={formatNumber(
+                        detail.priceIntelligence.confidence_score
+                      )}
+                    />
+                    <Field
+                      label="sold_median"
+                      value={formatCurrency(
+                        detail.priceIntelligence.sold_median_price
+                      )}
+                    />
+                    <Field
+                      label="sold_avg"
+                      value={formatCurrency(
+                        detail.priceIntelligence.sold_avg_price
+                      )}
+                    />
+                    <Field
+                      label="sold_range"
+                      value={`${formatCurrency(
+                        detail.priceIntelligence.sold_min_price
+                      )} - ${formatCurrency(
+                        detail.priceIntelligence.sold_max_price
+                      )}`}
+                    />
+                    <Field
+                      label="sold_comp_count"
+                      value={detail.priceIntelligence.sold_comp_count}
+                    />
+                    <Field
+                      label="active_avg"
+                      value={formatCurrency(
+                        detail.priceIntelligence.active_avg_price
+                      )}
+                    />
+                    <Field
+                      label="active_range"
+                      value={`${formatCurrency(
+                        detail.priceIntelligence.active_min_price
+                      )} - ${formatCurrency(
+                        detail.priceIntelligence.active_max_price
+                      )}`}
+                    />
+                    <Field
+                      label="active_comp_count"
+                      value={detail.priceIntelligence.active_comp_count}
+                    />
+                    <Field
+                      label="estimated_shipping"
+                      value={formatCurrency(
+                        detail.priceIntelligence.estimated_shipping_cost
+                      )}
+                    />
+                    <Field
+                      label="shipping_scope"
+                      value={
+                        typeof shippingScopeEvidence?.shipping_scope === "string"
+                          ? shippingScopeEvidence.shipping_scope
+                          : null
+                      }
+                    />
+                    <Field
+                      label="buyer_country"
+                      value={
+                        typeof shippingScopeEvidence?.buyer_location_country === "string"
+                          ? shippingScopeEvidence.buyer_location_country
+                          : null
+                      }
+                    />
+                    <Field
+                      label="competitor_item"
+                      value={formatCurrency(
+                        shippingScopeEvidence?.competitor_item_price
+                      )}
+                    />
+                    <Field
+                      label="domestic_shipping_us"
+                      value={formatCurrency(
+                        shippingScopeEvidence?.competitor_domestic_shipping_price
+                      )}
+                    />
+                    <Field
+                      label="domestic_total_us"
+                      value={formatCurrency(
+                        shippingScopeEvidence?.competitor_domestic_landed_price
+                      )}
+                    />
+                    <Field
+                      label="international_shipping"
+                      value={formatCurrency(
+                        shippingScopeEvidence?.competitor_international_shipping_price
+                      )}
+                    />
+                    <Field
+                      label="international_total"
+                      value={formatCurrency(
+                        shippingScopeEvidence?.competitor_international_landed_price
+                      )}
+                    />
+                    <Field
+                      label="category"
+                      value={
+                        detail.priceIntelligence.category_name ||
+                        detail.priceIntelligence.category_id
+                      }
+                    />
+                    <Field
+                      label="match_type"
+                      value={detail.priceIntelligence.product_match_type}
+                    />
+                    <Field
+                      label="created_at"
+                      value={formatDate(
+                        detail.priceIntelligence.created_at
+                      )}
+                    />
+                  </div>
+                  <Field
+                    label="search_query"
+                    value={detail.priceIntelligence.search_query}
+                  />
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-white/30">
+                      evidence_url
+                    </p>
+                    {isSafeHttpUrl(
+                      detail.priceIntelligence.evidence_url
+                    ) ? (
+                      <a
+                        href={detail.priceIntelligence.evidence_url || ""}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 inline-flex break-all text-sm font-semibold text-cyan-100 hover:text-cyan-50"
+                      >
+                        {detail.priceIntelligence.evidence_url}
+                      </a>
+                    ) : (
+                      <p className="mt-1 break-words text-sm text-white/70">
+                        {detail.priceIntelligence.evidence_url || "-"}
+                      </p>
+                    )}
+                  </div>
+                  <Field
+                    label="evidence_notes"
+                    value={detail.priceIntelligence.evidence_notes}
+                  />
+                </>
+              ) : (
+                <p className="text-sm text-white/40">
+                  Sin evidencia Price Intelligence registrada.
+                </p>
+              )}
             </DetailSection>
 
             <DetailSection title="Compliance findings">
@@ -981,6 +3006,16 @@ export function EbayWinnerPipelinePanel() {
     setIsDetailLoading,
   ] = useState(false)
 
+  const [
+    isReprocessing,
+    setIsReprocessing,
+  ] = useState(false)
+
+  const [
+    reprocessStatus,
+    setReprocessStatus,
+  ] = useState<ReprocessStatus | null>(null)
+
   const getAccessToken =
     useCallback(async () => {
       const {
@@ -1130,6 +3165,7 @@ export function EbayWinnerPipelinePanel() {
         candidateId
       )
       setDetail(null)
+      setReprocessStatus(null)
       setIsDetailLoading(true)
       setError("")
 
@@ -1162,6 +3198,220 @@ export function EbayWinnerPipelinePanel() {
         setIsDetailLoading(false)
       }
     }, [requestJson])
+
+  const reprocessWithPriceIntelligence =
+    useCallback(async (
+      currentDetail: EbayCandidateDetail
+    ) => {
+      const snapshot =
+        currentDetail.priceIntelligence
+
+      if (
+        !snapshot ||
+        toNumber(snapshot.recommended_sale_price) === null
+      ) {
+        setReprocessStatus({
+          status:
+            "error",
+          message:
+            "Falta recommended_sale_price para reevaluar.",
+        })
+        return
+      }
+
+      setIsReprocessing(true)
+      setReprocessStatus(null)
+      setError("")
+
+      try {
+        const token =
+          await getAccessToken()
+
+        const response =
+          await fetch(
+            "/api/admin/ebay-winner-pipeline/price-intelligence/reprocess",
+            {
+              method:
+                "POST",
+              headers: {
+                Authorization:
+                  `Bearer ${token}`,
+                "Content-Type":
+                  "application/json",
+              },
+              body:
+                JSON.stringify({
+                  candidateId:
+                    currentDetail.candidate.id,
+                  supplierSku:
+                    currentDetail.candidate.supplier_sku,
+                  candidateKey:
+                    currentDetail.candidate.candidate_key,
+                  priceIntelligenceSnapshotId:
+                    snapshot.id,
+                }),
+            }
+          )
+
+        const payload =
+          await response.json() as {
+            success?: boolean
+            error?: string
+          }
+
+        if (
+          !response.ok ||
+          !payload.success
+        ) {
+          throw new Error(
+            payload.error ||
+            "No se pudo reevaluar con Price Intelligence."
+          )
+        }
+
+        await loadDetail(
+          currentDetail.candidate.id
+        )
+        await loadDashboard()
+
+        setReprocessStatus({
+          status:
+            "success",
+          message:
+            "Candidato reevaluado con Price Intelligence.",
+        })
+      } catch (reprocessError) {
+        console.error(
+          "REPROCESS PRICE INTELLIGENCE ERROR:",
+          reprocessError
+        )
+
+        setReprocessStatus({
+          status:
+            "error",
+          message:
+            reprocessError instanceof Error
+              ? reprocessError.message
+              : "No se pudo reevaluar con Price Intelligence.",
+        })
+      } finally {
+        setIsReprocessing(false)
+      }
+    }, [
+      getAccessToken,
+      loadDashboard,
+      loadDetail,
+    ])
+
+  const reprocessWithSuggestedPrice =
+    useCallback(async (
+      currentDetail: EbayCandidateDetail
+    ) => {
+      const assumptions =
+        currentDetail.profitScenario?.assumptions &&
+        typeof currentDetail.profitScenario.assumptions === "object"
+          ? currentDetail.profitScenario.assumptions as ProfitAssumptions
+          : {}
+
+      const suggestedTargetPrice =
+        toNumber(
+          assumptions.targetPriceAdvisor?.suggested_target_price
+        )
+
+      if (suggestedTargetPrice === null) {
+        setReprocessStatus({
+          status:
+            "error",
+          message:
+            "Falta suggested_target_price para reevaluar.",
+        })
+        return
+      }
+
+      setIsReprocessing(true)
+      setReprocessStatus(null)
+      setError("")
+
+      try {
+        const token =
+          await getAccessToken()
+
+        const response =
+          await fetch(
+            "/api/admin/ebay-winner-pipeline/price-intelligence/reprocess",
+            {
+              method:
+                "POST",
+              headers: {
+                Authorization:
+                  `Bearer ${token}`,
+                "Content-Type":
+                  "application/json",
+              },
+              body:
+                JSON.stringify({
+                  action:
+                    "reprocess_with_suggested_price",
+                  candidateId:
+                    currentDetail.candidate.id,
+                  supplierSku:
+                    currentDetail.candidate.supplier_sku,
+                  candidateKey:
+                    currentDetail.candidate.candidate_key,
+                  suggestedTargetPrice,
+                }),
+            }
+          )
+
+        const payload =
+          await response.json() as {
+            success?: boolean
+            error?: string
+          }
+
+        if (
+          !response.ok ||
+          !payload.success
+        ) {
+          throw new Error(
+            payload.error ||
+            "No se pudo reevaluar con precio sugerido."
+          )
+        }
+
+        await loadDetail(
+          currentDetail.candidate.id
+        )
+        await loadDashboard()
+
+        setReprocessStatus({
+          status:
+            "success",
+          message:
+            "Candidato reevaluado con precio sugerido.",
+        })
+      } catch (reprocessError) {
+        console.error(
+          "REPROCESS SUGGESTED PRICE ERROR:",
+          reprocessError
+        )
+
+        setReprocessStatus({
+          status:
+            "error",
+          message:
+            reprocessError instanceof Error
+              ? reprocessError.message
+              : "No se pudo reevaluar con precio sugerido.",
+        })
+      } finally {
+        setIsReprocessing(false)
+      }
+    }, [
+      getAccessToken,
+      loadDashboard,
+      loadDetail,
+    ])
 
   useEffect(() => {
     loadDashboard()
@@ -1655,9 +3905,14 @@ export function EbayWinnerPipelinePanel() {
         <CandidateDetailDrawer
           detail={detail}
           isLoading={isDetailLoading}
+          isReprocessing={isReprocessing}
+          reprocessStatus={reprocessStatus}
+          onReprocess={reprocessWithPriceIntelligence}
+          onReprocessSuggestedPrice={reprocessWithSuggestedPrice}
           onClose={() => {
             setSelectedCandidateId("")
             setDetail(null)
+            setReprocessStatus(null)
           }}
         />
       )}

@@ -21,7 +21,15 @@ import {
 const LUNAPORTEX_SOURCE_KEY =
   "lunaportex"
 
-const POSTGREST_PAGE_SIZE = 1000
+const DASHBOARD_PRODUCT_LIMIT = 80
+
+function getCount(
+  count: number | null
+) {
+  return typeof count === "number"
+    ? count
+    : 0
+}
 
 function formatWhatsAppMoney(
   value: number | string | null | undefined
@@ -153,6 +161,350 @@ function toNumber(
     : null
 }
 
+async function getLatestMarketRadarProducts(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  source: MarketRadarSource
+) {
+  const {
+    data: scoreData,
+    error: scoreError,
+  } =
+    await supabase
+      .from("market_radar_scores")
+      .select(`
+        product_id,
+        opportunity_score,
+        rotation_score,
+        price_score,
+        stock_score,
+        discount_score,
+        collection_score,
+        event_count_24h,
+        event_count_7d,
+        restock_count_7d,
+        out_of_stock_count_7d,
+        price_change_count_7d,
+        last_event_at,
+        updated_at
+      `)
+      .eq(
+        "source_id",
+        source.id
+      )
+      .order(
+        "opportunity_score",
+        {
+          ascending: false,
+          nullsFirst: false,
+        }
+      )
+      .order(
+        "last_event_at",
+        {
+          ascending: false,
+          nullsFirst: false,
+        }
+      )
+      .limit(
+        DASHBOARD_PRODUCT_LIMIT
+      )
+
+  if (scoreError) {
+    throw new Error(
+      scoreError.message
+    )
+  }
+
+  const scores =
+    (scoreData || []) as Array<{
+      product_id: string
+      opportunity_score: number | string | null
+      rotation_score: number | string | null
+      price_score: number | string | null
+      stock_score: number | string | null
+      discount_score: number | string | null
+      collection_score: number | string | null
+      event_count_24h: number | null
+      event_count_7d: number | null
+      restock_count_7d: number | null
+      out_of_stock_count_7d: number | null
+      price_change_count_7d: number | null
+      last_event_at: string | null
+      updated_at: string | null
+    }>
+
+  const scoreByProductId =
+    new Map(
+      scores.map(score => [
+        score.product_id,
+        score,
+      ])
+    )
+
+  let productIds =
+    scores.map(
+      score => score.product_id
+    )
+
+  if (productIds.length === 0) {
+    const {
+      data: fallbackProductsData,
+      error: fallbackProductsError,
+    } =
+      await supabase
+        .from("market_radar_products")
+        .select("id")
+        .eq(
+          "source_id",
+          source.id
+        )
+        .order(
+          "last_seen_at",
+          {
+            ascending: false,
+            nullsFirst: false,
+          }
+        )
+        .limit(
+          DASHBOARD_PRODUCT_LIMIT
+        )
+
+    if (fallbackProductsError) {
+      throw new Error(
+        fallbackProductsError.message
+      )
+    }
+
+    productIds =
+      (
+        fallbackProductsData || []
+      ).map(product => product.id)
+  }
+
+  if (productIds.length === 0) {
+    return []
+  }
+
+  const {
+    data: productsData,
+    error: productsError,
+  } =
+    await supabase
+      .from("market_radar_products")
+      .select(`
+        id,
+        source_id,
+        supplier_product_id,
+        handle,
+        title,
+        vendor,
+        product_type,
+        tags,
+        product_url,
+        featured_image_url,
+        image_urls,
+        first_seen_at,
+        last_seen_at,
+        updated_at_source
+      `)
+      .in(
+        "id",
+        productIds
+      )
+
+  if (productsError) {
+    throw new Error(
+      productsError.message
+    )
+  }
+
+  const productById =
+    new Map(
+      (
+        productsData || []
+      ).map(product => [
+        product.id,
+        product,
+      ])
+    )
+
+  const {
+    data: snapshotsData,
+    error: snapshotsError,
+  } =
+    await supabase
+      .from("market_radar_snapshots")
+      .select(`
+        id,
+        product_id,
+        supplier_variant_id,
+        variant_title,
+        sku,
+        price,
+        compare_at_price,
+        available,
+        inventory_quantity,
+        collections,
+        discount_percent,
+        captured_at
+      `)
+      .in(
+        "product_id",
+        productIds
+      )
+      .order(
+        "captured_at",
+        {
+          ascending: false,
+          nullsFirst: false,
+        }
+      )
+
+  if (snapshotsError) {
+    throw new Error(
+      snapshotsError.message
+    )
+  }
+
+  const snapshotByProductId =
+    new Map<string, NonNullable<typeof snapshotsData>[number]>()
+
+  for (const snapshot of snapshotsData || []) {
+    const currentSnapshot =
+      snapshotByProductId.get(
+        snapshot.product_id
+      )
+
+    const hasConfirmedQuantity =
+      snapshot.available === true &&
+      snapshot.inventory_quantity !== null &&
+      snapshot.inventory_quantity !== undefined
+
+    const currentHasConfirmedQuantity =
+      currentSnapshot?.available === true &&
+      currentSnapshot.inventory_quantity !== null &&
+      currentSnapshot.inventory_quantity !== undefined
+
+    if (
+      !currentSnapshot ||
+      (
+        hasConfirmedQuantity &&
+        !currentHasConfirmedQuantity
+      )
+    ) {
+      snapshotByProductId.set(
+        snapshot.product_id,
+        snapshot
+      )
+    }
+  }
+
+  return productIds
+    .map(productId => {
+      const product =
+        productById.get(productId)
+
+      if (!product) {
+        return null
+      }
+
+      const snapshot =
+        snapshotByProductId.get(productId)
+
+      const score =
+        scoreByProductId.get(productId)
+
+      return {
+        product_id:
+          product.id,
+        source_id:
+          product.source_id,
+        source_key:
+          source.key,
+        source_name:
+          source.name,
+        supplier_product_id:
+          product.supplier_product_id,
+        handle:
+          product.handle,
+        title:
+          product.title,
+        vendor:
+          product.vendor,
+        product_type:
+          product.product_type,
+        tags:
+          product.tags,
+        product_url:
+          product.product_url,
+        featured_image_url:
+          product.featured_image_url,
+        image_urls:
+          product.image_urls,
+        first_seen_at:
+          product.first_seen_at,
+        last_seen_at:
+          product.last_seen_at,
+        updated_at_source:
+          product.updated_at_source,
+        snapshot_id:
+          snapshot?.id || null,
+        supplier_variant_id:
+          snapshot?.supplier_variant_id || null,
+        variant_title:
+          snapshot?.variant_title || null,
+        sku:
+          snapshot?.sku || null,
+        price:
+          snapshot?.price || null,
+        compare_at_price:
+          snapshot?.compare_at_price || null,
+        available:
+          snapshot?.available ?? null,
+        inventory_quantity:
+          snapshot?.inventory_quantity ?? null,
+        collections:
+          snapshot?.collections || null,
+        discount_percent:
+          snapshot?.discount_percent || null,
+        last_captured_at:
+          snapshot?.captured_at || null,
+        opportunity_score:
+          score?.opportunity_score || null,
+        rotation_score:
+          score?.rotation_score || null,
+        price_score:
+          score?.price_score || null,
+        stock_score:
+          score?.stock_score || null,
+        discount_score:
+          score?.discount_score || null,
+        collection_score:
+          score?.collection_score || null,
+        event_count_24h:
+          score?.event_count_24h ?? null,
+        event_count_7d:
+          score?.event_count_7d ?? null,
+        restock_count_7d:
+          score?.restock_count_7d ?? null,
+        out_of_stock_count_7d:
+          score?.out_of_stock_count_7d ?? null,
+        price_change_count_7d:
+          score?.price_change_count_7d ?? null,
+        last_event_at:
+          score?.last_event_at || null,
+        score_updated_at:
+          score?.updated_at || null,
+      } satisfies MarketRadarProductRow
+    })
+    .filter(
+      (
+        product
+      ): product is MarketRadarProductRow =>
+        Boolean(product)
+    )
+}
+
 async function validateAdmin(
   req: Request
 ) {
@@ -237,66 +589,11 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
     }
   }
 
-  const latestProducts: MarketRadarProductRow[] =
-    []
-
-  for (
-    let from = 0;
-    ;
-    from += POSTGREST_PAGE_SIZE
-  ) {
-    const {
-      data,
-      error,
-    } =
-      await supabase
-        .from("market_radar_latest_products")
-        .select("*")
-        .eq(
-          "source_id",
-          source.id
-        )
-        .order(
-          "opportunity_score",
-          {
-            ascending: false,
-            nullsFirst: false,
-          }
-        )
-        .order(
-          "last_event_at",
-          {
-            ascending: false,
-            nullsFirst: false,
-          }
-        )
-        .range(
-          from,
-          from + POSTGREST_PAGE_SIZE - 1
-        )
-
-    if (error) {
-      throw new Error(
-        error.message
-      )
-    }
-
-    const rows =
-      (
-        data || []
-      ) as MarketRadarProductRow[]
-
-    latestProducts.push(
-      ...rows
+  const latestProducts =
+    await getLatestMarketRadarProducts(
+      supabase,
+      source
     )
-
-    if (
-      rows.length <
-      POSTGREST_PAGE_SIZE
-    ) {
-      break
-    }
-  }
 
   const sevenDaysAgo =
     new Date(
@@ -351,88 +648,126 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
     )
   }
 
-  const eventWindow =
-    [] as Array<{
-      event_type: string
-      created_at: string
-    }>
-
-  for (
-    let from = 0;
-    ;
-    from += POSTGREST_PAGE_SIZE
-  ) {
-    const {
-      data,
-      error,
-    } =
-      await supabase
-        .from("market_radar_events")
-        .select(`
-          event_type,
-          created_at
-        `)
+  const [
+    totalProductsResult,
+    highOpportunityProductsResult,
+    priceChanges24hResult,
+    restocks7dResult,
+    stockOuts7dResult,
+  ] =
+    await Promise.all([
+      supabase
+        .from("market_radar_products")
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
+        .eq(
+          "source_id",
+          source.id
+        ),
+      supabase
+        .from("market_radar_scores")
+        .select(
+          "product_id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
         .eq(
           "source_id",
           source.id
         )
         .gte(
+          "opportunity_score",
+          70
+        ),
+      supabase
+        .from("market_radar_events")
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
+        .eq(
+          "source_id",
+          source.id
+        )
+        .in(
+          "event_type",
+          [
+            "price_down",
+            "price_up",
+          ]
+        )
+        .gte(
+          "created_at",
+          oneDayAgo
+        ),
+      supabase
+        .from("market_radar_events")
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
+        .eq(
+          "source_id",
+          source.id
+        )
+        .eq(
+          "event_type",
+          "restocked"
+        )
+        .gte(
           "created_at",
           sevenDaysAgo
+        ),
+      supabase
+        .from("market_radar_events")
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
         )
-        .range(
-          from,
-          from + POSTGREST_PAGE_SIZE - 1
+        .eq(
+          "source_id",
+          source.id
         )
+        .eq(
+          "event_type",
+          "out_of_stock"
+        )
+        .gte(
+          "created_at",
+          sevenDaysAgo
+        ),
+    ])
 
-    if (error) {
-      throw new Error(
-        error.message
-      )
-    }
+  const countErrors = [
+    totalProductsResult.error,
+    highOpportunityProductsResult.error,
+    priceChanges24hResult.error,
+    restocks7dResult.error,
+    stockOuts7dResult.error,
+  ].filter(Boolean)
 
-    const rows =
-      (
-        data || []
-      ) as Array<{
-        event_type: string
-        created_at: string
-      }>
-
-    eventWindow.push(
-      ...rows
+  if (countErrors.length > 0) {
+    throw new Error(
+      countErrors[0]?.message ||
+        "market_radar_count_failed"
     )
-
-    if (
-      rows.length <
-      POSTGREST_PAGE_SIZE
-    ) {
-      break
-    }
   }
-
-  const priceChanges24h =
-    eventWindow.filter(event => {
-      return (
-        (
-          event.event_type === "price_down" ||
-          event.event_type === "price_up"
-        ) &&
-        event.created_at >= oneDayAgo
-      )
-    }).length
-
-  const restocks7d =
-    eventWindow.filter(
-      event =>
-        event.event_type === "restocked"
-    ).length
-
-  const stockOuts7d =
-    eventWindow.filter(
-      event =>
-        event.event_type === "out_of_stock"
-    ).length
 
   const availableProducts =
     latestProducts.filter(
@@ -459,16 +794,6 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
       )
     }).length
 
-  const highOpportunityProducts =
-    latestProducts.filter(product => {
-      const score =
-        toNumber(
-          product.opportunity_score
-        ) || 0
-
-      return score >= 70
-    }).length
-
   const recentEvents =
     (
       (
@@ -492,24 +817,38 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
     summary: {
       source,
       totalProducts:
-        latestProducts.length,
-      availableProducts,
-      outOfStockProducts,
-      discountedProducts,
-      highOpportunityProducts,
-      priceChanges24h,
-      restocks7d,
-      stockOuts7d,
+        getCount(
+          totalProductsResult.count
+        ),
+      availableProducts:
+        availableProducts,
+      outOfStockProducts:
+        outOfStockProducts,
+      discountedProducts:
+        discountedProducts,
+      highOpportunityProducts:
+        getCount(
+          highOpportunityProductsResult.count
+        ),
+      priceChanges24h:
+        getCount(
+          priceChanges24hResult.count
+        ),
+      restocks7d:
+        getCount(
+          restocks7dResult.count
+        ),
+      stockOuts7d:
+        getCount(
+          stockOuts7dResult.count
+        ),
       lastRunAt:
         source.last_run_at,
       lastSuccessAt:
         source.last_success_at,
     },
     products:
-      latestProducts.slice(
-        0,
-        80
-      ),
+      latestProducts,
     recentEvents,
   }
 }

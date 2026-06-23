@@ -650,6 +650,11 @@ export default function AdminPage() {
   ] = useState(false)
 
   const [
+    adminAccessError,
+    setAdminAccessError,
+  ] = useState("")
+
+  const [
     liveProducts,
     setLiveProducts,
   ] = useState<Product[]>([])
@@ -974,63 +979,70 @@ export default function AdminPage() {
   const loadAdminData =
     async () => {
 
-      const states =
-        await getProductStates()
+      try {
+        const states =
+          await getProductStates()
 
-      const [
-        metrics,
-        priorityProducts,
-        actionProducts,
-      ] =
-        await Promise.all([
-          getAdminDashboardMetrics(
-            states || []
-          ),
-          getAdminPriorityProducts(6),
-          getAdminValidationActionProducts(),
-        ])
+        const [
+          metrics,
+          priorityProducts,
+          actionProducts,
+        ] =
+          await Promise.all([
+            getAdminDashboardMetrics(
+              states || []
+            ),
+            getAdminPriorityProducts(6),
+            getAdminValidationActionProducts(),
+          ])
 
-      setLiveProducts(
-        (priorityProducts || []).map(
-          normalizeProduct
+        setLiveProducts(
+          (priorityProducts || []).map(
+            normalizeProduct
+          )
         )
-      )
 
-      setDashboardMetrics(
-        metrics as AdminDashboardMetrics
-      )
+        setDashboardMetrics(
+          metrics as AdminDashboardMetrics
+        )
 
-      setValidationActionProducts({
-        readyToAdvance:
-          (
-            actionProducts.readyToAdvance ||
-            []
-          ).map(normalizeProduct),
-        pendingDecision:
-          (
-            actionProducts.pendingDecision ||
-            []
-          ).map(normalizeProduct),
-        needsAdjustment:
-          (
-            actionProducts.needsAdjustment ||
-            []
-          ).map(normalizeProduct),
-      })
+        setValidationActionProducts({
+          readyToAdvance:
+            (
+              actionProducts.readyToAdvance ||
+              []
+            ).map(normalizeProduct),
+          pendingDecision:
+            (
+              actionProducts.pendingDecision ||
+              []
+            ).map(normalizeProduct),
+          needsAdjustment:
+            (
+              actionProducts.needsAdjustment ||
+              []
+            ).map(normalizeProduct),
+        })
 
-      setProductStates(
-        states || []
-      )
+        setProductStates(
+          states || []
+        )
 
-      console.log(
-        "ADMIN DASHBOARD METRICS:",
-        metrics
-      )
+        console.log(
+          "ADMIN DASHBOARD METRICS:",
+          metrics
+        )
 
-      console.log(
-        "PRODUCT STATES:",
-        states
-      )
+        console.log(
+          "PRODUCT STATES:",
+          states
+        )
+      } catch (error) {
+        console.error(
+          "LOAD ADMIN DATA ERROR:",
+          error
+        )
+      }
 
     }
 
@@ -1993,22 +2005,40 @@ export default function AdminPage() {
     let isMounted = true
 
     async function validateAccess() {
-      const result =
-        await validateAdminSession()
+      try {
+        const result =
+          await validateAdminSession()
 
-      if (!isMounted) {
-        return
-      }
+        if (!isMounted) {
+          return
+        }
 
-      if (!result.isAdmin) {
-        router.replace(
-          "/admin/login"
+        if (!result.isAdmin) {
+          router.replace(
+            "/admin/login"
+          )
+
+          return
+        }
+
+        setAdminAccessError("")
+        setIsAuthenticated(true)
+      } catch (error) {
+        console.error(
+          "VALIDATE ADMIN ACCESS ERROR:",
+          error
         )
 
-        return
-      }
+        if (!isMounted) {
+          return
+        }
 
-      setIsAuthenticated(true)
+        setAdminAccessError(
+          error instanceof Error
+            ? error.message
+            : "No se pudo validar el acceso admin."
+        )
+      }
     }
 
     validateAccess()
@@ -2642,10 +2672,41 @@ export default function AdminPage() {
 
       <div
         className="
+          flex
           min-h-screen
+          items-center
+          justify-center
           bg-black
+          px-6
+          text-white
         "
-      />
+      >
+        <div className="max-w-md rounded-2xl border border-white/10 bg-white/[0.04] p-6 text-center">
+          <p className="text-xs uppercase tracking-[0.28em] text-cyan-100/55">
+            Admin access
+          </p>
+          <h1 className="mt-4 text-2xl font-black">
+            Validando sesion
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-white/55">
+            {adminAccessError ||
+              "Conectando con Supabase para confirmar permisos."}
+          </p>
+          {adminAccessError ? (
+            <button
+              type="button"
+              onClick={() => {
+                router.replace(
+                  "/admin/login"
+                )
+              }}
+              className="mt-5 rounded-lg bg-cyan-300 px-4 py-2 text-sm font-black text-black"
+            >
+              Volver al login
+            </button>
+          ) : null}
+        </div>
+      </div>
 
     )
 
