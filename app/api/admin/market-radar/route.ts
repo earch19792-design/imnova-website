@@ -841,19 +841,12 @@ export async function GET(
 
     return NextResponse.json(
       {
-        success: true,
-        dashboard:
-          createEmptyMarketRadarDashboard(
-            null
-          ),
-        warning:
-          "market_radar_dashboard_degraded",
+        success: false,
+        error:
+          "market_radar_dashboard_failed",
       },
       {
-        headers: {
-          "Cache-Control":
-            "no-store",
-        },
+        status: 500,
       }
     )
   }
