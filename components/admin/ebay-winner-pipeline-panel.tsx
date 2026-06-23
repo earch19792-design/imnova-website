@@ -188,6 +188,7 @@ type PriceIntelligenceSnapshot = {
   category_name?: string | null
   evidence_url?: string | null
   evidence_notes?: string | null
+  raw_payload?: Record<string, unknown> | null
   created_at?: string | null
 }
 
@@ -249,6 +250,13 @@ type EbayDecisionAdvisor = {
     competitor_item_price?: number | string | null
     competitor_shipping_price?: number | string | null
     competitor_landed_price?: number | string | null
+    competitor_domestic_shipping_price?: number | string | null
+    competitor_domestic_landed_price?: number | string | null
+    competitor_international_shipping_price?: number | string | null
+    competitor_international_landed_price?: number | string | null
+    shipping_scope?: string | null
+    buyer_location_country?: string | null
+    domestic_free_shipping?: boolean | null
     shipping_strategy?: string | null
   }
   cost_breakdown?: CostBreakdown | null
@@ -324,7 +332,7 @@ const draftOptions = [
 ]
 
 function toNumber(
-  value: number | string | null | undefined
+  value: unknown
 ) {
   if (
     value === null ||
@@ -344,8 +352,31 @@ function toNumber(
     : null
 }
 
+function getObjectValue(
+  value: unknown
+): Record<string, unknown> | null {
+  return value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function getShippingScopeEvidence(
+  snapshot?: PriceIntelligenceSnapshot | null
+) {
+  const rawPayload =
+    getObjectValue(
+      snapshot?.raw_payload
+    )
+
+  return getObjectValue(
+    rawPayload?.shipping_scope_evidence
+  )
+}
+
 function formatNumber(
-  value: number | string | null | undefined,
+  value: unknown,
   suffix = ""
 ) {
   const numericValue =
@@ -364,7 +395,7 @@ function formatNumber(
 }
 
 function formatCurrency(
-  value: number | string | null | undefined
+  value: unknown
 ) {
   const numericValue =
     toNumber(value)
@@ -1530,6 +1561,11 @@ function CandidateDetailDrawer({
     suggestedTargetPrice !== null &&
     detail?.decisionAdvisor?.target_price?.is_target_price_competitive === true
 
+  const shippingScopeEvidence =
+    getShippingScopeEvidence(
+      detail?.priceIntelligence
+    )
+
   return (
     <div className="fixed inset-0 z-[70] flex justify-end bg-black/65 backdrop-blur-sm">
       <button
@@ -1700,21 +1736,45 @@ function CandidateDetailDrawer({
                       value={detail.decisionAdvisor.target_price?.market_reference_source}
                     />
                     <Field
+                      label="Shipping scope"
+                      value={detail.decisionAdvisor.target_price?.shipping_scope}
+                    />
+                    <Field
+                      label="Pais comprador"
+                      value={detail.decisionAdvisor.target_price?.buyer_location_country}
+                    />
+                    <Field
                       label="Item competidor"
                       value={formatCurrency(
                         detail.decisionAdvisor.target_price?.competitor_item_price
                       )}
                     />
                     <Field
-                      label="Envio competidor"
+                      label="Envio domestico USA"
                       value={formatCurrency(
-                        detail.decisionAdvisor.target_price?.competitor_shipping_price
+                        detail.decisionAdvisor.target_price?.competitor_domestic_shipping_price
                       )}
                     />
                     <Field
-                      label="Total comprador"
+                      label="Total comprador USA"
                       value={formatCurrency(
-                        detail.decisionAdvisor.target_price?.competitor_landed_price
+                        detail.decisionAdvisor.target_price?.competitor_domestic_landed_price
+                      )}
+                    />
+                    <Field
+                      label="Free shipping USA"
+                      value={detail.decisionAdvisor.target_price?.domestic_free_shipping}
+                    />
+                    <Field
+                      label="Envio internacional"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.competitor_international_shipping_price
+                      )}
+                    />
+                    <Field
+                      label="Total internacional"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.competitor_international_landed_price
                       )}
                     />
                     <Field
@@ -2475,6 +2535,52 @@ function CandidateDetailDrawer({
                       label="estimated_shipping"
                       value={formatCurrency(
                         detail.priceIntelligence.estimated_shipping_cost
+                      )}
+                    />
+                    <Field
+                      label="shipping_scope"
+                      value={
+                        typeof shippingScopeEvidence?.shipping_scope === "string"
+                          ? shippingScopeEvidence.shipping_scope
+                          : null
+                      }
+                    />
+                    <Field
+                      label="buyer_country"
+                      value={
+                        typeof shippingScopeEvidence?.buyer_location_country === "string"
+                          ? shippingScopeEvidence.buyer_location_country
+                          : null
+                      }
+                    />
+                    <Field
+                      label="competitor_item"
+                      value={formatCurrency(
+                        shippingScopeEvidence?.competitor_item_price
+                      )}
+                    />
+                    <Field
+                      label="domestic_shipping_us"
+                      value={formatCurrency(
+                        shippingScopeEvidence?.competitor_domestic_shipping_price
+                      )}
+                    />
+                    <Field
+                      label="domestic_total_us"
+                      value={formatCurrency(
+                        shippingScopeEvidence?.competitor_domestic_landed_price
+                      )}
+                    />
+                    <Field
+                      label="international_shipping"
+                      value={formatCurrency(
+                        shippingScopeEvidence?.competitor_international_shipping_price
+                      )}
+                    />
+                    <Field
+                      label="international_total"
+                      value={formatCurrency(
+                        shippingScopeEvidence?.competitor_international_landed_price
                       )}
                     />
                     <Field

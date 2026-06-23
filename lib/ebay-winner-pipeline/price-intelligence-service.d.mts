@@ -18,6 +18,11 @@ export type PriceIntelligenceProductMatchType =
   | "category_only"
   | "unknown"
 
+export type PriceIntelligenceShippingScope =
+  | "us_domestic"
+  | "international"
+  | "unknown"
+
 export type PriceIntelligenceSnapshotInput = {
   candidate_id?: string | null
   candidateId?: string | null
@@ -57,6 +62,24 @@ export type PriceIntelligenceSnapshotInput = {
   evidenceUrl?: string | null
   evidence_notes?: string | null
   evidenceNotes?: string | null
+  shipping_scope?: PriceIntelligenceShippingScope | string | null
+  shippingScope?: PriceIntelligenceShippingScope | string | null
+  buyer_location_country?: string | null
+  buyerLocationCountry?: string | null
+  competitor_item_price?: number | string | null
+  competitorItemPrice?: number | string | null
+  competitor_shipping_price?: number | string | null
+  competitorShippingPrice?: number | string | null
+  competitor_landed_price?: number | string | null
+  competitorLandedPrice?: number | string | null
+  competitor_domestic_shipping_price?: number | string | null
+  competitorDomesticShippingPrice?: number | string | null
+  competitor_domestic_landed_price?: number | string | null
+  competitorDomesticLandedPrice?: number | string | null
+  competitor_international_shipping_price?: number | string | null
+  competitorInternationalShippingPrice?: number | string | null
+  competitor_international_landed_price?: number | string | null
+  competitorInternationalLandedPrice?: number | string | null
 }
 
 export type PriceIntelligenceSnapshot = {

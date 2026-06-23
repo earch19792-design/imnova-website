@@ -2,8 +2,12 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import {
   buildDecisionIdempotencyKey,
+  calculateProfitScenario,
   processRadarCandidate,
 } from "../lib/ebay-winner-pipeline/core.mjs"
+import {
+  getEbayProductDecisionAdvisor,
+} from "../lib/ebay-winner-pipeline/decision-advisor.mjs"
 
 const validRadarProduct = {
   source_key: "lunaportex",
@@ -120,4 +124,218 @@ test("botón de WhatsApp duplicado produce la misma idempotency key", () => {
   })
 
   assert.equal(first, second)
+})
+
+test("Price Intelligence usa total domestico USA con free shipping como referencia", () => {
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      {
+        state:
+          "BLOCKED",
+        shipping_cost:
+          6.99,
+      },
+      {
+        estimated_sale_price:
+          28.99,
+        luna_cost:
+          10,
+        estimated_shipping_cost:
+          6.99,
+        fulfillment_cost:
+          1.5,
+        packaging_cost:
+          0.75,
+        net_profit:
+          5,
+        net_margin_percent:
+          17,
+        assumptions: {
+          ebayFeePercent:
+            13.25,
+          paymentFeePercent:
+            0,
+          advertisingPercent:
+            0,
+          returnReservePercent:
+            3,
+          minimumNetMarginPercent:
+            10,
+        },
+      },
+      {
+        raw_payload: {
+          shipping_scope_evidence: {
+            shipping_scope:
+              "us_domestic",
+            buyer_location_country:
+              "US",
+            competitor_item_price:
+              28.99,
+            competitor_domestic_shipping_price:
+              0,
+            competitor_domestic_landed_price:
+              28.99,
+            competitor_international_shipping_price:
+              34.86,
+            competitor_international_landed_price:
+              63.85,
+            landed_price_source:
+              "manual_observed",
+          },
+        },
+      },
+      null,
+      null
+    )
+
+  assert.equal(
+    advisor.target_price.market_reference_price,
+    28.99
+  )
+  assert.equal(
+    advisor.target_price.market_reference_source,
+    "competitor_domestic_landed_price"
+  )
+  assert.equal(
+    advisor.target_price.domestic_free_shipping,
+    true
+  )
+})
+
+test("Price Intelligence no usa total internacional como referencia principal USA", () => {
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      {
+        state:
+          "BLOCKED",
+        shipping_cost:
+          6.99,
+      },
+      {
+        estimated_sale_price:
+          28.99,
+        luna_cost:
+          10,
+        estimated_shipping_cost:
+          6.99,
+        fulfillment_cost:
+          1.5,
+        packaging_cost:
+          0.75,
+        net_profit:
+          5,
+        net_margin_percent:
+          17,
+        assumptions: {
+          ebayFeePercent:
+            13.25,
+          paymentFeePercent:
+            0,
+          advertisingPercent:
+            0,
+          returnReservePercent:
+            3,
+          minimumNetMarginPercent:
+            10,
+        },
+      },
+      {
+        recommended_sale_price:
+          null,
+        raw_payload: {
+          shipping_scope_evidence: {
+            shipping_scope:
+              "international",
+            buyer_location_country:
+              "NI",
+            competitor_item_price:
+              28.99,
+            competitor_international_shipping_price:
+              34.86,
+            competitor_international_landed_price:
+              63.85,
+            landed_price_source:
+              "manual_observed",
+          },
+        },
+      },
+      null,
+      null
+    )
+
+  assert.equal(
+    advisor.target_price.market_reference_price,
+    null
+  )
+  assert.notEqual(
+    advisor.target_price.market_reference_price,
+    63.85
+  )
+  assert.ok(
+    advisor.market_price_reasons.some(reason =>
+      reason.includes(
+        "No usar como referencia principal"
+      )
+    )
+  )
+})
+
+test("IMNOVA free shipping mantiene estimated_shipping_cost como costo interno", () => {
+  const scenario =
+    calculateProfitScenario(
+      {
+        cost:
+          10,
+        estimated_sale_price:
+          28.99,
+        buyer_shipping_charge:
+          0,
+        shipping_cost:
+          6.99,
+        fulfillment_cost:
+          1.5,
+        packaging_cost:
+          0.75,
+      },
+      {
+        defaultShippingCost:
+          6.99,
+        ebayFeePercent:
+          13.25,
+        paymentFeePercent:
+          0,
+        advertisingPercent:
+          0,
+        returnReservePercent:
+          3,
+      }
+    )
+
+  assert.equal(
+    scenario.total_revenue,
+    28.99
+  )
+  assert.equal(
+    scenario.estimated_shipping_cost,
+    6.99
+  )
+  assert.equal(
+    scenario.net_profit,
+    Number(
+      (
+        28.99 -
+        (
+          10 +
+          1.5 +
+          0.75 +
+          6.99 +
+          3.84 +
+          0 +
+          0 +
+          0.87
+        )
+      ).toFixed(2)
+    )
+  )
 })

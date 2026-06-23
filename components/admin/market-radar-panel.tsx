@@ -102,9 +102,15 @@ type PriceIntelligenceFormState = {
   source_type: string
   price_capture_type: "sold" | "active"
   pasted_price_text: string
+  shipping_scope: "us_domestic" | "international" | "unknown"
+  buyer_location_country: string
   competitor_item_price: string
   competitor_shipping_price: string
   competitor_landed_price: string
+  competitor_domestic_shipping_price: string
+  competitor_domestic_landed_price: string
+  competitor_international_shipping_price: string
+  competitor_international_landed_price: string
   search_query: string
   product_match_type: string
   sold_avg_price: string
@@ -220,6 +226,21 @@ const priceCaptureTypeLabels: Record<string, string> = {
     "Precios vendidos",
   active:
     "Precios activos",
+}
+
+const shippingScopeOptions = [
+  "us_domestic",
+  "international",
+  "unknown",
+]
+
+const shippingScopeLabels: Record<string, string> = {
+  us_domestic:
+    "Envio domestico EE. UU.",
+  international:
+    "Envio internacional observado",
+  unknown:
+    "No estoy seguro",
 }
 
 const productMatchOptions = [
@@ -949,11 +970,23 @@ function createPriceIntelligenceForm(
       "sold",
     pasted_price_text:
       "",
+    shipping_scope:
+      "unknown",
+    buyer_location_country:
+      "",
     competitor_item_price:
       "",
     competitor_shipping_price:
       "",
     competitor_landed_price:
+      "",
+    competitor_domestic_shipping_price:
+      "",
+    competitor_domestic_landed_price:
+      "",
+    competitor_international_shipping_price:
+      "",
+    competitor_international_landed_price:
       "",
     search_query:
       product.title,
@@ -1053,19 +1086,70 @@ function buildPriceIntelligencePayload(
       form.competitor_shipping_price
     )
 
-  const competitorLandedPrice =
+  const domesticShippingPrice =
     getPriceFormNumber(
-      form.competitor_landed_price
+      form.competitor_domestic_shipping_price
     ) ??
     (
-      competitorItemPrice !== null ||
-      competitorShippingPrice !== null
+      form.shipping_scope === "us_domestic"
+        ? competitorShippingPrice
+        : null
+    )
+
+  const internationalShippingPrice =
+    getPriceFormNumber(
+      form.competitor_international_shipping_price
+    ) ??
+    (
+      form.shipping_scope === "international"
+        ? competitorShippingPrice
+        : null
+    )
+
+  const domesticLandedPrice =
+    getPriceFormNumber(
+      form.competitor_domestic_landed_price
+    ) ??
+    (
+      (
+        form.shipping_scope === "us_domestic" ||
+        getPriceFormNumber(
+          form.competitor_domestic_shipping_price
+        ) !== null
+      ) &&
+      (
+        competitorItemPrice !== null ||
+        domesticShippingPrice !== null
+      )
         ? roundPriceValue(
             (competitorItemPrice || 0) +
-            (competitorShippingPrice || 0)
+            (domesticShippingPrice || 0)
           )
         : null
     )
+
+  const internationalLandedPrice =
+    getPriceFormNumber(
+      form.competitor_international_landed_price
+    ) ??
+    (
+      competitorItemPrice !== null ||
+      internationalShippingPrice !== null
+        ? roundPriceValue(
+            (competitorItemPrice || 0) +
+            (internationalShippingPrice || 0)
+          )
+        : null
+    )
+
+  const competitorLandedPrice =
+    form.shipping_scope === "us_domestic"
+      ? domesticLandedPrice
+      : form.shipping_scope === "international"
+        ? internationalLandedPrice
+        : getPriceFormNumber(
+            form.competitor_landed_price
+          )
 
   return {
     market_radar_product_id:
@@ -1158,6 +1242,12 @@ function buildPriceIntelligencePayload(
       getNullableFormValue(
         form.evidence_notes
       ),
+    shipping_scope:
+      form.shipping_scope,
+    buyer_location_country:
+      getNullableFormValue(
+        form.buyer_location_country
+      ),
     competitor_item_price:
       getNullableFormValue(
         form.competitor_item_price
@@ -1172,15 +1262,41 @@ function buildPriceIntelligencePayload(
         : formatPriceFormValue(
             competitorLandedPrice
           ),
+    competitor_domestic_shipping_price:
+      domesticShippingPrice === null
+        ? null
+        : formatPriceFormValue(
+            domesticShippingPrice
+          ),
+    competitor_domestic_landed_price:
+      domesticLandedPrice === null
+        ? null
+        : formatPriceFormValue(
+            domesticLandedPrice
+          ),
+    competitor_international_shipping_price:
+      internationalShippingPrice === null
+        ? null
+        : formatPriceFormValue(
+            internationalShippingPrice
+          ),
+    competitor_international_landed_price:
+      internationalLandedPrice === null
+        ? null
+        : formatPriceFormValue(
+            internationalLandedPrice
+          ),
     shipping_strategy:
       getShippingStrategy(
         competitorItemPrice,
-        competitorShippingPrice
+        domesticShippingPrice
       ),
     landed_price_source:
       competitorItemPrice !== null ||
-      competitorShippingPrice !== null ||
-      competitorLandedPrice !== null
+      domesticShippingPrice !== null ||
+      domesticLandedPrice !== null ||
+      internationalShippingPrice !== null ||
+      internationalLandedPrice !== null
         ? "manual_observed"
         : null,
   }
@@ -1459,24 +1575,72 @@ function PriceIntelligenceModal({
       form.competitor_shipping_price
     )
 
-  const competitorLandedPrice =
-    competitorItemPrice !== null ||
-    competitorShippingPrice !== null
+  const competitorDomesticShippingPrice =
+    getPriceFormNumber(
+      form.competitor_domestic_shipping_price
+    ) ??
+    (
+      form.shipping_scope === "us_domestic"
+        ? competitorShippingPrice
+        : null
+    )
+
+  const competitorInternationalShippingPrice =
+    getPriceFormNumber(
+      form.competitor_international_shipping_price
+    ) ??
+    (
+      form.shipping_scope === "international"
+        ? competitorShippingPrice
+        : null
+    )
+
+  const competitorDomesticLandedPrice =
+    (
+      form.shipping_scope === "us_domestic" ||
+      getPriceFormNumber(
+        form.competitor_domestic_shipping_price
+      ) !== null
+    ) &&
+    (
+      competitorItemPrice !== null ||
+      competitorDomesticShippingPrice !== null
+    )
       ? roundPriceValue(
           (competitorItemPrice || 0) +
-          (competitorShippingPrice || 0)
+          (competitorDomesticShippingPrice || 0)
         )
       : getPriceFormNumber(
-          form.competitor_landed_price
+          form.competitor_domestic_landed_price
         )
 
+  const competitorInternationalLandedPrice =
+    competitorItemPrice !== null ||
+    competitorInternationalShippingPrice !== null
+      ? roundPriceValue(
+          (competitorItemPrice || 0) +
+          (competitorInternationalShippingPrice || 0)
+        )
+      : getPriceFormNumber(
+          form.competitor_international_landed_price
+        )
+
+  const competitorLandedPrice =
+    form.shipping_scope === "us_domestic"
+      ? competitorDomesticLandedPrice
+      : form.shipping_scope === "international"
+        ? competitorInternationalLandedPrice
+        : getPriceFormNumber(
+            form.competitor_landed_price
+          )
+
   const competitorShippingStrategy =
-    competitorShippingPrice === null
+    competitorDomesticShippingPrice === null
       ? "unknown"
-      : competitorShippingPrice === 0
+      : competitorDomesticShippingPrice === 0
         ? "free_shipping"
         : competitorItemPrice !== null &&
-          competitorShippingPrice >= competitorItemPrice * 0.75
+          competitorDomesticShippingPrice >= competitorItemPrice * 0.75
           ? "high_shipping"
           : "paid_shipping"
 
@@ -1585,17 +1749,20 @@ function PriceIntelligenceModal({
   }
 
   function applyLandedPriceCapture() {
-    if (competitorLandedPrice === null) {
+    if (
+      form.shipping_scope !== "us_domestic" ||
+      competitorDomesticLandedPrice === null
+    ) {
       return
     }
 
     const landedPrice =
       formatPriceFormValue(
-        competitorLandedPrice
+        competitorDomesticLandedPrice
       )
 
     onChange(
-      "competitor_landed_price",
+      "competitor_domestic_landed_price",
       landedPrice
     )
     onChange(
@@ -1899,13 +2066,27 @@ function PriceIntelligenceModal({
                   )
                 }
               />
+              <PriceSelect
+                label="Este envio observado es dentro de EE. UU. o internacional?"
+                techName="shipping_scope"
+                value={form.shipping_scope}
+                options={shippingScopeOptions}
+                optionLabels={shippingScopeLabels}
+                helpText="Por defecto el analisis competitivo es mercado USA domestico. El envio internacional observado queda solo como observacion."
+                onChange={value =>
+                  onChange(
+                    "shipping_scope",
+                    value as PriceIntelligenceFormState["shipping_scope"]
+                  )
+                }
+              />
               <PriceInput
                 label="Shipping estimado"
                 techName="estimated_shipping_cost"
                 type="number"
                 placeholder="6.99"
                 value={form.estimated_shipping_cost}
-                helpText="Costo de envio estimado o promedio observado."
+                helpText="Costo interno estimado de IMNOVA. No copies aqui el shipping cobrado por un competidor."
                 onChange={value =>
                   onChange(
                     "estimated_shipping_cost",
@@ -1919,16 +2100,19 @@ function PriceIntelligenceModal({
               <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                 <div>
                   <p className="text-sm font-black text-white">
-                    Precio total comprador
+                    Mercado USA
                   </p>
                   <p className="mt-1 text-xs leading-5 text-white/45">
-                    Ejemplo: el competidor muestra $28.99, pero si cobra $34.86 de envio, el comprador paga $63.85. IMNOVA debe competir contra el total.
+                    Compara por defecto contra el total que paga un comprador dentro de EE. UU. Si el vendedor ofrece free shipping domestico, el envio USA es $0.00.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={applyLandedPriceCapture}
-                  disabled={competitorLandedPrice === null}
+                  disabled={
+                    form.shipping_scope !== "us_domestic" ||
+                    competitorDomesticLandedPrice === null
+                  }
                   className="
                     inline-flex
                     items-center
@@ -1948,7 +2132,7 @@ function PriceIntelligenceModal({
                     disabled:opacity-50
                   "
                 >
-                  Usar total comprador
+                  Usar total USA
                 </button>
               </div>
 
@@ -1968,42 +2152,104 @@ function PriceIntelligenceModal({
                   }
                 />
                 <PriceInput
-                  label="Envio cobrado al comprador"
-                  techName="competitor_shipping_price"
+                  label="Envio domestico USA"
+                  techName="competitor_domestic_shipping_price"
                   type="number"
-                  placeholder="34.86"
-                  value={form.competitor_shipping_price}
-                  helpText="Este envio es lo que cobra el competidor, no el costo de envio de IMNOVA."
+                  placeholder="0.00"
+                  value={form.competitor_domestic_shipping_price}
+                  helpText="Shipping cobrado por el competidor a compradores en EE. UU.; puede ser 0 si ofrece free shipping."
                   onChange={value =>
                     onChange(
-                      "competitor_shipping_price",
+                      "competitor_domestic_shipping_price",
                       value
                     )
                   }
                 />
                 <PriceInput
-                  label="Total comprador observado sin desglose"
-                  techName="competitor_landed_price"
+                  label="Total comprador USA"
+                  techName="competitor_domestic_landed_price"
                   type="number"
-                  placeholder="63.85"
-                  value={form.competitor_landed_price}
-                  helpText="Usa este campo solo si viste el total comprador, pero no tienes item y envio separados."
+                  placeholder="28.99"
+                  value={form.competitor_domestic_landed_price}
+                  helpText="Precio articulo + envio domestico USA. Este total puede usarse como referencia de mercado USA."
                   onChange={value =>
                     onChange(
-                      "competitor_landed_price",
+                      "competitor_domestic_landed_price",
                       value
                     )
                   }
                 />
               </div>
 
-              {competitorLandedPrice !== null ? (
+              {competitorDomesticLandedPrice !== null ? (
                 <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.04] p-3 text-xs leading-5 text-white/60">
-                  Total comprador detectado: <strong className="text-white">{formatCurrency(competitorLandedPrice)}</strong>
+                  Total comprador USA: <strong className="text-white">{formatCurrency(competitorDomesticLandedPrice)}</strong>
                   {" "} Estrategia shipping: <strong className="text-white">{competitorShippingStrategy}</strong>.
                   {competitorShippingStrategy === "high_shipping"
-                    ? " Competidor usa envio alto; valida ventas reales antes de copiar esa estrategia."
+                    ? " Competidor usa envio domestico alto; valida ventas reales antes de copiar esa estrategia."
                     : null}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="mt-4 rounded-lg border border-amber-300/20 bg-amber-300/[0.06] p-4">
+              <p className="text-sm font-black text-white">
+                Observacion internacional
+              </p>
+              <p className="mt-1 text-xs leading-5 text-amber-50/65">
+                No usar como referencia principal si vendes dentro de EE. UU.
+              </p>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <PriceInput
+                  label="Envio internacional observado"
+                  techName="competitor_international_shipping_price"
+                  type="number"
+                  placeholder="34.86"
+                  value={form.competitor_international_shipping_price}
+                  helpText="Shipping internacional cobrado al comprador observado; no es costo interno de IMNOVA."
+                  onChange={value =>
+                    onChange(
+                      "competitor_international_shipping_price",
+                      value
+                    )
+                  }
+                />
+                <PriceInput
+                  label="Total internacional observado"
+                  techName="competitor_international_landed_price"
+                  type="number"
+                  placeholder="63.85"
+                  value={form.competitor_international_landed_price}
+                  helpText="Solo se usa si cambias explicitamente el analisis a mercado internacional."
+                  onChange={value =>
+                    onChange(
+                      "competitor_international_landed_price",
+                      value
+                    )
+                  }
+                />
+                <PriceInput
+                  label="Pais comprador"
+                  techName="buyer_location_country"
+                  placeholder="US"
+                  value={form.buyer_location_country}
+                  helpText="Pais desde donde se observo el shipping, si lo sabes."
+                  onChange={value =>
+                    onChange(
+                      "buyer_location_country",
+                      value
+                    )
+                  }
+                />
+              </div>
+              {form.shipping_scope === "international" ? (
+                <div className="mt-4 rounded-lg border border-amber-200/20 bg-black/20 p-3 text-xs leading-5 text-amber-50/75">
+                  Este precio incluye envio internacional. Para competir dentro de EE. UU., valida el precio domestico/free shipping. No se copiara automaticamente a recommended_sale_price.
+                </div>
+              ) : null}
+              {competitorInternationalLandedPrice !== null ? (
+                <div className="mt-4 text-xs leading-5 text-amber-50/65">
+                  Total internacional observado: <strong className="text-white">{formatCurrency(competitorInternationalLandedPrice)}</strong>
                 </div>
               ) : null}
             </div>
