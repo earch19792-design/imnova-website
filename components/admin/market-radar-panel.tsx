@@ -162,60 +162,6 @@ const priceSourceLabels: Record<string, string> = {
     "Otro",
 }
 
-type PriceIntelligenceProvider =
-  | "manual_paste"
-  | "aiprice_export"
-  | "terapeak_export"
-  | "zik_export"
-  | "ebay_api"
-
-const priceIntelligenceProviders: Array<{
-  key: PriceIntelligenceProvider
-  label: string
-  status: string
-}> = [
-  {
-    key:
-      "terapeak_export",
-    label:
-      "Terapeak / eBay Research",
-    status:
-      "Proxima fuente: Terapeak export",
-  },
-  {
-    key:
-      "ebay_api",
-    label:
-      "eBay API",
-    status:
-      "Proxima fuente: eBay API",
-  },
-  {
-    key:
-      "aiprice_export",
-    label:
-      "Aiprice export",
-    status:
-      "Fuente auxiliar: Aiprice export",
-  },
-  {
-    key:
-      "zik_export",
-    label:
-      "ZIK export",
-    status:
-      "Fuente auxiliar: ZIK export",
-  },
-  {
-    key:
-      "manual_paste",
-    label:
-      "Captura rapida",
-    status:
-      "Respaldo temporal",
-  },
-]
-
 const priceCaptureTypeOptions = [
   "sold",
   "active",
@@ -276,12 +222,6 @@ type ParsedPriceIntelligenceText = {
 type SuggestedPriceConfidence = {
   source_confidence: string
   confidence_score: number
-}
-
-type PriceAnalysisResult = {
-  provider: PriceIntelligenceProvider
-  status: "not_configured" | "ready"
-  metrics: ParsedPriceIntelligenceText | null
 }
 
 const sourceConfidenceOptions = [
@@ -514,21 +454,6 @@ function parsePriceIntelligenceText(
   return calculatePriceMetrics(
     normalizeComparablePrices(text)
   )
-}
-
-function runPriceAnalysis(
-  _product: MarketRadarProductRow,
-  provider: PriceIntelligenceProvider
-): PriceAnalysisResult {
-  return {
-    provider,
-    status:
-      provider === "manual_paste"
-        ? "ready"
-        : "not_configured",
-    metrics:
-      null,
-  }
 }
 
 function normalizePriceSourceForPayload(
@@ -971,7 +896,7 @@ function createPriceIntelligenceForm(
     pasted_price_text:
       "",
     shipping_scope:
-      "unknown",
+      "us_domestic",
     buyer_location_country:
       "",
     competitor_item_price:
@@ -1048,6 +973,91 @@ function getPriceFormNumber(
     number >= 0
     ? number
     : null
+}
+
+function getRequiredPriceNumberError(
+  value: string,
+  label: string
+) {
+  if (!value.trim()) {
+    return `${label} es obligatorio.`
+  }
+
+  return getPriceFormNumber(value) === null
+    ? `${label} debe ser 0 o mayor.`
+    : null
+}
+
+function getPriceIntelligenceFieldErrors(
+  form: PriceIntelligenceFormState
+) {
+  const errors: Partial<
+    Record<keyof PriceIntelligenceFormState, string>
+  > = {}
+
+  const competitorItemPriceError =
+    getRequiredPriceNumberError(
+      form.competitor_item_price,
+      "Precio del competidor"
+    )
+
+  if (competitorItemPriceError) {
+    errors.competitor_item_price =
+      competitorItemPriceError
+  }
+
+  const competitorShippingError =
+    getRequiredPriceNumberError(
+      form.competitor_domestic_shipping_price,
+      "Envio USA"
+    )
+
+  if (competitorShippingError) {
+    errors.competitor_domestic_shipping_price =
+      competitorShippingError
+  }
+
+  const recommendedSalePriceError =
+    getRequiredPriceNumberError(
+      form.recommended_sale_price,
+      "Precio recomendado"
+    )
+
+  if (recommendedSalePriceError) {
+    errors.recommended_sale_price =
+      recommendedSalePriceError
+  }
+
+  const confidenceScoreError =
+    getRequiredPriceNumberError(
+      form.confidence_score,
+      "Puntaje de confianza"
+    )
+
+  if (confidenceScoreError) {
+    errors.confidence_score =
+      confidenceScoreError
+  } else {
+    const confidenceScore =
+      getPriceFormNumber(
+        form.confidence_score
+      )
+
+    if (
+      confidenceScore !== null &&
+      confidenceScore > 100
+    ) {
+      errors.confidence_score =
+        "Puntaje de confianza debe estar entre 0 y 100."
+    }
+  }
+
+  if (!form.evidence_notes.trim()) {
+    errors.evidence_notes =
+      "Notas de evidencia es obligatorio."
+  }
+
+  return errors
 }
 
 function getShippingStrategy(
@@ -1370,7 +1380,8 @@ function PriceInput({
   type = "text",
   placeholder,
   helpText,
-  techName,
+  error,
+  required = false,
 }: {
   label: string
   value: string
@@ -1379,17 +1390,26 @@ function PriceInput({
   placeholder?: string
   helpText?: string
   techName?: string
+  error?: string
+  required?: boolean
 }) {
   return (
     <label className="block min-w-0">
-      <span className="block break-words text-xs font-bold leading-5 text-white/80">
+      <span
+        className={`
+          block
+          break-words
+          text-xs
+          font-bold
+          leading-5
+          ${error ? "text-red-200" : "text-white/80"}
+        `}
+      >
         {label}
+        {required ? (
+          <span className="text-red-300"> *</span>
+        ) : null}
       </span>
-      {techName ? (
-        <span className="mt-0.5 block text-[10px] leading-4 text-white/30">
-          {techName}
-        </span>
-      ) : null}
       <input
         type={type}
         value={value}
@@ -1397,13 +1417,12 @@ function PriceInput({
         onChange={event =>
           onChange(event.target.value)
         }
-        className="
+        className={`
           mt-2
           w-full
           rounded-lg
           border
-          border-white/10
-          bg-black/35
+          ${error ? "border-red-400/60 bg-red-950/20" : "border-white/10 bg-black/35"}
           px-3
           py-2
           text-sm
@@ -1411,9 +1430,14 @@ function PriceInput({
           outline-none
           transition
           placeholder:text-white/25
-          focus:border-cyan-300/30
-        "
+          ${error ? "focus:border-red-300" : "focus:border-cyan-300/30"}
+        `}
       />
+      {error ? (
+        <span className="mt-2 block text-xs font-semibold leading-5 text-red-300">
+          {error}
+        </span>
+      ) : null}
       {helpText ? (
         <span className="mt-2 block text-xs leading-5 text-white/40">
           {helpText}
@@ -1430,7 +1454,8 @@ function PriceSelect({
   onChange,
   optionLabels,
   helpText,
-  techName,
+  error,
+  required = false,
 }: {
   label: string
   value: string
@@ -1439,37 +1464,45 @@ function PriceSelect({
   optionLabels?: Record<string, string>
   helpText?: string
   techName?: string
+  error?: string
+  required?: boolean
 }) {
   return (
     <label className="block min-w-0">
-      <span className="block break-words text-xs font-bold leading-5 text-white/80">
+      <span
+        className={`
+          block
+          break-words
+          text-xs
+          font-bold
+          leading-5
+          ${error ? "text-red-200" : "text-white/80"}
+        `}
+      >
         {label}
+        {required ? (
+          <span className="text-red-300"> *</span>
+        ) : null}
       </span>
-      {techName ? (
-        <span className="mt-0.5 block text-[10px] leading-4 text-white/30">
-          {techName}
-        </span>
-      ) : null}
       <select
         value={value}
         onChange={event =>
           onChange(event.target.value)
         }
-        className="
+        className={`
           mt-2
           w-full
           rounded-lg
           border
-          border-white/10
-          bg-black/35
+          ${error ? "border-red-400/60 bg-red-950/20" : "border-white/10 bg-black/35"}
           px-3
           py-2
           text-sm
           text-white
           outline-none
           transition
-          focus:border-cyan-300/30
-        "
+          ${error ? "focus:border-red-300" : "focus:border-cyan-300/30"}
+        `}
       >
         {options.map(option => (
           <option
@@ -1480,6 +1513,11 @@ function PriceSelect({
           </option>
         ))}
       </select>
+      {error ? (
+        <span className="mt-2 block text-xs font-semibold leading-5 text-red-300">
+          {error}
+        </span>
+      ) : null}
       {helpText ? (
         <span className="mt-2 block text-xs leading-5 text-white/40">
           {helpText}
@@ -1538,6 +1576,21 @@ function PriceIntelligenceModal({
     showAdvancedFields,
     setShowAdvancedFields,
   ] = useState(false)
+
+  const [
+    hasSubmitted,
+    setHasSubmitted,
+  ] = useState(false)
+
+  const fieldErrors =
+    hasSubmitted
+      ? getPriceIntelligenceFieldErrors(
+          form
+        )
+      : {}
+
+  const missingFieldCount =
+    Object.keys(fieldErrors).length
 
   const quickCaptureAnalysis =
     parsePriceIntelligenceText(
@@ -1643,12 +1696,6 @@ function PriceIntelligenceModal({
           competitorDomesticShippingPrice >= competitorItemPrice * 0.75
           ? "high_shipping"
           : "paid_shipping"
-
-  const automationStatus =
-    runPriceAnalysis(
-      product,
-      "ebay_api"
-    )
 
   const ebaySearchQuery =
     [
@@ -1795,6 +1842,21 @@ function PriceIntelligenceModal({
     }
   }
 
+  function handleSubmit() {
+    setHasSubmitted(true)
+
+    const errors =
+      getPriceIntelligenceFieldErrors(
+        form
+      )
+
+    if (Object.keys(errors).length > 0) {
+      return
+    }
+
+    onSubmit()
+  }
+
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center overflow-hidden bg-black/80 p-4 backdrop-blur-sm">
       <button
@@ -1858,73 +1920,16 @@ function PriceIntelligenceModal({
 
         <div className="min-h-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto px-5 py-5 md:px-6">
           <section className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.06] p-4">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-100/55">
-                  Automation-first
-                </p>
-                <p className="mt-2 inline-flex rounded-md border border-amber-300/25 bg-amber-300/[0.10] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-100">
-                  Fuente automatica aun no configurada
-                </p>
-                <h4 className="mt-2 text-lg font-black text-white">
-                  Fuente recomendada: Terapeak / eBay Research
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <h4 className="text-base font-black text-white">
+                  Paso 1: busca un comparable en eBay
                 </h4>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-cyan-50/75">
-                  Terapeak/eBay Research permite validar precios vendidos, competencia y senales del marketplace desde el ecosistema de eBay. Hasta conectar la API, puedes pegar datos revisados manualmente.
-                </p>
-                <p className="mt-2 max-w-3xl text-xs leading-5 text-cyan-50/55">
-                  Cuando conectemos eBay API, esta capa se llenara automaticamente desde datos oficiales. Aiprice, ZIK y SerpAPI quedan como fuentes auxiliares o puente temporal; manual paste queda solo como fallback.
-                </p>
-                <p className="mt-2 text-xs text-white/40">
-                  Estado actual: {automationStatus.status === "not_configured" ? "provider pendiente" : "provider listo"}.
+                <p className="mt-2 text-sm leading-6 text-cyan-50/70">
+                  Usa ventas reales si puedes. Despues llena los datos minimos marcados con *.
                 </p>
               </div>
-              <button
-                type="button"
-                disabled={automationStatus.status === "not_configured"}
-                title="Provider automatico pendiente de configuracion"
-                className="
-                  inline-flex
-                  shrink-0
-                  items-center
-                  justify-center
-                  rounded-lg
-                  border
-                  border-white/10
-                  bg-white/[0.04]
-                  px-4
-                  py-3
-                  text-sm
-                  font-black
-                  text-white
-                  transition
-                  hover:border-cyan-300/25
-                  hover:text-cyan-100
-                  disabled:cursor-not-allowed
-                  disabled:opacity-50
-                "
-              >
-                Analizar precio de mercado
-              </button>
-            </div>
-
-            <div className="mt-4 grid gap-2 md:grid-cols-5">
-              {priceIntelligenceProviders.map(provider => (
-                <div
-                  key={provider.key}
-                  className="rounded-md border border-white/10 bg-black/20 p-3"
-                >
-                  <p className="text-xs font-bold text-white">
-                    {provider.label}
-                  </p>
-                  <p className="mt-1 text-[11px] leading-4 text-white/40">
-                    {provider.status}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-3">
+              <div className="flex flex-wrap gap-3">
               <button
                 type="button"
                 onClick={openEbaySearch}
@@ -1964,6 +1969,7 @@ function PriceIntelligenceModal({
               >
                 Copiar busqueda
               </button>
+              </div>
             </div>
           </section>
 
@@ -2016,13 +2022,15 @@ function PriceIntelligenceModal({
             </div>
           </section>
 
-          <PriceFormGroup title="Pegar datos de Terapeak/eBay Research">
-            <p className="mb-4 text-sm leading-6 text-white/50">
-              Fallback temporal: pega datos desde Terapeak, eBay Research, Aiprice o ZIK. IMNOVA calculara minimo, maximo, promedio, mediana y precio recomendado.
+          <PriceFormGroup title="Datos minimos para analizar">
+            <p className="mb-4 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] p-3 text-sm leading-6 text-cyan-50/75">
+              Llena precio del competidor, envio USA, precio recomendado, confianza y notas. Si algo falta, el campo queda marcado en rojo.
             </p>
-            <p className="mb-4 rounded-lg border border-amber-300/20 bg-amber-300/[0.08] p-3 text-xs leading-5 text-amber-100">
-              No compares solo el precio del articulo. En eBay debes comparar el total que paga el comprador: precio + envio.
-            </p>
+            {missingFieldCount > 0 ? (
+              <p className="mb-4 rounded-lg border border-red-400/35 bg-red-950/30 p-3 text-sm font-semibold leading-6 text-red-200">
+                Faltan {missingFieldCount} dato{missingFieldCount === 1 ? "" : "s"} obligatorio{missingFieldCount === 1 ? "" : "s"} antes de guardar.
+              </p>
+            ) : null}
             <div className="grid gap-4 md:grid-cols-2">
               <PriceSelect
                 label="Fuente del precio"
@@ -2030,7 +2038,7 @@ function PriceIntelligenceModal({
                 value={form.source_type}
                 options={priceSourceOptions}
                 optionLabels={priceSourceLabels}
-                helpText="Terapeak/eBay Research es la fuente recomendada. eBay Research se guarda por ahora como Terapeak; SerpAPI se guarda como Other hasta una migracion futura."
+                helpText="Usa Terapeak/eBay Research si tienes ventas reales."
                 onChange={value =>
                   onChange(
                     "source_type",
@@ -2044,7 +2052,7 @@ function PriceIntelligenceModal({
                 value={form.price_capture_type}
                 options={priceCaptureTypeOptions}
                 optionLabels={priceCaptureTypeLabels}
-                helpText="Usa vendidos para precio recomendado por mediana; activos para promedio."
+                helpText="Vendidos es mejor que listados activos."
                 onChange={value =>
                   onChange(
                     "price_capture_type",
@@ -2058,7 +2066,7 @@ function PriceIntelligenceModal({
                 value={form.product_match_type}
                 options={productMatchOptions}
                 optionLabels={productMatchLabels}
-                helpText="Mientras mas parecido sea, mas confiable sera el dato."
+                helpText="Mientras mas parecido sea, mas confiable es el dato."
                 onChange={value =>
                   onChange(
                     "product_match_type",
@@ -2072,7 +2080,7 @@ function PriceIntelligenceModal({
                 value={form.shipping_scope}
                 options={shippingScopeOptions}
                 optionLabels={shippingScopeLabels}
-                helpText="Por defecto el analisis competitivo es mercado USA domestico. El envio internacional observado queda solo como observacion."
+                helpText="Para eBay usa mercado USA domestico."
                 onChange={value =>
                   onChange(
                     "shipping_scope",
@@ -2086,7 +2094,7 @@ function PriceIntelligenceModal({
                 type="number"
                 placeholder="6.99"
                 value={form.estimated_shipping_cost}
-                helpText="Costo interno estimado de IMNOVA. No copies aqui el shipping cobrado por un competidor."
+                helpText="Costo interno estimado de IMNOVA, si lo sabes."
                 onChange={value =>
                   onChange(
                     "estimated_shipping_cost",
@@ -2138,12 +2146,14 @@ function PriceIntelligenceModal({
 
               <div className="mt-4 grid gap-4 md:grid-cols-3">
                 <PriceInput
-                  label="Precio articulo competidor"
+                  label="Precio del competidor"
                   techName="competitor_item_price"
                   type="number"
                   placeholder="28.99"
                   value={form.competitor_item_price}
-                  helpText="Precio visible del item, sin envio."
+                  required
+                  error={fieldErrors.competitor_item_price}
+                  helpText="Precio visible del articulo, sin envio."
                   onChange={value =>
                     onChange(
                       "competitor_item_price",
@@ -2152,12 +2162,14 @@ function PriceIntelligenceModal({
                   }
                 />
                 <PriceInput
-                  label="Envio domestico USA"
+                  label="Envio USA"
                   techName="competitor_domestic_shipping_price"
                   type="number"
                   placeholder="0.00"
                   value={form.competitor_domestic_shipping_price}
-                  helpText="Shipping cobrado por el competidor a compradores en EE. UU.; puede ser 0 si ofrece free shipping."
+                  required
+                  error={fieldErrors.competitor_domestic_shipping_price}
+                  helpText="Pon 0 si el competidor ofrece free shipping."
                   onChange={value =>
                     onChange(
                       "competitor_domestic_shipping_price",
@@ -2171,7 +2183,7 @@ function PriceIntelligenceModal({
                   type="number"
                   placeholder="28.99"
                   value={form.competitor_domestic_landed_price}
-                  helpText="Precio articulo + envio domestico USA. Este total puede usarse como referencia de mercado USA."
+                  helpText="Se calcula con precio + envio. Puedes escribirlo manualmente si hace falta."
                   onChange={value =>
                     onChange(
                       "competitor_domestic_landed_price",
@@ -2271,7 +2283,7 @@ function PriceIntelligenceModal({
                 }
                 rows={4}
                 placeholder="Pega precios vendidos o datos de Terapeak/eBay Research. Ejemplo: $24.99, $29.99, $31.50, $34.99"
-                className="
+                className={`
                   mt-2
                   w-full
                   rounded-lg
@@ -2286,7 +2298,7 @@ function PriceIntelligenceModal({
                   transition
                   placeholder:text-white/25
                   focus:border-cyan-300/30
-                "
+                `}
               />
               <span className="mt-2 block text-xs leading-5 text-white/40">
                 Este texto solo se usa en el navegador para calcular los campos. No se envia ni se guarda completo.
@@ -2400,7 +2412,9 @@ function PriceIntelligenceModal({
                 type="number"
                 placeholder="29.99"
                 value={form.recommended_sale_price}
-                helpText="Precio que IMNOVA debe usar para calcular rentabilidad."
+                required
+                error={fieldErrors.recommended_sale_price}
+                helpText="Precio que IMNOVA usara para calcular rentabilidad."
                 onChange={value =>
                   onChange(
                     "recommended_sale_price",
@@ -2428,7 +2442,9 @@ function PriceIntelligenceModal({
                 type="number"
                 placeholder="0 a 100"
                 value={form.confidence_score}
-                helpText="Editable: ventas reales pesan mas que listados activos."
+                required
+                error={fieldErrors.confidence_score}
+                helpText="0 a 100. Ventas reales pesan mas que listados activos."
                 onChange={value =>
                   onChange(
                     "confidence_score",
@@ -2439,11 +2455,18 @@ function PriceIntelligenceModal({
             </div>
 
             <label className="mt-4 block min-w-0">
-              <span className="block break-words text-xs font-bold leading-5 text-white/80">
+              <span
+                className={`
+                  block
+                  break-words
+                  text-xs
+                  font-bold
+                  leading-5
+                  ${fieldErrors.evidence_notes ? "text-red-200" : "text-white/80"}
+                `}
+              >
                 Notas de evidencia
-              </span>
-              <span className="mt-0.5 block text-[10px] leading-4 text-white/30">
-                evidence_notes
+                <span className="text-red-300"> *</span>
               </span>
               <textarea
                 value={form.evidence_notes}
@@ -2455,13 +2478,12 @@ function PriceIntelligenceModal({
                 }
                 rows={4}
                 placeholder="Ejemplo: Revisado en Terapeak/eBay Research. Mismo part number. 8 vendidos similares, STR alto."
-                className="
+                className={`
                   mt-2
                   w-full
                   rounded-lg
                   border
-                  border-white/10
-                  bg-black/35
+                  ${fieldErrors.evidence_notes ? "border-red-400/60 bg-red-950/20" : "border-white/10 bg-black/35"}
                   px-3
                   py-2
                   text-sm
@@ -2469,9 +2491,14 @@ function PriceIntelligenceModal({
                   outline-none
                   transition
                   placeholder:text-white/25
-                  focus:border-cyan-300/30
-                "
+                  ${fieldErrors.evidence_notes ? "focus:border-red-300" : "focus:border-cyan-300/30"}
+                `}
               />
+              {fieldErrors.evidence_notes ? (
+                <span className="mt-2 block text-xs font-semibold leading-5 text-red-300">
+                  {fieldErrors.evidence_notes}
+                </span>
+              ) : null}
               <span className="mt-2 block text-xs leading-5 text-white/40">
                 Que viste, que comparaste, si era el mismo modelo o parecido.
               </span>
@@ -2655,7 +2682,7 @@ function PriceIntelligenceModal({
           </button>
           <button
             type="button"
-            onClick={onSubmit}
+            onClick={handleSubmit}
             disabled={isSaving}
             className="
               inline-flex
