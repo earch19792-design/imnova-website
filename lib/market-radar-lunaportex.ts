@@ -45,6 +45,7 @@ type ShopifyVariant = {
   qty?: number | string | null
   stock?: number | string | null
   inventory?: number | string | null
+  inventory_source?: "luna_authenticated_html" | null
 }
 
 type ShopifyImage = {
@@ -290,7 +291,9 @@ function getNormalizedVariantInventory(
           ? "in_stock"
           : "out_of_stock",
       inventory_source:
-        "luna_numeric",
+        variant.inventory_source === "luna_authenticated_html"
+          ? "luna_authenticated_html"
+          : "luna_numeric",
       inventory_confidence:
         "high",
     } as const
@@ -415,6 +418,58 @@ function mergeAuthenticatedVariantInventory(
     })
 
   return changed
+}
+
+function getAuthenticatedHtmlInventoryQuantity(
+  html: string
+) {
+  const inventoryMatch =
+    html.match(
+      /(\d[\d,]*)\s+units\s+available/i
+    )
+
+  if (!inventoryMatch) {
+    return null
+  }
+
+  return getInteger(
+    inventoryMatch[1].replace(
+      /,/g,
+      ""
+    )
+  )
+}
+
+function mergeAuthenticatedHtmlInventory(
+  product: AggregatedProduct,
+  html: string
+) {
+  const inventoryQuantity =
+    getAuthenticatedHtmlInventoryQuantity(
+      html
+    )
+
+  if (inventoryQuantity === null) {
+    return false
+  }
+
+  const variants =
+    product.variants || []
+
+  if (variants.length !== 1) {
+    return false
+  }
+
+  product.variants =
+    variants.map(variant => ({
+      ...variant,
+      inventory_quantity:
+        inventoryQuantity,
+      inventory_source:
+        "luna_authenticated_html",
+    }))
+
+  return true
 }
 
 function normalizeAuthenticatedProductPayload(
@@ -728,6 +783,45 @@ async function fetchAuthenticatedProductInventory(
   )
 }
 
+async function fetchAuthenticatedProductHtml(
+  handle: string
+) {
+  if (!LUNAPORTEX_AUTH_COOKIE) {
+    return null
+  }
+
+  const headers =
+    getLunaPortexRequestHeaders()
+
+  headers.Accept =
+    "text/html"
+
+  const response =
+    await fetch(
+      `${LUNAPORTEX_BASE_URL}/products/${handle}`,
+      {
+        headers,
+        cache:
+          "no-store",
+      }
+    )
+
+  if (!response.ok) {
+    console.warn(
+      "LUNA PORTEX AUTH PRODUCT HTML INVENTORY FETCH WARNING:",
+      {
+        handle,
+        status:
+          response.status,
+      }
+    )
+
+    return null
+  }
+
+  return response.text()
+}
+
 async function getLunaPortexAuthState(
   handle: string
 ) {
@@ -923,7 +1017,26 @@ async function hydrateAuthenticatedInventoryQuantities(
           ) {
             hydratedProducts += 1
           } else {
-            productsWithoutNumericInventory += 1
+            if (authState.authState === "approved") {
+              const authenticatedHtml =
+                await fetchAuthenticatedProductHtml(
+                  handle
+                )
+
+              if (
+                authenticatedHtml &&
+                mergeAuthenticatedHtmlInventory(
+                  product,
+                  authenticatedHtml
+                )
+              ) {
+                hydratedProducts += 1
+              } else {
+                productsWithoutNumericInventory += 1
+              }
+            } else {
+              productsWithoutNumericInventory += 1
+            }
           }
         } else {
           failedFetches += 1
@@ -2055,14 +2168,19 @@ export async function runLunaPortexMarketRadarSync(
       )
 
     const inventoryNumericVariants =
-      snapshotRows.filter(snapshot =>
-        snapshot.raw?.inventory_context &&
-        (
+      snapshotRows.filter(snapshot => {
+        const inventorySource =
+          (
           snapshot.raw.inventory_context as {
             inventory_source?: string
           }
-        ).inventory_source === "luna_numeric"
-      ).length
+          )?.inventory_source
+
+        return (
+          inventorySource === "luna_numeric" ||
+          inventorySource === "luna_authenticated_html"
+        )
+      }).length
 
     const inventoryAvailabilityOnlyVariants =
       snapshotRows.filter(snapshot =>

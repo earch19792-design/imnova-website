@@ -1,5 +1,9 @@
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import test from "node:test"
+import ts from "typescript"
 import {
   buildDecisionIdempotencyKey,
   calculateProfitScenario,
@@ -13,6 +17,64 @@ import {
   getRadarAdvisorEvent,
   getNormalizedInventoryContext,
 } from "../lib/radar-advisor-events.mjs"
+
+let lunaPortexTestInternals = null
+
+async function getLunaPortexTestInternals() {
+  if (lunaPortexTestInternals) {
+    return lunaPortexTestInternals
+  }
+
+  const sourcePath =
+    path.resolve(
+      "lib/market-radar-lunaportex.ts"
+    )
+
+  const source =
+    fs.readFileSync(
+      sourcePath,
+      "utf8"
+    )
+
+  const testSource = `${source}
+export {
+  getAuthenticatedHtmlInventoryQuantity,
+  mergeAuthenticatedHtmlInventory,
+  getNormalizedVariantInventory,
+}
+`
+
+  const transpiled =
+    ts.transpileModule(
+      testSource,
+      {
+        compilerOptions: {
+          module:
+            ts.ModuleKind.ES2022,
+          target:
+            ts.ScriptTarget.ES2022,
+        },
+      }
+    ).outputText
+
+  const outputPath =
+    path.join(
+      os.tmpdir(),
+      `market-radar-lunaportex-test-${process.pid}-${Date.now()}.mjs`
+    )
+
+  fs.writeFileSync(
+    outputPath,
+    transpiled
+  )
+
+  lunaPortexTestInternals =
+    await import(
+      `file://${outputPath}`
+    )
+
+  return lunaPortexTestInternals
+}
 
 const validRadarProduct = {
   source_key: "lunaportex",
@@ -239,6 +301,160 @@ test("radar advisor inventory: available false queda out_of_stock", () => {
   assert.equal(stockContext.inventory_quantity, 0)
   assert.equal(stockContext.inventory_status, "out_of_stock")
   assert.equal(stockContext.inventory_source, "luna_availability")
+})
+
+test("lunaportex inventory: html autenticado parsea unidades", async () => {
+  const {
+    getAuthenticatedHtmlInventoryQuantity,
+  } =
+    await getLunaPortexTestInternals()
+
+  assert.equal(
+    getAuthenticatedHtmlInventoryQuantity(
+      "<div>422 units available</div>"
+    ),
+    422
+  )
+  assert.equal(
+    getAuthenticatedHtmlInventoryQuantity(
+      "<div>1,200 units available</div>"
+    ),
+    1200
+  )
+  assert.equal(
+    getAuthenticatedHtmlInventoryQuantity(
+      "<div>units available</div>"
+    ),
+    null
+  )
+  assert.equal(
+    getAuthenticatedHtmlInventoryQuantity(
+      "<div>available soon</div>"
+    ),
+    null
+  )
+})
+
+test("lunaportex inventory: html autenticado aplica solo a producto monovariante", async () => {
+  const {
+    mergeAuthenticatedHtmlInventory,
+    getNormalizedVariantInventory,
+  } =
+    await getLunaPortexTestInternals()
+
+  const singleVariantProduct = {
+    variants: [
+      {
+        id:
+          "variant-1",
+        sku:
+          "ITEM3543",
+        available:
+          true,
+      },
+    ],
+  }
+
+  const jsonInventoryContext =
+    getNormalizedVariantInventory({
+      id:
+        "variant-json",
+      inventory_quantity:
+        42,
+      available:
+        true,
+    })
+
+  assert.equal(
+    jsonInventoryContext.inventory_quantity,
+    42
+  )
+  assert.equal(
+    jsonInventoryContext.inventory_source,
+    "luna_numeric"
+  )
+  assert.equal(
+    jsonInventoryContext.inventory_confidence,
+    "high"
+  )
+
+  assert.equal(
+    mergeAuthenticatedHtmlInventory(
+      singleVariantProduct,
+      "<section>422 units available</section>"
+    ),
+    true
+  )
+  assert.equal(
+    singleVariantProduct.variants[0].inventory_quantity,
+    422
+  )
+
+  const inventoryContext =
+    getNormalizedVariantInventory(
+      singleVariantProduct.variants[0]
+    )
+
+  assert.equal(
+    inventoryContext.inventory_quantity,
+    422
+  )
+  assert.equal(
+    inventoryContext.inventory_source,
+    "luna_authenticated_html"
+  )
+  assert.equal(
+    inventoryContext.inventory_confidence,
+    "high"
+  )
+
+  const multiVariantProduct = {
+    variants: [
+      {
+        id:
+          "variant-1",
+        available:
+          true,
+      },
+      {
+        id:
+          "variant-2",
+        available:
+          true,
+      },
+    ],
+  }
+
+  assert.equal(
+    mergeAuthenticatedHtmlInventory(
+      multiVariantProduct,
+      "<section>422 units available</section>"
+    ),
+    false
+  )
+  assert.equal(
+    multiVariantProduct.variants[0].inventory_quantity,
+    undefined
+  )
+  assert.equal(
+    multiVariantProduct.variants[1].inventory_quantity,
+    undefined
+  )
+})
+
+test("lunaportex inventory: html autenticado requiere sesion approved", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "lib/market-radar-lunaportex.ts"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /authState\.authState === "approved"[\s\S]*fetchAuthenticatedProductHtml/
+  )
 })
 
 test("radar advisor inventory: unknown requiere validacion manual", () => {
