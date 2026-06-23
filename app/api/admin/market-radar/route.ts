@@ -172,14 +172,116 @@ function getInventoryContext(
     raw?: {
       inventory_context?: {
         inventory_source?: string | null
+        inventory_scope?: string | null
+        inventory_confidence?: string | null
+        product_available_quantity?: number | string | null
+        stock_message?: string | null
       } | null
     } | null
   } | null | undefined
 ) {
+  const rawInventoryContext =
+    value?.raw?.inventory_context || null
+
+  const productAvailableQuantity =
+    toNumber(
+      rawInventoryContext?.product_available_quantity ??
+        null
+    )
+
+  if (
+    (
+      rawInventoryContext?.inventory_scope ===
+        "product_or_category_signal" ||
+      (
+        productAvailableQuantity !== null &&
+        productAvailableQuantity >= 10000
+      )
+    ) &&
+    productAvailableQuantity !== null
+  ) {
+    const signalQuantity =
+      Math.trunc(productAvailableQuantity)
+
+    return {
+      inventory_quantity:
+        null,
+      product_available_quantity:
+        signalQuantity,
+      inventory_status:
+        signalQuantity > 0
+          ? "in_stock"
+          : "out_of_stock",
+      inventory_source:
+        "luna_authenticated_html",
+      inventory_confidence:
+        "low",
+      inventory_scope:
+        "product_or_category_signal",
+      stock_message:
+        `Luna muestra ${new Intl.NumberFormat("en-US").format(signalQuantity)} unidades como señal general de disponibilidad. No se considera stock confirmado por variante.`,
+    } as const
+  }
+
+  if (
+    rawInventoryContext?.inventory_scope ===
+      "product_level" &&
+    productAvailableQuantity !== null
+  ) {
+    const productQuantity =
+      Math.trunc(productAvailableQuantity)
+
+    return {
+      inventory_quantity:
+        null,
+      product_available_quantity:
+        productQuantity,
+      inventory_status:
+        productQuantity > 0
+          ? "in_stock"
+          : "out_of_stock",
+      inventory_source:
+        "luna_authenticated_html_product",
+      inventory_confidence:
+        "medium",
+      inventory_scope:
+        "product_level",
+      stock_message:
+        `Luna muestra ${new Intl.NumberFormat("en-US").format(productQuantity)} unidades disponibles a nivel producto. Este producto tiene varias variantes; validar cantidad por variante antes de listar o escalar.`,
+    } as const
+  }
+
   const numericQuantity =
     toNumber(
       value?.inventory_quantity ?? null
     )
+
+  if (
+    numericQuantity !== null &&
+    rawInventoryContext?.inventory_source ===
+      "luna_authenticated_html" &&
+    numericQuantity >= 10000
+  ) {
+    const signalQuantity =
+      Math.trunc(numericQuantity)
+
+    return {
+      inventory_quantity:
+        null,
+      product_available_quantity:
+        signalQuantity,
+      inventory_status:
+        "in_stock",
+      inventory_source:
+        "luna_authenticated_html",
+      inventory_confidence:
+        "low",
+      inventory_scope:
+        "product_or_category_signal",
+      stock_message:
+        `Luna muestra ${new Intl.NumberFormat("en-US").format(signalQuantity)} unidades como señal general de disponibilidad. No se considera stock confirmado por variante.`,
+    } as const
+  }
 
   if (numericQuantity !== null) {
     const inventoryQuantity =
@@ -188,17 +290,26 @@ function getInventoryContext(
     return {
       inventory_quantity:
         inventoryQuantity,
+      product_available_quantity:
+        productAvailableQuantity !== null
+          ? Math.trunc(productAvailableQuantity)
+          : null,
       inventory_status:
         inventoryQuantity > 0
           ? "in_stock"
           : "out_of_stock",
       inventory_source:
-        "luna_numeric",
+        rawInventoryContext?.inventory_source ===
+          "luna_authenticated_html"
+          ? "luna_authenticated_html"
+          : "luna_numeric",
       inventory_confidence:
         "high",
+      inventory_scope:
+        "variant_level",
       stock_message:
         inventoryQuantity > 0
-          ? `Cantidad: ${new Intl.NumberFormat("en-US").format(inventoryQuantity)} unidades.`
+          ? `Stock disponible: ${new Intl.NumberFormat("en-US").format(inventoryQuantity)} unidades.`
           : "Producto sin stock. No listar o revisar pausa si ya está en eBay.",
     } as const
   }
@@ -207,12 +318,16 @@ function getInventoryContext(
     return {
       inventory_quantity:
         0,
+      product_available_quantity:
+        null,
       inventory_status:
         "out_of_stock",
       inventory_source:
         "luna_availability",
       inventory_confidence:
         "medium",
+      inventory_scope:
+        "availability_only",
       stock_message:
         "Producto sin stock. No listar o revisar pausa si ya está en eBay.",
     } as const
@@ -222,19 +337,25 @@ function getInventoryContext(
     return {
       inventory_quantity:
         null,
+      product_available_quantity:
+        null,
       inventory_status:
         "in_stock",
       inventory_source:
         "luna_availability",
       inventory_confidence:
         "medium",
+      inventory_scope:
+        "availability_only",
       stock_message:
-        "Luna marca este producto como disponible, pero no expone unidades numéricas. Validar inventario real antes de listar, escalar campaña o crear packs grandes.",
+        "Disponible, pero Luna no expone cantidad numérica.",
     } as const
   }
 
   return {
     inventory_quantity:
+      null,
+    product_available_quantity:
       null,
     inventory_status:
       "unknown",
@@ -242,6 +363,8 @@ function getInventoryContext(
       "not_exposed",
     inventory_confidence:
       "low",
+    inventory_scope:
+      "unknown",
     stock_message:
       "Cantidad no disponible. Validar manualmente antes de listar.",
   } as const
@@ -629,12 +752,16 @@ async function getLatestMarketRadarProducts(
           snapshot?.available ?? null,
         inventory_quantity:
           inventoryContext.inventory_quantity,
+        product_available_quantity:
+          inventoryContext.product_available_quantity,
         inventory_status:
           inventoryContext.inventory_status,
         inventory_source:
           inventoryContext.inventory_source,
         inventory_confidence:
           inventoryContext.inventory_confidence,
+        inventory_scope:
+          inventoryContext.inventory_scope,
         collections:
           snapshot?.collections || null,
         discount_percent:
@@ -669,12 +796,7 @@ async function getLatestMarketRadarProducts(
           score?.updated_at || null,
       } satisfies MarketRadarProductRow
     })
-    .filter(
-      (
-        product
-      ): product is MarketRadarProductRow =>
-        Boolean(product)
-    )
+    .filter(Boolean) as MarketRadarProductRow[]
 }
 
 async function validateAdmin(

@@ -18,9 +18,21 @@ export type RadarAdvisorEvent = {
   created_at: string | null
   stock_context?: {
     inventory_quantity: number | null
+    product_available_quantity?: number | null
     inventory_status: "in_stock" | "out_of_stock" | "unknown"
-    inventory_source: "luna_numeric" | "luna_availability" | "not_exposed"
+    inventory_source:
+      | "luna_numeric"
+      | "luna_authenticated_html"
+      | "luna_authenticated_html_product"
+      | "luna_availability"
+      | "not_exposed"
     inventory_confidence: "high" | "medium" | "low"
+    inventory_scope?:
+      | "variant_level"
+      | "product_level"
+      | "product_or_category_signal"
+      | "availability_only"
+      | "unknown"
     stock_message: string
   }
 }

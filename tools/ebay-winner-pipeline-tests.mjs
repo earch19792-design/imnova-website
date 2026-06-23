@@ -407,6 +407,10 @@ test("lunaportex inventory: html autenticado aplica solo a producto monovariante
     inventoryContext.inventory_confidence,
     "high"
   )
+  assert.equal(
+    inventoryContext.inventory_scope,
+    "variant_level"
+  )
 
   const multiVariantProduct = {
     variants: [
@@ -428,9 +432,9 @@ test("lunaportex inventory: html autenticado aplica solo a producto monovariante
   assert.equal(
     mergeAuthenticatedHtmlInventory(
       multiVariantProduct,
-      "<section>422 units available</section>"
+      "<section>50000 units available</section>"
     ),
-    false
+    true
   )
   assert.equal(
     multiVariantProduct.variants[0].inventory_quantity,
@@ -439,6 +443,69 @@ test("lunaportex inventory: html autenticado aplica solo a producto monovariante
   assert.equal(
     multiVariantProduct.variants[1].inventory_quantity,
     undefined
+  )
+
+  const multiVariantContext =
+    getNormalizedVariantInventory(
+      multiVariantProduct.variants[0]
+    )
+
+  assert.equal(
+    multiVariantContext.inventory_quantity,
+    null
+  )
+  assert.equal(
+    multiVariantContext.product_available_quantity,
+    50000
+  )
+  assert.equal(
+    multiVariantContext.inventory_scope,
+    "product_or_category_signal"
+  )
+  assert.equal(
+    multiVariantContext.inventory_source,
+    "luna_authenticated_html"
+  )
+  assert.equal(
+    multiVariantContext.inventory_confidence,
+    "low"
+  )
+
+  const suspiciousSingleVariantProduct = {
+    variants: [
+      {
+        id:
+          "variant-high",
+        available:
+          true,
+      },
+    ],
+  }
+
+  assert.equal(
+    mergeAuthenticatedHtmlInventory(
+      suspiciousSingleVariantProduct,
+      "<section>50000 units available</section>"
+    ),
+    true
+  )
+
+  const suspiciousContext =
+    getNormalizedVariantInventory(
+      suspiciousSingleVariantProduct.variants[0]
+    )
+
+  assert.equal(
+    suspiciousContext.inventory_quantity,
+    null
+  )
+  assert.equal(
+    suspiciousContext.product_available_quantity,
+    50000
+  )
+  assert.equal(
+    suspiciousContext.inventory_scope,
+    "product_or_category_signal"
   )
 })
 
@@ -565,6 +632,89 @@ test("radar advisor: availability-only requiere aprobacion y mensaje claro", () 
     alert.proposed_next_step,
     "Validar inventario real del SKU antes de listar o escalar."
   )
+})
+
+test("radar advisor: quantity alta requiere aprobacion y no asume stock por variante", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "discount_started",
+        new_value: {
+          stock_context: {
+            inventory_quantity:
+              null,
+            product_available_quantity:
+              50000,
+            inventory_status:
+              "in_stock",
+            inventory_source:
+              "luna_authenticated_html",
+            inventory_confidence:
+              "low",
+            inventory_scope:
+              "product_or_category_signal",
+            stock_message:
+              "Luna muestra 50,000 unidades como señal general de disponibilidad. No se considera stock confirmado por variante.",
+          },
+        },
+      },
+      baseRadarAdvisorProduct,
+      {
+        id:
+          "candidate-product-level",
+        state:
+          "VALIDATED",
+        product_type:
+          "Coffee",
+      }
+    )
+
+  assert.equal(alert.stock_context.inventory_quantity, null)
+  assert.equal(alert.stock_context.product_available_quantity, 50000)
+  assert.equal(alert.stock_context.inventory_scope, "product_or_category_signal")
+  assert.equal(alert.required_human_approval, true)
+  assert.equal(
+    alert.advisor_message,
+    "Luna muestra una disponibilidad alta a nivel producto/categoría, pero no confirma cantidad exacta por variante."
+  )
+  assert.equal(
+    alert.proposed_next_step,
+    "Confirmar inventario real del SKU/variante antes de listar, crear pack o escalar campaña."
+  )
+  assert.equal(alert.recommended_action, "recalculate_profit")
+})
+
+test("radar advisor: low_stock con quantity alta se ignora", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "low_stock",
+        new_value: {
+          stock_context: {
+            inventory_quantity:
+              null,
+            product_available_quantity:
+              50000,
+            inventory_status:
+              "in_stock",
+            inventory_source:
+              "luna_authenticated_html",
+            inventory_confidence:
+              "low",
+            inventory_scope:
+              "product_or_category_signal",
+          },
+        },
+      },
+      baseRadarAdvisorProduct,
+      null
+    )
+
+  assert.equal(alert, null)
 })
 
 test("radar advisor: discount_started + consumable signal -> evaluate_pack_strategy", () => {

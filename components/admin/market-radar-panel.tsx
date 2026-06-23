@@ -606,25 +606,41 @@ function getProductInventoryMessage(
   product: MarketRadarProductRow
 ) {
   if (
-    product.inventory_source === "luna_numeric" &&
+    product.inventory_scope === "variant_level" &&
     product.inventory_quantity !== null &&
     product.inventory_quantity !== undefined
   ) {
-    return `Cantidad: ${new Intl.NumberFormat("en-US").format(product.inventory_quantity)} unidades`
+    return `Stock disponible: ${new Intl.NumberFormat("en-US").format(product.inventory_quantity)} unidades.`
   }
 
   if (
-    product.inventory_source === "luna_availability" &&
+    product.inventory_scope === "product_or_category_signal" &&
+    product.product_available_quantity !== null &&
+    product.product_available_quantity !== undefined
+  ) {
+    return `Luna muestra ${new Intl.NumberFormat("en-US").format(product.product_available_quantity)} unidades como señal general de disponibilidad. No se considera stock confirmado por variante.`
+  }
+
+  if (
+    product.inventory_scope === "product_level" &&
+    product.product_available_quantity !== null &&
+    product.product_available_quantity !== undefined
+  ) {
+    return `Luna muestra ${new Intl.NumberFormat("en-US").format(product.product_available_quantity)} unidades disponibles a nivel producto. Este producto tiene varias variantes; validar cantidad por variante antes de listar o escalar.`
+  }
+
+  if (
+    product.inventory_scope === "availability_only" &&
     product.inventory_status === "in_stock"
   ) {
-    return "Disponible, pero Luna no expone cantidad numérica"
+    return "Disponible, pero Luna no expone cantidad numérica."
   }
 
   if (product.inventory_status === "out_of_stock") {
-    return "Sin stock"
+    return "Sin stock."
   }
 
-  return "Cantidad no disponible"
+  return "Cantidad no disponible."
 }
 
 function formatDate(
@@ -743,7 +759,21 @@ function getProductStatusLabel(
 
   if (
     product.inventory_status === "in_stock" &&
-    product.inventory_source === "luna_availability"
+    product.inventory_scope === "product_or_category_signal"
+  ) {
+    return "Señal general"
+  }
+
+  if (
+    product.inventory_status === "in_stock" &&
+    product.inventory_scope === "product_level"
+  ) {
+    return "Cantidad a nivel producto"
+  }
+
+  if (
+    product.inventory_status === "in_stock" &&
+    product.inventory_scope === "availability_only"
   ) {
     return "Disponible sin cantidad"
   }
@@ -786,14 +816,18 @@ function getProductStatusClassName(
 
   if (
     product.inventory_status === "in_stock" &&
-    product.inventory_source === "luna_numeric"
+    product.inventory_scope === "variant_level"
   ) {
     return "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100"
   }
 
   if (
     product.inventory_status === "in_stock" &&
-    product.inventory_source === "luna_availability"
+    (
+      product.inventory_scope === "product_level" ||
+      product.inventory_scope === "product_or_category_signal" ||
+      product.inventory_scope === "availability_only"
+    )
   ) {
     return "border-amber-300/25 bg-amber-300/[0.10] text-amber-100"
   }
@@ -844,7 +878,7 @@ function getStockContextClassName(
     return "border-red-300/25 bg-red-300/[0.08] text-red-100"
   }
 
-  if (stockContext.inventory_source === "luna_numeric") {
+  if (stockContext.inventory_scope === "variant_level") {
     return "border-emerald-300/25 bg-emerald-300/[0.08] text-emerald-100"
   }
 
@@ -3227,9 +3261,13 @@ function ProductRow({
           {getProductInventoryMessage(product)}
         </p>
         <p className="mt-1 text-[11px] text-white/35">
-          {product.inventory_source === "luna_numeric"
-            ? "Cantidad disponible proveedor"
-            : product.inventory_source === "luna_availability"
+          {product.inventory_scope === "variant_level"
+            ? "Cantidad confirmada por variante/SKU"
+            : product.inventory_scope === "product_or_category_signal"
+              ? "Señal general de disponibilidad"
+            : product.inventory_scope === "product_level"
+              ? "Cantidad mostrada por Luna a nivel producto"
+              : product.inventory_scope === "availability_only"
               ? "Luna confirma disponibilidad sin unidades"
               : "Cantidad no expuesta por Luna"}
         </p>

@@ -45,7 +45,18 @@ type ShopifyVariant = {
   qty?: number | string | null
   stock?: number | string | null
   inventory?: number | string | null
-  inventory_source?: "luna_authenticated_html" | null
+  product_available_quantity?: number | null
+  inventory_scope?:
+    | "variant_level"
+    | "product_level"
+    | "product_or_category_signal"
+    | "availability_only"
+    | "unknown"
+    | null
+  inventory_source?:
+    | "luna_authenticated_html"
+    | "luna_authenticated_html_product"
+    | null
 }
 
 type ShopifyImage = {
@@ -222,6 +233,9 @@ function getNumber(
     : null
 }
 
+const SUSPICIOUS_HTML_INVENTORY_QUANTITY =
+  10000
+
 function getInteger(
   value: unknown
 ) {
@@ -282,6 +296,28 @@ function getNormalizedVariantInventory(
       variant
     )
 
+  if (
+    inventoryQuantity !== null &&
+    variant.inventory_source === "luna_authenticated_html" &&
+    inventoryQuantity >=
+      SUSPICIOUS_HTML_INVENTORY_QUANTITY
+  ) {
+    return {
+      inventory_quantity:
+        null,
+      inventory_status:
+        "in_stock",
+      inventory_source:
+        "luna_authenticated_html",
+      inventory_confidence:
+        "low",
+      inventory_scope:
+        "product_or_category_signal",
+      product_available_quantity:
+        inventoryQuantity,
+    } as const
+  }
+
   if (inventoryQuantity !== null) {
     return {
       inventory_quantity:
@@ -296,6 +332,62 @@ function getNormalizedVariantInventory(
           : "luna_numeric",
       inventory_confidence:
         "high",
+      inventory_scope:
+        "variant_level",
+      product_available_quantity:
+        getInteger(
+          variant.product_available_quantity
+        ),
+    } as const
+  }
+
+  const productAvailableQuantity =
+    getInteger(
+      variant.product_available_quantity
+    )
+
+  if (
+    productAvailableQuantity !== null &&
+    (
+      variant.inventory_scope === "product_or_category_signal" ||
+      productAvailableQuantity >=
+        SUSPICIOUS_HTML_INVENTORY_QUANTITY
+    )
+  ) {
+    return {
+      inventory_quantity:
+        null,
+      inventory_status:
+        productAvailableQuantity > 0
+          ? "in_stock"
+          : "out_of_stock",
+      inventory_source:
+        "luna_authenticated_html",
+      inventory_confidence:
+        "low",
+      inventory_scope:
+        "product_or_category_signal",
+      product_available_quantity:
+        productAvailableQuantity,
+    } as const
+  }
+
+  if (productAvailableQuantity !== null) {
+    return {
+      inventory_quantity:
+        null,
+      inventory_status:
+        productAvailableQuantity > 0
+          ? "in_stock"
+          : "out_of_stock",
+      inventory_source:
+        "luna_authenticated_html_product",
+      inventory_confidence:
+        "medium",
+      inventory_scope:
+        "product_level",
+      product_available_quantity:
+        productAvailableQuantity,
     } as const
   }
 
@@ -309,6 +401,10 @@ function getNormalizedVariantInventory(
         "luna_availability",
       inventory_confidence:
         "medium",
+      inventory_scope:
+        "availability_only",
+      product_available_quantity:
+        null,
     } as const
   }
 
@@ -322,6 +418,10 @@ function getNormalizedVariantInventory(
         "luna_availability",
       inventory_confidence:
         "medium",
+      inventory_scope:
+        "availability_only",
+      product_available_quantity:
+        null,
     } as const
   }
 
@@ -334,6 +434,10 @@ function getNormalizedVariantInventory(
       "not_exposed",
     inventory_confidence:
       "low",
+    inventory_scope:
+      "unknown",
+    product_available_quantity:
+      null,
   } as const
 }
 
@@ -456,18 +560,36 @@ function mergeAuthenticatedHtmlInventory(
   const variants =
     product.variants || []
 
-  if (variants.length !== 1) {
+  if (variants.length === 0) {
     return false
   }
 
   product.variants =
-    variants.map(variant => ({
-      ...variant,
-      inventory_quantity:
-        inventoryQuantity,
-      inventory_source:
-        "luna_authenticated_html",
-    }))
+    variants.map(variant =>
+      variants.length === 1 &&
+      inventoryQuantity <
+        SUSPICIOUS_HTML_INVENTORY_QUANTITY
+        ? {
+            ...variant,
+            inventory_quantity:
+              inventoryQuantity,
+            product_available_quantity:
+              inventoryQuantity,
+            inventory_scope:
+              "variant_level",
+            inventory_source:
+              "luna_authenticated_html",
+          }
+        : {
+            ...variant,
+            product_available_quantity:
+              inventoryQuantity,
+            inventory_scope:
+              "product_or_category_signal",
+            inventory_source:
+              "luna_authenticated_html",
+          }
+    )
 
   return true
 }
