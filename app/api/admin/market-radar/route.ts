@@ -69,6 +69,38 @@ function formatWhatsAppQuantity(
   ).format(value)} unidades`
 }
 
+function getSafeErrorDetail(
+  error: unknown
+) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : ""
+
+  return message
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
+    .replace(/access_token=[^&\s]+/gi, "access_token=[redacted]")
+    .replace(/apikey=[^&\s]+/gi, "apikey=[redacted]")
+    .slice(0, 300) ||
+    "unknown_error"
+}
+
+function getMarketRadarActionError(
+  action?: string
+) {
+  if (action === "sync_lunaportex") {
+    return "market_radar_sync_lunaportex_failed"
+  }
+
+  if (action === "notify_ebay_opportunities") {
+    return "market_radar_notify_failed"
+  }
+
+  return "market_radar_action_failed"
+}
+
 function buildMarketRadarWhatsAppAnalysis(
   products: MarketRadarProductRow[]
 ) {
@@ -1283,6 +1315,8 @@ export async function POST(
     return unauthorized
   }
 
+  let action: string | undefined
+
   try {
     const body =
       await req
@@ -1291,10 +1325,13 @@ export async function POST(
           action?: string
         }
 
+    action =
+      body.action
+
     if (
-      body.action !==
+      action !==
       "sync_lunaportex" &&
-      body.action !==
+      action !==
       "notify_ebay_opportunities"
     ) {
       return NextResponse.json(
@@ -1310,7 +1347,7 @@ export async function POST(
     }
 
     if (
-      body.action ===
+      action ===
       "notify_ebay_opportunities"
     ) {
       const dashboard =
@@ -1398,7 +1435,13 @@ export async function POST(
       {
         success: false,
         error:
-          "market_radar_action_failed",
+          getMarketRadarActionError(
+            action
+          ),
+        error_detail:
+          getSafeErrorDetail(
+            error
+          ),
       },
       {
         status: 500,

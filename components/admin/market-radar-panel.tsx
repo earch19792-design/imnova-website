@@ -56,6 +56,7 @@ type MarketRadarApiResponse = {
     error?: string
   }
   error?: string
+  error_detail?: string
 }
 
 const MARKET_RADAR_REQUEST_TIMEOUT_MS =
@@ -3655,8 +3656,13 @@ export function MarketRadarPanel({
         !payload.success ||
         !payload.dashboard
       ) {
+        const detailMessage =
+          payload.error_detail
+            ? `${payload.error}: ${payload.error_detail}`
+            : payload.error
+
         throw new Error(
-          payload.error ||
+          detailMessage ||
           "No se pudo cargar Market Radar."
         )
       }
