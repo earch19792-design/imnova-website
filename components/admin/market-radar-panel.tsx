@@ -181,6 +181,12 @@ type PriceIntelligenceFormState = {
   evidence_notes: string
 }
 
+type RadarRankingFilter =
+  | "actionable"
+  | "stock_confirmed"
+  | "stock_needs_validation"
+  | "reviewed"
+
 const priceSourceOptions = [
   "terapeak",
   "ebay_research",
@@ -865,6 +871,152 @@ function getProductStatusClassName(
   }
 
   return "border-white/10 bg-white/[0.04] text-white/45"
+}
+
+function isStrictStockConfirmed(
+  product: MarketRadarProductRow
+) {
+  const quantity =
+    toNumber(product.inventory_quantity)
+
+  return Boolean(
+    product.stock_validation_status === "stock_confirmed" ||
+    (
+      product.available === true &&
+      quantity !== null &&
+      quantity > 0 &&
+      quantity < 10000 &&
+      product.inventory_scope === "variant_level" &&
+      product.inventory_confidence === "high" &&
+      (
+        product.inventory_source === "luna_numeric" ||
+        product.inventory_source === "luna_authenticated_html"
+      )
+    )
+  )
+}
+
+function getRadarStockValidationStatus(
+  product: MarketRadarProductRow
+) {
+  if (isStrictStockConfirmed(product)) {
+    return "stock_confirmed"
+  }
+
+  if (
+    product.stock_validation_status === "out_of_stock" ||
+    product.inventory_status === "out_of_stock" ||
+    product.available === false ||
+    toNumber(product.inventory_quantity) === 0
+  ) {
+    return "out_of_stock"
+  }
+
+  if (
+    product.stock_validation_status === "stock_needs_validation" ||
+    product.available === true ||
+    product.inventory_status === "in_stock"
+  ) {
+    return "stock_needs_validation"
+  }
+
+  return "stock_unknown"
+}
+
+function isRadarProductActionable(
+  product: MarketRadarProductRow
+) {
+  if (product.radar_action_status) {
+    return product.radar_action_status === "actionable"
+  }
+
+  return !product.pipeline_candidate_id
+}
+
+function getRadarActionStatusLabel(
+  product: MarketRadarProductRow
+) {
+  if (!isRadarProductActionable(product)) {
+    return "Ya revisado"
+  }
+
+  if (
+    getRadarStockValidationStatus(product) ===
+    "stock_confirmed"
+  ) {
+    return "Accionable"
+  }
+
+  return "Revisar ahora"
+}
+
+function getRadarActionStatusClassName(
+  product: MarketRadarProductRow
+) {
+  if (!isRadarProductActionable(product)) {
+    return "border-white/10 bg-white/[0.04] text-white/55"
+  }
+
+  if (
+    getRadarStockValidationStatus(product) ===
+    "stock_confirmed"
+  ) {
+    return "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100"
+  }
+
+  return "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100"
+}
+
+function getActionableReasonLabel(
+  product: MarketRadarProductRow
+) {
+  switch (product.actionable_reason) {
+    case "new_product_not_reviewed":
+      return "Nuevo producto no revisado"
+    case "price_down_after_review":
+      return "Reanalizar por cambio de precio"
+    case "discount_started_after_review":
+      return "Empezo descuento despues del ultimo analisis"
+    case "restocked_after_review":
+      return "Volvio a stock"
+    case "stock_increased_after_review":
+      return "Subio el stock confirmado"
+    case "quantity_changed_after_review":
+      return "Cambio la cantidad confirmada"
+    case "collection_changed_after_review":
+      return "Cambio de coleccion relevante"
+    case "price_up_after_review":
+      return "Subio precio y puede afectar margen"
+    case "pipeline_candidate_not_evaluated":
+      return "Existe en Pipeline, pero todavia no fue analizado"
+    case "reviewed_no_new_signal":
+      return "Ya revisado, sin cambios nuevos"
+    default:
+      return isRadarProductActionable(product)
+        ? "Revisar ahora"
+        : "No repetir hasta que cambie algo relevante"
+  }
+}
+
+function getStockValidationLabel(
+  product: MarketRadarProductRow
+) {
+  const status =
+    getRadarStockValidationStatus(product)
+
+  if (status === "stock_confirmed") {
+    return "Stock confirmado por variante"
+  }
+
+  if (status === "out_of_stock") {
+    return "Sin stock para revisar"
+  }
+
+  if (status === "stock_needs_validation") {
+    return "Falta validar stock"
+  }
+
+  return "Stock sin dato confiable"
 }
 
 function getStockContextMessage(
@@ -3345,6 +3497,29 @@ function ProductRow({
           {product.event_count_7d || 0} eventos 7d
         </p>
       </td>
+      <td className="px-4 py-4">
+        <span
+          className={`
+            rounded-md
+            border
+            px-2
+            py-1
+            text-[10px]
+            font-bold
+            uppercase
+            tracking-[0.14em]
+            ${getRadarActionStatusClassName(product)}
+          `}
+        >
+          {getRadarActionStatusLabel(product)}
+        </span>
+        <p className="mt-2 text-xs font-semibold leading-5 text-white/70">
+          {getActionableReasonLabel(product)}
+        </p>
+        <p className="mt-1 text-[11px] leading-5 text-white/35">
+          {getStockValidationLabel(product)}
+        </p>
+      </td>
       <td className="px-4 py-4 text-xs leading-5 text-white/45">
         {formatDate(
           product.last_event_at ||
@@ -3548,9 +3723,9 @@ export function MarketRadarPanel({
   ] = useState<Record<string, PriceIntelligenceSaveState>>({})
 
   const [
-    stockFilter,
-    setStockFilter,
-  ] = useState<"all" | "confirmed" | "missing">("confirmed")
+    rankingFilter,
+    setRankingFilter,
+  ] = useState<RadarRankingFilter>("actionable")
 
   const getAccessToken =
     useCallback(async () => {
@@ -4018,22 +4193,40 @@ export function MarketRadarPanel({
       window.clearInterval(interval)
   }, [loadDashboard])
 
-  const inventoryCounts =
+  const rankingCounts =
     useMemo(
       () => {
         const products =
           dashboard?.products || []
 
-        const confirmed =
-          products.filter(product =>
-            product.inventory_quantity !== null &&
-            product.inventory_quantity !== undefined
+        const actionable =
+          products.filter(
+            isRadarProductActionable
+          ).length
+
+        const stockConfirmed =
+          products.filter(
+            isStrictStockConfirmed
+          ).length
+
+        const stockNeedsValidation =
+          products.filter(
+            product =>
+              getRadarStockValidationStatus(product) ===
+              "stock_needs_validation"
+          ).length
+
+        const reviewed =
+          products.filter(
+            product =>
+              !isRadarProductActionable(product)
           ).length
 
         return {
-          confirmed,
-          missing:
-            products.length - confirmed,
+          actionable,
+          stockConfirmed,
+          stockNeedsValidation,
+          reviewed,
         }
       },
       [dashboard]
@@ -4047,18 +4240,23 @@ export function MarketRadarPanel({
 
         return products
           .filter(product => {
-            if (stockFilter === "confirmed") {
+            if (rankingFilter === "actionable") {
+              return isRadarProductActionable(product)
+            }
+
+            if (rankingFilter === "stock_confirmed") {
+              return isStrictStockConfirmed(product)
+            }
+
+            if (rankingFilter === "stock_needs_validation") {
               return (
-                product.inventory_quantity !== null &&
-                product.inventory_quantity !== undefined
+                getRadarStockValidationStatus(product) ===
+                "stock_needs_validation"
               )
             }
 
-            if (stockFilter === "missing") {
-              return (
-                product.inventory_quantity === null ||
-                product.inventory_quantity === undefined
-              )
+            if (rankingFilter === "reviewed") {
+              return !isRadarProductActionable(product)
             }
 
             return true
@@ -4070,7 +4268,7 @@ export function MarketRadarPanel({
       },
       [
         dashboard,
-        stockFilter,
+        rankingFilter,
       ]
     )
 
@@ -4442,10 +4640,10 @@ export function MarketRadarPanel({
                 Ranking
               </p>
               <h3 className="mt-2 text-xl font-black text-white">
-                Productos con mayor oportunidad
+                Oportunidades para revisar ahora
               </h3>
               <p className="mt-2 text-xs text-white/40">
-                {inventoryCounts.confirmed} con cantidad confirmada / {inventoryCounts.missing} sin cantidad
+                {rankingCounts.actionable} para revisar / {rankingCounts.reviewed} ya revisados / {rankingCounts.stockNeedsValidation} con stock pendiente
               </p>
             </div>
             <div className="flex flex-col gap-3 md:items-end">
@@ -4453,28 +4651,34 @@ export function MarketRadarPanel({
                 {[
                   {
                     value:
-                      "all" as const,
+                      "actionable" as const,
                     label:
-                      "Todos",
+                      "Accionables",
                   },
                   {
                     value:
-                      "confirmed" as const,
+                      "stock_confirmed" as const,
                     label:
-                      "Con cantidad",
+                      "Stock confirmado",
                   },
                   {
                     value:
-                      "missing" as const,
+                      "stock_needs_validation" as const,
                     label:
-                      "Sin cantidad",
+                      "Falta validar stock",
+                  },
+                  {
+                    value:
+                      "reviewed" as const,
+                    label:
+                      "Ya revisados",
                   },
                 ].map(option => (
                   <button
                     key={option.value}
                     type="button"
                     onClick={() =>
-                      setStockFilter(option.value)
+                      setRankingFilter(option.value)
                     }
                     className={`
                       rounded-md
@@ -4485,7 +4689,7 @@ export function MarketRadarPanel({
                       font-bold
                       transition
                       ${
-                        stockFilter === option.value
+                        rankingFilter === option.value
                           ? "border-cyan-300/40 bg-cyan-300 text-black"
                           : "border-white/10 bg-white/[0.04] text-white/55 hover:border-cyan-300/25 hover:text-white"
                       }
@@ -4528,6 +4732,9 @@ export function MarketRadarPanel({
                     Score
                   </th>
                   <th className="px-4 py-3 font-medium">
+                    Estado
+                  </th>
+                  <th className="px-4 py-3 font-medium">
                     Movimiento
                   </th>
                 </tr>
@@ -4536,7 +4743,7 @@ export function MarketRadarPanel({
                 {isLoading && !dashboard ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="px-4 py-12 text-center text-sm text-white/45"
                     >
                       Cargando radar...
@@ -4545,7 +4752,7 @@ export function MarketRadarPanel({
                 ) : hotProducts.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="px-4 py-12 text-center text-sm text-white/45"
                     >
                       {dashboard
