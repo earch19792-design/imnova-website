@@ -1013,7 +1013,7 @@ function getStockValidationLabel(
   }
 
   if (status === "stock_needs_validation") {
-    return "Falta validar stock"
+    return "Falta confirmar stock"
   }
 
   return "Stock sin dato confiable"
@@ -4642,9 +4642,17 @@ export function MarketRadarPanel({
               <h3 className="mt-2 text-xl font-black text-white">
                 Oportunidades para revisar ahora
               </h3>
-              <p className="mt-2 text-xs text-white/40">
-                {rankingCounts.actionable} para revisar / {rankingCounts.reviewed} ya revisados / {rankingCounts.stockNeedsValidation} con stock pendiente
-              </p>
+              <div className="mt-2 space-y-1 text-xs leading-5 text-white/45">
+                <p>
+                  {rankingCounts.actionable} productos necesitan revisión.
+                </p>
+                <p>
+                  {rankingCounts.reviewed} ya fueron revisados sin cambios nuevos.
+                </p>
+                <p>
+                  {rankingCounts.stockNeedsValidation} necesitan confirmar stock antes de decidir.
+                </p>
+              </div>
             </div>
             <div className="flex flex-col gap-3 md:items-end">
               <div className="flex flex-wrap gap-2">
@@ -4653,7 +4661,7 @@ export function MarketRadarPanel({
                     value:
                       "actionable" as const,
                     label:
-                      "Accionables",
+                      "Revisar ahora",
                   },
                   {
                     value:
@@ -4665,7 +4673,7 @@ export function MarketRadarPanel({
                     value:
                       "stock_needs_validation" as const,
                     label:
-                      "Falta validar stock",
+                      "Falta confirmar stock",
                   },
                   {
                     value:
