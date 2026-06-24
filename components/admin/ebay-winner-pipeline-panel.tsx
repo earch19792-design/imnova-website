@@ -2163,7 +2163,7 @@ function CandidateDetailDrawer({
     (
       isTemporaryListingPrice
         ? "No es recomendacion de publicacion."
-        : "Precio comercial, no piso minimo."
+        : "Precio comercial; no es el precio minimo."
     )
 
   const supplierCost =
@@ -2389,7 +2389,7 @@ function CandidateDetailDrawer({
                     <SummaryMetric
                       label="Costo total estimado"
                       value={formatCurrency(totalEstimatedCost)}
-                      detail={`Proveedor: ${formatCurrency(supplierCost)}`}
+                      detail={`No es precio de venta. Proveedor: ${formatCurrency(supplierCost)}`}
                     />
                     <SummaryMetric
                       label="Mercado observado"
@@ -2444,14 +2444,17 @@ function CandidateDetailDrawer({
                           value={formatCurrency(evaluatedSalePrice)}
                         />
                         <Field
-                          label="Piso minimo rentable"
+                          label="Precio minimo rentable"
                           value={formatCurrency(minimumProfitPrice)}
                         />
                         <Field
-                          label="Piso redondeado"
+                          label="Precio redondeado sugerido"
                           value={formatCurrency(roundedFloorPrice)}
                         />
                       </div>
+                      <p className="mt-3 text-xs leading-5 text-white/45">
+                        El costo total estimado sirve para calcular margen. El precio minimo rentable es la referencia para no vender demasiado barato.
+                      </p>
                     </div>
 
                     <div className="rounded-lg border border-white/10 bg-white/[0.025] p-3">
@@ -2647,7 +2650,7 @@ function CandidateDetailDrawer({
                         value={detail.decisionAdvisor.recommended_next_action}
                       />
                       <Field
-                        label="Piso rentable dentro del mercado"
+                        label="Precio minimo dentro del mercado"
                         value={
                           detail.decisionAdvisor.target_price?.is_target_price_competitive
                         }
@@ -2767,19 +2770,19 @@ function CandidateDetailDrawer({
                       )}
                     />
                     <Field
-                      label="Piso minimo 10% margen"
+                      label="Precio minimo 10% margen"
                       value={formatCurrency(
                         detail.decisionAdvisor.target_price?.minimum_price_for_10_percent_margin
                       )}
                     />
                     <Field
-                      label="Piso rentable redondeado"
+                      label="Precio redondeado sugerido"
                       value={formatCurrency(
                         detail.decisionAdvisor.target_price?.suggested_target_price
                       )}
                     />
                     <Field
-                      label="Piso objetivo 15% margen"
+                      label="Precio objetivo 15% margen"
                       value={formatCurrency(
                         detail.decisionAdvisor.target_price?.ideal_target_price
                       )}
@@ -3270,13 +3273,13 @@ function CandidateDetailDrawer({
                       )}
                     />
                     <Field
-                      label="Piso minimo 10% margen"
+                      label="Precio minimo 10% margen"
                       value={formatCurrency(
                         displayedCostBreakdown?.minimum_price_for_10_percent_margin
                       )}
                     />
                     <Field
-                      label="Piso rentable redondeado"
+                      label="Precio redondeado sugerido"
                       value={formatCurrency(
                         displayedCostBreakdown?.suggested_target_price
                       )}
@@ -3394,14 +3397,14 @@ function CandidateDetailDrawer({
                         {needsMarketBeforePriceAction
                           ? "Referencia de rentabilidad, no publicar"
                           : targetPriceNeedsAdjustment
-                          ? "Piso rentable para profit"
+                          ? "Precio minimo para rentabilidad"
                           : "Referencia de rentabilidad"}
                       </p>
                       <p className="mt-2 max-w-2xl text-xs leading-5 text-white/50">
                         {needsMarketBeforePriceAction
                           ? (
                             <>
-                              El precio evaluado actual pierde dinero, pero todavia no hay mercado para decidir precio de venta. Primero agrega Price Intelligence; el piso rentable solo dice desde cuanto empezaria a cubrir costos.
+                              El precio evaluado actual pierde dinero, pero todavia no hay mercado para decidir precio de venta. Primero agrega Price Intelligence; el precio minimo rentable solo dice desde cuanto empezaria a cubrir costos.
                             </>
                           )
                           : targetPriceNeedsAdjustment
@@ -3417,7 +3420,7 @@ function CandidateDetailDrawer({
                           )
                           : (
                             <>
-                              El precio de venta evaluado ya cumple los minimos de profit. El piso rentable es una referencia de costo, no una recomendacion comercial para bajar precio.
+                              El precio de venta evaluado ya cumple los minimos de profit. El precio minimo rentable es solo una referencia financiera, no una recomendacion comercial para bajar precio.
                             </>
                         )}
                       </p>
@@ -3481,13 +3484,13 @@ function CandidateDetailDrawer({
                       )}
                     />
                     <Field
-                      label="Piso rentable redondeado"
+                      label="Precio redondeado sugerido"
                       value={formatCurrency(
                         targetPriceAdvisor.suggested_target_price
                       )}
                     />
                     <Field
-                      label="Piso objetivo 15% margen"
+                      label="Precio objetivo 15% margen"
                       value={formatCurrency(
                         targetPriceAdvisor.ideal_target_price
                       )}
@@ -3499,7 +3502,7 @@ function CandidateDetailDrawer({
                       )}`}
                     />
                     <Field
-                      label="Piso vs mercado"
+                      label="Precio sugerido vs mercado"
                       value={formatCurrency(
                         suggestedMarketDifference
                       )}
@@ -3526,7 +3529,7 @@ function CandidateDetailDrawer({
                   ) : null}
                   {needsMarketBeforePriceAction ? (
                     <p className="mt-3 rounded-md border border-amber-300/25 bg-amber-300/[0.10] px-3 py-2 text-xs text-amber-100">
-                      No reevalúes con piso rentable todavía. Primero agrega Price Intelligence para saber si el mercado soporta ese precio.
+                      No reevalúes con precio minimo todavía. Primero agrega Price Intelligence para saber si el mercado soporta ese precio.
                     </p>
                   ) : targetPriceNeedsAdjustment &&
                   !canReprocessSuggestedPrice ? (
@@ -4444,7 +4447,7 @@ export function EbayWinnerPipelinePanel({
           status:
             "error",
           message:
-            "El precio actual ya cumple margen. No conviene reevaluar con el piso rentable.",
+            "El precio actual ya cumple margen. No conviene reevaluar con el precio minimo rentable.",
         })
         return
       }
@@ -4462,7 +4465,7 @@ export function EbayWinnerPipelinePanel({
           status:
             "error",
           message:
-            "El piso rentable esta por debajo del rango vendido. Usa Price Intelligence o precio ideal, no bajes al piso.",
+            "El precio minimo rentable esta por debajo del rango vendido. Usa Price Intelligence o precio ideal; no bajes automaticamente al minimo.",
         })
         return
       }
