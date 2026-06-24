@@ -204,6 +204,253 @@ test("Price Intelligence usa total domestico USA con free shipping como referenc
   )
 })
 
+test("Price semantics: costo proveedor actual no se trata como precio de venta eBay", () => {
+  const profitScenario =
+    calculateProfitScenario(
+      {
+        cost:
+          11,
+        estimated_sale_price:
+          19.99,
+        buyer_shipping_charge:
+          0,
+        shipping_cost:
+          1,
+        fulfillment_cost:
+          0.75,
+        packaging_cost:
+          0.5,
+      },
+      {
+        defaultShippingCost:
+          1,
+        ebayFeePercent:
+          13.25,
+        returnReservePercent:
+          3,
+      }
+    )
+
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      {
+        state:
+          "VALIDATED",
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+      },
+      profitScenario,
+      {
+        recommended_sale_price:
+          19.99,
+        sold_median_price:
+          25,
+        source_confidence:
+          "high",
+        raw_payload: {
+          shipping_scope_evidence: {
+            shipping_scope:
+              "us_domestic",
+            buyer_location_country:
+              "US",
+            competitor_item_price:
+              21.5,
+            competitor_domestic_shipping_price:
+              0,
+            competitor_domestic_landed_price:
+              21.5,
+          },
+        },
+      },
+      null,
+      null
+    )
+
+  assert.notEqual(
+    advisor.pricing_strategy.launch_strategy,
+    "blocked"
+  )
+  assert.equal(
+    advisor.target_price.supplier_unit_cost,
+    11
+  )
+  assert.equal(
+    advisor.target_price.evaluated_sale_price,
+    19.99
+  )
+  assert.match(
+    advisor.human_summary,
+    /costo proveedor actual es \$11\.00/i
+  )
+  assert.doesNotMatch(
+    advisor.human_summary,
+    /precio actual \$11/i
+  )
+})
+
+test("Price semantics: bloquea unidad cuando precio rentable supera mercado USA", () => {
+  const profitScenario =
+    calculateProfitScenario(
+      {
+        cost:
+          11,
+        estimated_sale_price:
+          17.95,
+        buyer_shipping_charge:
+          0,
+        shipping_cost:
+          1,
+        fulfillment_cost:
+          0.75,
+        packaging_cost:
+          0.5,
+      },
+      {
+        defaultShippingCost:
+          1,
+        ebayFeePercent:
+          13.25,
+        returnReservePercent:
+          3,
+      }
+    )
+
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      {
+        state:
+          "VALIDATED",
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+      },
+      profitScenario,
+      {
+        recommended_sale_price:
+          17.95,
+        sold_median_price:
+          14,
+        source_confidence:
+          "high",
+      },
+      null,
+      null
+    )
+
+  assert.equal(
+    advisor.pricing_strategy.launch_strategy,
+    "blocked"
+  )
+  assert.match(
+    advisor.pricing_strategy.reason,
+    /precio rentable por encima del mercado/i
+  )
+})
+
+test("Price semantics: sin mercado pide datos y no usa costo proveedor como precio venta", () => {
+  const result =
+    processRadarCandidate({
+      ...validRadarProduct,
+      price:
+        11,
+      estimated_sale_price:
+        null,
+    })
+
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      result.candidate,
+      result.profitScenario,
+      null,
+      result.validation,
+      result.compliance
+    )
+
+  assert.equal(
+    advisor.decision_label,
+    "NEEDS_PRICE_DATA"
+  )
+  assert.notEqual(
+    result.profitScenario.estimated_sale_price,
+    11
+  )
+  assert.equal(
+    result.profitScenario.assumptions.sale_price_basis,
+    "generated_target_price"
+  )
+  assert.match(
+    advisor.human_summary,
+    /no usar el costo proveedor como precio de venta eBay/i
+  )
+})
+
+test("Price semantics: listing real puede usar precio actual eBay explicito", () => {
+  const profitScenario =
+    calculateProfitScenario(
+      {
+        cost:
+          11,
+        current_listing_price:
+          21.5,
+        estimated_sale_price:
+          21.5,
+        buyer_shipping_charge:
+          0,
+        shipping_cost:
+          1,
+        fulfillment_cost:
+          0.75,
+        packaging_cost:
+          0.5,
+      },
+      {
+        defaultShippingCost:
+          1,
+        ebayFeePercent:
+          13.25,
+        returnReservePercent:
+          3,
+      }
+    )
+
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      {
+        state:
+          "VALIDATED",
+        current_listing_price:
+          21.5,
+      },
+      profitScenario,
+      {
+        recommended_sale_price:
+          21.5,
+        sold_median_price:
+          25,
+        source_confidence:
+          "high",
+      },
+      null,
+      null
+    )
+
+  assert.equal(
+    profitScenario.assumptions.sale_price_basis,
+    "current_listing_price"
+  )
+  assert.equal(
+    advisor.target_price.sale_price_basis,
+    "current_listing_price"
+  )
+  assert.equal(
+    advisor.target_price.evaluated_sale_price,
+    21.5
+  )
+})
+
 test("Price Intelligence no usa total internacional como referencia principal USA", () => {
   const advisor =
     getEbayProductDecisionAdvisor(
