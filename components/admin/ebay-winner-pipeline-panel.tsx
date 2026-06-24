@@ -268,6 +268,10 @@ type EbayDecisionAdvisor = {
   market_price_reasons?: string[]
   target_price?: {
     current_sale_price?: number | string | null
+    evaluated_sale_price?: number | string | null
+    sale_price_basis?: string | null
+    supplier_unit_cost?: number | string | null
+    luna_cost?: number | string | null
     current_net_profit?: number | string | null
     current_net_margin_percent?: number | string | null
     minimum_price_for_10_percent_margin?: number | string | null
@@ -1830,9 +1834,17 @@ function CandidateDetailDrawer({
 
                   <div className="grid gap-3 md:grid-cols-3">
                     <Field
-                      label="Precio actual"
+                      label="Precio de venta evaluado"
                       value={formatCurrency(
-                        detail.decisionAdvisor.target_price?.current_sale_price
+                        detail.decisionAdvisor.target_price?.evaluated_sale_price ??
+                          detail.decisionAdvisor.target_price?.current_sale_price
+                      )}
+                    />
+                    <Field
+                      label="Costo proveedor actual (Luna Portex)"
+                      value={formatCurrency(
+                        detail.decisionAdvisor.target_price?.supplier_unit_cost ??
+                          detail.decisionAdvisor.target_price?.luna_cost
                       )}
                     />
                     <Field
@@ -2102,7 +2114,7 @@ function CandidateDetailDrawer({
                       </p>
                       <div className="mt-3 space-y-3">
                         <Field
-                          label="Costo Luna"
+                          label="Costo proveedor actual (Luna Portex)"
                           value={formatCurrency(
                             displayedCostBreakdown?.luna_cost
                           )}
@@ -2300,13 +2312,13 @@ function CandidateDetailDrawer({
               </div>
               <div className="grid gap-3 md:grid-cols-3">
                 <Field
-                  label="Sale price"
+                  label="Precio de venta evaluado"
                   value={formatCurrency(
                     detail.profitScenario?.estimated_sale_price
                   )}
                 />
                 <Field
-                  label="Luna cost"
+                  label="Costo proveedor actual (Luna Portex)"
                   value={formatCurrency(
                     detail.profitScenario?.luna_cost
                   )}
@@ -2392,7 +2404,7 @@ function CandidateDetailDrawer({
                         Precio sugerido para profit
                       </p>
                       <p className="mt-2 max-w-2xl text-xs leading-5 text-white/50">
-                        El precio actual no es rentable. Para lograr {formatNumber(
+                        El precio de venta evaluado no es rentable. Para lograr {formatNumber(
                           targetPriceAdvisor.minimum_target_margin_percent,
                           "%"
                         )} de margen neto, IMNOVA necesita vender aproximadamente a {formatCurrency(
@@ -2444,7 +2456,7 @@ function CandidateDetailDrawer({
 
                   <div className="mt-4 grid gap-3 md:grid-cols-3">
                     <Field
-                      label="Precio actual"
+                      label="Precio de venta evaluado"
                       value={formatCurrency(
                         targetPriceAdvisor.current_sale_price
                       )}
