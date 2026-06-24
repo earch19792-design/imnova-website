@@ -909,6 +909,21 @@ function getProductEvaluationKey(
   ].join(":")
 }
 
+function getEbayPipelineCandidateKey(
+  product: MarketRadarProductRow
+) {
+  return [
+    product.source_key ||
+      "lunaportex",
+    product.product_id ||
+      product.supplier_product_id ||
+      "unknown-product",
+    product.supplier_variant_id ||
+      product.sku ||
+      "default",
+  ].join(":")
+}
+
 function getNullableString(
   value: string | null | undefined
 ) {
@@ -939,7 +954,8 @@ function getRealProductSku(
 }
 
 function buildEbayPipelineRadarProduct(
-  product: MarketRadarProductRow
+  product: MarketRadarProductRow,
+  estimatedSalePrice?: number | null
 ) {
   const imageUrls =
     product.image_urls || []
@@ -975,6 +991,10 @@ function buildEbayPipelineRadarProduct(
       product.supplier_variant_id ||
       product.sku ||
       "default",
+    candidate_key:
+      getEbayPipelineCandidateKey(
+        product
+      ),
     sku:
       getRealProductSku(
         product
@@ -991,6 +1011,8 @@ function buildEbayPipelineRadarProduct(
       product.tags || [],
     price:
       product.price,
+    estimated_sale_price:
+      estimatedSalePrice,
     compare_at_price:
       product.compare_at_price,
     available:
@@ -1415,6 +1437,10 @@ function buildPriceIntelligencePayload(
     market_radar_product_id:
       getNullableString(
         product.product_id
+      ),
+    candidate_key:
+      getEbayPipelineCandidateKey(
+        product
       ),
     supplier_sku:
       getStableSupplierSku(
@@ -3853,6 +3879,17 @@ export function MarketRadarPanel({
         const token =
           await getAccessToken()
 
+        const savedRecommendedPrice =
+          toNumber(
+            priceIntelligenceResults[productKey]?.recommendedSalePrice
+          )
+
+        const radarProduct =
+          buildEbayPipelineRadarProduct(
+            product,
+            savedRecommendedPrice
+          )
+
         const response =
           await fetch(
             "/api/admin/ebay-winner-pipeline",
@@ -3872,9 +3909,7 @@ export function MarketRadarPanel({
                   persist:
                     true,
                   radarProduct:
-                    buildEbayPipelineRadarProduct(
-                      product
-                    ),
+                    radarProduct,
                 }),
             }
           )
@@ -3956,7 +3991,10 @@ export function MarketRadarPanel({
       } finally {
         setEvaluatingProductKey("")
       }
-    }, [getAccessToken])
+    }, [
+      getAccessToken,
+      priceIntelligenceResults,
+    ])
 
 
   useEffect(() => {
