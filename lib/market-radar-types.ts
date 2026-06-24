@@ -2,6 +2,9 @@ export type MarketRadarEventType =
   | "new_product"
   | "restocked"
   | "out_of_stock"
+  | "low_stock"
+  | "stock_increased"
+  | "stock_decreased_fast"
   | "price_up"
   | "price_down"
   | "entered_collection"
@@ -46,6 +49,21 @@ export type MarketRadarProductRow = {
   compare_at_price: number | string | null
   available: boolean | null
   inventory_quantity: number | null
+  product_available_quantity?: number | null
+  inventory_status: "in_stock" | "out_of_stock" | "unknown"
+  inventory_source:
+    | "luna_numeric"
+    | "luna_authenticated_html"
+    | "luna_authenticated_html_product"
+    | "luna_availability"
+    | "not_exposed"
+  inventory_confidence: "high" | "medium" | "low"
+  inventory_scope:
+    | "variant_level"
+    | "product_level"
+    | "product_or_category_signal"
+    | "availability_only"
+    | "unknown"
   collections: string[] | null
   discount_percent: number | string | null
   last_captured_at: string | null
@@ -82,6 +100,45 @@ export type MarketRadarEventRow = {
   } | null
 }
 
+export type RadarAdvisorAlert = {
+  event_type: string
+  product_id: string | null
+  product_title: string
+  supplier_sku: string | null
+  previous_value: Record<string, unknown> | null
+  current_value: Record<string, unknown> | null
+  severity: "critical" | "high" | "medium" | "low"
+  business_signal: string
+  advisor_message: string
+  recommended_action: string
+  automation_available: boolean
+  automation_level: number
+  required_human_approval: boolean
+  proposed_next_step: string
+  candidate_state: string | null
+  candidate_id: string | null
+  created_at: string | null
+  stock_context?: {
+    inventory_quantity: number | null
+    product_available_quantity?: number | null
+    inventory_status: "in_stock" | "out_of_stock" | "unknown"
+    inventory_source:
+      | "luna_numeric"
+      | "luna_authenticated_html"
+      | "luna_authenticated_html_product"
+      | "luna_availability"
+      | "not_exposed"
+    inventory_confidence: "high" | "medium" | "low"
+    inventory_scope?:
+      | "variant_level"
+      | "product_level"
+      | "product_or_category_signal"
+      | "availability_only"
+      | "unknown"
+    stock_message: string
+  }
+}
+
 export type MarketRadarSummary = {
   source: MarketRadarSource | null
   totalProducts: number
@@ -100,6 +157,7 @@ export type MarketRadarDashboard = {
   summary: MarketRadarSummary
   products: MarketRadarProductRow[]
   recentEvents: MarketRadarEventRow[]
+  advisorAlerts: RadarAdvisorAlert[]
 }
 
 export type MarketRadarSyncResult = {
@@ -110,6 +168,18 @@ export type MarketRadarSyncResult = {
   snapshotsInserted: number
   eventsInserted: number
   scoredProducts: number
+  inventoryNumericVariants?: number
+  inventoryAvailabilityOnlyVariants?: number
+  inventoryUnknownVariants?: number
+  inventoryHydrationEnabled?: boolean
+  inventoryHydrationCandidates?: number
+  inventoryHydratedProducts?: number
+  inventoryHydrationSuccessfulFetches?: number
+  inventoryHydrationFailedFetches?: number
+  inventoryHydrationWithoutNumericInventory?: number
+  lunaAuthState?: "approved" | "restricted" | "unknown" | "not_configured"
+  lunaAuthMessage?: string
+  lunaAuthCheckedHandle?: string | null
   startedAt: string
   finishedAt: string
 }

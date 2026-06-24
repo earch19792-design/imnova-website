@@ -12,9 +12,13 @@ import {
   sendWhatsAppUpdate,
 } from "@/lib/whatsapp"
 import {
+  getRadarAdvisorEvent,
+} from "@/lib/radar-advisor-events.mjs"
+import {
   type MarketRadarDashboard,
   type MarketRadarEventRow,
   type MarketRadarProductRow,
+  type RadarAdvisorAlert,
   type MarketRadarSource,
 } from "@/lib/market-radar-types"
 
@@ -63,6 +67,38 @@ function formatWhatsAppQuantity(
   return `${new Intl.NumberFormat(
     "en-US"
   ).format(value)} unidades`
+}
+
+function getSafeErrorDetail(
+  error: unknown
+) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : ""
+
+  return message
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
+    .replace(/access_token=[^&\s]+/gi, "access_token=[redacted]")
+    .replace(/apikey=[^&\s]+/gi, "apikey=[redacted]")
+    .slice(0, 300) ||
+    "unknown_error"
+}
+
+function getMarketRadarActionError(
+  action?: string
+) {
+  if (action === "sync_lunaportex") {
+    return "market_radar_sync_lunaportex_failed"
+  }
+
+  if (action === "notify_ebay_opportunities") {
+    return "market_radar_notify_failed"
+  }
+
+  return "market_radar_action_failed"
 }
 
 function buildMarketRadarWhatsAppAnalysis(
@@ -159,6 +195,318 @@ function toNumber(
   return Number.isFinite(numericValue)
     ? numericValue
     : null
+}
+
+function getInventoryContext(
+  value: {
+    available?: boolean | null
+    inventory_quantity?: number | string | null
+    raw?: {
+      inventory_context?: {
+        inventory_source?: string | null
+        inventory_scope?: string | null
+        inventory_confidence?: string | null
+        product_available_quantity?: number | string | null
+        stock_message?: string | null
+      } | null
+    } | null
+  } | null | undefined
+) {
+  const rawInventoryContext =
+    value?.raw?.inventory_context || null
+
+  const productAvailableQuantity =
+    toNumber(
+      rawInventoryContext?.product_available_quantity ??
+        null
+    )
+
+  if (
+    (
+      rawInventoryContext?.inventory_scope ===
+        "product_or_category_signal" ||
+      (
+        productAvailableQuantity !== null &&
+        productAvailableQuantity >= 10000
+      )
+    ) &&
+    productAvailableQuantity !== null
+  ) {
+    const signalQuantity =
+      Math.trunc(productAvailableQuantity)
+
+    return {
+      inventory_quantity:
+        null,
+      product_available_quantity:
+        signalQuantity,
+      inventory_status:
+        signalQuantity > 0
+          ? "in_stock"
+          : "out_of_stock",
+      inventory_source:
+        "luna_authenticated_html",
+      inventory_confidence:
+        "low",
+      inventory_scope:
+        "product_or_category_signal",
+      stock_message:
+        `Luna muestra ${new Intl.NumberFormat("en-US").format(signalQuantity)} unidades como señal general de disponibilidad. No se considera stock confirmado por variante.`,
+    } as const
+  }
+
+  if (
+    rawInventoryContext?.inventory_scope ===
+      "product_level" &&
+    productAvailableQuantity !== null
+  ) {
+    const productQuantity =
+      Math.trunc(productAvailableQuantity)
+
+    return {
+      inventory_quantity:
+        null,
+      product_available_quantity:
+        productQuantity,
+      inventory_status:
+        productQuantity > 0
+          ? "in_stock"
+          : "out_of_stock",
+      inventory_source:
+        "luna_authenticated_html_product",
+      inventory_confidence:
+        "medium",
+      inventory_scope:
+        "product_level",
+      stock_message:
+        `Luna muestra ${new Intl.NumberFormat("en-US").format(productQuantity)} unidades disponibles a nivel producto. Este producto tiene varias variantes; validar cantidad por variante antes de listar o escalar.`,
+    } as const
+  }
+
+  const numericQuantity =
+    toNumber(
+      value?.inventory_quantity ?? null
+    )
+
+  if (
+    numericQuantity !== null &&
+    rawInventoryContext?.inventory_source ===
+      "luna_authenticated_html" &&
+    numericQuantity >= 10000
+  ) {
+    const signalQuantity =
+      Math.trunc(numericQuantity)
+
+    return {
+      inventory_quantity:
+        null,
+      product_available_quantity:
+        signalQuantity,
+      inventory_status:
+        "in_stock",
+      inventory_source:
+        "luna_authenticated_html",
+      inventory_confidence:
+        "low",
+      inventory_scope:
+        "product_or_category_signal",
+      stock_message:
+        `Luna muestra ${new Intl.NumberFormat("en-US").format(signalQuantity)} unidades como señal general de disponibilidad. No se considera stock confirmado por variante.`,
+    } as const
+  }
+
+  if (numericQuantity !== null) {
+    const inventoryQuantity =
+      Math.trunc(numericQuantity)
+
+    return {
+      inventory_quantity:
+        inventoryQuantity,
+      product_available_quantity:
+        productAvailableQuantity !== null
+          ? Math.trunc(productAvailableQuantity)
+          : null,
+      inventory_status:
+        inventoryQuantity > 0
+          ? "in_stock"
+          : "out_of_stock",
+      inventory_source:
+        rawInventoryContext?.inventory_source ===
+          "luna_authenticated_html"
+          ? "luna_authenticated_html"
+          : "luna_numeric",
+      inventory_confidence:
+        "high",
+      inventory_scope:
+        "variant_level",
+      stock_message:
+        inventoryQuantity > 0
+          ? `Stock disponible: ${new Intl.NumberFormat("en-US").format(inventoryQuantity)} unidades.`
+          : "Producto sin stock. No listar o revisar pausa si ya está en eBay.",
+    } as const
+  }
+
+  if (value?.available === false) {
+    return {
+      inventory_quantity:
+        0,
+      product_available_quantity:
+        null,
+      inventory_status:
+        "out_of_stock",
+      inventory_source:
+        "luna_availability",
+      inventory_confidence:
+        "medium",
+      inventory_scope:
+        "availability_only",
+      stock_message:
+        "Producto sin stock. No listar o revisar pausa si ya está en eBay.",
+    } as const
+  }
+
+  if (value?.available === true) {
+    return {
+      inventory_quantity:
+        null,
+      product_available_quantity:
+        null,
+      inventory_status:
+        "in_stock",
+      inventory_source:
+        "luna_availability",
+      inventory_confidence:
+        "medium",
+      inventory_scope:
+        "availability_only",
+      stock_message:
+        "Disponible, pero Luna no expone cantidad numérica.",
+    } as const
+  }
+
+  return {
+    inventory_quantity:
+      null,
+    product_available_quantity:
+      null,
+    inventory_status:
+      "unknown",
+    inventory_source:
+      "not_exposed",
+    inventory_confidence:
+      "low",
+    inventory_scope:
+      "unknown",
+    stock_message:
+      "Cantidad no disponible. Validar manualmente antes de listar.",
+  } as const
+}
+
+function isMissingLatestSnapshotViewError(
+  error: unknown
+) {
+  const typedError =
+    error as {
+      code?: string
+      message?: string
+    } | null
+
+  const message =
+    typedError?.message?.toLowerCase() || ""
+
+  return (
+    typedError?.code === "42P01" ||
+    typedError?.code === "PGRST205" ||
+    (
+      message.includes(
+        "market_radar_latest_snapshots"
+      ) &&
+      (
+        message.includes("does not exist") ||
+        message.includes("not found")
+      )
+    )
+  )
+}
+
+async function getLatestProductSnapshots(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  productIds: string[]
+) {
+  const selectFields = `
+    id,
+    product_id,
+    supplier_variant_id,
+    variant_title,
+    sku,
+    price,
+    compare_at_price,
+    available,
+    inventory_quantity,
+    raw,
+    collections,
+    discount_percent,
+    captured_at
+  `
+
+  const latestResult =
+    await supabase
+      .from("market_radar_latest_snapshots")
+      .select(selectFields)
+      .in(
+        "product_id",
+        productIds
+      )
+      .order(
+        "captured_at",
+        {
+          ascending: false,
+          nullsFirst: false,
+        }
+      )
+
+  if (!latestResult.error) {
+    return latestResult.data || []
+  }
+
+  if (
+    !isMissingLatestSnapshotViewError(
+      latestResult.error
+    )
+  ) {
+    throw new Error(
+      latestResult.error.message
+    )
+  }
+
+  console.warn(
+    "MARKET RADAR LATEST SNAPSHOTS VIEW MISSING; FALLING BACK TO SNAPSHOT HISTORY:",
+    latestResult.error.message
+  )
+
+  const fallbackResult =
+    await supabase
+      .from("market_radar_snapshots")
+      .select(selectFields)
+      .in(
+        "product_id",
+        productIds
+      )
+      .order(
+        "captured_at",
+        {
+          ascending: false,
+          nullsFirst: false,
+        }
+      )
+
+  if (fallbackResult.error) {
+    throw new Error(
+      fallbackResult.error.message
+    )
+  }
+
+  return fallbackResult.data || []
 }
 
 async function getLatestMarketRadarProducts(
@@ -328,43 +676,11 @@ async function getLatestMarketRadarProducts(
       ])
     )
 
-  const {
-    data: snapshotsData,
-    error: snapshotsError,
-  } =
-    await supabase
-      .from("market_radar_snapshots")
-      .select(`
-        id,
-        product_id,
-        supplier_variant_id,
-        variant_title,
-        sku,
-        price,
-        compare_at_price,
-        available,
-        inventory_quantity,
-        collections,
-        discount_percent,
-        captured_at
-      `)
-      .in(
-        "product_id",
-        productIds
-      )
-      .order(
-        "captured_at",
-        {
-          ascending: false,
-          nullsFirst: false,
-        }
-      )
-
-  if (snapshotsError) {
-    throw new Error(
-      snapshotsError.message
+  const snapshotsData =
+    await getLatestProductSnapshots(
+      supabase,
+      productIds
     )
-  }
 
   const snapshotByProductId =
     new Map<string, NonNullable<typeof snapshotsData>[number]>()
@@ -414,6 +730,11 @@ async function getLatestMarketRadarProducts(
       const score =
         scoreByProductId.get(productId)
 
+      const inventoryContext =
+        getInventoryContext(
+          snapshot
+        )
+
       return {
         product_id:
           product.id,
@@ -462,7 +783,17 @@ async function getLatestMarketRadarProducts(
         available:
           snapshot?.available ?? null,
         inventory_quantity:
-          snapshot?.inventory_quantity ?? null,
+          inventoryContext.inventory_quantity,
+        product_available_quantity:
+          inventoryContext.product_available_quantity,
+        inventory_status:
+          inventoryContext.inventory_status,
+        inventory_source:
+          inventoryContext.inventory_source,
+        inventory_confidence:
+          inventoryContext.inventory_confidence,
+        inventory_scope:
+          inventoryContext.inventory_scope,
         collections:
           snapshot?.collections || null,
         discount_percent:
@@ -497,12 +828,7 @@ async function getLatestMarketRadarProducts(
           score?.updated_at || null,
       } satisfies MarketRadarProductRow
     })
-    .filter(
-      (
-        product
-      ): product is MarketRadarProductRow =>
-        Boolean(product)
-    )
+    .filter(Boolean) as MarketRadarProductRow[]
 }
 
 async function validateAdmin(
@@ -586,6 +912,7 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
       },
       products: [],
       recentEvents: [],
+      advisorAlerts: [],
     }
   }
 
@@ -813,6 +1140,93 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
           : event.product || null,
     })) as MarketRadarEventRow[]
 
+  const productById =
+    new Map(
+      latestProducts.map(product => [
+        product.product_id,
+        product,
+      ])
+    )
+
+  const eventProductIds =
+    Array.from(
+      new Set(
+        recentEvents
+          .map(event => event.product_id)
+          .filter(Boolean)
+      )
+    )
+
+  const candidatesByProductId =
+    new Map<string, Record<string, unknown>>()
+
+  if (eventProductIds.length > 0) {
+    const {
+      data: candidateData,
+      error: candidateError,
+    } =
+      await supabase
+        .from("ebay_product_candidates")
+        .select(`
+          id,
+          market_radar_product_id,
+          supplier_sku,
+          title,
+          product_type,
+          state,
+          blocked_reason,
+          needs_data,
+          updated_at
+        `)
+        .in(
+          "market_radar_product_id",
+          eventProductIds
+        )
+        .order(
+          "updated_at",
+          {
+            ascending: false,
+            nullsFirst: false,
+          }
+        )
+
+    if (candidateError) {
+      console.warn(
+        "RADAR ADVISOR CANDIDATE LOOKUP WARNING:",
+        candidateError.message
+      )
+    } else {
+      ;(
+        candidateData || []
+      ).forEach(candidate => {
+        const productId =
+          candidate.market_radar_product_id
+
+        if (
+          productId &&
+          !candidatesByProductId.has(productId)
+        ) {
+          candidatesByProductId.set(
+            productId,
+            candidate
+          )
+        }
+      })
+    }
+  }
+
+  const advisorAlerts =
+    recentEvents
+      .map(event =>
+        getRadarAdvisorEvent(
+          event,
+          productById.get(event.product_id) || null,
+          candidatesByProductId.get(event.product_id) || null
+        )
+      )
+      .filter(Boolean)
+      .slice(0, 12) as RadarAdvisorAlert[]
+
   return {
     summary: {
       source,
@@ -850,6 +1264,7 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
     products:
       latestProducts,
     recentEvents,
+    advisorAlerts,
   }
 }
 
@@ -900,6 +1315,8 @@ export async function POST(
     return unauthorized
   }
 
+  let action: string | undefined
+
   try {
     const body =
       await req
@@ -908,10 +1325,13 @@ export async function POST(
           action?: string
         }
 
+    action =
+      body.action
+
     if (
-      body.action !==
+      action !==
       "sync_lunaportex" &&
-      body.action !==
+      action !==
       "notify_ebay_opportunities"
     ) {
       return NextResponse.json(
@@ -927,7 +1347,7 @@ export async function POST(
     }
 
     if (
-      body.action ===
+      action ===
       "notify_ebay_opportunities"
     ) {
       const dashboard =
@@ -1015,7 +1435,13 @@ export async function POST(
       {
         success: false,
         error:
-          "market_radar_action_failed",
+          getMarketRadarActionError(
+            action
+          ),
+        error_detail:
+          getSafeErrorDetail(
+            error
+          ),
       },
       {
         status: 500,

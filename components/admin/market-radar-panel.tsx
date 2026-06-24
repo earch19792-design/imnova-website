@@ -33,8 +33,12 @@ import {
   type MarketRadarDashboard,
   type MarketRadarEventRow,
   type MarketRadarProductRow,
+  type RadarAdvisorAlert,
   type MarketRadarSyncResult,
 } from "@/lib/market-radar-types"
+import {
+  type EbayPipelineFocusCandidate,
+} from "@/components/admin/ebay-winner-pipeline-panel"
 
 type MarketRadarApiResponse = {
   success: boolean
@@ -52,6 +56,45 @@ type MarketRadarApiResponse = {
     error?: string
   }
   error?: string
+  error_detail?: string
+}
+
+const MARKET_RADAR_REQUEST_TIMEOUT_MS =
+  90000
+
+function getAbortErrorMessage(
+  fallbackMessage: string
+) {
+  return `${fallbackMessage} La sincronización tardó demasiado. Revisa el dashboard en unos minutos o intenta de nuevo.`
+}
+
+async function readJsonResponse<T>(
+  response: Response,
+  fallbackMessage: string
+): Promise<T> {
+  const responseText =
+    await response.text()
+
+  if (!responseText.trim()) {
+    return {
+      success:
+        response.ok,
+    } as T
+  }
+
+  try {
+    return JSON.parse(responseText) as T
+  } catch {
+    const excerpt =
+      responseText
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 180)
+
+    throw new Error(
+      `${fallbackMessage}${excerpt ? ` Respuesta no JSON: ${excerpt}` : ""}`
+    )
+  }
 }
 
 type EbayPipelineApiResponse = {
@@ -79,6 +122,12 @@ type EbayPipelineEvaluationState = {
   candidateId?: string
   candidateKey?: string
   candidateState?: string
+}
+
+type MarketRadarPanelProps = {
+  onOpenEbayPipeline?: (
+    focusCandidate: EbayPipelineFocusCandidate
+  ) => void
 }
 
 type PriceIntelligenceApiResponse = {
@@ -563,19 +612,45 @@ function suggestPriceConfidence({
   }
 }
 
-function formatInventoryQuantity(
-  value: number | null | undefined
+function getProductInventoryMessage(
+  product: MarketRadarProductRow
 ) {
   if (
-    value === null ||
-    value === undefined
+    product.inventory_scope === "variant_level" &&
+    product.inventory_quantity !== null &&
+    product.inventory_quantity !== undefined
   ) {
-    return "Unidades sin confirmar"
+    return `Stock disponible: ${new Intl.NumberFormat("en-US").format(product.inventory_quantity)} unidades.`
   }
 
-  return `${new Intl.NumberFormat(
-    "en-US"
-  ).format(value)} unidades`
+  if (
+    product.inventory_scope === "product_or_category_signal" &&
+    product.product_available_quantity !== null &&
+    product.product_available_quantity !== undefined
+  ) {
+    return `Luna muestra ${new Intl.NumberFormat("en-US").format(product.product_available_quantity)} unidades como señal general de disponibilidad. No se considera stock confirmado por variante.`
+  }
+
+  if (
+    product.inventory_scope === "product_level" &&
+    product.product_available_quantity !== null &&
+    product.product_available_quantity !== undefined
+  ) {
+    return `Luna muestra ${new Intl.NumberFormat("en-US").format(product.product_available_quantity)} unidades disponibles a nivel producto. Este producto tiene varias variantes; validar cantidad por variante antes de listar o escalar.`
+  }
+
+  if (
+    product.inventory_scope === "availability_only" &&
+    product.inventory_status === "in_stock"
+  ) {
+    return "Disponible, pero Luna no expone cantidad numérica."
+  }
+
+  if (product.inventory_status === "out_of_stock") {
+    return "Sin stock."
+  }
+
+  return "Cantidad no disponible."
 }
 
 function formatDate(
@@ -667,9 +742,60 @@ function getEventValue(
   return "-"
 }
 
+function getAdvisorSeverityClassName(
+  severity: RadarAdvisorAlert["severity"]
+) {
+  if (severity === "critical") {
+    return "border-red-300/30 bg-red-300/[0.12] text-red-100"
+  }
+
+  if (severity === "high") {
+    return "border-amber-300/30 bg-amber-300/[0.12] text-amber-100"
+  }
+
+  if (severity === "medium") {
+    return "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100"
+  }
+
+  return "border-white/10 bg-white/[0.04] text-white/55"
+}
+
 function getProductStatusLabel(
   product: MarketRadarProductRow
 ) {
+  if (product.inventory_status === "out_of_stock") {
+    return "Agotado"
+  }
+
+  if (
+    product.inventory_status === "in_stock" &&
+    product.inventory_scope === "product_or_category_signal"
+  ) {
+    return "Señal general"
+  }
+
+  if (
+    product.inventory_status === "in_stock" &&
+    product.inventory_scope === "product_level"
+  ) {
+    return "Cantidad a nivel producto"
+  }
+
+  if (
+    product.inventory_status === "in_stock" &&
+    product.inventory_scope === "availability_only"
+  ) {
+    return "Disponible sin cantidad"
+  }
+
+  if (product.inventory_status === "in_stock") {
+    return "Disponible"
+  }
+
+  if (product.inventory_status === "unknown") {
+    return "Sin dato"
+  }
+
   if (
     product.available === true &&
     (
@@ -694,6 +820,32 @@ function getProductStatusLabel(
 function getProductStatusClassName(
   product: MarketRadarProductRow
 ) {
+  if (product.inventory_status === "out_of_stock") {
+    return "border-red-300/25 bg-red-300/[0.10] text-red-100"
+  }
+
+  if (
+    product.inventory_status === "in_stock" &&
+    product.inventory_scope === "variant_level"
+  ) {
+    return "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100"
+  }
+
+  if (
+    product.inventory_status === "in_stock" &&
+    (
+      product.inventory_scope === "product_level" ||
+      product.inventory_scope === "product_or_category_signal" ||
+      product.inventory_scope === "availability_only"
+    )
+  ) {
+    return "border-amber-300/25 bg-amber-300/[0.10] text-amber-100"
+  }
+
+  if (product.inventory_status === "unknown") {
+    return "border-white/10 bg-white/[0.04] text-white/45"
+  }
+
   if (
     product.available === true &&
     (
@@ -715,11 +867,58 @@ function getProductStatusClassName(
   return "border-white/10 bg-white/[0.04] text-white/45"
 }
 
+function getStockContextMessage(
+  stockContext: RadarAdvisorAlert["stock_context"] | null | undefined
+) {
+  if (!stockContext) {
+    return null
+  }
+
+  return stockContext.stock_message
+}
+
+function getStockContextClassName(
+  stockContext: RadarAdvisorAlert["stock_context"] | null | undefined
+) {
+  if (!stockContext) {
+    return "border-white/10 bg-white/[0.04] text-white/45"
+  }
+
+  if (stockContext.inventory_status === "out_of_stock") {
+    return "border-red-300/25 bg-red-300/[0.08] text-red-100"
+  }
+
+  if (stockContext.inventory_scope === "variant_level") {
+    return "border-emerald-300/25 bg-emerald-300/[0.08] text-emerald-100"
+  }
+
+  if (stockContext.inventory_status === "in_stock") {
+    return "border-amber-300/25 bg-amber-300/[0.08] text-amber-100"
+  }
+
+  return "border-white/10 bg-white/[0.04] text-white/45"
+}
+
 function getProductEvaluationKey(
   product: MarketRadarProductRow
 ) {
   return [
     product.product_id,
+    product.supplier_variant_id ||
+      product.sku ||
+      "default",
+  ].join(":")
+}
+
+function getEbayPipelineCandidateKey(
+  product: MarketRadarProductRow
+) {
+  return [
+    product.source_key ||
+      "lunaportex",
+    product.product_id ||
+      product.supplier_product_id ||
+      "unknown-product",
     product.supplier_variant_id ||
       product.sku ||
       "default",
@@ -756,7 +955,8 @@ function getRealProductSku(
 }
 
 function buildEbayPipelineRadarProduct(
-  product: MarketRadarProductRow
+  product: MarketRadarProductRow,
+  estimatedSalePrice?: number | null
 ) {
   const imageUrls =
     product.image_urls || []
@@ -792,6 +992,10 @@ function buildEbayPipelineRadarProduct(
       product.supplier_variant_id ||
       product.sku ||
       "default",
+    candidate_key:
+      getEbayPipelineCandidateKey(
+        product
+      ),
     sku:
       getRealProductSku(
         product
@@ -808,6 +1012,8 @@ function buildEbayPipelineRadarProduct(
       product.tags || [],
     price:
       product.price,
+    estimated_sale_price:
+      estimatedSalePrice,
     compare_at_price:
       product.compare_at_price,
     available:
@@ -1232,6 +1438,10 @@ function buildPriceIntelligencePayload(
     market_radar_product_id:
       getNullableString(
         product.product_id
+      ),
+    candidate_key:
+      getEbayPipelineCandidateKey(
+        product
       ),
     supplier_sku:
       getStableSupplierSku(
@@ -3083,14 +3293,19 @@ function ProductRow({
         >
           {getProductStatusLabel(product)}
         </span>
-        <p className="mt-2 text-xs font-semibold text-white/70">
-          {formatInventoryQuantity(product.inventory_quantity)}
+        <p className="mt-2 text-xs font-semibold leading-5 text-white/70">
+          {getProductInventoryMessage(product)}
         </p>
         <p className="mt-1 text-[11px] text-white/35">
-          {product.inventory_quantity === null ||
-          product.inventory_quantity === undefined
-            ? "Proveedor no expone unidades"
-            : "Cantidad disponible proveedor"}
+          {product.inventory_scope === "variant_level"
+            ? "Cantidad confirmada por variante/SKU"
+            : product.inventory_scope === "product_or_category_signal"
+              ? "Señal general de disponibilidad"
+            : product.inventory_scope === "product_level"
+              ? "Cantidad mostrada por Luna a nivel producto"
+              : product.inventory_scope === "availability_only"
+              ? "Luna confirma disponibilidad sin unidades"
+              : "Cantidad no expuesta por Luna"}
         </p>
       </td>
       <td className="px-4 py-4">
@@ -3171,7 +3386,107 @@ function RecentEventItem({
   )
 }
 
-export function MarketRadarPanel() {
+function RadarAdvisorAlertItem({
+  alert,
+}: {
+  alert: RadarAdvisorAlert
+}) {
+  const stockMessage =
+    getStockContextMessage(
+      alert.stock_context
+    )
+
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <span
+          className={`
+            rounded-md
+            border
+            px-2
+            py-1
+            text-[10px]
+            font-bold
+            uppercase
+            tracking-[0.14em]
+            ${getAdvisorSeverityClassName(alert.severity)}
+          `}
+        >
+          {alert.severity}
+        </span>
+        <span className="text-[11px] text-white/35">
+          {formatDate(alert.created_at)}
+        </span>
+      </div>
+
+      <p className="mt-3 break-words text-sm font-black leading-5 text-white">
+        {alert.product_title}
+      </p>
+      <p className="mt-2 break-words text-sm leading-6 text-white/70">
+        {alert.advisor_message}
+      </p>
+
+      {stockMessage && (
+        <div
+          className={`
+            mt-3
+            rounded-md
+            border
+            px-3
+            py-2
+            text-xs
+            font-semibold
+            leading-5
+            ${getStockContextClassName(alert.stock_context)}
+          `}
+        >
+          {stockMessage}
+        </div>
+      )}
+
+      <div className="mt-4 grid grid-cols-1 gap-4 text-xs leading-5 text-white/45 lg:grid-cols-2">
+        <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
+            Recomendacion
+          </p>
+          <p className="mt-1 break-words text-white/70">
+            {alert.recommended_action}
+          </p>
+        </div>
+        <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
+            Proximo paso
+          </p>
+          <p className="mt-1 break-words text-white/70">
+            {alert.proposed_next_step}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.08em]">
+        {alert.candidate_state && (
+          <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-white/45">
+            {alert.candidate_state}
+          </span>
+        )}
+        <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-white/45">
+          {alert.required_human_approval
+            ? "Requiere aprobacion humana"
+            : "Solo recomendacion"}
+        </span>
+        {alert.automation_available && (
+          <span className="rounded-md border border-cyan-300/20 bg-cyan-300/[0.08] px-2 py-1 text-cyan-100/75">
+            Automation L{alert.automation_level}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function MarketRadarPanel({
+  onOpenEbayPipeline,
+}: MarketRadarPanelProps = {}) {
   const [
     isMounted,
     setIsMounted,
@@ -3271,42 +3586,83 @@ export function MarketRadarPanel() {
       const token =
         await getAccessToken()
 
-      const response =
-        await fetch(
-          "/api/admin/market-radar",
-          {
-            method:
-              options?.action
-                ? "POST"
-                : "GET",
-            cache:
-              "no-store",
-            headers: {
-              Authorization:
-                `Bearer ${token}`,
-              "Content-Type":
-                "application/json",
-            },
-            body:
-              options?.action
-                ? JSON.stringify({
-                    action:
-                      options.action,
-                  })
-                : undefined,
-          }
+      const controller =
+        new AbortController()
+
+      const timeoutId =
+        window.setTimeout(
+          () =>
+            controller.abort(),
+          MARKET_RADAR_REQUEST_TIMEOUT_MS
         )
 
+      let response: Response
+
+      try {
+        response =
+          await fetch(
+            "/api/admin/market-radar",
+            {
+              method:
+                options?.action
+                  ? "POST"
+                  : "GET",
+              cache:
+                "no-store",
+              signal:
+                controller.signal,
+              headers: {
+                Authorization:
+                  `Bearer ${token}`,
+                "Content-Type":
+                  "application/json",
+              },
+              body:
+                options?.action
+                  ? JSON.stringify({
+                      action:
+                        options.action,
+                    })
+                  : undefined,
+            }
+          )
+      } catch (error) {
+        if (
+          error instanceof DOMException &&
+          error.name === "AbortError"
+        ) {
+          throw new Error(
+            getAbortErrorMessage(
+              "Market Radar no respondió a tiempo."
+            )
+          )
+        }
+
+        throw error
+      } finally {
+        window.clearTimeout(
+          timeoutId
+        )
+      }
+
       const payload =
-        await response.json() as MarketRadarApiResponse
+        await readJsonResponse<MarketRadarApiResponse>(
+          response,
+          "Market Radar devolvio una respuesta invalida."
+        )
 
       if (
         !response.ok ||
         !payload.success ||
         !payload.dashboard
       ) {
+        const detailMessage =
+          payload.error_detail
+            ? `${payload.error}: ${payload.error_detail}`
+            : payload.error
+
         throw new Error(
-          payload.error ||
+          detailMessage ||
           "No se pudo cargar Market Radar."
         )
       }
@@ -3455,7 +3811,10 @@ export function MarketRadarPanel() {
           )
 
         const payload =
-          await response.json() as PriceIntelligenceApiResponse
+          await readJsonResponse<PriceIntelligenceApiResponse>(
+            response,
+            "Price Intelligence devolvio una respuesta invalida."
+          )
 
         if (
           !response.ok ||
@@ -3526,6 +3885,17 @@ export function MarketRadarPanel() {
         const token =
           await getAccessToken()
 
+        const savedRecommendedPrice =
+          toNumber(
+            priceIntelligenceResults[productKey]?.recommendedSalePrice
+          )
+
+        const radarProduct =
+          buildEbayPipelineRadarProduct(
+            product,
+            savedRecommendedPrice
+          )
+
         const response =
           await fetch(
             "/api/admin/ebay-winner-pipeline",
@@ -3545,15 +3915,16 @@ export function MarketRadarPanel() {
                   persist:
                     true,
                   radarProduct:
-                    buildEbayPipelineRadarProduct(
-                      product
-                    ),
+                    radarProduct,
                 }),
             }
           )
 
         const payload =
-          await response.json() as EbayPipelineApiResponse
+          await readJsonResponse<EbayPipelineApiResponse>(
+            response,
+            "eBay Pipeline devolvio una respuesta invalida."
+          )
 
         if (
           !response.ok ||
@@ -3574,7 +3945,7 @@ export function MarketRadarPanel() {
             status:
               "success",
             message:
-              "Candidato enviado al eBay Pipeline en modo dryRun.",
+              "Candidato enviado al eBay Pipeline en modo dryRun. Abriendo detalle.",
             candidateId:
               persistedCandidate?.id,
             candidateKey:
@@ -3585,6 +3956,27 @@ export function MarketRadarPanel() {
               payload.result?.candidate?.state,
           },
         }))
+
+        onOpenEbayPipeline?.({
+          candidateId:
+            persistedCandidate?.id || null,
+          candidateKey:
+            persistedCandidate?.candidate_key ||
+            payload.result?.candidate?.candidate_key ||
+            null,
+          supplierSku:
+            getRealProductSku(
+              product
+            ) ||
+            getStableSupplierSku(
+              product
+            ) ||
+            null,
+          title:
+            product.title || null,
+          nonce:
+            Date.now(),
+        })
       } catch (evaluationError) {
         console.error(
           "EBAY PIPELINE DRYRUN EVALUATION ERROR:",
@@ -3605,7 +3997,10 @@ export function MarketRadarPanel() {
       } finally {
         setEvaluatingProductKey("")
       }
-    }, [getAccessToken])
+    }, [
+      getAccessToken,
+      priceIntelligenceResults,
+    ])
 
 
   useEffect(() => {
@@ -3800,37 +4195,178 @@ export function MarketRadarPanel() {
         </div>
 
         {syncResult && (
-          <div
-            className="
-              mt-5
-              grid
-              gap-3
-              rounded-lg
-              border
-              border-white/10
-              bg-black/25
-              p-4
-              text-xs
-              text-white/55
-              md:grid-cols-5
-            "
-          >
-            <span>
-              Productos: <strong className="text-white">{syncResult.fetchedProducts}</strong>
-            </span>
-            <span>
-              Variantes: <strong className="text-white">{syncResult.fetchedVariants}</strong>
-            </span>
-            <span>
-              Snapshots: <strong className="text-white">{syncResult.snapshotsInserted}</strong>
-            </span>
-            <span>
-              Eventos: <strong className="text-white">{syncResult.eventsInserted}</strong>
-            </span>
-            <span>
-              Scores: <strong className="text-white">{syncResult.scoredProducts}</strong>
-            </span>
-          </div>
+          <>
+            <div
+              className="
+                mt-5
+                grid
+                gap-3
+                rounded-lg
+                border
+                border-white/10
+                bg-black/25
+                p-4
+                text-xs
+                text-white/55
+                md:grid-cols-5
+              "
+            >
+              <span>
+                Productos: <strong className="text-white">{syncResult.fetchedProducts}</strong>
+              </span>
+              <span>
+                Variantes: <strong className="text-white">{syncResult.fetchedVariants}</strong>
+              </span>
+              <span>
+                Snapshots: <strong className="text-white">{syncResult.snapshotsInserted}</strong>
+              </span>
+              <span>
+                Eventos: <strong className="text-white">{syncResult.eventsInserted}</strong>
+              </span>
+              <span>
+                Scores: <strong className="text-white">{syncResult.scoredProducts}</strong>
+              </span>
+            </div>
+            <div
+              className="
+                mt-3
+                grid
+                gap-3
+                rounded-lg
+                border
+                border-white/10
+                bg-black/20
+                p-4
+                text-xs
+                leading-5
+                text-white/55
+                md:grid-cols-3
+              "
+            >
+              <span>
+                Cantidad numérica:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryNumericVariants ?? 0}
+                </strong>
+              </span>
+              <span>
+                Solo disponibilidad:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryAvailabilityOnlyVariants ?? 0}
+                </strong>
+              </span>
+              <span>
+                Sin dato stock:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryUnknownVariants ?? 0}
+                </strong>
+              </span>
+              <span>
+                Cookie Luna:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryHydrationEnabled
+                    ? "activa"
+                    : "no activa"}
+                </strong>
+              </span>
+              <span>
+                Hidratados:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryHydratedProducts ?? 0}
+                </strong>
+              </span>
+              <span>
+                Candidatos hidratación:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryHydrationCandidates ?? 0}
+                </strong>
+              </span>
+              <span>
+                Fetch OK:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryHydrationSuccessfulFetches ?? 0}
+                </strong>
+              </span>
+              <span>
+                Fetch fallidos:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryHydrationFailedFetches ?? 0}
+                </strong>
+              </span>
+              <span>
+                OK sin cantidad:{" "}
+                <strong className="text-white">
+                  {syncResult.inventoryHydrationWithoutNumericInventory ?? 0}
+                </strong>
+              </span>
+              <span>
+                Sesión Luna:{" "}
+                <strong className="text-white">
+                  {syncResult.lunaAuthState || "unknown"}
+                </strong>
+              </span>
+            </div>
+
+            {syncResult.lunaAuthState &&
+              syncResult.lunaAuthState !== "approved" && (
+                <div
+                  className="
+                    mt-3
+                    flex
+                    flex-col
+                    gap-3
+                    rounded-lg
+                    border
+                    border-amber-300/25
+                    bg-amber-300/[0.08]
+                    p-4
+                    text-sm
+                    leading-6
+                    text-amber-50
+                    md:flex-row
+                    md:items-center
+                    md:justify-between
+                  "
+                >
+                  <div className="min-w-0">
+                    <p className="font-black">
+                      Cookie Luna requiere actualización
+                    </p>
+                    <p className="mt-1 text-xs text-amber-50/75">
+                      {syncResult.lunaAuthMessage ||
+                        "Actualizar LUNAPORTEX_AUTH_COOKIE con una sesión aprobada."}
+                    </p>
+                  </div>
+                  <a
+                    href="https://lunaportex.com/account"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="
+                      inline-flex
+                      shrink-0
+                      items-center
+                      justify-center
+                      gap-2
+                      rounded-lg
+                      border
+                      border-amber-200/35
+                      bg-amber-200
+                      px-3
+                      py-2
+                      text-xs
+                      font-black
+                      text-black
+                      transition
+                      hover:bg-amber-100
+                    "
+                  >
+                    Abrir Luna
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                </div>
+              )}
+
+          </>
         )}
 
         {error && (
@@ -4049,6 +4585,41 @@ export function MarketRadarPanel() {
                 )}
               </tbody>
             </table>
+          </div>
+        </section>
+
+        <section
+          className="
+            rounded-lg
+            border
+            border-white/10
+            bg-black/30
+            p-5
+          "
+        >
+          <p className="text-[10px] uppercase tracking-[0.26em] text-white/40">
+            Advisor
+          </p>
+          <h3 className="mt-2 text-xl font-black text-white">
+            Alertas Advisor del Radar
+          </h3>
+          <p className="mt-2 text-xs leading-5 text-white/40">
+            Eventos traducidos a recomendaciones estrategicas. No ejecutan acciones reales.
+          </p>
+
+          <div className="mt-5 space-y-3">
+            {dashboard?.advisorAlerts.length ? (
+              dashboard.advisorAlerts.map((alert, index) => (
+                <RadarAdvisorAlertItem
+                  key={`${alert.product_id || "product"}-${alert.supplier_sku || alert.candidate_id || "variant"}-${alert.event_type}-${alert.created_at || "created"}-${index}`}
+                  alert={alert}
+                />
+              ))
+            ) : (
+              <p className="rounded-lg border border-white/10 bg-white/[0.03] p-4 text-sm text-white/45">
+                Sin alertas Advisor por ahora.
+              </p>
+            )}
           </div>
         </section>
 
