@@ -1168,6 +1168,89 @@ function humanizePipelineValue(
   return labels[value] || value.replaceAll("_", " ")
 }
 
+function humanizeSupplierInput(
+  value?: string | null
+) {
+  if (!value) {
+    return "-"
+  }
+
+  const labels: Record<string, string> = {
+    direct_supplier_unit_cost:
+      "Costo directo del proveedor",
+    inbound_shipping_to_luna:
+      "Envio hacia Luna o fulfillment",
+    moq:
+      "Compra minima (MOQ)",
+    lead_time_days:
+      "Tiempo de entrega",
+    luna_receiving_fee:
+      "Costo de recepcion en Luna",
+    luna_storage_fee:
+      "Costo de almacenamiento",
+    luna_pick_pack_fee:
+      "Costo pick & pack",
+    luna_fulfillment_fee:
+      "Costo fulfillment Luna",
+    luna_outbound_shipping:
+      "Envio final al comprador",
+    supplier_unit_cost:
+      "Costo proveedor actual",
+  }
+
+  return labels[value] || humanizePipelineValue(value)
+}
+
+function humanizeSupplierInputs(
+  values?: string[] | null
+) {
+  const orderedInputs = [
+    "direct_supplier_unit_cost",
+    "inbound_shipping_to_luna",
+    "moq",
+    "lead_time_days",
+    "luna_receiving_fee",
+    "luna_storage_fee",
+    "luna_pick_pack_fee",
+    "luna_fulfillment_fee",
+    "luna_outbound_shipping",
+    "supplier_unit_cost",
+  ]
+
+  const uniqueValues =
+    uniqueStrings(values || [])
+
+  return [
+    ...orderedInputs.filter(input =>
+      uniqueValues.includes(input)
+    ),
+    ...uniqueValues.filter(input =>
+      !orderedInputs.includes(input)
+    ),
+  ].map(humanizeSupplierInput)
+}
+
+function formatSupplierGap(
+  value?: string | number | null
+) {
+  const numericValue =
+    toNumber(value)
+
+  if (numericValue === null) {
+    return "-"
+  }
+
+  if (numericValue > 0) {
+    return `${formatCurrency(numericValue)} por encima del maximo`
+  }
+
+  if (numericValue < 0) {
+    return `${formatCurrency(Math.abs(numericValue))} por debajo del maximo`
+  }
+
+  return "En el limite del margen objetivo"
+}
+
 function humanizeCampaignNow(
   pricingStrategy?: PricingStrategyRecommendation | null
 ) {
@@ -2844,7 +2927,7 @@ function CandidateDetailDrawer({
                         />
                         <Field
                           label="Diferencia contra margen objetivo"
-                          value={formatCurrency(
+                          value={formatSupplierGap(
                             currentSupplierScenario?.profit_gap
                           )}
                         />
@@ -2858,7 +2941,9 @@ function CandidateDetailDrawer({
                           label="Que falta para comparar"
                           value={
                             supplierSimulatorMissingInputs.length
-                              ? supplierSimulatorMissingInputs.join(", ")
+                              ? humanizeSupplierInputs(
+                                  supplierSimulatorMissingInputs
+                                ).join(", ")
                               : "Datos suficientes para simulacion inicial"
                           }
                         />
@@ -2884,19 +2969,19 @@ function CandidateDetailDrawer({
                                   )}
                                 />
                                 <Field
-                                  label="Costo proveedor landed"
+                                  label="Costo proveedor total"
                                   value={formatCurrency(
                                     scenario.supplier_landed_cost
                                   )}
                                 />
                                 <Field
-                                  label="Fulfillment"
+                                  label="Operacion fulfillment"
                                   value={formatCurrency(
                                     scenario.fulfillment_cost
                                   )}
                                 />
                                 <Field
-                                  label="Shipping"
+                                  label="Envio"
                                   value={formatCurrency(
                                     scenario.shipping_cost
                                   )}
@@ -2908,7 +2993,7 @@ function CandidateDetailDrawer({
                                   )}
                                 />
                                 <Field
-                                  label="Profit / margen"
+                                  label="Ganancia / margen"
                                   value={`${formatCurrency(
                                     scenario.net_profit
                                   )} / ${formatNumber(
@@ -2917,14 +3002,14 @@ function CandidateDetailDrawer({
                                   )}`}
                                 />
                                 <Field
-                                  label="Costo maximo proveedor"
+                                  label="Costo maximo para margen"
                                   value={formatCurrency(
                                     scenario.max_supplier_landed_cost
                                   )}
                                 />
                                 <Field
                                   label="Diferencia"
-                                  value={formatCurrency(
+                                  value={formatSupplierGap(
                                     scenario.profit_gap
                                   )}
                                 />
@@ -2940,7 +3025,9 @@ function CandidateDetailDrawer({
                                   Que falta
                                 </p>
                                 <SimpleList
-                                  items={scenario.missing_inputs || []}
+                                  items={humanizeSupplierInputs(
+                                    scenario.missing_inputs
+                                  )}
                                   empty="Sin faltantes criticos para este escenario."
                                 />
                               </div>
