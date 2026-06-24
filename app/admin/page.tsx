@@ -71,6 +71,7 @@ import {
 } from "@/components/admin/market-radar-panel"
 import {
   EbayWinnerPipelinePanel,
+  type EbayPipelineFocusCandidate,
 } from "@/components/admin/ebay-winner-pipeline-panel"
 
 type Product = {
@@ -682,6 +683,11 @@ export default function AdminPage() {
     selectedMenu,
     setSelectedMenu,
   ] = useState("community")
+
+  const [
+    ebayPipelineFocusCandidate,
+    setEbayPipelineFocusCandidate,
+  ] = useState<EbayPipelineFocusCandidate | null>(null)
 
   const [
     productSearchTerm,
@@ -9105,13 +9111,24 @@ export default function AdminPage() {
 
         {
           selectedMenu === "market-radar" && (
-            <MarketRadarPanel />
+            <MarketRadarPanel
+              onOpenEbayPipeline={(focusCandidate) => {
+                setEbayPipelineFocusCandidate(
+                  focusCandidate
+                )
+                setSelectedMenu(
+                  "ebay-winner-pipeline"
+                )
+              }}
+            />
           )
         }
 
         {
           selectedMenu === "ebay-winner-pipeline" && (
-            <EbayWinnerPipelinePanel />
+            <EbayWinnerPipelinePanel
+              focusCandidate={ebayPipelineFocusCandidate}
+            />
           )
         }
 

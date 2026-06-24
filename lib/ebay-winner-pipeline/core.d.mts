@@ -13,11 +13,13 @@ export function getPipelineReanalysisAdvisor(args?: {
 }): Record<string, any>
 export function normalizeRadarProductToEbayCandidate(radarProduct: Record<string, any>): Record<string, any>
 export function validateCandidateData(candidate: Record<string, any>, config?: Record<string, any>): Record<string, any>
+export function resolveEbayFeeRule(candidate?: Record<string, any>, totalRevenue?: number, config?: Record<string, any>): Record<string, any>
+export function calculateEbayFee(totalRevenue: number, feeRule: Record<string, any>): number
 export function calculateProfitScenario(candidate: Record<string, any>, config?: Record<string, any>): Record<string, any>
 export function runComplianceChecks(candidate: Record<string, any>, profitScenario: Record<string, any>, config?: Record<string, any>): Record<string, any>
 export function calculateWinnerScore(candidate: Record<string, any>, validation: Record<string, any>, profitScenario: Record<string, any>, compliance: Record<string, any>): Record<string, any>
 export function decideCandidateState(validation: Record<string, any>, profitScenario: Record<string, any>, compliance: Record<string, any>): string
-export function buildHumanExplanation(candidate: Record<string, any>, profitScenario: Record<string, any>, compliance: Record<string, any>, score: Record<string, any>): string
+export function buildHumanExplanation(candidate: Record<string, any>, profitScenario: Record<string, any>, compliance: Record<string, any>, score: Record<string, any>, validation?: Record<string, any> | null): string
 export function buildWhatsAppDryRunPayload(candidate: Record<string, any>, profitScenario: Record<string, any>, score: Record<string, any>, explanation: string): Record<string, any>
 export function processRadarCandidate(radarProduct: Record<string, any>, config?: Record<string, any>): Record<string, any>
 export function normalizeDecisionAction(action: string): string | null

@@ -926,6 +926,8 @@ test("producto sin peso ni dimensiones queda en NEEDS_DATA", () => {
 
   assert.equal(result.candidate.state, "NEEDS_DATA")
   assert.ok(result.validation.missingFields.includes("weight_or_dimensions"))
+  assert.match(result.explanation, /Producto necesita datos/)
+  assert.doesNotMatch(result.explanation, /Producto recomendado/)
 })
 
 test("producto con margen bajo queda bloqueado", () => {
@@ -937,10 +939,609 @@ test("producto con margen bajo queda bloqueado", () => {
   })
 
   assert.equal(result.candidate.state, "BLOCKED")
+  assert.equal(result.profitScenario.passes_minimums, false)
   assert.ok(
-    result.compliance.findings.some(finding =>
+    !result.compliance.findings.some(finding =>
       finding.code === "margin_below_minimum"
     )
+  )
+})
+
+test("fee engine: categoria default usa 13.25% + fee fijo", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        1,
+      estimated_sale_price:
+        100,
+      buyer_shipping_charge:
+        10,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+      suggested_category_name:
+        "Health & Beauty",
+    },
+    {
+      defaultShippingCost:
+        0,
+      paymentFeePercent:
+        0,
+      advertisingPercent:
+        0,
+      returnReservePercent:
+        0,
+    }
+  )
+
+  assert.equal(result.assumptions.ebayFeePercent, 13.25)
+  assert.equal(result.assumptions.ebay_fixed_fee, 0.3)
+  assert.equal(result.assumptions.ebay_fee_source, "default_most_categories")
+  assert.equal(result.assumptions.ebay_fee_confidence, "medium")
+  assert.equal(result.estimated_ebay_fee, 14.88)
+})
+
+test("fee engine: books/media usa 14.95% + fee fijo", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        1,
+      estimated_sale_price:
+        100,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+      suggested_category_name:
+        "Books, Movies & Music",
+    },
+    {
+      defaultShippingCost:
+        0,
+      paymentFeePercent:
+        0,
+      advertisingPercent:
+        0,
+      returnReservePercent:
+        0,
+    }
+  )
+
+  assert.equal(result.assumptions.ebayFeePercent, 14.95)
+  assert.equal(result.assumptions.ebay_fee_source, "category_rule")
+  assert.equal(result.assumptions.ebay_fee_confidence, "high")
+  assert.equal(result.estimated_ebay_fee, 15.25)
+})
+
+test("fee engine: guitars/basses usa 6.35% + fee fijo", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        1,
+      estimated_sale_price:
+        100,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+      suggested_category_name:
+        "Guitars & Basses",
+    },
+    {
+      defaultShippingCost:
+        0,
+      paymentFeePercent:
+        0,
+      advertisingPercent:
+        0,
+      returnReservePercent:
+        0,
+    }
+  )
+
+  assert.equal(result.assumptions.ebayFeePercent, 6.35)
+  assert.equal(result.estimated_ebay_fee, 6.65)
+})
+
+test("fee engine: sneakers desde 150 usa 8% + fee fijo", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        1,
+      estimated_sale_price:
+        150,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+      suggested_category_name:
+        "Sneakers",
+    },
+    {
+      defaultShippingCost:
+        0,
+      paymentFeePercent:
+        0,
+      advertisingPercent:
+        0,
+      returnReservePercent:
+        0,
+    }
+  )
+
+  assert.equal(result.assumptions.ebayFeePercent, 8)
+  assert.equal(result.assumptions.ebay_category_group, "sneakers_150_plus")
+  assert.equal(result.estimated_ebay_fee, 12.3)
+})
+
+test("fee engine: categoria desconocida usa default con confianza media", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        1,
+      estimated_sale_price:
+        100,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+      suggested_category_name:
+        "Unmapped Category",
+    },
+    {
+      defaultShippingCost:
+        0,
+      paymentFeePercent:
+        0,
+      advertisingPercent:
+        0,
+      returnReservePercent:
+        0,
+    }
+  )
+
+  assert.equal(result.assumptions.ebayFeePercent, 13.25)
+  assert.equal(result.assumptions.ebay_fee_source, "default_most_categories")
+  assert.equal(result.assumptions.ebay_fee_confidence, "medium")
+})
+
+test("fee engine: insertion fee no se suma por defecto", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        1,
+      estimated_sale_price:
+        100,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+      suggested_category_name:
+        "Health & Beauty",
+    },
+    {
+      defaultShippingCost:
+        0,
+      paymentFeePercent:
+        0,
+      advertisingPercent:
+        0,
+      returnReservePercent:
+        0,
+    }
+  )
+
+  assert.match(
+    result.assumptions.insertion_fee_assumption,
+    /Insertion fee no aplicado/
+  )
+  assert.equal(result.total_estimated_cost, 14.55)
+})
+
+test("advisor advierte que categoria faltante puede cambiar fee eBay", () => {
+  const { product_type, suggested_category_id, suggested_category_name, ...product } =
+    validRadarProduct
+
+  const result = processRadarCandidate({
+    ...product,
+    sku:
+      "LP-MISSING-CATEGORY-FEE-001",
+  })
+
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      result.candidate,
+      result.profitScenario,
+      null,
+      result.validation,
+      result.compliance
+    )
+
+  assert.ok(
+    advisor.profit_reasons.includes(
+      "La categoria final afecta el fee de eBay. Confirmar categoria antes de publicar."
+    )
+  )
+})
+
+test("strategic summary: rentable pero NEEDS_DATA queda pendiente operativo", () => {
+  const { weight, dimensions, ...product } = validRadarProduct
+  const result = processRadarCandidate({
+    ...product,
+    sku:
+      "LP-STRATEGIC-NEEDS-DATA-001",
+  })
+
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      result.candidate,
+      result.profitScenario,
+      {
+        sold_median_price:
+          35,
+        source_confidence:
+          "high",
+      },
+      result.validation,
+      result.compliance
+    )
+
+  assert.equal(
+    advisor.strategic_summary.commercial_status,
+    "needs_operational_data"
+  )
+  assert.match(
+    advisor.strategic_summary.headline,
+    /prometedor/
+  )
+})
+
+test("pricing strategy: rentable con NEEDS_DATA no lista organico todavia", () => {
+  const result = processRadarCandidate({
+    ...validRadarProduct,
+    sku:
+      "LP-STRATEGIC-NEEDS-DATA-LAUNCH-001",
+    weight:
+      undefined,
+  })
+
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      result.candidate,
+      result.profitScenario,
+      {
+        sold_median_price:
+          35,
+        source_confidence:
+          "high",
+      },
+      result.validation,
+      result.compliance
+    )
+
+  assert.equal(
+    advisor.pricing_strategy.launch_strategy,
+    "needs_data"
+  )
+  assert.match(
+    advisor.pricing_strategy.reason,
+    /pendiente de datos operativos/
+  )
+})
+
+test("strategic summary: rentable y datos completos queda listo para preparar listing", () => {
+  const result = processRadarCandidate(validRadarProduct)
+
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      result.candidate,
+      result.profitScenario,
+      {
+        sold_median_price:
+          35,
+        source_confidence:
+          "high",
+      },
+      result.validation,
+      result.compliance
+    )
+
+  assert.equal(
+    advisor.strategic_summary.commercial_status,
+    "ready_to_prepare_listing"
+  )
+  assert.match(
+    advisor.strategic_summary.seller_advisor_note,
+    /organico/
+  )
+})
+
+test("strategic summary: precio minimo rentable sobre mercado bloquea unidad", () => {
+  const profitScenario =
+    calculateProfitScenario(
+      {
+        cost:
+          28,
+        estimated_sale_price:
+          30,
+        shipping_cost:
+          6.99,
+        fulfillment_cost:
+          1.5,
+        packaging_cost:
+          0.75,
+        suggested_category_name:
+          "Health & Beauty",
+      },
+      {
+        defaultShippingCost:
+          6.99,
+      }
+    )
+
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      {
+        state:
+          "BLOCKED",
+        product_type:
+          "Health & Beauty",
+      },
+      profitScenario,
+      {
+        sold_median_price:
+          45,
+        source_confidence:
+          "high",
+      },
+      {
+        missingFields:
+          [],
+      },
+      {
+        overall_status:
+          "passed",
+        findings:
+          [],
+      }
+    )
+
+  assert.equal(
+    advisor.strategic_summary.commercial_status,
+    "blocked_as_unit"
+  )
+})
+
+test("strategic summary: proveedor actual caro con demanda sugiere buscar proveedor", () => {
+  const profitScenario =
+    calculateProfitScenario(
+      {
+        cost:
+          24,
+        estimated_sale_price:
+          30,
+        shipping_cost:
+          6.99,
+        fulfillment_cost:
+          1.5,
+        packaging_cost:
+          0.75,
+        suggested_category_name:
+          "Health & Beauty",
+      },
+      {
+        defaultShippingCost:
+          6.99,
+      }
+    )
+
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      {
+        state:
+          "BLOCKED",
+        product_type:
+          "Health & Beauty",
+      },
+      profitScenario,
+      {
+        sold_median_price:
+          45,
+        source_confidence:
+          "high",
+      },
+      {
+        missingFields:
+          [],
+      },
+      {
+        overall_status:
+          "passed",
+        findings:
+          [],
+      }
+    )
+
+  assert.equal(
+    advisor.strategic_summary.commercial_status,
+    "supplier_not_competitive"
+  )
+  assert.equal(
+    advisor.strategic_summary.supplier_strategy.supplier_strategy,
+    "find_better_supplier"
+  )
+})
+
+test("cost model: margen deseado no se suma como costo real", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        10,
+      estimated_sale_price:
+        30,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+      suggested_category_name:
+        "Health & Beauty",
+    },
+    {
+      defaultShippingCost:
+        0,
+      paymentFeePercent:
+        0,
+      advertisingPercent:
+        0,
+      returnReservePercent:
+        0,
+      minimumNetMarginPercent:
+        50,
+    }
+  )
+
+  assert.equal(result.total_estimated_cost, 14.28)
+})
+
+test("cost model: eBay fee queda como assumption configurable", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        1,
+      estimated_sale_price:
+        100,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+    },
+    {
+      defaultShippingCost:
+        0,
+      ebayFeePercent:
+        12,
+      ebayFixedOrderFee:
+        0.4,
+      paymentFeePercent:
+        0,
+      advertisingPercent:
+        0,
+      returnReservePercent:
+        0,
+    }
+  )
+
+  assert.equal(result.assumptions.ebayFeePercent, 12)
+  assert.equal(result.assumptions.ebay_fixed_fee, 0.4)
+  assert.equal(result.estimated_ebay_fee, 12.4)
+})
+
+test("cost model: campana opcional no descuenta si advertisingPercent es 0", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        10,
+      estimated_sale_price:
+        30,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+      suggested_category_name:
+        "Health & Beauty",
+    },
+    {
+      defaultShippingCost:
+        0,
+      advertisingPercent:
+        0,
+      paymentFeePercent:
+        0,
+      returnReservePercent:
+        0,
+    }
+  )
+
+  assert.equal(result.estimated_advertising_cost, 0)
+})
+
+test("cost model: fulfillment y packaging pueden caer a 0", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        10,
+      estimated_sale_price:
+        30,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+      suggested_category_name:
+        "Health & Beauty",
+    },
+    {
+      defaultShippingCost:
+        0,
+    }
+  )
+
+  assert.equal(result.fulfillment_cost, 0)
+  assert.equal(result.packaging_cost, 0)
+})
+
+test("cost model: Luna como proveedor directo no suma fulfillment por defecto", () => {
+  const result = calculateProfitScenario(
+    {
+      source_key:
+        "lunaportex",
+      cost:
+        8,
+      estimated_sale_price:
+        41.99,
+      shipping_cost:
+        6.99,
+      suggested_category_name:
+        "Home Improvement",
+    },
+    {
+      defaultFulfillmentCost:
+        1.5,
+      defaultPackagingCost:
+        0.75,
+    }
+  )
+
+  assert.equal(result.supplier_model, "luna_as_supplier")
+  assert.equal(result.fulfillment_cost, 0)
+  assert.equal(result.packaging_cost, 0)
+  assert.equal(
+    result.fulfillment_cost_source,
+    "included_in_luna_supplier_purchase"
+  )
+  assert.match(
+    result.operating_cost_note,
+    /proveedor directo/
   )
 })
 
@@ -1707,7 +2308,7 @@ test("IMNOVA free shipping mantiene estimated_shipping_cost como costo interno",
           1.5 +
           0.75 +
           6.99 +
-          3.84 +
+          4.14 +
           0 +
           0 +
           0.87
@@ -1828,7 +2429,7 @@ test("pricing strategy: organico rentable pero campana rompe margen -> organic_o
           salePrice:
             40,
           lunaCost:
-            20,
+            19.75,
         }),
       priceIntelligence:
         makePriceIntelligence({
@@ -1861,7 +2462,7 @@ test("pricing strategy: campana 1%-2% mantiene margen -> list_with_small_campaig
           salePrice:
             40,
           lunaCost:
-            19.26,
+            19,
         }),
       priceIntelligence:
         makePriceIntelligence({

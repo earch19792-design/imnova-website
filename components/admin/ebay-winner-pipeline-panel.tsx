@@ -23,6 +23,14 @@ import {
   supabase,
 } from "@/lib/supabase"
 
+export type EbayPipelineFocusCandidate = {
+  candidateId?: string | null
+  candidateKey?: string | null
+  supplierSku?: string | null
+  title?: string | null
+  nonce?: number
+}
+
 type EbaySummary = {
   dryRunOnly: boolean
   totalCandidates: number
@@ -49,8 +57,12 @@ type EbayScore = {
 type EbayProfitScenario = {
   estimated_sale_price?: number | string | null
   luna_cost?: number | string | null
+  supplier_model?: string | null
   fulfillment_cost?: number | string | null
+  fulfillment_cost_source?: string | null
   packaging_cost?: number | string | null
+  packaging_cost_source?: string | null
+  operating_cost_note?: string | null
   estimated_shipping_cost?: number | string | null
   estimated_ebay_fee?: number | string | null
   estimated_payment_fee?: number | string | null
@@ -207,16 +219,28 @@ type PriceIntelligenceSnapshot = {
 
 type CostScenario = {
   sale_price?: number | string | null
+  buyer_shipping_charge?: number | string | null
   luna_cost?: number | string | null
   shipping_cost?: number | string | null
   ebay_fee_percent?: number | string | null
+  ebay_fixed_fee?: number | string | null
   ebay_fee_amount?: number | string | null
+  ebay_fee_source?: string | null
+  ebay_fee_confidence?: string | null
+  ebay_category_group?: string | null
+  ebay_category_match?: string | null
+  ebay_fee_note?: string | null
+  insertion_fee_assumption?: string | null
   payment_fee_percent?: number | string | null
   payment_fee_amount?: number | string | null
   promotion_percent?: number | string | null
   promotion_amount?: number | string | null
+  supplier_model?: string | null
   fulfillment_cost?: number | string | null
+  fulfillment_cost_source?: string | null
   packaging_cost?: number | string | null
+  packaging_cost_source?: string | null
+  operating_cost_note?: string | null
   return_reserve_percent?: number | string | null
   return_reserve_amount?: number | string | null
   direct_cost?: number | string | null
@@ -261,6 +285,24 @@ type PricingStrategyRecommendation = {
 
 type EbayDecisionAdvisor = {
   decision_label?: string
+  strategic_summary?: {
+    commercial_status?: string | null
+    headline?: string | null
+    why?: string | null
+    recommended_action?: string | null
+    next_step?: string | null
+    risk?: string | null
+    seller_advisor_note?: string | null
+    supplier_strategy?: {
+      supplier_model?: string | null
+      current_supplier?: string | null
+      current_supplier_landed_cost?: number | string | null
+      max_supplier_landed_cost?: number | string | null
+      profit_gap?: number | string | null
+      supplier_strategy?: string | null
+      note?: string | null
+    } | null
+  } | null
   human_summary?: string
   block_reasons?: string[]
   missing_data?: string[]
@@ -497,6 +539,15 @@ function calculateEditableCostScenario(
   const salePrice =
     toNumber(base.sale_price) || 0
 
+  const buyerShippingCharge =
+    toNumber(base.buyer_shipping_charge) || 0
+
+  const totalRevenue =
+    roundMoney(
+      salePrice +
+        buyerShippingCharge
+    )
+
   const lunaCost =
     toNumber(base.luna_cost) || 0
 
@@ -508,6 +559,9 @@ function calculateEditableCostScenario(
 
   const ebayFeePercent =
     toNumber(base.ebay_fee_percent) || 0
+
+  const ebayFixedFee =
+    toNumber(base.ebay_fixed_fee) ?? 0.3
 
   const paymentFeePercent =
     toNumber(base.payment_fee_percent) || 0
@@ -535,7 +589,8 @@ function calculateEditableCostScenario(
 
   const ebayFeeAmount =
     roundMoney(
-      salePrice * (ebayFeePercent / 100)
+      totalRevenue * (ebayFeePercent / 100) +
+        ebayFixedFee
     )
 
   const paymentFeeAmount =
@@ -581,13 +636,13 @@ function calculateEditableCostScenario(
 
   const netProfit =
     roundMoney(
-      salePrice - totalEstimatedCost
+      totalRevenue - totalEstimatedCost
     )
 
   const netMarginPercent =
-    salePrice > 0
+    totalRevenue > 0
       ? roundMoney(
-          (netProfit / salePrice) * 100
+          (netProfit / totalRevenue) * 100
         )
       : 0
 
@@ -610,7 +665,8 @@ function calculateEditableCostScenario(
     lunaCost +
     safeShippingCost +
     fulfillmentCost +
-    packagingCost
+    packagingCost +
+    ebayFixedFee
 
   const breakEvenPrice =
     1 - variableRate > 0
@@ -630,14 +686,30 @@ function calculateEditableCostScenario(
   return {
     sale_price:
       salePrice,
+    buyer_shipping_charge:
+      buyerShippingCharge,
     luna_cost:
       lunaCost,
     shipping_cost:
       safeShippingCost,
     ebay_fee_percent:
       ebayFeePercent,
+    ebay_fixed_fee:
+      ebayFixedFee,
     ebay_fee_amount:
       ebayFeeAmount,
+    ebay_fee_source:
+      base.ebay_fee_source,
+    ebay_fee_confidence:
+      base.ebay_fee_confidence,
+    ebay_category_group:
+      base.ebay_category_group,
+    ebay_category_match:
+      base.ebay_category_match,
+    ebay_fee_note:
+      base.ebay_fee_note,
+    insertion_fee_assumption:
+      base.insertion_fee_assumption,
     payment_fee_percent:
       paymentFeePercent,
     payment_fee_amount:
@@ -944,6 +1016,167 @@ function Field({
   )
 }
 
+function humanizePipelineValue(
+  value?: string | null
+) {
+  if (!value) {
+    return "-"
+  }
+
+  const labels: Record<string, string> = {
+    NEEDS_DATA:
+      "Faltan datos antes de publicar",
+    VALIDATED:
+      "Listo para preparar",
+    BLOCKED:
+      "Bloqueado",
+    APPROVAL_PENDING:
+      "Pendiente de aprobacion",
+    needs_operational_data:
+      "Prometedor, pero incompleto",
+    ready_to_prepare_listing:
+      "Listo para preparar listing",
+    supplier_not_competitive:
+      "Proveedor no competitivo",
+    blocked_as_unit:
+      "No conviene vender como unidad",
+    pack_candidate:
+      "Candidato para pack",
+    list_organic:
+      "Listar organico primero",
+    needs_data:
+      "Completar datos",
+    complete_missing_data:
+      "Completar datos faltantes",
+    monitor:
+      "Monitorear",
+    price_down:
+      "Cambio de precio detectado",
+    operational_data:
+      "Datos operativos",
+    market_execution:
+      "Ejecucion de mercado",
+    low:
+      "Bajo",
+    medium:
+      "Medio",
+    high:
+      "Alto",
+    luna_as_supplier:
+      "Luna como proveedor",
+    luna_as_fulfillment_only:
+      "Luna solo como fulfillment",
+    test_with_current_supplier:
+      "Probar con proveedor actual",
+    find_better_supplier:
+      "Buscar mejor proveedor",
+    explicit_candidate_cost:
+      "Costo confirmado en el candidato",
+    included_in_luna_supplier_purchase:
+      "No aplicado: Luna es proveedor directo",
+    default_operating_assumption:
+      "Supuesto operativo default",
+    default_most_categories:
+      "Default mayoria de categorias",
+    category_rule:
+      "Regla de categoria",
+    most_categories:
+      "Mayoria de categorias",
+  }
+
+  return labels[value] || value.replaceAll("_", " ")
+}
+
+function humanizeMissingField(
+  value: string
+) {
+  const labels: Record<string, string> = {
+    weight_or_dimensions:
+      "Peso y dimensiones",
+    authorized_images:
+      "Imagenes autorizadas",
+    category_or_inference_data:
+      "Categoria e item specifics",
+    supplier_sku:
+      "SKU proveedor",
+    title:
+      "Titulo",
+    cost:
+      "Costo",
+    stock:
+      "Inventario",
+  }
+
+  return labels[value] || value.replaceAll("_", " ")
+}
+
+function SummaryMetric({
+  label,
+  value,
+  detail,
+  tone = "neutral",
+}: {
+  label: string
+  value: string | number
+  detail?: string
+  tone?: "neutral" | "success" | "warning" | "danger"
+}) {
+  const toneClass =
+    tone === "success"
+      ? "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-50"
+      : tone === "warning"
+        ? "border-amber-300/20 bg-amber-300/[0.08] text-amber-50"
+        : tone === "danger"
+          ? "border-red-300/20 bg-red-300/[0.08] text-red-50"
+          : "border-white/10 bg-black/25 text-white"
+
+  return (
+    <div className={`rounded-lg border p-3 ${toneClass}`}>
+      <p className="text-[10px] uppercase tracking-[0.16em] opacity-55">
+        {label}
+      </p>
+      <p className="mt-2 text-xl font-black leading-7">
+        {value}
+      </p>
+      {detail ? (
+        <p className="mt-1 text-xs leading-5 opacity-65">
+          {detail}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+function SimpleList({
+  items,
+  empty,
+}: {
+  items: string[]
+  empty: string
+}) {
+  if (!items.length) {
+    return (
+      <p className="text-sm leading-6 text-white/55">
+        {empty}
+      </p>
+    )
+  }
+
+  return (
+    <ul className="space-y-2 text-sm leading-6 text-white/70">
+      {items.map(item => (
+        <li
+          key={item}
+          className="flex gap-2"
+        >
+          <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-200/70" />
+          <span>{item}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 type HumanBlockReason = {
   title: string
   detail: string
@@ -978,6 +1211,16 @@ function unknownToStringArray(
   ]
 }
 
+function uniqueStrings(
+  values: string[]
+) {
+  return [
+    ...new Set(
+      values.filter(Boolean)
+    ),
+  ]
+}
+
 function getComplianceMessages(
   value: unknown
 ) {
@@ -996,6 +1239,10 @@ function getComplianceMessages(
             code?: string
             message?: string
           }
+
+        if (finding.code === "margin_below_minimum") {
+          return ""
+        }
 
         return finding.message ||
           finding.code ||
@@ -1025,24 +1272,24 @@ function getHumanBlockReasons(
   const state =
     detail.candidate.state
 
-  const missingFields = [
+  const missingFields = uniqueStrings([
     ...unknownToStringArray(
       detail.candidate.needs_data
     ),
     ...unknownToStringArray(
       detail.validation?.missing_fields
     ),
-  ]
+  ])
 
   const criticalReasons =
-    unknownToStringArray(
+    uniqueStrings(unknownToStringArray(
       detail.validation?.critical_reasons
-    )
+    ))
 
   const complianceMessages =
-    getComplianceMessages(
+    uniqueStrings(getComplianceMessages(
       detail.compliance?.findings
-    )
+    ))
 
   const netProfit =
     toNumber(
@@ -1181,17 +1428,12 @@ function getHumanBlockReasons(
     })
   }
 
-  if (
-    detail.compliance?.overall_status === "blocked" ||
-    complianceMessages.length > 0
-  ) {
+  if (complianceMessages.length > 0) {
     reasons.push({
       title:
         "Riesgo compliance",
       detail:
-        complianceMessages.length > 0
-          ? complianceMessages.join(" | ")
-          : "Compliance bloqueo o marco el candidato para revision.",
+        complianceMessages.join(" | "),
       tone:
         detail.compliance?.overall_status === "blocked"
           ? "danger"
@@ -1300,6 +1542,114 @@ function getHumanBlockReasons(
   return reasons
 }
 
+function getStrategicSummary(
+  detail: EbayCandidateDetail
+): NonNullable<EbayDecisionAdvisor["strategic_summary"]> | null {
+  if (detail.decisionAdvisor?.strategic_summary) {
+    return detail.decisionAdvisor.strategic_summary
+  }
+
+  const netProfit =
+    toNumber(
+      detail.profitScenario?.net_profit
+    )
+
+  const margin =
+    toNumber(
+      detail.profitScenario?.net_margin_percent
+    )
+
+  const missingFields = uniqueStrings([
+    ...unknownToStringArray(
+      detail.candidate.needs_data
+    ),
+    ...unknownToStringArray(
+      detail.validation?.missing_fields
+    ),
+  ])
+
+  const profitable =
+    netProfit !== null &&
+    netProfit > 0 &&
+    margin !== null &&
+    margin >= 10
+
+  const supplierCost =
+    toNumber(
+      detail.profitScenario?.luna_cost
+    )
+
+  if (
+    profitable &&
+    (
+      detail.candidate.state === "NEEDS_DATA" ||
+      missingFields.length > 0
+    )
+  ) {
+    return {
+      commercial_status:
+        "needs_operational_data",
+      headline:
+        "Producto prometedor, pero todavía no listo para publicar.",
+      why:
+        "Tiene margen estimado saludable y mercado favorable, pero faltan datos operativos.",
+      recommended_action:
+        "Completar peso/dimensiones, confirmar imagenes autorizadas y categoria antes de preparar listing organico.",
+      next_step:
+        "Completar datos faltantes y mantener campana apagada hasta observar comportamiento.",
+      risk:
+        "operational_data",
+      seller_advisor_note:
+        "No actives campana todavia. Primero valida logistica y prepara un listing organico fuerte.",
+      supplier_strategy: {
+        supplier_model:
+          "luna_as_supplier",
+        current_supplier:
+          "Luna Portex",
+        current_supplier_landed_cost:
+          supplierCost,
+        supplier_strategy:
+          "test_with_current_supplier",
+        note:
+          "Proveedor actual: Luna Portex. Este costo no es precio de venta eBay.",
+      },
+    }
+  }
+
+  if (profitable) {
+    return {
+      commercial_status:
+        "ready_to_prepare_listing",
+      headline:
+        "Producto listo para preparar listing organico.",
+      why:
+        "Cumple los minimos de profit y no muestra bloqueos criticos.",
+      recommended_action:
+        "Preparar listing organico y monitorear antes de activar campana.",
+      next_step:
+        "Validar copy, imagenes, categoria final e inventario antes de enviar a borrador.",
+      risk:
+        "market_execution",
+      seller_advisor_note:
+        "La campana es opcional. Primero publica organico si el listing esta completo.",
+      supplier_strategy: {
+        supplier_model:
+          "luna_as_supplier",
+        current_supplier:
+          "Luna Portex",
+        current_supplier_landed_cost:
+          supplierCost,
+        supplier_strategy:
+          "test_with_current_supplier",
+        note:
+          "Proveedor actual: Luna Portex. Este costo no es precio de venta eBay.",
+      },
+    }
+  }
+
+  return null
+}
+
 function getReasonClassName(
   tone: HumanBlockReason["tone"]
 ) {
@@ -1359,6 +1709,35 @@ function CandidateDetailDrawer({
           detail
         )
       : []
+
+  const strategicSummary =
+    detail
+      ? getStrategicSummary(
+          detail
+        )
+      : null
+
+  const currentMissingFields =
+    detail
+      ? uniqueStrings([
+          ...unknownToStringArray(
+            detail.candidate.needs_data
+          ),
+          ...unknownToStringArray(
+            detail.validation?.missing_fields
+          ),
+        ])
+      : []
+
+  const scoreExplanation =
+    detail &&
+    (
+      detail.candidate.state === "NEEDS_DATA" ||
+      detail.validation?.validation_status === "needs_data" ||
+      currentMissingFields.length > 0
+    )
+      ? `Producto necesita datos antes de avanzar. Faltan: ${currentMissingFields.join(", ")}. Profit estimado ${formatCurrency(detail.profitScenario?.net_profit)}, margen ${formatNumber(detail.profitScenario?.net_margin_percent, "%")}, score ${formatNumber(detail.score?.winner_score)}.`
+      : detail?.score?.explanation
 
   const profitAssumptions =
     detail?.profitScenario?.assumptions &&
@@ -1556,6 +1935,11 @@ function CandidateDetailDrawer({
       suggestedTargetPrice - soldMedianPrice
     ) <= soldMedianPrice * 0.1
 
+  const suggestedPriceBelowSoldRange =
+    suggestedTargetPrice !== null &&
+    soldMinPrice !== null &&
+    suggestedTargetPrice < soldMinPrice
+
   const hasSoldMarketEvidence =
     soldMedianPrice !== null ||
     soldAvgPrice !== null ||
@@ -1572,15 +1956,17 @@ function CandidateDetailDrawer({
         : suggestedPriceWithinSoldRange ||
           suggestedPriceNearSoldMedian
           ? "El precio sugerido esta dentro del rango de mercado o cerca de ventas reales."
-          : hasSoldMarketEvidence &&
-            marketReferencePrice !== null &&
-            suggestedTargetPrice >
-              marketReferencePrice * 1.1
-            ? "El precio sugerido esta por encima del mercado; no competitivo."
-            : activeAvgPrice !== null &&
-              !hasSoldMarketEvidence
-              ? "Solo hay precios activos; revisar evidencia antes de decidir."
-              : "Hace falta mejor evidencia de mercado para evaluar competitividad."
+          : suggestedPriceBelowSoldRange
+            ? "El precio sugerido esta por debajo del rango vendido; usar Price Intelligence o precio ideal puede capturar mas margen."
+            : hasSoldMarketEvidence &&
+              marketReferencePrice !== null &&
+              suggestedTargetPrice >
+                marketReferencePrice * 1.1
+              ? "El precio sugerido esta por encima del mercado; no competitivo."
+              : activeAvgPrice !== null &&
+                !hasSoldMarketEvidence
+                ? "Solo hay precios activos; revisar evidencia antes de decidir."
+                : "Hace falta mejor evidencia de mercado para evaluar competitividad."
 
   const suggestedPriceTone =
     suggestedPriceMarketMessage.includes(
@@ -1588,19 +1974,150 @@ function CandidateDetailDrawer({
     )
       ? "success"
       : suggestedPriceMarketMessage.includes(
-          "por encima"
+          "por debajo"
         )
-        ? "danger"
-        : "warning"
+        ? "info"
+        : suggestedPriceMarketMessage.includes(
+            "por encima"
+          )
+          ? "danger"
+          : "warning"
 
   const canReprocessSuggestedPrice =
     suggestedTargetPrice !== null &&
-    detail?.decisionAdvisor?.target_price?.is_target_price_competitive === true
+    detail?.decisionAdvisor?.target_price?.is_target_price_competitive === true &&
+    !suggestedPriceBelowSoldRange
+
+  const currentPricePassesMinimums =
+    detail?.profitScenario?.passes_minimums === true
+
+  const targetPriceNeedsAdjustment =
+    Boolean(
+      targetPriceAdvisor &&
+        !currentPricePassesMinimums
+    )
 
   const shippingScopeEvidence =
     getShippingScopeEvidence(
       detail?.priceIntelligence
     )
+
+  const evaluatedSalePrice =
+    detail?.decisionAdvisor?.target_price?.evaluated_sale_price ??
+    detail?.decisionAdvisor?.target_price?.current_sale_price ??
+    detail?.profitScenario?.estimated_sale_price
+
+  const commercialPrice =
+    detail?.decisionAdvisor?.pricing_strategy?.recommended_listing_price ??
+    evaluatedSalePrice
+
+  const supplierCost =
+    detail?.decisionAdvisor?.target_price?.supplier_unit_cost ??
+    detail?.decisionAdvisor?.target_price?.luna_cost ??
+    detail?.profitScenario?.luna_cost
+
+  const netProfit =
+    displayedCostBreakdown?.net_profit ??
+    detail?.profitScenario?.net_profit
+
+  const netMargin =
+    displayedCostBreakdown?.net_margin_percent ??
+    detail?.profitScenario?.net_margin_percent
+
+  const totalEstimatedCost =
+    displayedCostBreakdown?.total_estimated_cost ??
+    detail?.profitScenario?.total_estimated_cost
+
+  const minimumProfitPrice =
+    displayedCostBreakdown?.minimum_price_for_10_percent_margin ??
+    detail?.decisionAdvisor?.target_price?.minimum_price_for_10_percent_margin ??
+    targetPriceAdvisor?.minimum_profitable_price
+
+  const roundedFloorPrice =
+    displayedCostBreakdown?.suggested_target_price ??
+    detail?.decisionAdvisor?.target_price?.suggested_target_price ??
+    targetPriceAdvisor?.suggested_target_price
+
+  const marketPrice =
+    detail?.decisionAdvisor?.target_price?.market_reference_price ??
+    marketReferencePrice
+
+  const competitorLandedPrice =
+    detail?.decisionAdvisor?.target_price?.competitor_domestic_landed_price ??
+    detail?.decisionAdvisor?.target_price?.competitor_landed_price ??
+    shippingScopeEvidence?.competitor_domestic_landed_price
+
+  const launchStrategy =
+    humanizePipelineValue(
+      detail?.decisionAdvisor?.pricing_strategy?.launch_strategy
+    )
+
+  const sellerNextAction =
+    strategicSummary?.recommended_action ||
+    detail?.decisionAdvisor?.pricing_strategy?.proposed_next_step ||
+    detail?.decisionAdvisor?.recommended_next_action ||
+    "Revisar datos antes de tomar accion."
+
+  const sellerRisk =
+    strategicSummary?.risk ||
+    detail?.decisionAdvisor?.pricing_strategy?.risk_level ||
+    "Sin riesgo principal calculado"
+
+  const marketEvidenceSummary =
+    detail?.priceIntelligence
+      ? [
+          `${humanizePipelineValue(detail.priceIntelligence.source_type)} con confianza ${humanizePipelineValue(detail.priceIntelligence.source_confidence)}`,
+          `${formatNumber(detail.priceIntelligence.sold_comp_count)} ventas comparables`,
+        ]
+      : [
+          "Sin evidencia de mercado guardada",
+        ]
+
+  const simpleMissingFields =
+    currentMissingFields.map(
+      humanizeMissingField
+    )
+
+  const guardrailItems = uniqueStrings([
+    ...(currentMissingFields.includes("weight_or_dimensions")
+      ? [
+          "Validar peso y dimensiones antes de confiar en el shipping.",
+        ]
+      : []),
+    ...(currentMissingFields.includes("authorized_images")
+      ? [
+          "Confirmar que las imagenes se pueden usar en eBay.",
+        ]
+      : []),
+    ...(currentMissingFields.includes("category_or_inference_data")
+      ? [
+          "Confirmar categoria final porque puede cambiar el fee de eBay.",
+        ]
+      : []),
+    ...(hasLowConfidence
+      ? [
+          "La evidencia de mercado tiene confianza baja; revisar comparables antes de escalar.",
+        ]
+      : []),
+  ])
+
+  const profitTone =
+    detail?.profitScenario?.passes_minimums === true ||
+    (
+      toNumber(netProfit) !== null &&
+      toNumber(netProfit)! > 0 &&
+      toNumber(netMargin) !== null &&
+      toNumber(netMargin)! >= 10
+    )
+      ? "success"
+      : "danger"
+
+  const stateTone =
+    detail?.candidate.state === "NEEDS_DATA"
+      ? "warning"
+      : detail?.candidate.state === "BLOCKED"
+        ? "danger"
+        : "success"
 
   return (
     <div className="fixed inset-0 z-[70] flex justify-end bg-black/65 backdrop-blur-sm">
@@ -1662,6 +2179,205 @@ function CandidateDetailDrawer({
           </div>
         ) : detail ? (
           <div className="mt-6 space-y-5">
+            <DetailSection title="Resumen IMNOVA">
+              {strategicSummary ? (
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.08] p-4">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.22em] text-emerald-50/55">
+                          Decision para vendedor
+                        </p>
+                        <p className="mt-3 text-base font-black leading-6 text-emerald-50">
+                          {humanizePipelineValue(
+                            strategicSummary.commercial_status
+                          )}
+                        </p>
+                      </div>
+                      <span
+                        className={`
+                          inline-flex
+                          w-fit
+                          rounded-md
+                          border
+                          px-3
+                          py-2
+                          text-xs
+                          font-black
+                          ${getStateClassName(detail.candidate.state)}
+                        `}
+                      >
+                        {humanizePipelineValue(detail.candidate.state)}
+                      </span>
+                    </div>
+                    <p className="mt-4 text-xl font-black leading-7 text-white">
+                      {strategicSummary.headline}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-emerald-50/75">
+                      {strategicSummary.why}
+                    </p>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-4">
+                    <SummaryMetric
+                      label="Precio sugerido para listar"
+                      value={formatCurrency(commercialPrice)}
+                      detail="Precio comercial, no piso minimo."
+                      tone="success"
+                    />
+                    <SummaryMetric
+                      label="Ganancia estimada"
+                      value={formatCurrency(netProfit)}
+                      detail={`${formatNumber(netMargin, "%")} margen neto`}
+                      tone={profitTone}
+                    />
+                    <SummaryMetric
+                      label="Costo total estimado"
+                      value={formatCurrency(totalEstimatedCost)}
+                      detail={`Proveedor: ${formatCurrency(supplierCost)}`}
+                    />
+                    <SummaryMetric
+                      label="Mercado observado"
+                      value={formatCurrency(marketPrice)}
+                      detail={`Competidor: ${formatCurrency(competitorLandedPrice)}`}
+                    />
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <div className="rounded-lg border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-white/45">
+                        Que hacer ahora
+                      </p>
+                      <p className="mt-3 text-sm leading-6 text-white/75">
+                        {sellerNextAction}
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-white/45">
+                        {strategicSummary.next_step}
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.07] p-3">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-amber-50/60">
+                        Falta antes de publicar
+                      </p>
+                      <div className="mt-3">
+                        <SimpleList
+                          items={simpleMissingFields}
+                          empty="No hay datos operativos faltantes."
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.06] p-3">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-cyan-50/55">
+                        Nota de vendedor
+                      </p>
+                      <p className="mt-3 text-sm leading-6 text-cyan-50/75">
+                        {strategicSummary.seller_advisor_note}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <div className="rounded-lg border border-white/10 bg-white/[0.025] p-3">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-white/45">
+                        Precio y margen
+                      </p>
+                      <div className="mt-3 space-y-3">
+                        <Field
+                          label="Precio evaluado"
+                          value={formatCurrency(evaluatedSalePrice)}
+                        />
+                        <Field
+                          label="Piso minimo rentable"
+                          value={formatCurrency(minimumProfitPrice)}
+                        />
+                        <Field
+                          label="Piso redondeado"
+                          value={formatCurrency(roundedFloorPrice)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-white/10 bg-white/[0.025] p-3">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-white/45">
+                        Costos principales
+                      </p>
+                      <div className="mt-3 space-y-3">
+                        <Field
+                          label="Proveedor actual"
+                          value={
+                            strategicSummary.supplier_strategy?.current_supplier ||
+                            "Luna Portex"
+                          }
+                        />
+                        <Field
+                          label="Modelo"
+                          value={humanizePipelineValue(
+                            strategicSummary.supplier_strategy?.supplier_model
+                          )}
+                        />
+                        <Field
+                          label="Fee eBay usado"
+                          value={`${formatNumber(
+                            displayedCostBreakdown?.ebay_fee_percent,
+                            "%"
+                          )} + ${formatCurrency(
+                            displayedCostBreakdown?.ebay_fixed_fee
+                          )}`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-white/10 bg-white/[0.025] p-3">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-white/45">
+                        Mercado y riesgo
+                      </p>
+                      <div className="mt-3 space-y-3">
+                        <Field
+                          label="Estrategia"
+                          value={launchStrategy}
+                        />
+                        <Field
+                          label="Riesgo principal"
+                          value={humanizePipelineValue(sellerRisk)}
+                        />
+                        <Field
+                          label="Evidencia"
+                          value={marketEvidenceSummary.join(" / ")}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    className={`
+                      rounded-lg
+                      border
+                      p-3
+                      ${getReasonClassName(
+                        guardrailItems.length ? "warning" : "success"
+                      )}
+                    `}
+                  >
+                    <p className="text-xs font-black uppercase tracking-[0.16em] opacity-70">
+                      Guardrails antes de avanzar
+                    </p>
+                    <div className="mt-3">
+                      <SimpleList
+                        items={guardrailItems}
+                        empty="No hay guardrails criticos pendientes en este resumen."
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-white/40">
+                  Sin resumen estrategico calculado.
+                </p>
+              )}
+            </DetailSection>
+
             <DetailSection title="Informacion base">
               <div className="grid gap-3 md:grid-cols-2">
                 <Field
@@ -1776,7 +2492,7 @@ function CandidateDetailDrawer({
                         value={detail.decisionAdvisor.recommended_next_action}
                       />
                       <Field
-                        label="target_competitive"
+                        label="Piso rentable dentro del mercado"
                         value={
                           detail.decisionAdvisor.target_price?.is_target_price_competitive
                         }
@@ -1798,7 +2514,7 @@ function CandidateDetailDrawer({
                           value={detail.decisionAdvisor.pricing_strategy.launch_strategy}
                         />
                         <Field
-                          label="recommended_listing_price"
+                          label="Precio comercial recomendado"
                           value={formatCurrency(
                             detail.decisionAdvisor.pricing_strategy.recommended_listing_price
                           )}
@@ -1848,19 +2564,19 @@ function CandidateDetailDrawer({
                       )}
                     />
                     <Field
-                      label="Minimo 10% margen"
+                      label="Piso minimo 10% margen"
                       value={formatCurrency(
                         detail.decisionAdvisor.target_price?.minimum_price_for_10_percent_margin
                       )}
                     />
                     <Field
-                      label="Precio sugerido"
+                      label="Piso rentable redondeado"
                       value={formatCurrency(
                         detail.decisionAdvisor.target_price?.suggested_target_price
                       )}
                     />
                     <Field
-                      label="Precio ideal"
+                      label="Precio con margen comodo"
                       value={formatCurrency(
                         detail.decisionAdvisor.target_price?.ideal_target_price
                       )}
@@ -1929,10 +2645,10 @@ function CandidateDetailDrawer({
                         Razones
                       </p>
                       <ul className="mt-3 space-y-2 text-xs leading-5 text-white/60">
-                        {[
+                        {uniqueStrings([
                           ...(detail.decisionAdvisor.block_reasons || []),
                           ...(detail.decisionAdvisor.profit_reasons || []),
-                        ].map((reason, index) => (
+                        ]).map((reason, index) => (
                           <li key={`${reason}-${index}`}>
                             {reason}
                           </li>
@@ -1944,10 +2660,10 @@ function CandidateDetailDrawer({
                         Mercado y datos faltantes
                       </p>
                       <ul className="mt-3 space-y-2 text-xs leading-5 text-white/60">
-                        {[
+                        {uniqueStrings([
                           ...(detail.decisionAdvisor.market_price_reasons || []),
                           ...(detail.decisionAdvisor.missing_data || []),
-                        ].map((reason, index) => (
+                        ]).map((reason, index) => (
                           <li key={`${reason}-${index}`}>
                             {reason}
                           </li>
@@ -2031,7 +2747,7 @@ function CandidateDetailDrawer({
                     Regla minima: net profit mayor que $0 y margen neto minimo de {formatNumber(
                       costBreakdown.minimum_target_margin_percent,
                       "%"
-                    )}. El envio minimo default es $6.99. La promocion eBay es opcional; este advisor permite simular de 0% a 5%.
+                    )}. El margen deseado es una meta, no un costo real. El envio minimo default es $6.99. La promocion eBay es opcional; este advisor permite simular de 0% a 5%.
                   </div>
 
                   <div className="grid gap-3 rounded-lg border border-white/10 bg-black/25 p-3 md:grid-cols-2">
@@ -2107,10 +2823,30 @@ function CandidateDetailDrawer({
                     </label>
                   </div>
 
-                  <div className="grid gap-3 md:grid-cols-3">
+                  <div className="grid gap-3 md:grid-cols-4">
                     <div className="rounded-lg border border-white/10 bg-black/25 p-3">
                       <p className="text-xs font-black uppercase tracking-[0.16em] text-white/40">
-                        Costo directo IMNOVA
+                        Ingreso
+                      </p>
+                      <div className="mt-3 space-y-3">
+                        <Field
+                          label="Precio venta evaluado"
+                          value={formatCurrency(
+                            displayedCostBreakdown?.sale_price
+                          )}
+                        />
+                        <Field
+                          label="Shipping cobrado comprador"
+                          value={formatCurrency(
+                            displayedCostBreakdown?.buyer_shipping_charge
+                          )}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-white/40">
+                        Proveedor y logistica
                       </p>
                       <div className="mt-3 space-y-3">
                         <Field
@@ -2144,7 +2880,29 @@ function CandidateDetailDrawer({
                           )} (${formatNumber(
                             displayedCostBreakdown?.ebay_fee_percent,
                             "%"
+                          )} + ${formatCurrency(
+                            displayedCostBreakdown?.ebay_fixed_fee
                           )})`}
+                        />
+                        <Field
+                          label="Fuente fee eBay"
+                          value={
+                            displayedCostBreakdown?.ebay_fee_source === "category_rule"
+                              ? "Regla de categoria"
+                              : "Default mayoria de categorias"
+                          }
+                        />
+                        <Field
+                          label="Confianza fee eBay"
+                          value={displayedCostBreakdown?.ebay_fee_confidence}
+                        />
+                        <Field
+                          label="Grupo fee eBay"
+                          value={displayedCostBreakdown?.ebay_category_group}
+                        />
+                        <Field
+                          label="Insertion fee"
+                          value={displayedCostBreakdown?.insertion_fee_assumption}
                         />
                         <Field
                           label="Payment fee"
@@ -2173,12 +2931,24 @@ function CandidateDetailDrawer({
                       </p>
                       <div className="mt-3 space-y-3">
                         <Field
-                          label="Fulfillment/empaque"
+                          label="Manejo operativo/empaque"
                           value={`${formatCurrency(
                             displayedCostBreakdown?.fulfillment_cost
                           )} / ${formatCurrency(
                             displayedCostBreakdown?.packaging_cost
                           )}`}
+                        />
+                        <Field
+                          label="Fuente manejo"
+                          value={humanizePipelineValue(
+                            displayedCostBreakdown?.fulfillment_cost_source
+                          )}
+                        />
+                        <Field
+                          label="Fuente empaque"
+                          value={humanizePipelineValue(
+                            displayedCostBreakdown?.packaging_cost_source
+                          )}
                         />
                         <Field
                           label="Reserva/devolucion"
@@ -2229,6 +2999,17 @@ function CandidateDetailDrawer({
                     {costBreakdown.shipping_note ||
                       "Envio estimado estandar."}
                   </div>
+
+                  <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.08] p-3 text-xs leading-5 text-amber-50/80">
+                    {costBreakdown.ebay_fee_note ||
+                      "Fee eBay usado como default. Confirmar categoria final antes de publicar."}
+                  </div>
+
+                  {displayedCostBreakdown?.operating_cost_note ? (
+                    <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.08] p-3 text-xs leading-5 text-cyan-50/80">
+                      {displayedCostBreakdown.operating_cost_note}
+                    </div>
+                  ) : null}
 
                   <div className="grid gap-3 md:grid-cols-3">
                     {costScenarios.map(scenario => (
@@ -2286,13 +3067,13 @@ function CandidateDetailDrawer({
                       )}
                     />
                     <Field
-                      label="Minimo 10% margen"
+                      label="Piso minimo 10% margen"
                       value={formatCurrency(
                         displayedCostBreakdown?.minimum_price_for_10_percent_margin
                       )}
                     />
                     <Field
-                      label="Precio sugerido"
+                      label="Piso rentable redondeado"
                       value={formatCurrency(
                         displayedCostBreakdown?.suggested_target_price
                       )}
@@ -2342,15 +3123,21 @@ function CandidateDetailDrawer({
                   )}
                 />
                 <Field
-                  label="Fulfillment"
+                  label="Manejo operativo"
                   value={formatCurrency(
                     detail.profitScenario?.fulfillment_cost
                   )}
                 />
                 <Field
-                  label="Packaging"
+                  label="Empaque"
                   value={formatCurrency(
                     detail.profitScenario?.packaging_cost
+                  )}
+                />
+                <Field
+                  label="Fuente manejo"
+                  value={humanizePipelineValue(
+                    detail.profitScenario?.fulfillment_cost_source
                   )}
                 />
                 <Field
@@ -2401,57 +3188,71 @@ function CandidateDetailDrawer({
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div>
                       <p className="text-sm font-black text-white">
-                        Precio sugerido para profit
+                        {targetPriceNeedsAdjustment
+                          ? "Piso rentable para profit"
+                          : "Referencia de rentabilidad"}
                       </p>
                       <p className="mt-2 max-w-2xl text-xs leading-5 text-white/50">
-                        El precio de venta evaluado no es rentable. Para lograr {formatNumber(
-                          targetPriceAdvisor.minimum_target_margin_percent,
-                          "%"
-                        )} de margen neto, IMNOVA necesita vender aproximadamente a {formatCurrency(
-                          targetPriceAdvisor.suggested_target_price
-                        )}.
+                        {targetPriceNeedsAdjustment
+                          ? (
+                            <>
+                              El precio de venta evaluado no es rentable. Para lograr {formatNumber(
+                                targetPriceAdvisor.minimum_target_margin_percent,
+                                "%"
+                              )} de margen neto, IMNOVA necesita vender al menos cerca de {formatCurrency(
+                                targetPriceAdvisor.suggested_target_price
+                              )}.
+                            </>
+                          )
+                          : (
+                            <>
+                              El precio de venta evaluado ya cumple los minimos de profit. El piso rentable es una referencia de costo, no una recomendacion comercial para bajar precio.
+                            </>
+                          )}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onReprocessSuggestedPrice(detail)
-                      }
-                      disabled={
-                        isReprocessing ||
-                        !canReprocessSuggestedPrice
-                      }
-                      className="
-                        inline-flex
-                        items-center
-                        justify-center
-                        gap-2
-                        rounded-lg
-                        border
-                        border-cyan-300/30
-                        bg-cyan-300
-                        px-4
-                        py-3
-                        text-sm
-                        font-black
-                        text-black
-                        transition
-                        hover:bg-cyan-200
-                        disabled:cursor-not-allowed
-                        disabled:opacity-50
-                      "
-                    >
-                      <RefreshCw
-                        className={`
-                          h-4
-                          w-4
-                          ${isReprocessing ? "animate-spin" : ""}
-                        `}
-                      />
-                      {isReprocessing
-                        ? "Reevaluando"
-                        : "Reevaluar con precio sugerido"}
-                    </button>
+                    {targetPriceNeedsAdjustment ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onReprocessSuggestedPrice(detail)
+                        }
+                        disabled={
+                          isReprocessing ||
+                          !canReprocessSuggestedPrice
+                        }
+                        className="
+                          inline-flex
+                          items-center
+                          justify-center
+                          gap-2
+                          rounded-lg
+                          border
+                          border-cyan-300/30
+                          bg-cyan-300
+                          px-4
+                          py-3
+                          text-sm
+                          font-black
+                          text-black
+                          transition
+                          hover:bg-cyan-200
+                          disabled:cursor-not-allowed
+                          disabled:opacity-50
+                        "
+                      >
+                        <RefreshCw
+                          className={`
+                            h-4
+                            w-4
+                            ${isReprocessing ? "animate-spin" : ""}
+                          `}
+                        />
+                        {isReprocessing
+                          ? "Reevaluando"
+                          : "Reevaluar con precio sugerido"}
+                      </button>
+                    ) : null}
                   </div>
 
                   <div className="mt-4 grid gap-3 md:grid-cols-3">
@@ -2468,13 +3269,13 @@ function CandidateDetailDrawer({
                       )}
                     />
                     <Field
-                      label="Precio ideal sugerido"
+                      label="Piso rentable redondeado"
                       value={formatCurrency(
                         targetPriceAdvisor.suggested_target_price
                       )}
                     />
                     <Field
-                      label="Precio ideal opcional"
+                      label="Precio ideal margen 15%"
                       value={formatCurrency(
                         targetPriceAdvisor.ideal_target_price
                       )}
@@ -2486,7 +3287,7 @@ function CandidateDetailDrawer({
                       )}`}
                     />
                     <Field
-                      label="Diferencia vs mercado"
+                      label="Piso vs mercado"
                       value={formatCurrency(
                         suggestedMarketDifference
                       )}
@@ -2511,7 +3312,8 @@ function CandidateDetailDrawer({
                       Confidence bajo: hace falta mejor evidencia antes de tomar decision comercial.
                     </p>
                   ) : null}
-                  {!canReprocessSuggestedPrice ? (
+                  {targetPriceNeedsAdjustment &&
+                  !canReprocessSuggestedPrice ? (
                     <p className="mt-3 rounded-md border border-amber-300/25 bg-amber-300/[0.10] px-3 py-2 text-xs text-amber-100">
                       La reevaluacion con precio sugerido queda deshabilitada hasta que Price Intelligence indique que el precio esta dentro del mercado.
                     </p>
@@ -2847,7 +3649,7 @@ function CandidateDetailDrawer({
               </div>
               <Field
                 label="explanation"
-                value={detail.score?.explanation}
+                value={scoreExplanation}
               />
               <JsonPreview
                 value={detail.score?.score_payload}
@@ -3027,7 +3829,11 @@ function CandidateDetailDrawer({
   )
 }
 
-export function EbayWinnerPipelinePanel() {
+export function EbayWinnerPipelinePanel({
+  focusCandidate,
+}: {
+  focusCandidate?: EbayPipelineFocusCandidate | null
+}) {
   const [
     dashboard,
     setDashboard,
@@ -3092,6 +3898,11 @@ export function EbayWinnerPipelinePanel() {
     reprocessStatus,
     setReprocessStatus,
   ] = useState<ReprocessStatus | null>(null)
+
+  const [
+    focusNotice,
+    setFocusNotice,
+  ] = useState("")
 
   const getAccessToken =
     useCallback(async () => {
@@ -3358,11 +4169,6 @@ export function EbayWinnerPipelinePanel() {
             "Candidato reevaluado con Price Intelligence.",
         })
       } catch (reprocessError) {
-        console.error(
-          "REPROCESS PRICE INTELLIGENCE ERROR:",
-          reprocessError
-        )
-
         setReprocessStatus({
           status:
             "error",
@@ -3401,6 +4207,36 @@ export function EbayWinnerPipelinePanel() {
             "error",
           message:
             "Falta suggested_target_price para reevaluar.",
+        })
+        return
+      }
+
+      if (
+        currentDetail.profitScenario?.passes_minimums === true
+      ) {
+        setReprocessStatus({
+          status:
+            "error",
+          message:
+            "El precio actual ya cumple margen. No conviene reevaluar con el piso rentable.",
+        })
+        return
+      }
+
+      const soldMinPrice =
+        toNumber(
+          currentDetail.priceIntelligence?.sold_min_price
+        )
+
+      if (
+        soldMinPrice !== null &&
+        suggestedTargetPrice < soldMinPrice
+      ) {
+        setReprocessStatus({
+          status:
+            "error",
+          message:
+            "El piso rentable esta por debajo del rango vendido. Usa Price Intelligence o precio ideal, no bajes al piso.",
         })
         return
       }
@@ -3468,11 +4304,6 @@ export function EbayWinnerPipelinePanel() {
             "Candidato reevaluado con precio sugerido.",
         })
       } catch (reprocessError) {
-        console.error(
-          "REPROCESS SUGGESTED PRICE ERROR:",
-          reprocessError
-        )
-
         setReprocessStatus({
           status:
             "error",
@@ -3493,6 +4324,44 @@ export function EbayWinnerPipelinePanel() {
   useEffect(() => {
     loadDashboard()
   }, [loadDashboard])
+
+  useEffect(() => {
+    if (!focusCandidate) {
+      return
+    }
+
+    const searchValue =
+      focusCandidate.supplierSku?.trim() ||
+      focusCandidate.candidateKey?.trim() ||
+      focusCandidate.title?.trim() ||
+      ""
+
+    if (searchValue) {
+      setPage(0)
+      setStateFilter("")
+      setComplianceFilter("")
+      setDraftFilter("")
+      setSearch(searchValue)
+    }
+
+    const label =
+      focusCandidate.title?.trim() ||
+      focusCandidate.supplierSku?.trim() ||
+      "el candidato enviado"
+
+    setFocusNotice(
+      `Mostrando ${label} enviado desde Market Radar.`
+    )
+
+    if (focusCandidate.candidateId) {
+      loadDetail(
+        focusCandidate.candidateId
+      )
+    }
+  }, [
+    focusCandidate,
+    loadDetail,
+  ])
 
   const summary =
     dashboard?.summary
@@ -3622,6 +4491,23 @@ export function EbayWinnerPipelinePanel() {
             "
           >
             {error}
+          </div>
+        )}
+
+        {focusNotice && (
+          <div
+            className="
+              mt-5
+              rounded-lg
+              border
+              border-cyan-300/20
+              bg-cyan-300/[0.08]
+              p-4
+              text-sm
+              text-cyan-50
+            "
+          >
+            {focusNotice}
           </div>
         )}
       </section>

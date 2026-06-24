@@ -36,6 +36,9 @@ import {
   type RadarAdvisorAlert,
   type MarketRadarSyncResult,
 } from "@/lib/market-radar-types"
+import {
+  type EbayPipelineFocusCandidate,
+} from "@/components/admin/ebay-winner-pipeline-panel"
 
 type MarketRadarApiResponse = {
   success: boolean
@@ -118,6 +121,12 @@ type EbayPipelineEvaluationState = {
   candidateId?: string
   candidateKey?: string
   candidateState?: string
+}
+
+type MarketRadarPanelProps = {
+  onOpenEbayPipeline?: (
+    focusCandidate: EbayPipelineFocusCandidate
+  ) => void
 }
 
 type PriceIntelligenceApiResponse = {
@@ -3448,7 +3457,9 @@ function RadarAdvisorAlertItem({
   )
 }
 
-export function MarketRadarPanel() {
+export function MarketRadarPanel({
+  onOpenEbayPipeline,
+}: MarketRadarPanelProps = {}) {
   const [
     isMounted,
     setIsMounted,
@@ -3893,7 +3904,7 @@ export function MarketRadarPanel() {
             status:
               "success",
             message:
-              "Candidato enviado al eBay Pipeline en modo dryRun.",
+              "Candidato enviado al eBay Pipeline en modo dryRun. Abriendo detalle.",
             candidateId:
               persistedCandidate?.id,
             candidateKey:
@@ -3904,6 +3915,27 @@ export function MarketRadarPanel() {
               payload.result?.candidate?.state,
           },
         }))
+
+        onOpenEbayPipeline?.({
+          candidateId:
+            persistedCandidate?.id || null,
+          candidateKey:
+            persistedCandidate?.candidate_key ||
+            payload.result?.candidate?.candidate_key ||
+            null,
+          supplierSku:
+            getRealProductSku(
+              product
+            ) ||
+            getStableSupplierSku(
+              product
+            ) ||
+            null,
+          title:
+            product.title || null,
+          nonce:
+            Date.now(),
+        })
       } catch (evaluationError) {
         console.error(
           "EBAY PIPELINE DRYRUN EVALUATION ERROR:",
