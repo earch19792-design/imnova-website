@@ -107,6 +107,7 @@ type ProfitAssumptions = {
   paymentFeePercent?: number
   advertisingPercent?: number
   returnReservePercent?: number
+  sale_price_basis?: string
   targetPriceAdvisor?: TargetPriceAdvisor
 }
 
@@ -276,6 +277,8 @@ type CostBreakdown = CostScenario & {
 type PricingStrategyRecommendation = {
   launch_strategy?: string | null
   recommended_listing_price?: number | string | null
+  listing_price_role?: string | null
+  listing_price_note?: string | null
   minimum_profitable_price?: number | string | null
   minimum_price_with_1_percent_campaign?: number | string | null
   minimum_price_with_2_percent_campaign?: number | string | null
@@ -1045,6 +1048,10 @@ function humanizePipelineValue(
       "Falta precio de mercado",
     needs_reanalysis:
       "Revisar antes de decidir",
+    temporary_evaluation:
+      "Temporal, no publicar",
+    commercial_recommendation:
+      "Recomendacion comercial",
     ready_to_prepare_listing:
       "Listo para preparar listing",
     supplier_not_competitive:
@@ -2022,6 +2029,32 @@ function CandidateDetailDrawer({
     detail?.decisionAdvisor?.pricing_strategy?.recommended_listing_price ??
     evaluatedSalePrice
 
+  const listingPriceRole =
+    detail?.decisionAdvisor?.pricing_strategy?.listing_price_role ||
+    (
+      detail?.decisionAdvisor?.target_price?.sale_price_basis === "generated_target_price" ||
+      profitAssumptions.sale_price_basis === "generated_target_price" ||
+      detail?.decisionAdvisor?.strategic_summary?.commercial_status === "needs_price_data"
+        ? "temporary_evaluation"
+        : "commercial_recommendation"
+    )
+
+  const isTemporaryListingPrice =
+    listingPriceRole !== "commercial_recommendation"
+
+  const listingPriceLabel =
+    isTemporaryListingPrice
+      ? "Precio evaluado temporal"
+      : "Precio sugerido para listar"
+
+  const listingPriceDetail =
+    detail?.decisionAdvisor?.pricing_strategy?.listing_price_note ||
+    (
+      isTemporaryListingPrice
+        ? "No es recomendacion de publicacion."
+        : "Precio comercial, no piso minimo."
+    )
+
   const supplierCost =
     detail?.decisionAdvisor?.target_price?.supplier_unit_cost ??
     detail?.decisionAdvisor?.target_price?.luna_cost ??
@@ -2231,10 +2264,10 @@ function CandidateDetailDrawer({
 
                   <div className="grid gap-3 md:grid-cols-4">
                     <SummaryMetric
-                      label="Precio sugerido para listar"
+                      label={listingPriceLabel}
                       value={formatCurrency(commercialPrice)}
-                      detail="Precio comercial, no piso minimo."
-                      tone="success"
+                      detail={listingPriceDetail}
+                      tone={isTemporaryListingPrice ? "warning" : "success"}
                     />
                     <SummaryMetric
                       label="Ganancia estimada"
@@ -2525,9 +2558,19 @@ function CandidateDetailDrawer({
                           value={detail.decisionAdvisor.pricing_strategy.launch_strategy}
                         />
                         <Field
-                          label="Precio comercial recomendado"
+                          label={
+                            isTemporaryListingPrice
+                              ? "Precio evaluado temporal"
+                              : "Precio comercial recomendado"
+                          }
                           value={formatCurrency(
                             detail.decisionAdvisor.pricing_strategy.recommended_listing_price
+                          )}
+                        />
+                        <Field
+                          label="Estado del precio"
+                          value={humanizePipelineValue(
+                            detail.decisionAdvisor.pricing_strategy.listing_price_role
                           )}
                         />
                         <Field

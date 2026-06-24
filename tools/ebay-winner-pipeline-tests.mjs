@@ -1442,6 +1442,14 @@ test("strategic summary: sin mercado y margen negativo pide Price Intelligence",
     advisor.strategic_summary.commercial_status,
     "needs_price_data"
   )
+  assert.equal(
+    advisor.pricing_strategy.listing_price_role,
+    "temporary_evaluation"
+  )
+  assert.match(
+    advisor.pricing_strategy.listing_price_note,
+    /No usar como precio de publicacion/
+  )
   assert.doesNotMatch(
     advisor.strategic_summary.headline,
     /prometedor/i
