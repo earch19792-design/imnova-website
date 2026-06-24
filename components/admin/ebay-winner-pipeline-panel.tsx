@@ -1074,6 +1074,12 @@ function humanizePipelineValue(
       "Datos operativos",
     market_execution:
       "Ejecucion de mercado",
+    missing_market_price:
+      "Falta precio de mercado",
+    supplier_cost:
+      "Costo proveedor",
+    unit_economics:
+      "Rentabilidad por unidad",
     low:
       "Bajo",
     medium:
@@ -2013,6 +2019,13 @@ function CandidateDetailDrawer({
     Boolean(
       targetPriceAdvisor &&
         !currentPricePassesMinimums
+    )
+
+  const needsMarketBeforePriceAction =
+    targetPriceNeedsAdjustment &&
+    (
+      !detail?.priceIntelligence ||
+      strategicSummary?.commercial_status === "needs_price_data"
     )
 
   const shippingScopeEvidence =
@@ -3242,12 +3255,20 @@ function CandidateDetailDrawer({
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div>
                       <p className="text-sm font-black text-white">
-                        {targetPriceNeedsAdjustment
+                        {needsMarketBeforePriceAction
+                          ? "Referencia de rentabilidad, no publicar"
+                          : targetPriceNeedsAdjustment
                           ? "Piso rentable para profit"
                           : "Referencia de rentabilidad"}
                       </p>
                       <p className="mt-2 max-w-2xl text-xs leading-5 text-white/50">
-                        {targetPriceNeedsAdjustment
+                        {needsMarketBeforePriceAction
+                          ? (
+                            <>
+                              El precio evaluado actual pierde dinero, pero todavia no hay mercado para decidir precio de venta. Primero agrega Price Intelligence; el piso rentable solo dice desde cuanto empezaria a cubrir costos.
+                            </>
+                          )
+                          : targetPriceNeedsAdjustment
                           ? (
                             <>
                               El precio de venta evaluado no es rentable. Para lograr {formatNumber(
@@ -3262,10 +3283,11 @@ function CandidateDetailDrawer({
                             <>
                               El precio de venta evaluado ya cumple los minimos de profit. El piso rentable es una referencia de costo, no una recomendacion comercial para bajar precio.
                             </>
-                          )}
+                        )}
                       </p>
                     </div>
-                    {targetPriceNeedsAdjustment ? (
+                    {targetPriceNeedsAdjustment &&
+                    !needsMarketBeforePriceAction ? (
                       <button
                         type="button"
                         onClick={() =>
@@ -3366,7 +3388,11 @@ function CandidateDetailDrawer({
                       Confidence bajo: hace falta mejor evidencia antes de tomar decision comercial.
                     </p>
                   ) : null}
-                  {targetPriceNeedsAdjustment &&
+                  {needsMarketBeforePriceAction ? (
+                    <p className="mt-3 rounded-md border border-amber-300/25 bg-amber-300/[0.10] px-3 py-2 text-xs text-amber-100">
+                      No reevalúes con piso rentable todavía. Primero agrega Price Intelligence para saber si el mercado soporta ese precio.
+                    </p>
+                  ) : targetPriceNeedsAdjustment &&
                   !canReprocessSuggestedPrice ? (
                     <p className="mt-3 rounded-md border border-amber-300/25 bg-amber-300/[0.10] px-3 py-2 text-xs text-amber-100">
                       La reevaluacion con precio sugerido queda deshabilitada hasta que Price Intelligence indique que el precio esta dentro del mercado.
