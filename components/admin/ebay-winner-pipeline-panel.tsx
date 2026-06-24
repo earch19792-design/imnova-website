@@ -1041,6 +1041,10 @@ function humanizePipelineValue(
       "Pendiente de aprobacion",
     needs_operational_data:
       "Prometedor, pero incompleto",
+    needs_price_data:
+      "Falta precio de mercado",
+    needs_reanalysis:
+      "Revisar antes de decidir",
     ready_to_prepare_listing:
       "Listo para preparar listing",
     supplier_not_competitive:

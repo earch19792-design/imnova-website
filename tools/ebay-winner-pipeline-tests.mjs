@@ -1385,6 +1385,73 @@ test("strategic summary: proveedor actual caro con demanda sugiere buscar provee
   )
 })
 
+test("strategic summary: sin mercado y margen negativo pide Price Intelligence", () => {
+  const profitScenario =
+    calculateProfitScenario(
+      {
+        source_key:
+          "lunaportex",
+        cost:
+          8,
+        estimated_sale_price:
+          15,
+        shipping_cost:
+          6.99,
+        suggested_category_name:
+          "Home Improvement",
+      },
+      {
+        defaultShippingCost:
+          6.99,
+      }
+    )
+
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      {
+        state:
+          "NEEDS_DATA",
+        source_key:
+          "lunaportex",
+        product_type:
+          "Home Improvement",
+        needs_data: [
+          "weight_or_dimensions",
+          "authorized_images",
+          "category_or_inference_data",
+        ],
+      },
+      profitScenario,
+      null,
+      {
+        missingFields: [
+          "weight_or_dimensions",
+          "authorized_images",
+          "category_or_inference_data",
+        ],
+      },
+      {
+        overall_status:
+          "passed",
+        findings:
+          [],
+      }
+    )
+
+  assert.equal(
+    advisor.strategic_summary.commercial_status,
+    "needs_price_data"
+  )
+  assert.doesNotMatch(
+    advisor.strategic_summary.headline,
+    /prometedor/i
+  )
+  assert.match(
+    advisor.strategic_summary.seller_advisor_note,
+    /No publiques/
+  )
+})
+
 test("cost model: margen deseado no se suma como costo real", () => {
   const result = calculateProfitScenario(
     {
