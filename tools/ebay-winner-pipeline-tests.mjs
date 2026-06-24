@@ -19,6 +19,10 @@ import {
   getRadarAdvisorEvent,
   getNormalizedInventoryContext,
 } from "../lib/radar-advisor-events.mjs"
+import {
+  getMarketRadarActionability,
+  isConfirmedVariantStock,
+} from "../lib/market-radar-actionable-ranking.mjs"
 
 let lunaPortexTestInternals = null
 
@@ -119,6 +123,318 @@ const baseRadarAdvisorProduct = {
   tags: ["coffee", "pack"],
   inventory_quantity: 2,
 }
+
+const baseActionableRadarProduct = {
+  product_id:
+    "radar-product-actionable",
+  available:
+    true,
+  inventory_quantity:
+    8,
+  inventory_status:
+    "in_stock",
+  inventory_source:
+    "luna_numeric",
+  inventory_confidence:
+    "high",
+  inventory_scope:
+    "variant_level",
+}
+
+test("market radar actionable ranking: producto nunca analizado aparece como accionable", () => {
+  const result =
+    getMarketRadarActionability({
+      product:
+        baseActionableRadarProduct,
+      candidate:
+        null,
+      events:
+        [],
+    })
+
+  assert.equal(result.radar_action_status, "actionable")
+  assert.equal(
+    result.actionable_reason,
+    "new_product_not_reviewed"
+  )
+})
+
+test("market radar actionable ranking: producto ya analizado sin evento nuevo no reaparece", () => {
+  const result =
+    getMarketRadarActionability({
+      product:
+        baseActionableRadarProduct,
+      candidate: {
+        id:
+          "candidate-reviewed",
+        state:
+          "VALIDATED",
+        last_evaluated_at:
+          "2026-06-24T12:00:00.000Z",
+      },
+      events: [
+        {
+          event_type:
+            "price_down",
+          created_at:
+            "2026-06-24T11:00:00.000Z",
+        },
+      ],
+    })
+
+  assert.equal(result.radar_action_status, "reviewed")
+  assert.equal(
+    result.actionable_reason,
+    "reviewed_no_new_signal"
+  )
+})
+
+test("market radar actionable ranking: candidato sin last_evaluated_at no se oculta", () => {
+  const result =
+    getMarketRadarActionability({
+      product:
+        baseActionableRadarProduct,
+      candidate: {
+        id:
+          "candidate-not-evaluated",
+        state:
+          "DETECTED",
+        updated_at:
+          "2026-06-24T12:00:00.000Z",
+      },
+      events:
+        [],
+    })
+
+  assert.equal(result.radar_action_status, "actionable")
+  assert.equal(
+    result.pipeline_last_evaluated_at,
+    null
+  )
+  assert.equal(
+    result.actionable_reason,
+    "pipeline_candidate_not_evaluated"
+  )
+})
+
+test("market radar actionable ranking: evento material anterior al analisis no reaparece", () => {
+  const result =
+    getMarketRadarActionability({
+      product:
+        baseActionableRadarProduct,
+      candidate: {
+        id:
+          "candidate-old-event",
+        state:
+          "VALIDATED",
+        last_evaluated_at:
+          "2026-06-24T12:00:00.000Z",
+      },
+      events: [
+        {
+          event_type:
+            "restocked",
+          created_at:
+            "2026-06-24T11:59:59.000Z",
+        },
+      ],
+    })
+
+  assert.equal(result.radar_action_status, "reviewed")
+  assert.equal(
+    result.has_material_change_since_pipeline_review,
+    false
+  )
+})
+
+test("market radar actionable ranking: price_down posterior vuelve accionable el producto", () => {
+  const result =
+    getMarketRadarActionability({
+      product:
+        baseActionableRadarProduct,
+      candidate: {
+        id:
+          "candidate-price-down",
+        state:
+          "VALIDATED",
+        last_evaluated_at:
+          "2026-06-24T12:00:00.000Z",
+      },
+      events: [
+        {
+          event_type:
+            "price_down",
+          created_at:
+            "2026-06-24T12:15:00.000Z",
+        },
+      ],
+    })
+
+  assert.equal(result.radar_action_status, "actionable")
+  assert.equal(
+    result.actionable_reason,
+    "price_down_after_review"
+  )
+})
+
+test("market radar actionable ranking: price_up solo es material en estados avanzados", () => {
+  const needsDataResult =
+    getMarketRadarActionability({
+      product:
+        baseActionableRadarProduct,
+      candidate: {
+        id:
+          "candidate-price-up-needs-data",
+        state:
+          "NEEDS_DATA",
+        last_evaluated_at:
+          "2026-06-24T12:00:00.000Z",
+      },
+      events: [
+        {
+          event_type:
+            "price_up",
+          created_at:
+            "2026-06-24T12:30:00.000Z",
+        },
+      ],
+    })
+
+  const validatedResult =
+    getMarketRadarActionability({
+      product:
+        baseActionableRadarProduct,
+      candidate: {
+        id:
+          "candidate-price-up-validated",
+        state:
+          "VALIDATED",
+        last_evaluated_at:
+          "2026-06-24T12:00:00.000Z",
+      },
+      events: [
+        {
+          event_type:
+            "price_up",
+          created_at:
+            "2026-06-24T12:30:00.000Z",
+        },
+      ],
+    })
+
+  assert.equal(
+    needsDataResult.radar_action_status,
+    "reviewed"
+  )
+  assert.equal(
+    validatedResult.radar_action_status,
+    "actionable"
+  )
+  assert.equal(
+    validatedResult.actionable_reason,
+    "price_up_after_review"
+  )
+})
+
+test("market radar actionable ranking: restocked posterior vuelve accionable el producto", () => {
+  const result =
+    getMarketRadarActionability({
+      product:
+        baseActionableRadarProduct,
+      candidate: {
+        id:
+          "candidate-restocked",
+        state:
+          "BLOCKED",
+        last_evaluated_at:
+          "2026-06-24T12:00:00.000Z",
+      },
+      events: [
+        {
+          event_type:
+            "restocked",
+          created_at:
+            "2026-06-24T12:20:00.000Z",
+        },
+      ],
+    })
+
+  assert.equal(result.radar_action_status, "actionable")
+  assert.equal(
+    result.actionable_reason,
+    "restocked_after_review"
+  )
+})
+
+test("market radar actionable ranking: solo variante con confianza alta cuenta como stock confirmado", () => {
+  assert.equal(
+    isConfirmedVariantStock(
+      baseActionableRadarProduct
+    ),
+    true
+  )
+
+  assert.equal(
+    isConfirmedVariantStock({
+      ...baseActionableRadarProduct,
+      inventory_scope:
+        "availability_only",
+      inventory_quantity:
+        null,
+    }),
+    false
+  )
+
+  assert.equal(
+    isConfirmedVariantStock({
+      ...baseActionableRadarProduct,
+      inventory_scope:
+        "product_or_category_signal",
+      product_available_quantity:
+        50000,
+    }),
+    false
+  )
+
+  assert.equal(
+    isConfirmedVariantStock({
+      ...baseActionableRadarProduct,
+      inventory_quantity:
+        50000,
+    }),
+    false
+  )
+})
+
+test("market radar actionable ranking: ya revisados muestra candidato sin cambios materiales", () => {
+  const result =
+    getMarketRadarActionability({
+      product:
+        baseActionableRadarProduct,
+      candidate: {
+        id:
+          "candidate-reviewed-clean",
+        state:
+          "NEEDS_DATA",
+        last_evaluated_at:
+          "2026-06-24T12:00:00.000Z",
+      },
+      events: [
+        {
+          event_type:
+            "discount_ended",
+          created_at:
+            "2026-06-24T12:30:00.000Z",
+        },
+      ],
+    })
+
+  assert.equal(result.radar_action_status, "reviewed")
+  assert.equal(
+    result.has_material_change_since_pipeline_review,
+    false
+  )
+})
 
 test("producto válido se evalúa completo y genera WhatsApp dryRun", () => {
   const result = processRadarCandidate(validRadarProduct)

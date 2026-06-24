@@ -15,6 +15,9 @@ import {
   getRadarAdvisorEvent,
 } from "@/lib/radar-advisor-events.mjs"
 import {
+  decorateMarketRadarProductActionability,
+} from "@/lib/market-radar-actionable-ranking.mjs"
+import {
   type MarketRadarDashboard,
   type MarketRadarEventRow,
   type MarketRadarProductRow,
@@ -26,6 +29,58 @@ const LUNAPORTEX_SOURCE_KEY =
   "lunaportex"
 
 const DASHBOARD_PRODUCT_LIMIT = 80
+
+type MarketRadarPipelineCandidateLookup = {
+  id: string
+  candidate_key?: string | null
+  market_radar_product_id: string | null
+  supplier_variant_id?: string | null
+  supplier_sku?: string | null
+  title?: string | null
+  product_type?: string | null
+  state?: string | null
+  blocked_reason?: string | null
+  needs_data?: unknown
+  last_evaluated_at?: string | null
+  updated_at?: string | null
+}
+
+function getPipelineCandidateVariantKey(
+  productId: string,
+  supplierVariantId?: string | null
+) {
+  return [
+    productId,
+    supplierVariantId || "default",
+  ].join(":")
+}
+
+function getCandidateForMarketRadarProduct({
+  product,
+  candidatesByVariantKey,
+  fallbackCandidatesByProductId,
+}: {
+  product: MarketRadarProductRow
+  candidatesByVariantKey: Map<string, MarketRadarPipelineCandidateLookup>
+  fallbackCandidatesByProductId: Map<string, MarketRadarPipelineCandidateLookup>
+}) {
+  const exactCandidate =
+    candidatesByVariantKey.get(
+      getPipelineCandidateVariantKey(
+        product.product_id,
+        product.supplier_variant_id
+      )
+    )
+
+  if (exactCandidate) {
+    return exactCandidate
+  }
+
+  return (
+    fallbackCandidatesByProductId.get(product.product_id) ||
+    null
+  )
+}
 
 function getCount(
   count: number | null
@@ -1148,19 +1203,22 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
       ])
     )
 
-  const eventProductIds =
+  const latestProductIds =
     Array.from(
       new Set(
-        recentEvents
-          .map(event => event.product_id)
+        latestProducts
+          .map(product => product.product_id)
           .filter(Boolean)
       )
     )
 
-  const candidatesByProductId =
-    new Map<string, Record<string, unknown>>()
+  const candidatesByVariantKey =
+    new Map<string, MarketRadarPipelineCandidateLookup>()
 
-  if (eventProductIds.length > 0) {
+  const fallbackCandidatesByProductId =
+    new Map<string, MarketRadarPipelineCandidateLookup>()
+
+  if (latestProductIds.length > 0) {
     const {
       data: candidateData,
       error: candidateError,
@@ -1169,18 +1227,21 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
         .from("ebay_product_candidates")
         .select(`
           id,
+          candidate_key,
           market_radar_product_id,
+          supplier_variant_id,
           supplier_sku,
           title,
           product_type,
           state,
           blocked_reason,
           needs_data,
+          last_evaluated_at,
           updated_at
         `)
         .in(
           "market_radar_product_id",
-          eventProductIds
+          latestProductIds
         )
         .order(
           "updated_at",
@@ -1204,9 +1265,29 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
 
         if (
           productId &&
-          !candidatesByProductId.has(productId)
+          candidate.supplier_variant_id
         ) {
-          candidatesByProductId.set(
+          const variantKey =
+            getPipelineCandidateVariantKey(
+              productId,
+              candidate.supplier_variant_id
+            )
+
+          if (
+            !candidatesByVariantKey.has(variantKey)
+          ) {
+            candidatesByVariantKey.set(
+              variantKey,
+              candidate
+            )
+          }
+        }
+
+        if (
+          productId &&
+          !fallbackCandidatesByProductId.has(productId)
+        ) {
+          fallbackCandidatesByProductId.set(
             productId,
             candidate
           )
@@ -1215,13 +1296,91 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
     }
   }
 
+  const eventsByProductId =
+    new Map<string, MarketRadarEventRow[]>()
+
+  if (latestProductIds.length > 0) {
+    const {
+      data: productEventsData,
+      error: productEventsError,
+    } =
+      await supabase
+        .from("market_radar_events")
+        .select(`
+          id,
+          source_id,
+          product_id,
+          supplier_variant_id,
+          event_type,
+          old_value,
+          new_value,
+          event_strength,
+          created_at
+        `)
+        .eq(
+          "source_id",
+          source.id
+        )
+        .in(
+          "product_id",
+          latestProductIds
+        )
+        .order(
+          "created_at",
+          {
+            ascending: false,
+          }
+        )
+        .limit(500)
+
+    if (productEventsError) {
+      console.warn(
+        "RADAR ACTIONABLE EVENT LOOKUP WARNING:",
+        productEventsError.message
+      )
+    } else {
+      ;(
+        productEventsData || []
+      ).forEach(event => {
+        const productEvents =
+          eventsByProductId.get(event.product_id) || []
+
+        productEvents.push(
+          event as MarketRadarEventRow
+        )
+
+        eventsByProductId.set(
+          event.product_id,
+          productEvents
+        )
+      })
+    }
+  }
+
+  const actionableProducts =
+    latestProducts.map(product =>
+      decorateMarketRadarProductActionability({
+        product,
+        candidate:
+          getCandidateForMarketRadarProduct({
+            product,
+            candidatesByVariantKey,
+            fallbackCandidatesByProductId,
+          }),
+        events:
+          eventsByProductId.get(product.product_id) ||
+          [],
+      })
+    ) as MarketRadarProductRow[]
+
   const advisorAlerts =
     recentEvents
       .map(event =>
         getRadarAdvisorEvent(
           event,
           productById.get(event.product_id) || null,
-          candidatesByProductId.get(event.product_id) || null
+          fallbackCandidatesByProductId.get(event.product_id) ||
+            null
         )
       )
       .filter(Boolean)
@@ -1262,7 +1421,7 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
         source.last_success_at,
     },
     products:
-      latestProducts,
+      actionableProducts,
     recentEvents,
     advisorAlerts,
   }

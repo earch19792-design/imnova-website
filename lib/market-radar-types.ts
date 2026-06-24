@@ -80,6 +80,29 @@ export type MarketRadarProductRow = {
   price_change_count_7d: number | null
   last_event_at: string | null
   score_updated_at: string | null
+  pipeline_candidate_id?: string | null
+  pipeline_candidate_state?: string | null
+  pipeline_last_evaluated_at?: string | null
+  has_material_change_since_pipeline_review?: boolean
+  actionable_reason?:
+    | "new_product_not_reviewed"
+    | "price_down_after_review"
+    | "discount_started_after_review"
+    | "restocked_after_review"
+    | "stock_increased_after_review"
+    | "quantity_changed_after_review"
+    | "collection_changed_after_review"
+    | "price_up_after_review"
+    | "pipeline_candidate_not_evaluated"
+    | "reviewed_no_new_signal"
+  stock_validation_status?:
+    | "stock_confirmed"
+    | "stock_needs_validation"
+    | "out_of_stock"
+    | "stock_unknown"
+  radar_action_status?:
+    | "actionable"
+    | "reviewed"
 }
 
 export type MarketRadarEventRow = {
