@@ -97,6 +97,13 @@ type ProfitAssumptions = {
   minimumNetMarginPercent?: number
   roiBlocksMinimums?: boolean
   ebayFeePercent?: number
+  ebay_fixed_fee?: number
+  ebay_fee_source?: string
+  ebay_fee_confidence?: string
+  ebay_category_group?: string
+  ebay_category_match?: string
+  insertion_fee_assumption?: string
+  ebay_fee_note?: string
   paymentFeePercent?: number
   advertisingPercent?: number
   returnReservePercent?: number
