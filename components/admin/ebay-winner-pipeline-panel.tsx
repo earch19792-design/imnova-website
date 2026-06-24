@@ -85,6 +85,13 @@ type ProfitAssumptions = {
   minimumNetMarginPercent?: number
   roiBlocksMinimums?: boolean
   ebayFeePercent?: number
+  ebay_fixed_fee?: number
+  ebay_fee_source?: string
+  ebay_fee_confidence?: string
+  ebay_category_group?: string
+  ebay_category_match?: string
+  insertion_fee_assumption?: string
+  ebay_fee_note?: string
   paymentFeePercent?: number
   advertisingPercent?: number
   returnReservePercent?: number
@@ -194,10 +201,18 @@ type PriceIntelligenceSnapshot = {
 
 type CostScenario = {
   sale_price?: number | string | null
+  buyer_shipping_charge?: number | string | null
   luna_cost?: number | string | null
   shipping_cost?: number | string | null
   ebay_fee_percent?: number | string | null
+  ebay_fixed_fee?: number | string | null
   ebay_fee_amount?: number | string | null
+  ebay_fee_source?: string | null
+  ebay_fee_confidence?: string | null
+  ebay_category_group?: string | null
+  ebay_category_match?: string | null
+  ebay_fee_note?: string | null
+  insertion_fee_assumption?: string | null
   payment_fee_percent?: number | string | null
   payment_fee_amount?: number | string | null
   promotion_percent?: number | string | null
@@ -483,6 +498,15 @@ function calculateEditableCostScenario(
   const salePrice =
     toNumber(base.sale_price) || 0
 
+  const buyerShippingCharge =
+    toNumber(base.buyer_shipping_charge) || 0
+
+  const totalRevenue =
+    roundMoney(
+      salePrice +
+        buyerShippingCharge
+    )
+
   const lunaCost =
     toNumber(base.luna_cost) || 0
 
@@ -494,6 +518,9 @@ function calculateEditableCostScenario(
 
   const ebayFeePercent =
     toNumber(base.ebay_fee_percent) || 0
+
+  const ebayFixedFee =
+    toNumber(base.ebay_fixed_fee) ?? 0.3
 
   const paymentFeePercent =
     toNumber(base.payment_fee_percent) || 0
@@ -521,7 +548,8 @@ function calculateEditableCostScenario(
 
   const ebayFeeAmount =
     roundMoney(
-      salePrice * (ebayFeePercent / 100)
+      totalRevenue * (ebayFeePercent / 100) +
+        ebayFixedFee
     )
 
   const paymentFeeAmount =
@@ -567,13 +595,13 @@ function calculateEditableCostScenario(
 
   const netProfit =
     roundMoney(
-      salePrice - totalEstimatedCost
+      totalRevenue - totalEstimatedCost
     )
 
   const netMarginPercent =
-    salePrice > 0
+    totalRevenue > 0
       ? roundMoney(
-          (netProfit / salePrice) * 100
+          (netProfit / totalRevenue) * 100
         )
       : 0
 
@@ -596,7 +624,8 @@ function calculateEditableCostScenario(
     lunaCost +
     safeShippingCost +
     fulfillmentCost +
-    packagingCost
+    packagingCost +
+    ebayFixedFee
 
   const breakEvenPrice =
     1 - variableRate > 0
@@ -616,14 +645,30 @@ function calculateEditableCostScenario(
   return {
     sale_price:
       salePrice,
+    buyer_shipping_charge:
+      buyerShippingCharge,
     luna_cost:
       lunaCost,
     shipping_cost:
       safeShippingCost,
     ebay_fee_percent:
       ebayFeePercent,
+    ebay_fixed_fee:
+      ebayFixedFee,
     ebay_fee_amount:
       ebayFeeAmount,
+    ebay_fee_source:
+      base.ebay_fee_source,
+    ebay_fee_confidence:
+      base.ebay_fee_confidence,
+    ebay_category_group:
+      base.ebay_category_group,
+    ebay_category_match:
+      base.ebay_category_match,
+    ebay_fee_note:
+      base.ebay_fee_note,
+    insertion_fee_assumption:
+      base.insertion_fee_assumption,
     payment_fee_percent:
       paymentFeePercent,
     payment_fee_amount:
@@ -2079,7 +2124,29 @@ function CandidateDetailDrawer({
                           )} (${formatNumber(
                             displayedCostBreakdown?.ebay_fee_percent,
                             "%"
+                          )} + ${formatCurrency(
+                            displayedCostBreakdown?.ebay_fixed_fee
                           )})`}
+                        />
+                        <Field
+                          label="Fuente fee eBay"
+                          value={
+                            displayedCostBreakdown?.ebay_fee_source === "category_rule"
+                              ? "Regla de categoria"
+                              : "Default mayoria de categorias"
+                          }
+                        />
+                        <Field
+                          label="Confianza fee eBay"
+                          value={displayedCostBreakdown?.ebay_fee_confidence}
+                        />
+                        <Field
+                          label="Grupo fee eBay"
+                          value={displayedCostBreakdown?.ebay_category_group}
+                        />
+                        <Field
+                          label="Insertion fee"
+                          value={displayedCostBreakdown?.insertion_fee_assumption}
                         />
                         <Field
                           label="Payment fee"
@@ -2163,6 +2230,11 @@ function CandidateDetailDrawer({
                   >
                     {costBreakdown.shipping_note ||
                       "Envio estimado estandar."}
+                  </div>
+
+                  <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.08] p-3 text-xs leading-5 text-amber-50/80">
+                    {costBreakdown.ebay_fee_note ||
+                      "Fee eBay usado como default. Confirmar categoria final antes de publicar."}
                   </div>
 
                   <div className="grid gap-3 md:grid-cols-3">

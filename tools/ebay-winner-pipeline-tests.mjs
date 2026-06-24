@@ -2,8 +2,10 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import {
   buildDecisionIdempotencyKey,
+  calculateEbayFee,
   calculateProfitScenario,
   processRadarCandidate,
+  resolveEbayFeeRule,
 } from "../lib/ebay-winner-pipeline/core.mjs"
 import {
   getEbayProductDecisionAdvisor,
@@ -85,6 +87,256 @@ test("producto con margen bajo queda bloqueado", () => {
   assert.ok(
     result.compliance.findings.some(finding =>
       finding.code === "margin_below_minimum"
+    )
+  )
+})
+
+test("Fee Engine V0: categoria default usa 13.25% + fee fijo", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        1,
+      estimated_sale_price:
+        100,
+      buyer_shipping_charge:
+        10,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+      suggested_category_name:
+        "Health & Beauty",
+    },
+    {
+      defaultShippingCost:
+        0,
+      paymentFeePercent:
+        0,
+      advertisingPercent:
+        0,
+      returnReservePercent:
+        0,
+    }
+  )
+
+  assert.equal(result.assumptions.ebayFeePercent, 13.25)
+  assert.equal(result.assumptions.ebay_fixed_fee, 0.3)
+  assert.equal(result.assumptions.ebay_fee_source, "default_most_categories")
+  assert.equal(result.assumptions.ebay_fee_confidence, "medium")
+  assert.equal(result.estimated_ebay_fee, 14.88)
+})
+
+test("Fee Engine V0: books/media usa 14.95% + fee fijo", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        1,
+      estimated_sale_price:
+        100,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+      suggested_category_name:
+        "Books, Movies & Music",
+    },
+    {
+      defaultShippingCost:
+        0,
+      paymentFeePercent:
+        0,
+      advertisingPercent:
+        0,
+      returnReservePercent:
+        0,
+    }
+  )
+
+  assert.equal(result.assumptions.ebayFeePercent, 14.95)
+  assert.equal(result.assumptions.ebay_fee_source, "category_rule")
+  assert.equal(result.assumptions.ebay_fee_confidence, "high")
+  assert.equal(result.estimated_ebay_fee, 15.25)
+})
+
+test("Fee Engine V0: guitars/basses usa 6.35% + fee fijo", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        1,
+      estimated_sale_price:
+        100,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+      suggested_category_name:
+        "Guitars & Basses",
+    },
+    {
+      defaultShippingCost:
+        0,
+      paymentFeePercent:
+        0,
+      advertisingPercent:
+        0,
+      returnReservePercent:
+        0,
+    }
+  )
+
+  assert.equal(result.assumptions.ebayFeePercent, 6.35)
+  assert.equal(result.estimated_ebay_fee, 6.65)
+})
+
+test("Fee Engine V0: sneakers desde 150 usa 8% + fee fijo", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        1,
+      estimated_sale_price:
+        150,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+      suggested_category_name:
+        "Sneakers",
+    },
+    {
+      defaultShippingCost:
+        0,
+      paymentFeePercent:
+        0,
+      advertisingPercent:
+        0,
+      returnReservePercent:
+        0,
+    }
+  )
+
+  assert.equal(result.assumptions.ebayFeePercent, 8)
+  assert.equal(result.assumptions.ebay_category_group, "sneakers_150_plus")
+  assert.equal(result.estimated_ebay_fee, 12.3)
+})
+
+test("Fee Engine V0: categoria desconocida usa default con confianza media", () => {
+  const rule =
+    resolveEbayFeeRule(
+      {},
+      100,
+      {}
+    )
+
+  assert.equal(rule.final_value_fee_percent, 13.25)
+  assert.equal(rule.fixed_order_fee, 0.3)
+  assert.equal(rule.fee_source, "default_most_categories")
+  assert.equal(rule.confidence, "medium")
+})
+
+test("Fee Engine V0: insertion fee no se suma por defecto", () => {
+  const result = calculateProfitScenario(
+    {
+      cost:
+        1,
+      estimated_sale_price:
+        100,
+      shipping_cost:
+        0,
+      fulfillment_cost:
+        0,
+      packaging_cost:
+        0,
+    },
+    {
+      defaultShippingCost:
+        0,
+      paymentFeePercent:
+        0,
+      advertisingPercent:
+        0,
+      returnReservePercent:
+        0,
+    }
+  )
+
+  assert.equal(result.estimated_ebay_fee, 13.55)
+  assert.match(
+    result.assumptions.insertion_fee_assumption,
+    /Primeros 250 anuncios/
+  )
+})
+
+test("Fee Engine V0: fee fijo se suma separado del payment fee", () => {
+  assert.equal(
+    calculateEbayFee(
+      100,
+      {
+        final_value_fee_percent:
+          13.25,
+        fixed_order_fee:
+          0.3,
+      }
+    ),
+    13.55
+  )
+})
+
+test("Fee Engine V0: Advisor advierte si falta category_or_inference_data", () => {
+  const profitScenario =
+    calculateProfitScenario(
+      {
+        cost:
+          8,
+        estimated_sale_price:
+          31.5,
+        shipping_cost:
+          6.99,
+        fulfillment_cost:
+          0,
+        packaging_cost:
+          0,
+      }
+    )
+
+  const advisor =
+    getEbayProductDecisionAdvisor(
+      {
+        state:
+          "NEEDS_DATA",
+        needs_data: [
+          "category_or_inference_data",
+        ],
+      },
+      {
+        validation_status:
+          "needs_data",
+        missing_fields: [
+          "category_or_inference_data",
+        ],
+      },
+      profitScenario,
+      {
+        overall_status:
+          "passed",
+      },
+      null,
+      {
+        winner_score:
+          70,
+      }
+    )
+
+  assert.ok(
+    advisor.profit_reasons.some(reason =>
+      reason.includes("categoria final afecta el fee de eBay")
     )
   )
 })
@@ -578,7 +830,7 @@ test("IMNOVA free shipping mantiene estimated_shipping_cost como costo interno",
           1.5 +
           0.75 +
           6.99 +
-          3.84 +
+          4.14 +
           0 +
           0 +
           0.87
@@ -699,7 +951,7 @@ test("pricing strategy: organico rentable pero campana rompe margen -> organic_o
           salePrice:
             40,
           lunaCost:
-            20,
+            19.75,
         }),
       priceIntelligence:
         makePriceIntelligence({
@@ -732,7 +984,7 @@ test("pricing strategy: campana 1%-2% mantiene margen -> list_with_small_campaig
           salePrice:
             40,
           lunaCost:
-            19.26,
+            19,
         }),
       priceIntelligence:
         makePriceIntelligence({
