@@ -2450,6 +2450,55 @@ function makeProfitScenario({
   )
 }
 
+function makeLunaProfitScenario({
+  salePrice = 50,
+  lunaCost = 20,
+  shippingCost = 6.99,
+  assumptions = {},
+} = {}) {
+  const scenario =
+    calculateProfitScenario(
+      {
+        cost:
+          lunaCost,
+        estimated_sale_price:
+          salePrice,
+        buyer_shipping_charge:
+          0,
+        shipping_cost:
+          shippingCost,
+        source:
+          "lunaportex",
+        supplier:
+          "Luna Portex",
+        product_url:
+          "https://lunaportex.com/products/test-product",
+      },
+      {
+        defaultShippingCost:
+          6.99,
+        ebayFeePercent:
+          13.25,
+        paymentFeePercent:
+          0,
+        advertisingPercent:
+          0,
+        returnReservePercent:
+          3,
+        minimumNetMarginPercent:
+          10,
+      }
+    )
+
+  return {
+    ...scenario,
+    assumptions: {
+      ...scenario.assumptions,
+      ...assumptions,
+    },
+  }
+}
+
 function makePriceIntelligence({
   soldMedian = 50,
   domesticLanded = 50,
@@ -2478,6 +2527,274 @@ function makePriceIntelligence({
     },
   }
 }
+
+function makeSupplierSimulatorAdvisor({
+  salePrice = 50,
+  lunaCost = 20,
+  shippingCost = 6.99,
+  assumptions = {},
+  candidate = {},
+} = {}) {
+  return getEbayProductDecisionAdvisor(
+    {
+      state:
+        "VALIDATED",
+      source:
+        "lunaportex",
+      supplier:
+        "Luna Portex",
+      product_url:
+        "https://lunaportex.com/products/test-product",
+      ...candidate,
+    },
+    makeLunaProfitScenario({
+      salePrice,
+      lunaCost,
+      shippingCost,
+      assumptions,
+    }),
+    makePriceIntelligence({
+      soldMedian:
+        salePrice,
+      domesticLanded:
+        salePrice,
+    }),
+    null,
+    null
+  )
+}
+
+test("supplier model simulator: luna_as_supplier no suma fulfillment ni empaque por default", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({})
+
+  const currentScenario =
+    advisor.supplier_model_simulator.scenarios[0]
+
+  assert.equal(
+    currentScenario.supplier_model,
+    "luna_as_supplier"
+  )
+  assert.equal(
+    currentScenario.fulfillment_cost,
+    0
+  )
+  assert.equal(
+    advisor.cost_breakdown.packaging_cost,
+    0
+  )
+  assert.equal(
+    advisor.supplier_model_simulator.recommended_strategy,
+    "test_with_current_supplier"
+  )
+})
+
+test("supplier model simulator: proveedor directo suma inbound y fulfillment cuando existen assumptions", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      assumptions: {
+        supplier_model:
+          "direct_brand_supplier",
+        direct_supplier_unit_cost:
+          10,
+        inbound_shipping_to_luna:
+          1.25,
+        luna_receiving_fee:
+          0.5,
+        luna_storage_fee:
+          0.25,
+        luna_pick_pack_fee:
+          1.1,
+        luna_fulfillment_fee:
+          2.2,
+        luna_outbound_shipping:
+          5,
+        moq:
+          24,
+        lead_time_days:
+          14,
+      },
+    })
+
+  const directScenario =
+    advisor.supplier_model_simulator.scenarios[1]
+
+  assert.equal(
+    directScenario.supplier_model,
+    "direct_brand_supplier"
+  )
+  assert.equal(
+    directScenario.supplier_landed_cost,
+    12
+  )
+  assert.equal(
+    directScenario.fulfillment_cost,
+    3.3
+  )
+  assert.equal(
+    directScenario.shipping_cost,
+    5
+  )
+  assert.equal(
+    directScenario.missing_inputs.length,
+    0
+  )
+})
+
+test("supplier model simulator: sin costo directo muestra missing_inputs y no recomienda escalar", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      assumptions: {
+        inbound_shipping_to_luna:
+          1.25,
+        moq:
+          24,
+        lead_time_days:
+          14,
+      },
+    })
+
+  const directScenario =
+    advisor.supplier_model_simulator.scenarios[1]
+
+  assert.deepEqual(
+    directScenario.missing_inputs,
+    ["direct_supplier_unit_cost"]
+  )
+  assert.equal(
+    directScenario.recommendation,
+    "Datos insuficientes para comparar con confianza."
+  )
+  assert.notEqual(
+    advisor.supplier_model_simulator.recommended_strategy,
+    "scale_with_alternative_supplier"
+  )
+})
+
+test("supplier model simulator: distributor_wholesale exige inbound antes de recomendar escalar", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      assumptions: {
+        direct_supplier_unit_cost:
+          10,
+        moq:
+          24,
+        lead_time_days:
+          14,
+      },
+    })
+
+  const distributorScenario =
+    advisor.supplier_model_simulator.scenarios[2]
+
+  assert.equal(
+    distributorScenario.supplier_model,
+    "distributor_wholesale"
+  )
+  assert.ok(
+    distributorScenario.missing_inputs.includes(
+      "inbound_shipping_to_luna"
+    )
+  )
+  assert.equal(
+    distributorScenario.recommendation,
+    "Datos insuficientes para comparar con confianza."
+  )
+  assert.notEqual(
+    advisor.supplier_model_simulator.recommended_strategy,
+    "scale_with_alternative_supplier"
+  )
+})
+
+test("supplier model simulator: mercado favorable con proveedor caro recomienda buscar mejor proveedor", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      salePrice:
+        50,
+      lunaCost:
+        42,
+    })
+
+  assert.equal(
+    advisor.supplier_model_simulator.recommended_strategy,
+    "find_better_supplier"
+  )
+  assert.match(
+    advisor.supplier_model_simulator.summary,
+    /Buscar mejor proveedor/i
+  )
+})
+
+test("supplier model simulator: costo maximo proveedor baja cuando sube shipping", () => {
+  const baseAdvisor =
+    makeSupplierSimulatorAdvisor({
+      shippingCost:
+        6.99,
+    })
+
+  const highShippingAdvisor =
+    makeSupplierSimulatorAdvisor({
+      shippingCost:
+        12.99,
+    })
+
+  const baseMax =
+    baseAdvisor.supplier_model_simulator.scenarios[0]
+      .max_supplier_landed_cost
+
+  const highShippingMax =
+    highShippingAdvisor.supplier_model_simulator.scenarios[0]
+      .max_supplier_landed_cost
+
+  assert.ok(
+    highShippingMax < baseMax
+  )
+})
+
+test("supplier model simulator: profit_gap no crea recomendacion falsa si faltan inputs", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({})
+
+  const directScenario =
+    advisor.supplier_model_simulator.scenarios[1]
+
+  assert.equal(
+    directScenario.profit_gap,
+    null
+  )
+  assert.equal(
+    directScenario.recommendation,
+    "Datos insuficientes para comparar con confianza."
+  )
+})
+
+test("supplier model simulator: Fee Engine V0 conserva porcentaje y fee fijo", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({})
+
+  assert.equal(
+    advisor.cost_breakdown.ebay_fee_percent,
+    13.25
+  )
+  assert.equal(
+    advisor.cost_breakdown.ebay_fixed_fee,
+    0.3
+  )
+})
+
+test("supplier model simulator: Campaign Advisor no cambia campaign_eligible", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({})
+
+  assert.equal(
+    advisor.pricing_strategy.campaign_eligible,
+    false
+  )
+  assert.equal(
+    advisor.pricing_strategy.campaign_observation_required,
+    true
+  )
+})
 
 test("pricing strategy: organico rentable y competitivo -> list_organic", () => {
   const recommendation =

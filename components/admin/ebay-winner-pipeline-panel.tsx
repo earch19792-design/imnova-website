@@ -296,6 +296,29 @@ type PricingStrategyRecommendation = {
   proposed_next_step?: string | null
 }
 
+type SupplierModelSimulatorScenario = {
+  supplier_model?: string | null
+  label?: string | null
+  supplier_landed_cost?: number | string | null
+  fulfillment_cost?: number | string | null
+  shipping_cost?: number | string | null
+  total_estimated_cost?: number | string | null
+  net_profit?: number | string | null
+  net_margin_percent?: number | string | null
+  max_supplier_landed_cost?: number | string | null
+  profit_gap?: number | string | null
+  missing_inputs?: string[] | null
+  recommendation?: string | null
+  seller_note?: string | null
+}
+
+type SupplierModelSimulator = {
+  recommended_strategy?: string | null
+  current_model?: string | null
+  summary?: string | null
+  scenarios?: SupplierModelSimulatorScenario[] | null
+}
+
 type EbayDecisionAdvisor = {
   decision_label?: string
   strategic_summary?: {
@@ -349,6 +372,7 @@ type EbayDecisionAdvisor = {
     shipping_strategy?: string | null
   }
   cost_breakdown?: CostBreakdown | null
+  supplier_model_simulator?: SupplierModelSimulator | null
   pricing_strategy?: PricingStrategyRecommendation | null
   recommended_next_action?: string
 }
@@ -1101,12 +1125,32 @@ function humanizePipelineValue(
       "Alto",
     luna_as_supplier:
       "Luna como proveedor",
+    direct_brand_supplier:
+      "Marca como proveedor",
+    manufacturer_direct:
+      "Fabricante directo",
+    distributor_wholesale:
+      "Distribuidor mayorista",
     luna_as_fulfillment_only:
       "Luna solo como fulfillment",
+    external_fulfillment:
+      "Fulfillment externo",
     test_with_current_supplier:
       "Probar con proveedor actual",
+    negotiate_cost:
+      "Negociar costo",
     find_better_supplier:
       "Buscar mejor proveedor",
+    source_direct_recommended:
+      "Buscar proveedor directo",
+    scale_with_alternative_supplier:
+      "Escalar con proveedor alternativo",
+    use_luna_as_fulfillment:
+      "Usar Luna como fulfillment",
+    blocked_until_better_supplier:
+      "Bloqueado hasta mejorar proveedor",
+    complete_supplier_inputs:
+      "Completar datos de proveedor",
     explicit_candidate_cost:
       "Costo confirmado en el candidato",
     included_in_luna_supplier_purchase:
@@ -1122,6 +1166,89 @@ function humanizePipelineValue(
   }
 
   return labels[value] || value.replaceAll("_", " ")
+}
+
+function humanizeSupplierInput(
+  value?: string | null
+) {
+  if (!value) {
+    return "-"
+  }
+
+  const labels: Record<string, string> = {
+    direct_supplier_unit_cost:
+      "Costo directo del proveedor",
+    inbound_shipping_to_luna:
+      "Envio hacia Luna o fulfillment",
+    moq:
+      "Compra minima (MOQ)",
+    lead_time_days:
+      "Tiempo de entrega",
+    luna_receiving_fee:
+      "Costo de recepcion en Luna",
+    luna_storage_fee:
+      "Costo de almacenamiento",
+    luna_pick_pack_fee:
+      "Costo pick & pack",
+    luna_fulfillment_fee:
+      "Costo fulfillment Luna",
+    luna_outbound_shipping:
+      "Envio final al comprador",
+    supplier_unit_cost:
+      "Costo proveedor actual",
+  }
+
+  return labels[value] || humanizePipelineValue(value)
+}
+
+function humanizeSupplierInputs(
+  values?: string[] | null
+) {
+  const orderedInputs = [
+    "direct_supplier_unit_cost",
+    "inbound_shipping_to_luna",
+    "moq",
+    "lead_time_days",
+    "luna_receiving_fee",
+    "luna_storage_fee",
+    "luna_pick_pack_fee",
+    "luna_fulfillment_fee",
+    "luna_outbound_shipping",
+    "supplier_unit_cost",
+  ]
+
+  const uniqueValues =
+    uniqueStrings(values || [])
+
+  return [
+    ...orderedInputs.filter(input =>
+      uniqueValues.includes(input)
+    ),
+    ...uniqueValues.filter(input =>
+      !orderedInputs.includes(input)
+    ),
+  ].map(humanizeSupplierInput)
+}
+
+function formatSupplierGap(
+  value?: string | number | null
+) {
+  const numericValue =
+    toNumber(value)
+
+  if (numericValue === null) {
+    return "-"
+  }
+
+  if (numericValue > 0) {
+    return `${formatCurrency(numericValue)} por encima del maximo`
+  }
+
+  if (numericValue < 0) {
+    return `${formatCurrency(Math.abs(numericValue))} por debajo del maximo`
+  }
+
+  return "En el limite del margen objetivo"
 }
 
 function humanizeCampaignNow(
@@ -1838,6 +1965,22 @@ function CandidateDetailDrawer({
           detail
         )
       : null
+
+  const supplierModelSimulator =
+    detail?.decisionAdvisor?.supplier_model_simulator
+
+  const supplierSimulatorMissingInputs =
+    uniqueStrings(
+      (
+        supplierModelSimulator?.scenarios || []
+      ).flatMap(
+        scenario =>
+          scenario.missing_inputs || []
+      )
+    )
+
+  const currentSupplierScenario =
+    supplierModelSimulator?.scenarios?.[0]
 
   const currentMissingFields =
     detail
@@ -2751,6 +2894,147 @@ function CandidateDetailDrawer({
                           {detail.decisionAdvisor.pricing_strategy.campaign_observation_note}
                         </p>
                       ) : null}
+                    </div>
+                  ) : null}
+
+                  {supplierModelSimulator ? (
+                    <div className="rounded-lg border border-sky-300/20 bg-sky-300/[0.07] p-4">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-sky-100/60">
+                        Comparacion de proveedor
+                      </p>
+                      <p className="mt-3 text-sm leading-6 text-sky-50/75">
+                        {supplierModelSimulator.summary ||
+                          "El producto puede tener demanda, pero el proveedor actual puede no ser el mejor para escalar."}
+                      </p>
+                      <div className="mt-4 grid gap-3 md:grid-cols-3">
+                        <Field
+                          label="Proveedor actual"
+                          value={humanizePipelineValue(
+                            supplierModelSimulator.current_model
+                          )}
+                        />
+                        <Field
+                          label="Modelo de operacion"
+                          value={humanizePipelineValue(
+                            supplierModelSimulator.recommended_strategy
+                          )}
+                        />
+                        <Field
+                          label="Costo maximo que podemos pagar"
+                          value={formatCurrency(
+                            currentSupplierScenario?.max_supplier_landed_cost
+                          )}
+                        />
+                        <Field
+                          label="Diferencia contra margen objetivo"
+                          value={formatSupplierGap(
+                            currentSupplierScenario?.profit_gap
+                          )}
+                        />
+                        <Field
+                          label="Mejor camino"
+                          value={humanizePipelineValue(
+                            supplierModelSimulator.recommended_strategy
+                          )}
+                        />
+                        <Field
+                          label="Que falta para comparar"
+                          value={
+                            supplierSimulatorMissingInputs.length
+                              ? humanizeSupplierInputs(
+                                  supplierSimulatorMissingInputs
+                                ).join(", ")
+                              : "Datos suficientes para simulacion inicial"
+                          }
+                        />
+                      </div>
+                      <div className="mt-4 grid gap-3 xl:grid-cols-3">
+                        {(supplierModelSimulator.scenarios || []).map(
+                          (scenario, index) => (
+                            <div
+                              key={`${scenario.supplier_model || "supplier"}-${index}`}
+                              className="rounded-lg border border-white/10 bg-black/25 p-3"
+                            >
+                              <p className="text-sm font-bold text-white/80">
+                                {scenario.label ||
+                                  humanizePipelineValue(
+                                    scenario.supplier_model
+                                  )}
+                              </p>
+                              <div className="mt-3 grid gap-3">
+                                <Field
+                                  label="Modelo"
+                                  value={humanizePipelineValue(
+                                    scenario.supplier_model
+                                  )}
+                                />
+                                <Field
+                                  label="Costo proveedor total"
+                                  value={formatCurrency(
+                                    scenario.supplier_landed_cost
+                                  )}
+                                />
+                                <Field
+                                  label="Operacion fulfillment"
+                                  value={formatCurrency(
+                                    scenario.fulfillment_cost
+                                  )}
+                                />
+                                <Field
+                                  label="Envio"
+                                  value={formatCurrency(
+                                    scenario.shipping_cost
+                                  )}
+                                />
+                                <Field
+                                  label="Costo total estimado"
+                                  value={formatCurrency(
+                                    scenario.total_estimated_cost
+                                  )}
+                                />
+                                <Field
+                                  label="Ganancia / margen"
+                                  value={`${formatCurrency(
+                                    scenario.net_profit
+                                  )} / ${formatNumber(
+                                    scenario.net_margin_percent,
+                                    "%"
+                                  )}`}
+                                />
+                                <Field
+                                  label="Costo maximo para margen"
+                                  value={formatCurrency(
+                                    scenario.max_supplier_landed_cost
+                                  )}
+                                />
+                                <Field
+                                  label="Diferencia"
+                                  value={formatSupplierGap(
+                                    scenario.profit_gap
+                                  )}
+                                />
+                              </div>
+                              <p className="mt-3 text-xs leading-5 text-white/65">
+                                {scenario.recommendation}
+                              </p>
+                              <p className="mt-2 text-xs leading-5 text-white/45">
+                                {scenario.seller_note}
+                              </p>
+                              <div className="mt-3">
+                                <p className="text-[10px] uppercase tracking-[0.18em] text-white/30">
+                                  Que falta
+                                </p>
+                                <SimpleList
+                                  items={humanizeSupplierInputs(
+                                    scenario.missing_inputs
+                                  )}
+                                  empty="Sin faltantes criticos para este escenario."
+                                />
+                              </div>
+                            </div>
+                          )
+                        )}
+                      </div>
                     </div>
                   ) : null}
 
