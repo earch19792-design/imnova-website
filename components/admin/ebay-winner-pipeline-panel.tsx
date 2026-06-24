@@ -3984,6 +3984,16 @@ export function EbayWinnerPipelinePanel({
     setFocusNotice,
   ] = useState("")
 
+  const [
+    focusedCandidateKey,
+    setFocusedCandidateKey,
+  ] = useState("")
+
+  const [
+    focusedCandidateId,
+    setFocusedCandidateId,
+  ] = useState("")
+
   const getAccessToken =
     useCallback(async () => {
       const {
@@ -4411,8 +4421,8 @@ export function EbayWinnerPipelinePanel({
     }
 
     const searchValue =
-      focusCandidate.supplierSku?.trim() ||
       focusCandidate.candidateKey?.trim() ||
+      focusCandidate.supplierSku?.trim() ||
       focusCandidate.title?.trim() ||
       ""
 
@@ -4429,8 +4439,14 @@ export function EbayWinnerPipelinePanel({
       focusCandidate.supplierSku?.trim() ||
       "el candidato enviado"
 
+    setFocusedCandidateKey(
+      focusCandidate.candidateKey?.trim() || ""
+    )
+    setFocusedCandidateId(
+      focusCandidate.candidateId?.trim() || ""
+    )
     setFocusNotice(
-      `Mostrando ${label} enviado desde Market Radar.`
+      `Candidato enviado desde Market Radar: ${label}${focusCandidate.supplierSku ? ` | SKU ${focusCandidate.supplierSku}` : ""}${focusCandidate.candidateKey ? ` | ${focusCandidate.candidateKey}` : ""}.`
     )
 
     if (focusCandidate.candidateId) {
@@ -4833,11 +4849,30 @@ export function EbayWinnerPipelinePanel({
                   </td>
                 </tr>
               ) : (
-                candidates.map(candidate => (
-                  <tr
-                    key={candidate.id}
-                    className="border-b border-white/5 align-top"
-                  >
+                candidates.map(candidate => {
+                  const isFocusedCandidate =
+                    (
+                      focusedCandidateId &&
+                      candidate.id === focusedCandidateId
+                    ) ||
+                    (
+                      focusedCandidateKey &&
+                      candidate.candidate_key === focusedCandidateKey
+                    )
+
+                  return (
+                    <tr
+                      key={candidate.id}
+                      className={`
+                        border-b
+                        align-top
+                        ${
+                          isFocusedCandidate
+                            ? "border-cyan-300/35 bg-cyan-300/[0.10]"
+                            : "border-white/5"
+                        }
+                      `}
+                    >
                     <td className="px-4 py-4">
                       <StatusBadge
                         value={candidate.state}
@@ -4856,6 +4891,11 @@ export function EbayWinnerPipelinePanel({
                       <p className="mt-2 line-clamp-1 text-[11px] text-white/35">
                         {candidate.candidate_key}
                       </p>
+                      {isFocusedCandidate ? (
+                        <p className="mt-2 inline-flex rounded-md border border-cyan-300/25 bg-cyan-300/[0.12] px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-cyan-50">
+                          Recién evaluado
+                        </p>
+                      ) : null}
                     </td>
                     <td className="px-4 py-4 text-sm font-black text-white">
                       {formatNumber(
@@ -4936,8 +4976,9 @@ export function EbayWinnerPipelinePanel({
                         Ver detalle
                       </button>
                     </td>
-                  </tr>
-                ))
+                    </tr>
+                  )
+                })
               )}
             </tbody>
           </table>
