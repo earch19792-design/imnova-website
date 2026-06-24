@@ -7,6 +7,8 @@ import ts from "typescript"
 import {
   buildDecisionIdempotencyKey,
   calculateProfitScenario,
+  getListingQuantityPolicy,
+  getPipelineReanalysisAdvisor,
   processRadarCandidate,
 } from "../lib/ebay-winner-pipeline/core.mjs"
 import {
@@ -962,6 +964,280 @@ test("ejecución duplicada con mismo supplier_sku conserva candidate_key", () =>
   const second = processRadarCandidate(validRadarProduct)
 
   assert.equal(first.candidate.candidate_key, second.candidate.candidate_key)
+})
+
+test("pipeline reanalysis: DRAFT_CREATED + price_down revisa draft sin degradar", () => {
+  const advisor =
+    getPipelineReanalysisAdvisor({
+      existingCandidate: {
+        state:
+          "DRAFT_CREATED",
+      },
+      radarProduct:
+        validRadarProduct,
+      advisorEvents: [
+        {
+          event_type:
+            "price_down",
+        },
+      ],
+      inventoryContext: {
+        inventory_quantity:
+          10,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+      },
+    })
+
+  assert.equal(advisor.action, "review_existing_draft")
+  assert.equal(advisor.previous_state, "DRAFT_CREATED")
+  assert.equal(advisor.required_human_approval, true)
+  assert.match(
+    advisor.reason,
+    /ya tiene draft/i
+  )
+})
+
+test("pipeline reanalysis: BLOCKED + restocked resurface_blocked", () => {
+  const advisor =
+    getPipelineReanalysisAdvisor({
+      existingCandidate: {
+        state:
+          "BLOCKED",
+      },
+      radarProduct:
+        validRadarProduct,
+      advisorEvents: [
+        {
+          event_type:
+            "restocked",
+        },
+      ],
+      inventoryContext: {
+        inventory_quantity:
+          10,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+      },
+    })
+
+  assert.equal(advisor.action, "resurface_blocked")
+  assert.equal(advisor.priority, "high")
+})
+
+test("pipeline reanalysis: product_or_category_signal requiere validar inventario", () => {
+  const advisor =
+    getPipelineReanalysisAdvisor({
+      existingCandidate: {
+        state:
+          "VALIDATED",
+      },
+      radarProduct:
+        validRadarProduct,
+      inventoryContext: {
+        product_available_quantity:
+          50000,
+        inventory_scope:
+          "product_or_category_signal",
+        inventory_confidence:
+          "low",
+      },
+    })
+
+  assert.equal(advisor.action, "inventory_validation_required")
+  assert.equal(advisor.inventory_scope, "product_or_category_signal")
+  assert.equal(advisor.required_human_approval, true)
+})
+
+test("pipeline reanalysis: availability_only requiere aprobacion humana", () => {
+  const advisor =
+    getPipelineReanalysisAdvisor({
+      existingCandidate: {
+        state:
+          "VALIDATED",
+      },
+      radarProduct:
+        validRadarProduct,
+      inventoryContext: {
+        inventory_quantity:
+          null,
+        inventory_scope:
+          "availability_only",
+        inventory_confidence:
+          "medium",
+      },
+    })
+
+  assert.equal(advisor.action, "inventory_validation_required")
+  assert.equal(advisor.required_human_approval, true)
+})
+
+test("pipeline reanalysis: variant_level confirmado permite analisis sin accion real", () => {
+  const advisor =
+    getPipelineReanalysisAdvisor({
+      existingCandidate: {
+        state:
+          "VALIDATED",
+      },
+      radarProduct:
+        validRadarProduct,
+      advisorEvents: [
+        {
+          event_type:
+            "price_down",
+        },
+      ],
+      inventoryContext: {
+        inventory_quantity:
+          10,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+      },
+    })
+
+  assert.equal(advisor.action, "needs_reanalysis")
+  assert.equal(advisor.inventory_scope, "variant_level")
+  assert.equal(advisor.required_human_approval, false)
+})
+
+test("pipeline reanalysis: sin cambios queda no_change", () => {
+  const advisor =
+    getPipelineReanalysisAdvisor({
+      existingCandidate: {
+        state:
+          "VALIDATED",
+      },
+      radarProduct:
+        validRadarProduct,
+      advisorEvents: [],
+      inventoryContext: {
+        inventory_quantity:
+          10,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+      },
+    })
+
+  assert.equal(advisor.action, "no_change")
+})
+
+test("pipeline reanalysis: Luna auth no approved requiere aprobacion humana", () => {
+  const advisor =
+    getPipelineReanalysisAdvisor({
+      existingCandidate: {
+        state:
+          "VALIDATED",
+      },
+      radarProduct:
+        validRadarProduct,
+      advisorEvents: [],
+      inventoryContext: {
+        inventory_quantity:
+          10,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+      },
+      lunaAuthState:
+        "restricted",
+    })
+
+  assert.equal(advisor.action, "no_change")
+  assert.equal(advisor.required_human_approval, true)
+})
+
+test("pipeline reanalysis: Luna auth unknown aplica guardrails conservadores", () => {
+  const inventoryContext = {
+    inventory_quantity:
+      24,
+    inventory_scope:
+      "variant_level",
+    inventory_confidence:
+      "high",
+    luna_auth_state:
+      "unknown",
+  }
+
+  const advisor =
+    getPipelineReanalysisAdvisor({
+      existingCandidate: {
+        state:
+          "VALIDATED",
+      },
+      radarProduct:
+        validRadarProduct,
+      advisorEvents: [],
+      inventoryContext,
+      lunaAuthState:
+        "unknown",
+    })
+
+  const policy =
+    getListingQuantityPolicy(
+      inventoryContext
+    )
+
+  assert.equal(advisor.required_human_approval, true)
+  assert.match(
+    advisor.proposed_next_step,
+    /Validar sesión Luna e inventario/i
+  )
+  assert.equal(policy.can_use_for_listing_quantity, false)
+  assert.equal(policy.max_recommended_listing_quantity, 0)
+  assert.equal(policy.pack_large_allowed, false)
+  assert.equal(policy.campaign_scale_allowed, false)
+})
+
+test("pipeline reanalysis: Luna auth approved conserva inventario variant_level confirmado", () => {
+  const inventoryContext = {
+    inventory_quantity:
+      24,
+    inventory_scope:
+      "variant_level",
+    inventory_confidence:
+      "high",
+    luna_auth_state:
+      "approved",
+  }
+
+  const advisor =
+    getPipelineReanalysisAdvisor({
+      existingCandidate: {
+        state:
+          "VALIDATED",
+      },
+      radarProduct:
+        validRadarProduct,
+      advisorEvents: [
+        {
+          event_type:
+            "price_down",
+        },
+      ],
+      inventoryContext,
+      lunaAuthState:
+        "approved",
+    })
+
+  const policy =
+    getListingQuantityPolicy(
+      inventoryContext
+    )
+
+  assert.equal(advisor.action, "needs_reanalysis")
+  assert.equal(advisor.required_human_approval, false)
+  assert.equal(policy.can_use_for_listing_quantity, true)
+  assert.equal(policy.pack_large_allowed, true)
+  assert.equal(policy.campaign_scale_allowed, true)
 })
 
 test("botón de WhatsApp duplicado produce la misma idempotency key", () => {

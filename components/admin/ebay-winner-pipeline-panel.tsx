@@ -137,6 +137,19 @@ type EbayCandidate = {
   profitScenario?: EbayProfitScenario | null
   compliance?: EbayCompliance | null
   draft?: EbayDraft | null
+  pipelineReanalysisAdvisor?: PipelineReanalysisAdvisor | null
+}
+
+type PipelineReanalysisAdvisor = {
+  action?: string | null
+  reason?: string | null
+  previous_state?: string | null
+  new_signals?: string[] | null
+  inventory_scope?: string | null
+  inventory_confidence?: string | null
+  required_human_approval?: boolean | null
+  priority?: string | null
+  proposed_next_step?: string | null
 }
 
 type EbayValidation = {
@@ -283,6 +296,7 @@ type EbayDecisionAdvisor = {
 
 type EbayCandidateDetail = {
   candidate: EbayCandidate
+  pipelineReanalysisAdvisor?: PipelineReanalysisAdvisor | null
   validation?: EbayValidation | null
   validations?: EbayValidation[]
   profitScenario?: EbayProfitScenario | null
@@ -1692,6 +1706,57 @@ function CandidateDetailDrawer({
                 </div>
               </div>
             </DetailSection>
+
+            {detail.pipelineReanalysisAdvisor ? (
+              <DetailSection title="Revision operativa IMNOVA">
+                <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.07] p-4">
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <Field
+                      label="action"
+                      value={detail.pipelineReanalysisAdvisor.action}
+                    />
+                    <Field
+                      label="priority"
+                      value={detail.pipelineReanalysisAdvisor.priority}
+                    />
+                    <Field
+                      label="previous_state"
+                      value={detail.pipelineReanalysisAdvisor.previous_state}
+                    />
+                    <Field
+                      label="inventory_scope"
+                      value={detail.pipelineReanalysisAdvisor.inventory_scope}
+                    />
+                    <Field
+                      label="inventory_confidence"
+                      value={detail.pipelineReanalysisAdvisor.inventory_confidence}
+                    />
+                    <Field
+                      label="human_approval"
+                      value={detail.pipelineReanalysisAdvisor.required_human_approval}
+                    />
+                  </div>
+                  <p className="mt-4 text-sm leading-6 text-amber-50/75">
+                    {detail.pipelineReanalysisAdvisor.reason}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-amber-50/60">
+                    {detail.pipelineReanalysisAdvisor.proposed_next_step}
+                  </p>
+                  {detail.pipelineReanalysisAdvisor.new_signals?.length ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {detail.pipelineReanalysisAdvisor.new_signals.map(signal => (
+                        <span
+                          key={signal}
+                          className="rounded-md border border-amber-200/15 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-50/60"
+                        >
+                          {signal}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </DetailSection>
+            ) : null}
 
             <DetailSection title="Decision estrategica">
               {detail.decisionAdvisor ? (
