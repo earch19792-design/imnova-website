@@ -1236,9 +1236,21 @@ test("pricing strategy: rentable con NEEDS_DATA no lista organico todavia", () =
     advisor.pricing_strategy.launch_strategy,
     "needs_data"
   )
+  assert.equal(
+    advisor.pricing_strategy.campaign_eligible,
+    false
+  )
+  assert.equal(
+    advisor.pricing_strategy.listing_price_role,
+    "temporary_evaluation"
+  )
   assert.match(
     advisor.pricing_strategy.reason,
     /pendiente de datos operativos/
+  )
+  assert.match(
+    advisor.pricing_strategy.listing_price_note,
+    /no accionable/i
   )
 })
 
@@ -2533,12 +2545,130 @@ test("pricing strategy: organico rentable pero campana rompe margen -> organic_o
   )
 })
 
-test("pricing strategy: campana 1%-2% mantiene margen -> list_with_small_campaign", () => {
+test("pricing strategy: campana con margen requiere observar listing primero", () => {
   const recommendation =
     getPricingStrategyRecommendation({
       candidate: {
         state:
           "VALIDATED",
+      },
+      profitScenario:
+        makeProfitScenario({
+          salePrice:
+            40,
+          lunaCost:
+            19,
+        }),
+      priceIntelligence:
+        makePriceIntelligence({
+          soldMedian:
+            40,
+          domesticLanded:
+            40,
+        }),
+    })
+
+  assert.equal(
+    recommendation.launch_strategy,
+    "list_organic"
+  )
+  assert.equal(
+    recommendation.campaign_eligible,
+    false
+  )
+  assert.equal(
+    recommendation.campaign_financially_supported,
+    true
+  )
+  assert.equal(
+    recommendation.campaign_observation_required,
+    true
+  )
+  assert.equal(
+    recommendation.max_safe_campaign_percent,
+    2
+  )
+  assert.match(
+    recommendation.proposed_next_step,
+    /medir impresiones, clicks, watchers y conversion/i
+  )
+})
+
+test("pricing strategy: metricas en cero no cuentan como comportamiento observado", () => {
+  const recommendation =
+    getPricingStrategyRecommendation({
+      candidate: {
+        state:
+          "VALIDATED",
+        listing_metrics: {
+          impressions:
+            0,
+          views:
+            0,
+          clicks:
+            0,
+          watchers:
+            0,
+          orders:
+            0,
+          days_live:
+            0,
+        },
+      },
+      profitScenario:
+        makeProfitScenario({
+          salePrice:
+            40,
+          lunaCost:
+            19,
+        }),
+      priceIntelligence:
+        makePriceIntelligence({
+          soldMedian:
+            40,
+          domesticLanded:
+            40,
+        }),
+    })
+
+  assert.equal(
+    recommendation.launch_strategy,
+    "list_organic"
+  )
+  assert.equal(
+    recommendation.campaign_eligible,
+    false
+  )
+  assert.equal(
+    recommendation.campaign_financially_supported,
+    true
+  )
+  assert.equal(
+    recommendation.campaign_observation_required,
+    true
+  )
+})
+
+test("pricing strategy: orden positiva cuenta como comportamiento aunque days_live sea bajo", () => {
+  const recommendation =
+    getPricingStrategyRecommendation({
+      candidate: {
+        state:
+          "VALIDATED",
+        listing_metrics: {
+          impressions:
+            0,
+          views:
+            0,
+          clicks:
+            0,
+          watchers:
+            0,
+          orders:
+            1,
+          days_live:
+            1,
+        },
       },
       profitScenario:
         makeProfitScenario({
@@ -2565,8 +2695,55 @@ test("pricing strategy: campana 1%-2% mantiene margen -> list_with_small_campaig
     true
   )
   assert.equal(
-    recommendation.max_safe_campaign_percent,
-    2
+    recommendation.campaign_observation_required,
+    false
+  )
+})
+
+test("pricing strategy: comportamiento observado habilita campana pequena", () => {
+  const recommendation =
+    getPricingStrategyRecommendation({
+      candidate: {
+        state:
+          "VALIDATED",
+        listing_metrics: {
+          impressions:
+            120,
+          clicks:
+            6,
+          watchers:
+            1,
+          days_live:
+            4,
+        },
+      },
+      profitScenario:
+        makeProfitScenario({
+          salePrice:
+            40,
+          lunaCost:
+            19,
+        }),
+      priceIntelligence:
+        makePriceIntelligence({
+          soldMedian:
+            40,
+          domesticLanded:
+            40,
+        }),
+    })
+
+  assert.equal(
+    recommendation.launch_strategy,
+    "list_with_small_campaign"
+  )
+  assert.equal(
+    recommendation.campaign_eligible,
+    true
+  )
+  assert.equal(
+    recommendation.campaign_observation_required,
+    false
   )
 })
 

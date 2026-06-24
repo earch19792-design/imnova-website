@@ -285,6 +285,9 @@ type PricingStrategyRecommendation = {
   minimum_price_with_3_percent_campaign?: number | string | null
   minimum_price_with_5_percent_campaign?: number | string | null
   campaign_eligible?: boolean | null
+  campaign_financially_supported?: boolean | null
+  campaign_observation_required?: boolean | null
+  campaign_observation_note?: string | null
   max_safe_campaign_percent?: number | string | null
   reason?: string | null
   evidence?: string[] | null
@@ -1061,7 +1064,17 @@ function humanizePipelineValue(
     pack_candidate:
       "Candidato para pack",
     list_organic:
-      "Listar organico primero",
+      "Publicar organico primero",
+    list_with_small_campaign:
+      "Campana pequena posible",
+    organic_only_no_campaign:
+      "Publicar organico sin campana",
+    needs_market_data:
+      "Validar mercado primero",
+    needs_price_adjustment:
+      "Ajustar precio antes de publicar",
+    blocked:
+      "No publicar como unidad",
     needs_data:
       "Completar datos",
     complete_missing_data:
@@ -1109,6 +1122,91 @@ function humanizePipelineValue(
   }
 
   return labels[value] || value.replaceAll("_", " ")
+}
+
+function humanizeCampaignNow(
+  pricingStrategy?: PricingStrategyRecommendation | null
+) {
+  if (!pricingStrategy) {
+    return "-"
+  }
+
+  if (pricingStrategy.campaign_eligible) {
+    return "Campana pequena posible: 1%-2% con aprobacion humana."
+  }
+
+  if (pricingStrategy.campaign_observation_required) {
+    return "No activar campana todavia"
+  }
+
+  if (pricingStrategy.campaign_financially_supported === false) {
+    return "No activar campana: el margen no la soporta."
+  }
+
+  return "No activar campana todavia"
+}
+
+function humanizeCampaignSupport(
+  value?: boolean | null
+) {
+  if (value === true) {
+    return "Si, el margen soporta campana"
+  }
+
+  if (value === false) {
+    return "No, el margen no soporta campana"
+  }
+
+  return "-"
+}
+
+function humanizeObservationNeed({
+  pricingStrategy,
+  candidateState,
+  hasOperationalBlockers,
+}: {
+  pricingStrategy?: PricingStrategyRecommendation | null
+  candidateState?: string | null
+  hasOperationalBlockers?: boolean
+}) {
+  if (
+    candidateState === "NEEDS_DATA" ||
+    pricingStrategy?.launch_strategy === "needs_data"
+  ) {
+    return "No aplica: primero completar datos operativos antes de publicar."
+  }
+
+  if (hasOperationalBlockers) {
+    return "No aplica: resolver bloqueos operativos antes de pensar en campana."
+  }
+
+  if (pricingStrategy?.campaign_observation_required === true) {
+    return "Si: publicar organico primero y observar impresiones, clicks, watchers y conversion."
+  }
+
+  if (pricingStrategy?.campaign_eligible) {
+    return "No: ya hay comportamiento observado. Revisar senales antes de decidir campana."
+  }
+
+  if (
+    pricingStrategy?.campaign_observation_required === false
+  ) {
+    return "No aplica todavia: primero publicar el listing organico."
+  }
+
+  return "-"
+}
+
+function hasCampaignOperationalBlockers(
+  candidate?: EbayCandidate | null,
+  pricingStrategy?: PricingStrategyRecommendation | null
+) {
+  return Boolean(
+    candidate?.blocked_reason ||
+    candidate?.state === "BLOCKED" ||
+    candidate?.state === "REJECTED" ||
+    pricingStrategy?.launch_strategy === "blocked"
+  )
 }
 
 function humanizeMissingField(
@@ -2567,8 +2665,10 @@ function CandidateDetailDrawer({
                       </p>
                       <div className="mt-4 grid gap-3 md:grid-cols-3">
                         <Field
-                          label="launch_strategy"
-                          value={detail.decisionAdvisor.pricing_strategy.launch_strategy}
+                          label="Accion recomendada"
+                          value={humanizePipelineValue(
+                            detail.decisionAdvisor.pricing_strategy.launch_strategy
+                          )}
                         />
                         <Field
                           label={
@@ -2587,31 +2687,67 @@ function CandidateDetailDrawer({
                           )}
                         />
                         <Field
-                          label="max_safe_campaign_percent"
+                          label="Campana maxima segura"
                           value={formatNumber(
                             detail.decisionAdvisor.pricing_strategy.max_safe_campaign_percent,
                             "%"
                           )}
                         />
                         <Field
-                          label="risk_level"
+                          label="Riesgo"
                           value={detail.decisionAdvisor.pricing_strategy.risk_level}
                         />
                         <Field
-                          label="campaign_eligible"
-                          value={detail.decisionAdvisor.pricing_strategy.campaign_eligible}
+                          label="Campana ahora"
+                          value={humanizeCampaignNow(
+                            detail.decisionAdvisor.pricing_strategy
+                          )}
                         />
                         <Field
-                          label="human_approval"
-                          value={detail.decisionAdvisor.pricing_strategy.required_human_approval}
+                          label="Margen soporta campana"
+                          value={humanizeCampaignSupport(
+                            detail.decisionAdvisor.pricing_strategy.campaign_financially_supported
+                          )}
+                        />
+                        <Field
+                          label="Falta observar listing"
+                          value={humanizeObservationNeed(
+                            {
+                              pricingStrategy:
+                                detail.decisionAdvisor.pricing_strategy,
+                              candidateState:
+                                detail.candidate.state,
+                              hasOperationalBlockers:
+                                hasCampaignOperationalBlockers(
+                                  detail.candidate,
+                                  detail.decisionAdvisor.pricing_strategy
+                                ),
+                            }
+                          )}
+                        />
+                        <Field
+                          label="Aprobacion humana"
+                          value={
+                            detail.decisionAdvisor.pricing_strategy.required_human_approval
+                              ? "Requerida"
+                              : "No requerida"
+                          }
                         />
                       </div>
                       <p className="mt-4 text-sm leading-6 text-emerald-50/75">
                         {detail.decisionAdvisor.pricing_strategy.reason}
                       </p>
-                      <p className="mt-2 text-xs leading-5 text-emerald-50/60">
-                        {detail.decisionAdvisor.pricing_strategy.proposed_next_step}
-                      </p>
+                      <div className="mt-3">
+                        <Field
+                          label="Siguiente decision"
+                          value={detail.decisionAdvisor.pricing_strategy.proposed_next_step}
+                        />
+                      </div>
+                      {detail.decisionAdvisor.pricing_strategy.campaign_observation_note ? (
+                        <p className="mt-2 text-xs leading-5 text-amber-100/70">
+                          {detail.decisionAdvisor.pricing_strategy.campaign_observation_note}
+                        </p>
+                      ) : null}
                     </div>
                   ) : null}
 
@@ -2643,7 +2779,7 @@ function CandidateDetailDrawer({
                       )}
                     />
                     <Field
-                      label="Precio con margen comodo"
+                      label="Piso objetivo 15% margen"
                       value={formatCurrency(
                         detail.decisionAdvisor.target_price?.ideal_target_price
                       )}
@@ -3351,7 +3487,7 @@ function CandidateDetailDrawer({
                       )}
                     />
                     <Field
-                      label="Precio ideal margen 15%"
+                      label="Piso objetivo 15% margen"
                       value={formatCurrency(
                         targetPriceAdvisor.ideal_target_price
                       )}
