@@ -319,6 +319,33 @@ type SupplierModelSimulator = {
   scenarios?: SupplierModelSimulatorScenario[] | null
 }
 
+type MultipackProfitScenario = {
+  pack_quantity?: number | string | null
+  label?: string | null
+  estimated_pack_price?: number | string | null
+  unit_market_price?: number | string | null
+  supplier_cost?: number | string | null
+  shipping_cost?: number | string | null
+  total_estimated_cost?: number | string | null
+  net_profit?: number | string | null
+  net_margin_percent?: number | string | null
+  pass_10_percent_margin?: boolean | null
+  profit_lift_vs_unit?: number | string | null
+  missing_inputs?: string[] | null
+  recommendation?: string | null
+  seller_note?: string | null
+}
+
+type MultipackProfitAdvisor = {
+  recommended_strategy?: string | null
+  is_multipack_candidate?: boolean | null
+  summary?: string | null
+  unit_economics_note?: string | null
+  missing_inputs?: string[] | null
+  best_pack?: MultipackProfitScenario | null
+  scenarios?: MultipackProfitScenario[] | null
+}
+
 type EbayDecisionAdvisor = {
   decision_label?: string
   strategic_summary?: {
@@ -373,6 +400,7 @@ type EbayDecisionAdvisor = {
   }
   cost_breakdown?: CostBreakdown | null
   supplier_model_simulator?: SupplierModelSimulator | null
+  multipack_profit_advisor?: MultipackProfitAdvisor | null
   pricing_strategy?: PricingStrategyRecommendation | null
   recommended_next_action?: string
 }
@@ -1083,10 +1111,20 @@ function humanizePipelineValue(
       "Listo para preparar listing",
     supplier_not_competitive:
       "Proveedor no competitivo",
+    multipack_candidate_needs_data:
+      "Evaluar pack antes de descartar",
     blocked_as_unit:
       "No conviene vender como unidad",
     pack_candidate:
       "Candidato para pack",
+    validate_pack_inputs:
+      "Confirmar datos para pack",
+    evaluate_multipack_listing:
+      "Evaluar listing en pack",
+    pack_not_enough_find_supplier:
+      "Pack no alcanza; buscar proveedor",
+    test_with_pack_before_supplier_change:
+      "Probar pack antes de cambiar proveedor",
     list_organic:
       "Publicar organico primero",
     list_with_small_campaign:
@@ -1968,6 +2006,9 @@ function CandidateDetailDrawer({
 
   const supplierModelSimulator =
     detail?.decisionAdvisor?.supplier_model_simulator
+
+  const multipackProfitAdvisor =
+    detail?.decisionAdvisor?.multipack_profit_advisor
 
   const supplierSimulatorMissingInputs =
     uniqueStrings(
@@ -2894,6 +2935,107 @@ function CandidateDetailDrawer({
                           {detail.decisionAdvisor.pricing_strategy.campaign_observation_note}
                         </p>
                       ) : null}
+                    </div>
+                  ) : null}
+
+                  {multipackProfitAdvisor?.is_multipack_candidate ? (
+                    <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.07] p-4">
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-100/60">
+                        Estrategia pack
+                      </p>
+                      <p className="mt-3 text-sm leading-6 text-emerald-50/75">
+                        {multipackProfitAdvisor.summary ||
+                          "Como unidad no deja suficiente margen, pero el pack puede diluir el envio fijo."}
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-emerald-50/55">
+                        {multipackProfitAdvisor.unit_economics_note ||
+                          "Evaluar pack antes de descartar proveedor."}
+                      </p>
+                      <div className="mt-4 grid gap-3 md:grid-cols-3">
+                        <Field
+                          label="Mejor camino"
+                          value={humanizePipelineValue(
+                            multipackProfitAdvisor.recommended_strategy
+                          )}
+                        />
+                        <Field
+                          label="Pack sugerido"
+                          value={
+                            multipackProfitAdvisor.best_pack?.label ||
+                            "Validar escenarios"
+                          }
+                        />
+                        <Field
+                          label="Que falta antes de publicar pack"
+                          value={
+                            multipackProfitAdvisor.missing_inputs?.length
+                              ? multipackProfitAdvisor.missing_inputs
+                                .map(humanizeMissingField)
+                                .join(", ")
+                              : "Validar comparables multipack"
+                          }
+                        />
+                      </div>
+                      <div className="mt-4 grid gap-3 xl:grid-cols-4">
+                        {(multipackProfitAdvisor.scenarios || []).map(
+                          (scenario, index) => (
+                            <div
+                              key={`${scenario.label || "pack"}-${index}`}
+                              className="rounded-lg border border-white/10 bg-black/25 p-3"
+                            >
+                              <p className="text-sm font-bold text-white/80">
+                                {scenario.label ||
+                                  `Pack de ${scenario.pack_quantity || "-"}`}
+                              </p>
+                              <div className="mt-3 grid gap-3">
+                                <Field
+                                  label="Precio pack estimado"
+                                  value={formatCurrency(
+                                    scenario.estimated_pack_price
+                                  )}
+                                />
+                                <Field
+                                  label="Costo proveedor"
+                                  value={formatCurrency(
+                                    scenario.supplier_cost
+                                  )}
+                                />
+                                <Field
+                                  label="Envio estimado"
+                                  value={formatCurrency(
+                                    scenario.shipping_cost
+                                  )}
+                                />
+                                <Field
+                                  label="Ganancia / margen"
+                                  value={`${formatCurrency(
+                                    scenario.net_profit
+                                  )} / ${formatNumber(
+                                    scenario.net_margin_percent,
+                                    "%"
+                                  )}`}
+                                />
+                                <Field
+                                  label="Mejora vs unidad"
+                                  value={formatCurrency(
+                                    scenario.profit_lift_vs_unit
+                                  )}
+                                />
+                                <Field
+                                  label="Pasa minimo"
+                                  value={scenario.pass_10_percent_margin}
+                                />
+                              </div>
+                              <p className="mt-3 text-xs leading-5 text-white/65">
+                                {scenario.recommendation}
+                              </p>
+                              <p className="mt-2 text-xs leading-5 text-white/45">
+                                {scenario.seller_note}
+                              </p>
+                            </div>
+                          )
+                        )}
+                      </div>
                     </div>
                   ) : null}
 

@@ -3112,6 +3112,130 @@ test("supplier model simulator: Campaign Advisor no cambia campaign_eligible", (
   )
 })
 
+test("multipack advisor: unidad no rentable por shipping sugiere validar pack antes de cambiar proveedor", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "John Frieda Sheer Blonde Highlight Activating Brightening Shampoo",
+        state:
+          "NEEDS_DATA",
+        inventory_quantity:
+          12,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+        needs_data: [
+          "weight_or_dimensions",
+        ],
+      },
+      salePrice:
+        15.09,
+      lunaCost:
+        4,
+      shippingCost:
+        6.99,
+    })
+
+  assert.equal(
+    advisor.multipack_profit_advisor.is_multipack_candidate,
+    true
+  )
+  assert.equal(
+    advisor.strategic_summary.commercial_status,
+    "multipack_candidate_needs_data"
+  )
+  assert.match(
+    advisor.strategic_summary.recommended_action,
+    /Confirmar stock, peso y comparables multipack/i
+  )
+})
+
+test("multipack advisor: pack viable muestra escenarios y no recomienda publicar si faltan inputs", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "Oral-B Glide Gum Care Dental Floss Picks",
+        state:
+          "NEEDS_DATA",
+        needs_data: [
+          "confirmed_stock_quantity",
+          "weight_or_dimensions",
+        ],
+      },
+      salePrice:
+        15.09,
+      lunaCost:
+        4,
+      shippingCost:
+        6.99,
+    })
+
+  const packThree =
+    advisor.multipack_profit_advisor.scenarios.find(
+      scenario => scenario.pack_quantity === 3
+    )
+
+  assert.ok(packThree)
+  assert.equal(
+    packThree.pass_10_percent_margin,
+    true
+  )
+  assert.ok(
+    packThree.missing_inputs.includes(
+      "confirmed_stock_quantity"
+    )
+  )
+  assert.ok(
+    packThree.missing_inputs.includes(
+      "weight_or_dimensions"
+    )
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.recommended_strategy,
+    "validate_pack_inputs"
+  )
+})
+
+test("multipack advisor: no altera Fee Engine ni Campaign Advisor", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "Small consumable shampoo",
+        state:
+          "VALIDATED",
+        inventory_quantity:
+          12,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+      },
+      salePrice:
+        15.09,
+      lunaCost:
+        4,
+      shippingCost:
+        6.99,
+    })
+
+  assert.equal(
+    advisor.cost_breakdown.ebay_fee_percent,
+    13.25
+  )
+  assert.equal(
+    advisor.cost_breakdown.ebay_fixed_fee,
+    0.3
+  )
+  assert.equal(
+    advisor.pricing_strategy.campaign_eligible,
+    false
+  )
+})
+
 test("pricing strategy: organico rentable y competitivo -> list_organic", () => {
   const recommendation =
     getPricingStrategyRecommendation({
