@@ -20,6 +20,7 @@ import {
   getNormalizedInventoryContext,
 } from "../lib/radar-advisor-events.mjs"
 import {
+  getManualStockQuantity,
   getMarketRadarActionability,
   isConfirmedVariantStock,
 } from "../lib/market-radar-actionable-ranking.mjs"
@@ -403,6 +404,44 @@ test("market radar actionable ranking: solo variante con confianza alta cuenta c
         50000,
     }),
     false
+  )
+
+  assert.equal(
+    isConfirmedVariantStock({
+      ...baseActionableRadarProduct,
+      inventory_quantity:
+        8,
+      inventory_source:
+        "manual_admin_confirmation",
+    }),
+    true
+  )
+})
+
+test("market radar manual stock confirmation: valida cantidades antes de guardar", () => {
+  assert.equal(
+    getManualStockQuantity(8),
+    8
+  )
+  assert.equal(
+    getManualStockQuantity("12"),
+    12
+  )
+  assert.equal(
+    getManualStockQuantity(0),
+    null
+  )
+  assert.equal(
+    getManualStockQuantity(-1),
+    null
+  )
+  assert.equal(
+    getManualStockQuantity("abc"),
+    null
+  )
+  assert.equal(
+    getManualStockQuantity(50000),
+    null
   )
 })
 
