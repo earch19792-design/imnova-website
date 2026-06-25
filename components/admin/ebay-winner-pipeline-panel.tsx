@@ -2025,6 +2025,15 @@ function CandidateDetailDrawer({
   const multipackProfitAdvisor =
     detail?.decisionAdvisor?.multipack_profit_advisor
 
+  const showMultipackProfitAdvisor =
+    Boolean(
+      multipackProfitAdvisor?.is_multipack_candidate ||
+      (
+        multipackProfitAdvisor?.scenarios &&
+        multipackProfitAdvisor.scenarios.length > 0
+      )
+    )
+
   const supplierSimulatorMissingInputs =
     uniqueStrings(
       (
@@ -2963,7 +2972,7 @@ function CandidateDetailDrawer({
                     </div>
                   ) : null}
 
-                  {multipackProfitAdvisor?.is_multipack_candidate ? (
+                  {showMultipackProfitAdvisor && multipackProfitAdvisor ? (
                     <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.07] p-4">
                       <p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-100/60">
                         Estrategia pack
@@ -2988,7 +2997,7 @@ function CandidateDetailDrawer({
                           value={
                             multipackProfitAdvisor.best_pack?.label ||
                             multipackProfitAdvisor.best_pack_hypothesis?.label ||
-                            "Validar escenarios"
+                            "Sin pack viable con estos datos"
                           }
                         />
                         <Field

@@ -3305,6 +3305,60 @@ test("multipack advisor: stock confirmado de una unidad bloquea packs 2 3 6 12",
   )
 })
 
+test("multipack advisor: producto barato con shipping alto muestra packs aunque ninguno sea viable", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "RAM RAM-B-111BU Mounting Plate Powder Coat Garmin GPSMAP",
+        state:
+          "NEEDS_DATA",
+        inventory_quantity:
+          8,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+        needs_data: [
+          "weight_or_dimensions",
+        ],
+      },
+      salePrice:
+        6,
+      lunaCost:
+        4,
+      shippingCost:
+        6.99,
+    })
+
+  assert.equal(
+    advisor.multipack_profit_advisor.is_multipack_candidate,
+    false
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.best_pack,
+    null
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.best_pack_hypothesis,
+    null
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.scenarios.length,
+    4
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.recommended_strategy,
+    "pack_not_enough_find_supplier"
+  )
+  assert.ok(
+    advisor.multipack_profit_advisor.scenarios.every(
+      scenario =>
+        scenario.pass_10_percent_margin === false
+    )
+  )
+})
+
 test("multipack advisor: no altera Fee Engine ni Campaign Advisor", () => {
   const advisor =
     makeSupplierSimulatorAdvisor({
