@@ -3222,6 +3222,10 @@ test("multipack advisor: pack viable muestra escenarios y no recomienda publicar
     packThree.pass_10_percent_margin,
     true
   )
+  assert.equal(
+    packThree.stock_sufficient,
+    false
+  )
   assert.ok(
     packThree.missing_inputs.includes(
       "confirmed_stock_quantity"
@@ -3235,6 +3239,69 @@ test("multipack advisor: pack viable muestra escenarios y no recomienda publicar
   assert.equal(
     advisor.multipack_profit_advisor.recommended_strategy,
     "validate_pack_inputs"
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.best_pack,
+    null
+  )
+  assert.ok(
+    advisor.multipack_profit_advisor.best_pack_hypothesis
+  )
+  assert.ok(
+    packThree.buyer_discount_percent > 0
+  )
+  assert.ok(
+    packThree.unit_price_in_pack <
+      packThree.unit_market_price
+  )
+})
+
+test("multipack advisor: stock confirmado de una unidad bloquea packs 2 3 6 12", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "Glade Automatic Spray Refill Lavender Vanilla Value Pack",
+        state:
+          "NEEDS_DATA",
+        inventory_quantity:
+          1,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+      },
+      salePrice:
+        13.64,
+      lunaCost:
+        4,
+      shippingCost:
+        6.99,
+    })
+
+  assert.equal(
+    advisor.multipack_profit_advisor.best_pack,
+    null
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.recommended_strategy,
+    "validate_pack_inputs"
+  )
+  assert.ok(
+    advisor.multipack_profit_advisor.scenarios.every(
+      scenario =>
+        scenario.stock_sufficient === false &&
+        scenario.status ===
+          "blocked_insufficient_stock"
+    )
+  )
+  assert.ok(
+    advisor.multipack_profit_advisor.scenarios.every(
+      scenario =>
+        scenario.missing_inputs.includes(
+          "stock_sufficient_for_pack"
+        )
+    )
   )
 })
 

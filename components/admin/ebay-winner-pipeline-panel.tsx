@@ -323,7 +323,12 @@ type MultipackProfitScenario = {
   pack_quantity?: number | string | null
   label?: string | null
   estimated_pack_price?: number | string | null
+  unit_price_in_pack?: number | string | null
   unit_market_price?: number | string | null
+  buyer_discount_percent?: number | string | null
+  stock_required?: number | string | null
+  stock_available?: number | string | null
+  stock_sufficient?: boolean | null
   supplier_cost?: number | string | null
   shipping_cost?: number | string | null
   total_estimated_cost?: number | string | null
@@ -332,6 +337,7 @@ type MultipackProfitScenario = {
   pass_10_percent_margin?: boolean | null
   profit_lift_vs_unit?: number | string | null
   missing_inputs?: string[] | null
+  status?: string | null
   recommendation?: string | null
   seller_note?: string | null
 }
@@ -343,6 +349,7 @@ type MultipackProfitAdvisor = {
   unit_economics_note?: string | null
   missing_inputs?: string[] | null
   best_pack?: MultipackProfitScenario | null
+  best_pack_hypothesis?: MultipackProfitScenario | null
   scenarios?: MultipackProfitScenario[] | null
 }
 
@@ -1123,6 +1130,14 @@ function humanizePipelineValue(
       "Evaluar listing en pack",
     pack_not_enough_find_supplier:
       "Pack no alcanza; buscar proveedor",
+    blocked_insufficient_stock:
+      "Sin stock suficiente",
+    needs_pack_inputs:
+      "Faltan datos del pack",
+    pack_hypothesis_viable:
+      "Hipotesis viable",
+    pack_not_profitable:
+      "Pack no rentable",
     test_with_pack_before_supplier_change:
       "Probar pack antes de cambiar proveedor",
     list_organic:
@@ -2969,9 +2984,10 @@ function CandidateDetailDrawer({
                           )}
                         />
                         <Field
-                          label="Pack sugerido"
+                          label="Mejor hipotesis de pack"
                           value={
                             multipackProfitAdvisor.best_pack?.label ||
+                            multipackProfitAdvisor.best_pack_hypothesis?.label ||
                             "Validar escenarios"
                           }
                         />
@@ -2986,6 +3002,9 @@ function CandidateDetailDrawer({
                           }
                         />
                       </div>
+                      <p className="mt-3 text-xs leading-5 text-amber-100/75">
+                        Simulacion, no publicacion. Vender en pack requiere stock suficiente, peso confirmado y comparables multipack. El comprador debe recibir mejor precio por unidad.
+                      </p>
                       <div className="mt-4 grid gap-3 xl:grid-cols-4">
                         {(multipackProfitAdvisor.scenarios || []).map(
                           (scenario, index) => (
@@ -3003,6 +3022,27 @@ function CandidateDetailDrawer({
                                   value={formatCurrency(
                                     scenario.estimated_pack_price
                                   )}
+                                />
+                                <Field
+                                  label="Precio por unidad"
+                                  value={formatCurrency(
+                                    scenario.unit_price_in_pack
+                                  )}
+                                />
+                                <Field
+                                  label="Descuento comprador"
+                                  value={formatNumber(
+                                    scenario.buyer_discount_percent,
+                                    "%"
+                                  )}
+                                />
+                                <Field
+                                  label="Stock requerido / disponible"
+                                  value={`${formatNumber(
+                                    scenario.stock_required
+                                  )} / ${formatNumber(
+                                    scenario.stock_available
+                                  )}`}
                                 />
                                 <Field
                                   label="Costo proveedor"
@@ -3034,6 +3074,12 @@ function CandidateDetailDrawer({
                                 <Field
                                   label="Pasa minimo"
                                   value={scenario.pass_10_percent_margin}
+                                />
+                                <Field
+                                  label="Estado"
+                                  value={humanizePipelineValue(
+                                    scenario.status
+                                  )}
                                 />
                               </div>
                               <p className="mt-3 text-xs leading-5 text-white/65">
