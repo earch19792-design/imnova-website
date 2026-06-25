@@ -3351,6 +3351,14 @@ test("multipack advisor: producto barato con shipping alto muestra packs aunque 
     advisor.multipack_profit_advisor.recommended_strategy,
     "pack_not_enough_find_supplier"
   )
+  assert.equal(
+    advisor.strategic_summary.commercial_status,
+    "pack_not_enough_find_supplier"
+  )
+  assert.match(
+    advisor.strategic_summary.recommended_action,
+    /No publicar como unidad ni como pack/
+  )
   assert.ok(
     advisor.multipack_profit_advisor.scenarios.every(
       scenario =>
