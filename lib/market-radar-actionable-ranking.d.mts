@@ -36,6 +36,10 @@ export function isSuspiciousInventoryQuantity(
   value: number | string | null | undefined
 ): boolean
 
+export function getManualStockQuantity(
+  value: number | string | null | undefined
+): number | null
+
 export function isConfirmedVariantStock(
   product: Partial<MarketRadarProductRow> | null | undefined
 ): boolean

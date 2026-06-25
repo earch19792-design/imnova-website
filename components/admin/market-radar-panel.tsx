@@ -55,6 +55,10 @@ type MarketRadarApiResponse = {
     message?: string
     error?: string
   }
+  stockConfirmation?: {
+    snapshot_id?: string | null
+    confirmed_quantity?: number
+  }
   error?: string
   error_detail?: string
 }
@@ -145,6 +149,16 @@ type PriceIntelligenceSaveState = {
   status: "success" | "error"
   message: string
   recommendedSalePrice?: number | string | null
+}
+
+type StockConfirmationFormState = {
+  quantity: string
+  note: string
+}
+
+type StockConfirmationSaveState = {
+  status: "success" | "error"
+  message: string
 }
 
 type PriceIntelligenceFormState = {
@@ -3211,18 +3225,34 @@ function ProductRow({
   product,
   evaluation,
   priceIntelligence,
+  stockConfirmationForm,
+  stockConfirmationResult,
   isEvaluating,
+  isConfirmingStock,
   onOpenPriceIntelligence,
   onEvaluate,
+  onChangeStockConfirmation,
+  onConfirmStock,
 }: {
   product: MarketRadarProductRow
   evaluation?: EbayPipelineEvaluationState
   priceIntelligence?: PriceIntelligenceSaveState
+  stockConfirmationForm?: StockConfirmationFormState
+  stockConfirmationResult?: StockConfirmationSaveState
   isEvaluating?: boolean
+  isConfirmingStock?: boolean
   onOpenPriceIntelligence: (
     product: MarketRadarProductRow
   ) => void
   onEvaluate: (
+    product: MarketRadarProductRow
+  ) => void
+  onChangeStockConfirmation: (
+    product: MarketRadarProductRow,
+    field: keyof StockConfirmationFormState,
+    value: string
+  ) => void
+  onConfirmStock: (
     product: MarketRadarProductRow
   ) => void
 }) {
@@ -3463,6 +3493,70 @@ function ProductRow({
               ? "Luna confirma disponibilidad sin unidades"
               : "Cantidad no expuesta por Luna"}
         </p>
+        <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/35">
+            Confirmar cantidad
+          </p>
+          <div className="mt-2 grid gap-2">
+            <input
+              type="number"
+              min="1"
+              max="9999"
+              step="1"
+              value={stockConfirmationForm?.quantity || ""}
+              onChange={event =>
+                onChangeStockConfirmation(
+                  product,
+                  "quantity",
+                  event.target.value
+                )
+              }
+              placeholder="Cantidad real"
+              className="w-full rounded-md border border-white/10 bg-black/35 px-3 py-2 text-xs text-white outline-none placeholder:text-white/25 focus:border-cyan-300/35"
+            />
+            <input
+              type="text"
+              value={stockConfirmationForm?.note || ""}
+              onChange={event =>
+                onChangeStockConfirmation(
+                  product,
+                  "note",
+                  event.target.value
+                )
+              }
+              placeholder="Nota opcional"
+              className="w-full rounded-md border border-white/10 bg-black/35 px-3 py-2 text-xs text-white outline-none placeholder:text-white/25 focus:border-cyan-300/35"
+            />
+            <button
+              type="button"
+              disabled={
+                isConfirmingStock ||
+                !stockConfirmationForm?.quantity ||
+                !product.supplier_variant_id
+              }
+              onClick={() =>
+                onConfirmStock(product)
+              }
+              className="rounded-md border border-cyan-300/25 bg-cyan-300/[0.08] px-3 py-2 text-xs font-black text-cyan-50 transition hover:bg-cyan-300/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isConfirmingStock
+                ? "Guardando"
+                : "Guardar confirmación"}
+            </button>
+          </div>
+          {stockConfirmationResult && (
+            <p
+              className={`
+                mt-2
+                text-xs
+                leading-5
+                ${stockConfirmationResult.status === "success" ? "text-emerald-100/75" : "text-red-100"}
+              `}
+            >
+              {stockConfirmationResult.message}
+            </p>
+          )}
+        </div>
       </td>
       <td className="px-4 py-4">
         <div className="flex flex-wrap gap-1.5">
@@ -3727,6 +3821,21 @@ export function MarketRadarPanel({
   ] = useState<Record<string, PriceIntelligenceSaveState>>({})
 
   const [
+    stockConfirmationForms,
+    setStockConfirmationForms,
+  ] = useState<Record<string, StockConfirmationFormState>>({})
+
+  const [
+    stockConfirmationResults,
+    setStockConfirmationResults,
+  ] = useState<Record<string, StockConfirmationSaveState>>({})
+
+  const [
+    confirmingStockKey,
+    setConfirmingStockKey,
+  ] = useState("")
+
+  const [
     rankingFilter,
     setRankingFilter,
   ] = useState<RadarRankingFilter>("actionable")
@@ -3945,6 +4054,160 @@ export function MarketRadarPanel({
           : current
       )
     }, [])
+
+  const updateStockConfirmationForm =
+    useCallback((
+      product: MarketRadarProductRow,
+      field: keyof StockConfirmationFormState,
+      value: string
+    ) => {
+      const productKey =
+        getProductEvaluationKey(
+          product
+        )
+
+      setStockConfirmationForms(current => ({
+        ...current,
+        [productKey]: {
+          quantity:
+            current[productKey]?.quantity || "",
+          note:
+            current[productKey]?.note || "",
+          [field]:
+            value,
+        },
+      }))
+    }, [])
+
+  const confirmStockQuantity =
+    useCallback(async (
+      product: MarketRadarProductRow
+    ) => {
+      const productKey =
+        getProductEvaluationKey(
+          product
+        )
+
+      const form =
+        stockConfirmationForms[productKey]
+
+      if (
+        !form?.quantity ||
+        !product.supplier_variant_id
+      ) {
+        setStockConfirmationResults(current => ({
+          ...current,
+          [productKey]: {
+            status:
+              "error",
+            message:
+              "Escribe cantidad real y confirma variante/SKU antes de guardar.",
+          },
+        }))
+        return
+      }
+
+      setConfirmingStockKey(
+        productKey
+      )
+      setError("")
+
+      try {
+        const token =
+          await getAccessToken()
+
+        const response =
+          await fetch(
+            "/api/admin/market-radar",
+            {
+              method:
+                "POST",
+              headers: {
+                Authorization:
+                  `Bearer ${token}`,
+                "Content-Type":
+                  "application/json",
+              },
+              body:
+                JSON.stringify({
+                  action:
+                    "confirm_stock_quantity",
+                  source_id:
+                    product.source_id,
+                  product_id:
+                    product.product_id,
+                  supplier_variant_id:
+                    product.supplier_variant_id,
+                  quantity:
+                    form.quantity,
+                  note:
+                    form.note,
+                }),
+            }
+          )
+
+        const payload =
+          await readJsonResponse<MarketRadarApiResponse>(
+            response,
+            "Market Radar devolvio una respuesta invalida."
+          )
+
+        if (
+          !response.ok ||
+          !payload.success ||
+          !payload.dashboard
+        ) {
+          throw new Error(
+            payload.error ||
+            "No se pudo guardar la cantidad confirmada."
+          )
+        }
+
+        setDashboard(
+          payload.dashboard
+        )
+        setStockConfirmationResults(current => ({
+          ...current,
+          [productKey]: {
+            status:
+              "success",
+            message:
+              "Cantidad confirmada en IMNOVA OS.",
+          },
+        }))
+        setStockConfirmationForms(current => ({
+          ...current,
+          [productKey]: {
+            quantity:
+              "",
+            note:
+              "",
+          },
+        }))
+      } catch (confirmationError) {
+        console.error(
+          "MARKET RADAR STOCK CONFIRMATION ERROR:",
+          confirmationError
+        )
+
+        setStockConfirmationResults(current => ({
+          ...current,
+          [productKey]: {
+            status:
+              "error",
+            message:
+              confirmationError instanceof Error
+                ? confirmationError.message
+                : "No se pudo guardar la cantidad confirmada.",
+          },
+        }))
+      } finally {
+        setConfirmingStockKey("")
+      }
+    }, [
+      getAccessToken,
+      stockConfirmationForms,
+    ])
 
   const savePriceIntelligence =
     useCallback(async () => {
@@ -4773,34 +5036,51 @@ export function MarketRadarPanel({
                     </td>
                   </tr>
                 ) : (
-                  hotProducts.map(product => (
-                    <ProductRow
-                      key={`${product.product_id}-${product.supplier_variant_id || "default"}`}
-                      product={product}
-                      evaluation={
-                        ebayPipelineEvaluations[
-                          getProductEvaluationKey(
-                            product
-                          )
-                        ]
-                      }
-                      priceIntelligence={
-                        priceIntelligenceResults[
-                          getProductEvaluationKey(
-                            product
-                          )
-                        ]
-                      }
-                      isEvaluating={
-                        evaluatingProductKey ===
-                        getProductEvaluationKey(
-                          product
-                        )
-                      }
-                      onOpenPriceIntelligence={openPriceIntelligenceModal}
-                      onEvaluate={evaluateInEbayPipeline}
-                    />
-                  ))
+                  hotProducts.map(product => {
+                    const productKey =
+                      getProductEvaluationKey(
+                        product
+                      )
+
+                    return (
+                      <ProductRow
+                        key={`${product.product_id}-${product.supplier_variant_id || "default"}`}
+                        product={product}
+                        evaluation={
+                          ebayPipelineEvaluations[
+                            productKey
+                          ]
+                        }
+                        priceIntelligence={
+                          priceIntelligenceResults[
+                            productKey
+                          ]
+                        }
+                        stockConfirmationForm={
+                          stockConfirmationForms[
+                            productKey
+                          ]
+                        }
+                        stockConfirmationResult={
+                          stockConfirmationResults[
+                            productKey
+                          ]
+                        }
+                        isEvaluating={
+                          evaluatingProductKey ===
+                          productKey
+                        }
+                        isConfirmingStock={
+                          confirmingStockKey ===
+                          productKey
+                        }
+                        onOpenPriceIntelligence={openPriceIntelligenceModal}
+                        onEvaluate={evaluateInEbayPipeline}
+                        onChangeStockConfirmation={updateStockConfirmationForm}
+                        onConfirmStock={confirmStockQuantity}
+                      />
+                    )
+                  })
                 )}
               </tbody>
             </table>

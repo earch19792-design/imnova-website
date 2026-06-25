@@ -56,6 +56,7 @@ export type MarketRadarProductRow = {
     | "luna_authenticated_html"
     | "luna_authenticated_html_product"
     | "luna_availability"
+    | "manual_admin_confirmation"
     | "not_exposed"
   inventory_confidence: "high" | "medium" | "low"
   inventory_scope:
@@ -150,6 +151,7 @@ export type RadarAdvisorAlert = {
       | "luna_authenticated_html"
       | "luna_authenticated_html_product"
       | "luna_availability"
+      | "manual_admin_confirmation"
       | "not_exposed"
     inventory_confidence: "high" | "medium" | "low"
     inventory_scope?:

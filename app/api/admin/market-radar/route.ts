@@ -16,6 +16,7 @@ import {
 } from "@/lib/radar-advisor-events.mjs"
 import {
   decorateMarketRadarProductActionability,
+  getManualStockQuantity,
 } from "@/lib/market-radar-actionable-ranking.mjs"
 import {
   type MarketRadarDashboard,
@@ -151,6 +152,10 @@ function getMarketRadarActionError(
 
   if (action === "notify_ebay_opportunities") {
     return "market_radar_notify_failed"
+  }
+
+  if (action === "confirm_stock_quantity") {
+    return "market_radar_confirm_stock_failed"
   }
 
   return "market_radar_action_failed"
@@ -387,6 +392,9 @@ function getInventoryContext(
           : "out_of_stock",
       inventory_source:
         rawInventoryContext?.inventory_source ===
+          "manual_admin_confirmation"
+          ? "manual_admin_confirmation"
+          : rawInventoryContext?.inventory_source ===
           "luna_authenticated_html"
           ? "luna_authenticated_html"
           : "luna_numeric",
@@ -504,9 +512,15 @@ async function getLatestProductSnapshots(
     captured_at
   `
 
-  const latestResult =
+  const historyLimit =
+    Math.min(
+      Math.max(productIds.length * 8, 100),
+      1000
+    )
+
+  const historyResult =
     await supabase
-      .from("market_radar_latest_snapshots")
+      .from("market_radar_snapshots")
       .select(selectFields)
       .in(
         "product_id",
@@ -519,29 +533,30 @@ async function getLatestProductSnapshots(
           nullsFirst: false,
         }
       )
+      .limit(historyLimit)
 
-  if (!latestResult.error) {
-    return latestResult.data || []
+  if (!historyResult.error) {
+    return historyResult.data || []
   }
 
   if (
     !isMissingLatestSnapshotViewError(
-      latestResult.error
+      historyResult.error
     )
   ) {
     throw new Error(
-      latestResult.error.message
+      historyResult.error.message
     )
   }
 
   console.warn(
     "MARKET RADAR LATEST SNAPSHOTS VIEW MISSING; FALLING BACK TO SNAPSHOT HISTORY:",
-    latestResult.error.message
+    historyResult.error.message
   )
 
   const fallbackResult =
     await supabase
-      .from("market_radar_snapshots")
+      .from("market_radar_latest_snapshots")
       .select(selectFields)
       .in(
         "product_id",
@@ -901,6 +916,129 @@ async function validateAdmin(
   }
 
   return null
+}
+
+async function confirmMarketRadarStockQuantity({
+  supabase,
+  sourceId,
+  productId,
+  supplierVariantId,
+  quantity,
+  note,
+}: {
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  sourceId: string
+  productId: string
+  supplierVariantId: string
+  quantity: number
+  note?: string | null
+}) {
+  const {
+    data: latestSnapshot,
+    error: latestSnapshotError,
+  } =
+    await supabase
+      .from("market_radar_snapshots")
+      .select(`
+        id,
+        variant_title,
+        sku,
+        price,
+        compare_at_price,
+        collections,
+        discount_percent
+      `)
+      .eq(
+        "product_id",
+        productId
+      )
+      .eq(
+        "supplier_variant_id",
+        supplierVariantId
+      )
+      .order(
+        "captured_at",
+        {
+          ascending: false,
+          nullsFirst: false,
+        }
+      )
+      .limit(1)
+      .maybeSingle()
+
+  if (latestSnapshotError) {
+    throw new Error(
+      latestSnapshotError.message
+    )
+  }
+
+  const {
+    data,
+    error,
+  } =
+    await supabase
+      .from("market_radar_snapshots")
+      .insert({
+        source_id:
+          sourceId,
+        product_id:
+          productId,
+        supplier_variant_id:
+          supplierVariantId,
+        variant_title:
+          latestSnapshot?.variant_title || null,
+        sku:
+          latestSnapshot?.sku || null,
+        price:
+          latestSnapshot?.price ?? null,
+        compare_at_price:
+          latestSnapshot?.compare_at_price ?? null,
+        available:
+          true,
+        inventory_quantity:
+          quantity,
+        collections:
+          latestSnapshot?.collections || [],
+        discount_percent:
+          latestSnapshot?.discount_percent ?? null,
+        raw: {
+          inventory_context: {
+            inventory_source:
+              "manual_admin_confirmation",
+            inventory_scope:
+              "variant_level",
+            inventory_confidence:
+              "high",
+            stock_message:
+              `Cantidad confirmada manualmente: ${quantity} unidades.`,
+          },
+          manual_stock_confirmation: {
+            confirmed_quantity:
+              quantity,
+            note:
+              note || null,
+            previous_snapshot_id:
+              latestSnapshot?.id || null,
+            confirmed_at:
+              new Date().toISOString(),
+          },
+        },
+      })
+      .select("id")
+      .single()
+
+  if (error) {
+    throw new Error(
+      error.message
+    )
+  }
+
+  return {
+    snapshot_id:
+      data?.id || null,
+    confirmed_quantity:
+      quantity,
+  }
 }
 
 async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
@@ -1482,6 +1620,11 @@ export async function POST(
         .json()
         .catch(() => ({})) as {
           action?: string
+          source_id?: string
+          product_id?: string
+          supplier_variant_id?: string
+          quantity?: number | string | null
+          note?: string
         }
 
     action =
@@ -1491,7 +1634,9 @@ export async function POST(
       action !==
       "sync_lunaportex" &&
       action !==
-      "notify_ebay_opportunities"
+      "notify_ebay_opportunities" &&
+      action !==
+      "confirm_stock_quantity"
     ) {
       return NextResponse.json(
         {
@@ -1566,6 +1711,76 @@ export async function POST(
               : 502,
         }
       )
+    }
+
+    if (
+      action ===
+      "confirm_stock_quantity"
+    ) {
+      const sourceId =
+        typeof body.source_id === "string"
+          ? body.source_id
+          : ""
+
+      const productId =
+        typeof body.product_id === "string"
+          ? body.product_id
+          : ""
+
+      const supplierVariantId =
+        typeof body.supplier_variant_id === "string"
+          ? body.supplier_variant_id
+          : ""
+
+      const quantity =
+        getManualStockQuantity(
+          body.quantity
+        )
+
+      const note =
+        typeof body.note === "string"
+          ? body.note.trim().slice(0, 500)
+          : null
+
+      if (
+        !sourceId ||
+        !productId ||
+        !supplierVariantId ||
+        quantity === null
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "invalid_stock_confirmation_payload",
+          },
+          {
+            status: 400,
+          }
+        )
+      }
+
+      const supabase =
+        getSupabaseAdminClient()
+
+      const stockConfirmation =
+        await confirmMarketRadarStockQuantity({
+          supabase,
+          sourceId,
+          productId,
+          supplierVariantId,
+          quantity,
+          note,
+        })
+
+      const dashboard =
+        await getMarketRadarDashboard()
+
+      return NextResponse.json({
+        success: true,
+        stockConfirmation,
+        dashboard,
+      })
     }
 
     const supabase =
