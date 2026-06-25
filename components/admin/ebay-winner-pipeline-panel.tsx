@@ -2345,6 +2345,16 @@ function CandidateDetailDrawer({
     detail?.decisionAdvisor?.target_price?.competitor_landed_price ??
     shippingScopeEvidence?.competitor_domestic_landed_price
 
+  const competitorLandedPriceValue =
+    toNumber(
+      competitorLandedPrice
+    )
+
+  const competitorMarketDetail =
+    competitorLandedPriceValue !== null
+      ? `Competidor: ${formatCurrency(competitorLandedPriceValue)}`
+      : "Competidor: sin precio confiable"
+
   const launchStrategy =
     humanizePipelineValue(
       detail?.decisionAdvisor?.pricing_strategy?.launch_strategy
@@ -2530,14 +2540,14 @@ function CandidateDetailDrawer({
                       tone={profitTone}
                     />
                     <SummaryMetric
-                      label="Costo total estimado"
+                      label="Costo estimado de operacion"
                       value={formatCurrency(totalEstimatedCost)}
-                      detail={`No es precio de venta. Proveedor: ${formatCurrency(supplierCost)}`}
+                      detail={`Costo interno aproximado. No usar como precio de publicacion. Proveedor: ${formatCurrency(supplierCost)}`}
                     />
                     <SummaryMetric
                       label="Mercado observado"
                       value={formatCurrency(marketPrice)}
-                      detail={`Competidor: ${formatCurrency(competitorLandedPrice)}`}
+                      detail={competitorMarketDetail}
                     />
                   </div>
 
@@ -2587,7 +2597,7 @@ function CandidateDetailDrawer({
                           value={formatCurrency(evaluatedSalePrice)}
                         />
                         <Field
-                          label="Precio minimo rentable"
+                          label="No vender por debajo de"
                           value={formatCurrency(minimumProfitPrice)}
                         />
                         <Field
@@ -2596,7 +2606,7 @@ function CandidateDetailDrawer({
                         />
                       </div>
                       <p className="mt-3 text-xs leading-5 text-white/45">
-                        El costo total estimado sirve para calcular margen. El precio minimo rentable es la referencia para no vender demasiado barato.
+                        El costo estimado de operacion dice cuanto cuesta vender. No vender por debajo de es un limite interno de seguridad, no el precio recomendado. El precio evaluado por mercado es la referencia comercial.
                       </p>
                     </div>
 
@@ -2987,7 +2997,7 @@ function CandidateDetailDrawer({
                                   )}
                                 />
                                 <Field
-                                  label="Costo total estimado"
+                                  label="Costo estimado de operacion"
                                   value={formatCurrency(
                                     scenario.total_estimated_cost
                                   )}
@@ -3054,7 +3064,7 @@ function CandidateDetailDrawer({
                       )}
                     />
                     <Field
-                      label="Precio minimo 10% margen"
+                      label="No vender por debajo de (10% margen)"
                       value={formatCurrency(
                         detail.decisionAdvisor.target_price?.minimum_price_for_10_percent_margin
                       )}
@@ -3551,13 +3561,13 @@ function CandidateDetailDrawer({
 
                   <div className="grid gap-3 md:grid-cols-3">
                     <Field
-                      label="Break-even"
+                      label="Punto de equilibrio"
                       value={formatCurrency(
                         displayedCostBreakdown?.break_even_price
                       )}
                     />
                     <Field
-                      label="Precio minimo 10% margen"
+                      label="No vender por debajo de (10% margen)"
                       value={formatCurrency(
                         displayedCostBreakdown?.minimum_price_for_10_percent_margin
                       )}
