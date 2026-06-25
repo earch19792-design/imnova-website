@@ -741,7 +741,7 @@ function getEventValue(
     event.event_type === "out_of_stock"
   ) {
     return event.new_value?.available === true
-      ? "Disponible"
+      ? "Disponible segun Luna"
       : "Agotado"
   }
 
@@ -773,6 +773,10 @@ function getProductStatusLabel(
     return "Agotado"
   }
 
+  if (isStrictStockConfirmed(product)) {
+    return "Stock confirmado"
+  }
+
   if (
     product.inventory_status === "in_stock" &&
     product.inventory_scope === "product_or_category_signal"
@@ -795,7 +799,7 @@ function getProductStatusLabel(
   }
 
   if (product.inventory_status === "in_stock") {
-    return "Disponible"
+    return "Disponible segun Luna"
   }
 
   if (product.inventory_status === "unknown") {
@@ -813,7 +817,7 @@ function getProductStatusLabel(
   }
 
   if (product.available === true) {
-    return "Disponible"
+    return "Disponible segun Luna"
   }
 
   if (product.available === false) {
@@ -4587,34 +4591,34 @@ export function MarketRadarPanel({
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
         <MetricCard
-          title="Productos"
+          title="Productos Radar"
           value={summary?.totalProducts || 0}
-          detail={`${summary?.availableProducts || 0} disponibles`}
+          detail={`${summary?.availableProducts || 0} disponibles segun Luna`}
           icon={PackageCheck}
         />
         <MetricCard
-          title="Agotados"
-          value={summary?.outOfStockProducts || 0}
-          detail={`${summary?.stockOuts7d || 0} eventos 7d`}
+          title="Stock confirmado"
+          value={rankingCounts.stockConfirmed}
+          detail="Cantidad real por variante"
+          icon={CheckCircle2}
+        />
+        <MetricCard
+          title="Falta confirmar"
+          value={rankingCounts.stockNeedsValidation}
+          detail="Disponible sin cantidad confiable"
           icon={TriangleAlert}
+        />
+        <MetricCard
+          title="Oportunidad"
+          value={summary?.highOpportunityProducts || 0}
+          detail="Score 70+"
+          icon={Activity}
         />
         <MetricCard
           title="Descuento"
           value={summary?.discountedProducts || 0}
           detail="Con compare-at price"
           icon={DollarSign}
-        />
-        <MetricCard
-          title="Hot"
-          value={summary?.highOpportunityProducts || 0}
-          detail="Score 70+"
-          icon={Activity}
-        />
-        <MetricCard
-          title="Restocks"
-          value={summary?.restocks7d || 0}
-          detail="Ultimos 7 dias"
-          icon={CheckCircle2}
         />
         <MetricCard
           title="Precios"
