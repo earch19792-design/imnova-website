@@ -2025,12 +2025,23 @@ function CandidateDetailDrawer({
   const multipackProfitAdvisor =
     detail?.decisionAdvisor?.multipack_profit_advisor
 
+  const multipackScenarios =
+    multipackProfitAdvisor?.scenarios || []
+
+  const allMultipackScenariosBlockedByStock =
+    multipackScenarios.length > 0 &&
+    multipackScenarios.every(
+      scenario =>
+        scenario.status === "blocked_insufficient_stock" ||
+        scenario.stock_sufficient === false
+    )
+
   const showMultipackProfitAdvisor =
     Boolean(
       multipackProfitAdvisor?.is_multipack_candidate ||
       (
-        multipackProfitAdvisor?.scenarios &&
-        multipackProfitAdvisor.scenarios.length > 0
+        multipackScenarios &&
+        multipackScenarios.length > 0
       )
     )
 
@@ -2908,11 +2919,28 @@ function CandidateDetailDrawer({
                           )}
                         />
                         <Field
-                          label="Campana maxima segura"
-                          value={formatNumber(
-                            detail.decisionAdvisor.pricing_strategy.max_safe_campaign_percent,
-                            "%"
-                          )}
+                          label={
+                            hasCampaignOperationalBlockers(
+                              detail.candidate,
+                              detail.decisionAdvisor.pricing_strategy
+                            )
+                              ? "Campana: referencia interna"
+                              : "Campana maxima segura"
+                          }
+                          value={
+                            hasCampaignOperationalBlockers(
+                              detail.candidate,
+                              detail.decisionAdvisor.pricing_strategy
+                            )
+                              ? `Simulacion ${formatNumber(
+                                detail.decisionAdvisor.pricing_strategy.max_safe_campaign_percent,
+                                "%"
+                              )}; no activar todavia`
+                              : formatNumber(
+                                detail.decisionAdvisor.pricing_strategy.max_safe_campaign_percent,
+                                "%"
+                              )
+                          }
                         />
                         <Field
                           label="Riesgo"
@@ -2979,7 +3007,7 @@ function CandidateDetailDrawer({
                       </p>
                       <p className="mt-3 text-sm leading-6 text-emerald-50/75">
                         {multipackProfitAdvisor.summary ||
-                          "Como unidad no deja suficiente margen, pero el pack puede diluir el envio fijo."}
+                          "Pack solo como simulacion financiera hasta confirmar datos operativos."}
                       </p>
                       <p className="mt-2 text-xs leading-5 text-emerald-50/55">
                         {multipackProfitAdvisor.unit_economics_note ||
@@ -2993,13 +3021,23 @@ function CandidateDetailDrawer({
                           )}
                         />
                         <Field
-                          label="Mejor hipotesis de pack"
+                          label={
+                            allMultipackScenariosBlockedByStock
+                              ? "Mejor simulacion financiera"
+                              : "Mejor hipotesis de pack"
+                          }
                           value={
                             multipackProfitAdvisor.best_pack?.label ||
                             multipackProfitAdvisor.best_pack_hypothesis?.label ||
                             "Sin pack viable con estos datos"
                           }
                         />
+                        {allMultipackScenariosBlockedByStock ? (
+                          <Field
+                            label="Estado operativo"
+                            value="Bloqueado por stock insuficiente"
+                          />
+                        ) : null}
                         <Field
                           label="Que falta antes de publicar pack"
                           value={
@@ -3015,7 +3053,7 @@ function CandidateDetailDrawer({
                         Simulacion, no publicacion. Vender en pack requiere stock suficiente, peso confirmado y comparables multipack. El comprador debe recibir mejor precio por unidad.
                       </p>
                       <div className="mt-4 grid gap-3 xl:grid-cols-4">
-                        {(multipackProfitAdvisor.scenarios || []).map(
+                        {multipackScenarios.map(
                           (scenario, index) => (
                             <div
                               key={`${scenario.label || "pack"}-${index}`}
@@ -3081,8 +3119,22 @@ function CandidateDetailDrawer({
                                   )}
                                 />
                                 <Field
-                                  label="Pasa minimo"
-                                  value={scenario.pass_10_percent_margin}
+                                  label="Pasa margen minimo"
+                                  value={
+                                    scenario.pass_10_percent_margin
+                                      ? "Si"
+                                      : "No"
+                                  }
+                                />
+                                <Field
+                                  label="Estado operativo"
+                                  value={
+                                    scenario.stock_sufficient === false
+                                      ? "Bloqueado por stock insuficiente"
+                                      : scenario.missing_inputs?.length
+                                        ? "Faltan datos antes de publicar"
+                                        : "Listo para revision humana"
+                                  }
                                 />
                                 <Field
                                   label="Estado"
