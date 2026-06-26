@@ -1608,6 +1608,25 @@ function formatSupplierGap(
   return "En el limite del margen objetivo"
 }
 
+function formatSupplierMaxCostForSeller(
+  value?: string | number | null
+) {
+  const numericValue =
+    toNumber(value)
+
+  if (numericValue === null) {
+    return "-"
+  }
+
+  if (numericValue < 0) {
+    return "No viable como unidad"
+  }
+
+  return formatCurrency(
+    numericValue
+  )
+}
+
 function humanizeCampaignNow(
   pricingStrategy?: PricingStrategyRecommendation | null
 ) {
@@ -3202,6 +3221,117 @@ function CandidateDetailDrawer({
         ? "Inventario con confianza alta, pero cantidad no visible"
         : "Sin cantidad confirmada"
 
+  const supplierStrategyAlignment = (() => {
+    if (unitPassesMinimums) {
+      return {
+        summary:
+          "Proveedor actual puede funcionar como unidad si los datos del listing estan completos.",
+        operationModel:
+          "Probar unidad con proveedor actual",
+        bestPath:
+          hasMissingOperationalData
+            ? "Completar datos antes de preparar listing organico"
+            : "Listo para revision humana",
+        currentSupplierDetail:
+          "Proveedor actual puede sostener la unidad; confirmar datos operativos antes de avanzar.",
+        alternativeValue:
+          "Opcional",
+        alternativeDetail:
+          supplierSimulatorMissingInputs.length
+            ? `Comparar solo si se quiere escalar. Faltan: ${humanizeSupplierInputs(
+              supplierSimulatorMissingInputs
+            ).join(", ")}`
+            : "Comparar solo si se quiere escalar.",
+      }
+    }
+
+    if (multipackDoesNotSaveMargin) {
+      return {
+        summary:
+          "Proveedor actual no permite competir. Buscar mejor proveedor antes de avanzar.",
+        operationModel:
+          "Buscar mejor proveedor",
+        bestPath:
+          "Proveedor alternativo antes de avanzar",
+        currentSupplierDetail:
+          "Unidad y pack no alcanzan margen minimo con el proveedor actual.",
+        alternativeValue:
+          "Recomendado revisar",
+        alternativeDetail:
+          supplierSimulatorMissingInputs.length
+            ? `Faltan: ${humanizeSupplierInputs(
+              supplierSimulatorMissingInputs
+            ).join(", ")}`
+            : "Comparar proveedor directo o mayorista antes de preparar listing.",
+      }
+    }
+
+    if (multipackCanRescueUnitMargin) {
+      const packBlockedCopy =
+        allMultipackScenariosBlockedByStock
+          ? "Pack no es opcion operativa todavia por stock insuficiente."
+          : hasMissingOperationalData
+            ? "Evaluar pack solo si se confirma stock, peso/dimensiones y comparables."
+            : "Pack elegible para revision humana antes de preparar listing."
+
+      return {
+        summary:
+          `Proveedor actual no funciona bien como unidad. ${packBlockedCopy} Proveedor alternativo queda como Plan B.`,
+        operationModel:
+          "Evaluar pack antes de cambiar proveedor",
+        bestPath:
+          allMultipackScenariosBlockedByStock || hasMissingOperationalData
+            ? "Confirmar datos de pack"
+            : "Revision humana del pack",
+        currentSupplierDetail:
+          `No usar como unidad. ${packBlockedCopy}`,
+        alternativeValue:
+          "Plan B",
+        alternativeDetail:
+          "Revisar solo si stock, peso o comparables no validan el pack.",
+      }
+    }
+
+    if (showMultipackProfitAdvisor && allMultipackScenariosBlockedByStock) {
+      return {
+        summary:
+          "Proveedor actual no funciona bien como unidad. Pack no es opcion operativa todavia por stock insuficiente. Proveedor alternativo queda como Plan B.",
+        operationModel:
+          "Confirmar stock antes de cambiar proveedor",
+        bestPath:
+          "Confirmar cantidad real para pack",
+        currentSupplierDetail:
+          "Pack bloqueado por stock; no tratar proveedor alternativo como primera accion hasta validar cantidad.",
+        alternativeValue:
+          "Plan B",
+        alternativeDetail:
+          "Revisar solo si no aparece stock suficiente para pack.",
+      }
+    }
+
+    return {
+      summary:
+        "Proveedor actual no funciona bien como unidad. Buscar mejor precio, proveedor o estrategia antes de avanzar.",
+      operationModel:
+        "Revisar proveedor o precio",
+      bestPath:
+        "Comparar proveedor alternativo",
+      currentSupplierDetail:
+        "La unidad no pasa margen minimo con los datos actuales.",
+      alternativeValue:
+        supplierModelSimulator?.recommended_strategy === "find_better_supplier" ||
+        supplierModelSimulator?.recommended_strategy === "source_direct_recommended"
+          ? "Recomendado revisar"
+          : "Opcional",
+      alternativeDetail:
+        supplierSimulatorMissingInputs.length
+          ? `Faltan: ${humanizeSupplierInputs(
+            supplierSimulatorMissingInputs
+          ).join(", ")}`
+          : "Comparar si se quiere escalar.",
+    }
+  })()
+
   const sellerDecisionCards =
     detail
       ? [
@@ -3368,9 +3498,7 @@ function CandidateDetailDrawer({
           "luna_as_supplier"
         ),
       detail:
-        supplierModelSimulator?.summary ||
-        strategicSummary?.supplier_strategy?.note ||
-        "Validar si el proveedor actual sostiene margen y stock.",
+        supplierStrategyAlignment.currentSupplierDetail,
       tone:
         !unitPassesMinimums
           ? "warning"
@@ -3380,20 +3508,9 @@ function CandidateDetailDrawer({
       label:
         "Proveedor alternativo",
       value:
-        supplierModelSimulator?.recommended_strategy === "find_better_supplier" ||
-        supplierModelSimulator?.recommended_strategy === "source_direct_recommended"
-          ? multipackCanRescueUnitMargin
-            ? "Plan B"
-            : "Recomendado revisar"
-          : "Opcional",
+        supplierStrategyAlignment.alternativeValue,
       detail:
-        multipackCanRescueUnitMargin
-          ? "Revisar solo si stock, peso o comparables no validan el pack."
-          : supplierSimulatorMissingInputs.length
-          ? `Faltan: ${humanizeSupplierInputs(
-            supplierSimulatorMissingInputs
-          ).join(", ")}`
-          : "Comparar si se quiere escalar.",
+        supplierStrategyAlignment.alternativeDetail,
       tone:
         !unitPassesMinimums
           ? "warning"
@@ -4545,8 +4662,7 @@ function CandidateDetailDrawer({
                         Comparacion de proveedor
                       </p>
                       <p className="mt-3 text-sm leading-6 text-sky-50/75">
-                        {supplierModelSimulator.summary ||
-                          "El producto puede tener demanda, pero el proveedor actual puede no ser el mejor para escalar."}
+                        {supplierStrategyAlignment.summary}
                       </p>
                       <div className="mt-4 grid gap-3 md:grid-cols-3">
                         <Field
@@ -4557,13 +4673,11 @@ function CandidateDetailDrawer({
                         />
                         <Field
                           label="Modelo de operacion"
-                          value={humanizePipelineValue(
-                            supplierModelSimulator.recommended_strategy
-                          )}
+                          value={supplierStrategyAlignment.operationModel}
                         />
                         <Field
                           label="Costo maximo que podemos pagar"
-                          value={formatCurrency(
+                          value={formatSupplierMaxCostForSeller(
                             currentSupplierScenario?.max_supplier_landed_cost
                           )}
                         />
@@ -4575,9 +4689,7 @@ function CandidateDetailDrawer({
                         />
                         <Field
                           label="Mejor camino"
-                          value={humanizePipelineValue(
-                            supplierModelSimulator.recommended_strategy
-                          )}
+                          value={supplierStrategyAlignment.bestPath}
                         />
                         <Field
                           label="Que falta para comparar"
@@ -4645,7 +4757,7 @@ function CandidateDetailDrawer({
                                 />
                                 <Field
                                   label="Costo maximo para margen"
-                                  value={formatCurrency(
+                                  value={formatSupplierMaxCostForSeller(
                                     scenario.max_supplier_landed_cost
                                   )}
                                 />
@@ -4657,10 +4769,14 @@ function CandidateDetailDrawer({
                                 />
                               </div>
                               <p className="mt-3 text-xs leading-5 text-white/65">
-                                {scenario.recommendation}
+                                {index === 0
+                                  ? supplierStrategyAlignment.currentSupplierDetail
+                                  : scenario.recommendation}
                               </p>
                               <p className="mt-2 text-xs leading-5 text-white/45">
-                                {scenario.seller_note}
+                                {index === 0
+                                  ? supplierStrategyAlignment.summary
+                                  : scenario.seller_note}
                               </p>
                               <div className="mt-3">
                                 <p className="text-[10px] uppercase tracking-[0.18em] text-white/30">
