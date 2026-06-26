@@ -3151,6 +3151,259 @@ test("supplier model simulator: Campaign Advisor no cambia campaign_eligible", (
   )
 })
 
+test("multipack advisor: unidad no rentable por shipping sugiere validar pack antes de cambiar proveedor", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "John Frieda Sheer Blonde Highlight Activating Brightening Shampoo",
+        state:
+          "NEEDS_DATA",
+        inventory_quantity:
+          12,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+        needs_data: [
+          "weight_or_dimensions",
+        ],
+      },
+      salePrice:
+        15.09,
+      lunaCost:
+        4,
+      shippingCost:
+        6.99,
+    })
+
+  assert.equal(
+    advisor.multipack_profit_advisor.is_multipack_candidate,
+    true
+  )
+  assert.equal(
+    advisor.strategic_summary.commercial_status,
+    "multipack_candidate_needs_data"
+  )
+  assert.match(
+    advisor.strategic_summary.recommended_action,
+    /Confirmar stock, peso y comparables multipack/i
+  )
+})
+
+test("multipack advisor: pack viable muestra escenarios y no recomienda publicar si faltan inputs", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "Oral-B Glide Gum Care Dental Floss Picks",
+        state:
+          "NEEDS_DATA",
+        needs_data: [
+          "confirmed_stock_quantity",
+          "weight_or_dimensions",
+        ],
+      },
+      salePrice:
+        15.09,
+      lunaCost:
+        4,
+      shippingCost:
+        6.99,
+    })
+
+  const packThree =
+    advisor.multipack_profit_advisor.scenarios.find(
+      scenario => scenario.pack_quantity === 3
+    )
+
+  assert.ok(packThree)
+  assert.equal(
+    packThree.pass_10_percent_margin,
+    true
+  )
+  assert.equal(
+    packThree.stock_sufficient,
+    false
+  )
+  assert.ok(
+    packThree.missing_inputs.includes(
+      "confirmed_stock_quantity"
+    )
+  )
+  assert.ok(
+    packThree.missing_inputs.includes(
+      "weight_or_dimensions"
+    )
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.recommended_strategy,
+    "validate_pack_inputs"
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.best_pack,
+    null
+  )
+  assert.ok(
+    advisor.multipack_profit_advisor.best_pack_hypothesis
+  )
+  assert.ok(
+    packThree.buyer_discount_percent > 0
+  )
+  assert.ok(
+    packThree.unit_price_in_pack <
+      packThree.unit_market_price
+  )
+})
+
+test("multipack advisor: stock confirmado de una unidad bloquea packs 2 3 6 12", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "Glade Automatic Spray Refill Lavender Vanilla Value Pack",
+        state:
+          "NEEDS_DATA",
+        inventory_quantity:
+          1,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+      },
+      salePrice:
+        13.64,
+      lunaCost:
+        4,
+      shippingCost:
+        6.99,
+    })
+
+  assert.equal(
+    advisor.multipack_profit_advisor.best_pack,
+    null
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.recommended_strategy,
+    "validate_pack_inputs"
+  )
+  assert.ok(
+    advisor.multipack_profit_advisor.scenarios.every(
+      scenario =>
+        scenario.stock_sufficient === false &&
+        scenario.status ===
+          "blocked_insufficient_stock"
+    )
+  )
+  assert.ok(
+    advisor.multipack_profit_advisor.scenarios.every(
+      scenario =>
+        scenario.missing_inputs.includes(
+          "stock_sufficient_for_pack"
+        )
+    )
+  )
+})
+
+test("multipack advisor: producto barato con shipping alto muestra packs aunque ninguno sea viable", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "RAM RAM-B-111BU Mounting Plate Powder Coat Garmin GPSMAP",
+        state:
+          "NEEDS_DATA",
+        inventory_quantity:
+          8,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+        needs_data: [
+          "weight_or_dimensions",
+        ],
+      },
+      salePrice:
+        6,
+      lunaCost:
+        4,
+      shippingCost:
+        6.99,
+    })
+
+  assert.equal(
+    advisor.multipack_profit_advisor.is_multipack_candidate,
+    false
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.best_pack,
+    null
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.best_pack_hypothesis,
+    null
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.scenarios.length,
+    4
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.recommended_strategy,
+    "pack_not_enough_find_supplier"
+  )
+  assert.equal(
+    advisor.strategic_summary.commercial_status,
+    "pack_not_enough_find_supplier"
+  )
+  assert.match(
+    advisor.strategic_summary.recommended_action,
+    /No publicar como unidad ni como pack/
+  )
+  assert.ok(
+    advisor.multipack_profit_advisor.scenarios.every(
+      scenario =>
+        scenario.pass_10_percent_margin === false
+    )
+  )
+})
+
+test("multipack advisor: no altera Fee Engine ni Campaign Advisor", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "Small consumable shampoo",
+        state:
+          "VALIDATED",
+        inventory_quantity:
+          12,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+      },
+      salePrice:
+        15.09,
+      lunaCost:
+        4,
+      shippingCost:
+        6.99,
+    })
+
+  assert.equal(
+    advisor.cost_breakdown.ebay_fee_percent,
+    13.25
+  )
+  assert.equal(
+    advisor.cost_breakdown.ebay_fixed_fee,
+    0.3
+  )
+  assert.equal(
+    advisor.pricing_strategy.campaign_eligible,
+    false
+  )
+})
+
 test("pricing strategy: organico rentable y competitivo -> list_organic", () => {
   const recommendation =
     getPricingStrategyRecommendation({
