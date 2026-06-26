@@ -2802,6 +2802,11 @@ function CandidateDetailDrawer({
       toNumber(netMargin)! >= 10
     )
 
+  const multipackCanRescueUnitMargin =
+    !unitPassesMinimums &&
+    showMultipackProfitAdvisor &&
+    multipackHasFinanciallyViableScenario
+
   const hasMissingOperationalData =
     currentMissingFields.length > 0 ||
     detail?.candidate.state === "NEEDS_DATA"
@@ -2889,6 +2894,11 @@ function CandidateDetailDrawer({
             "No preparar listing con el proveedor actual.",
             "Buscar proveedor alternativo, negociar costo o descartar hasta que el mercado cambie.",
           ]
+        : multipackCanRescueUnitMargin
+        ? [
+            "No publicar como unidad.",
+            "Confirmar stock real, peso y comparables multipack antes de descartar el proveedor.",
+          ]
         : !unitPassesMinimums
         ? [
             "No preparar listing con el proveedor actual.",
@@ -2905,6 +2915,8 @@ function CandidateDetailDrawer({
         ? [
             multipackDoesNotSaveMargin
               ? "No usar pack para salvar este producto; no alcanza margen minimo."
+              : multipackCanRescueUnitMargin
+              ? "Mantener pack como simulacion financiera hasta confirmar cantidad suficiente."
               : allMultipackScenariosBlockedByStock
               ? "Mantener pack como simulacion financiera hasta confirmar stock."
               : "Evaluar pack solo con stock, peso y comparables confirmados.",
@@ -2977,10 +2989,14 @@ function CandidateDetailDrawer({
       value:
         supplierModelSimulator?.recommended_strategy === "find_better_supplier" ||
         supplierModelSimulator?.recommended_strategy === "source_direct_recommended"
-          ? "Recomendado revisar"
+          ? multipackCanRescueUnitMargin
+            ? "Plan B"
+            : "Recomendado revisar"
           : "Opcional",
       detail:
-        supplierSimulatorMissingInputs.length
+        multipackCanRescueUnitMargin
+          ? "Revisar solo si stock, peso o comparables no validan el pack."
+          : supplierSimulatorMissingInputs.length
           ? `Faltan: ${humanizeSupplierInputs(
             supplierSimulatorMissingInputs
           ).join(", ")}`
