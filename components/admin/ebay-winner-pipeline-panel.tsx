@@ -1927,7 +1927,7 @@ function getUnitDecisionCard({
       value:
         "Unidad viable en margen, pero no publicable todavia.",
       detail:
-        "Completar readiness antes de preparar listing organico.",
+        "Completar datos operativos antes de preparar listing organico.",
       tone:
         "warning",
     }
@@ -1963,7 +1963,7 @@ function getPackDecisionCard({
       value:
         "Pack no es prioridad.",
       detail:
-        "Evaluar unidad y readiness primero.",
+        "Evaluar unidad y datos antes de publicar primero.",
       tone:
         "neutral",
     }
@@ -2110,7 +2110,7 @@ function getPrimarySellerDecision({
       value:
         "Completar datos antes de publicar.",
       detail:
-        "El producto puede ser prometedor, pero readiness no esta completo.",
+        "El producto puede ser prometedor, pero faltan datos operativos.",
       tone:
         "warning",
     }
@@ -2892,14 +2892,14 @@ function CandidateDetailDrawer({
         : !unitPassesMinimums
         ? [
             "No preparar listing con el proveedor actual.",
-            "Buscar proveedor alternativo o ajustar precio antes de completar readiness.",
+            "Buscar proveedor alternativo o ajustar precio antes de completar datos operativos.",
           ]
         : hasMissingOperationalData
         ? [
             "Completar datos antes de preparar listing.",
           ]
         : [
-            "Preparar listing organico solo si readiness sigue completo.",
+            "Preparar listing organico solo si los datos operativos siguen completos.",
           ]),
       ...(showMultipackProfitAdvisor
         ? [
@@ -3206,7 +3206,7 @@ function CandidateDetailDrawer({
                       </p>
                       <p className="mt-2 text-sm leading-6 text-cyan-50/75">
                         {sellerDecisionCards[0]?.detail ||
-                          "No tomar accion operativa sin revisar readiness, margen, stock y mercado."}
+                          "No tomar accion operativa sin revisar datos operativos, margen, stock y mercado."}
                       </p>
                     </div>
                     <span
@@ -3343,7 +3343,7 @@ function CandidateDetailDrawer({
                 </div>
 
                 <p className="rounded-lg border border-white/10 bg-black/25 p-3 text-xs leading-5 text-white/50">
-                  Este bloque no publica, no crea drafts y no modifica listings. Pack y campana se muestran como evaluacion segura hasta que readiness y aprobacion humana esten completos.
+                  Este bloque no publica, no crea drafts y no modifica listings. Pack y campana se muestran como evaluacion segura hasta que los datos operativos y la aprobacion humana esten completos.
                 </p>
               </div>
             </DetailSection>
