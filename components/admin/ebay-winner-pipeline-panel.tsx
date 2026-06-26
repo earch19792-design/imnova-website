@@ -3357,11 +3357,7 @@ function CandidateDetailDrawer({
           flex-1
           p-5
           md:p-6
-          ${
-            isFullscreenDetail
-              ? "overflow-x-scroll overflow-y-auto"
-              : "overflow-y-auto"
-          }
+          overflow-y-auto
         `}
       >
         {isLoading ? (
@@ -3373,7 +3369,7 @@ function CandidateDetailDrawer({
             className={`
               mt-6
               space-y-5
-              ${isFullscreenDetail ? "min-w-[1600px]" : ""}
+              min-w-0
             `}
           >
             <DetailSection title="Decision del vendedor">
@@ -5567,7 +5563,7 @@ function CandidateDetailDrawer({
   if (isFullscreenDetail) {
     return (
       <div className="fixed inset-0 z-[80] bg-black/80 p-3 backdrop-blur-sm md:p-6">
-        <div className="mx-auto h-full w-full max-w-[96vw]">
+        <div className="h-full w-full">
           {detailPanel}
         </div>
       </div>
