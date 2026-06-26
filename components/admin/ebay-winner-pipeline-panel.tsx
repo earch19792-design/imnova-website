@@ -361,6 +361,27 @@ type MultipackProfitAdvisor = {
   scenarios?: MultipackProfitScenario[] | null
 }
 
+type StockRotationRiskAdvisor = {
+  status?: string | null
+  label?: string | null
+  message?: string | null
+  tone?: SellerDecisionTone | null
+  confirmed_stock?: number | string | null
+  inventory_scope?: string | null
+  inventory_confidence?: string | null
+  pack_blocked_by_stock?: boolean | null
+  campaign_blocked_by_stock?: boolean | null
+  stock_guardrail?: {
+    stock_risk_level?: string | null
+    stock_decision?: string | null
+    account_risk_notes?: string[] | null
+    blocked_actions?: string[] | null
+    allowed_actions?: string[] | null
+    next_safe_step?: string | null
+    human_approval_required?: boolean | null
+  } | null
+}
+
 type EbayDecisionAdvisor = {
   decision_label?: string
   strategic_summary?: {
@@ -416,6 +437,7 @@ type EbayDecisionAdvisor = {
   cost_breakdown?: CostBreakdown | null
   supplier_model_simulator?: SupplierModelSimulator | null
   multipack_profit_advisor?: MultipackProfitAdvisor | null
+  stock_rotation_risk?: StockRotationRiskAdvisor | null
   pricing_strategy?: PricingStrategyRecommendation | null
   recommended_next_action?: string
 }
@@ -2649,6 +2671,9 @@ function CandidateDetailDrawer({
   const multipackProfitAdvisor =
     detail?.decisionAdvisor?.multipack_profit_advisor
 
+  const stockRotationRisk =
+    detail?.decisionAdvisor?.stock_rotation_risk
+
   const multipackScenarios =
     multipackProfitAdvisor?.scenarios || []
 
@@ -3200,7 +3225,8 @@ function CandidateDetailDrawer({
       detail?.candidate,
       detail?.decisionAdvisor?.pricing_strategy
     ) ||
-    hasMissingOperationalData
+    hasMissingOperationalData ||
+    stockRotationRisk?.campaign_blocked_by_stock === true
 
   const inventoryQuantity =
     getCandidateInventoryQuantity(
@@ -3220,6 +3246,24 @@ function CandidateDetailDrawer({
       : hasHighInventoryConfidence
         ? "Inventario con confianza alta, pero cantidad no visible"
         : "Sin cantidad confirmada"
+
+  const stockRotationStatus =
+    stockRotationRisk || {
+      label:
+        "Stock no confirmado",
+      message:
+        "Stock no confirmado. Validar inventario antes de preparar listing, pack o campana.",
+      tone:
+        "warning" as SellerDecisionTone,
+      confirmed_stock:
+        null,
+      campaign_blocked_by_stock:
+        true,
+      pack_blocked_by_stock:
+        false,
+      stock_guardrail:
+        null,
+    }
 
   const supplierStrategyAlignment = (() => {
     if (unitPassesMinimums) {
@@ -3955,6 +3999,63 @@ function CandidateDetailDrawer({
                       tone={card.tone}
                     />
                   ))}
+                </div>
+
+                <div className="rounded-lg border border-white/10 bg-black/25 p-3">
+                  <p className="text-xs font-black uppercase tracking-[0.16em] text-white/45">
+                    Rotacion / disponibilidad
+                  </p>
+                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                    <SummaryMetric
+                      label="Riesgo de stock"
+                      value={stockRotationStatus.label || "Stock no confirmado"}
+                      detail={stockRotationStatus.message || "Stock no confirmado. Validar inventario antes de preparar listing, pack o campana."}
+                      tone={stockRotationStatus.tone || "warning"}
+                    />
+                    <SummaryMetric
+                      label="Cantidad"
+                      value={
+                        stockRotationStatus.confirmed_stock !== null &&
+                        stockRotationStatus.confirmed_stock !== undefined
+                          ? formatNumber(stockRotationStatus.confirmed_stock)
+                          : "No confirmada"
+                      }
+                      detail={
+                        stockRotationStatus.inventory_confidence ||
+                        stockRotationStatus.inventory_scope
+                          ? `Confianza: ${humanizePipelineValue(stockRotationStatus.inventory_confidence || "unknown")} / Scope: ${humanizePipelineValue(stockRotationStatus.inventory_scope || "unknown")}`
+                          : "Validar inventario antes de preparar listing, pack o campana."
+                      }
+                      tone={
+                        stockRotationStatus.confirmed_stock !== null &&
+                        stockRotationStatus.confirmed_stock !== undefined
+                          ? "success"
+                          : "warning"
+                      }
+                    />
+                    <SummaryMetric
+                      label="Guardrail"
+                      value={
+                        stockRotationStatus.stock_guardrail?.stock_risk_level
+                          ? humanizePipelineValue(stockRotationStatus.stock_guardrail.stock_risk_level)
+                          : "Pendiente"
+                      }
+                      detail={
+                        stockRotationStatus.pack_blocked_by_stock
+                          ? "Pack no es opcion operativa todavia por stock insuficiente."
+                          : stockRotationStatus.campaign_blocked_by_stock
+                            ? "No sugerir campana hasta confirmar disponibilidad."
+                            : "Senal read-only; requiere revision humana."
+                      }
+                      tone={
+                        stockRotationStatus.pack_blocked_by_stock
+                          ? "danger"
+                          : stockRotationStatus.campaign_blocked_by_stock
+                            ? "warning"
+                            : "neutral"
+                      }
+                    />
+                  </div>
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-3">
