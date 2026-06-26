@@ -1485,6 +1485,19 @@ type HumanBlockReason = {
   tone: "danger" | "warning" | "success" | "info"
 }
 
+type SellerDecisionTone =
+  "neutral" |
+  "success" |
+  "warning" |
+  "danger"
+
+type SellerDecisionCard = {
+  label: string
+  value: string
+  detail: string
+  tone: SellerDecisionTone
+}
+
 function unknownToStringArray(
   value: unknown
 ) {
@@ -1844,6 +1857,277 @@ function getHumanBlockReasons(
   return reasons
 }
 
+function getCandidateInventoryQuantity(
+  detail?: EbayCandidateDetail | null
+) {
+  const candidate =
+    detail?.candidate as unknown as Record<string, unknown> | undefined
+
+  return toNumber(
+    candidate?.inventory_quantity ??
+      candidate?.stock ??
+      candidate?.confirmed_stock
+  )
+}
+
+function isMultipackScenarioFinanciallyViable(
+  scenario?: MultipackProfitScenario | null
+) {
+  if (!scenario) {
+    return false
+  }
+
+  if (scenario.pass_10_percent_margin === true) {
+    return true
+  }
+
+  const scenarioProfit =
+    toNumber(
+      scenario.net_profit
+    )
+  const scenarioMargin =
+    toNumber(
+      scenario.net_margin_percent
+    )
+
+  return (
+    scenarioProfit !== null &&
+    scenarioProfit > 0 &&
+    scenarioMargin !== null &&
+    scenarioMargin >= 10
+  )
+}
+
+function getUnitDecisionCard({
+  passesMinimums,
+  netMargin,
+  hasMissingData,
+}: {
+  passesMinimums: boolean
+  netMargin: number | null
+  hasMissingData: boolean
+}): SellerDecisionCard {
+  if (!passesMinimums) {
+    return {
+      label:
+        "Unidad",
+      value:
+        "No publicar como unidad.",
+      detail:
+        `Margen unidad ${formatNumber(netMargin, "%")}. Buscar mejor precio, proveedor o estrategia antes de listar.`,
+      tone:
+        "danger",
+    }
+  }
+
+  if (hasMissingData) {
+    return {
+      label:
+        "Unidad",
+      value:
+        "Unidad viable en margen, pero no publicable todavia.",
+      detail:
+        "Completar datos operativos antes de preparar listing organico.",
+      tone:
+        "warning",
+    }
+  }
+
+  return {
+    label:
+      "Unidad",
+    value:
+      "Unidad lista para revision humana.",
+    detail:
+      "Puede avanzar a preparacion de listing organico si imagenes, categoria y shipping estan confirmados.",
+    tone:
+      "success",
+  }
+}
+
+function getPackDecisionCard({
+  showMultipack,
+  allBlockedByStock,
+  packDoesNotSaveMargin,
+  multipackAdvisor,
+}: {
+  showMultipack: boolean
+  allBlockedByStock: boolean
+  packDoesNotSaveMargin: boolean
+  multipackAdvisor?: MultipackProfitAdvisor | null
+}): SellerDecisionCard {
+  if (!showMultipack) {
+    return {
+      label:
+        "Pack",
+      value:
+        "Pack no es prioridad.",
+      detail:
+        "Evaluar unidad y datos antes de publicar primero.",
+      tone:
+        "neutral",
+    }
+  }
+
+  if (packDoesNotSaveMargin) {
+    return {
+      label:
+        "Pack",
+      value:
+        "Pack no salva margen.",
+      detail:
+        "Aunque se confirme stock, los packs simulados no alcanzan margen minimo con el proveedor actual.",
+      tone:
+        "danger",
+    }
+  }
+
+  if (allBlockedByStock) {
+    return {
+      label:
+        "Pack",
+      value:
+        "Pack bloqueado por stock.",
+      detail:
+        "Solo simulacion financiera. No publicar pack hasta confirmar stock suficiente, peso y comparables multipack.",
+      tone:
+        "danger",
+    }
+  }
+
+  if (multipackAdvisor?.best_pack) {
+    return {
+      label:
+        "Pack",
+      value:
+        "Pack elegible para revision humana.",
+      detail:
+        "Validar comparables multipack, peso y stock antes de preparar listing.",
+      tone:
+        "success",
+    }
+  }
+
+  return {
+    label:
+      "Pack",
+    value:
+      "Pack solo como hipotesis.",
+    detail:
+      "Completar datos antes de tratarlo como opcion operativa.",
+    tone:
+      "warning",
+  }
+}
+
+function getCampaignDecisionCard({
+  pricingStrategy,
+  hasOperationalBlockers,
+}: {
+  pricingStrategy?: PricingStrategyRecommendation | null
+  hasOperationalBlockers: boolean
+}): SellerDecisionCard {
+  if (hasOperationalBlockers) {
+    return {
+      label:
+        "Campana",
+      value:
+        "No activar campana todavia.",
+      detail:
+        "Hay datos o bloqueos operativos antes de cualquier promocion.",
+      tone:
+        "warning",
+    }
+  }
+
+  if (pricingStrategy?.campaign_eligible) {
+    return {
+      label:
+        "Campana",
+      value:
+        "Campana pequena posible.",
+      detail:
+        "Solo 1%-2%, con aprobacion humana y despues de revisar senales.",
+      tone:
+        "success",
+    }
+  }
+
+  if (pricingStrategy?.campaign_financially_supported === false) {
+    return {
+      label:
+        "Campana",
+      value:
+        "Campana bloqueada por margen.",
+      detail:
+        "No usar promocion para compensar un listing que aun no es rentable.",
+      tone:
+        "danger",
+    }
+  }
+
+  return {
+    label:
+      "Campana",
+    value:
+      "No activar campana todavia.",
+    detail:
+      "Publicar organico primero y observar comportamiento cuando el listing este listo.",
+    tone:
+      "warning",
+  }
+}
+
+function getPrimarySellerDecision({
+  candidateState,
+  passesMinimums,
+  hasMissingData,
+}: {
+  candidateState?: string | null
+  passesMinimums: boolean
+  hasMissingData: boolean
+}): SellerDecisionCard {
+  if (!passesMinimums) {
+    return {
+      label:
+        "Decision",
+      value:
+        "No publicar como unidad.",
+      detail:
+        "La unidad no cumple margen minimo con los datos actuales.",
+      tone:
+        "danger",
+    }
+  }
+
+  if (
+    candidateState === "NEEDS_DATA" ||
+    hasMissingData
+  ) {
+    return {
+      label:
+        "Decision",
+      value:
+        "Completar datos antes de publicar.",
+      detail:
+        "El producto puede ser prometedor, pero faltan datos operativos.",
+      tone:
+        "warning",
+    }
+  }
+
+  return {
+    label:
+      "Decision",
+    value:
+      "Listo para revision humana.",
+    detail:
+      "Preparar listing organico solo si los datos operativos siguen completos.",
+    tone:
+      "success",
+  }
+}
+
 function getStrategicSummary(
   detail: EbayCandidateDetail
 ): NonNullable<EbayDecisionAdvisor["strategic_summary"]> | null {
@@ -2036,6 +2320,14 @@ function CandidateDetailDrawer({
         scenario.stock_sufficient === false
     )
 
+  const multipackHasFinanciallyViableScenario =
+    multipackScenarios.some(
+      scenario =>
+        isMultipackScenarioFinanciallyViable(
+          scenario
+        )
+    )
+
   const showMultipackProfitAdvisor =
     Boolean(
       multipackProfitAdvisor?.is_multipack_candidate ||
@@ -2044,6 +2336,11 @@ function CandidateDetailDrawer({
         multipackScenarios.length > 0
       )
     )
+
+  const multipackDoesNotSaveMargin =
+    showMultipackProfitAdvisor &&
+    multipackScenarios.length > 0 &&
+    !multipackHasFinanciallyViableScenario
 
   const supplierSimulatorMissingInputs =
     uniqueStrings(
@@ -2496,6 +2793,354 @@ function CandidateDetailDrawer({
       ? "success"
       : "danger"
 
+  const unitPassesMinimums =
+    detail?.profitScenario?.passes_minimums === true ||
+    (
+      toNumber(netProfit) !== null &&
+      toNumber(netProfit)! > 0 &&
+      toNumber(netMargin) !== null &&
+      toNumber(netMargin)! >= 10
+    )
+
+  const multipackCanRescueUnitMargin =
+    !unitPassesMinimums &&
+    showMultipackProfitAdvisor &&
+    multipackHasFinanciallyViableScenario
+
+  const hasMissingOperationalData =
+    currentMissingFields.length > 0 ||
+    detail?.candidate.state === "NEEDS_DATA"
+
+  const hasCampaignBlockers =
+    hasCampaignOperationalBlockers(
+      detail?.candidate,
+      detail?.decisionAdvisor?.pricing_strategy
+    ) ||
+    hasMissingOperationalData
+
+  const inventoryQuantity =
+    getCandidateInventoryQuantity(
+      detail
+    )
+
+  const hasVisibleStockQuantity =
+    inventoryQuantity !== null
+
+  const hasHighInventoryConfidence =
+    detail?.pipelineReanalysisAdvisor?.inventory_confidence === "high" &&
+    detail?.pipelineReanalysisAdvisor?.inventory_scope === "variant_level"
+
+  const stockDiagnosis =
+    hasVisibleStockQuantity
+      ? `Cantidad confirmada: ${formatNumber(inventoryQuantity)}`
+      : hasHighInventoryConfidence
+        ? "Inventario con confianza alta, pero cantidad no visible"
+        : "Sin cantidad confirmada"
+
+  const sellerDecisionCards =
+    detail
+      ? [
+          getPrimarySellerDecision({
+            candidateState:
+              detail.candidate.state,
+            passesMinimums:
+              unitPassesMinimums,
+            hasMissingData:
+              hasMissingOperationalData,
+          }),
+          getUnitDecisionCard({
+            passesMinimums:
+              unitPassesMinimums,
+            netMargin:
+              toNumber(netMargin),
+            hasMissingData:
+              hasMissingOperationalData,
+          }),
+          getPackDecisionCard({
+            showMultipack:
+              showMultipackProfitAdvisor,
+            allBlockedByStock:
+              allMultipackScenariosBlockedByStock,
+            packDoesNotSaveMargin:
+              multipackDoesNotSaveMargin,
+            multipackAdvisor:
+              multipackProfitAdvisor,
+          }),
+          getCampaignDecisionCard({
+            pricingStrategy:
+              detail.decisionAdvisor?.pricing_strategy,
+            hasOperationalBlockers:
+              hasCampaignBlockers,
+          }),
+        ]
+      : []
+
+  const safeNextStep =
+    sellerNextAction ||
+    strategicSummary?.next_step ||
+    "Revisar datos antes de tomar accion."
+
+  const operationalStatus =
+    !unitPassesMinimums
+      ? "Bloqueado por margen de unidad"
+      : hasMissingOperationalData
+        ? "Faltan datos antes de publicar"
+        : "Listo para revision humana"
+
+  const recommendedStrategyItems =
+    uniqueStrings([
+      ...(!unitPassesMinimums && multipackDoesNotSaveMargin
+        ? [
+            "No preparar listing con el proveedor actual.",
+            "Buscar proveedor alternativo, negociar costo o descartar hasta que el mercado cambie.",
+          ]
+        : multipackCanRescueUnitMargin
+        ? [
+            "No publicar como unidad.",
+            "Confirmar stock real, peso y comparables multipack antes de descartar el proveedor.",
+          ]
+        : !unitPassesMinimums
+        ? [
+            "No preparar listing con el proveedor actual.",
+            "Buscar proveedor alternativo o ajustar precio antes de completar datos operativos.",
+          ]
+        : hasMissingOperationalData
+        ? [
+            "Completar datos antes de preparar listing.",
+          ]
+        : [
+            "Preparar listing organico solo si los datos operativos siguen completos.",
+          ]),
+      ...(showMultipackProfitAdvisor
+        ? [
+            multipackDoesNotSaveMargin
+              ? "No usar pack para salvar este producto; no alcanza margen minimo."
+              : multipackCanRescueUnitMargin
+              ? "Mantener pack como simulacion financiera hasta confirmar cantidad suficiente."
+              : allMultipackScenariosBlockedByStock
+              ? "Mantener pack como simulacion financiera hasta confirmar stock."
+              : "Evaluar pack solo con stock, peso y comparables confirmados.",
+          ]
+        : []),
+      "No activar campana todavia.",
+    ])
+
+  const evaluatedOptions = [
+    {
+      label:
+        "Unidad",
+      value:
+        unitPassesMinimums
+          ? "Margen viable"
+          : "Margen no pasa",
+      detail:
+        `${formatCurrency(netProfit)} / ${formatNumber(netMargin, "%")} margen neto`,
+      tone:
+        unitPassesMinimums
+          ? "success"
+          : "danger",
+    },
+    {
+      label:
+        "Pack",
+      value:
+        showMultipackProfitAdvisor
+          ? multipackDoesNotSaveMargin
+            ? "No viable"
+            : allMultipackScenariosBlockedByStock
+            ? "Bloqueado"
+            : "En evaluacion"
+          : "No prioritario",
+      detail:
+        showMultipackProfitAdvisor
+          ? multipackDoesNotSaveMargin
+            ? "Pack no alcanza margen minimo con estos datos."
+            : "Simulacion financiera; no publicacion."
+          : "Unidad primero.",
+      tone:
+        showMultipackProfitAdvisor
+          ? multipackDoesNotSaveMargin ||
+            allMultipackScenariosBlockedByStock
+            ? "danger"
+            : "warning"
+          : "neutral",
+    },
+    {
+      label:
+        "Proveedor actual",
+      value:
+        humanizePipelineValue(
+          supplierModelSimulator?.current_model ||
+          strategicSummary?.supplier_strategy?.supplier_model ||
+          "luna_as_supplier"
+        ),
+      detail:
+        supplierModelSimulator?.summary ||
+        strategicSummary?.supplier_strategy?.note ||
+        "Validar si el proveedor actual sostiene margen y stock.",
+      tone:
+        !unitPassesMinimums
+          ? "warning"
+          : "neutral",
+    },
+    {
+      label:
+        "Proveedor alternativo",
+      value:
+        supplierModelSimulator?.recommended_strategy === "find_better_supplier" ||
+        supplierModelSimulator?.recommended_strategy === "source_direct_recommended"
+          ? multipackCanRescueUnitMargin
+            ? "Plan B"
+            : "Recomendado revisar"
+          : "Opcional",
+      detail:
+        multipackCanRescueUnitMargin
+          ? "Revisar solo si stock, peso o comparables no validan el pack."
+          : supplierSimulatorMissingInputs.length
+          ? `Faltan: ${humanizeSupplierInputs(
+            supplierSimulatorMissingInputs
+          ).join(", ")}`
+          : "Comparar si se quiere escalar.",
+      tone:
+        !unitPassesMinimums
+          ? "warning"
+          : "neutral",
+    },
+    {
+      label:
+        "Campana",
+      value:
+        hasCampaignBlockers
+          ? "Bloqueada"
+          : detail?.decisionAdvisor?.pricing_strategy?.campaign_eligible
+            ? "Posible con aprobacion"
+            : "Esperar observacion",
+      detail:
+        humanizeCampaignNow(
+          detail?.decisionAdvisor?.pricing_strategy
+        ),
+      tone:
+        hasCampaignBlockers
+          ? "warning"
+          : detail?.decisionAdvisor?.pricing_strategy?.campaign_eligible
+            ? "success"
+            : "neutral",
+    },
+  ] as const
+
+  const publishingChecklist = [
+    {
+      label:
+        "Stock",
+      done:
+        hasVisibleStockQuantity,
+      detail:
+        hasVisibleStockQuantity
+          ? stockDiagnosis
+          : hasHighInventoryConfidence
+            ? "Falta cantidad visible para decidir publicacion o pack."
+            : "Confirmar cantidad real antes de publicar.",
+    },
+    {
+      label:
+        "Peso/dimensiones",
+      done:
+        !currentMissingFields.includes("weight_or_dimensions"),
+      detail:
+        currentMissingFields.includes("weight_or_dimensions")
+          ? "Falta antes de confiar en shipping."
+          : "Sin faltante registrado.",
+    },
+    {
+      label:
+        "Imagenes autorizadas",
+      done:
+        !currentMissingFields.includes("authorized_images"),
+      detail:
+        currentMissingFields.includes("authorized_images")
+          ? "Confirmar permiso de uso en eBay."
+          : "Sin faltante registrado.",
+    },
+    {
+      label:
+        "Categoria",
+      done:
+        !currentMissingFields.includes("category_or_inference_data"),
+      detail:
+        currentMissingFields.includes("category_or_inference_data")
+          ? "Confirmar categoria final antes de publicar."
+          : "Sin faltante registrado.",
+    },
+    {
+      label:
+        "Item specifics",
+      done:
+        !currentMissingFields.includes("category_or_inference_data"),
+      detail:
+        currentMissingFields.includes("category_or_inference_data")
+          ? "Completar specifics requeridos por categoria."
+          : "Sin faltante registrado.",
+    },
+    {
+      label:
+        "Comparables multipack",
+      done:
+        !showMultipackProfitAdvisor ||
+        !multipackProfitAdvisor?.missing_inputs?.includes(
+          "comparables_multipack"
+        ),
+      detail:
+        showMultipackProfitAdvisor
+          ? "Validar antes de tratar el pack como opcion operativa."
+          : "No aplica por ahora.",
+    },
+    {
+      label:
+        "Cantidad suficiente para pack",
+      done:
+        !showMultipackProfitAdvisor ||
+        (
+          !multipackDoesNotSaveMargin &&
+          !allMultipackScenariosBlockedByStock
+        ),
+      detail:
+        showMultipackProfitAdvisor
+          ? multipackDoesNotSaveMargin
+            ? "No aplica hasta que el pack alcance margen minimo."
+            : allMultipackScenariosBlockedByStock
+            ? "Pack bloqueado hasta confirmar cantidad suficiente."
+            : "Cantidad visible suficiente para al menos una simulacion de pack."
+          : "No aplica por ahora.",
+    },
+    {
+      label:
+        "Shipping confiable",
+      done:
+        !currentMissingFields.includes("weight_or_dimensions") &&
+        displayedCostBreakdown?.shipping_review_required !== true,
+      detail:
+        displayedCostBreakdown?.shipping_review_required
+          ? "Shipping requiere revision."
+          : "Revisar si cambia peso o empaque.",
+    },
+    {
+      label:
+        "Packaging/fulfillment confirmado",
+      done:
+        !showMultipackProfitAdvisor ||
+        (
+          !multipackDoesNotSaveMargin &&
+          !allMultipackScenariosBlockedByStock
+        ),
+      detail:
+        showMultipackProfitAdvisor
+          ? multipackDoesNotSaveMargin
+            ? "No avanzar a empaque mientras el pack no sea rentable."
+            : "Confirmar empaque si se usa pack, bundle o preparacion especial."
+          : "No aplicar costos extra sin confirmacion.",
+    },
+  ]
+
   const stateTone =
     detail?.candidate.state === "NEEDS_DATA"
       ? "warning"
@@ -2563,7 +3208,163 @@ function CandidateDetailDrawer({
           </div>
         ) : detail ? (
           <div className="mt-6 space-y-5">
-            <DetailSection title="Resumen IMNOVA">
+            <DetailSection title="Decision del vendedor">
+              <div className="space-y-4">
+                <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.08] p-4">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-50/55">
+                        Respuesta principal
+                      </p>
+                      <p className="mt-3 text-xl font-black leading-7 text-white">
+                        {sellerDecisionCards[0]?.value ||
+                          "Revisar antes de decidir."}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-cyan-50/75">
+                        {sellerDecisionCards[0]?.detail ||
+                          "No tomar accion operativa sin revisar datos operativos, margen, stock y mercado."}
+                      </p>
+                    </div>
+                    <span
+                      className={`
+                        inline-flex
+                        w-fit
+                        rounded-md
+                        border
+                        px-3
+                        py-2
+                        text-xs
+                        font-black
+                        ${getStateClassName(detail.candidate.state)}
+                      `}
+                    >
+                      {humanizePipelineValue(detail.candidate.state)}
+                    </span>
+                  </div>
+                  <div className="mt-4 rounded-md border border-white/10 bg-black/20 p-3">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-white/35">
+                      Siguiente paso seguro
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-white/75">
+                      {safeNextStep}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  {sellerDecisionCards.slice(1).map(card => (
+                    <SummaryMetric
+                      key={card.label}
+                      label={card.label}
+                      value={card.value}
+                      detail={card.detail}
+                      tone={card.tone}
+                    />
+                  ))}
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="rounded-lg border border-white/10 bg-black/25 p-3">
+                    <p className="text-xs font-black uppercase tracking-[0.16em] text-white/45">
+                      Diagnostico rapido
+                    </p>
+                    <div className="mt-3 space-y-3">
+                      <Field
+                        label="Margen unidad"
+                        value={`${formatCurrency(netProfit)} / ${formatNumber(netMargin, "%")}`}
+                      />
+                      <Field
+                        label="No vender por debajo de"
+                        value={formatCurrency(minimumProfitPrice)}
+                      />
+                      <Field
+                        label="Stock"
+                        value={stockDiagnosis}
+                      />
+                      <Field
+                        label="Datos faltantes"
+                        value={
+                          simpleMissingFields.length
+                            ? simpleMissingFields.join(", ")
+                            : "Sin faltantes criticos"
+                        }
+                      />
+                      <Field
+                        label="Estado operativo"
+                        value={operationalStatus}
+                      />
+                      <Field
+                        label="Riesgo principal"
+                        value={humanizePipelineValue(sellerRisk)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.07] p-3">
+                    <p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-50/60">
+                      Estrategia recomendada
+                    </p>
+                    <div className="mt-3">
+                      <SimpleList
+                        items={recommendedStrategyItems}
+                        empty="Revisar datos antes de tomar accion."
+                      />
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.07] p-3">
+                    <p className="text-xs font-black uppercase tracking-[0.16em] text-amber-50/60">
+                      Checklist antes de publicar
+                    </p>
+                    <ul className="mt-3 space-y-2">
+                      {publishingChecklist.map(item => (
+                        <li
+                          key={item.label}
+                          className="flex gap-2 rounded-md border border-white/10 bg-black/20 p-2"
+                        >
+                          {item.done ? (
+                            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-200" />
+                          ) : (
+                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-200" />
+                          )}
+                          <span>
+                            <span className="block text-sm font-bold text-white/75">
+                              {item.label}
+                            </span>
+                            <span className="mt-1 block text-xs leading-5 text-white/45">
+                              {item.detail}
+                            </span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-white/10 bg-white/[0.025] p-3">
+                  <p className="text-xs font-black uppercase tracking-[0.16em] text-white/45">
+                    Opciones evaluadas
+                  </p>
+                  <div className="mt-3 grid gap-3 md:grid-cols-5">
+                    {evaluatedOptions.map(option => (
+                      <SummaryMetric
+                        key={option.label}
+                        label={option.label}
+                        value={option.value}
+                        detail={option.detail}
+                        tone={option.tone}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <p className="rounded-lg border border-white/10 bg-black/25 p-3 text-xs leading-5 text-white/50">
+                  Este bloque no publica, no crea drafts y no modifica listings. Pack y campana se muestran como evaluacion segura hasta que los datos operativos y la aprobacion humana esten completos.
+                </p>
+              </div>
+            </DetailSection>
+
+            <DetailSection title="Detalle comercial resumido">
               {strategicSummary ? (
                 <div className="space-y-4">
                   <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.08] p-4">
@@ -2765,7 +3566,7 @@ function CandidateDetailDrawer({
               )}
             </DetailSection>
 
-            <DetailSection title="Informacion base">
+            <DetailSection title="Evidencia tecnica: informacion base">
               <div className="grid gap-3 md:grid-cols-2">
                 <Field
                   label="candidate_key"
@@ -2815,7 +3616,7 @@ function CandidateDetailDrawer({
             </DetailSection>
 
             {detail.pipelineReanalysisAdvisor ? (
-              <DetailSection title="Revision operativa IMNOVA">
+              <DetailSection title="Evidencia tecnica: revision operativa">
                 <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.07] p-4">
                   <div className="grid gap-3 md:grid-cols-3">
                     <Field
@@ -2865,7 +3666,7 @@ function CandidateDetailDrawer({
               </DetailSection>
             ) : null}
 
-            <DetailSection title="Decision estrategica">
+            <DetailSection title="Detalle de opciones y simulaciones">
               {detail.decisionAdvisor ? (
                 <div className="space-y-4">
                   <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.08] p-4">
@@ -2920,18 +3721,12 @@ function CandidateDetailDrawer({
                         />
                         <Field
                           label={
-                            hasCampaignOperationalBlockers(
-                              detail.candidate,
-                              detail.decisionAdvisor.pricing_strategy
-                            )
-                              ? "Campana: referencia interna"
-                              : "Campana maxima segura"
+                            hasCampaignBlockers
+                              ? "Referencia interna de campana"
+                              : "Campana maxima simulada"
                           }
                           value={
-                            hasCampaignOperationalBlockers(
-                              detail.candidate,
-                              detail.decisionAdvisor.pricing_strategy
-                            )
+                            hasCampaignBlockers
                               ? `Simulacion ${formatNumber(
                                 detail.decisionAdvisor.pricing_strategy.max_safe_campaign_percent,
                                 "%"
@@ -3022,16 +3817,26 @@ function CandidateDetailDrawer({
                         />
                         <Field
                           label={
-                            allMultipackScenariosBlockedByStock
+                            multipackDoesNotSaveMargin
+                              ? "Resultado financiero"
+                              : allMultipackScenariosBlockedByStock
                               ? "Mejor simulacion financiera"
                               : "Mejor hipotesis de pack"
                           }
                           value={
-                            multipackProfitAdvisor.best_pack?.label ||
-                            multipackProfitAdvisor.best_pack_hypothesis?.label ||
-                            "Sin pack viable con estos datos"
+                            multipackDoesNotSaveMargin
+                              ? "Sin pack viable con estos datos"
+                              : multipackProfitAdvisor.best_pack?.label ||
+                                multipackProfitAdvisor.best_pack_hypothesis?.label ||
+                                "Sin pack viable con estos datos"
                           }
                         />
+                        {multipackDoesNotSaveMargin ? (
+                          <Field
+                            label="Estado financiero"
+                            value="Pack no alcanza margen minimo"
+                          />
+                        ) : null}
                         {allMultipackScenariosBlockedByStock ? (
                           <Field
                             label="Estado operativo"
@@ -3458,7 +4263,7 @@ function CandidateDetailDrawer({
               )}
             </DetailSection>
 
-            <DetailSection title="Por que esta bloqueado">
+            <DetailSection title="Bloqueos y faltantes">
               {humanBlockReasons.length > 0 ? (
                 <div className="space-y-3">
                   {humanBlockReasons.map(
@@ -3489,7 +4294,7 @@ function CandidateDetailDrawer({
               )}
             </DetailSection>
 
-            <DetailSection title="Desglose de costeo">
+            <DetailSection title="Detalle financiero: desglose de costeo">
               {costBreakdown ? (
                 <div className="space-y-4">
                   <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.06] p-3 text-xs leading-5 text-cyan-50/70">
@@ -3836,7 +4641,7 @@ function CandidateDetailDrawer({
               )}
             </DetailSection>
 
-            <DetailSection title="Profit scenario">
+            <DetailSection title="Detalle financiero: profit scenario">
               <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.06] p-3 text-xs leading-5 text-cyan-50/70">
                 Regla minima: net profit mayor que $0 y net margin minimo de 10%. ROI se muestra como metrica, pero no bloquea minimos en esta configuracion.
               </div>
@@ -4087,7 +4892,7 @@ function CandidateDetailDrawer({
               />
             </DetailSection>
 
-            <DetailSection title="Price Intelligence">
+            <DetailSection title="Evidencia de mercado: Price Intelligence">
               {detail.priceIntelligence ? (
                 <>
                   <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.06] p-4">
@@ -4342,7 +5147,7 @@ function CandidateDetailDrawer({
               )}
             </DetailSection>
 
-            <DetailSection title="Compliance findings">
+            <DetailSection title="Evidencia tecnica: compliance">
               <div className="grid gap-3 md:grid-cols-3">
                 <Field
                   label="overall_status"
@@ -4364,7 +5169,7 @@ function CandidateDetailDrawer({
               />
             </DetailSection>
 
-            <DetailSection title="Score breakdown">
+            <DetailSection title="Evidencia tecnica: score breakdown">
               <div className="grid gap-3 md:grid-cols-3">
                 <Field
                   label="winner_score"
@@ -4418,7 +5223,7 @@ function CandidateDetailDrawer({
               />
             </DetailSection>
 
-            <DetailSection title="Validation">
+            <DetailSection title="Evidencia tecnica: validation">
               <div className="grid gap-3 md:grid-cols-2">
                 <Field
                   label="validation_status"
@@ -4484,7 +5289,7 @@ function CandidateDetailDrawer({
               )}
             </DetailSection>
 
-            <DetailSection title="Local draft">
+            <DetailSection title="Evidencia tecnica: local draft dry-run">
               <div className="grid gap-3 md:grid-cols-3">
                 <Field
                   label="draft_status"
@@ -4536,7 +5341,7 @@ function CandidateDetailDrawer({
               />
             </DetailSection>
 
-            <DetailSection title="Audit log">
+            <DetailSection title="Evidencia tecnica: audit log">
               {(detail.auditLog || []).length > 0 ? (
                 <div className="space-y-3">
                   {(detail.auditLog || []).map(
