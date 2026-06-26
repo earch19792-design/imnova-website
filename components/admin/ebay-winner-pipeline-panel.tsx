@@ -7,6 +7,9 @@ import {
   useState,
 } from "react"
 import {
+  createPortal,
+} from "react-dom"
+import {
   AlertTriangle,
   BarChart3,
   CheckCircle2,
@@ -14,6 +17,8 @@ import {
   ChevronRight,
   ClipboardList,
   FileSearch,
+  Maximize2,
+  Minimize2,
   PackageCheck,
   RefreshCw,
   ShieldCheck,
@@ -916,6 +921,101 @@ function getComplianceClassName(
   return "border-white/10 bg-white/[0.04] text-white/45"
 }
 
+function getCandidateMarginSignal(
+  candidate: EbayCandidate
+) {
+  const netProfit =
+    toNumber(
+      candidate.profitScenario?.net_profit
+    )
+
+  const netMargin =
+    toNumber(
+      candidate.profitScenario?.net_margin_percent
+    )
+
+  const passesMinimums =
+    candidate.profitScenario?.passes_minimums === true ||
+    (
+      netProfit !== null &&
+      netProfit > 0 &&
+      netMargin !== null &&
+      netMargin >= 10
+    )
+
+  if (passesMinimums) {
+    return {
+      label:
+        "Margen viable",
+      className:
+        "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100",
+    }
+  }
+
+  if (
+    netProfit !== null ||
+    netMargin !== null
+  ) {
+    return {
+      label:
+        "No publicar unidad",
+      className:
+        "border-red-300/25 bg-red-300/[0.10] text-red-100",
+    }
+  }
+
+  return {
+    label:
+      "Sin margen",
+    className:
+      "border-white/10 bg-white/[0.04] text-white/45",
+  }
+}
+
+function getCandidateReviewSignal(
+  candidate: EbayCandidate
+) {
+  if (candidate.state === "NEEDS_DATA") {
+    return "Faltan datos"
+  }
+
+  if (
+    candidate.state === "BLOCKED" ||
+    candidate.state === "REJECTED"
+  ) {
+    return "Bloqueado"
+  }
+
+  if (
+    candidate.state === "VALIDATED" ||
+    candidate.state === "APPROVED" ||
+    candidate.state === "APPROVAL_PENDING"
+  ) {
+    return "Revisar"
+  }
+
+  return humanizePipelineValue(
+    candidate.state
+  )
+}
+
+function getCandidateStockSignal(
+  candidate: EbayCandidate
+) {
+  const confidence =
+    candidate.pipelineReanalysisAdvisor?.inventory_confidence
+
+  if (confidence === "high") {
+    return "Stock: confianza alta"
+  }
+
+  if (confidence) {
+    return `Stock: ${humanizePipelineValue(confidence)}`
+  }
+
+  return "Stock: sin confirmar"
+}
+
 function StatusBadge({
   value,
   className,
@@ -1417,11 +1517,13 @@ function SummaryMetric({
   value,
   detail,
   tone = "neutral",
+  isCompact = false,
 }: {
   label: string
   value: string | number
   detail?: string
   tone?: "neutral" | "success" | "warning" | "danger"
+  isCompact?: boolean
 }) {
   const toneClass =
     tone === "success"
@@ -1433,15 +1535,30 @@ function SummaryMetric({
           : "border-white/10 bg-black/25 text-white"
 
   return (
-    <div className={`rounded-lg border p-3 ${toneClass}`}>
-      <p className="text-[10px] uppercase tracking-[0.16em] opacity-55">
+    <div
+      className={`
+        min-w-0
+        rounded-lg
+        border
+        p-3
+        ${toneClass}
+      `}
+    >
+      <p className="break-words text-[10px] uppercase tracking-[0.16em] opacity-55">
         {label}
       </p>
-      <p className="mt-2 text-xl font-black leading-7">
+      <p
+        className={`
+          mt-2
+          break-words
+          font-black
+          ${isCompact ? "text-base leading-6" : "text-xl leading-7"}
+        `}
+      >
         {value}
       </p>
       {detail ? (
-        <p className="mt-1 text-xs leading-5 opacity-65">
+        <p className="mt-2 break-words text-xs leading-5 opacity-65">
           {detail}
         </p>
       ) : null}
@@ -2399,6 +2516,11 @@ function CandidateDetailDrawer({
     setEditablePromotionPercent,
   ] = useState("")
 
+  const [
+    isFullscreenDetail,
+    setIsFullscreenDetail,
+  ] = useState(false)
+
   useEffect(() => {
     setEditableShippingCost(
       costBreakdown?.shipping_cost === null ||
@@ -3148,30 +3270,24 @@ function CandidateDetailDrawer({
         ? "danger"
         : "success"
 
-  return (
-    <div className="fixed inset-0 z-[70] flex justify-end bg-black/65 backdrop-blur-sm">
-      <button
-        type="button"
-        aria-label="Cerrar detalle"
-        onClick={onClose}
-        className="absolute inset-0 cursor-default"
-      />
-      <aside
-        className="
-          relative
-          z-10
-          h-full
-          w-full
-          max-w-3xl
-          overflow-y-auto
-          border-l
-          border-white/10
-          bg-zinc-950
-          p-5
-          shadow-2xl
-          md:p-6
-        "
-      >
+  const detailPanel = (
+    <section
+      className={`
+        flex
+        h-full
+        min-h-0
+        flex-col
+        overflow-hidden
+        bg-zinc-950
+        shadow-2xl
+        ${
+          isFullscreenDetail
+            ? "rounded-none border-0"
+            : "rounded-lg border border-white/10"
+        }
+      `}
+    >
+      <div className="border-b border-white/10 p-5 md:p-6">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[10px] uppercase tracking-[0.28em] text-cyan-100/55">
@@ -3179,35 +3295,88 @@ function CandidateDetailDrawer({
             </p>
             <h3 className="mt-3 text-2xl font-black text-white">
               {detail?.candidate.title ||
-                "Candidato eBay"}
+              "Candidato eBay"}
             </h3>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="
-              rounded-lg
-              border
-              border-white/10
-              bg-white/[0.04]
-              p-2
-              text-white/60
-              transition
-              hover:border-cyan-300/25
-              hover:text-cyan-100
-            "
-            aria-label="Cerrar"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                setIsFullscreenDetail(
+                  current => !current
+                )
+              }
+              className="
+                inline-flex
+                items-center
+                gap-2
+                rounded-lg
+                border
+                border-cyan-300/20
+                bg-cyan-300/[0.08]
+                px-3
+                py-2
+                text-xs
+                font-bold
+                text-cyan-50
+                transition
+                hover:bg-cyan-300/[0.13]
+              "
+            >
+              {isFullscreenDetail ? (
+                <Minimize2 className="h-4 w-4" />
+              ) : (
+                <Maximize2 className="h-4 w-4" />
+              )}
+              <span className="hidden sm:inline">
+                {isFullscreenDetail
+                  ? "Volver al split"
+                  : "Pantalla completa"}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="
+                rounded-lg
+                border
+                border-white/10
+                bg-white/[0.04]
+                p-2
+                text-white/60
+                transition
+                hover:border-cyan-300/25
+                hover:text-cyan-100
+              "
+              aria-label="Cerrar"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
+      </div>
 
+      <div
+        className={`
+          min-h-0
+          flex-1
+          p-5
+          md:p-6
+          overflow-y-auto
+        `}
+      >
         {isLoading ? (
           <div className="mt-8 rounded-lg border border-white/10 bg-white/[0.03] p-6 text-sm text-white/50">
             Cargando detalle...
           </div>
         ) : detail ? (
-          <div className="mt-6 space-y-5">
+          <div
+            className={`
+              mt-6
+              space-y-5
+              min-w-0
+            `}
+          >
             <DetailSection title="Decision del vendedor">
               <div className="space-y-4">
                 <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.08] p-4">
@@ -3345,7 +3514,7 @@ function CandidateDetailDrawer({
                   <p className="text-xs font-black uppercase tracking-[0.16em] text-white/45">
                     Opciones evaluadas
                   </p>
-                  <div className="mt-3 grid gap-3 md:grid-cols-5">
+                  <div className="mt-3 grid min-w-0 gap-3 md:grid-cols-2">
                     {evaluatedOptions.map(option => (
                       <SummaryMetric
                         key={option.label}
@@ -3353,6 +3522,7 @@ function CandidateDetailDrawer({
                         value={option.value}
                         detail={option.detail}
                         tone={option.tone}
+                        isCompact
                       />
                     ))}
                   </div>
@@ -5391,9 +5561,26 @@ function CandidateDetailDrawer({
             No se encontro detalle para este candidato.
           </div>
         )}
-      </aside>
-    </div>
+      </div>
+    </section>
   )
+
+  if (isFullscreenDetail) {
+    if (typeof document === "undefined") {
+      return detailPanel
+    }
+
+    return createPortal(
+      <div className="fixed inset-0 z-[100] bg-zinc-950">
+        <div className="h-full w-full">
+          {detailPanel}
+        </div>
+      </div>,
+      document.body
+    )
+  }
+
+  return detailPanel
 }
 
 export function EbayWinnerPipelinePanel({
@@ -6245,248 +6432,263 @@ export function EbayWinnerPipelinePanel({
         </div>
       </section>
 
-      <section
-        className="
-          overflow-hidden
-          rounded-lg
-          border
-          border-white/10
-          bg-black/30
-        "
-      >
-        <div className="flex flex-col gap-3 border-b border-white/10 p-5 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.26em] text-white/40">
-              Candidates
-            </p>
-            <h3 className="mt-2 text-xl font-black text-white">
-              eBay winner candidates
-            </h3>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-white/45">
-            <button
-              type="button"
-              onClick={() =>
-                setPage(
-                  Math.max(
-                    0,
-                    page - 1
-                  )
-                )
-              }
-              disabled={page === 0 || isLoading}
-              className="rounded-lg border border-white/10 bg-white/[0.04] p-2 transition hover:border-cyan-300/25 disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label="Pagina anterior"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <span className="min-w-20 text-center">
-              {pageLabel}
-            </span>
-            <button
-              type="button"
-              onClick={() =>
-                setPage(page + 1)
-              }
-              disabled={!pagination?.hasNextPage || isLoading}
-              className="rounded-lg border border-white/10 bg-white/[0.04] p-2 transition hover:border-cyan-300/25 disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label="Pagina siguiente"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1260px] border-collapse text-left">
-            <thead className="bg-white/[0.035] text-[10px] uppercase tracking-[0.16em] text-white/35">
-              <tr>
-                <th className="px-4 py-3">state</th>
-                <th className="px-4 py-3">supplier_sku</th>
-                <th className="px-4 py-3">title</th>
-                <th className="px-4 py-3">winner_score</th>
-                <th className="px-4 py-3">net_profit</th>
-                <th className="px-4 py-3">margin</th>
-                <th className="px-4 py-3">ROI</th>
-                <th className="px-4 py-3">compliance</th>
-                <th className="px-4 py-3">draft_status</th>
-                <th className="px-4 py-3">dry_run_only</th>
-                <th className="px-4 py-3">ebay_draft_id</th>
-                <th className="px-4 py-3">last_evaluated_at</th>
-                <th className="px-4 py-3">detalle</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading ? (
-                <tr>
-                  <td
-                    colSpan={13}
-                    className="px-4 py-10 text-center text-sm text-white/45"
-                  >
-                    Cargando candidatos...
-                  </td>
-                </tr>
-              ) : candidates.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={13}
-                    className="px-4 py-10 text-center text-sm text-white/45"
-                  >
-                    Sin candidatos para los filtros actuales.
-                  </td>
-                </tr>
-              ) : (
-                candidates.map(candidate => {
-                  const isFocusedCandidate =
-                    (
-                      focusedCandidateId &&
-                      candidate.id === focusedCandidateId
-                    ) ||
-                    (
-                      focusedCandidateKey &&
-                      candidate.candidate_key === focusedCandidateKey
+      <section className="grid gap-4 xl:grid-cols-[minmax(320px,430px)_minmax(0,1fr)]">
+        <div
+          className="
+            overflow-hidden
+            rounded-lg
+            border
+            border-white/10
+            bg-black/30
+          "
+        >
+          <div className="flex flex-col gap-3 border-b border-white/10 p-5 md:flex-row md:items-center md:justify-between xl:flex-col xl:items-stretch">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.26em] text-white/40">
+                Candidates
+              </p>
+              <h3 className="mt-2 text-xl font-black text-white">
+                eBay winner candidates
+              </h3>
+              <p className="mt-2 text-xs leading-5 text-white/45">
+                Selecciona un producto para revisar su decision sin salir de la lista.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-white/45">
+              <button
+                type="button"
+                onClick={() =>
+                  setPage(
+                    Math.max(
+                      0,
+                      page - 1
                     )
+                  )
+                }
+                disabled={page === 0 || isLoading}
+                className="rounded-lg border border-white/10 bg-white/[0.04] p-2 transition hover:border-cyan-300/25 disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Pagina anterior"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <span className="min-w-20 text-center">
+                {pageLabel}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setPage(page + 1)
+                }
+                disabled={!pagination?.hasNextPage || isLoading}
+                className="rounded-lg border border-white/10 bg-white/[0.04] p-2 transition hover:border-cyan-300/25 disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Pagina siguiente"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
 
-                  return (
-                    <tr
-                      key={candidate.id}
-                      className={`
-                        border-b
-                        align-top
-                        ${
-                          isFocusedCandidate
-                            ? "border-cyan-300/35 bg-cyan-300/[0.10]"
-                            : "border-white/5"
-                        }
-                      `}
-                    >
-                    <td className="px-4 py-4">
+          <div className="space-y-3 p-3 xl:max-h-[calc(100vh-220px)] xl:overflow-y-auto">
+            {isLoading ? (
+              <div className="rounded-lg border border-white/10 bg-white/[0.03] p-6 text-center text-sm text-white/45">
+                Cargando candidatos...
+              </div>
+            ) : candidates.length === 0 ? (
+              <div className="rounded-lg border border-white/10 bg-white/[0.03] p-6 text-center text-sm text-white/45">
+                Sin candidatos para los filtros actuales.
+              </div>
+            ) : (
+              candidates.map(candidate => {
+                const isFocusedCandidate =
+                  (
+                    focusedCandidateId &&
+                    candidate.id === focusedCandidateId
+                  ) ||
+                  (
+                    focusedCandidateKey &&
+                    candidate.candidate_key === focusedCandidateKey
+                  )
+
+                const isSelectedCandidate =
+                  candidate.id === selectedCandidateId
+
+                const marginSignal =
+                  getCandidateMarginSignal(
+                    candidate
+                  )
+
+                const missingDataCount =
+                  unknownToStringArray(
+                    candidate.needs_data
+                  ).length
+
+                return (
+                  <button
+                    key={candidate.id}
+                    type="button"
+                    onClick={() =>
+                      loadDetail(
+                        candidate.id
+                      )
+                    }
+                    className={`
+                      w-full
+                      rounded-lg
+                      border
+                      p-4
+                      text-left
+                      transition
+                      ${
+                        isSelectedCandidate
+                          ? "border-cyan-300/40 bg-cyan-300/[0.12]"
+                          : isFocusedCandidate
+                            ? "border-cyan-300/30 bg-cyan-300/[0.08]"
+                            : "border-white/10 bg-white/[0.03] hover:border-cyan-300/25 hover:bg-white/[0.05]"
+                      }
+                    `}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
                       <StatusBadge
                         value={candidate.state}
                         className={getStateClassName(
                           candidate.state
                         )}
                       />
-                    </td>
-                    <td className="px-4 py-4 text-xs font-semibold text-white/70">
-                      {candidate.supplier_sku || "-"}
-                    </td>
-                    <td className="max-w-[260px] px-4 py-4">
-                      <p className="line-clamp-2 text-sm font-semibold leading-5 text-white">
-                        {candidate.title}
-                      </p>
-                      <p className="mt-2 line-clamp-1 text-[11px] text-white/35">
-                        {candidate.candidate_key}
-                      </p>
-                      {isFocusedCandidate ? (
-                        <p className="mt-2 inline-flex rounded-md border border-cyan-300/25 bg-cyan-300/[0.12] px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-cyan-50">
-                          Recién evaluado
-                        </p>
-                      ) : null}
-                    </td>
-                    <td className="px-4 py-4 text-sm font-black text-white">
-                      {formatNumber(
-                        candidate.score?.winner_score
-                      )}
-                    </td>
-                    <td className="px-4 py-4 text-sm font-bold text-white">
-                      {formatCurrency(
-                        candidate.profitScenario?.net_profit
-                      )}
-                    </td>
-                    <td className="px-4 py-4 text-sm text-white/65">
-                      {formatNumber(
-                        candidate.profitScenario?.net_margin_percent,
-                        "%"
-                      )}
-                    </td>
-                    <td className="px-4 py-4 text-sm text-white/65">
-                      {formatNumber(
-                        candidate.profitScenario?.roi_percent,
-                        "%"
-                      )}
-                    </td>
-                    <td className="px-4 py-4">
-                      <StatusBadge
-                        value={candidate.compliance?.overall_status}
-                        className={getComplianceClassName(
-                          candidate.compliance?.overall_status
+                      <span
+                        className={`
+                          inline-flex
+                          rounded-md
+                          border
+                          px-2
+                          py-1
+                          text-[10px]
+                          font-black
+                          uppercase
+                          tracking-[0.12em]
+                          ${marginSignal.className}
+                        `}
+                      >
+                        {marginSignal.label}
+                      </span>
+                    </div>
+
+                    <p className="mt-3 line-clamp-2 text-sm font-black leading-5 text-white">
+                      {candidate.title}
+                    </p>
+
+                    <div className="mt-3 grid gap-2 text-xs text-white/55 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+                      <span>
+                        SKU:{" "}
+                        <span className="font-semibold text-white/75">
+                          {candidate.supplier_sku || "-"}
+                        </span>
+                      </span>
+                      <span>
+                        Score:{" "}
+                        <span className="font-semibold text-white/75">
+                          {formatNumber(
+                            candidate.score?.winner_score
+                          )}
+                        </span>
+                      </span>
+                      <span>
+                        Profit:{" "}
+                        <span className="font-semibold text-white/75">
+                          {formatCurrency(
+                            candidate.profitScenario?.net_profit
+                          )}
+                        </span>
+                      </span>
+                      <span>
+                        Margen:{" "}
+                        <span className="font-semibold text-white/75">
+                          {formatNumber(
+                            candidate.profitScenario?.net_margin_percent,
+                            "%"
+                          )}
+                        </span>
+                      </span>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="rounded-md border border-white/10 bg-black/25 px-2 py-1 text-[11px] text-white/55">
+                        {getCandidateReviewSignal(
+                          candidate
                         )}
-                      />
-                    </td>
-                    <td className="px-4 py-4 text-xs text-white/55">
-                      {candidate.draft?.draft_status || "Sin draft"}
-                    </td>
-                    <td className="px-4 py-4 text-xs text-white/55">
-                      {candidate.draft
-                        ? String(
-                            candidate.draft.dry_run_only
-                          )
-                        : "-"}
-                    </td>
-                    <td className="px-4 py-4 text-xs text-white/55">
+                      </span>
+                      <span className="rounded-md border border-white/10 bg-black/25 px-2 py-1 text-[11px] text-white/55">
+                        {getCandidateStockSignal(
+                          candidate
+                        )}
+                      </span>
+                      {missingDataCount > 0 ? (
+                        <span className="rounded-md border border-amber-300/20 bg-amber-300/[0.08] px-2 py-1 text-[11px] text-amber-100">
+                          {missingDataCount} datos faltantes
+                        </span>
+                      ) : null}
                       {candidate.draft?.ebay_draft_id ? (
-                        <span className="text-red-100">
-                          {candidate.draft.ebay_draft_id}
+                        <span className="rounded-md border border-red-300/20 bg-red-300/[0.08] px-2 py-1 text-[11px] text-red-100">
+                          Revisar draft real detectado
                         </span>
                       ) : (
-                        "null"
+                        <span className="rounded-md border border-emerald-300/20 bg-emerald-300/[0.08] px-2 py-1 text-[11px] text-emerald-100">
+                          Sin draft real
+                        </span>
                       )}
-                    </td>
-                    <td className="px-4 py-4 text-xs leading-5 text-white/45">
+                    </div>
+
+                    {isFocusedCandidate ? (
+                      <p className="mt-3 inline-flex rounded-md border border-cyan-300/25 bg-cyan-300/[0.12] px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-cyan-50">
+                        Recién evaluado
+                      </p>
+                    ) : null}
+
+                    <p className="mt-3 line-clamp-1 text-[11px] text-white/30">
+                      {candidate.candidate_key}
+                    </p>
+                    <p className="mt-1 text-[11px] text-white/30">
+                      Evaluado:{" "}
                       {formatDate(
                         candidate.last_evaluated_at
                       )}
-                    </td>
-                    <td className="px-4 py-4">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          loadDetail(
-                            candidate.id
-                          )
-                        }
-                        className="
-                          rounded-lg
-                          border
-                          border-cyan-300/20
-                          bg-cyan-300/[0.08]
-                          px-3
-                          py-2
-                          text-xs
-                          font-bold
-                          text-cyan-50
-                          transition
-                          hover:bg-cyan-300/[0.13]
-                        "
-                      >
-                        Ver detalle
-                      </button>
-                    </td>
-                    </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
+                    </p>
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </div>
+
+        <div className="min-w-0">
+          {selectedCandidateId ? (
+            <CandidateDetailDrawer
+              detail={detail}
+              isLoading={isDetailLoading}
+              isReprocessing={isReprocessing}
+              reprocessStatus={reprocessStatus}
+              onReprocess={reprocessWithPriceIntelligence}
+              onReprocessSuggestedPrice={reprocessWithSuggestedPrice}
+              onClose={() => {
+                setSelectedCandidateId("")
+                setDetail(null)
+                setReprocessStatus(null)
+              }}
+            />
+          ) : (
+            <div className="rounded-lg border border-white/10 bg-black/30 p-6 text-sm leading-6 text-white/50">
+              <p className="text-[10px] uppercase tracking-[0.24em] text-white/35">
+                Detalle del producto
+              </p>
+              <h3 className="mt-3 text-xl font-black text-white">
+                Selecciona un candidato
+              </h3>
+              <p className="mt-3 max-w-2xl">
+                La decision del vendedor, el diagnostico rapido y el checklist apareceran aqui. Este panel es solo revision segura: no publica, no crea drafts y no modifica listings.
+              </p>
+            </div>
+          )}
         </div>
       </section>
-
-      {selectedCandidateId && (
-        <CandidateDetailDrawer
-          detail={detail}
-          isLoading={isDetailLoading}
-          isReprocessing={isReprocessing}
-          reprocessStatus={reprocessStatus}
-          onReprocess={reprocessWithPriceIntelligence}
-          onReprocessSuggestedPrice={reprocessWithSuggestedPrice}
-          onClose={() => {
-            setSelectedCandidateId("")
-            setDetail(null)
-            setReprocessStatus(null)
-          }}
-        />
-      )}
     </div>
   )
 }
