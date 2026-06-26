@@ -460,6 +460,63 @@ type ReprocessStatus = {
   message: string
 }
 
+type ReviewFilter =
+  | "all"
+  | "needs_data"
+  | "blocked"
+  | "margin_viable"
+  | "no_margin"
+  | "ready_for_review"
+  | "stock_review"
+
+const reviewFilterOptions: {
+  value: ReviewFilter
+  label: string
+}[] = [
+  {
+    value:
+      "all",
+    label:
+      "Todos",
+  },
+  {
+    value:
+      "needs_data",
+    label:
+      "Necesita datos",
+  },
+  {
+    value:
+      "blocked",
+    label:
+      "Bloqueado",
+  },
+  {
+    value:
+      "margin_viable",
+    label:
+      "Margen viable",
+  },
+  {
+    value:
+      "no_margin",
+    label:
+      "Sin margen",
+  },
+  {
+    value:
+      "ready_for_review",
+    label:
+      "Listo para revision",
+  },
+  {
+    value:
+      "stock_review",
+    label:
+      "Stock por revisar",
+  },
+]
+
 const candidateStateOptions = [
   "",
   "DETECTED",
@@ -991,6 +1048,132 @@ function getCandidateMarginSignal(
     className:
       "border-white/10 bg-white/[0.04] text-white/45",
   }
+}
+
+function candidatePassesMarginMinimums(
+  candidate: EbayCandidate
+) {
+  const netProfit =
+    toNumber(
+      candidate.profitScenario?.net_profit
+    )
+
+  const netMargin =
+    toNumber(
+      candidate.profitScenario?.net_margin_percent
+    )
+
+  return candidate.profitScenario?.passes_minimums === true ||
+    (
+      netProfit !== null &&
+      netProfit > 0 &&
+      netMargin !== null &&
+      netMargin >= 10
+    )
+}
+
+function candidateHasMarginData(
+  candidate: EbayCandidate
+) {
+  return toNumber(
+    candidate.profitScenario?.net_profit
+  ) !== null ||
+    toNumber(
+      candidate.profitScenario?.net_margin_percent
+    ) !== null ||
+    candidate.profitScenario?.passes_minimums !== undefined &&
+      candidate.profitScenario?.passes_minimums !== null
+}
+
+function candidateNeedsData(
+  candidate: EbayCandidate
+) {
+  return candidate.state === "NEEDS_DATA" ||
+    unknownToStringArray(
+      candidate.needs_data
+    ).length > 0
+}
+
+function candidateIsBlockedForReview(
+  candidate: EbayCandidate
+) {
+  return candidate.state === "BLOCKED" ||
+    candidate.state === "REJECTED" ||
+    candidate.compliance?.overall_status === "blocked"
+}
+
+function candidateIsReadyForHumanReview(
+  candidate: EbayCandidate
+) {
+  return candidate.state === "VALIDATED" ||
+    candidate.state === "APPROVED" ||
+    candidate.state === "APPROVAL_PENDING"
+}
+
+function candidateNeedsStockReview(
+  candidate: EbayCandidate
+) {
+  const confidence =
+    candidate.pipelineReanalysisAdvisor?.inventory_confidence
+
+  const scope =
+    candidate.pipelineReanalysisAdvisor?.inventory_scope
+
+  return confidence !== "high" ||
+    (
+      scope !== "variant_level" &&
+      scope !== "product_level"
+    )
+}
+
+function candidateMatchesReviewFilter(
+  candidate: EbayCandidate,
+  filter: ReviewFilter
+) {
+  if (filter === "all") {
+    return true
+  }
+
+  if (filter === "needs_data") {
+    return candidateNeedsData(
+      candidate
+    )
+  }
+
+  if (filter === "blocked") {
+    return candidateIsBlockedForReview(
+      candidate
+    )
+  }
+
+  if (filter === "margin_viable") {
+    return candidatePassesMarginMinimums(
+      candidate
+    )
+  }
+
+  if (filter === "no_margin") {
+    return candidateHasMarginData(
+      candidate
+    ) &&
+      !candidatePassesMarginMinimums(
+        candidate
+      )
+  }
+
+  if (filter === "ready_for_review") {
+    return candidateIsReadyForHumanReview(
+      candidate
+    )
+  }
+
+  if (filter === "stock_review") {
+    return candidateNeedsStockReview(
+      candidate
+    )
+  }
+
+  return true
 }
 
 function getCandidateReviewSignal(
@@ -5975,6 +6158,11 @@ export function EbayWinnerPipelinePanel({
   ] = useState(0)
 
   const [
+    reviewFilter,
+    setReviewFilter,
+  ] = useState<ReviewFilter>("all")
+
+  const [
     selectedCandidateId,
     setSelectedCandidateId,
   ] = useState("")
@@ -6451,6 +6639,7 @@ export function EbayWinnerPipelinePanel({
       setStateFilter("")
       setComplianceFilter("")
       setDraftFilter("")
+      setReviewFilter("all")
       setSearch(searchValue)
     }
 
@@ -6484,6 +6673,42 @@ export function EbayWinnerPipelinePanel({
 
   const candidates =
     dashboard?.candidates || []
+
+  const reviewFilterCounts =
+    useMemo(
+      () =>
+        reviewFilterOptions.reduce(
+          (counts, option) => ({
+            ...counts,
+            [option.value]:
+              candidates.filter(candidate =>
+                candidateMatchesReviewFilter(
+                  candidate,
+                  option.value
+                )
+              ).length,
+          }),
+          {} as Record<ReviewFilter, number>
+        ),
+      [
+        candidates,
+      ]
+    )
+
+  const filteredCandidates =
+    useMemo(
+      () =>
+        candidates.filter(candidate =>
+          candidateMatchesReviewFilter(
+            candidate,
+            reviewFilter
+          )
+        ),
+      [
+        candidates,
+        reviewFilter,
+      ]
+    )
 
   const pagination =
     dashboard?.pagination
@@ -6832,6 +7057,52 @@ export function EbayWinnerPipelinePanel({
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
+
+            <div className="border-t border-white/10 pt-3">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">
+                Filtros de revision
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {reviewFilterOptions.map(option => {
+                  const isActive =
+                    reviewFilter === option.value
+
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() =>
+                        setReviewFilter(
+                          option.value
+                        )
+                      }
+                      className={`
+                        rounded-lg
+                        border
+                        px-3
+                        py-2
+                        text-xs
+                        font-bold
+                        transition
+                        ${
+                          isActive
+                            ? "border-cyan-300/35 bg-cyan-300/[0.12] text-cyan-50"
+                            : "border-white/10 bg-white/[0.04] text-white/60 hover:border-cyan-300/25 hover:text-white"
+                        }
+                      `}
+                    >
+                      {option.label}{" "}
+                      <span className="font-normal opacity-65">
+                        ({reviewFilterCounts[option.value] || 0} en esta pagina)
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="mt-3 text-xs leading-5 text-white/40">
+                Estos filtros solo ordenan la revision de los candidatos cargados en esta pagina. No publican, no crean drafts y no cambian estados.
+              </p>
+            </div>
           </div>
 
           <div className="space-y-3 p-3 xl:max-h-[calc(100vh-220px)] xl:overflow-y-auto">
@@ -6843,8 +7114,12 @@ export function EbayWinnerPipelinePanel({
               <div className="rounded-lg border border-white/10 bg-white/[0.03] p-6 text-center text-sm text-white/45">
                 Sin candidatos para los filtros actuales.
               </div>
+            ) : filteredCandidates.length === 0 ? (
+              <div className="rounded-lg border border-white/10 bg-white/[0.03] p-6 text-center text-sm leading-6 text-white/45">
+                Sin candidatos en esta pagina para este filtro.
+              </div>
             ) : (
-              candidates.map(candidate => {
+              filteredCandidates.map(candidate => {
                 const isFocusedCandidate =
                   (
                     focusedCandidateId &&
