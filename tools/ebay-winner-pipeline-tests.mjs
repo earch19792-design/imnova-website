@@ -499,6 +499,43 @@ test("producto válido se evalúa completo y genera WhatsApp dryRun", () => {
   assert.equal(result.whatsappDryRunPayload.interactive.action.buttons.length, 4)
 })
 
+test("winner pipeline normaliza stock confirmado desde inventory_context", () => {
+  const {
+    inventory_quantity,
+    ...productWithoutTopLevelQuantity
+  } = validRadarProduct
+
+  const result =
+    processRadarCandidate({
+      ...productWithoutTopLevelQuantity,
+      raw: {
+        inventory_context: {
+          inventory_quantity:
+            inventory_quantity,
+          inventory_scope:
+            "variant_level",
+          inventory_confidence:
+            "high",
+          inventory_source:
+            "manual_admin_confirmation",
+        },
+      },
+    })
+
+  assert.equal(
+    result.candidate.stock,
+    20
+  )
+  assert.equal(
+    result.candidate.inventory_context.inventory_quantity,
+    20
+  )
+  assert.equal(
+    result.validation.status,
+    "passed"
+  )
+})
+
 test("radar advisor: out_of_stock + DRAFT_CREATED -> review_existing_draft_inventory critical", () => {
   const alert =
     getRadarAdvisorEvent(
@@ -3453,6 +3490,64 @@ test("stock rotation integration: stock suficiente queda como senal read-only", 
   )
   assert.equal(
     advisor.stock_rotation_risk.stock_guardrail.human_approval_required,
+    true
+  )
+})
+
+test("stock rotation integration: usa cantidad confirmada desde payload normalizado", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "AG Adhesive Guru AG 220 CA Glue & Activator",
+        state:
+          "NEEDS_DATA",
+        normalized_payload: {
+          stock:
+            13,
+          inventory_context: {
+            inventory_quantity:
+              13,
+            inventory_scope:
+              "variant_level",
+            inventory_confidence:
+              "high",
+            inventory_source:
+              "manual_admin_confirmation",
+          },
+        },
+        needs_data: [
+          "weight_or_dimensions",
+          "authorized_images",
+          "category_or_inference_data",
+        ],
+      },
+      salePrice:
+        21.99,
+      lunaCost:
+        4,
+    })
+
+  assert.equal(
+    advisor.stock_rotation_risk.status,
+    "stock_sufficient"
+  )
+  assert.equal(
+    advisor.stock_rotation_risk.confirmed_stock,
+    13
+  )
+
+  const packTwelve =
+    advisor.multipack_profit_advisor.scenarios.find(
+      scenario => scenario.pack_quantity === 12
+    )
+
+  assert.equal(
+    packTwelve.stock_available,
+    13
+  )
+  assert.equal(
+    packTwelve.stock_sufficient,
     true
   )
 })
