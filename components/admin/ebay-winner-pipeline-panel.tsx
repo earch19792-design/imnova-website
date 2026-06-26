@@ -1608,6 +1608,25 @@ function formatSupplierGap(
   return "En el limite del margen objetivo"
 }
 
+function formatSupplierMaxCostForSeller(
+  value?: string | number | null
+) {
+  const numericValue =
+    toNumber(value)
+
+  if (numericValue === null) {
+    return "-"
+  }
+
+  if (numericValue < 0) {
+    return "No viable como unidad"
+  }
+
+  return formatCurrency(
+    numericValue
+  )
+}
+
 function humanizeCampaignNow(
   pricingStrategy?: PricingStrategyRecommendation | null
 ) {
@@ -4658,7 +4677,7 @@ function CandidateDetailDrawer({
                         />
                         <Field
                           label="Costo maximo que podemos pagar"
-                          value={formatCurrency(
+                          value={formatSupplierMaxCostForSeller(
                             currentSupplierScenario?.max_supplier_landed_cost
                           )}
                         />
@@ -4738,7 +4757,7 @@ function CandidateDetailDrawer({
                                 />
                                 <Field
                                   label="Costo maximo para margen"
-                                  value={formatCurrency(
+                                  value={formatSupplierMaxCostForSeller(
                                     scenario.max_supplier_landed_cost
                                   )}
                                 />
