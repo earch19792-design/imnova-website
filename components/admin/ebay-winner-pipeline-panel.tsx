@@ -2826,18 +2826,18 @@ function CandidateDetailDrawer({
 
   const recommendedStrategyItems =
     uniqueStrings([
-      ...(hasMissingOperationalData
+      ...(!unitPassesMinimums
+        ? [
+            "No preparar listing con el proveedor actual.",
+            "Buscar proveedor alternativo o ajustar precio antes de completar readiness.",
+          ]
+        : hasMissingOperationalData
         ? [
             "Completar datos antes de preparar listing.",
           ]
         : [
             "Preparar listing organico solo si readiness sigue completo.",
           ]),
-      ...(!unitPassesMinimums
-        ? [
-            "Buscar proveedor alternativo o ajustar precio antes de listar unidad.",
-          ]
-        : []),
       ...(showMultipackProfitAdvisor
         ? [
             allMultipackScenariosBlockedByStock
