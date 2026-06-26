@@ -489,19 +489,19 @@ const reviewFilterOptions: {
     value:
       "blocked",
     label:
-      "Bloqueado",
+      "Con bloqueo",
   },
   {
     value:
       "margin_viable",
     label:
-      "Margen viable",
+      "Con margen viable",
   },
   {
     value:
       "no_margin",
     label:
-      "Sin margen",
+      "Sin margen unitario",
   },
   {
     value:
@@ -513,7 +513,7 @@ const reviewFilterOptions: {
     value:
       "stock_review",
     label:
-      "Stock por revisar",
+      "Stock no confirmado",
   },
 ]
 
@@ -7216,7 +7216,7 @@ export function EbayWinnerPipelinePanel({
                 })}
               </div>
               <p className="mt-3 text-xs leading-5 text-white/40">
-                Estos filtros solo ordenan la revision de los candidatos cargados en esta pagina. No publican, no crean drafts y no cambian estados.
+                Los filtros son senales de revision y pueden solaparse. Los conteos corresponden solo a los candidatos cargados en esta pagina. No publican, no crean drafts y no cambian estados.
               </p>
             </div>
           </div>
