@@ -7,6 +7,9 @@ import {
   useState,
 } from "react"
 import {
+  createPortal,
+} from "react-dom"
+import {
   AlertTriangle,
   BarChart3,
   CheckCircle2,
@@ -3269,18 +3272,20 @@ function CandidateDetailDrawer({
 
   const detailPanel = (
     <section
-      className="
+      className={`
         flex
         h-full
         min-h-0
         flex-col
         overflow-hidden
-        rounded-lg
-        border
-        border-white/10
         bg-zinc-950
         shadow-2xl
-      "
+        ${
+          isFullscreenDetail
+            ? "rounded-none border-0"
+            : "rounded-lg border border-white/10"
+        }
+      `}
     >
       <div className="border-b border-white/10 p-5 md:p-6">
         <div className="flex items-start justify-between gap-4">
@@ -5561,12 +5566,17 @@ function CandidateDetailDrawer({
   )
 
   if (isFullscreenDetail) {
-    return (
-      <div className="fixed inset-0 z-[80] bg-black/80 p-3 backdrop-blur-sm md:p-6">
+    if (typeof document === "undefined") {
+      return detailPanel
+    }
+
+    return createPortal(
+      <div className="fixed inset-0 z-[100] bg-zinc-950">
         <div className="h-full w-full">
           {detailPanel}
         </div>
-      </div>
+      </div>,
+      document.body
     )
   }
 
