@@ -14,6 +14,8 @@ import {
   ChevronRight,
   ClipboardList,
   FileSearch,
+  Maximize2,
+  Minimize2,
   PackageCheck,
   RefreshCw,
   ShieldCheck,
@@ -2511,6 +2513,11 @@ function CandidateDetailDrawer({
     setEditablePromotionPercent,
   ] = useState("")
 
+  const [
+    isFullscreenDetail,
+    setIsFullscreenDetail,
+  ] = useState(false)
+
   useEffect(() => {
     setEditableShippingCost(
       costBreakdown?.shipping_cost === null ||
@@ -3262,15 +3269,19 @@ function CandidateDetailDrawer({
 
   return (
     <section
-      className="
-        h-full
+      className={`
         overflow-hidden
         rounded-lg
         border
         border-white/10
         bg-zinc-950
         shadow-2xl
-      "
+        ${
+          isFullscreenDetail
+            ? "fixed inset-3 z-[80] h-auto md:inset-6"
+            : "h-full"
+        }
+      `}
     >
       <div className="border-b border-white/10 p-5 md:p-6">
         <div className="flex items-start justify-between gap-4">
@@ -3280,31 +3291,78 @@ function CandidateDetailDrawer({
             </p>
             <h3 className="mt-3 text-2xl font-black text-white">
               {detail?.candidate.title ||
-                "Candidato eBay"}
+              "Candidato eBay"}
             </h3>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="
-              rounded-lg
-              border
-              border-white/10
-              bg-white/[0.04]
-              p-2
-              text-white/60
-              transition
-              hover:border-cyan-300/25
-              hover:text-cyan-100
-            "
-            aria-label="Cerrar"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                setIsFullscreenDetail(
+                  current => !current
+                )
+              }
+              className="
+                inline-flex
+                items-center
+                gap-2
+                rounded-lg
+                border
+                border-cyan-300/20
+                bg-cyan-300/[0.08]
+                px-3
+                py-2
+                text-xs
+                font-bold
+                text-cyan-50
+                transition
+                hover:bg-cyan-300/[0.13]
+              "
+            >
+              {isFullscreenDetail ? (
+                <Minimize2 className="h-4 w-4" />
+              ) : (
+                <Maximize2 className="h-4 w-4" />
+              )}
+              <span className="hidden sm:inline">
+                {isFullscreenDetail
+                  ? "Volver al split"
+                  : "Pantalla completa"}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="
+                rounded-lg
+                border
+                border-white/10
+                bg-white/[0.04]
+                p-2
+                text-white/60
+                transition
+                hover:border-cyan-300/25
+                hover:text-cyan-100
+              "
+              aria-label="Cerrar"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="p-5 md:p-6 xl:max-h-[calc(100vh-220px)] xl:overflow-y-auto">
+      <div
+        className={`
+          p-5
+          md:p-6
+          ${
+            isFullscreenDetail
+              ? "max-h-[calc(100vh-150px)] overflow-y-auto"
+              : "xl:max-h-[calc(100vh-220px)] xl:overflow-y-auto"
+          }
+        `}
+      >
         {isLoading ? (
           <div className="mt-8 rounded-lg border border-white/10 bg-white/[0.03] p-6 text-sm text-white/50">
             Cargando detalle...
