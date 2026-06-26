@@ -16,6 +16,18 @@ import {
   getPricingStrategyRecommendation,
 } from "../lib/ebay-winner-pipeline/decision-advisor.mjs"
 import {
+  evaluateStockRotationRisk,
+} from "../lib/ebay-winner-pipeline/stock-risk-guardrail.mjs"
+import {
+  descriptionConverterTemplate,
+  imageConversionTemplate,
+  launchObservationTemplate,
+  listingReadinessTemplate,
+  listingSellerAdvisorPromptsV0,
+  listingStrategyTemplate,
+  titleOptimizerTemplate,
+} from "../lib/ebay-listing-prompts/index.mjs"
+import {
   getRadarAdvisorEvent,
   getNormalizedInventoryContext,
 } from "../lib/radar-advisor-events.mjs"
@@ -3815,5 +3827,525 @@ test("pricing strategy: campaign 5 se interpreta como 5%", () => {
   )
   assert.ok(
     recommendation.minimum_price_with_5_percent_campaign < 100
+  )
+})
+
+test("stock rotation risk guardrail: stock 1 bloquea publicacion pack y campana", () => {
+  const risk =
+    evaluateStockRotationRisk({
+      confirmed_stock:
+        1,
+      net_margin_percent:
+        35,
+      readiness_passed:
+        true,
+    })
+
+  assert.equal(
+    risk.stock_risk_level,
+    "critical"
+  )
+  assert.equal(
+    risk.stock_decision,
+    "do_not_publish"
+  )
+  assert.deepEqual(
+    risk.blocked_actions,
+    [
+      "publish_listing",
+      "pack_review",
+      "campaign",
+    ]
+  )
+  assert.equal(
+    risk.human_approval_required,
+    true
+  )
+})
+
+test("stock rotation risk guardrail: stock 2-3 bloquea pack y campana", () => {
+  const risk =
+    evaluateStockRotationRisk({
+      confirmed_stock:
+        3,
+      readiness_passed:
+        true,
+    })
+
+  assert.equal(
+    risk.stock_risk_level,
+    "high"
+  )
+  assert.equal(
+    risk.stock_decision,
+    "limited_organic_test"
+  )
+  assert.ok(
+    risk.blocked_actions.includes("pack_review")
+  )
+  assert.ok(
+    risk.blocked_actions.includes("campaign")
+  )
+  assert.ok(
+    risk.allowed_actions.includes(
+      "limited_organic_listing_max_quantity_1"
+    )
+  )
+})
+
+test("stock rotation risk guardrail: stock 4-5 permite solo prueba organica limitada", () => {
+  const risk =
+    evaluateStockRotationRisk({
+      confirmed_stock:
+        5,
+      readiness_passed:
+        true,
+    })
+
+  assert.equal(
+    risk.stock_risk_level,
+    "medium"
+  )
+  assert.equal(
+    risk.stock_decision,
+    "limited_organic_test"
+  )
+  assert.deepEqual(
+    risk.allowed_actions,
+    [
+      "limited_organic_test",
+    ]
+  )
+  assert.ok(
+    risk.blocked_actions.includes("campaign")
+  )
+  assert.ok(
+    risk.blocked_actions.includes("large_pack_review")
+  )
+})
+
+test("stock rotation risk guardrail: stock 6+ permite evaluar listing si readiness pasa", () => {
+  const risk =
+    evaluateStockRotationRisk({
+      confirmed_stock:
+        8,
+      previous_confirmed_stock:
+        8,
+      readiness_passed:
+        true,
+    })
+
+  assert.equal(
+    risk.stock_risk_level,
+    "low"
+  )
+  assert.equal(
+    risk.stock_decision,
+    "eligible_for_listing_prep"
+  )
+  assert.deepEqual(
+    risk.allowed_actions,
+    [
+      "organic_listing_prep",
+    ]
+  )
+  assert.ok(
+    risk.blocked_actions.includes(
+      "scale_without_observation"
+    )
+  )
+})
+
+test("stock rotation risk guardrail: stock 12+ permite pack solo con datos completos", () => {
+  const incomplete =
+    evaluateStockRotationRisk({
+      confirmed_stock:
+        12,
+      margin_passed:
+        true,
+      weight_passed:
+        true,
+      comparables_passed:
+        true,
+      shipping_passed:
+        false,
+    })
+
+  const complete =
+    evaluateStockRotationRisk({
+      confirmed_stock:
+        12,
+      margin_passed:
+        true,
+      weight_passed:
+        true,
+      comparables_passed:
+        true,
+      shipping_passed:
+        true,
+    })
+
+  assert.equal(
+    incomplete.stock_decision,
+    "eligible_for_listing_prep"
+  )
+  assert.ok(
+    incomplete.blocked_actions.includes(
+      "pack_review_until_margin_weight_comparables_shipping_pass"
+    )
+  )
+  assert.equal(
+    complete.stock_decision,
+    "eligible_for_pack_review"
+  )
+  assert.deepEqual(
+    complete.allowed_actions,
+    [
+      "pack_review",
+    ]
+  )
+})
+
+test("stock rotation risk guardrail: margen bueno no elimina riesgo de stock bajo", () => {
+  const risk =
+    evaluateStockRotationRisk({
+      confirmed_stock:
+        1,
+      net_margin_percent:
+        55,
+      demand_level:
+        "high",
+      margin_passed:
+        true,
+    })
+
+  assert.equal(
+    risk.stock_risk_level,
+    "critical"
+  )
+  assert.equal(
+    risk.stock_decision,
+    "do_not_publish"
+  )
+})
+
+test("stock rotation risk guardrail: campana sigue bloqueada aunque sea rentable con stock bajo", () => {
+  const risk =
+    evaluateStockRotationRisk({
+      confirmed_stock:
+        2,
+      net_margin_percent:
+        40,
+      readiness_passed:
+        true,
+      margin_passed:
+        true,
+    })
+
+  assert.equal(
+    risk.stock_decision,
+    "limited_organic_test"
+  )
+  assert.ok(
+    risk.blocked_actions.includes("campaign")
+  )
+})
+
+test("stock rotation risk guardrail: output estable y aprobacion humana requerida", () => {
+  const risk =
+    evaluateStockRotationRisk({
+      confirmed_stock:
+        6,
+      previous_confirmed_stock:
+        9,
+      supplier_availability:
+        "unstable",
+      shipping_days:
+        10,
+      net_margin_percent:
+        8,
+    })
+
+  assert.deepEqual(
+    Object.keys(risk),
+    [
+      "stock_risk_level",
+      "stock_decision",
+      "account_risk_notes",
+      "blocked_actions",
+      "allowed_actions",
+      "next_safe_step",
+      "human_approval_required",
+    ]
+  )
+  assert.equal(
+    risk.stock_risk_level,
+    "medium"
+  )
+  assert.equal(
+    risk.human_approval_required,
+    true
+  )
+  assert.ok(
+    risk.account_risk_notes.length >= 3
+  )
+})
+
+test("listing seller advisor prompts: templates exportan contenido estable", () => {
+  assert.equal(
+    listingSellerAdvisorPromptsV0.id,
+    "listing_seller_advisor_prompts_v0"
+  )
+  assert.equal(
+    listingSellerAdvisorPromptsV0.principle,
+    "Readiness first, creativity after."
+  )
+  assert.equal(
+    listingSellerAdvisorPromptsV0.human_approval_required,
+    true
+  )
+  assert.deepEqual(
+    listingSellerAdvisorPromptsV0.templates.map(
+      template => template.id
+    ),
+    [
+      "listing_readiness_template_v0",
+      "title_optimizer_template_v0",
+      "image_conversion_template_v0",
+      "description_converter_template_v0",
+      "launch_observation_template_v0",
+      "listing_strategy_template_v0",
+    ]
+  )
+})
+
+test("listing seller advisor prompts: readiness aparece antes que prompts creativos", () => {
+  assert.equal(
+    listingSellerAdvisorPromptsV0.templates[0],
+    listingReadinessTemplate
+  )
+  assert.equal(
+    listingSellerAdvisorPromptsV0.templates.indexOf(
+      listingReadinessTemplate
+    ) <
+      listingSellerAdvisorPromptsV0.templates.indexOf(
+        titleOptimizerTemplate
+      ),
+    true
+  )
+  assert.equal(
+    listingSellerAdvisorPromptsV0.templates.indexOf(
+      listingReadinessTemplate
+    ) <
+      listingSellerAdvisorPromptsV0.templates.indexOf(
+        imageConversionTemplate
+      ),
+    true
+  )
+})
+
+test("listing seller advisor prompts: readiness bloquea datos criticos", () => {
+  assert.deepEqual(
+    listingReadinessTemplate.required_inputs,
+    [
+      "confirmed_stock",
+      "weight_or_dimensions",
+      "authorized_images",
+      "category_and_item_specifics",
+      "sufficient_margin",
+      "reliable_shipping",
+      "viable_supplier",
+      "pack_strategy_if_applicable",
+      "low_stock_or_cancellation_risk_review",
+    ]
+  )
+
+  const blockedFields =
+    listingReadinessTemplate.blocking_rules
+      .filter(rule => rule.severity === "block")
+      .map(rule => rule.field)
+
+  assert.ok(
+    blockedFields.includes("confirmed_stock")
+  )
+  assert.ok(
+    blockedFields.includes("sufficient_margin")
+  )
+  assert.ok(
+    blockedFields.includes("reliable_shipping")
+  )
+  assert.ok(
+    blockedFields.includes(
+      "low_stock_or_cancellation_risk_review"
+    )
+  )
+})
+
+test("listing seller advisor prompts: no contienen acciones reales ni eBay API", () => {
+  const templatesJson =
+    JSON.stringify(
+      listingSellerAdvisorPromptsV0
+    )
+
+  assert.doesNotMatch(
+    templatesJson,
+    /fetch\(|createDraft|createListing|publishListing|pauseListing|ebayApi|TradingAPI|InventoryAPI/i
+  )
+  assert.ok(
+    listingStrategyTemplate.forbidden_actions.includes(
+      "auto_publish_listing"
+    )
+  )
+  assert.ok(
+    listingReadinessTemplate.forbidden_actions.includes(
+      "create_real_ebay_draft"
+    )
+  )
+  assert.ok(
+    listingReadinessTemplate.forbidden_actions.includes(
+      "call_ebay_api"
+    )
+  )
+})
+
+test("listing seller advisor prompts: title template exige titulos eBay conservadores", () => {
+  assert.equal(
+    titleOptimizerTemplate.output_count,
+    3
+  )
+  assert.equal(
+    titleOptimizerTemplate.target_length,
+    "60-80 characters"
+  )
+  assert.ok(
+    titleOptimizerTemplate.rules.some(rule =>
+      /main buyer keyword/i.test(rule)
+    )
+  )
+  assert.ok(
+    titleOptimizerTemplate.rules.some(rule =>
+      /unverified claims/i.test(rule)
+    )
+  )
+  assert.ok(
+    titleOptimizerTemplate.rules.some(rule =>
+      /unauthorized brands/i.test(rule)
+    )
+  )
+})
+
+test("listing seller advisor prompts: image template planea siete imagenes con objeciones", () => {
+  assert.equal(
+    imageConversionTemplate.images.length,
+    7
+  )
+  assert.ok(
+    imageConversionTemplate.images.every(
+      image =>
+        image.commercial_goal &&
+        image.buyer_objection_resolved &&
+        image.suggested_visual_prompt &&
+        image.must_not_include
+    )
+  )
+  assert.deepEqual(
+    imageConversionTemplate.images.map(
+      image => image.role
+    ),
+    [
+      "main_click_image",
+      "trust_quality_material",
+      "package_contents",
+      "dimensions_size",
+      "benefit_in_action",
+      "lifestyle_context",
+      "scale_hands_real_use",
+    ]
+  )
+})
+
+test("listing seller advisor prompts: description bloquea medical claims datos inventados y marcas no autorizadas", () => {
+  assert.deepEqual(
+    descriptionConverterTemplate.required_sections,
+    [
+      "What it is",
+      "Who it is for",
+      "Key benefits",
+      "Features",
+      "What is included",
+      "Shipping/handling note",
+      "Trust note",
+    ]
+  )
+  assert.ok(
+    descriptionConverterTemplate.forbidden_content.includes(
+      "medical claims"
+    )
+  )
+  assert.ok(
+    descriptionConverterTemplate.forbidden_content.includes(
+      "invented data"
+    )
+  )
+  assert.ok(
+    descriptionConverterTemplate.forbidden_content.includes(
+      "unauthorized brands"
+    )
+  )
+})
+
+test("listing seller advisor prompts: lanzamiento es organico primero con campana apagada", () => {
+  assert.equal(
+    launchObservationTemplate.default_launch,
+    "organic_first"
+  )
+  assert.equal(
+    launchObservationTemplate.initial_campaign,
+    "off"
+  )
+  assert.deepEqual(
+    launchObservationTemplate.observe_metrics,
+    [
+      "impressions",
+      "clicks",
+      "watchers",
+      "conversion",
+      "sales",
+    ]
+  )
+  assert.ok(
+    launchObservationTemplate.campaign_rules.some(rule =>
+      /1%-2% campaign/i.test(rule)
+    )
+  )
+  assert.ok(
+    launchObservationTemplate.campaign_rules.some(rule =>
+      /stock is low/i.test(rule)
+    )
+  )
+})
+
+test("listing seller advisor prompts: estrategia combina decision readiness creatividad y riesgos", () => {
+  assert.deepEqual(
+    listingStrategyTemplate.combines,
+    [
+      "seller_decision",
+      "readiness",
+      "title",
+      "images",
+      "description",
+      "item_specifics",
+      "price",
+      "shipping",
+      "pack",
+      "launch",
+      "risks",
+      "final_conclusion",
+    ]
+  )
+  assert.equal(
+    listingStrategyTemplate.conclusion_schema
+      .human_approval_required,
+    true
   )
 })
