@@ -150,6 +150,9 @@ type EbayCandidate = {
   supplier_sku?: string | null
   title: string
   product_url?: string | null
+  featured_image_url?: string | null
+  image_urls?: string[] | null
+  images_authorized?: boolean | null
   brand?: string | null
   product_type?: string | null
   state: string
@@ -873,6 +876,24 @@ function isSafeHttpUrl(
   } catch {
     return false
   }
+}
+
+function getCandidateReviewImageUrl(
+  candidate?: EbayCandidate | null
+) {
+  if (
+    isSafeHttpUrl(
+      candidate?.featured_image_url
+    )
+  ) {
+    return candidate?.featured_image_url || null
+  }
+
+  return (
+    candidate?.image_urls || []
+  ).find(url =>
+    isSafeHttpUrl(url)
+  ) || null
 }
 
 function getStateClassName(
@@ -3002,6 +3023,34 @@ function CandidateDetailDrawer({
     strategicSummary?.next_step ||
     "Revisar datos antes de tomar accion."
 
+  const reviewImageUrl =
+    getCandidateReviewImageUrl(
+      detail?.candidate
+    )
+
+  const reviewImageAuthorized =
+    detail?.candidate.images_authorized === true
+
+  const reviewImageStatus =
+    reviewImageUrl
+      ? reviewImageAuthorized
+        ? "Imagen autorizada"
+        : "Imagen no confirmada para eBay"
+      : "Imagen no disponible"
+
+  const reviewImageStatusClass =
+    reviewImageUrl
+      ? reviewImageAuthorized
+        ? "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100"
+        : "border-amber-300/25 bg-amber-300/[0.10] text-amber-100"
+      : "border-white/10 bg-white/[0.05] text-white/55"
+
+  const reviewIdentity =
+    uniqueStrings([
+      detail?.candidate.supplier_sku || "",
+      detail?.candidate.brand || "",
+    ]).join(" / ") || "SKU/proveedor no disponible"
+
   const operationalStatus =
     !unitPassesMinimums
       ? "Bloqueado por margen de unidad"
@@ -3377,6 +3426,119 @@ function CandidateDetailDrawer({
               min-w-0
             `}
           >
+            <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] p-4">
+              <div className="grid min-w-0 gap-4 lg:grid-cols-[112px_minmax(0,1fr)]">
+                <div className="min-w-0">
+                  <div className="flex aspect-square min-h-[104px] items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-black/30">
+                    {reviewImageUrl ? (
+                      <img
+                        src={reviewImageUrl}
+                        alt={`Imagen de ${detail.candidate.title}`}
+                        className={`
+                          h-full
+                          w-full
+                          object-contain
+                          ${reviewImageAuthorized ? "" : "opacity-80"}
+                        `}
+                      />
+                    ) : (
+                      <span className="px-3 text-center text-xs font-bold leading-5 text-white/45">
+                        Imagen no disponible
+                      </span>
+                    )}
+                  </div>
+                  <span
+                    className={`
+                      mt-2
+                      inline-flex
+                      w-full
+                      justify-center
+                      rounded-md
+                      border
+                      px-2
+                      py-1.5
+                      text-center
+                      text-[10px]
+                      font-black
+                      uppercase
+                      leading-4
+                      ${reviewImageStatusClass}
+                    `}
+                  >
+                    {reviewImageStatus}
+                  </span>
+                </div>
+
+                <div className="min-w-0">
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-50/55">
+                        Review del producto
+                      </p>
+                      <h4 className="mt-2 break-words text-xl font-black leading-7 text-white">
+                        {detail.candidate.title ||
+                          "Candidato eBay"}
+                      </h4>
+                      <p className="mt-2 break-words text-xs leading-5 text-cyan-50/60">
+                        {reviewIdentity}
+                      </p>
+                    </div>
+                    <span
+                      className={`
+                        inline-flex
+                        w-fit
+                        shrink-0
+                        rounded-md
+                        border
+                        px-3
+                        py-2
+                        text-xs
+                        font-black
+                        ${getStateClassName(detail.candidate.state)}
+                      `}
+                    >
+                      {humanizePipelineValue(detail.candidate.state)}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <SummaryMetric
+                      label="Decision rapida"
+                      value={sellerDecisionCards[0]?.value || "Revisar"}
+                      detail={sellerDecisionCards[0]?.detail}
+                      tone={stateTone}
+                      isCompact
+                    />
+                    <SummaryMetric
+                      label="Margen"
+                      value={`${formatCurrency(netProfit)} / ${formatNumber(netMargin, "%")}`}
+                      detail="Margen estimado de la unidad."
+                      tone={profitTone}
+                      isCompact
+                    />
+                    <SummaryMetric
+                      label="Stock"
+                      value={stockDiagnosis}
+                      detail="Usa datos visibles del pipeline."
+                      tone={hasVisibleStockQuantity ? "success" : "warning"}
+                      isCompact
+                    />
+                    <SummaryMetric
+                      label="Siguiente paso"
+                      value={safeNextStep}
+                      detail="Accion segura antes de publicar."
+                      tone="warning"
+                      isCompact
+                    />
+                  </div>
+
+                  <p className="mt-3 rounded-md border border-white/10 bg-black/25 p-3 text-xs leading-5 text-white/50">
+                    Mostrar imagen no significa autorizacion para publicar. Si la imagen no esta confirmada, no debe usarse como imagen final de listing.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <DetailSection title="Decision del vendedor">
               <div className="space-y-4">
                 <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.08] p-4">
