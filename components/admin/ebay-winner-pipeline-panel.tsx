@@ -2542,6 +2542,45 @@ function CandidateDetailDrawer({
     setIsFullscreenDetail,
   ] = useState(false)
 
+  const [
+    isReviewImageZoomOpen,
+    setIsReviewImageZoomOpen,
+  ] = useState(false)
+
+  useEffect(() => {
+    setIsReviewImageZoomOpen(false)
+  }, [
+    detail?.candidate.id,
+  ])
+
+  useEffect(() => {
+    if (!isReviewImageZoomOpen) {
+      return
+    }
+
+    const handleKeyDown = (
+      event: KeyboardEvent
+    ) => {
+      if (event.key === "Escape") {
+        setIsReviewImageZoomOpen(false)
+      }
+    }
+
+    window.addEventListener(
+      "keydown",
+      handleKeyDown
+    )
+
+    return () => {
+      window.removeEventListener(
+        "keydown",
+        handleKeyDown
+      )
+    }
+  }, [
+    isReviewImageZoomOpen,
+  ])
+
   useEffect(() => {
     setEditableShippingCost(
       costBreakdown?.shipping_cost === null ||
@@ -3429,8 +3468,30 @@ function CandidateDetailDrawer({
             <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] p-4">
               <div className="grid min-w-0 gap-4 lg:grid-cols-[112px_minmax(0,1fr)]">
                 <div className="min-w-0">
-                  <div className="flex aspect-square min-h-[104px] items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-black/30">
-                    {reviewImageUrl ? (
+                  {reviewImageUrl ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setIsReviewImageZoomOpen(true)
+                      }
+                      className="
+                        flex
+                        aspect-square
+                        min-h-[104px]
+                        w-full
+                        cursor-zoom-in
+                        items-center
+                        justify-center
+                        overflow-hidden
+                        rounded-lg
+                        border
+                        border-white/10
+                        bg-black/30
+                        transition
+                        hover:border-cyan-300/30
+                      "
+                      aria-label="Ampliar imagen del producto"
+                    >
                       <img
                         src={reviewImageUrl}
                         alt={`Imagen de ${detail.candidate.title}`}
@@ -3441,12 +3502,14 @@ function CandidateDetailDrawer({
                           ${reviewImageAuthorized ? "" : "opacity-80"}
                         `}
                       />
-                    ) : (
+                    </button>
+                  ) : (
+                    <div className="flex aspect-square min-h-[104px] items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-black/30">
                       <span className="px-3 text-center text-xs font-bold leading-5 text-white/45">
                         Imagen no disponible
                       </span>
-                    )}
-                  </div>
+                    </div>
+                  )}
                   <span
                     className={`
                       mt-2
@@ -5727,6 +5790,121 @@ function CandidateDetailDrawer({
     </section>
   )
 
+  const reviewImageZoomPortal =
+    detail &&
+    reviewImageUrl &&
+    isReviewImageZoomOpen &&
+    typeof document !== "undefined"
+      ? createPortal(
+          <div
+            className="
+              fixed
+              inset-0
+              z-[120]
+              flex
+              items-center
+              justify-center
+              bg-black/90
+              p-4
+              md:p-6
+            "
+            onClick={() =>
+              setIsReviewImageZoomOpen(false)
+            }
+            role="dialog"
+            aria-modal="true"
+            aria-label="Imagen ampliada del producto"
+          >
+            <div
+              className="
+                flex
+                max-h-full
+                w-full
+                max-w-6xl
+                flex-col
+                overflow-hidden
+                rounded-lg
+                border
+                border-white/10
+                bg-zinc-950
+                shadow-2xl
+              "
+              onClick={event =>
+                event.stopPropagation()
+              }
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-white/10 p-4">
+                <div className="min-w-0">
+                  <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-50/55">
+                    Imagen del producto
+                  </p>
+                  <h4 className="mt-2 break-words text-base font-black leading-6 text-white">
+                    {detail.candidate.title ||
+                      "Candidato eBay"}
+                  </h4>
+                  <span
+                    className={`
+                      mt-3
+                      inline-flex
+                      rounded-md
+                      border
+                      px-2
+                      py-1.5
+                      text-[10px]
+                      font-black
+                      uppercase
+                      leading-4
+                      ${reviewImageStatusClass}
+                    `}
+                  >
+                    {reviewImageStatus}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setIsReviewImageZoomOpen(false)
+                  }
+                  className="
+                    shrink-0
+                    rounded-lg
+                    border
+                    border-white/10
+                    bg-white/[0.04]
+                    p-2
+                    text-white/60
+                    transition
+                    hover:border-cyan-300/25
+                    hover:text-cyan-100
+                  "
+                  aria-label="Cerrar imagen ampliada"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-auto bg-black p-4">
+                <img
+                  src={reviewImageUrl}
+                  alt={`Imagen ampliada de ${detail.candidate.title}`}
+                  className="
+                    mx-auto
+                    max-h-[72vh]
+                    w-full
+                    object-contain
+                  "
+                />
+              </div>
+
+              <p className="border-t border-white/10 bg-zinc-950 p-4 text-xs leading-5 text-white/55">
+                Ver la imagen ampliada no confirma autorizacion para publicar en eBay. Si la imagen no esta confirmada, no debe usarse como imagen final de listing.
+              </p>
+            </div>
+          </div>,
+          document.body
+        )
+      : null
+
   if (isFullscreenDetail) {
     if (typeof document === "undefined") {
       return detailPanel
@@ -5737,12 +5915,18 @@ function CandidateDetailDrawer({
         <div className="h-full w-full">
           {detailPanel}
         </div>
+        {reviewImageZoomPortal}
       </div>,
       document.body
     )
   }
 
-  return detailPanel
+  return (
+    <>
+      {detailPanel}
+      {reviewImageZoomPortal}
+    </>
+  )
 }
 
 export function EbayWinnerPipelinePanel({
