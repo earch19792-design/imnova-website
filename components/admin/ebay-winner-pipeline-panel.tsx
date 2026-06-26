@@ -2762,12 +2762,18 @@ function CandidateDetailDrawer({
       detail
     )
 
-  const stockDiagnosis =
+  const hasVisibleStockQuantity =
     inventoryQuantity !== null
-      ? `Confirmado: ${formatNumber(inventoryQuantity)}`
-      : detail?.pipelineReanalysisAdvisor?.inventory_confidence === "high" &&
-        detail?.pipelineReanalysisAdvisor?.inventory_scope === "variant_level"
-        ? "Confianza alta, cantidad no visible"
+
+  const hasHighInventoryConfidence =
+    detail?.pipelineReanalysisAdvisor?.inventory_confidence === "high" &&
+    detail?.pipelineReanalysisAdvisor?.inventory_scope === "variant_level"
+
+  const stockDiagnosis =
+    hasVisibleStockQuantity
+      ? `Cantidad confirmada: ${formatNumber(inventoryQuantity)}`
+      : hasHighInventoryConfidence
+        ? "Inventario con confianza alta, pero cantidad no visible"
         : "Sin cantidad confirmada"
 
   const sellerDecisionCards =
@@ -2939,15 +2945,15 @@ function CandidateDetailDrawer({
   const publishingChecklist = [
     {
       label:
-        "Stock confirmado",
+        "Stock",
       done:
-        inventoryQuantity !== null ||
-        (
-          detail?.pipelineReanalysisAdvisor?.inventory_confidence === "high" &&
-          detail?.pipelineReanalysisAdvisor?.inventory_scope === "variant_level"
-        ),
+        hasVisibleStockQuantity,
       detail:
-        stockDiagnosis,
+        hasVisibleStockQuantity
+          ? stockDiagnosis
+          : hasHighInventoryConfidence
+            ? "Falta cantidad visible para decidir publicacion o pack."
+            : "Confirmar cantidad real antes de publicar.",
     },
     {
       label:
@@ -3000,6 +3006,19 @@ function CandidateDetailDrawer({
       detail:
         showMultipackProfitAdvisor
           ? "Validar antes de tratar el pack como opcion operativa."
+          : "No aplica por ahora.",
+    },
+    {
+      label:
+        "Cantidad suficiente para pack",
+      done:
+        !showMultipackProfitAdvisor ||
+        !allMultipackScenariosBlockedByStock,
+      detail:
+        showMultipackProfitAdvisor
+          ? allMultipackScenariosBlockedByStock
+            ? "Pack bloqueado hasta confirmar cantidad suficiente."
+            : "Cantidad visible suficiente para al menos una simulacion de pack."
           : "No aplica por ahora.",
     },
     {
@@ -3163,7 +3182,7 @@ function CandidateDetailDrawer({
                         value={formatCurrency(minimumProfitPrice)}
                       />
                       <Field
-                        label="Stock confirmado"
+                        label="Stock"
                         value={stockDiagnosis}
                       />
                       <Field
