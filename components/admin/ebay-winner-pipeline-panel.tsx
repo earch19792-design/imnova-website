@@ -3351,13 +3351,27 @@ function CandidateDetailDrawer({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-5 md:p-6">
+      <div
+        className={`
+          min-h-0
+          flex-1
+          p-5
+          md:p-6
+          ${isFullscreenDetail ? "overflow-auto" : "overflow-y-auto"}
+        `}
+      >
         {isLoading ? (
           <div className="mt-8 rounded-lg border border-white/10 bg-white/[0.03] p-6 text-sm text-white/50">
             Cargando detalle...
           </div>
         ) : detail ? (
-          <div className="mt-6 space-y-5">
+          <div
+            className={`
+              mt-6
+              space-y-5
+              ${isFullscreenDetail ? "min-w-[1100px]" : ""}
+            `}
+          >
             <DetailSection title="Decision del vendedor">
               <div className="space-y-4">
                 <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.08] p-4">
