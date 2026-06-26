@@ -3267,21 +3267,20 @@ function CandidateDetailDrawer({
         ? "danger"
         : "success"
 
-  return (
+  const detailPanel = (
     <section
-      className={`
+      className="
+        flex
+        h-full
+        min-h-0
+        flex-col
         overflow-hidden
         rounded-lg
         border
         border-white/10
         bg-zinc-950
         shadow-2xl
-        ${
-          isFullscreenDetail
-            ? "fixed inset-3 z-[80] h-auto md:inset-6"
-            : "h-full"
-        }
-      `}
+      "
     >
       <div className="border-b border-white/10 p-5 md:p-6">
         <div className="flex items-start justify-between gap-4">
@@ -3352,17 +3351,7 @@ function CandidateDetailDrawer({
         </div>
       </div>
 
-      <div
-        className={`
-          p-5
-          md:p-6
-          ${
-            isFullscreenDetail
-              ? "max-h-[calc(100vh-150px)] overflow-y-auto"
-              : "xl:max-h-[calc(100vh-220px)] xl:overflow-y-auto"
-          }
-        `}
-      >
+      <div className="min-h-0 flex-1 overflow-y-auto p-5 md:p-6">
         {isLoading ? (
           <div className="mt-8 rounded-lg border border-white/10 bg-white/[0.03] p-6 text-sm text-white/50">
             Cargando detalle...
@@ -5556,6 +5545,18 @@ function CandidateDetailDrawer({
       </div>
     </section>
   )
+
+  if (isFullscreenDetail) {
+    return (
+      <div className="fixed inset-0 z-[80] bg-black/80 p-3 backdrop-blur-sm md:p-6">
+        <div className="mx-auto h-full w-full max-w-7xl">
+          {detailPanel}
+        </div>
+      </div>
+    )
+  }
+
+  return detailPanel
 }
 
 export function EbayWinnerPipelinePanel({
