@@ -1870,6 +1870,34 @@ function getCandidateInventoryQuantity(
   )
 }
 
+function isMultipackScenarioFinanciallyViable(
+  scenario?: MultipackProfitScenario | null
+) {
+  if (!scenario) {
+    return false
+  }
+
+  if (scenario.pass_10_percent_margin === true) {
+    return true
+  }
+
+  const scenarioProfit =
+    toNumber(
+      scenario.net_profit
+    )
+  const scenarioMargin =
+    toNumber(
+      scenario.net_margin_percent
+    )
+
+  return (
+    scenarioProfit !== null &&
+    scenarioProfit > 0 &&
+    scenarioMargin !== null &&
+    scenarioMargin >= 10
+  )
+}
+
 function getUnitDecisionCard({
   passesMinimums,
   netMargin,
@@ -1920,10 +1948,12 @@ function getUnitDecisionCard({
 function getPackDecisionCard({
   showMultipack,
   allBlockedByStock,
+  packDoesNotSaveMargin,
   multipackAdvisor,
 }: {
   showMultipack: boolean
   allBlockedByStock: boolean
+  packDoesNotSaveMargin: boolean
   multipackAdvisor?: MultipackProfitAdvisor | null
 }): SellerDecisionCard {
   if (!showMultipack) {
@@ -1936,6 +1966,19 @@ function getPackDecisionCard({
         "Evaluar unidad y readiness primero.",
       tone:
         "neutral",
+    }
+  }
+
+  if (packDoesNotSaveMargin) {
+    return {
+      label:
+        "Pack",
+      value:
+        "Pack no salva margen.",
+      detail:
+        "Aunque se confirme stock, los packs simulados no alcanzan margen minimo con el proveedor actual.",
+      tone:
+        "danger",
     }
   }
 
@@ -2277,6 +2320,14 @@ function CandidateDetailDrawer({
         scenario.stock_sufficient === false
     )
 
+  const multipackHasFinanciallyViableScenario =
+    multipackScenarios.some(
+      scenario =>
+        isMultipackScenarioFinanciallyViable(
+          scenario
+        )
+    )
+
   const showMultipackProfitAdvisor =
     Boolean(
       multipackProfitAdvisor?.is_multipack_candidate ||
@@ -2285,6 +2336,11 @@ function CandidateDetailDrawer({
         multipackScenarios.length > 0
       )
     )
+
+  const multipackDoesNotSaveMargin =
+    showMultipackProfitAdvisor &&
+    multipackScenarios.length > 0 &&
+    !multipackHasFinanciallyViableScenario
 
   const supplierSimulatorMissingInputs =
     uniqueStrings(
@@ -2800,6 +2856,8 @@ function CandidateDetailDrawer({
               showMultipackProfitAdvisor,
             allBlockedByStock:
               allMultipackScenariosBlockedByStock,
+            packDoesNotSaveMargin:
+              multipackDoesNotSaveMargin,
             multipackAdvisor:
               multipackProfitAdvisor,
           }),
@@ -2826,7 +2884,12 @@ function CandidateDetailDrawer({
 
   const recommendedStrategyItems =
     uniqueStrings([
-      ...(!unitPassesMinimums
+      ...(!unitPassesMinimums && multipackDoesNotSaveMargin
+        ? [
+            "No preparar listing con el proveedor actual.",
+            "Buscar proveedor alternativo, negociar costo o descartar hasta que el mercado cambie.",
+          ]
+        : !unitPassesMinimums
         ? [
             "No preparar listing con el proveedor actual.",
             "Buscar proveedor alternativo o ajustar precio antes de completar readiness.",
@@ -2840,7 +2903,9 @@ function CandidateDetailDrawer({
           ]),
       ...(showMultipackProfitAdvisor
         ? [
-            allMultipackScenariosBlockedByStock
+            multipackDoesNotSaveMargin
+              ? "No usar pack para salvar este producto; no alcanza margen minimo."
+              : allMultipackScenariosBlockedByStock
               ? "Mantener pack como simulacion financiera hasta confirmar stock."
               : "Evaluar pack solo con stock, peso y comparables confirmados.",
           ]
@@ -2868,17 +2933,22 @@ function CandidateDetailDrawer({
         "Pack",
       value:
         showMultipackProfitAdvisor
-          ? allMultipackScenariosBlockedByStock
+          ? multipackDoesNotSaveMargin
+            ? "No viable"
+            : allMultipackScenariosBlockedByStock
             ? "Bloqueado"
             : "En evaluacion"
           : "No prioritario",
       detail:
         showMultipackProfitAdvisor
-          ? "Simulacion financiera; no publicacion."
+          ? multipackDoesNotSaveMargin
+            ? "Pack no alcanza margen minimo con estos datos."
+            : "Simulacion financiera; no publicacion."
           : "Unidad primero.",
       tone:
         showMultipackProfitAdvisor
-          ? allMultipackScenariosBlockedByStock
+          ? multipackDoesNotSaveMargin ||
+            allMultipackScenariosBlockedByStock
             ? "danger"
             : "warning"
           : "neutral",
@@ -3013,10 +3083,15 @@ function CandidateDetailDrawer({
         "Cantidad suficiente para pack",
       done:
         !showMultipackProfitAdvisor ||
-        !allMultipackScenariosBlockedByStock,
+        (
+          !multipackDoesNotSaveMargin &&
+          !allMultipackScenariosBlockedByStock
+        ),
       detail:
         showMultipackProfitAdvisor
-          ? allMultipackScenariosBlockedByStock
+          ? multipackDoesNotSaveMargin
+            ? "No aplica hasta que el pack alcance margen minimo."
+            : allMultipackScenariosBlockedByStock
             ? "Pack bloqueado hasta confirmar cantidad suficiente."
             : "Cantidad visible suficiente para al menos una simulacion de pack."
           : "No aplica por ahora.",
@@ -3037,10 +3112,15 @@ function CandidateDetailDrawer({
         "Packaging/fulfillment confirmado",
       done:
         !showMultipackProfitAdvisor ||
-        !allMultipackScenariosBlockedByStock,
+        (
+          !multipackDoesNotSaveMargin &&
+          !allMultipackScenariosBlockedByStock
+        ),
       detail:
         showMultipackProfitAdvisor
-          ? "Confirmar empaque si se usa pack, bundle o preparacion especial."
+          ? multipackDoesNotSaveMargin
+            ? "No avanzar a empaque mientras el pack no sea rentable."
+            : "Confirmar empaque si se usa pack, bundle o preparacion especial."
           : "No aplicar costos extra sin confirmacion.",
     },
   ]
@@ -3721,16 +3801,26 @@ function CandidateDetailDrawer({
                         />
                         <Field
                           label={
-                            allMultipackScenariosBlockedByStock
+                            multipackDoesNotSaveMargin
+                              ? "Resultado financiero"
+                              : allMultipackScenariosBlockedByStock
                               ? "Mejor simulacion financiera"
                               : "Mejor hipotesis de pack"
                           }
                           value={
-                            multipackProfitAdvisor.best_pack?.label ||
-                            multipackProfitAdvisor.best_pack_hypothesis?.label ||
-                            "Sin pack viable con estos datos"
+                            multipackDoesNotSaveMargin
+                              ? "Sin pack viable con estos datos"
+                              : multipackProfitAdvisor.best_pack?.label ||
+                                multipackProfitAdvisor.best_pack_hypothesis?.label ||
+                                "Sin pack viable con estos datos"
                           }
                         />
+                        {multipackDoesNotSaveMargin ? (
+                          <Field
+                            label="Estado financiero"
+                            value="Pack no alcanza margen minimo"
+                          />
+                        ) : null}
                         {allMultipackScenariosBlockedByStock ? (
                           <Field
                             label="Estado operativo"
