@@ -150,6 +150,9 @@ type EbayCandidate = {
   supplier_sku?: string | null
   title: string
   product_url?: string | null
+  featured_image_url?: string | null
+  image_urls?: string[] | null
+  images_authorized?: boolean | null
   brand?: string | null
   product_type?: string | null
   state: string
@@ -873,6 +876,24 @@ function isSafeHttpUrl(
   } catch {
     return false
   }
+}
+
+function getCandidateReviewImageUrl(
+  candidate?: EbayCandidate | null
+) {
+  if (
+    isSafeHttpUrl(
+      candidate?.featured_image_url
+    )
+  ) {
+    return candidate?.featured_image_url || null
+  }
+
+  return (
+    candidate?.image_urls || []
+  ).find(url =>
+    isSafeHttpUrl(url)
+  ) || null
 }
 
 function getStateClassName(
@@ -2521,6 +2542,45 @@ function CandidateDetailDrawer({
     setIsFullscreenDetail,
   ] = useState(false)
 
+  const [
+    isReviewImageZoomOpen,
+    setIsReviewImageZoomOpen,
+  ] = useState(false)
+
+  useEffect(() => {
+    setIsReviewImageZoomOpen(false)
+  }, [
+    detail?.candidate.id,
+  ])
+
+  useEffect(() => {
+    if (!isReviewImageZoomOpen) {
+      return
+    }
+
+    const handleKeyDown = (
+      event: KeyboardEvent
+    ) => {
+      if (event.key === "Escape") {
+        setIsReviewImageZoomOpen(false)
+      }
+    }
+
+    window.addEventListener(
+      "keydown",
+      handleKeyDown
+    )
+
+    return () => {
+      window.removeEventListener(
+        "keydown",
+        handleKeyDown
+      )
+    }
+  }, [
+    isReviewImageZoomOpen,
+  ])
+
   useEffect(() => {
     setEditableShippingCost(
       costBreakdown?.shipping_cost === null ||
@@ -3002,6 +3062,34 @@ function CandidateDetailDrawer({
     strategicSummary?.next_step ||
     "Revisar datos antes de tomar accion."
 
+  const reviewImageUrl =
+    getCandidateReviewImageUrl(
+      detail?.candidate
+    )
+
+  const reviewImageAuthorized =
+    detail?.candidate.images_authorized === true
+
+  const reviewImageStatus =
+    reviewImageUrl
+      ? reviewImageAuthorized
+        ? "Imagen autorizada"
+        : "Imagen no confirmada para eBay"
+      : "Imagen no disponible"
+
+  const reviewImageStatusClass =
+    reviewImageUrl
+      ? reviewImageAuthorized
+        ? "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100"
+        : "border-amber-300/25 bg-amber-300/[0.10] text-amber-100"
+      : "border-white/10 bg-white/[0.05] text-white/55"
+
+  const reviewIdentity =
+    uniqueStrings([
+      detail?.candidate.supplier_sku || "",
+      detail?.candidate.brand || "",
+    ]).join(" / ") || "SKU/proveedor no disponible"
+
   const operationalStatus =
     !unitPassesMinimums
       ? "Bloqueado por margen de unidad"
@@ -3377,6 +3465,143 @@ function CandidateDetailDrawer({
               min-w-0
             `}
           >
+            <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] p-4">
+              <div className="grid min-w-0 gap-4 lg:grid-cols-[112px_minmax(0,1fr)]">
+                <div className="min-w-0">
+                  {reviewImageUrl ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setIsReviewImageZoomOpen(true)
+                      }
+                      className="
+                        flex
+                        aspect-square
+                        min-h-[104px]
+                        w-full
+                        cursor-zoom-in
+                        items-center
+                        justify-center
+                        overflow-hidden
+                        rounded-lg
+                        border
+                        border-white/10
+                        bg-black/30
+                        transition
+                        hover:border-cyan-300/30
+                      "
+                      aria-label="Ampliar imagen del producto"
+                    >
+                      <img
+                        src={reviewImageUrl}
+                        alt={`Imagen de ${detail.candidate.title}`}
+                        className={`
+                          h-full
+                          w-full
+                          object-contain
+                          ${reviewImageAuthorized ? "" : "opacity-80"}
+                        `}
+                      />
+                    </button>
+                  ) : (
+                    <div className="flex aspect-square min-h-[104px] items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-black/30">
+                      <span className="px-3 text-center text-xs font-bold leading-5 text-white/45">
+                        Imagen no disponible
+                      </span>
+                    </div>
+                  )}
+                  <span
+                    className={`
+                      mt-2
+                      inline-flex
+                      w-full
+                      justify-center
+                      rounded-md
+                      border
+                      px-2
+                      py-1.5
+                      text-center
+                      text-[10px]
+                      font-black
+                      uppercase
+                      leading-4
+                      ${reviewImageStatusClass}
+                    `}
+                  >
+                    {reviewImageStatus}
+                  </span>
+                </div>
+
+                <div className="min-w-0">
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-50/55">
+                        Review del producto
+                      </p>
+                      <h4 className="mt-2 break-words text-xl font-black leading-7 text-white">
+                        {detail.candidate.title ||
+                          "Candidato eBay"}
+                      </h4>
+                      <p className="mt-2 break-words text-xs leading-5 text-cyan-50/60">
+                        {reviewIdentity}
+                      </p>
+                    </div>
+                    <span
+                      className={`
+                        inline-flex
+                        w-fit
+                        shrink-0
+                        rounded-md
+                        border
+                        px-3
+                        py-2
+                        text-xs
+                        font-black
+                        ${getStateClassName(detail.candidate.state)}
+                      `}
+                    >
+                      {humanizePipelineValue(detail.candidate.state)}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <SummaryMetric
+                      label="Decision rapida"
+                      value={sellerDecisionCards[0]?.value || "Revisar"}
+                      detail={sellerDecisionCards[0]?.detail}
+                      tone={stateTone}
+                      isCompact
+                    />
+                    <SummaryMetric
+                      label="Margen"
+                      value={`${formatCurrency(netProfit)} / ${formatNumber(netMargin, "%")}`}
+                      detail="Margen estimado de la unidad."
+                      tone={profitTone}
+                      isCompact
+                    />
+                    <SummaryMetric
+                      label="Stock"
+                      value={stockDiagnosis}
+                      detail="Usa datos visibles del pipeline."
+                      tone={hasVisibleStockQuantity ? "success" : "warning"}
+                      isCompact
+                    />
+                    <SummaryMetric
+                      label="Siguiente paso"
+                      value={safeNextStep}
+                      detail="Accion segura antes de publicar."
+                      tone="warning"
+                      isCompact
+                    />
+                  </div>
+
+                  <p className="mt-3 rounded-md border border-white/10 bg-black/25 p-3 text-xs leading-5 text-white/50">
+                    Mostrar imagen no significa autorizacion para publicar. Si la imagen no esta confirmada, no debe usarse como imagen final de listing.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <DetailSection title="Decision del vendedor">
               <div className="space-y-4">
                 <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.08] p-4">
@@ -5565,6 +5790,121 @@ function CandidateDetailDrawer({
     </section>
   )
 
+  const reviewImageZoomPortal =
+    detail &&
+    reviewImageUrl &&
+    isReviewImageZoomOpen &&
+    typeof document !== "undefined"
+      ? createPortal(
+          <div
+            className="
+              fixed
+              inset-0
+              z-[120]
+              flex
+              items-center
+              justify-center
+              bg-black/90
+              p-4
+              md:p-6
+            "
+            onClick={() =>
+              setIsReviewImageZoomOpen(false)
+            }
+            role="dialog"
+            aria-modal="true"
+            aria-label="Imagen ampliada del producto"
+          >
+            <div
+              className="
+                flex
+                max-h-full
+                w-full
+                max-w-6xl
+                flex-col
+                overflow-hidden
+                rounded-lg
+                border
+                border-white/10
+                bg-zinc-950
+                shadow-2xl
+              "
+              onClick={event =>
+                event.stopPropagation()
+              }
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-white/10 p-4">
+                <div className="min-w-0">
+                  <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-50/55">
+                    Imagen del producto
+                  </p>
+                  <h4 className="mt-2 break-words text-base font-black leading-6 text-white">
+                    {detail.candidate.title ||
+                      "Candidato eBay"}
+                  </h4>
+                  <span
+                    className={`
+                      mt-3
+                      inline-flex
+                      rounded-md
+                      border
+                      px-2
+                      py-1.5
+                      text-[10px]
+                      font-black
+                      uppercase
+                      leading-4
+                      ${reviewImageStatusClass}
+                    `}
+                  >
+                    {reviewImageStatus}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setIsReviewImageZoomOpen(false)
+                  }
+                  className="
+                    shrink-0
+                    rounded-lg
+                    border
+                    border-white/10
+                    bg-white/[0.04]
+                    p-2
+                    text-white/60
+                    transition
+                    hover:border-cyan-300/25
+                    hover:text-cyan-100
+                  "
+                  aria-label="Cerrar imagen ampliada"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-auto bg-black p-4">
+                <img
+                  src={reviewImageUrl}
+                  alt={`Imagen ampliada de ${detail.candidate.title}`}
+                  className="
+                    mx-auto
+                    max-h-[72vh]
+                    w-full
+                    object-contain
+                  "
+                />
+              </div>
+
+              <p className="border-t border-white/10 bg-zinc-950 p-4 text-xs leading-5 text-white/55">
+                Ver la imagen ampliada no confirma autorizacion para publicar en eBay. Si la imagen no esta confirmada, no debe usarse como imagen final de listing.
+              </p>
+            </div>
+          </div>,
+          document.body
+        )
+      : null
+
   if (isFullscreenDetail) {
     if (typeof document === "undefined") {
       return detailPanel
@@ -5575,12 +5915,18 @@ function CandidateDetailDrawer({
         <div className="h-full w-full">
           {detailPanel}
         </div>
+        {reviewImageZoomPortal}
       </div>,
       document.body
     )
   }
 
-  return detailPanel
+  return (
+    <>
+      {detailPanel}
+      {reviewImageZoomPortal}
+    </>
+  )
 }
 
 export function EbayWinnerPipelinePanel({

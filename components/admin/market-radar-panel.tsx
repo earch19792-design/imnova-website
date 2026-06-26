@@ -161,6 +161,12 @@ type StockConfirmationSaveState = {
   message: string
 }
 
+type MarketRadarImageZoom = {
+  url: string
+  title: string
+  imagesAuthorized: boolean
+}
+
 type PriceIntelligenceFormState = {
   source_type: string
   price_capture_type: "sold" | "active"
@@ -2008,6 +2014,7 @@ function PriceIntelligenceModal({
   form,
   isSaving,
   onChange,
+  onZoomImage,
   onClose,
   onSubmit,
 }: {
@@ -2017,6 +2024,9 @@ function PriceIntelligenceModal({
   onChange: (
     field: keyof PriceIntelligenceFormState,
     value: string
+  ) => void
+  onZoomImage: (
+    product: MarketRadarProductRow
   ) => void
   onClose: () => void
   onSubmit: () => void
@@ -2433,19 +2443,45 @@ function PriceIntelligenceModal({
 
           <section className="rounded-lg border border-white/10 bg-white/[0.025] p-4">
             <div className="flex flex-col gap-4 md:flex-row">
-              <div className="flex h-44 w-full shrink-0 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-black/35 md:h-40 md:w-40">
-                {productPreviewImageUrl ? (
+              {productPreviewImageUrl ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onZoomImage(product)
+                  }
+                  className="
+                    flex
+                    h-44
+                    w-full
+                    shrink-0
+                    cursor-zoom-in
+                    items-center
+                    justify-center
+                    overflow-hidden
+                    rounded-lg
+                    border
+                    border-white/10
+                    bg-black/35
+                    transition
+                    hover:border-cyan-300/30
+                    md:h-40
+                    md:w-40
+                  "
+                  aria-label="Ampliar imagen del producto"
+                >
                   <img
                     src={productPreviewImageUrl}
                     alt={product.title}
                     className="h-full w-full object-contain p-2"
                   />
-                ) : (
+                </button>
+              ) : (
+                <div className="flex h-44 w-full shrink-0 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-black/35 md:h-40 md:w-40">
                   <span className="px-4 text-center text-xs font-semibold uppercase tracking-[0.16em] text-white/35">
                     Sin imagen disponible
                   </span>
-                )}
-              </div>
+                </div>
+              )}
 
               <div className="min-w-0 flex-1">
                 <p className="text-[10px] uppercase tracking-[0.22em] text-white/35">
@@ -3191,6 +3227,7 @@ function PriceIntelligenceModalPortal({
   form,
   isSaving,
   onChange,
+  onZoomImage,
   onClose,
   onSubmit,
 }: {
@@ -3200,6 +3237,9 @@ function PriceIntelligenceModalPortal({
   onChange: (
     field: keyof PriceIntelligenceFormState,
     value: string
+  ) => void
+  onZoomImage: (
+    product: MarketRadarProductRow
   ) => void
   onClose: () => void
   onSubmit: () => void
@@ -3214,9 +3254,160 @@ function PriceIntelligenceModalPortal({
       form={form}
       isSaving={isSaving}
       onChange={onChange}
+      onZoomImage={onZoomImage}
       onClose={onClose}
       onSubmit={onSubmit}
     />,
+    document.body
+  )
+}
+
+function MarketRadarImageZoomPortal({
+  image,
+  onClose,
+}: {
+  image: MarketRadarImageZoom
+  onClose: () => void
+}) {
+  useEffect(() => {
+    const handleKeyDown = (
+      event: KeyboardEvent
+    ) => {
+      if (event.key === "Escape") {
+        onClose()
+      }
+    }
+
+    window.addEventListener(
+      "keydown",
+      handleKeyDown
+    )
+
+    return () => {
+      window.removeEventListener(
+        "keydown",
+        handleKeyDown
+      )
+    }
+  }, [
+    onClose,
+  ])
+
+  if (typeof document === "undefined") {
+    return null
+  }
+
+  const imageStatus =
+    image.imagesAuthorized
+      ? "Imagen autorizada"
+      : "Imagen no confirmada para eBay"
+
+  const imageStatusClass =
+    image.imagesAuthorized
+      ? "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100"
+      : "border-amber-300/25 bg-amber-300/[0.10] text-amber-100"
+
+  return createPortal(
+    <div
+      className="
+        fixed
+        inset-0
+        z-[120]
+        flex
+        items-center
+        justify-center
+        bg-black/90
+        p-4
+        md:p-6
+      "
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Imagen ampliada de Market Radar"
+    >
+      <div
+        className="
+          flex
+          max-h-full
+          w-full
+          max-w-6xl
+          flex-col
+          overflow-hidden
+          rounded-lg
+          border
+          border-white/10
+          bg-zinc-950
+          shadow-2xl
+        "
+        onClick={event =>
+          event.stopPropagation()
+        }
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-white/10 p-4">
+          <div className="min-w-0">
+            <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-50/55">
+              Imagen Market Radar
+            </p>
+            <h4 className="mt-2 break-words text-base font-black leading-6 text-white">
+              {image.title || "Producto"}
+            </h4>
+            <span
+              className={`
+                mt-3
+                inline-flex
+                rounded-md
+                border
+                px-2
+                py-1.5
+                text-[10px]
+                font-black
+                uppercase
+                leading-4
+                ${imageStatusClass}
+              `}
+            >
+              {imageStatus}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="
+              shrink-0
+              rounded-lg
+              border
+              border-white/10
+              bg-white/[0.04]
+              p-2
+              text-white/60
+              transition
+              hover:border-cyan-300/25
+              hover:text-cyan-100
+            "
+            aria-label="Cerrar imagen ampliada"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto bg-black p-4">
+          <img
+            src={image.url}
+            alt={`Imagen ampliada de ${image.title || "producto"}`}
+            className="
+              mx-auto
+              max-h-[72vh]
+              w-full
+              object-contain
+            "
+          />
+        </div>
+
+        <p className="border-t border-white/10 bg-zinc-950 p-4 text-xs leading-5 text-white/55">
+          Ver la imagen ampliada no confirma autorizacion para publicar en eBay. Si la imagen no esta confirmada, no debe usarse como imagen final de listing.
+        </p>
+      </div>
+    </div>,
     document.body
   )
 }
@@ -3229,6 +3420,7 @@ function ProductRow({
   stockConfirmationResult,
   isEvaluating,
   isConfirmingStock,
+  onZoomImage,
   onOpenPriceIntelligence,
   onEvaluate,
   onChangeStockConfirmation,
@@ -3241,6 +3433,9 @@ function ProductRow({
   stockConfirmationResult?: StockConfirmationSaveState
   isEvaluating?: boolean
   isConfirmingStock?: boolean
+  onZoomImage: (
+    product: MarketRadarProductRow
+  ) => void
   onOpenPriceIntelligence: (
     product: MarketRadarProductRow
   ) => void
@@ -3264,6 +3459,11 @@ function ProductRow({
   const collections =
     product.collections || []
 
+  const productPreviewImageUrl =
+    getProductPreviewImageUrl(
+      product
+    )
+
   return (
     <tr className="border-b border-white/5 align-top">
       <td className="w-[42%] px-4 py-4">
@@ -3280,13 +3480,27 @@ function ProductRow({
               bg-white/[0.04]
             "
           >
-            {product.featured_image_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={product.featured_image_url}
-                alt=""
-                className="h-full w-full object-cover"
-              />
+            {productPreviewImageUrl ? (
+              <button
+                type="button"
+                onClick={() =>
+                  onZoomImage(product)
+                }
+                className="
+                  h-full
+                  w-full
+                  cursor-zoom-in
+                  transition
+                  hover:opacity-85
+                "
+                aria-label="Ampliar imagen del producto"
+              >
+                <img
+                  src={productPreviewImageUrl}
+                  alt=""
+                  className="h-full w-full object-cover"
+                />
+              </button>
             ) : null}
           </div>
           <div className="min-w-0">
@@ -3806,6 +4020,11 @@ export function MarketRadarPanel({
   ] = useState<MarketRadarProductRow | null>(null)
 
   const [
+    zoomedImage,
+    setZoomedImage,
+  ] = useState<MarketRadarImageZoom | null>(null)
+
+  const [
     priceIntelligenceForm,
     setPriceIntelligenceForm,
   ] = useState<PriceIntelligenceFormState | null>(null)
@@ -4038,6 +4257,39 @@ export function MarketRadarPanel({
       setPriceIntelligenceProduct(null)
       setPriceIntelligenceForm(null)
     }, [isSavingPriceIntelligence])
+
+  const openImageZoom =
+    useCallback((
+      product: MarketRadarProductRow
+    ) => {
+      const imageUrl =
+        getProductPreviewImageUrl(
+          product
+        )
+
+      if (!imageUrl) {
+        return
+      }
+
+      const imageProduct =
+        product as MarketRadarProductRow & {
+          images_authorized?: boolean | null
+        }
+
+      setZoomedImage({
+        url:
+          imageUrl,
+        title:
+          product.title || "Producto",
+        imagesAuthorized:
+          imageProduct.images_authorized === true,
+      })
+    }, [])
+
+  const closeImageZoom =
+    useCallback(() => {
+      setZoomedImage(null)
+    }, [])
 
   const updatePriceIntelligenceForm =
     useCallback((
@@ -4552,8 +4804,17 @@ export function MarketRadarPanel({
           form={priceIntelligenceForm}
           isSaving={isSavingPriceIntelligence}
           onChange={updatePriceIntelligenceForm}
+          onZoomImage={openImageZoom}
           onClose={closePriceIntelligenceModal}
           onSubmit={savePriceIntelligence}
+        />
+      ) : null}
+
+      {isMounted &&
+      zoomedImage ? (
+        <MarketRadarImageZoomPortal
+          image={zoomedImage}
+          onClose={closeImageZoom}
         />
       ) : null}
 
@@ -5074,6 +5335,7 @@ export function MarketRadarPanel({
                           confirmingStockKey ===
                           productKey
                         }
+                        onZoomImage={openImageZoom}
                         onOpenPriceIntelligence={openPriceIntelligenceModal}
                         onEvaluate={evaluateInEbayPipeline}
                         onChangeStockConfirmation={updateStockConfirmationForm}
