@@ -168,6 +168,33 @@ importers:
       '@tailwindcss/postcss':
         specifier: ^4.2.0
         version: 4.3.0
+      '@types/d3-array':
+        specifier: 3.2.2
+        version: 3.2.2
+      '@types/d3-color':
+        specifier: 3.1.3
+        version: 3.1.3
+      '@types/d3-ease':
+        specifier: 3.0.2
+        version: 3.0.2
+      '@types/d3-interpolate':
+        specifier: 3.0.4
+        version: 3.0.4
+      '@types/d3-path':
+        specifier: 3.1.1
+        version: 3.1.1
+      '@types/d3-scale':
+        specifier: 4.0.9
+        version: 4.0.9
+      '@types/d3-shape':
+        specifier: 3.1.8
+        version: 3.1.8
+      '@types/d3-time':
+        specifier: 3.0.4
+        version: 3.0.4
+      '@types/d3-timer':
+        specifier: 3.0.2
+        version: 3.0.2
       '@types/node':
         specifier: ^22
         version: 22.19.19
