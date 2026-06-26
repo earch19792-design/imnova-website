@@ -1897,7 +1897,7 @@ function getUnitDecisionCard({
       label:
         "Unidad",
       value:
-        "Unidad prometedora, pero faltan datos.",
+        "Unidad viable en margen, pero no publicable todavia.",
       detail:
         "Completar readiness antes de preparar listing organico.",
       tone:
@@ -2854,7 +2854,7 @@ function CandidateDetailDrawer({
         "Unidad",
       value:
         unitPassesMinimums
-          ? "Margen pasa"
+          ? "Margen viable"
           : "Margen no pasa",
       detail:
         `${formatCurrency(netProfit)} / ${formatNumber(netMargin, "%")} margen neto`,
@@ -3625,18 +3625,12 @@ function CandidateDetailDrawer({
                         />
                         <Field
                           label={
-                            hasCampaignOperationalBlockers(
-                              detail.candidate,
-                              detail.decisionAdvisor.pricing_strategy
-                            )
-                              ? "Campana: referencia interna"
-                              : "Campana maxima segura"
+                            hasCampaignBlockers
+                              ? "Referencia interna de campana"
+                              : "Campana maxima simulada"
                           }
                           value={
-                            hasCampaignOperationalBlockers(
-                              detail.candidate,
-                              detail.decisionAdvisor.pricing_strategy
-                            )
+                            hasCampaignBlockers
                               ? `Simulacion ${formatNumber(
                                 detail.decisionAdvisor.pricing_strategy.max_safe_campaign_percent,
                                 "%"
