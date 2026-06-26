@@ -1512,11 +1512,13 @@ function SummaryMetric({
   value,
   detail,
   tone = "neutral",
+  isCompact = false,
 }: {
   label: string
   value: string | number
   detail?: string
   tone?: "neutral" | "success" | "warning" | "danger"
+  isCompact?: boolean
 }) {
   const toneClass =
     tone === "success"
@@ -1528,15 +1530,30 @@ function SummaryMetric({
           : "border-white/10 bg-black/25 text-white"
 
   return (
-    <div className={`rounded-lg border p-3 ${toneClass}`}>
-      <p className="text-[10px] uppercase tracking-[0.16em] opacity-55">
+    <div
+      className={`
+        min-w-0
+        rounded-lg
+        border
+        p-3
+        ${toneClass}
+      `}
+    >
+      <p className="break-words text-[10px] uppercase tracking-[0.16em] opacity-55">
         {label}
       </p>
-      <p className="mt-2 text-xl font-black leading-7">
+      <p
+        className={`
+          mt-2
+          break-words
+          font-black
+          ${isCompact ? "text-base leading-6" : "text-xl leading-7"}
+        `}
+      >
         {value}
       </p>
       {detail ? (
-        <p className="mt-1 text-xs leading-5 opacity-65">
+        <p className="mt-2 break-words text-xs leading-5 opacity-65">
           {detail}
         </p>
       ) : null}
@@ -3431,7 +3448,7 @@ function CandidateDetailDrawer({
                   <p className="text-xs font-black uppercase tracking-[0.16em] text-white/45">
                     Opciones evaluadas
                   </p>
-                  <div className="mt-3 grid gap-3 md:grid-cols-5">
+                  <div className="mt-3 grid min-w-0 gap-3 md:grid-cols-2">
                     {evaluatedOptions.map(option => (
                       <SummaryMetric
                         key={option.label}
@@ -3439,6 +3456,7 @@ function CandidateDetailDrawer({
                         value={option.value}
                         detail={option.detail}
                         tone={option.tone}
+                        isCompact
                       />
                     ))}
                   </div>
