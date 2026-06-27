@@ -3203,19 +3203,19 @@ function CandidateDetailDrawer({
 
   const suggestedPriceMarketMessage =
     suggestedTargetPrice === null
-      ? "No hay precio sugerido calculado."
+      ? "No hay precio minimo objetivo calculado."
       : !detail?.priceIntelligence
         ? "No hay Price Intelligence para comparar contra mercado."
         : suggestedPriceWithinSoldRange ||
           suggestedPriceNearSoldMedian
-          ? "El precio sugerido esta dentro del rango de mercado o cerca de ventas reales."
+          ? "El precio minimo con margen objetivo esta dentro del rango de mercado o cerca de ventas reales."
           : suggestedPriceBelowSoldRange
-            ? "El precio sugerido esta por debajo del rango vendido; usar Price Intelligence o precio ideal puede capturar mas margen."
+            ? "El precio minimo con margen objetivo esta por debajo del mercado vendido; no es una recomendacion comercial para bajar precio."
             : hasSoldMarketEvidence &&
               marketReferencePrice !== null &&
               suggestedTargetPrice >
                 marketReferencePrice * 1.1
-              ? "El precio sugerido esta por encima del mercado; no competitivo."
+              ? "El precio minimo con margen objetivo esta por encima del mercado; revisar competitividad."
               : activeAvgPrice !== null &&
                 !hasSoldMarketEvidence
                 ? "Solo hay precios activos; revisar evidencia antes de decidir."
@@ -4480,7 +4480,7 @@ function CandidateDetailDrawer({
                           value={formatCurrency(minimumProfitPrice)}
                         />
                         <Field
-                          label="Precio redondeado sugerido"
+                          label="Precio mínimo con margen objetivo"
                           value={formatCurrency(roundedFloorPrice)}
                         />
                       </div>
@@ -5125,7 +5125,7 @@ function CandidateDetailDrawer({
                       )}
                     />
                     <Field
-                      label="Precio redondeado sugerido"
+                      label="Precio mínimo con margen objetivo"
                       value={formatCurrency(
                         detail.decisionAdvisor.target_price?.suggested_target_price
                       )}
@@ -5628,7 +5628,7 @@ function CandidateDetailDrawer({
                       )}
                     />
                     <Field
-                      label="Precio redondeado sugerido"
+                      label="Precio mínimo con margen objetivo"
                       value={formatCurrency(
                         displayedCostBreakdown?.suggested_target_price
                       )}
@@ -5814,7 +5814,7 @@ function CandidateDetailDrawer({
                         />
                         {isReprocessing
                           ? "Reevaluando"
-                          : "Reevaluar con precio sugerido"}
+                          : "Reevaluar con precio mínimo objetivo"}
                       </button>
                     ) : null}
                   </div>
@@ -5833,7 +5833,7 @@ function CandidateDetailDrawer({
                       )}
                     />
                     <Field
-                      label="Precio redondeado sugerido"
+                      label="Precio mínimo con margen objetivo"
                       value={formatCurrency(
                         targetPriceAdvisor.suggested_target_price
                       )}
@@ -5851,7 +5851,7 @@ function CandidateDetailDrawer({
                       )}`}
                     />
                     <Field
-                      label="Precio sugerido vs mercado"
+                      label="Piso objetivo vs mercado"
                       value={formatCurrency(
                         suggestedMarketDifference
                       )}
@@ -5883,7 +5883,7 @@ function CandidateDetailDrawer({
                   ) : targetPriceNeedsAdjustment &&
                   !canReprocessSuggestedPrice ? (
                     <p className="mt-3 rounded-md border border-amber-300/25 bg-amber-300/[0.10] px-3 py-2 text-xs text-amber-100">
-                      La reevaluacion con precio sugerido queda deshabilitada hasta que Price Intelligence indique que el precio esta dentro del mercado.
+                      La reevaluacion con precio minimo objetivo queda deshabilitada hasta que Price Intelligence indique que el precio esta dentro del mercado.
                     </p>
                   ) : null}
                 </div>
