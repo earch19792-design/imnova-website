@@ -31,6 +31,7 @@ const LUNAPORTEX_SOURCE_KEY =
 
 const DASHBOARD_PRODUCT_LIMIT = 80
 const DASHBOARD_SEARCH_LIMIT = 80
+const DASHBOARD_SEARCH_SCAN_LIMIT = 1200
 
 type MarketRadarPipelineCandidateLookup = {
   id: string
@@ -311,6 +312,56 @@ function dedupeAdvisorAlerts(
 
     return true
   })
+}
+
+function normalizeMarketRadarSearchText(
+  value: string | null | undefined
+) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(
+      /[^a-z0-9\s-]/g,
+      " "
+    )
+    .replace(
+      /\s+/g,
+      " "
+    )
+    .trim()
+}
+
+function productMatchesMarketRadarSearch(
+  product: {
+    title?: string | null
+    handle?: string | null
+    vendor?: string | null
+    product_type?: string | null
+    supplier_product_id?: string | null
+  },
+  search: string
+) {
+  const normalizedSearch =
+    normalizeMarketRadarSearchText(
+      search
+    )
+
+  if (!normalizedSearch) {
+    return false
+  }
+
+  return [
+    product.title,
+    product.handle,
+    product.vendor,
+    product.product_type,
+    product.supplier_product_id,
+  ].some(value =>
+    normalizeMarketRadarSearchText(
+      value
+    ).includes(
+      normalizedSearch
+    )
+  )
 }
 
 function getInventoryContext(
@@ -650,8 +701,6 @@ async function getLatestMarketRadarProducts(
   let productIds: string[] = []
 
   if (search) {
-    const pattern =
-      `%${search}%`
     const skuSearchValues =
       Array.from(
         new Set([
@@ -668,29 +717,20 @@ async function getLatestMarketRadarProducts(
       await Promise.all([
         supabase
           .from("market_radar_products")
-          .select("id")
+          .select(`
+            id,
+            title,
+            handle,
+            vendor,
+            product_type,
+            supplier_product_id
+          `)
           .eq(
             "source_id",
             source.id
           )
-          .or(
-            [
-              `title.ilike.${pattern}`,
-              `handle.ilike.${pattern}`,
-              `vendor.ilike.${pattern}`,
-              `product_type.ilike.${pattern}`,
-              `supplier_product_id.ilike.${pattern}`,
-            ].join(",")
-          )
-          .order(
-            "last_seen_at",
-            {
-              ascending: false,
-              nullsFirst: false,
-            }
-          )
           .limit(
-            DASHBOARD_SEARCH_LIMIT
+            DASHBOARD_SEARCH_SCAN_LIMIT
           ),
         supabase
           .from("market_radar_snapshots")
@@ -725,7 +765,14 @@ async function getLatestMarketRadarProducts(
         new Set([
           ...(
             productSearchResult.data || []
-          ).map(product => product.id),
+          )
+            .filter(product =>
+              productMatchesMarketRadarSearch(
+                product,
+                search
+              )
+            )
+            .map(product => product.id),
           ...(
             snapshotSearchResult.data || []
           ).map(snapshot => snapshot.product_id),
