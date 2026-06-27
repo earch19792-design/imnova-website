@@ -38,6 +38,7 @@ export type MarketRadarProductRow = {
   product_url: string | null
   featured_image_url: string | null
   image_urls: string[] | null
+  is_active?: boolean | null
   first_seen_at: string | null
   last_seen_at: string | null
   updated_at_source: string | null

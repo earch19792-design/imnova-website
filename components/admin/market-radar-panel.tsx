@@ -2,10 +2,12 @@
 
 import {
   type ElementType,
+  type FormEvent,
   type ReactNode,
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react"
 import {
@@ -202,6 +204,7 @@ type PriceIntelligenceFormState = {
 }
 
 type RadarRankingFilter =
+  | "all"
   | "actionable"
   | "stock_confirmed"
   | "stock_needs_validation"
@@ -786,9 +789,37 @@ function getAdvisorSeverityClassName(
   return "border-white/10 bg-white/[0.04] text-white/55"
 }
 
+function getAdvisorActionLabel(
+  action: string | null | undefined
+) {
+  switch (action) {
+    case "process_candidate":
+      return "Revisar candidato"
+    case "recalculate_margin":
+      return "Recalcular margen"
+    case "reprocess_with_updated_cost":
+      return "Reprocesar con costo actualizado"
+    case "confirm_stock_quantity":
+      return "Confirmar cantidad de stock"
+    case "complete_missing_data":
+      return "Completar datos operativos"
+    default:
+      return action
+        ? action
+            .replace(/_/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+        : "-"
+  }
+}
+
 function getProductStatusLabel(
   product: MarketRadarProductRow
 ) {
+  if (product.is_active === false) {
+    return "Fuera de catalogo"
+  }
+
   if (product.inventory_status === "out_of_stock") {
     return "Agotado"
   }
@@ -850,6 +881,10 @@ function getProductStatusLabel(
 function getProductStatusClassName(
   product: MarketRadarProductRow
 ) {
+  if (product.is_active === false) {
+    return "border-red-300/30 bg-red-300/[0.12] text-red-100"
+  }
+
   if (product.inventory_status === "out_of_stock") {
     return "border-red-300/25 bg-red-300/[0.10] text-red-100"
   }
@@ -923,6 +958,10 @@ function isStrictStockConfirmed(
 function getRadarStockValidationStatus(
   product: MarketRadarProductRow
 ) {
+  if (product.is_active === false) {
+    return "out_of_stock"
+  }
+
   if (isStrictStockConfirmed(product)) {
     return "stock_confirmed"
   }
@@ -960,6 +999,10 @@ function isRadarProductActionable(
 function getRadarActionStatusLabel(
   product: MarketRadarProductRow
 ) {
+  if (product.is_active === false) {
+    return "No listar"
+  }
+
   if (!isRadarProductActionable(product)) {
     return "Ya revisado"
   }
@@ -977,6 +1020,10 @@ function getRadarActionStatusLabel(
 function getRadarActionStatusClassName(
   product: MarketRadarProductRow
 ) {
+  if (product.is_active === false) {
+    return "border-red-300/30 bg-red-300/[0.12] text-red-100"
+  }
+
   if (!isRadarProductActionable(product)) {
     return "border-white/10 bg-white/[0.04] text-white/55"
   }
@@ -994,6 +1041,10 @@ function getRadarActionStatusClassName(
 function getActionableReasonLabel(
   product: MarketRadarProductRow
 ) {
+  if (product.is_active === false) {
+    return "Luna no muestra este producto en el catalogo actual"
+  }
+
   switch (product.actionable_reason) {
     case "new_product_not_reviewed":
       return "Nuevo producto no revisado"
@@ -1025,6 +1076,10 @@ function getActionableReasonLabel(
 function getStockValidationLabel(
   product: MarketRadarProductRow
 ) {
+  if (product.is_active === false) {
+    return "Proveedor no disponible"
+  }
+
   const status =
     getRadarStockValidationStatus(product)
 
@@ -3937,7 +3992,7 @@ function RadarAdvisorAlertItem({
             Recomendacion
           </p>
           <p className="mt-1 break-words text-white/70">
-            {alert.recommended_action}
+            {getAdvisorActionLabel(alert.recommended_action)}
           </p>
         </div>
         <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-3">
@@ -4055,9 +4110,22 @@ export function MarketRadarPanel({
   ] = useState("")
 
   const [
+    radarSearch,
+    setRadarSearch,
+  ] = useState("")
+
+  const [
+    activeRadarSearch,
+    setActiveRadarSearch,
+  ] = useState("")
+
+  const [
     rankingFilter,
     setRankingFilter,
   ] = useState<RadarRankingFilter>("actionable")
+
+  const searchResultsRef =
+    useRef<HTMLElement | null>(null)
 
   const getAccessToken =
     useCallback(async () => {
@@ -4088,6 +4156,7 @@ export function MarketRadarPanel({
     useCallback(async (
       options?: {
         action?: "sync_lunaportex" | "notify_ebay_opportunities"
+        search?: string
       }
     ) => {
       const token =
@@ -4104,11 +4173,30 @@ export function MarketRadarPanel({
         )
 
       let response: Response
+      const searchValue =
+        options?.search ?? radarSearch
+      const query =
+        new URLSearchParams()
+
+      if (
+        !options?.action &&
+        searchValue.trim()
+      ) {
+        query.set(
+          "search",
+          searchValue.trim()
+        )
+      }
+
+      const endpoint =
+        query.toString()
+          ? `/api/admin/market-radar?${query.toString()}`
+          : "/api/admin/market-radar"
 
       try {
         response =
           await fetch(
-            "/api/admin/market-radar",
+            endpoint,
             {
               method:
                 options?.action
@@ -4183,15 +4271,25 @@ export function MarketRadarPanel({
           payload.sync
         )
       }
-    }, [getAccessToken])
+    }, [
+      getAccessToken,
+      radarSearch,
+    ])
 
   const loadDashboard =
-    useCallback(async () => {
+    useCallback(async (
+      options?: {
+        search?: string
+      }
+    ) => {
       setIsLoading(true)
       setError("")
 
       try {
-        await requestDashboard()
+        await requestDashboard({
+          search:
+            options?.search,
+        })
       } catch (loadError) {
         console.error(
           "LOAD MARKET RADAR ERROR:",
@@ -4207,6 +4305,40 @@ export function MarketRadarPanel({
         setIsLoading(false)
       }
     }, [requestDashboard])
+
+  const submitRadarSearch =
+    useCallback((
+      event: FormEvent<HTMLFormElement>
+    ) => {
+      event.preventDefault()
+      const searchTerm =
+        radarSearch.trim()
+
+      setActiveRadarSearch(
+        searchTerm
+      )
+      setRankingFilter("all")
+      loadDashboard({
+        search:
+          searchTerm,
+      })
+    }, [
+      loadDashboard,
+      radarSearch,
+    ])
+
+  const clearRadarSearch =
+    useCallback(() => {
+      setRadarSearch("")
+      setActiveRadarSearch("")
+      setRankingFilter("actionable")
+      loadDashboard({
+        search:
+          "",
+      })
+    }, [
+      loadDashboard,
+    ])
 
   const syncLunaPortex =
     useCallback(async () => {
@@ -4757,8 +4889,13 @@ export function MarketRadarPanel({
         const products =
           dashboard?.products || []
 
-        return products
+        const filteredProducts =
+          products
           .filter(product => {
+            if (rankingFilter === "all") {
+              return true
+            }
+
             if (rankingFilter === "actionable") {
               return isRadarProductActionable(product)
             }
@@ -4780,16 +4917,45 @@ export function MarketRadarPanel({
 
             return true
           })
-          .slice(
-          0,
-          25
-        )
+
+        return activeRadarSearch
+          ? filteredProducts.slice(
+              0,
+              80
+            )
+          : filteredProducts.slice(
+              0,
+              25
+            )
       },
       [
+        activeRadarSearch,
         dashboard,
         rankingFilter,
       ]
     )
+
+  useEffect(() => {
+    if (
+      !activeRadarSearch ||
+      isLoading ||
+      !dashboard
+    ) {
+      return
+    }
+
+    searchResultsRef.current?.scrollIntoView({
+      behavior:
+        "smooth",
+      block:
+        "start",
+    })
+  }, [
+    activeRadarSearch,
+    dashboard,
+    hotProducts.length,
+    isLoading,
+  ])
 
   const summary =
     dashboard?.summary
@@ -4853,7 +5019,9 @@ export function MarketRadarPanel({
 
           <div className="flex flex-wrap gap-3">
             <button
-              onClick={loadDashboard}
+              onClick={() =>
+                loadDashboard()
+              }
               disabled={isLoading || isSyncing}
               className="
                 inline-flex
@@ -5154,6 +5322,7 @@ export function MarketRadarPanel({
 
       <div className="grid gap-6 xl:grid-cols-[1.5fr_0.7fr]">
         <section
+          ref={searchResultsRef}
           className="
             overflow-hidden
             rounded-lg
@@ -5185,6 +5354,12 @@ export function MarketRadarPanel({
             <div className="flex flex-col gap-3 md:items-end">
               <div className="flex flex-wrap gap-2">
                 {[
+                  {
+                    value:
+                      "all" as const,
+                    label:
+                      "Todos",
+                  },
                   {
                     value:
                       "actionable" as const,
@@ -5235,6 +5410,45 @@ export function MarketRadarPanel({
                   </button>
                 ))}
               </div>
+              <form
+                onSubmit={submitRadarSearch}
+                className="flex w-full flex-col gap-2 sm:flex-row md:max-w-xl"
+              >
+                <input
+                  value={radarSearch}
+                  onChange={(event) =>
+                    setRadarSearch(
+                      event.target.value
+                    )
+                  }
+                  placeholder="Buscar producto sincronizado por titulo, SKU o handle"
+                  className="min-w-0 flex-1 rounded-md border border-white/10 bg-black/35 px-3 py-2 text-xs text-white outline-none placeholder:text-white/30 focus:border-cyan-300/35"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="rounded-md border border-cyan-300/30 bg-cyan-300/[0.12] px-3 py-2 text-xs font-bold text-cyan-50 transition hover:bg-cyan-300/[0.18] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Buscar
+                  </button>
+                  {radarSearch ? (
+                    <button
+                      type="button"
+                      onClick={clearRadarSearch}
+                      disabled={isLoading}
+                      className="rounded-md border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-bold text-white/60 transition hover:border-cyan-300/25 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Limpiar
+                    </button>
+                  ) : null}
+                </div>
+              </form>
+              {activeRadarSearch ? (
+                <p className="max-w-xl text-[11px] leading-5 text-white/40">
+                  Busqueda activa: {activeRadarSearch}. {hotProducts.length} resultado{hotProducts.length === 1 ? "" : "s"} visible{hotProducts.length === 1 ? "" : "s"}.
+                </p>
+              ) : null}
               <div className="flex gap-2 text-[11px] text-white/40">
                 <span className="inline-flex items-center gap-1">
                   <ArrowDown className="h-3.5 w-3.5 text-cyan-100" />
@@ -5291,9 +5505,11 @@ export function MarketRadarPanel({
                       colSpan={7}
                       className="px-4 py-12 text-center text-sm text-white/45"
                     >
-                      {dashboard
-                        ? "No hay productos para este filtro."
-                        : "Ejecuta el primer sync para llenar el ranking."}
+                      {activeRadarSearch
+                        ? "No se encontro ese producto entre los productos sincronizados disponibles para busqueda."
+                        : dashboard
+                          ? "No hay productos para este filtro."
+                          : "Ejecuta el primer sync para llenar el ranking."}
                     </td>
                   </tr>
                 ) : (
