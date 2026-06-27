@@ -159,6 +159,11 @@ type EbayCandidate = {
   last_evaluated_at?: string | null
   blocked_reason?: string | null
   needs_data?: unknown
+  inventory_quantity?: number | string | null
+  inventory_scope?: string | null
+  inventory_confidence?: string | null
+  inventory_source?: string | null
+  stock_rotation_risk?: StockRotationRiskAdvisor | null
   created_at?: string | null
   updated_at?: string | null
   score?: EbayScore | null
@@ -490,6 +495,10 @@ type ReviewFilter =
   | "no_margin"
   | "ready_for_review"
   | "stock_review"
+  | "stock_insufficient"
+  | "rotation_risk"
+  | "pack_blocked_by_stock"
+  | "stock_sufficient"
 
 const reviewFilterOptions: {
   value: ReviewFilter
@@ -536,6 +545,30 @@ const reviewFilterOptions: {
       "stock_review",
     label:
       "Stock no confirmado",
+  },
+  {
+    value:
+      "stock_insufficient",
+    label:
+      "Stock insuficiente",
+  },
+  {
+    value:
+      "rotation_risk",
+    label:
+      "Riesgo de rotacion",
+  },
+  {
+    value:
+      "pack_blocked_by_stock",
+    label:
+      "Pack bloqueado por stock",
+  },
+  {
+    value:
+      "stock_sufficient",
+    label:
+      "Stock suficiente",
   },
 ]
 
@@ -1132,19 +1165,154 @@ function candidateIsReadyForHumanReview(
     candidate.state === "APPROVAL_PENDING"
 }
 
+function getCandidateInventoryQuantityFromList(
+  candidate: EbayCandidate
+) {
+  return toNumber(
+    candidate.inventory_quantity
+  )
+}
+
+function getCandidateStockRotationStatus(
+  candidate: EbayCandidate
+) {
+  return candidate.stock_rotation_risk?.status || null
+}
+
 function candidateNeedsStockReview(
   candidate: EbayCandidate
 ) {
+  if (
+    getCandidateStockRotationStatus(
+      candidate
+    ) === "stock_unconfirmed"
+  ) {
+    return true
+  }
+
   const confidence =
+    candidate.inventory_confidence ||
     candidate.pipelineReanalysisAdvisor?.inventory_confidence
 
   const scope =
+    candidate.inventory_scope ||
     candidate.pipelineReanalysisAdvisor?.inventory_scope
 
-  return confidence !== "high" ||
+  return getCandidateInventoryQuantityFromList(
+    candidate
+  ) === null ||
+    confidence !== "high" ||
     (
       scope !== "variant_level" &&
       scope !== "product_level"
+    )
+}
+
+function candidateHasInsufficientStock(
+  candidate: EbayCandidate
+) {
+  if (
+    getCandidateStockRotationStatus(
+      candidate
+    ) === "stock_insufficient"
+  ) {
+    return true
+  }
+
+  const quantity =
+    getCandidateInventoryQuantityFromList(
+      candidate
+    )
+
+  return quantity !== null &&
+    quantity <= 0
+}
+
+function candidateHasRotationRisk(
+  candidate: EbayCandidate
+) {
+  if (
+    getCandidateStockRotationStatus(
+      candidate
+    ) === "rotation_risk"
+  ) {
+    return true
+  }
+
+  const quantity =
+    getCandidateInventoryQuantityFromList(
+      candidate
+    )
+
+  const stockStability =
+    toNumber(
+      candidate.score?.stock_stability_score
+    )
+
+  return (
+    quantity !== null &&
+    quantity > 0 &&
+    quantity <= 5
+  ) ||
+    (
+      stockStability !== null &&
+      stockStability < 10
+    )
+}
+
+function candidateHasPackBlockedByStock(
+  candidate: EbayCandidate
+) {
+  if (
+    getCandidateStockRotationStatus(
+      candidate
+    ) === "pack_blocked_by_stock" ||
+    candidate.stock_rotation_risk?.pack_blocked_by_stock === true
+  ) {
+    return true
+  }
+
+  const quantity =
+    getCandidateInventoryQuantityFromList(
+      candidate
+    )
+
+  return quantity !== null &&
+    quantity > 0 &&
+    quantity < 2
+}
+
+function candidateHasSufficientStockSignal(
+  candidate: EbayCandidate
+) {
+  if (
+    getCandidateStockRotationStatus(
+      candidate
+    ) === "stock_sufficient"
+  ) {
+    return true
+  }
+
+  const quantity =
+    getCandidateInventoryQuantityFromList(
+      candidate
+    )
+
+  const confidence =
+    candidate.inventory_confidence ||
+    candidate.pipelineReanalysisAdvisor?.inventory_confidence
+
+  return quantity !== null &&
+    quantity > 5 &&
+    confidence === "high" &&
+    !candidateHasInsufficientStock(
+      candidate
+    ) &&
+    !candidateHasRotationRisk(
+      candidate
+    ) &&
+    !candidateHasPackBlockedByStock(
+      candidate
     )
 }
 
@@ -1195,6 +1363,30 @@ function candidateMatchesReviewFilter(
     )
   }
 
+  if (filter === "stock_insufficient") {
+    return candidateHasInsufficientStock(
+      candidate
+    )
+  }
+
+  if (filter === "rotation_risk") {
+    return candidateHasRotationRisk(
+      candidate
+    )
+  }
+
+  if (filter === "pack_blocked_by_stock") {
+    return candidateHasPackBlockedByStock(
+      candidate
+    )
+  }
+
+  if (filter === "stock_sufficient") {
+    return candidateHasSufficientStockSignal(
+      candidate
+    )
+  }
+
   return true
 }
 
@@ -1228,11 +1420,23 @@ function getCandidateReviewSignal(
 function getCandidateStockSignal(
   candidate: EbayCandidate
 ) {
+  const quantity =
+    getCandidateInventoryQuantityFromList(
+      candidate
+    )
+
+  if (quantity !== null) {
+    return `Stock: ${formatNumber(
+      quantity
+    )}`
+  }
+
   const confidence =
+    candidate.inventory_confidence ||
     candidate.pipelineReanalysisAdvisor?.inventory_confidence
 
   if (confidence === "high") {
-    return "Stock: confianza alta"
+    return "Stock: cantidad no visible"
   }
 
   if (confidence) {
