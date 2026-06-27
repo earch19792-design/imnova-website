@@ -652,6 +652,14 @@ async function getLatestMarketRadarProducts(
   if (search) {
     const pattern =
       `%${search}%`
+    const skuSearchValues =
+      Array.from(
+        new Set([
+          search,
+          search.toUpperCase(),
+          search.toLowerCase(),
+        ])
+      )
 
     const [
       productSearchResult,
@@ -691,18 +699,9 @@ async function getLatestMarketRadarProducts(
             "source_id",
             source.id
           )
-          .or(
-            [
-              `sku.ilike.${pattern}`,
-              `variant_title.ilike.${pattern}`,
-            ].join(",")
-          )
-          .order(
-            "captured_at",
-            {
-              ascending: false,
-              nullsFirst: false,
-            }
+          .in(
+            "sku",
+            skuSearchValues
           )
           .limit(
             DASHBOARD_SEARCH_LIMIT
