@@ -815,6 +815,10 @@ function getAdvisorActionLabel(
 function getProductStatusLabel(
   product: MarketRadarProductRow
 ) {
+  if (product.is_active === false) {
+    return "Fuera de catalogo"
+  }
+
   if (product.inventory_status === "out_of_stock") {
     return "Agotado"
   }
@@ -876,6 +880,10 @@ function getProductStatusLabel(
 function getProductStatusClassName(
   product: MarketRadarProductRow
 ) {
+  if (product.is_active === false) {
+    return "border-red-300/30 bg-red-300/[0.12] text-red-100"
+  }
+
   if (product.inventory_status === "out_of_stock") {
     return "border-red-300/25 bg-red-300/[0.10] text-red-100"
   }
@@ -949,6 +957,10 @@ function isStrictStockConfirmed(
 function getRadarStockValidationStatus(
   product: MarketRadarProductRow
 ) {
+  if (product.is_active === false) {
+    return "out_of_stock"
+  }
+
   if (isStrictStockConfirmed(product)) {
     return "stock_confirmed"
   }
@@ -986,6 +998,10 @@ function isRadarProductActionable(
 function getRadarActionStatusLabel(
   product: MarketRadarProductRow
 ) {
+  if (product.is_active === false) {
+    return "No listar"
+  }
+
   if (!isRadarProductActionable(product)) {
     return "Ya revisado"
   }
@@ -1003,6 +1019,10 @@ function getRadarActionStatusLabel(
 function getRadarActionStatusClassName(
   product: MarketRadarProductRow
 ) {
+  if (product.is_active === false) {
+    return "border-red-300/30 bg-red-300/[0.12] text-red-100"
+  }
+
   if (!isRadarProductActionable(product)) {
     return "border-white/10 bg-white/[0.04] text-white/55"
   }
@@ -1020,6 +1040,10 @@ function getRadarActionStatusClassName(
 function getActionableReasonLabel(
   product: MarketRadarProductRow
 ) {
+  if (product.is_active === false) {
+    return "Luna no muestra este producto en el catalogo actual"
+  }
+
   switch (product.actionable_reason) {
     case "new_product_not_reviewed":
       return "Nuevo producto no revisado"
@@ -1051,6 +1075,10 @@ function getActionableReasonLabel(
 function getStockValidationLabel(
   product: MarketRadarProductRow
 ) {
+  if (product.is_active === false) {
+    return "Proveedor no disponible"
+  }
+
   const status =
     getRadarStockValidationStatus(product)
 

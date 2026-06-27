@@ -894,6 +894,7 @@ async function getLatestMarketRadarProducts(
         product_url,
         featured_image_url,
         image_urls,
+        is_active,
         first_seen_at,
         last_seen_at,
         updated_at_source
@@ -1005,6 +1006,8 @@ async function getLatestMarketRadarProducts(
           product.featured_image_url,
         image_urls:
           product.image_urls,
+        is_active:
+          product.is_active ?? null,
         first_seen_at:
           product.first_seen_at,
         last_seen_at:
