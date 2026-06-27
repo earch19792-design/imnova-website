@@ -1452,6 +1452,8 @@ function humanizePipelineValue(
       "Candidato para pack",
     validate_pack_inputs:
       "Confirmar datos para pack",
+    unit_first_pack_optional:
+      "Unidad organica primero",
     evaluate_multipack_listing:
       "Evaluar listing en pack",
     pack_not_enough_find_supplier:

@@ -3536,6 +3536,18 @@ test("stock rotation integration: usa cantidad confirmada desde payload normaliz
     advisor.stock_rotation_risk.confirmed_stock,
     13
   )
+  assert.equal(
+    advisor.multipack_profit_advisor.recommended_strategy,
+    "unit_first_pack_optional"
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.best_pack_hypothesis.pack_quantity,
+    6
+  )
+  assert.match(
+    advisor.multipack_profit_advisor.summary,
+    /Unidad organica primero/
+  )
 
   const packTwelve =
     advisor.multipack_profit_advisor.scenarios.find(
