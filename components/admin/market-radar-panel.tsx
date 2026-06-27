@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react"
 import {
@@ -4114,9 +4115,17 @@ export function MarketRadarPanel({
   ] = useState("")
 
   const [
+    activeRadarSearch,
+    setActiveRadarSearch,
+  ] = useState("")
+
+  const [
     rankingFilter,
     setRankingFilter,
   ] = useState<RadarRankingFilter>("actionable")
+
+  const searchResultsRef =
+    useRef<HTMLElement | null>(null)
 
   const getAccessToken =
     useCallback(async () => {
@@ -4302,10 +4311,16 @@ export function MarketRadarPanel({
       event: FormEvent<HTMLFormElement>
     ) => {
       event.preventDefault()
+      const searchTerm =
+        radarSearch.trim()
+
+      setActiveRadarSearch(
+        searchTerm
+      )
       setRankingFilter("all")
       loadDashboard({
         search:
-          radarSearch,
+          searchTerm,
       })
     }, [
       loadDashboard,
@@ -4315,6 +4330,7 @@ export function MarketRadarPanel({
   const clearRadarSearch =
     useCallback(() => {
       setRadarSearch("")
+      setActiveRadarSearch("")
       setRankingFilter("actionable")
       loadDashboard({
         search:
@@ -4873,7 +4889,8 @@ export function MarketRadarPanel({
         const products =
           dashboard?.products || []
 
-        return products
+        const filteredProducts =
+          products
           .filter(product => {
             if (rankingFilter === "all") {
               return true
@@ -4900,16 +4917,45 @@ export function MarketRadarPanel({
 
             return true
           })
-          .slice(
-          0,
-          25
-        )
+
+        return activeRadarSearch
+          ? filteredProducts.slice(
+              0,
+              80
+            )
+          : filteredProducts.slice(
+              0,
+              25
+            )
       },
       [
+        activeRadarSearch,
         dashboard,
         rankingFilter,
       ]
     )
+
+  useEffect(() => {
+    if (
+      !activeRadarSearch ||
+      isLoading ||
+      !dashboard
+    ) {
+      return
+    }
+
+    searchResultsRef.current?.scrollIntoView({
+      behavior:
+        "smooth",
+      block:
+        "start",
+    })
+  }, [
+    activeRadarSearch,
+    dashboard,
+    hotProducts.length,
+    isLoading,
+  ])
 
   const summary =
     dashboard?.summary
@@ -5276,6 +5322,7 @@ export function MarketRadarPanel({
 
       <div className="grid gap-6 xl:grid-cols-[1.5fr_0.7fr]">
         <section
+          ref={searchResultsRef}
           className="
             overflow-hidden
             rounded-lg
@@ -5397,9 +5444,9 @@ export function MarketRadarPanel({
                   ) : null}
                 </div>
               </form>
-              {radarSearch ? (
+              {activeRadarSearch ? (
                 <p className="max-w-xl text-[11px] leading-5 text-white/40">
-                  La busqueda consulta productos sincronizados, aunque no esten en el ranking principal.
+                  Busqueda activa: {activeRadarSearch}. {hotProducts.length} resultado{hotProducts.length === 1 ? "" : "s"} visible{hotProducts.length === 1 ? "" : "s"}.
                 </p>
               ) : null}
               <div className="flex gap-2 text-[11px] text-white/40">
@@ -5458,9 +5505,11 @@ export function MarketRadarPanel({
                       colSpan={7}
                       className="px-4 py-12 text-center text-sm text-white/45"
                     >
-                      {dashboard
-                        ? "No hay productos para este filtro."
-                        : "Ejecuta el primer sync para llenar el ranking."}
+                      {activeRadarSearch
+                        ? "No se encontro ese producto entre los productos sincronizados disponibles para busqueda."
+                        : dashboard
+                          ? "No hay productos para este filtro."
+                          : "Ejecuta el primer sync para llenar el ranking."}
                     </td>
                   </tr>
                 ) : (

@@ -330,6 +330,22 @@ function normalizeMarketRadarSearchText(
     .trim()
 }
 
+function getMarketRadarSearchHandleCandidate(
+  value: string
+) {
+  return normalizeMarketRadarSearchText(
+    value
+  )
+    .replace(
+      /\s+/g,
+      "-"
+    )
+    .replace(
+      /-+/g,
+      "-"
+    )
+}
+
 function productMatchesMarketRadarSearch(
   product: {
     title?: string | null
@@ -709,12 +725,33 @@ async function getLatestMarketRadarProducts(
           search.toLowerCase(),
         ])
       )
+    const handleCandidate =
+      getMarketRadarSearchHandleCandidate(
+        search
+      )
 
     const [
+      exactProductSearchResult,
       productSearchResult,
       snapshotSearchResult,
     ] =
       await Promise.all([
+        supabase
+          .from("market_radar_products")
+          .select("id")
+          .eq(
+            "source_id",
+            source.id
+          )
+          .or(
+            [
+              `handle.eq.${handleCandidate}`,
+              `supplier_product_id.eq.${search}`,
+            ].join(",")
+          )
+          .limit(
+            DASHBOARD_SEARCH_LIMIT
+          ),
         supabase
           .from("market_radar_products")
           .select(`
@@ -748,6 +785,12 @@ async function getLatestMarketRadarProducts(
           ),
       ])
 
+    if (exactProductSearchResult.error) {
+      throw new Error(
+        exactProductSearchResult.error.message
+      )
+    }
+
     if (productSearchResult.error) {
       throw new Error(
         productSearchResult.error.message
@@ -763,6 +806,9 @@ async function getLatestMarketRadarProducts(
     productIds =
       Array.from(
         new Set([
+          ...(
+            exactProductSearchResult.data || []
+          ).map(product => product.id),
           ...(
             productSearchResult.data || []
           )
