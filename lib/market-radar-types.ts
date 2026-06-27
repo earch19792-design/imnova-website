@@ -130,6 +130,7 @@ export type RadarAdvisorAlert = {
   product_id: string | null
   product_title: string
   supplier_sku: string | null
+  supplier_variant_id?: string | null
   previous_value: Record<string, unknown> | null
   current_value: Record<string, unknown> | null
   severity: "critical" | "high" | "medium" | "low"
