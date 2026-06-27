@@ -499,6 +499,43 @@ test("producto válido se evalúa completo y genera WhatsApp dryRun", () => {
   assert.equal(result.whatsappDryRunPayload.interactive.action.buttons.length, 4)
 })
 
+test("winner pipeline normaliza stock confirmado desde inventory_context", () => {
+  const {
+    inventory_quantity,
+    ...productWithoutTopLevelQuantity
+  } = validRadarProduct
+
+  const result =
+    processRadarCandidate({
+      ...productWithoutTopLevelQuantity,
+      raw: {
+        inventory_context: {
+          inventory_quantity:
+            inventory_quantity,
+          inventory_scope:
+            "variant_level",
+          inventory_confidence:
+            "high",
+          inventory_source:
+            "manual_admin_confirmation",
+        },
+      },
+    })
+
+  assert.equal(
+    result.candidate.stock,
+    20
+  )
+  assert.equal(
+    result.candidate.inventory_context.inventory_quantity,
+    20
+  )
+  assert.equal(
+    result.validation.status,
+    "passed"
+  )
+})
+
 test("radar advisor: out_of_stock + DRAFT_CREATED -> review_existing_draft_inventory critical", () => {
   const alert =
     getRadarAdvisorEvent(
@@ -3413,6 +3450,349 @@ test("multipack advisor: no altera Fee Engine ni Campaign Advisor", () => {
   assert.equal(
     advisor.pricing_strategy.campaign_eligible,
     false
+  )
+})
+
+test("stock rotation integration: stock suficiente queda como senal read-only", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "Small consumable shampoo",
+        state:
+          "VALIDATED",
+        inventory_quantity:
+          12,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+        weight:
+          1,
+      },
+      salePrice:
+        50,
+      lunaCost:
+        20,
+    })
+
+  assert.equal(
+    advisor.stock_rotation_risk.status,
+    "stock_sufficient"
+  )
+  assert.equal(
+    advisor.stock_rotation_risk.message,
+    "Stock suficiente para revision humana. No autoriza publicacion automatica."
+  )
+  assert.equal(
+    advisor.stock_rotation_risk.campaign_blocked_by_stock,
+    false
+  )
+  assert.equal(
+    advisor.stock_rotation_risk.stock_guardrail.human_approval_required,
+    true
+  )
+})
+
+test("stock rotation integration: usa cantidad confirmada desde payload normalizado", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "AG Adhesive Guru AG 220 CA Glue & Activator",
+        state:
+          "NEEDS_DATA",
+        normalized_payload: {
+          stock:
+            13,
+          inventory_context: {
+            inventory_quantity:
+              13,
+            inventory_scope:
+              "variant_level",
+            inventory_confidence:
+              "high",
+            inventory_source:
+              "manual_admin_confirmation",
+          },
+        },
+        needs_data: [
+          "weight_or_dimensions",
+          "authorized_images",
+          "category_or_inference_data",
+        ],
+      },
+      salePrice:
+        21.99,
+      lunaCost:
+        4,
+    })
+
+  assert.equal(
+    advisor.stock_rotation_risk.status,
+    "stock_sufficient"
+  )
+  assert.equal(
+    advisor.stock_rotation_risk.confirmed_stock,
+    13
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.recommended_strategy,
+    "unit_first_pack_optional"
+  )
+  assert.equal(
+    advisor.multipack_profit_advisor.best_pack_hypothesis.pack_quantity,
+    6
+  )
+  assert.match(
+    advisor.multipack_profit_advisor.summary,
+    /Unidad organica primero/
+  )
+
+  const packTwelve =
+    advisor.multipack_profit_advisor.scenarios.find(
+      scenario => scenario.pack_quantity === 12
+    )
+
+  assert.equal(
+    packTwelve.stock_available,
+    13
+  )
+  assert.equal(
+    packTwelve.stock_sufficient,
+    true
+  )
+})
+
+test("stock rotation integration: stock no confirmado bloquea escalamiento sin inventar cantidad", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "Small consumable shampoo",
+        state:
+          "VALIDATED",
+      },
+      salePrice:
+        50,
+      lunaCost:
+        20,
+    })
+
+  assert.equal(
+    advisor.stock_rotation_risk.status,
+    "stock_unconfirmed"
+  )
+  assert.equal(
+    advisor.stock_rotation_risk.confirmed_stock,
+    null
+  )
+  assert.equal(
+    advisor.stock_rotation_risk.message,
+    "Stock no confirmado. Validar inventario antes de preparar listing, pack o campana."
+  )
+  assert.equal(
+    advisor.stock_rotation_risk.campaign_blocked_by_stock,
+    true
+  )
+  assert.ok(
+    advisor.stock_rotation_risk.stock_guardrail.blocked_actions.includes(
+      "campaign"
+    )
+  )
+})
+
+test("stock rotation integration: stock insuficiente bloquea pack campana y listing", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "Small consumable shampoo",
+        state:
+          "VALIDATED",
+        inventory_quantity:
+          0,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+      },
+      salePrice:
+        50,
+      lunaCost:
+        20,
+    })
+
+  assert.equal(
+    advisor.stock_rotation_risk.status,
+    "stock_insufficient"
+  )
+  assert.equal(
+    advisor.stock_rotation_risk.message,
+    "Stock insuficiente. No escalar pack, campana ni listing hasta confirmar disponibilidad."
+  )
+  assert.equal(
+    advisor.stock_rotation_risk.pack_blocked_by_stock,
+    true
+  )
+  assert.ok(
+    advisor.stock_rotation_risk.stock_guardrail.blocked_actions.includes(
+      "publish_listing"
+    )
+  )
+})
+
+test("stock rotation integration: pack bloqueado por stock mantiene copy operativo", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "Glade Automatic Spray Refill Lavender Vanilla Value Pack",
+        state:
+          "VALIDATED",
+        inventory_quantity:
+          1,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+        weight:
+          1,
+      },
+      salePrice:
+        13.64,
+      lunaCost:
+        4,
+      shippingCost:
+        6.99,
+    })
+
+  assert.equal(
+    advisor.stock_rotation_risk.status,
+    "pack_blocked_by_stock"
+  )
+  assert.equal(
+    advisor.stock_rotation_risk.message,
+    "Pack no es opcion operativa todavia por stock insuficiente."
+  )
+  assert.ok(
+    advisor.multipack_profit_advisor.scenarios.every(
+      scenario =>
+        scenario.status === "blocked_insufficient_stock"
+    )
+  )
+})
+
+test("stock rotation integration: riesgo de rotacion no altera profit ni multipack math", () => {
+  const stableAdvisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "Small consumable shampoo",
+        state:
+          "VALIDATED",
+        inventory_quantity:
+          8,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+        weight:
+          1,
+      },
+      salePrice:
+        50,
+      lunaCost:
+        20,
+    })
+
+  const rotationAdvisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "Small consumable shampoo",
+        state:
+          "VALIDATED",
+        inventory_quantity:
+          8,
+        previous_confirmed_stock:
+          12,
+        supplier_availability:
+          "unstable",
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+        weight:
+          1,
+      },
+      salePrice:
+        50,
+      lunaCost:
+        20,
+    })
+
+  assert.equal(
+    rotationAdvisor.stock_rotation_risk.status,
+    "rotation_risk"
+  )
+  assert.equal(
+    rotationAdvisor.stock_rotation_risk.message,
+    "Riesgo de rotacion de stock. Revisar velocidad de venta, cantidad disponible y reposicion antes de escalar."
+  )
+  assert.equal(
+    rotationAdvisor.cost_breakdown.net_profit,
+    stableAdvisor.cost_breakdown.net_profit
+  )
+  assert.equal(
+    rotationAdvisor.cost_breakdown.net_margin_percent,
+    stableAdvisor.cost_breakdown.net_margin_percent
+  )
+  assert.equal(
+    rotationAdvisor.multipack_profit_advisor.scenarios[0].net_profit,
+    stableAdvisor.multipack_profit_advisor.scenarios[0].net_profit
+  )
+})
+
+test("stock rotation integration: no genera acciones reales y PUBLISHED sigue sin ruta operativa", () => {
+  const advisor =
+    makeSupplierSimulatorAdvisor({
+      candidate: {
+        title:
+          "Small consumable shampoo",
+        state:
+          "PUBLISHED",
+        inventory_quantity:
+          12,
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+        weight:
+          1,
+      },
+      salePrice:
+        50,
+      lunaCost:
+        20,
+    })
+
+  const serialized =
+    JSON.stringify(
+      advisor.stock_rotation_risk
+    )
+
+  assert.equal(
+    advisor.recommended_next_action,
+    "monitor"
+  )
+  assert.doesNotMatch(
+    serialized,
+    /create_real_ebay_draft|auto_publish_listing|publishListing|pauseListing|call_ebay_api/i
+  )
+  assert.equal(
+    advisor.stock_rotation_risk.stock_guardrail.human_approval_required,
+    true
   )
 })
 

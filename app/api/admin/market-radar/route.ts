@@ -1003,6 +1003,8 @@ async function confirmMarketRadarStockQuantity({
           latestSnapshot?.discount_percent ?? null,
         raw: {
           inventory_context: {
+            inventory_quantity:
+              quantity,
             inventory_source:
               "manual_admin_confirmation",
             inventory_scope:
