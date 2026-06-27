@@ -3986,6 +3986,36 @@ function RadarAdvisorAlertItem({
         </div>
       )}
 
+      {alert.commercial_playbook && (
+        <div className="mt-4 rounded-md border border-amber-300/20 bg-amber-300/[0.06] p-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-amber-100/55">
+                Playbook comercial
+              </p>
+              <p className="mt-1 break-words text-sm font-black leading-5 text-amber-50/90">
+                {alert.commercial_playbook.label}
+              </p>
+            </div>
+            <span className="rounded-md border border-amber-200/20 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-amber-100/65">
+              {alert.commercial_playbook.risk_level}
+            </span>
+          </div>
+          <p className="mt-3 text-xs leading-5 text-amber-50/70">
+            Recomendación generada a partir de señales del Radar. No ejecuta acciones reales.
+          </p>
+          <p className="mt-2 text-sm font-semibold leading-6 text-amber-50/85">
+            {alert.commercial_playbook.recommendation}
+          </p>
+          <p className="mt-2 text-xs leading-5 text-amber-50/60">
+            {alert.commercial_playbook.next_step}
+          </p>
+          <p className="mt-2 text-[11px] font-semibold leading-5 text-amber-50/50">
+            {alert.commercial_playbook.guardrail}
+          </p>
+        </div>
+      )}
+
       <div className="mt-4 grid grid-cols-1 gap-4 text-xs leading-5 text-white/45 lg:grid-cols-2">
         <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-3">
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">

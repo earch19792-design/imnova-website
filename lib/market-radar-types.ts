@@ -143,6 +143,14 @@ export type RadarAdvisorAlert = {
   candidate_state: string | null
   candidate_id: string | null
   created_at: string | null
+  commercial_playbook?: {
+    label: string
+    recommendation: string
+    next_step: string
+    risk_level: "critical" | "high" | "medium" | "low"
+    guardrail: string
+    advisory_only: true
+  } | null
   stock_context?: {
     inventory_quantity: number | null
     product_available_quantity?: number | null
