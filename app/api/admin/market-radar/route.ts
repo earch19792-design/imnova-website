@@ -731,7 +731,8 @@ async function getLatestMarketRadarProducts(
       )
 
     const [
-      exactProductSearchResult,
+      exactHandleSearchResult,
+      exactSupplierProductSearchResult,
       productSearchResult,
       snapshotSearchResult,
     ] =
@@ -743,11 +744,23 @@ async function getLatestMarketRadarProducts(
             "source_id",
             source.id
           )
-          .or(
-            [
-              `handle.eq.${handleCandidate}`,
-              `supplier_product_id.eq.${search}`,
-            ].join(",")
+          .eq(
+            "handle",
+            handleCandidate
+          )
+          .limit(
+            DASHBOARD_SEARCH_LIMIT
+          ),
+        supabase
+          .from("market_radar_products")
+          .select("id")
+          .eq(
+            "source_id",
+            source.id
+          )
+          .eq(
+            "supplier_product_id",
+            search
           )
           .limit(
             DASHBOARD_SEARCH_LIMIT
@@ -785,9 +798,15 @@ async function getLatestMarketRadarProducts(
           ),
       ])
 
-    if (exactProductSearchResult.error) {
+    if (exactHandleSearchResult.error) {
       throw new Error(
-        exactProductSearchResult.error.message
+        exactHandleSearchResult.error.message
+      )
+    }
+
+    if (exactSupplierProductSearchResult.error) {
+      throw new Error(
+        exactSupplierProductSearchResult.error.message
       )
     }
 
@@ -807,7 +826,10 @@ async function getLatestMarketRadarProducts(
       Array.from(
         new Set([
           ...(
-            exactProductSearchResult.data || []
+            exactHandleSearchResult.data || []
+          ).map(product => product.id),
+          ...(
+            exactSupplierProductSearchResult.data || []
           ).map(product => product.id),
           ...(
             productSearchResult.data || []
@@ -1882,6 +1904,10 @@ export async function GET(
         success: false,
         error:
           "market_radar_dashboard_failed",
+        error_detail:
+          error instanceof Error
+            ? error.message
+            : String(error),
       },
       {
         status: 500,
