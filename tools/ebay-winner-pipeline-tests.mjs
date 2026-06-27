@@ -619,6 +619,38 @@ test("radar advisor: price_down -> reprocess_with_updated_cost", () => {
   assert.equal(alert.severity, "medium")
 })
 
+test("radar advisor playbook: price_down recalcula margen y reabre oportunidad", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "price_down",
+        old_value: {
+          price:
+            30,
+        },
+        new_value: {
+          price:
+            20,
+        },
+      },
+      baseRadarAdvisorProduct,
+      null
+    )
+
+  assert.equal(alert.commercial_playbook.advisory_only, true)
+  assert.equal(alert.commercial_playbook.label, "Bajo precio")
+  assert.match(
+    alert.commercial_playbook.recommendation,
+    /Recalcular margen/
+  )
+  assert.match(
+    alert.commercial_playbook.recommendation,
+    /reabrir oportunidad/
+  )
+})
+
 test("radar advisor: low_stock -> prepare_pause_or_reduce_quantity", () => {
   const alert =
     getRadarAdvisorEvent(
@@ -1304,6 +1336,235 @@ test("radar advisor: price_up + VALIDATED -> recalculate_before_listing", () => 
 
   assert.equal(alert.recommended_action, "recalculate_before_listing")
   assert.equal(alert.severity, "high")
+})
+
+test("radar advisor playbook: price_up revisa margen antes de escalar", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "price_up",
+        old_value: {
+          price:
+            20,
+        },
+        new_value: {
+          price:
+            30,
+        },
+      },
+      baseRadarAdvisorProduct,
+      null
+    )
+
+  assert.equal(alert.commercial_playbook.label, "Subio precio")
+  assert.match(
+    alert.commercial_playbook.recommendation,
+    /Revisar margen/
+  )
+  assert.match(
+    alert.commercial_playbook.recommendation,
+    /No avanzar/
+  )
+})
+
+test("radar advisor playbook: out_of_stock bloquea listing pack y campana", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "out_of_stock",
+        new_value: {
+          available:
+            false,
+        },
+      },
+      baseRadarAdvisorProduct,
+      null
+    )
+
+  assert.equal(alert.commercial_playbook.label, "Sin stock")
+  assert.match(
+    alert.commercial_playbook.recommendation,
+    /No listar, no crear pack/
+  )
+  assert.match(
+    alert.commercial_playbook.recommendation,
+    /no activar campana/
+  )
+})
+
+test("radar advisor playbook: restocked confirma cantidad y reanaliza", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "restocked",
+        new_value: {
+          available:
+            true,
+          inventory_quantity:
+            8,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          8,
+      },
+      null
+    )
+
+  assert.equal(alert.commercial_playbook.label, "Volvio a stock")
+  assert.match(
+    alert.commercial_playbook.recommendation,
+    /Confirmar cantidad disponible/
+  )
+  assert.match(
+    alert.commercial_playbook.recommendation,
+    /peso, dimensiones y comparables/
+  )
+})
+
+test("radar advisor playbook: stock_increased prioriza revision", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "stock_increased",
+        old_value: {
+          inventory_quantity:
+            2,
+        },
+        new_value: {
+          inventory_quantity:
+            12,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          12,
+      },
+      null
+    )
+
+  assert.equal(
+    alert.commercial_playbook.label,
+    "Rotacion o disponibilidad al alza"
+  )
+  assert.match(
+    alert.commercial_playbook.recommendation,
+    /Priorizar revision/
+  )
+})
+
+test("radar advisor playbook: discount_started evalua margen y liquidacion", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "discount_started",
+        new_value: {
+          price:
+            15,
+          compare_at_price:
+            25,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          12,
+      },
+      null
+    )
+
+  assert.equal(alert.commercial_playbook.label, "Descuento iniciado")
+  assert.match(
+    alert.commercial_playbook.recommendation,
+    /riesgo de liquidacion/
+  )
+  assert.match(
+    alert.commercial_playbook.recommendation,
+    /oportunidad automatica/
+  )
+})
+
+test("radar advisor playbook: inactive producto fuera de catalogo", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "price_down",
+        new_value: {
+          price:
+            20,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        is_active:
+          false,
+      },
+      null
+    )
+
+  assert.equal(alert.commercial_playbook.label, "Fuera de catalogo")
+  assert.equal(alert.commercial_playbook.risk_level, "critical")
+  assert.match(
+    alert.commercial_playbook.recommendation,
+    /Bloquear avance/
+  )
+  assert.match(
+    alert.commercial_playbook.recommendation,
+    /proveedor alternativo/
+  )
+})
+
+test("radar advisor playbook: no acciones reales", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "stock_increased",
+        new_value: {
+          inventory_quantity:
+            12,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          12,
+      },
+      null
+    )
+
+  assert.equal(alert.commercial_playbook.advisory_only, true)
+  assert.match(
+    alert.commercial_playbook.guardrail,
+    /no publica/
+  )
+  assert.match(
+    alert.commercial_playbook.guardrail,
+    /no crea drafts/
+  )
+  assert.match(
+    alert.commercial_playbook.guardrail,
+    /no modifica listings/
+  )
+  assert.match(
+    alert.commercial_playbook.guardrail,
+    /no cambia estados/
+  )
 })
 
 test("producto sin stock queda bloqueado", () => {
