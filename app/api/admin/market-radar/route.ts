@@ -30,6 +30,7 @@ const LUNAPORTEX_SOURCE_KEY =
   "lunaportex"
 
 const DASHBOARD_PRODUCT_LIMIT = 80
+const DASHBOARD_SEARCH_LIMIT = 80
 
 type MarketRadarPipelineCandidateLookup = {
   id: string
@@ -255,6 +256,61 @@ function toNumber(
   return Number.isFinite(numericValue)
     ? numericValue
     : null
+}
+
+function sanitizeMarketRadarSearch(
+  value: string | null
+) {
+  return String(value || "")
+    .trim()
+    .replace(
+      /[^a-zA-Z0-9\s-]/g,
+      " "
+    )
+    .replace(
+      /\s+/g,
+      " "
+    )
+    .slice(
+      0,
+      100
+    )
+}
+
+function getAdvisorAlertDedupeKey(
+  alert: RadarAdvisorAlert
+) {
+  return [
+    alert.product_id || "unknown_product",
+    alert.supplier_sku || "unknown_sku",
+    alert.event_type || "unknown_event",
+    alert.business_signal || "unknown_signal",
+    alert.recommended_action || "unknown_action",
+    alert.stock_context?.inventory_status || "unknown_stock",
+    alert.stock_context?.inventory_source || "unknown_source",
+    alert.stock_context?.inventory_scope || "unknown_scope",
+    alert.stock_context?.inventory_quantity ?? "unknown_quantity",
+  ].join("|")
+}
+
+function dedupeAdvisorAlerts(
+  alerts: RadarAdvisorAlert[]
+) {
+  const seenAlerts =
+    new Set<string>()
+
+  return alerts.filter(alert => {
+    const dedupeKey =
+      getAdvisorAlertDedupeKey(alert)
+
+    if (seenAlerts.has(dedupeKey)) {
+      return false
+    }
+
+    seenAlerts.add(dedupeKey)
+
+    return true
+  })
 }
 
 function getInventoryContext(
@@ -581,13 +637,108 @@ async function getLatestProductSnapshots(
 
 async function getLatestMarketRadarProducts(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
-  source: MarketRadarSource
+  source: MarketRadarSource,
+  options: {
+    search?: string
+  } = {}
 ) {
-  const {
-    data: scoreData,
-    error: scoreError,
-  } =
-    await supabase
+  const search =
+    sanitizeMarketRadarSearch(
+      options.search || null
+    )
+
+  let productIds: string[] = []
+
+  if (search) {
+    const pattern =
+      `%${search}%`
+
+    const [
+      productSearchResult,
+      snapshotSearchResult,
+    ] =
+      await Promise.all([
+        supabase
+          .from("market_radar_products")
+          .select("id")
+          .eq(
+            "source_id",
+            source.id
+          )
+          .or(
+            [
+              `title.ilike.${pattern}`,
+              `handle.ilike.${pattern}`,
+              `vendor.ilike.${pattern}`,
+              `product_type.ilike.${pattern}`,
+              `supplier_product_id.ilike.${pattern}`,
+            ].join(",")
+          )
+          .order(
+            "last_seen_at",
+            {
+              ascending: false,
+              nullsFirst: false,
+            }
+          )
+          .limit(
+            DASHBOARD_SEARCH_LIMIT
+          ),
+        supabase
+          .from("market_radar_snapshots")
+          .select("product_id")
+          .eq(
+            "source_id",
+            source.id
+          )
+          .or(
+            [
+              `sku.ilike.${pattern}`,
+              `variant_title.ilike.${pattern}`,
+            ].join(",")
+          )
+          .order(
+            "captured_at",
+            {
+              ascending: false,
+              nullsFirst: false,
+            }
+          )
+          .limit(
+            DASHBOARD_SEARCH_LIMIT
+          ),
+      ])
+
+    if (productSearchResult.error) {
+      throw new Error(
+        productSearchResult.error.message
+      )
+    }
+
+    if (snapshotSearchResult.error) {
+      throw new Error(
+        snapshotSearchResult.error.message
+      )
+    }
+
+    productIds =
+      Array.from(
+        new Set([
+          ...(
+            productSearchResult.data || []
+          ).map(product => product.id),
+          ...(
+            snapshotSearchResult.data || []
+          ).map(snapshot => snapshot.product_id),
+        ].filter(Boolean))
+      ).slice(
+        0,
+        DASHBOARD_SEARCH_LIMIT
+      )
+  }
+
+  let scoreQuery =
+    supabase
       .from("market_radar_scores")
       .select(`
         product_id,
@@ -609,23 +760,44 @@ async function getLatestMarketRadarProducts(
         "source_id",
         source.id
       )
-      .order(
-        "opportunity_score",
-        {
-          ascending: false,
-          nullsFirst: false,
-        }
+
+  if (search) {
+    if (productIds.length === 0) {
+      return []
+    }
+
+    scoreQuery =
+      scoreQuery.in(
+        "product_id",
+        productIds
       )
-      .order(
-        "last_event_at",
-        {
-          ascending: false,
-          nullsFirst: false,
-        }
-      )
-      .limit(
-        DASHBOARD_PRODUCT_LIMIT
-      )
+  } else {
+    scoreQuery =
+      scoreQuery
+        .order(
+          "opportunity_score",
+          {
+            ascending: false,
+            nullsFirst: false,
+          }
+        )
+        .order(
+          "last_event_at",
+          {
+            ascending: false,
+            nullsFirst: false,
+          }
+        )
+        .limit(
+          DASHBOARD_PRODUCT_LIMIT
+        )
+  }
+
+  const {
+    data: scoreData,
+    error: scoreError,
+  } =
+    await scoreQuery
 
   if (scoreError) {
     throw new Error(
@@ -659,10 +831,12 @@ async function getLatestMarketRadarProducts(
       ])
     )
 
-  let productIds =
-    scores.map(
-      score => score.product_id
-    )
+  if (!search) {
+    productIds =
+      scores.map(
+        score => score.product_id
+      )
+  }
 
   if (productIds.length === 0) {
     const {
@@ -1043,7 +1217,11 @@ async function confirmMarketRadarStockQuantity({
   }
 }
 
-async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
+async function getMarketRadarDashboard(
+  options: {
+    search?: string
+  } = {}
+): Promise<MarketRadarDashboard> {
   const supabase =
     getSupabaseAdminClient()
 
@@ -1114,7 +1292,11 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
   const latestProducts =
     await getLatestMarketRadarProducts(
       supabase,
-      source
+      source,
+      {
+        search:
+          options.search,
+      }
     )
 
   const sevenDaysAgo =
@@ -1514,17 +1696,18 @@ async function getMarketRadarDashboard(): Promise<MarketRadarDashboard> {
     ) as MarketRadarProductRow[]
 
   const advisorAlerts =
-    recentEvents
-      .map(event =>
-        getRadarAdvisorEvent(
-          event,
-          productById.get(event.product_id) || null,
-          fallbackCandidatesByProductId.get(event.product_id) ||
-            null
+    dedupeAdvisorAlerts(
+      recentEvents
+        .map(event =>
+          getRadarAdvisorEvent(
+            event,
+            productById.get(event.product_id) || null,
+            fallbackCandidatesByProductId.get(event.product_id) ||
+              null
+          )
         )
-      )
-      .filter(Boolean)
-      .slice(0, 12) as RadarAdvisorAlert[]
+        .filter(Boolean) as RadarAdvisorAlert[]
+    ).slice(0, 12)
 
   return {
     summary: {
@@ -1578,8 +1761,16 @@ export async function GET(
   }
 
   try {
+    const url =
+      new URL(req.url)
+
     const dashboard =
-      await getMarketRadarDashboard()
+      await getMarketRadarDashboard({
+        search:
+          sanitizeMarketRadarSearch(
+            url.searchParams.get("search")
+          ),
+      })
 
     return NextResponse.json({
       success: true,
