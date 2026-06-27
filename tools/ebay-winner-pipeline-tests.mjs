@@ -962,6 +962,29 @@ test("lunaportex inventory: html autenticado requiere sesion approved", () => {
   )
 })
 
+test("lunaportex sync: latest snapshots usa historial acotado para evitar timeout", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "lib/market-radar-lunaportex.ts"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /function getLatestSnapshots[\s\S]*\.from\("market_radar_snapshots"\)/
+  )
+  assert.match(
+    source,
+    /function getLatestSnapshots[\s\S]*historyLimit[\s\S]*\.limit\(\s*historyLimit\s*\)/
+  )
+  assert.doesNotMatch(
+    source,
+    /function getLatestSnapshots[\s\S]*\.from\("market_radar_latest_snapshots"\)/
+  )
+})
+
 test("radar advisor inventory: unknown requiere validacion manual", () => {
   const alert =
     getRadarAdvisorEvent(
