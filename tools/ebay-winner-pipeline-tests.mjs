@@ -564,6 +564,9 @@ test("radar advisor: out_of_stock + DRAFT_CREATED -> review_existing_draft_inven
   assert.equal(alert.recommended_action, "review_existing_draft_inventory")
   assert.equal(alert.severity, "critical")
   assert.equal(alert.required_human_approval, true)
+  assert.equal(alert.seller_action_label, "No listar")
+  assert.equal(alert.seller_priority, "Urgente")
+  assert.equal(alert.seller_reason, "Sin stock")
 })
 
 test("radar advisor: restocked + BLOCKED -> resurface_for_reanalysis", () => {
@@ -593,6 +596,9 @@ test("radar advisor: restocked + BLOCKED -> resurface_for_reanalysis", () => {
 
   assert.equal(alert.recommended_action, "resurface_for_reanalysis")
   assert.equal(alert.severity, "medium")
+  assert.equal(alert.seller_action_label, "Reanalizar candidato")
+  assert.equal(alert.seller_priority, "Alta")
+  assert.equal(alert.seller_reason, "Producto volvio a stock")
 })
 
 test("radar advisor: price_down -> reprocess_with_updated_cost", () => {
@@ -617,6 +623,9 @@ test("radar advisor: price_down -> reprocess_with_updated_cost", () => {
 
   assert.equal(alert.recommended_action, "reprocess_with_updated_cost")
   assert.equal(alert.severity, "medium")
+  assert.equal(alert.seller_action_label, "Revisar oportunidad")
+  assert.equal(alert.seller_priority, "Media")
+  assert.equal(alert.seller_reason, "Bajo costo con stock disponible")
 })
 
 test("radar advisor playbook: price_down recalcula margen y reabre oportunidad", () => {
@@ -738,6 +747,9 @@ test("radar event intelligence: stock ambiguo requiere validacion manual", () =>
     alert.event_intelligence_summary,
     /Confirmar stock real/
   )
+  assert.equal(alert.seller_action_label, "Validar stock")
+  assert.equal(alert.seller_priority, "Alta")
+  assert.equal(alert.seller_reason, "Stock no confirmado")
 })
 
 test("radar advisor seller risk: detecta restricciones por tipo de producto", () => {
@@ -763,6 +775,14 @@ test("radar advisor seller risk: detecta restricciones por tipo de producto", ()
   assert.equal(
     paintAlert.seller_risk_label,
     "Shipping restringido"
+  )
+  assert.equal(
+    paintAlert.seller_action_label,
+    "Revisar riesgo eBay"
+  )
+  assert.equal(
+    paintAlert.seller_priority,
+    "Alta"
   )
   assert.match(
     paintAlert.seller_risk_summary,
@@ -920,6 +940,18 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   assert.match(
     source,
     /No publica ni crea drafts/
+  )
+  assert.match(
+    source,
+    /Cola Advisor/
+  )
+  assert.match(
+    source,
+    /getAdvisorSellerPriorityRank[\s\S]*seller_priority/
+  )
+  assert.match(
+    source,
+    /seller_action_label[\s\S]*seller_reason[\s\S]*seller_next_step/
   )
 })
 
@@ -1725,6 +1757,9 @@ test("radar advisor: price_up + VALIDATED -> recalculate_before_listing", () => 
 
   assert.equal(alert.recommended_action, "recalculate_before_listing")
   assert.equal(alert.severity, "high")
+  assert.equal(alert.seller_action_label, "Recalcular margen")
+  assert.equal(alert.seller_priority, "Alta")
+  assert.equal(alert.seller_reason, "Precio subio")
 })
 
 test("radar advisor playbook: price_up revisa margen antes de escalar", () => {

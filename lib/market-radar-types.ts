@@ -151,6 +151,10 @@ export type RadarAdvisorAlert = {
   seller_risk_label?: string | null
   seller_risk_summary?: string | null
   seller_risk_severity?: "critical" | "high" | "medium" | "low" | null
+  seller_action_label: string
+  seller_priority: "Urgente" | "Alta" | "Media" | "Baja"
+  seller_reason: string
+  seller_next_step: string
   commercial_playbook?: {
     label: string
     recommendation: string
