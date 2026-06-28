@@ -204,6 +204,29 @@ export type MarketRadarDashboard = {
   products: MarketRadarProductRow[]
   recentEvents: MarketRadarEventRow[]
   advisorAlerts: RadarAdvisorAlert[]
+  activeListingRisks?: EbayActiveListingRisk[]
+}
+
+export type EbayActiveListingRisk = {
+  listing_id: string
+  ebay_item_id: string
+  listing_status: "active" | "paused" | "ended" | "draft" | "unknown"
+  title: string
+  ebay_sku: string | null
+  ebay_quantity: number | null
+  ebay_price: number | string | null
+  supplier_sku: string | null
+  supplier_variant_id: string | null
+  market_radar_product_id: string | null
+  luna_available: boolean | null
+  luna_inventory_quantity: number | null
+  luna_price: number | string | null
+  risk_type: "out_of_stock" | "stock_unknown" | "price_up" | "margin_review" | "listing_stale" | "manual_review"
+  risk_priority: "critical" | "high" | "medium" | "low"
+  risk_summary: string
+  recommended_action: string
+  last_ebay_sync_at: string | null
+  last_radar_review_at: string | null
 }
 
 export type MarketRadarSyncResult = {
