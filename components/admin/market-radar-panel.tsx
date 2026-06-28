@@ -246,19 +246,19 @@ const radarAdvisorReviewFilterOptions: {
     value:
       "validate_stock",
     label:
-      "Validar stock",
+      "Stock",
   },
   {
     value:
       "recalculate_margin",
     label:
-      "Recalcular margen",
+      "Margen",
   },
   {
     value:
       "review_risk",
     label:
-      "Revisar riesgo eBay",
+      "Riesgo",
   },
   {
     value:
@@ -270,7 +270,7 @@ const radarAdvisorReviewFilterOptions: {
     value:
       "review_opportunity",
     label:
-      "Revisar oportunidad",
+      "Oportunidad",
   },
 ]
 
@@ -4231,6 +4231,107 @@ function matchesRadarAdvisorReviewFilter(
   return true
 }
 
+function RadarAdvisorSellerRiskSummary({
+  alerts,
+}: {
+  alerts: RadarAdvisorAlert[]
+}) {
+  const summaryItems = [
+    {
+      label:
+        "Cancelacion",
+      count:
+        alerts.filter(
+          alert =>
+            alert.seller_priority ===
+              "Urgente" &&
+            alert.seller_action_label ===
+              "No listar"
+        ).length,
+      className:
+        "border-red-300/20 bg-red-300/[0.08] text-red-50",
+    },
+    {
+      label:
+        "Stock",
+      count:
+        alerts.filter(
+          alert =>
+            alert.seller_action_label ===
+            "Validar stock"
+        ).length,
+      className:
+        "border-amber-300/20 bg-amber-300/[0.08] text-amber-50",
+    },
+    {
+      label:
+        "Margen",
+      count:
+        alerts.filter(
+          alert =>
+            alert.seller_action_label ===
+            "Recalcular margen"
+        ).length,
+      className:
+        "border-blue-300/20 bg-blue-300/[0.08] text-blue-50",
+    },
+    {
+      label:
+        "Riesgo eBay",
+      count:
+        alerts.filter(
+          alert =>
+            alert.seller_action_label ===
+            "Revisar riesgo eBay"
+        ).length,
+      className:
+        "border-rose-300/20 bg-rose-300/[0.08] text-rose-50",
+    },
+    {
+      label:
+        "Oportunidad",
+      count:
+        alerts.filter(
+          alert =>
+            alert.seller_action_label ===
+            "Revisar oportunidad"
+        ).length,
+      className:
+        "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-50",
+    },
+  ]
+
+  return (
+    <div className="mt-5 rounded-lg border border-white/10 bg-white/[0.025] p-3">
+      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">
+        Resumen vendedor
+      </p>
+      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+        {summaryItems.map(item => (
+          <div
+            key={item.label}
+            className={`
+              min-w-0
+              rounded-md
+              border
+              px-2
+              py-2
+              ${item.className}
+            `}
+          >
+            <p className="text-base font-black leading-5">
+              {item.count}
+            </p>
+            <p className="mt-1 truncate text-[10px] font-bold uppercase tracking-[0.08em] opacity-70">
+              {item.label}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function RadarAdvisorReviewQueue({
   alerts,
 }: {
@@ -4260,7 +4361,7 @@ function RadarAdvisorReviewQueue({
 
   return (
     <div className="mt-5 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-100/45">
             Cola Advisor
@@ -4269,9 +4370,6 @@ function RadarAdvisorReviewQueue({
             {queueAlerts.length} prioritarias
           </span>
         </div>
-        <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-cyan-100/40">
-          Read-only
-        </span>
       </div>
 
       {queueAlerts.length ? (
@@ -4285,7 +4383,7 @@ function RadarAdvisorReviewQueue({
             return (
               <div
                 key={`${alertKey}-${index}`}
-                className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 overflow-hidden border-b border-white/10 px-3 py-2 last:border-b-0 sm:grid-cols-[auto_auto_minmax(0,1fr)_auto]"
+                className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 overflow-hidden border-b border-white/10 px-3 py-2 last:border-b-0 sm:grid-cols-[auto_auto_minmax(0,1fr)]"
               >
                 <span
                   className={`
@@ -4309,9 +4407,6 @@ function RadarAdvisorReviewQueue({
                 <span className="col-span-2 min-w-0 truncate text-xs font-semibold leading-5 text-white/50 sm:col-span-1">
                   {alert.product_title}
                 </span>
-                <span className="shrink-0 text-right text-[11px] font-bold leading-5 text-cyan-100/45">
-                  Ver alerta abajo
-                </span>
               </div>
             )
           })}
@@ -4327,6 +4422,9 @@ function RadarAdvisorReviewQueue({
           +{hiddenAlertCount} alertas en detalle
         </p>
       )}
+      <p className="mt-2 text-[11px] font-semibold text-cyan-100/35">
+        Revisa el detalle completo debajo.
+      </p>
     </div>
   )
 }
@@ -6455,6 +6553,15 @@ export function MarketRadarPanel({
           <p className="mt-2 text-xs leading-5 text-white/40">
             Eventos traducidos a recomendaciones estrategicas. No ejecutan acciones reales.
           </p>
+          <p className="mt-2 text-[11px] font-bold uppercase tracking-[0.08em] text-cyan-100/45">
+            Solo lectura · No ejecuta acciones reales
+          </p>
+
+          <RadarAdvisorSellerRiskSummary
+            alerts={
+              advisorAlerts
+            }
+          />
 
           <RadarAdvisorReviewQueue
             alerts={
