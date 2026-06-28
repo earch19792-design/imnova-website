@@ -278,6 +278,14 @@ function sanitizeMarketRadarSearch(
     )
 }
 
+function isUuidLike(
+  value: string
+) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    value
+  )
+}
+
 function getAdvisorAlertDedupeKey(
   alert: RadarAdvisorAlert
 ) {
@@ -729,6 +737,26 @@ async function getLatestMarketRadarProducts(
       getMarketRadarSearchHandleCandidate(
         search
       )
+    const productIdSearchPromise =
+      isUuidLike(search)
+        ? supabase
+            .from("market_radar_products")
+            .select("id")
+            .eq(
+              "source_id",
+              source.id
+            )
+            .eq(
+              "id",
+              search
+            )
+            .limit(
+              DASHBOARD_SEARCH_LIMIT
+            )
+        : Promise.resolve({
+            data: [],
+            error: null,
+          })
 
     const [
       exactProductIdSearchResult,
@@ -736,22 +764,10 @@ async function getLatestMarketRadarProducts(
       exactSupplierProductSearchResult,
       productSearchResult,
       snapshotSearchResult,
+      snapshotVariantSearchResult,
     ] =
       await Promise.all([
-        supabase
-          .from("market_radar_products")
-          .select("id")
-          .eq(
-            "source_id",
-            source.id
-          )
-          .eq(
-            "id",
-            search
-          )
-          .limit(
-            DASHBOARD_SEARCH_LIMIT
-          ),
+        productIdSearchPromise,
         supabase
           .from("market_radar_products")
           .select("id")
@@ -811,6 +827,20 @@ async function getLatestMarketRadarProducts(
           .limit(
             DASHBOARD_SEARCH_LIMIT
           ),
+        supabase
+          .from("market_radar_snapshots")
+          .select("product_id")
+          .eq(
+            "source_id",
+            source.id
+          )
+          .eq(
+            "supplier_variant_id",
+            search
+          )
+          .limit(
+            DASHBOARD_SEARCH_LIMIT
+          ),
       ])
 
     if (exactProductIdSearchResult.error) {
@@ -843,6 +873,12 @@ async function getLatestMarketRadarProducts(
       )
     }
 
+    if (snapshotVariantSearchResult.error) {
+      throw new Error(
+        snapshotVariantSearchResult.error.message
+      )
+    }
+
     productIds =
       Array.from(
         new Set([
@@ -867,6 +903,9 @@ async function getLatestMarketRadarProducts(
             .map(product => product.id),
           ...(
             snapshotSearchResult.data || []
+          ).map(snapshot => snapshot.product_id),
+          ...(
+            snapshotVariantSearchResult.data || []
           ).map(snapshot => snapshot.product_id),
         ].filter(Boolean))
       ).slice(
@@ -1361,6 +1400,7 @@ async function confirmMarketRadarStockQuantity({
 async function getMarketRadarDashboard(
   options: {
     search?: string
+    lightweight?: boolean
   } = {}
 ): Promise<MarketRadarDashboard> {
   const supabase =
@@ -1440,6 +1480,25 @@ async function getMarketRadarDashboard(
       }
     )
 
+  const isSearchDashboard =
+    Boolean(
+      sanitizeMarketRadarSearch(
+        options.search || null
+      )
+    )
+  const useLightweightDashboard =
+    isSearchDashboard ||
+    options.lightweight === true
+
+  const latestProductIds =
+    Array.from(
+      new Set(
+        latestProducts
+          .map(product => product.product_id)
+          .filter(Boolean)
+      )
+    )
+
   const sevenDaysAgo =
     new Date(
       Date.now() -
@@ -1456,161 +1515,85 @@ async function getMarketRadarDashboard(
     data: recentEventsData,
     error: recentEventsError,
   } =
-    await supabase
-      .from("market_radar_events")
-      .select(`
-        id,
-        source_id,
-        product_id,
-        supplier_variant_id,
-        event_type,
-        old_value,
-        new_value,
-        event_strength,
-        created_at,
-        product:market_radar_products (
-          title,
-          handle,
-          product_url,
-          featured_image_url
-        )
-      `)
-      .eq(
-        "source_id",
-        source.id
-      )
-      .order(
-        "created_at",
-        {
-          ascending: false,
+    useLightweightDashboard &&
+    latestProductIds.length === 0
+      ? {
+          data:
+            [],
+          error:
+            null,
         }
-      )
-      .limit(40)
+      : await (
+          useLightweightDashboard
+            ? supabase
+                .from("market_radar_events")
+                .select(`
+                  id,
+                  source_id,
+                  product_id,
+                  supplier_variant_id,
+                  event_type,
+                  old_value,
+                  new_value,
+                  event_strength,
+                  created_at,
+                  product:market_radar_products (
+                    title,
+                    handle,
+                    product_url,
+                    featured_image_url
+                  )
+                `)
+                .eq(
+                  "source_id",
+                  source.id
+                )
+                .in(
+                  "product_id",
+                  latestProductIds
+                )
+                .order(
+                  "created_at",
+                  {
+                    ascending: false,
+                  }
+                )
+                .limit(80)
+            : supabase
+                .from("market_radar_events")
+                .select(`
+                  id,
+                  source_id,
+                  product_id,
+                  supplier_variant_id,
+                  event_type,
+                  old_value,
+                  new_value,
+                  event_strength,
+                  created_at,
+                  product:market_radar_products (
+                    title,
+                    handle,
+                    product_url,
+                    featured_image_url
+                  )
+                `)
+                .eq(
+                  "source_id",
+                  source.id
+                )
+                .order(
+                  "created_at",
+                  {
+                    ascending: false,
+                  }
+                )
+                .limit(40)
+        )
 
   if (recentEventsError) {
     throw new Error(
       recentEventsError.message
-    )
-  }
-
-  const [
-    totalProductsResult,
-    highOpportunityProductsResult,
-    priceChanges24hResult,
-    restocks7dResult,
-    stockOuts7dResult,
-  ] =
-    await Promise.all([
-      supabase
-        .from("market_radar_products")
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .eq(
-          "source_id",
-          source.id
-        ),
-      supabase
-        .from("market_radar_scores")
-        .select(
-          "product_id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .eq(
-          "source_id",
-          source.id
-        )
-        .gte(
-          "opportunity_score",
-          70
-        ),
-      supabase
-        .from("market_radar_events")
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .eq(
-          "source_id",
-          source.id
-        )
-        .in(
-          "event_type",
-          [
-            "price_down",
-            "price_up",
-          ]
-        )
-        .gte(
-          "created_at",
-          oneDayAgo
-        ),
-      supabase
-        .from("market_radar_events")
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .eq(
-          "source_id",
-          source.id
-        )
-        .eq(
-          "event_type",
-          "restocked"
-        )
-        .gte(
-          "created_at",
-          sevenDaysAgo
-        ),
-      supabase
-        .from("market_radar_events")
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .eq(
-          "source_id",
-          source.id
-        )
-        .eq(
-          "event_type",
-          "out_of_stock"
-        )
-        .gte(
-          "created_at",
-          sevenDaysAgo
-        ),
-    ])
-
-  const countErrors = [
-    totalProductsResult.error,
-    highOpportunityProductsResult.error,
-    priceChanges24hResult.error,
-    restocks7dResult.error,
-    stockOuts7dResult.error,
-  ].filter(Boolean)
-
-  if (countErrors.length > 0) {
-    throw new Error(
-      countErrors[0]?.message ||
-        "market_radar_count_failed"
     )
   }
 
@@ -1658,21 +1641,189 @@ async function getMarketRadarDashboard(
           : event.product || null,
     })) as MarketRadarEventRow[]
 
+  let totalProductsCount =
+    latestProducts.length
+  let highOpportunityProductsCount =
+    latestProducts.filter(
+      product =>
+        (
+          toNumber(
+            product.opportunity_score
+          ) || 0
+        ) >= 70
+    ).length
+  let priceChanges24hCount =
+    recentEvents.filter(
+      event =>
+        (
+          event.event_type === "price_down" ||
+          event.event_type === "price_up"
+        ) &&
+        event.created_at >= oneDayAgo
+    ).length
+  let restocks7dCount =
+    recentEvents.filter(
+      event =>
+        event.event_type === "restocked" &&
+        event.created_at >= sevenDaysAgo
+    ).length
+  let stockOuts7dCount =
+    recentEvents.filter(
+      event =>
+        event.event_type === "out_of_stock" &&
+        event.created_at >= sevenDaysAgo
+    ).length
+
+  if (!useLightweightDashboard) {
+    const [
+      totalProductsResult,
+      highOpportunityProductsResult,
+      priceChanges24hResult,
+      restocks7dResult,
+      stockOuts7dResult,
+    ] =
+      await Promise.all([
+        supabase
+          .from("market_radar_products")
+          .select(
+            "id",
+            {
+              count: "exact",
+              head: true,
+            }
+          )
+          .eq(
+            "source_id",
+            source.id
+          ),
+        supabase
+          .from("market_radar_scores")
+          .select(
+            "product_id",
+            {
+              count: "exact",
+              head: true,
+            }
+          )
+          .eq(
+            "source_id",
+            source.id
+          )
+          .gte(
+            "opportunity_score",
+            70
+          ),
+        supabase
+          .from("market_radar_events")
+          .select(
+            "id",
+            {
+              count: "exact",
+              head: true,
+            }
+          )
+          .eq(
+            "source_id",
+            source.id
+          )
+          .in(
+            "event_type",
+            [
+              "price_down",
+              "price_up",
+            ]
+          )
+          .gte(
+            "created_at",
+            oneDayAgo
+          ),
+        supabase
+          .from("market_radar_events")
+          .select(
+            "id",
+            {
+              count: "exact",
+              head: true,
+            }
+          )
+          .eq(
+            "source_id",
+            source.id
+          )
+          .eq(
+            "event_type",
+            "restocked"
+          )
+          .gte(
+            "created_at",
+            sevenDaysAgo
+          ),
+        supabase
+          .from("market_radar_events")
+          .select(
+            "id",
+            {
+              count: "exact",
+              head: true,
+            }
+          )
+          .eq(
+            "source_id",
+            source.id
+          )
+          .eq(
+            "event_type",
+            "out_of_stock"
+          )
+          .gte(
+            "created_at",
+            sevenDaysAgo
+          ),
+      ])
+
+    const countErrors = [
+      totalProductsResult.error,
+      highOpportunityProductsResult.error,
+      priceChanges24hResult.error,
+      restocks7dResult.error,
+      stockOuts7dResult.error,
+    ].filter(Boolean)
+
+    if (countErrors.length > 0) {
+      throw new Error(
+        countErrors[0]?.message ||
+          "market_radar_count_failed"
+      )
+    }
+
+    totalProductsCount =
+      getCount(
+        totalProductsResult.count
+      )
+    highOpportunityProductsCount =
+      getCount(
+        highOpportunityProductsResult.count
+      )
+    priceChanges24hCount =
+      getCount(
+        priceChanges24hResult.count
+      )
+    restocks7dCount =
+      getCount(
+        restocks7dResult.count
+      )
+    stockOuts7dCount =
+      getCount(
+        stockOuts7dResult.count
+      )
+  }
+
   const productById =
     new Map(
       latestProducts.map(product => [
         product.product_id,
         product,
       ])
-    )
-
-  const latestProductIds =
-    Array.from(
-      new Set(
-        latestProducts
-          .map(product => product.product_id)
-          .filter(Boolean)
-      )
     )
 
   const candidatesByVariantKey =
@@ -1854,9 +2005,7 @@ async function getMarketRadarDashboard(
     summary: {
       source,
       totalProducts:
-        getCount(
-          totalProductsResult.count
-        ),
+        totalProductsCount,
       availableProducts:
         availableProducts,
       outOfStockProducts:
@@ -1864,21 +2013,13 @@ async function getMarketRadarDashboard(
       discountedProducts:
         discountedProducts,
       highOpportunityProducts:
-        getCount(
-          highOpportunityProductsResult.count
-        ),
+        highOpportunityProductsCount,
       priceChanges24h:
-        getCount(
-          priceChanges24hResult.count
-        ),
+        priceChanges24hCount,
       restocks7d:
-        getCount(
-          restocks7dResult.count
-        ),
+        restocks7dCount,
       stockOuts7d:
-        getCount(
-          stockOuts7dResult.count
-        ),
+        stockOuts7dCount,
       lastRunAt:
         source.last_run_at,
       lastSuccessAt:
@@ -1911,6 +2052,8 @@ export async function GET(
           sanitizeMarketRadarSearch(
             url.searchParams.get("search")
           ),
+        lightweight:
+          true,
       })
 
     return NextResponse.json({
@@ -2130,7 +2273,10 @@ export async function POST(
       )
 
     const dashboard =
-      await getMarketRadarDashboard()
+      await getMarketRadarDashboard({
+        lightweight:
+          true,
+      })
 
     return NextResponse.json({
       success: true,

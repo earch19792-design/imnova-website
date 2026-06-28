@@ -30,6 +30,25 @@ const SHOPIFY_AUTH_PRODUCT_CONCURRENCY = 6
 const SHOPIFY_AUTH_PRODUCT_LIMIT = 300
 const POSTGREST_FILTER_CHUNK_SIZE = 100
 
+function isStatementTimeoutError(
+  error: unknown
+) {
+  const typedError =
+    error as {
+      code?: string
+      message?: string
+    } | null
+  const message =
+    typedError?.message?.toLowerCase() || ""
+
+  return (
+    typedError?.code === "57014" ||
+    message.includes(
+      "canceling statement due to statement timeout"
+    )
+  )
+}
+
 type ShopifyVariant = {
   id?: number | string | null
   title?: string | null
@@ -1484,6 +1503,18 @@ async function getLatestSnapshots(
         )
 
     if (error) {
+      if (
+        isStatementTimeoutError(
+          error
+        )
+      ) {
+        console.warn(
+          "MARKET RADAR SNAPSHOT HISTORY LOOKUP TIMEOUT; CONTINUING WITHOUT PREVIOUS SNAPSHOTS FOR CHUNK:",
+          error.message
+        )
+        continue
+      }
+
       throw new Error(
         error.message
       )
@@ -1941,6 +1972,18 @@ async function getRecentEventsForProducts(
         )
 
     if (error) {
+      if (
+        isStatementTimeoutError(
+          error
+        )
+      ) {
+        console.warn(
+          "MARKET RADAR RECENT EVENT LOOKUP TIMEOUT; CONTINUING WITH PARTIAL EVENT HISTORY:",
+          error.message
+        )
+        continue
+      }
+
       throw new Error(
         error.message
       )

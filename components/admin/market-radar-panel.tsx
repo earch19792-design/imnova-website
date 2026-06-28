@@ -803,6 +803,10 @@ function getAdvisorActionLabel(
       return "Confirmar cantidad de stock"
     case "complete_missing_data":
       return "Completar datos operativos"
+    case "validate_stock_before_review":
+      return "Validar stock antes de revisar"
+    case "keep_blocked_until_stock_confirmed":
+      return "Mantener bloqueado hasta confirmar stock"
     default:
       return action
         ? action
@@ -1291,6 +1295,70 @@ function getStableSupplierSku(
     optionalProduct.id ||
     ""
   )
+}
+
+function normalizeRadarSearchTerm(
+  value: string | null | undefined
+) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+}
+
+function getMarketRadarProductSearchRank(
+  product: MarketRadarProductRow,
+  searchTerm: string
+) {
+  const normalizedSearch =
+    normalizeRadarSearchTerm(
+      searchTerm
+    )
+
+  if (!normalizedSearch) {
+    return 0
+  }
+
+  const exactValues =
+    [
+      product.supplier_variant_id,
+      getRealProductSku(product),
+      getStableSupplierSku(product),
+      product.product_id,
+      product.supplier_product_id,
+      product.handle,
+    ]
+      .map(normalizeRadarSearchTerm)
+      .filter(Boolean)
+
+  if (
+    exactValues.some(
+      value => value === normalizedSearch
+    )
+  ) {
+    return 0
+  }
+
+  const textValues =
+    [
+      product.title,
+      product.vendor,
+      product.product_type,
+      ...(product.tags || []),
+    ]
+      .map(normalizeRadarSearchTerm)
+      .filter(Boolean)
+
+  if (
+    textValues.some(value =>
+      value.includes(
+        normalizedSearch
+      )
+    )
+  ) {
+    return 1
+  }
+
+  return 2
 }
 
 function getProductPreviewImageUrl(
@@ -3475,6 +3543,7 @@ function ProductRow({
   stockConfirmationResult,
   isEvaluating,
   isConfirmingStock,
+  isFocused,
   onZoomImage,
   onOpenPriceIntelligence,
   onEvaluate,
@@ -3488,6 +3557,7 @@ function ProductRow({
   stockConfirmationResult?: StockConfirmationSaveState
   isEvaluating?: boolean
   isConfirmingStock?: boolean
+  isFocused?: boolean
   onZoomImage: (
     product: MarketRadarProductRow
   ) => void
@@ -3520,7 +3590,14 @@ function ProductRow({
     )
 
   return (
-    <tr className="border-b border-white/5 align-top">
+    <tr
+      className={`
+        border-b
+        align-top
+        transition-colors
+        ${isFocused ? "border-cyan-300/30 bg-cyan-300/[0.08]" : "border-white/5"}
+      `}
+    >
       <td className="w-[42%] px-4 py-4">
         <div className="flex gap-3">
           <div
@@ -3953,6 +4030,69 @@ function canResolveAdvisorAlertProduct(
   )
 }
 
+function getAdvisorAlertSearchTerms(
+  alert: RadarAdvisorAlert
+) {
+  const exactTerms =
+    [
+      alert.supplier_sku,
+      alert.supplier_variant_id,
+      alert.product_id,
+    ]
+      .map(value =>
+        typeof value === "string"
+          ? value.trim()
+          : ""
+      )
+      .filter(Boolean)
+
+  const fallbackTerms =
+    [
+      alert.product_title,
+    ]
+      .map(value =>
+        typeof value === "string"
+          ? value.trim()
+          : ""
+      )
+      .filter(Boolean)
+
+  return Array.from(
+    new Set([
+      ...exactTerms,
+      ...fallbackTerms,
+    ])
+  )
+}
+
+function getAdvisorAlertPreferredSearchTerm(
+  alert: RadarAdvisorAlert,
+  product?: MarketRadarProductRow | null
+) {
+  const values =
+    [
+      product
+        ? getRealProductSku(
+            product
+          )
+        : null,
+      alert.supplier_sku,
+      product?.sku,
+      alert.supplier_variant_id,
+      product?.supplier_variant_id,
+      alert.product_id,
+      product?.product_id,
+      alert.product_title,
+    ]
+
+  return (
+    values.find(value =>
+      typeof value === "string" &&
+      value.trim()
+    )?.trim() || ""
+  )
+}
+
 function RadarAdvisorAlertItem({
   alert,
   isResolving,
@@ -3970,6 +4110,11 @@ function RadarAdvisorAlertItem({
     canResolveAdvisorAlertProduct(
       alert
     )
+  const showEventIntelligence =
+    alert.event_intelligence_label !==
+      "Evento monitoreado" ||
+    alert.event_intelligence_severity === "high" ||
+    alert.event_intelligence_severity === "critical"
 
   return (
     <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
@@ -3997,7 +4142,7 @@ function RadarAdvisorAlertItem({
       <p className="mt-3 break-words text-sm font-black leading-5 text-white">
         {alert.product_title}
       </p>
-      <p className="mt-2 break-words text-sm leading-6 text-white/70">
+      <p className="mt-2 break-words text-sm font-semibold leading-5 text-white/70">
         {alert.advisor_message}
       </p>
 
@@ -4019,7 +4164,46 @@ function RadarAdvisorAlertItem({
         </div>
       )}
 
-      {alert.commercial_playbook && (
+      {showEventIntelligence && (
+        <div className="mt-3 rounded-md border border-sky-300/20 bg-sky-300/[0.06] px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md border border-sky-200/20 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-sky-100/70">
+              {alert.event_intelligence_label}
+            </span>
+            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-sky-100/45">
+              {alert.event_intelligence_severity}
+            </span>
+          </div>
+          <p className="mt-2 text-xs leading-5 text-sky-50/70">
+            {alert.event_intelligence_summary}
+          </p>
+        </div>
+      )}
+
+      {alert.seller_risk_label &&
+        alert.seller_risk_summary && (
+          <div className="mt-3 rounded-md border border-rose-300/20 bg-rose-300/[0.06] px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-md border border-rose-200/20 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-rose-100/70">
+                Riesgo vendedor
+              </span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-rose-100/55">
+                {alert.seller_risk_label}
+              </span>
+              {alert.seller_risk_severity && (
+                <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-rose-100/40">
+                  {alert.seller_risk_severity}
+                </span>
+              )}
+            </div>
+            <p className="mt-2 text-xs leading-5 text-rose-50/70">
+              {alert.seller_risk_summary}
+            </p>
+          </div>
+        )}
+
+      {alert.commercial_playbook &&
+        alert.commercial_playbook.risk_level !== "medium" && (
         <div className="mt-4 rounded-md border border-amber-300/20 bg-amber-300/[0.06] p-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0">
@@ -4034,35 +4218,26 @@ function RadarAdvisorAlertItem({
               {alert.commercial_playbook.risk_level}
             </span>
           </div>
-          <p className="mt-3 text-xs leading-5 text-amber-50/70">
-            Recomendación generada a partir de señales del Radar. No ejecuta acciones reales.
-          </p>
           <p className="mt-2 text-sm font-semibold leading-6 text-amber-50/85">
             {alert.commercial_playbook.recommendation}
-          </p>
-          <p className="mt-2 text-xs leading-5 text-amber-50/60">
-            {alert.commercial_playbook.next_step}
-          </p>
-          <p className="mt-2 text-[11px] font-semibold leading-5 text-amber-50/50">
-            {alert.commercial_playbook.guardrail}
           </p>
         </div>
       )}
 
-      <div className="mt-4 grid grid-cols-1 gap-4 text-xs leading-5 text-white/45 lg:grid-cols-2">
-        <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-3">
+      <div className="mt-4 grid grid-cols-1 gap-3 text-xs leading-5 text-white/45 lg:grid-cols-2">
+        <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-2.5">
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
-            Recomendacion
+            Accion
           </p>
-          <p className="mt-1 break-words text-white/70">
+          <p className="mt-1 break-words font-semibold text-white/80">
             {getAdvisorActionLabel(alert.recommended_action)}
           </p>
         </div>
-        <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-3">
+        <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-2.5">
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
-            Proximo paso
+            Ahora
           </p>
-          <p className="mt-1 break-words text-white/70">
+          <p className="mt-1 break-words font-semibold text-white/80">
             {alert.proposed_next_step}
           </p>
         </div>
@@ -4113,10 +4288,10 @@ function RadarAdvisorAlertItem({
           >
             {isResolving
               ? "Buscando producto..."
-              : "Ver en Radar"}
+              : "Buscar SKU en Radar"}
           </button>
           <p className="mt-2 text-[11px] leading-5 text-white/35">
-            Busca el producto sincronizado por alerta/SKU aunque no esté en el ranking visible. No analiza, no publica ni crea drafts reales.
+            Solo busca en Radar. No publica ni crea drafts.
           </p>
         </div>
       )}
@@ -4210,6 +4385,16 @@ export function MarketRadarPanel({
   const [
     resolvingAdvisorAlertKey,
     setResolvingAdvisorAlertKey,
+  ] = useState("")
+
+  const [
+    focusedRadarProductKey,
+    setFocusedRadarProductKey,
+  ] = useState("")
+
+  const [
+    advisorAlertReviewMessage,
+    setAdvisorAlertReviewMessage,
   ] = useState("")
 
   const [
@@ -4423,6 +4608,11 @@ export function MarketRadarPanel({
         searchTerm
       )
       setRankingFilter("all")
+      setAdvisorAlertReviewMessage(
+        searchTerm
+          ? `Buscando en Radar: ${searchTerm}`
+          : ""
+      )
       loadDashboard({
         search:
           searchTerm,
@@ -4974,27 +5164,73 @@ export function MarketRadarPanel({
           matchesAlert
         )
 
-      if (loadedProduct) {
-        return loadedProduct
-      }
-
+      const preferredSearchTerm =
+        loadedProduct
+          ? getAdvisorAlertPreferredSearchTerm(
+              alert,
+              loadedProduct
+            )
+          : ""
       const searchTerms =
         Array.from(
-          new Set(
-            [
-              alert.product_id,
-              alert.supplier_variant_id,
-              alert.supplier_sku,
-              alert.product_title,
-            ]
-              .map(value =>
-                typeof value === "string"
-                  ? value.trim()
-                  : ""
-              )
-              .filter(Boolean)
-          )
+          new Set([
+            preferredSearchTerm,
+            ...getAdvisorAlertSearchTerms(
+              alert
+            ),
+          ].filter(Boolean))
         )
+
+      if (loadedProduct) {
+        for (const searchTerm of searchTerms) {
+          const searchDashboard =
+            await requestDashboard({
+              search:
+                searchTerm,
+            })
+
+          const resolvedProduct =
+            searchDashboard.products.find(
+              matchesAlert
+            ) ||
+            searchDashboard.products[0]
+
+          if (resolvedProduct) {
+            const visibleSearchTerm =
+              getAdvisorAlertPreferredSearchTerm(
+                alert,
+                resolvedProduct
+              ) || searchTerm
+
+            setFocusedRadarProductKey(
+              getProductEvaluationKey(
+                resolvedProduct
+              )
+            )
+            setRadarSearch(
+              visibleSearchTerm
+            )
+            setActiveRadarSearch(
+              visibleSearchTerm
+            )
+            setRankingFilter("all")
+
+            window.setTimeout(
+              () => {
+                searchResultsRef.current?.scrollIntoView({
+                  behavior:
+                    "smooth",
+                  block:
+                    "start",
+                })
+              },
+              50
+            )
+
+            return resolvedProduct
+          }
+        }
+      }
 
       for (const searchTerm of searchTerms) {
         const searchedDashboard =
@@ -5010,11 +5246,22 @@ export function MarketRadarPanel({
           searchedDashboard.products[0]
 
         if (resolvedProduct) {
+          const preferredSearchTerm =
+            getAdvisorAlertPreferredSearchTerm(
+              alert,
+              resolvedProduct
+            ) || searchTerm
+
+          setFocusedRadarProductKey(
+            getProductEvaluationKey(
+              resolvedProduct
+            )
+          )
           setRadarSearch(
-            searchTerm
+            preferredSearchTerm
           )
           setActiveRadarSearch(
-            searchTerm
+            preferredSearchTerm
           )
           setRankingFilter("all")
 
@@ -5053,6 +5300,37 @@ export function MarketRadarPanel({
         alertKey
       )
       setError("")
+      setAdvisorAlertReviewMessage("")
+
+      const immediateSearchTerm =
+        getAdvisorAlertSearchTerms(
+          alert
+        )[0] || ""
+
+      if (immediateSearchTerm) {
+        setRadarSearch(
+          immediateSearchTerm
+        )
+        setActiveRadarSearch(
+          immediateSearchTerm
+        )
+        setRankingFilter("all")
+        setAdvisorAlertReviewMessage(
+          `Buscando en Radar: ${immediateSearchTerm}`
+        )
+
+        window.setTimeout(
+          () => {
+            searchResultsRef.current?.scrollIntoView({
+              behavior:
+                "smooth",
+              block:
+                "start",
+            })
+          },
+          50
+        )
+      }
 
       try {
         const product =
@@ -5061,12 +5339,25 @@ export function MarketRadarPanel({
           )
 
         if (!product) {
-          throw new Error(
-            "No se encontró el producto sincronizado para esta alerta. Sincronizar Luna o buscar SKU manualmente."
+          setAdvisorAlertReviewMessage(
+            immediateSearchTerm
+              ? `Busqueda ejecutada: ${immediateSearchTerm}. No hubo coincidencia exacta; prueba con el titulo o sincroniza Luna.`
+              : "No hay SKU o titulo suficiente para buscar esta alerta."
           )
+          return
         }
 
         setError("")
+        const searchTerm =
+          getAdvisorAlertPreferredSearchTerm(
+            alert,
+            product
+          )
+        setAdvisorAlertReviewMessage(
+          searchTerm
+            ? `Producto encontrado en Radar. Buscador listo con: ${searchTerm}. Presiona Buscar si quieres repetir la consulta.`
+            : "Producto encontrado en Radar. Revisa stock, precio y datos antes de decidir."
+        )
       } catch (alertError) {
         console.error(
           "RADAR ADVISOR ALERT REVIEW ERROR:",
@@ -5078,6 +5369,7 @@ export function MarketRadarPanel({
             ? alertError.message
             : "No se pudo revisar el candidato desde la alerta."
         )
+        setAdvisorAlertReviewMessage("")
       } finally {
         setResolvingAdvisorAlertKey("")
       }
@@ -5174,6 +5466,20 @@ export function MarketRadarPanel({
             return true
           })
 
+        if (activeRadarSearch) {
+          filteredProducts.sort(
+            (left, right) =>
+              getMarketRadarProductSearchRank(
+                left,
+                activeRadarSearch
+              ) -
+              getMarketRadarProductSearchRank(
+                right,
+                activeRadarSearch
+              )
+          )
+        }
+
         return activeRadarSearch
           ? filteredProducts.slice(
               0,
@@ -5198,6 +5504,29 @@ export function MarketRadarPanel({
       !dashboard
     ) {
       return
+    }
+
+    const exactProduct =
+      (dashboard.products || []).find(
+        product =>
+          getMarketRadarProductSearchRank(
+            product,
+            activeRadarSearch
+          ) === 0
+      )
+
+    if (exactProduct) {
+      const exactProductKey =
+        getProductEvaluationKey(
+          exactProduct
+        )
+
+      setFocusedRadarProductKey(
+        currentKey =>
+          currentKey === exactProductKey
+            ? currentKey
+            : exactProductKey
+      )
     }
 
     searchResultsRef.current?.scrollIntoView({
@@ -5705,6 +6034,11 @@ export function MarketRadarPanel({
                   Busqueda activa: {activeRadarSearch}. {hotProducts.length} resultado{hotProducts.length === 1 ? "" : "s"} visible{hotProducts.length === 1 ? "" : "s"}.
                 </p>
               ) : null}
+              {advisorAlertReviewMessage ? (
+                <p className="max-w-xl rounded-md border border-cyan-300/20 bg-cyan-300/[0.08] px-3 py-2 text-[11px] font-semibold leading-5 text-cyan-50/75">
+                  {advisorAlertReviewMessage}
+                </p>
+              ) : null}
               <div className="flex gap-2 text-[11px] text-white/40">
                 <span className="inline-flex items-center gap-1">
                   <ArrowDown className="h-3.5 w-3.5 text-cyan-100" />
@@ -5805,6 +6139,10 @@ export function MarketRadarPanel({
                         }
                         isConfirmingStock={
                           confirmingStockKey ===
+                          productKey
+                        }
+                        isFocused={
+                          focusedRadarProductKey ===
                           productKey
                         }
                         onZoomImage={openImageZoom}

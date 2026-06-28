@@ -649,6 +649,183 @@ test("radar advisor playbook: price_down recalcula margen y reabre oportunidad",
     alert.commercial_playbook.recommendation,
     /reabrir oportunidad/
   )
+  assert.equal(
+    alert.event_intelligence_label,
+    "Oportunidad de revision"
+  )
+  assert.match(
+    alert.event_intelligence_summary,
+    /Precio bajo con stock disponible/
+  )
+  assert.equal(
+    alert.event_intelligence_advisory_only,
+    true
+  )
+})
+
+test("radar event intelligence: out_of_stock marca riesgo de inventario", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "out_of_stock",
+        new_value: {
+          available:
+            false,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          0,
+        out_of_stock_count_7d:
+          2,
+      },
+      null
+    )
+
+  assert.equal(
+    alert.event_intelligence_label,
+    "Riesgo de inventario"
+  )
+  assert.equal(
+    alert.event_intelligence_severity,
+    "critical"
+  )
+  assert.match(
+    alert.event_intelligence_summary,
+    /Stock agotado/
+  )
+})
+
+test("radar event intelligence: stock ambiguo requiere validacion manual", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "new_product",
+        new_value: {
+          available:
+            true,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          null,
+        inventory_source:
+          "luna_availability",
+      },
+      null
+    )
+
+  assert.equal(
+    alert.event_intelligence_label,
+    "Validacion manual"
+  )
+  assert.equal(
+    alert.event_intelligence_severity,
+    "high"
+  )
+  assert.equal(alert.severity, "high")
+  assert.equal(
+    alert.recommended_action,
+    "validate_stock_before_review"
+  )
+  assert.match(
+    alert.event_intelligence_summary,
+    /Confirmar stock real/
+  )
+})
+
+test("radar advisor seller risk: detecta restricciones por tipo de producto", () => {
+  const paintAlert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "new_product",
+        new_value: {
+          available:
+            true,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        title:
+          "Blue Rust-Oleum Professional Inverted Striping Paint Spray",
+      },
+      null
+    )
+
+  assert.equal(
+    paintAlert.seller_risk_label,
+    "Shipping restringido"
+  )
+  assert.match(
+    paintAlert.seller_risk_summary,
+    /hazmat/
+  )
+
+  const supplementAlert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "new_product",
+        new_value: {
+          available:
+            true,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        title:
+          "Green Hills Ginseng Herbal Supplement",
+        product_type:
+          "Supplements",
+      },
+      null
+    )
+
+  assert.equal(
+    supplementAlert.seller_risk_label,
+    "Compliance / claims"
+  )
+  assert.match(
+    supplementAlert.seller_risk_summary,
+    /restricciones eBay/
+  )
+
+  const brandAlert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "new_product",
+        new_value: {
+          available:
+            true,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        title:
+          "PowerA Clutch Bag for Nintendo Switch",
+      },
+      null
+    )
+
+  assert.equal(
+    brandAlert.seller_risk_label,
+    "Marca / compatibilidad"
+  )
+  assert.match(
+    brandAlert.seller_risk_summary,
+    /UPC/
+  )
 })
 
 test("radar advisor: conserva supplier_variant_id para resolver acciones desde alertas", () => {
@@ -686,7 +863,7 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
 
   assert.match(
     source,
-    /Ver en Radar/
+    /Buscar SKU en Radar/
   )
   assert.match(
     source,
@@ -694,7 +871,31 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
+    /const fallbackTerms[\s\S]*alert\.product_title/
+  )
+  assert.match(
+    source,
+    /preferredSearchTerm[\s\S]*getAdvisorAlertSearchTerms/
+  )
+  assert.match(
+    source,
     /requestDashboard\(\{\s*search:\s*searchTerm/
+  )
+  assert.match(
+    source,
+    /const searchDashboard[\s\S]*await requestDashboard\(\{\s*search:\s*searchTerm[\s\S]*searchDashboard\.products\.find/
+  )
+  assert.match(
+    source,
+    /setFocusedRadarProductKey\([\s\S]*getProductEvaluationKey/
+  )
+  assert.match(
+    source,
+    /getAdvisorAlertPreferredSearchTerm[\s\S]*setRadarSearch[\s\S]*setActiveRadarSearch/
+  )
+  assert.match(
+    source,
+    /Producto encontrado en Radar\. Buscador listo con:/
   )
   assert.doesNotMatch(
     source,
@@ -702,11 +903,62 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Sincronizar Luna o buscar SKU manualmente/
+    /Buscando en Radar:/
   )
   assert.match(
     source,
-    /No analiza, no publica ni crea drafts reales/
+    /getMarketRadarProductSearchRank[\s\S]*product\.supplier_variant_id[\s\S]*setFocusedRadarProductKey/
+  )
+  assert.match(
+    source,
+    /Busqueda ejecutada:/
+  )
+  assert.match(
+    source,
+    /Solo busca en Radar/
+  )
+  assert.match(
+    source,
+    /No publica ni crea drafts/
+  )
+})
+
+test("market radar dashboard: busqueda evita conteos globales exactos", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "app/api/admin/market-radar/route.ts"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /const isSearchDashboard[\s\S]*sanitizeMarketRadarSearch/
+  )
+  assert.match(
+    source,
+    /if \(!useLightweightDashboard\) \{[\s\S]*count:\s*"exact"/
+  )
+  assert.match(
+    source,
+    /useLightweightDashboard[\s\S]*\.in\(\s*"product_id",\s*latestProductIds\s*\)/
+  )
+  assert.match(
+    source,
+    /supplier_variant_id[\s\S]*search/
+  )
+  assert.match(
+    source,
+    /function isUuidLike[\s\S]*const productIdSearchPromise[\s\S]*isUuidLike\(search\)[\s\S]*\.eq\(\s*"id",\s*search\s*\)/
+  )
+  assert.match(
+    source,
+    /sync[\s\S]*runLunaPortexMarketRadarSync[\s\S]*getMarketRadarDashboard\(\{\s*lightweight:\s*true/
+  )
+  assert.match(
+    source,
+    /export async function GET[\s\S]*getMarketRadarDashboard\(\{[\s\S]*lightweight:\s*true/
   )
 })
 
@@ -1042,6 +1294,18 @@ test("lunaportex sync: latest snapshots usa historial acotado para evitar timeou
     source,
     /function getLatestSnapshots[\s\S]*\.from\("market_radar_latest_snapshots"\)/
   )
+  assert.match(
+    source,
+    /function isStatementTimeoutError[\s\S]*57014[\s\S]*canceling statement due to statement timeout/
+  )
+  assert.match(
+    source,
+    /MARKET RADAR SNAPSHOT HISTORY LOOKUP TIMEOUT; CONTINUING WITHOUT PREVIOUS SNAPSHOTS FOR CHUNK/
+  )
+  assert.match(
+    source,
+    /MARKET RADAR RECENT EVENT LOOKUP TIMEOUT; CONTINUING WITH PARTIAL EVENT HISTORY/
+  )
 })
 
 test("radar advisor inventory: unknown requiere validacion manual", () => {
@@ -1144,13 +1408,56 @@ test("radar advisor: availability-only requiere aprobacion y mensaje claro", () 
   assert.equal(alert.stock_context.inventory_source, "luna_availability")
   assert.equal(alert.stock_context.inventory_quantity, null)
   assert.equal(alert.required_human_approval, true)
+  assert.equal(alert.severity, "high")
+  assert.equal(
+    alert.recommended_action,
+    "validate_stock_before_review"
+  )
   assert.equal(
     alert.advisor_message,
-    "Luna marca este producto como disponible, pero no expone unidades numéricas. Validar inventario real antes de listar, escalar campaña o crear packs grandes."
+    "Disponible sin cantidad numerica."
   )
   assert.equal(
     alert.proposed_next_step,
-    "Validar inventario real del SKU antes de listar o escalar."
+    "Buscar SKU. Confirmar cantidad antes de listar o escalar."
+  )
+})
+
+test("radar advisor: candidato bloqueado con stock ambiguo no se reabre", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "new_product",
+        new_value: {
+          available:
+            true,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          null,
+        inventory_source:
+          "luna_availability",
+      },
+      {
+        id:
+          "candidate-blocked-stock",
+        state:
+          "BLOCKED",
+      }
+    )
+
+  assert.equal(alert.severity, "high")
+  assert.equal(
+    alert.recommended_action,
+    "keep_blocked_until_stock_confirmed"
+  )
+  assert.match(
+    alert.proposed_next_step,
+    /Mantener bloqueado/
   )
 })
 
@@ -1252,13 +1559,13 @@ test("radar advisor: quantity alta requiere aprobacion y no asume stock por vari
   assert.equal(alert.required_human_approval, true)
   assert.equal(
     alert.advisor_message,
-    "Luna muestra una disponibilidad alta a nivel producto/categoría, pero no confirma cantidad exacta por variante."
+    "Disponibilidad general; falta variante."
   )
   assert.equal(
     alert.proposed_next_step,
-    "Confirmar inventario real del SKU/variante antes de listar, crear pack o escalar campaña."
+    "Buscar SKU. Confirmar variante antes de listar o escalar."
   )
-  assert.equal(alert.recommended_action, "recalculate_profit")
+  assert.equal(alert.recommended_action, "validate_stock_before_review")
 })
 
 test("radar advisor: low_stock con quantity alta se ignora", () => {
@@ -1355,7 +1662,7 @@ test("radar advisor: discount_started consumible sin stock suficiente no sugiere
       }
     )
 
-  assert.equal(alert.recommended_action, "recalculate_profit")
+  assert.equal(alert.recommended_action, "validate_stock_before_review")
 })
 
 test("pricing strategy: pack candidate requiere stock numerico", () => {
