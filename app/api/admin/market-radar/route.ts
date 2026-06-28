@@ -2013,6 +2013,8 @@ export async function GET(
           sanitizeMarketRadarSearch(
             url.searchParams.get("search")
           ),
+        lightweight:
+          true,
       })
 
     return NextResponse.json({

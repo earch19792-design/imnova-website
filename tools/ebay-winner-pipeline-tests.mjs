@@ -831,6 +831,10 @@ test("market radar dashboard: busqueda evita conteos globales exactos", () => {
     source,
     /sync[\s\S]*runLunaPortexMarketRadarSync[\s\S]*getMarketRadarDashboard\(\{\s*lightweight:\s*true/
   )
+  assert.match(
+    source,
+    /export async function GET[\s\S]*getMarketRadarDashboard\(\{[\s\S]*lightweight:\s*true/
+  )
 })
 
 test("radar advisor: low_stock -> prepare_pause_or_reduce_quantity", () => {
