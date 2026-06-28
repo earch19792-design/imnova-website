@@ -803,6 +803,10 @@ function getAdvisorActionLabel(
       return "Confirmar cantidad de stock"
     case "complete_missing_data":
       return "Completar datos operativos"
+    case "validate_stock_before_review":
+      return "Validar stock antes de revisar"
+    case "keep_blocked_until_stock_confirmed":
+      return "Mantener bloqueado hasta confirmar stock"
     default:
       return action
         ? action
@@ -4107,6 +4111,28 @@ function RadarAdvisorAlertItem({
         </p>
       </div>
 
+      {alert.seller_risk_label &&
+        alert.seller_risk_summary && (
+          <div className="mt-3 rounded-md border border-rose-300/20 bg-rose-300/[0.06] px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-md border border-rose-200/20 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-rose-100/70">
+                Riesgo vendedor
+              </span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-rose-100/55">
+                {alert.seller_risk_label}
+              </span>
+              {alert.seller_risk_severity && (
+                <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-rose-100/40">
+                  {alert.seller_risk_severity}
+                </span>
+              )}
+            </div>
+            <p className="mt-2 text-xs leading-5 text-rose-50/70">
+              {alert.seller_risk_summary}
+            </p>
+          </div>
+        )}
+
       {alert.commercial_playbook && (
         <div className="mt-4 rounded-md border border-amber-300/20 bg-amber-300/[0.06] p-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -4201,10 +4227,10 @@ function RadarAdvisorAlertItem({
           >
             {isResolving
               ? "Buscando producto..."
-              : "Ver en Radar"}
+              : "Buscar SKU en Radar"}
           </button>
           <p className="mt-2 text-[11px] leading-5 text-white/35">
-            Busca el producto sincronizado por alerta/SKU aunque no esté en el ranking visible. No analiza, no publica ni crea drafts reales.
+            Llena el buscador con SKU o numero de parte para revisar stock y datos. No analiza, no publica ni crea drafts reales.
           </p>
         </div>
       )}

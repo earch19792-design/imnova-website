@@ -729,9 +729,102 @@ test("radar event intelligence: stock ambiguo requiere validacion manual", () =>
     alert.event_intelligence_severity,
     "high"
   )
+  assert.equal(alert.severity, "high")
+  assert.equal(
+    alert.recommended_action,
+    "validate_stock_before_review"
+  )
   assert.match(
     alert.event_intelligence_summary,
-    /Datos de stock ambiguos/
+    /Stock no confirmado por variante/
+  )
+})
+
+test("radar advisor seller risk: detecta restricciones por tipo de producto", () => {
+  const paintAlert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "new_product",
+        new_value: {
+          available:
+            true,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        title:
+          "Blue Rust-Oleum Professional Inverted Striping Paint Spray",
+      },
+      null
+    )
+
+  assert.equal(
+    paintAlert.seller_risk_label,
+    "Shipping restringido"
+  )
+  assert.match(
+    paintAlert.seller_risk_summary,
+    /hazmat\/aerosol/
+  )
+
+  const supplementAlert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "new_product",
+        new_value: {
+          available:
+            true,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        title:
+          "Green Hills Ginseng Herbal Supplement",
+        product_type:
+          "Supplements",
+      },
+      null
+    )
+
+  assert.equal(
+    supplementAlert.seller_risk_label,
+    "Compliance / claims"
+  )
+  assert.match(
+    supplementAlert.seller_risk_summary,
+    /restricciones de eBay/
+  )
+
+  const brandAlert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "new_product",
+        new_value: {
+          available:
+            true,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        title:
+          "PowerA Clutch Bag for Nintendo Switch",
+      },
+      null
+    )
+
+  assert.equal(
+    brandAlert.seller_risk_label,
+    "Marca / compatibilidad"
+  )
+  assert.match(
+    brandAlert.seller_risk_summary,
+    /UPC/
   )
 })
 
@@ -770,7 +863,7 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
 
   assert.match(
     source,
-    /Ver en Radar/
+    /Buscar SKU en Radar/
   )
   assert.match(
     source,
@@ -803,6 +896,10 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   assert.match(
     source,
     /Sincronizar Luna o buscar SKU manualmente/
+  )
+  assert.match(
+    source,
+    /Llena el buscador con SKU o numero de parte/
   )
   assert.match(
     source,
@@ -1287,13 +1384,56 @@ test("radar advisor: availability-only requiere aprobacion y mensaje claro", () 
   assert.equal(alert.stock_context.inventory_source, "luna_availability")
   assert.equal(alert.stock_context.inventory_quantity, null)
   assert.equal(alert.required_human_approval, true)
+  assert.equal(alert.severity, "high")
+  assert.equal(
+    alert.recommended_action,
+    "validate_stock_before_review"
+  )
   assert.equal(
     alert.advisor_message,
-    "Luna marca este producto como disponible, pero no expone unidades numéricas. Validar inventario real antes de listar, escalar campaña o crear packs grandes."
+    "Luna marca el producto como disponible, pero no expone unidades numericas. Tratar como pendiente de stock antes de cualquier decision de venta."
   )
   assert.equal(
     alert.proposed_next_step,
-    "Validar inventario real del SKU antes de listar o escalar."
+    "Buscar SKU o numero de parte en Radar y confirmar cantidad real antes de listar, escalar o crear packs."
+  )
+})
+
+test("radar advisor: candidato bloqueado con stock ambiguo no se reabre", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "new_product",
+        new_value: {
+          available:
+            true,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          null,
+        inventory_source:
+          "luna_availability",
+      },
+      {
+        id:
+          "candidate-blocked-stock",
+        state:
+          "BLOCKED",
+      }
+    )
+
+  assert.equal(alert.severity, "high")
+  assert.equal(
+    alert.recommended_action,
+    "keep_blocked_until_stock_confirmed"
+  )
+  assert.match(
+    alert.proposed_next_step,
+    /Mantener bloqueado/
   )
 })
 
@@ -1395,13 +1535,13 @@ test("radar advisor: quantity alta requiere aprobacion y no asume stock por vari
   assert.equal(alert.required_human_approval, true)
   assert.equal(
     alert.advisor_message,
-    "Luna muestra una disponibilidad alta a nivel producto/categoría, pero no confirma cantidad exacta por variante."
+    "Luna muestra disponibilidad general, pero no confirma cantidad exacta por variante."
   )
   assert.equal(
     alert.proposed_next_step,
-    "Confirmar inventario real del SKU/variante antes de listar, crear pack o escalar campaña."
+    "Buscar SKU o numero de parte en Radar y confirmar inventario real por variante antes de listar, crear pack o escalar campaña."
   )
-  assert.equal(alert.recommended_action, "recalculate_profit")
+  assert.equal(alert.recommended_action, "validate_stock_before_review")
 })
 
 test("radar advisor: low_stock con quantity alta se ignora", () => {
@@ -1498,7 +1638,7 @@ test("radar advisor: discount_started consumible sin stock suficiente no sugiere
       }
     )
 
-  assert.equal(alert.recommended_action, "recalculate_profit")
+  assert.equal(alert.recommended_action, "validate_stock_before_review")
 })
 
 test("pricing strategy: pack candidate requiere stock numerico", () => {
