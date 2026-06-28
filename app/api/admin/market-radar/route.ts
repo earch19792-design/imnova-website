@@ -278,6 +278,14 @@ function sanitizeMarketRadarSearch(
     )
 }
 
+function isUuidLike(
+  value: string
+) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    value
+  )
+}
+
 function getAdvisorAlertDedupeKey(
   alert: RadarAdvisorAlert
 ) {
@@ -729,6 +737,26 @@ async function getLatestMarketRadarProducts(
       getMarketRadarSearchHandleCandidate(
         search
       )
+    const productIdSearchPromise =
+      isUuidLike(search)
+        ? supabase
+            .from("market_radar_products")
+            .select("id")
+            .eq(
+              "source_id",
+              source.id
+            )
+            .eq(
+              "id",
+              search
+            )
+            .limit(
+              DASHBOARD_SEARCH_LIMIT
+            )
+        : Promise.resolve({
+            data: [],
+            error: null,
+          })
 
     const [
       exactProductIdSearchResult,
@@ -739,20 +767,7 @@ async function getLatestMarketRadarProducts(
       snapshotVariantSearchResult,
     ] =
       await Promise.all([
-        supabase
-          .from("market_radar_products")
-          .select("id")
-          .eq(
-            "source_id",
-            source.id
-          )
-          .eq(
-            "id",
-            search
-          )
-          .limit(
-            DASHBOARD_SEARCH_LIMIT
-          ),
+        productIdSearchPromise,
         supabase
           .from("market_radar_products")
           .select("id")

@@ -950,6 +950,10 @@ test("market radar dashboard: busqueda evita conteos globales exactos", () => {
   )
   assert.match(
     source,
+    /function isUuidLike[\s\S]*const productIdSearchPromise[\s\S]*isUuidLike\(search\)[\s\S]*\.eq\(\s*"id",\s*search\s*\)/
+  )
+  assert.match(
+    source,
     /sync[\s\S]*runLunaPortexMarketRadarSync[\s\S]*getMarketRadarDashboard\(\{\s*lightweight:\s*true/
   )
   assert.match(
