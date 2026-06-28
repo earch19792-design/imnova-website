@@ -574,6 +574,96 @@ test("active listing risk read service: summary cuenta prioridades y tipos", asy
   )
 })
 
+test("active listing risk admin api: protege lectura y usa servicio read-only", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "app/api/admin/active-listing-risks/route.ts"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /export const runtime = "nodejs"/
+  )
+  assert.match(
+    source,
+    /validateAdminApiRequest\(req\)[\s\S]*if \(unauthorizedResponse\)[\s\S]*getSupabaseAdminClient\(\)/
+  )
+  assert.match(
+    source,
+    /getActiveListingRiskSummary/
+  )
+  assert.match(
+    source,
+    /getOpenActiveListingRisks/
+  )
+  assert.match(
+    source,
+    /getRisksByEbaySku/
+  )
+  assert.match(
+    source,
+    /getRisksBySupplierSku/
+  )
+  assert.match(
+    source,
+    /dryRunOnly:\s*true/
+  )
+  assert.doesNotMatch(
+    source,
+    new RegExp("\\.(insert|update|delete|upsert|rpc)\\(")
+  )
+})
+
+test("active listing risk admin api: valida modos y queries ambiguas", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "app/api/admin/active-listing-risks/route.ts"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /const DEFAULT_LIMIT[\s\S]*25/
+  )
+  assert.match(
+    source,
+    /const MAX_LIMIT[\s\S]*100/
+  )
+  assert.match(
+    source,
+    /active_listing_risk_invalid_limit/
+  )
+  assert.match(
+    source,
+    /summary[\s\S]*sku[\s\S]*supplierSku[\s\S]*active_listing_risk_ambiguous_query/
+  )
+  assert.match(
+    source,
+    /sku[\s\S]*supplierSku[\s\S]*active_listing_risk_ambiguous_query/
+  )
+  assert.match(
+    source,
+    /mode:\s*"summary"/
+  )
+  assert.match(
+    source,
+    /mode:\s*"ebay_sku"/
+  )
+  assert.match(
+    source,
+    /mode:\s*"supplier_sku"/
+  )
+  assert.match(
+    source,
+    /mode:\s*"open"/
+  )
+})
+
 test("market radar actionable ranking: producto ya analizado sin evento nuevo no reaparece", () => {
   const result =
     getMarketRadarActionability({
