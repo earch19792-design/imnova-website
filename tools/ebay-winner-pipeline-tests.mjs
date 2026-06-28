@@ -5360,7 +5360,7 @@ test("listing seller advisor prompts: templates exportan contenido estable", () 
   )
   assert.equal(
     listingSellerAdvisorPromptsV0.principle,
-    "Readiness first, creativity after."
+    "Protect active eBay listings first; readiness before creativity for new opportunities."
   )
   assert.equal(
     listingSellerAdvisorPromptsV0.human_approval_required,
@@ -5410,6 +5410,7 @@ test("listing seller advisor prompts: readiness bloquea datos criticos", () => {
   assert.deepEqual(
     listingReadinessTemplate.required_inputs,
     [
+      "active_ebay_listing_risk_review",
       "confirmed_stock",
       "weight_or_dimensions",
       "authorized_images",
@@ -5427,6 +5428,11 @@ test("listing seller advisor prompts: readiness bloquea datos criticos", () => {
       .filter(rule => rule.severity === "block")
       .map(rule => rule.field)
 
+  assert.ok(
+    blockedFields.includes(
+      "active_ebay_listing_risk_review"
+    )
+  )
   assert.ok(
     blockedFields.includes("confirmed_stock")
   )
@@ -5609,5 +5615,14 @@ test("listing seller advisor prompts: estrategia combina decision readiness crea
     listingStrategyTemplate.conclusion_schema
       .human_approval_required,
     true
+  )
+  assert.equal(
+    listingStrategyTemplate.conclusion_schema
+      .active_listing_risk_status,
+    "clear | needs_review | critical_blocker"
+  )
+  assert.match(
+    listingStrategyTemplate.final_review_order[0],
+    /active eBay listing risks first/i
   )
 })
