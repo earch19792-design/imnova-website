@@ -786,7 +786,7 @@ test("radar advisor seller risk: detecta restricciones por tipo de producto", ()
   )
   assert.match(
     paintAlert.seller_risk_summary,
-    /hazmat/
+    /restricciones de envio/
   )
 
   const supplementAlert =
