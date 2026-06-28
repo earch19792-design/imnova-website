@@ -3953,6 +3953,43 @@ function canResolveAdvisorAlertProduct(
   )
 }
 
+function getAdvisorAlertSearchTerms(
+  alert: RadarAdvisorAlert
+) {
+  const exactTerms =
+    [
+      alert.product_id,
+      alert.supplier_variant_id,
+      alert.supplier_sku,
+    ]
+      .map(value =>
+        typeof value === "string"
+          ? value.trim()
+          : ""
+      )
+      .filter(Boolean)
+
+  const fallbackTerms =
+    exactTerms.length
+      ? []
+      : [
+          alert.product_title,
+        ]
+          .map(value =>
+            typeof value === "string"
+              ? value.trim()
+              : ""
+          )
+          .filter(Boolean)
+
+  return Array.from(
+    new Set([
+      ...exactTerms,
+      ...fallbackTerms,
+    ])
+  )
+}
+
 function RadarAdvisorAlertItem({
   alert,
   isResolving,
@@ -4993,21 +5030,8 @@ export function MarketRadarPanel({
       }
 
       const searchTerms =
-        Array.from(
-          new Set(
-            [
-              alert.product_id,
-              alert.supplier_variant_id,
-              alert.supplier_sku,
-              alert.product_title,
-            ]
-              .map(value =>
-                typeof value === "string"
-                  ? value.trim()
-                  : ""
-              )
-              .filter(Boolean)
-          )
+        getAdvisorAlertSearchTerms(
+          alert
         )
 
       for (const searchTerm of searchTerms) {

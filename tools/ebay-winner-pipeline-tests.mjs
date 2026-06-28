@@ -778,6 +778,10 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
+    /exactTerms\.length[\s\S]*\?\s*\[\][\s\S]*alert\.product_title/
+  )
+  assert.match(
+    source,
     /requestDashboard\(\{\s*search:\s*searchTerm/
   )
   assert.doesNotMatch(
