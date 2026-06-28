@@ -4544,6 +4544,11 @@ export function MarketRadarPanel({
         searchTerm
       )
       setRankingFilter("all")
+      setAdvisorAlertReviewMessage(
+        searchTerm
+          ? `Buscando en Radar: ${searchTerm}`
+          : ""
+      )
       loadDashboard({
         search:
           searchTerm,

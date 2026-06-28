@@ -942,6 +942,10 @@ test("market radar dashboard: busqueda evita conteos globales exactos", () => {
   )
   assert.match(
     source,
+    /supplier_variant_id[\s\S]*search/
+  )
+  assert.match(
+    source,
     /sync[\s\S]*runLunaPortexMarketRadarSync[\s\S]*getMarketRadarDashboard\(\{\s*lightweight:\s*true/
   )
   assert.match(

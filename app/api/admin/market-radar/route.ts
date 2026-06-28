@@ -736,6 +736,7 @@ async function getLatestMarketRadarProducts(
       exactSupplierProductSearchResult,
       productSearchResult,
       snapshotSearchResult,
+      snapshotVariantSearchResult,
     ] =
       await Promise.all([
         supabase
@@ -811,6 +812,20 @@ async function getLatestMarketRadarProducts(
           .limit(
             DASHBOARD_SEARCH_LIMIT
           ),
+        supabase
+          .from("market_radar_snapshots")
+          .select("product_id")
+          .eq(
+            "source_id",
+            source.id
+          )
+          .eq(
+            "supplier_variant_id",
+            search
+          )
+          .limit(
+            DASHBOARD_SEARCH_LIMIT
+          ),
       ])
 
     if (exactProductIdSearchResult.error) {
@@ -843,6 +858,12 @@ async function getLatestMarketRadarProducts(
       )
     }
 
+    if (snapshotVariantSearchResult.error) {
+      throw new Error(
+        snapshotVariantSearchResult.error.message
+      )
+    }
+
     productIds =
       Array.from(
         new Set([
@@ -867,6 +888,9 @@ async function getLatestMarketRadarProducts(
             .map(product => product.id),
           ...(
             snapshotSearchResult.data || []
+          ).map(snapshot => snapshot.product_id),
+          ...(
+            snapshotVariantSearchResult.data || []
           ).map(snapshot => snapshot.product_id),
         ].filter(Boolean))
       ).slice(
