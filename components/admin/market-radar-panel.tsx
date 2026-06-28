@@ -46,6 +46,8 @@ type MarketRadarApiResponse = {
   success: boolean
   dashboard?: MarketRadarDashboard
   sync?: MarketRadarSyncResult
+  degraded?: boolean
+  warning?: string
   notification?: {
     success?: boolean
     total?: number
@@ -68,10 +70,13 @@ type MarketRadarApiResponse = {
 const MARKET_RADAR_REQUEST_TIMEOUT_MS =
   90000
 
+const MARKET_RADAR_SYNC_TIMEOUT_MS =
+  240000
+
 function getAbortErrorMessage(
   fallbackMessage: string
 ) {
-  return `${fallbackMessage} La sincronización tardó demasiado. Revisa el dashboard en unos minutos o intenta de nuevo.`
+  return `${fallbackMessage} La operación tardó demasiado. Revisa el dashboard en unos minutos o intenta de nuevo.`
 }
 
 async function readJsonResponse<T>(
@@ -4806,12 +4811,17 @@ export function MarketRadarPanel({
 
       const controller =
         new AbortController()
+      const requestTimeoutMs =
+        options?.action ===
+        "sync_lunaportex"
+          ? MARKET_RADAR_SYNC_TIMEOUT_MS
+          : MARKET_RADAR_REQUEST_TIMEOUT_MS
 
       const timeoutId =
         window.setTimeout(
           () =>
             controller.abort(),
-          MARKET_RADAR_REQUEST_TIMEOUT_MS
+          requestTimeoutMs
         )
 
       let response: Response
@@ -4907,6 +4917,12 @@ export function MarketRadarPanel({
       setDashboard(
         payload.dashboard
       )
+
+      if (payload.degraded) {
+        setError(
+          "Market Radar cargó en modo limitado porque Supabase canceló una consulta lenta. Puedes intentar buscar por SKU o sincronizar de nuevo más tarde."
+        )
+      }
 
       if (payload.sync) {
         setSyncResult(
