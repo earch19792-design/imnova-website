@@ -806,6 +806,29 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
 })
 
+test("market radar dashboard: busqueda evita conteos globales exactos", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "app/api/admin/market-radar/route.ts"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /const isSearchDashboard[\s\S]*sanitizeMarketRadarSearch/
+  )
+  assert.match(
+    source,
+    /if \(!isSearchDashboard\) \{[\s\S]*count:\s*"exact"/
+  )
+  assert.match(
+    source,
+    /isSearchDashboard[\s\S]*\.in\(\s*"product_id",\s*latestProductIds\s*\)/
+  )
+})
+
 test("radar advisor: low_stock -> prepare_pause_or_reduce_quantity", () => {
   const alert =
     getRadarAdvisorEvent(
