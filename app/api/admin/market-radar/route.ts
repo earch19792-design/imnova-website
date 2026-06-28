@@ -1361,6 +1361,7 @@ async function confirmMarketRadarStockQuantity({
 async function getMarketRadarDashboard(
   options: {
     search?: string
+    lightweight?: boolean
   } = {}
 ): Promise<MarketRadarDashboard> {
   const supabase =
@@ -1446,6 +1447,9 @@ async function getMarketRadarDashboard(
         options.search || null
       )
     )
+  const useLightweightDashboard =
+    isSearchDashboard ||
+    options.lightweight === true
 
   const latestProductIds =
     Array.from(
@@ -1472,7 +1476,7 @@ async function getMarketRadarDashboard(
     data: recentEventsData,
     error: recentEventsError,
   } =
-    isSearchDashboard &&
+    useLightweightDashboard &&
     latestProductIds.length === 0
       ? {
           data:
@@ -1481,7 +1485,7 @@ async function getMarketRadarDashboard(
             null,
         }
       : await (
-          isSearchDashboard
+          useLightweightDashboard
             ? supabase
                 .from("market_radar_events")
                 .select(`
@@ -1631,7 +1635,7 @@ async function getMarketRadarDashboard(
         event.created_at >= sevenDaysAgo
     ).length
 
-  if (!isSearchDashboard) {
+  if (!useLightweightDashboard) {
     const [
       totalProductsResult,
       highOpportunityProductsResult,
@@ -2228,7 +2232,10 @@ export async function POST(
       )
 
     const dashboard =
-      await getMarketRadarDashboard()
+      await getMarketRadarDashboard({
+        lightweight:
+          true,
+      })
 
     return NextResponse.json({
       success: true,

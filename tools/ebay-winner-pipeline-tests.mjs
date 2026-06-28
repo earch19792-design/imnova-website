@@ -821,11 +821,15 @@ test("market radar dashboard: busqueda evita conteos globales exactos", () => {
   )
   assert.match(
     source,
-    /if \(!isSearchDashboard\) \{[\s\S]*count:\s*"exact"/
+    /if \(!useLightweightDashboard\) \{[\s\S]*count:\s*"exact"/
   )
   assert.match(
     source,
-    /isSearchDashboard[\s\S]*\.in\(\s*"product_id",\s*latestProductIds\s*\)/
+    /useLightweightDashboard[\s\S]*\.in\(\s*"product_id",\s*latestProductIds\s*\)/
+  )
+  assert.match(
+    source,
+    /sync[\s\S]*runLunaPortexMarketRadarSync[\s\S]*getMarketRadarDashboard\(\{\s*lightweight:\s*true/
   )
 })
 
