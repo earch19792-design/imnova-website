@@ -1444,12 +1444,18 @@ async function getLatestSnapshots(
       POSTGREST_FILTER_CHUNK_SIZE
     )
   ) {
+    const historyLimit =
+      Math.min(
+        Math.max(productIdChunk.length * 8, 100),
+        1000
+      )
+
     const {
       data,
       error,
     } =
       await supabase
-        .from("market_radar_latest_snapshots")
+        .from("market_radar_snapshots")
         .select(`
           product_id,
           supplier_variant_id,
@@ -1464,6 +1470,18 @@ async function getLatestSnapshots(
           "product_id",
           productIdChunk
         )
+        .order(
+          "captured_at",
+          {
+            ascending:
+              false,
+            nullsFirst:
+              false,
+          }
+        )
+        .limit(
+          historyLimit
+        )
 
     if (error) {
       throw new Error(
@@ -1476,9 +1494,19 @@ async function getLatestSnapshots(
     ).forEach(snapshot => {
       const typedSnapshot =
         snapshot as LatestSnapshotRecord
+      const snapshotKey =
+        `${typedSnapshot.product_id}:${typedSnapshot.supplier_variant_id}`
+
+      if (
+        snapshots.has(
+          snapshotKey
+        )
+      ) {
+        return
+      }
 
       snapshots.set(
-        `${typedSnapshot.product_id}:${typedSnapshot.supplier_variant_id}`,
+        snapshotKey,
         typedSnapshot
       )
     })
