@@ -3971,9 +3971,9 @@ function getAdvisorAlertSearchTerms(
 ) {
   const exactTerms =
     [
-      alert.product_id,
-      alert.supplier_variant_id,
       alert.supplier_sku,
+      alert.supplier_variant_id,
+      alert.product_id,
     ]
       .map(value =>
         typeof value === "string"
@@ -5233,6 +5233,36 @@ export function MarketRadarPanel({
       setError("")
       setAdvisorAlertReviewMessage("")
 
+      const immediateSearchTerm =
+        getAdvisorAlertSearchTerms(
+          alert
+        )[0] || ""
+
+      if (immediateSearchTerm) {
+        setRadarSearch(
+          immediateSearchTerm
+        )
+        setActiveRadarSearch(
+          immediateSearchTerm
+        )
+        setRankingFilter("all")
+        setAdvisorAlertReviewMessage(
+          `Buscando en Radar: ${immediateSearchTerm}`
+        )
+
+        window.setTimeout(
+          () => {
+            searchResultsRef.current?.scrollIntoView({
+              behavior:
+                "smooth",
+              block:
+                "start",
+            })
+          },
+          50
+        )
+      }
+
       try {
         const product =
           await findAdvisorAlertProduct(
@@ -5240,9 +5270,12 @@ export function MarketRadarPanel({
           )
 
         if (!product) {
-          throw new Error(
-            "No se encontró el producto sincronizado para esta alerta. Sincronizar Luna o buscar SKU manualmente."
+          setAdvisorAlertReviewMessage(
+            immediateSearchTerm
+              ? `Busqueda ejecutada: ${immediateSearchTerm}. No hubo coincidencia exacta; prueba con el titulo o sincroniza Luna.`
+              : "No hay SKU o titulo suficiente para buscar esta alerta."
           )
+          return
         }
 
         setError("")

@@ -903,7 +903,11 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Sincronizar Luna o buscar SKU manualmente/
+    /Buscando en Radar:/
+  )
+  assert.match(
+    source,
+    /Busqueda ejecutada:/
   )
   assert.match(
     source,
