@@ -1297,6 +1297,70 @@ function getStableSupplierSku(
   )
 }
 
+function normalizeRadarSearchTerm(
+  value: string | null | undefined
+) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+}
+
+function getMarketRadarProductSearchRank(
+  product: MarketRadarProductRow,
+  searchTerm: string
+) {
+  const normalizedSearch =
+    normalizeRadarSearchTerm(
+      searchTerm
+    )
+
+  if (!normalizedSearch) {
+    return 0
+  }
+
+  const exactValues =
+    [
+      product.supplier_variant_id,
+      getRealProductSku(product),
+      getStableSupplierSku(product),
+      product.product_id,
+      product.supplier_product_id,
+      product.handle,
+    ]
+      .map(normalizeRadarSearchTerm)
+      .filter(Boolean)
+
+  if (
+    exactValues.some(
+      value => value === normalizedSearch
+    )
+  ) {
+    return 0
+  }
+
+  const textValues =
+    [
+      product.title,
+      product.vendor,
+      product.product_type,
+      ...(product.tags || []),
+    ]
+      .map(normalizeRadarSearchTerm)
+      .filter(Boolean)
+
+  if (
+    textValues.some(value =>
+      value.includes(
+        normalizedSearch
+      )
+    )
+  ) {
+    return 1
+  }
+
+  return 2
+}
+
 function getProductPreviewImageUrl(
   product: MarketRadarProductRow
 ) {
@@ -5402,6 +5466,20 @@ export function MarketRadarPanel({
             return true
           })
 
+        if (activeRadarSearch) {
+          filteredProducts.sort(
+            (left, right) =>
+              getMarketRadarProductSearchRank(
+                left,
+                activeRadarSearch
+              ) -
+              getMarketRadarProductSearchRank(
+                right,
+                activeRadarSearch
+              )
+          )
+        }
+
         return activeRadarSearch
           ? filteredProducts.slice(
               0,
@@ -5426,6 +5504,29 @@ export function MarketRadarPanel({
       !dashboard
     ) {
       return
+    }
+
+    const exactProduct =
+      (dashboard.products || []).find(
+        product =>
+          getMarketRadarProductSearchRank(
+            product,
+            activeRadarSearch
+          ) === 0
+      )
+
+    if (exactProduct) {
+      const exactProductKey =
+        getProductEvaluationKey(
+          exactProduct
+        )
+
+      setFocusedRadarProductKey(
+        currentKey =>
+          currentKey === exactProductKey
+            ? currentKey
+            : exactProductKey
+      )
     }
 
     searchResultsRef.current?.scrollIntoView({

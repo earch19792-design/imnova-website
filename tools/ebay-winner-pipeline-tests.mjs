@@ -907,6 +907,10 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
+    /getMarketRadarProductSearchRank[\s\S]*product\.supplier_variant_id[\s\S]*setFocusedRadarProductKey/
+  )
+  assert.match(
+    source,
     /Busqueda ejecutada:/
   )
   assert.match(
