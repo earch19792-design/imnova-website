@@ -4239,7 +4239,9 @@ function RadarAdvisorSellerRiskSummary({
   const summaryItems = [
     {
       label:
-        "Riesgo de cancelacion",
+        "Cancelacion",
+      detail:
+        "Venta que podria fallar",
       count:
         alerts.filter(
           alert =>
@@ -4253,7 +4255,9 @@ function RadarAdvisorSellerRiskSummary({
     },
     {
       label:
-        "Stock por confirmar",
+        "Stock pendiente",
+      detail:
+        "Confirmar antes de avanzar",
       count:
         alerts.filter(
           alert =>
@@ -4265,7 +4269,9 @@ function RadarAdvisorSellerRiskSummary({
     },
     {
       label:
-        "Margen por recalcular",
+        "Margen",
+      detail:
+        "Revisar rentabilidad",
       count:
         alerts.filter(
           alert =>
@@ -4278,6 +4284,8 @@ function RadarAdvisorSellerRiskSummary({
     {
       label:
         "Riesgo eBay",
+      detail:
+        "Marca, envio o compliance",
       count:
         alerts.filter(
           alert =>
@@ -4290,6 +4298,8 @@ function RadarAdvisorSellerRiskSummary({
     {
       label:
         "Oportunidades",
+      detail:
+        "Revisar cuando haya tiempo",
       count:
         alerts.filter(
           alert =>
@@ -4329,6 +4339,9 @@ function RadarAdvisorSellerRiskSummary({
             </p>
             <p className="mt-1 truncate text-[10px] font-bold uppercase tracking-[0.08em] opacity-70">
               {item.label}
+            </p>
+            <p className="mt-1 truncate text-[11px] font-semibold normal-case tracking-normal opacity-55">
+              {item.detail}
             </p>
           </div>
         ))}

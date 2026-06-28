@@ -1069,7 +1069,7 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Riesgo de cancelacion[\s\S]*Stock por confirmar[\s\S]*Margen por recalcular[\s\S]*Riesgo eBay[\s\S]*Oportunidades/
+    /Cancelacion[\s\S]*Venta que podria fallar[\s\S]*Stock pendiente[\s\S]*Confirmar antes de avanzar[\s\S]*Margen[\s\S]*Revisar rentabilidad[\s\S]*Riesgo eBay[\s\S]*Marca, envio o compliance[\s\S]*Oportunidades/
   )
   assert.match(
     source,
