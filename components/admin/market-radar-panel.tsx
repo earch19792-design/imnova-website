@@ -4182,38 +4182,38 @@ function RadarAdvisorReviewQueue({
             return (
               <div
                 key={`${alertKey}-${index}`}
-                className="flex min-w-0 flex-col gap-1 overflow-hidden border-b border-white/10 px-3 py-2 last:border-b-0 sm:flex-row sm:items-center sm:gap-2"
+                className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1 overflow-hidden border-b border-white/10 px-3 py-2.5 last:border-b-0"
               >
-                <div className="flex min-w-0 w-full flex-nowrap items-center gap-2 overflow-hidden sm:flex-1">
-                  <span
-                    className={`
-                      shrink-0
-                      rounded-md
-                      border
-                      px-2
-                      py-0.5
-                      text-[10px]
-                      font-bold
-                      uppercase
-                      tracking-[0.08em]
-                      ${getAdvisorSellerPriorityClassName(alert.seller_priority)}
-                    `}
-                  >
-                    {alert.seller_priority}
-                  </span>
-                  <span className="shrink-0 text-xs font-black text-white/75">
+                <span
+                  className={`
+                    shrink-0
+                    rounded-md
+                    border
+                    px-2
+                    py-0.5
+                    text-[10px]
+                    font-bold
+                    uppercase
+                    tracking-[0.08em]
+                    ${getAdvisorSellerPriorityClassName(alert.seller_priority)}
+                  `}
+                >
+                  {alert.seller_priority}
+                </span>
+                <div className="min-w-0 overflow-hidden">
+                  <p className="truncate text-xs font-black leading-5 text-white/75">
                     {alert.seller_action_label}
-                  </span>
-                </div>
-                <div className="flex shrink-0 flex-nowrap items-center gap-2 overflow-hidden">
-                  {alert.candidate_state && (
-                    <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-white/35">
-                      {alert.candidate_state}
+                  </p>
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    {alert.candidate_state && (
+                      <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-white/35">
+                        {alert.candidate_state}
+                      </span>
+                    )}
+                    <span className="shrink-0 text-[11px] font-bold text-cyan-100/45">
+                      Ver alerta abajo
                     </span>
-                  )}
-                  <span className="shrink-0 text-[11px] font-bold text-cyan-100/45">
-                    Ver alerta abajo
-                  </span>
+                  </div>
                 </div>
               </div>
             )
