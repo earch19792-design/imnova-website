@@ -5105,9 +5105,21 @@ export function MarketRadarPanel({
             loadedProduct
           )
 
+        const searchDashboard =
+          searchTerm
+            ? await requestDashboard({
+                search:
+                  searchTerm,
+              })
+            : null
+        const resolvedProduct =
+          searchDashboard?.products.find(
+            matchesAlert
+          ) || loadedProduct
+
         setFocusedRadarProductKey(
           getProductEvaluationKey(
-            loadedProduct
+            resolvedProduct
           )
         )
         if (searchTerm) {
