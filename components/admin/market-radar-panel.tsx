@@ -4345,7 +4345,7 @@ function RadarAdvisorSellerRiskSummary({
       <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/45">
         Resumen vendedor
       </p>
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+      <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(104px,1fr))] gap-2">
         {summaryItems.map(item => (
           <div
             key={item.label}
