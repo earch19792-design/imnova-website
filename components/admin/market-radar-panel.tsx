@@ -3475,6 +3475,7 @@ function ProductRow({
   stockConfirmationResult,
   isEvaluating,
   isConfirmingStock,
+  isFocused,
   onZoomImage,
   onOpenPriceIntelligence,
   onEvaluate,
@@ -3488,6 +3489,7 @@ function ProductRow({
   stockConfirmationResult?: StockConfirmationSaveState
   isEvaluating?: boolean
   isConfirmingStock?: boolean
+  isFocused?: boolean
   onZoomImage: (
     product: MarketRadarProductRow
   ) => void
@@ -3520,7 +3522,14 @@ function ProductRow({
     )
 
   return (
-    <tr className="border-b border-white/5 align-top">
+    <tr
+      className={`
+        border-b
+        align-top
+        transition-colors
+        ${isFocused ? "border-cyan-300/30 bg-cyan-300/[0.08]" : "border-white/5"}
+      `}
+    >
       <td className="w-[42%] px-4 py-4">
         <div className="flex gap-3">
           <div
@@ -4261,6 +4270,16 @@ export function MarketRadarPanel({
   const [
     resolvingAdvisorAlertKey,
     setResolvingAdvisorAlertKey,
+  ] = useState("")
+
+  const [
+    focusedRadarProductKey,
+    setFocusedRadarProductKey,
+  ] = useState("")
+
+  const [
+    advisorAlertReviewMessage,
+    setAdvisorAlertReviewMessage,
   ] = useState("")
 
   const [
@@ -5026,6 +5045,25 @@ export function MarketRadarPanel({
         )
 
       if (loadedProduct) {
+        setFocusedRadarProductKey(
+          getProductEvaluationKey(
+            loadedProduct
+          )
+        )
+        setRankingFilter("all")
+
+        window.setTimeout(
+          () => {
+            searchResultsRef.current?.scrollIntoView({
+              behavior:
+                "smooth",
+              block:
+                "start",
+            })
+          },
+          50
+        )
+
         return loadedProduct
       }
 
@@ -5048,6 +5086,11 @@ export function MarketRadarPanel({
           searchedDashboard.products[0]
 
         if (resolvedProduct) {
+          setFocusedRadarProductKey(
+            getProductEvaluationKey(
+              resolvedProduct
+            )
+          )
           setRadarSearch(
             searchTerm
           )
@@ -5091,6 +5134,7 @@ export function MarketRadarPanel({
         alertKey
       )
       setError("")
+      setAdvisorAlertReviewMessage("")
 
       try {
         const product =
@@ -5105,6 +5149,9 @@ export function MarketRadarPanel({
         }
 
         setError("")
+        setAdvisorAlertReviewMessage(
+          "Producto encontrado en Radar. Revisa stock, precio y datos antes de decidir."
+        )
       } catch (alertError) {
         console.error(
           "RADAR ADVISOR ALERT REVIEW ERROR:",
@@ -5116,6 +5163,7 @@ export function MarketRadarPanel({
             ? alertError.message
             : "No se pudo revisar el candidato desde la alerta."
         )
+        setAdvisorAlertReviewMessage("")
       } finally {
         setResolvingAdvisorAlertKey("")
       }
@@ -5743,6 +5791,11 @@ export function MarketRadarPanel({
                   Busqueda activa: {activeRadarSearch}. {hotProducts.length} resultado{hotProducts.length === 1 ? "" : "s"} visible{hotProducts.length === 1 ? "" : "s"}.
                 </p>
               ) : null}
+              {advisorAlertReviewMessage ? (
+                <p className="max-w-xl rounded-md border border-cyan-300/20 bg-cyan-300/[0.08] px-3 py-2 text-[11px] font-semibold leading-5 text-cyan-50/75">
+                  {advisorAlertReviewMessage}
+                </p>
+              ) : null}
               <div className="flex gap-2 text-[11px] text-white/40">
                 <span className="inline-flex items-center gap-1">
                   <ArrowDown className="h-3.5 w-3.5 text-cyan-100" />
@@ -5843,6 +5896,10 @@ export function MarketRadarPanel({
                         }
                         isConfirmingStock={
                           confirmingStockKey ===
+                          productKey
+                        }
+                        isFocused={
+                          focusedRadarProductKey ===
                           productKey
                         }
                         onZoomImage={openImageZoom}

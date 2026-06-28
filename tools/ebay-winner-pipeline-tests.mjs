@@ -784,6 +784,14 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
     source,
     /requestDashboard\(\{\s*search:\s*searchTerm/
   )
+  assert.match(
+    source,
+    /setFocusedRadarProductKey\([\s\S]*getProductEvaluationKey/
+  )
+  assert.match(
+    source,
+    /Producto encontrado en Radar\. Revisa stock, precio y datos antes de decidir\./
+  )
   assert.doesNotMatch(
     source,
     /reviewAdvisorAlertCandidate[\s\S]*evaluateInEbayPipeline\(\s*product\s*\)/
