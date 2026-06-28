@@ -29,9 +29,12 @@ import {
 const LUNAPORTEX_SOURCE_KEY =
   "lunaportex"
 
-const DASHBOARD_PRODUCT_LIMIT = 80
+const DASHBOARD_PRODUCT_LIMIT = 50
 const DASHBOARD_SEARCH_LIMIT = 80
-const DASHBOARD_SEARCH_SCAN_LIMIT = 1200
+const DASHBOARD_SEARCH_SCAN_LIMIT = 500
+const DASHBOARD_LIGHTWEIGHT_EVENT_LIMIT = 40
+const DASHBOARD_PRODUCT_EVENT_LIMIT = 160
+const DASHBOARD_CANDIDATE_LOOKUP_LIMIT = 160
 
 type MarketRadarPipelineCandidateLookup = {
   id: string
@@ -236,6 +239,41 @@ function createUnauthorizedResponse(
       status,
     }
   )
+}
+
+function createDegradedMarketRadarDashboard(): MarketRadarDashboard {
+  return {
+    summary: {
+      source:
+        null,
+      totalProducts:
+        0,
+      availableProducts:
+        0,
+      outOfStockProducts:
+        0,
+      discountedProducts:
+        0,
+      highOpportunityProducts:
+        0,
+      priceChanges24h:
+        0,
+      restocks7d:
+        0,
+      stockOuts7d:
+        0,
+      lastRunAt:
+        null,
+      lastSuccessAt:
+        null,
+    },
+    products:
+      [],
+    recentEvents:
+      [],
+    advisorAlerts:
+      [],
+  }
 }
 
 function toNumber(
@@ -623,6 +661,29 @@ function isMissingLatestSnapshotViewError(
   )
 }
 
+function isStatementTimeoutError(
+  error: unknown
+) {
+  const typedError =
+    error as {
+      code?: string
+      message?: string
+    } | null
+
+  const message =
+    typedError?.message?.toLowerCase() || ""
+
+  return (
+    typedError?.code === "57014" ||
+    message.includes(
+      "canceling statement due to statement timeout"
+    ) ||
+    message.includes(
+      "statement timeout"
+    )
+  )
+}
+
 async function getLatestProductSnapshots(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   productIds: string[]
@@ -645,8 +706,8 @@ async function getLatestProductSnapshots(
 
   const historyLimit =
     Math.min(
-      Math.max(productIds.length * 8, 100),
-      1000
+      Math.max(productIds.length * 3, 50),
+      180
     )
 
   const historyResult =
@@ -668,6 +729,19 @@ async function getLatestProductSnapshots(
 
   if (!historyResult.error) {
     return historyResult.data || []
+  }
+
+  if (
+    isStatementTimeoutError(
+      historyResult.error
+    )
+  ) {
+    console.warn(
+      "MARKET RADAR SNAPSHOT HISTORY TIMEOUT; CONTINUING WITHOUT SNAPSHOT DETAILS:",
+      historyResult.error.message
+    )
+
+    return []
   }
 
   if (
@@ -977,9 +1051,20 @@ async function getLatestMarketRadarProducts(
     await scoreQuery
 
   if (scoreError) {
-    throw new Error(
-      scoreError.message
-    )
+    if (
+      isStatementTimeoutError(
+        scoreError
+      )
+    ) {
+      console.warn(
+        "MARKET RADAR SCORE QUERY TIMEOUT; FALLING BACK TO RECENT PRODUCTS:",
+        scoreError.message
+      )
+    } else {
+      throw new Error(
+        scoreError.message
+      )
+    }
   }
 
   const scores =
@@ -1511,90 +1596,118 @@ async function getMarketRadarDashboard(
       24 * 60 * 60 * 1000
     ).toISOString()
 
-  const {
-    data: recentEventsData,
-    error: recentEventsError,
-  } =
-    useLightweightDashboard &&
+  let recentEventsData: unknown[] | null =
+    []
+  let recentEventsError: {
+    code?: string
+    message: string
+  } | null =
+    null
+
+  if (
+    isSearchDashboard &&
     latestProductIds.length === 0
-      ? {
-          data:
-            [],
-          error:
-            null,
-        }
-      : await (
-          useLightweightDashboard
-            ? supabase
-                .from("market_radar_events")
-                .select(`
-                  id,
-                  source_id,
-                  product_id,
-                  supplier_variant_id,
-                  event_type,
-                  old_value,
-                  new_value,
-                  event_strength,
-                  created_at,
-                  product:market_radar_products (
-                    title,
-                    handle,
-                    product_url,
-                    featured_image_url
-                  )
-                `)
-                .eq(
-                  "source_id",
-                  source.id
-                )
-                .in(
-                  "product_id",
-                  latestProductIds
-                )
-                .order(
-                  "created_at",
-                  {
-                    ascending: false,
-                  }
-                )
-                .limit(80)
-            : supabase
-                .from("market_radar_events")
-                .select(`
-                  id,
-                  source_id,
-                  product_id,
-                  supplier_variant_id,
-                  event_type,
-                  old_value,
-                  new_value,
-                  event_strength,
-                  created_at,
-                  product:market_radar_products (
-                    title,
-                    handle,
-                    product_url,
-                    featured_image_url
-                  )
-                `)
-                .eq(
-                  "source_id",
-                  source.id
-                )
-                .order(
-                  "created_at",
-                  {
-                    ascending: false,
-                  }
-                )
-                .limit(40)
+  ) {
+    recentEventsData =
+      []
+  } else if (useLightweightDashboard) {
+    let recentEventsQuery =
+      supabase
+        .from("market_radar_events")
+        .select(`
+          id,
+          source_id,
+          product_id,
+          supplier_variant_id,
+          event_type,
+          old_value,
+          new_value,
+          event_strength,
+          created_at
+        `)
+        .eq(
+          "source_id",
+          source.id
+        )
+        .order(
+          "created_at",
+          {
+            ascending: false,
+          }
+        )
+        .limit(
+          DASHBOARD_LIGHTWEIGHT_EVENT_LIMIT
         )
 
+    if (isSearchDashboard) {
+      recentEventsQuery =
+        recentEventsQuery.in(
+          "product_id",
+          latestProductIds
+        )
+    }
+
+    const result =
+      await recentEventsQuery
+
+    recentEventsData =
+      result.data || []
+    recentEventsError =
+      result.error
+  } else {
+    const result =
+      await supabase
+        .from("market_radar_events")
+        .select(`
+          id,
+          source_id,
+          product_id,
+          supplier_variant_id,
+          event_type,
+          old_value,
+          new_value,
+          event_strength,
+          created_at,
+          product:market_radar_products (
+            title,
+            handle,
+            product_url,
+            featured_image_url
+          )
+        `)
+        .eq(
+          "source_id",
+          source.id
+        )
+        .order(
+          "created_at",
+          {
+            ascending: false,
+          }
+        )
+        .limit(40)
+
+    recentEventsData =
+      result.data || []
+    recentEventsError =
+      result.error
+  }
+
   if (recentEventsError) {
-    throw new Error(
-      recentEventsError.message
-    )
+    if (
+      isStatementTimeoutError(
+        recentEventsError
+      )
+    ) {
+      console.warn(
+        "MARKET RADAR RECENT EVENTS TIMEOUT; CONTINUING WITHOUT RECENT EVENTS:",
+        recentEventsError.message
+      )
+    } else {
+      throw new Error(
+        recentEventsError.message
+      )
+    }
   }
 
   const availableProducts =
@@ -1608,6 +1721,83 @@ async function getMarketRadarDashboard(
       product =>
         product.available === false
     ).length
+
+  const productById =
+    new Map(
+      latestProducts.map(product => [
+        product.product_id,
+        product,
+      ])
+    )
+
+  const recentEventProductIds =
+    Array.from(
+      new Set(
+        (
+          recentEventsData || []
+        )
+          .map(event =>
+            (
+              event as {
+                product_id?: string | null
+              }
+            ).product_id
+          )
+          .filter(Boolean) as string[]
+      )
+    )
+  const missingRecentEventProductIds =
+    recentEventProductIds.filter(
+      productId =>
+        !productById.has(productId)
+    )
+
+  if (missingRecentEventProductIds.length > 0) {
+    const {
+      data: eventProductsData,
+      error: eventProductsError,
+    } =
+      await supabase
+        .from("market_radar_products")
+        .select(`
+          id,
+          title,
+          handle,
+          product_url,
+          featured_image_url
+        `)
+        .in(
+          "id",
+          missingRecentEventProductIds
+        )
+
+    if (eventProductsError) {
+      console.warn(
+        "MARKET RADAR RECENT EVENT PRODUCT LOOKUP WARNING:",
+        eventProductsError.message
+      )
+    } else {
+      ;(
+        eventProductsData || []
+      ).forEach(product => {
+        productById.set(
+          product.id,
+          {
+            product_id:
+              product.id,
+            title:
+              product.title,
+            handle:
+              product.handle,
+            product_url:
+              product.product_url,
+            featured_image_url:
+              product.featured_image_url,
+          } as MarketRadarProductRow
+        )
+      })
+    }
+  }
 
   const discountedProducts =
     latestProducts.filter(product => {
@@ -1638,7 +1828,9 @@ async function getMarketRadarDashboard(
       product:
         Array.isArray(event.product)
           ? event.product[0] || null
-          : event.product || null,
+          : event.product ||
+            productById.get(event.product_id) ||
+            null,
     })) as MarketRadarEventRow[]
 
   let totalProductsCount =
@@ -1790,41 +1982,47 @@ async function getMarketRadarDashboard(
     ].filter(Boolean)
 
     if (countErrors.length > 0) {
-      throw new Error(
-        countErrors[0]?.message ||
-          "market_radar_count_failed"
-      )
+      const firstCountError =
+        countErrors[0]
+
+      if (
+        isStatementTimeoutError(
+          firstCountError
+        )
+      ) {
+        console.warn(
+          "MARKET RADAR COUNT QUERY TIMEOUT; USING LOADED PRODUCT COUNTS:",
+          firstCountError?.message
+        )
+      } else {
+        throw new Error(
+          firstCountError?.message ||
+            "market_radar_count_failed"
+        )
+      }
+    } else {
+      totalProductsCount =
+        getCount(
+          totalProductsResult.count
+        )
+      highOpportunityProductsCount =
+        getCount(
+          highOpportunityProductsResult.count
+        )
+      priceChanges24hCount =
+        getCount(
+          priceChanges24hResult.count
+        )
+      restocks7dCount =
+        getCount(
+          restocks7dResult.count
+        )
+      stockOuts7dCount =
+        getCount(
+          stockOuts7dResult.count
+        )
     }
-
-    totalProductsCount =
-      getCount(
-        totalProductsResult.count
-      )
-    highOpportunityProductsCount =
-      getCount(
-        highOpportunityProductsResult.count
-      )
-    priceChanges24hCount =
-      getCount(
-        priceChanges24hResult.count
-      )
-    restocks7dCount =
-      getCount(
-        restocks7dResult.count
-      )
-    stockOuts7dCount =
-      getCount(
-        stockOuts7dResult.count
-      )
   }
-
-  const productById =
-    new Map(
-      latestProducts.map(product => [
-        product.product_id,
-        product,
-      ])
-    )
 
   const candidatesByVariantKey =
     new Map<string, MarketRadarPipelineCandidateLookup>()
@@ -1863,6 +2061,9 @@ async function getMarketRadarDashboard(
             ascending: false,
             nullsFirst: false,
           }
+        )
+        .limit(
+          DASHBOARD_CANDIDATE_LOOKUP_LIMIT
         )
 
     if (candidateError) {
@@ -1913,7 +2114,26 @@ async function getMarketRadarDashboard(
   const eventsByProductId =
     new Map<string, MarketRadarEventRow[]>()
 
-  if (latestProductIds.length > 0) {
+  if (useLightweightDashboard) {
+    recentEvents.forEach(event => {
+      const productEvents =
+        eventsByProductId.get(event.product_id) || []
+
+      productEvents.push(
+        event
+      )
+
+      eventsByProductId.set(
+        event.product_id,
+        productEvents
+      )
+    })
+  }
+
+  if (
+    latestProductIds.length > 0 &&
+    !useLightweightDashboard
+  ) {
     const {
       data: productEventsData,
       error: productEventsError,
@@ -1945,7 +2165,9 @@ async function getMarketRadarDashboard(
             ascending: false,
           }
         )
-        .limit(500)
+        .limit(
+          DASHBOARD_PRODUCT_EVENT_LIMIT
+        )
 
     if (productEventsError) {
       console.warn(
@@ -2065,6 +2287,27 @@ export async function GET(
       "GET MARKET RADAR ERROR:",
       error
     )
+
+    if (
+      isStatementTimeoutError(
+        error
+      )
+    ) {
+      return NextResponse.json({
+        success:
+          true,
+        degraded:
+          true,
+        warning:
+          "market_radar_dashboard_timeout_degraded",
+        error_detail:
+          error instanceof Error
+            ? error.message
+            : String(error),
+        dashboard:
+          createDegradedMarketRadarDashboard(),
+      })
+    }
 
     return NextResponse.json(
       {
@@ -2272,15 +2515,39 @@ export async function POST(
         supabase
       )
 
-    const dashboard =
-      await getMarketRadarDashboard({
-        lightweight:
-          true,
-      })
+    let dashboard: MarketRadarDashboard
+    let degraded = false
+
+    try {
+      dashboard =
+        await getMarketRadarDashboard({
+          lightweight:
+            true,
+        })
+    } catch (dashboardError) {
+      if (
+        !isStatementTimeoutError(
+          dashboardError
+        )
+      ) {
+        throw dashboardError
+      }
+
+      console.warn(
+        "MARKET RADAR POST-SYNC DASHBOARD TIMEOUT; RETURNING SYNC RESULT WITH DEGRADED DASHBOARD:",
+        dashboardError
+      )
+
+      degraded =
+        true
+      dashboard =
+        createDegradedMarketRadarDashboard()
+    }
 
     return NextResponse.json({
       success: true,
       sync,
+      degraded,
       dashboard,
     })
   } catch (error) {
