@@ -3928,14 +3928,47 @@ function RecentEventItem({
   )
 }
 
+function getRadarAdvisorAlertKey(
+  alert: RadarAdvisorAlert
+) {
+  return [
+    alert.product_id || "product",
+    alert.supplier_variant_id ||
+      alert.supplier_sku ||
+      alert.candidate_id ||
+      "variant",
+    alert.event_type,
+    alert.created_at || "created",
+  ].join(":")
+}
+
+function canResolveAdvisorAlertProduct(
+  alert: RadarAdvisorAlert
+) {
+  return Boolean(
+    alert.product_id ||
+    alert.supplier_variant_id ||
+    alert.supplier_sku ||
+    alert.product_title
+  )
+}
+
 function RadarAdvisorAlertItem({
   alert,
+  isResolving,
+  onReviewCandidate,
 }: {
   alert: RadarAdvisorAlert
+  isResolving?: boolean
+  onReviewCandidate?: (alert: RadarAdvisorAlert) => void
 }) {
   const stockMessage =
     getStockContextMessage(
       alert.stock_context
+    )
+  const canReviewCandidate =
+    canResolveAdvisorAlertProduct(
+      alert
     )
 
   return (
@@ -4052,6 +4085,41 @@ function RadarAdvisorAlertItem({
           </span>
         )}
       </div>
+
+      {canReviewCandidate && onReviewCandidate && (
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={() =>
+              onReviewCandidate(alert)
+            }
+            disabled={isResolving}
+            className="
+              rounded-md
+              border
+              border-emerald-300/25
+              bg-emerald-300/[0.08]
+              px-3
+              py-2
+              text-xs
+              font-bold
+              text-emerald-50/85
+              transition
+              hover:border-emerald-200/45
+              hover:bg-emerald-300/[0.14]
+              disabled:cursor-not-allowed
+              disabled:opacity-45
+            "
+          >
+            {isResolving
+              ? "Buscando producto..."
+              : "Ver en Radar"}
+          </button>
+          <p className="mt-2 text-[11px] leading-5 text-white/35">
+            Busca el producto sincronizado por alerta/SKU aunque no esté en el ranking visible. No analiza, no publica ni crea drafts reales.
+          </p>
+        </div>
+      )}
     </div>
   )
 }
@@ -4137,6 +4205,11 @@ export function MarketRadarPanel({
   const [
     confirmingStockKey,
     setConfirmingStockKey,
+  ] = useState("")
+
+  const [
+    resolvingAdvisorAlertKey,
+    setResolvingAdvisorAlertKey,
   ] = useState("")
 
   const [
@@ -4301,6 +4374,8 @@ export function MarketRadarPanel({
           payload.sync
         )
       }
+
+      return payload.dashboard
     }, [
       getAccessToken,
       radarSearch,
@@ -4858,6 +4933,157 @@ export function MarketRadarPanel({
       priceIntelligenceResults,
     ])
 
+  const findAdvisorAlertProduct =
+    useCallback(async (
+      alert: RadarAdvisorAlert
+    ) => {
+      const currentProducts =
+        dashboard?.products || []
+
+      const matchesAlert =
+        (
+          product: MarketRadarProductRow
+        ) => {
+          const productSku =
+            getRealProductSku(
+              product
+            ) ||
+            getStableSupplierSku(
+              product
+            )
+
+          return (
+            (
+              alert.product_id &&
+              product.product_id === alert.product_id
+            ) ||
+            (
+              alert.supplier_variant_id &&
+              product.supplier_variant_id ===
+                alert.supplier_variant_id
+            ) ||
+            (
+              alert.supplier_sku &&
+              productSku === alert.supplier_sku
+            )
+          )
+        }
+
+      const loadedProduct =
+        currentProducts.find(
+          matchesAlert
+        )
+
+      if (loadedProduct) {
+        return loadedProduct
+      }
+
+      const searchTerms =
+        Array.from(
+          new Set(
+            [
+              alert.product_id,
+              alert.supplier_variant_id,
+              alert.supplier_sku,
+              alert.product_title,
+            ]
+              .map(value =>
+                typeof value === "string"
+                  ? value.trim()
+                  : ""
+              )
+              .filter(Boolean)
+          )
+        )
+
+      for (const searchTerm of searchTerms) {
+        const searchedDashboard =
+          await requestDashboard({
+            search:
+              searchTerm,
+          })
+
+        const resolvedProduct =
+          searchedDashboard.products.find(
+            matchesAlert
+          ) ||
+          searchedDashboard.products[0]
+
+        if (resolvedProduct) {
+          setRadarSearch(
+            searchTerm
+          )
+          setActiveRadarSearch(
+            searchTerm
+          )
+          setRankingFilter("all")
+
+          window.setTimeout(
+            () => {
+              searchResultsRef.current?.scrollIntoView({
+                behavior:
+                  "smooth",
+                block:
+                  "start",
+              })
+            },
+            50
+          )
+
+          return resolvedProduct
+        }
+      }
+
+      return null
+    }, [
+      dashboard?.products,
+      requestDashboard,
+    ])
+
+  const reviewAdvisorAlertCandidate =
+    useCallback(async (
+      alert: RadarAdvisorAlert
+    ) => {
+      const alertKey =
+        getRadarAdvisorAlertKey(
+          alert
+        )
+
+      setResolvingAdvisorAlertKey(
+        alertKey
+      )
+      setError("")
+
+      try {
+        const product =
+          await findAdvisorAlertProduct(
+            alert
+          )
+
+        if (!product) {
+          throw new Error(
+            "No se encontró el producto sincronizado para esta alerta. Sincronizar Luna o buscar SKU manualmente."
+          )
+        }
+
+        setError("")
+      } catch (alertError) {
+        console.error(
+          "RADAR ADVISOR ALERT REVIEW ERROR:",
+          alertError
+        )
+
+        setError(
+          alertError instanceof Error
+            ? alertError.message
+            : "No se pudo revisar el candidato desde la alerta."
+        )
+      } finally {
+        setResolvingAdvisorAlertKey("")
+      }
+    }, [
+      findAdvisorAlertProduct,
+    ])
 
   useEffect(() => {
     loadDashboard()
@@ -5620,6 +5846,15 @@ export function MarketRadarPanel({
                 <RadarAdvisorAlertItem
                   key={`${alert.product_id || "product"}-${alert.supplier_sku || alert.candidate_id || "variant"}-${alert.event_type}-${alert.created_at || "created"}-${index}`}
                   alert={alert}
+                  isResolving={
+                    resolvingAdvisorAlertKey ===
+                    getRadarAdvisorAlertKey(
+                      alert
+                    )
+                  }
+                  onReviewCandidate={
+                    reviewAdvisorAlertCandidate
+                  }
                 />
               ))
             ) : (

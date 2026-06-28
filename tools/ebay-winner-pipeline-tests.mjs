@@ -651,6 +651,65 @@ test("radar advisor playbook: price_down recalcula margen y reabre oportunidad",
   )
 })
 
+test("radar advisor: conserva supplier_variant_id para resolver acciones desde alertas", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "price_down",
+        supplier_variant_id:
+          "variant-alert-123",
+        new_value: {
+          price:
+            20,
+        },
+      },
+      baseRadarAdvisorProduct,
+      null
+    )
+
+  assert.equal(
+    alert.supplier_variant_id,
+    "variant-alert-123"
+  )
+})
+
+test("market radar panel: advisor alert action ubica producto sin analizarlo", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/market-radar-panel.tsx"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /Ver en Radar/
+  )
+  assert.match(
+    source,
+    /alert\.product_id[\s\S]*alert\.supplier_variant_id[\s\S]*alert\.supplier_sku[\s\S]*alert\.product_title/
+  )
+  assert.match(
+    source,
+    /requestDashboard\(\{\s*search:\s*searchTerm/
+  )
+  assert.doesNotMatch(
+    source,
+    /reviewAdvisorAlertCandidate[\s\S]*evaluateInEbayPipeline\(\s*product\s*\)/
+  )
+  assert.match(
+    source,
+    /Sincronizar Luna o buscar SKU manualmente/
+  )
+  assert.match(
+    source,
+    /No analiza, no publica ni crea drafts reales/
+  )
+})
+
 test("radar advisor: low_stock -> prepare_pause_or_reduce_quantity", () => {
   const alert =
     getRadarAdvisorEvent(
