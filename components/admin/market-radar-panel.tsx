@@ -4048,6 +4048,11 @@ function RadarAdvisorAlertItem({
     canResolveAdvisorAlertProduct(
       alert
     )
+  const showEventIntelligence =
+    alert.event_intelligence_label !==
+      "Evento monitoreado" ||
+    alert.event_intelligence_severity === "high" ||
+    alert.event_intelligence_severity === "critical"
 
   return (
     <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
@@ -4075,7 +4080,7 @@ function RadarAdvisorAlertItem({
       <p className="mt-3 break-words text-sm font-black leading-5 text-white">
         {alert.product_title}
       </p>
-      <p className="mt-2 break-words text-sm leading-6 text-white/70">
+      <p className="mt-2 break-words text-sm font-semibold leading-5 text-white/70">
         {alert.advisor_message}
       </p>
 
@@ -4097,19 +4102,21 @@ function RadarAdvisorAlertItem({
         </div>
       )}
 
-      <div className="mt-3 rounded-md border border-sky-300/20 bg-sky-300/[0.06] px-3 py-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-md border border-sky-200/20 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-sky-100/70">
-            {alert.event_intelligence_label}
-          </span>
-          <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-sky-100/45">
-            {alert.event_intelligence_severity}
-          </span>
+      {showEventIntelligence && (
+        <div className="mt-3 rounded-md border border-sky-300/20 bg-sky-300/[0.06] px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md border border-sky-200/20 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-sky-100/70">
+              {alert.event_intelligence_label}
+            </span>
+            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-sky-100/45">
+              {alert.event_intelligence_severity}
+            </span>
+          </div>
+          <p className="mt-2 text-xs leading-5 text-sky-50/70">
+            {alert.event_intelligence_summary}
+          </p>
         </div>
-        <p className="mt-2 text-xs leading-5 text-sky-50/70">
-          {alert.event_intelligence_summary}
-        </p>
-      </div>
+      )}
 
       {alert.seller_risk_label &&
         alert.seller_risk_summary && (
@@ -4133,7 +4140,8 @@ function RadarAdvisorAlertItem({
           </div>
         )}
 
-      {alert.commercial_playbook && (
+      {alert.commercial_playbook &&
+        alert.commercial_playbook.risk_level !== "medium" && (
         <div className="mt-4 rounded-md border border-amber-300/20 bg-amber-300/[0.06] p-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0">
@@ -4148,35 +4156,26 @@ function RadarAdvisorAlertItem({
               {alert.commercial_playbook.risk_level}
             </span>
           </div>
-          <p className="mt-3 text-xs leading-5 text-amber-50/70">
-            Recomendación generada a partir de señales del Radar. No ejecuta acciones reales.
-          </p>
           <p className="mt-2 text-sm font-semibold leading-6 text-amber-50/85">
             {alert.commercial_playbook.recommendation}
-          </p>
-          <p className="mt-2 text-xs leading-5 text-amber-50/60">
-            {alert.commercial_playbook.next_step}
-          </p>
-          <p className="mt-2 text-[11px] font-semibold leading-5 text-amber-50/50">
-            {alert.commercial_playbook.guardrail}
           </p>
         </div>
       )}
 
-      <div className="mt-4 grid grid-cols-1 gap-4 text-xs leading-5 text-white/45 lg:grid-cols-2">
-        <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-3">
+      <div className="mt-4 grid grid-cols-1 gap-3 text-xs leading-5 text-white/45 lg:grid-cols-2">
+        <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-2.5">
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
-            Recomendacion
+            Accion
           </p>
-          <p className="mt-1 break-words text-white/70">
+          <p className="mt-1 break-words font-semibold text-white/80">
             {getAdvisorActionLabel(alert.recommended_action)}
           </p>
         </div>
-        <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-3">
+        <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-2.5">
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
-            Proximo paso
+            Ahora
           </p>
-          <p className="mt-1 break-words text-white/70">
+          <p className="mt-1 break-words font-semibold text-white/80">
             {alert.proposed_next_step}
           </p>
         </div>
@@ -4230,7 +4229,7 @@ function RadarAdvisorAlertItem({
               : "Buscar SKU en Radar"}
           </button>
           <p className="mt-2 text-[11px] leading-5 text-white/35">
-            Llena el buscador con SKU o numero de parte para revisar stock y datos. No analiza, no publica ni crea drafts reales.
+            Solo busca en Radar. No publica ni crea drafts.
           </p>
         </div>
       )}

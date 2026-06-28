@@ -736,7 +736,7 @@ test("radar event intelligence: stock ambiguo requiere validacion manual", () =>
   )
   assert.match(
     alert.event_intelligence_summary,
-    /Stock no confirmado por variante/
+    /Confirmar stock real/
   )
 })
 
@@ -766,7 +766,7 @@ test("radar advisor seller risk: detecta restricciones por tipo de producto", ()
   )
   assert.match(
     paintAlert.seller_risk_summary,
-    /hazmat\/aerosol/
+    /hazmat/
   )
 
   const supplementAlert =
@@ -796,7 +796,7 @@ test("radar advisor seller risk: detecta restricciones por tipo de producto", ()
   )
   assert.match(
     supplementAlert.seller_risk_summary,
-    /restricciones de eBay/
+    /restricciones eBay/
   )
 
   const brandAlert =
@@ -903,11 +903,11 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Llena el buscador con SKU o numero de parte/
+    /Solo busca en Radar/
   )
   assert.match(
     source,
-    /No analiza, no publica ni crea drafts reales/
+    /No publica ni crea drafts/
   )
 })
 
@@ -1395,11 +1395,11 @@ test("radar advisor: availability-only requiere aprobacion y mensaje claro", () 
   )
   assert.equal(
     alert.advisor_message,
-    "Luna marca el producto como disponible, pero no expone unidades numericas. Tratar como pendiente de stock antes de cualquier decision de venta."
+    "Disponible sin cantidad numerica."
   )
   assert.equal(
     alert.proposed_next_step,
-    "Buscar SKU o numero de parte en Radar y confirmar cantidad real antes de listar, escalar o crear packs."
+    "Buscar SKU. Confirmar cantidad antes de listar o escalar."
   )
 })
 
@@ -1539,11 +1539,11 @@ test("radar advisor: quantity alta requiere aprobacion y no asume stock por vari
   assert.equal(alert.required_human_approval, true)
   assert.equal(
     alert.advisor_message,
-    "Luna muestra disponibilidad general, pero no confirma cantidad exacta por variante."
+    "Disponibilidad general; falta variante."
   )
   assert.equal(
     alert.proposed_next_step,
-    "Buscar SKU o numero de parte en Radar y confirmar inventario real por variante antes de listar, crear pack o escalar campaña."
+    "Buscar SKU. Confirmar variante antes de listar o escalar."
   )
   assert.equal(alert.recommended_action, "validate_stock_before_review")
 })
