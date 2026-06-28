@@ -1053,9 +1053,13 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
+    /Solo lectura · No ejecuta acciones reales/
+  )
+  assert.doesNotMatch(
+    source,
     /Solo busca en Radar/
   )
-  assert.match(
+  assert.doesNotMatch(
     source,
     /No publica ni crea drafts/
   )
@@ -1081,7 +1085,11 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /seller_action_label[\s\S]*product_title[\s\S]*Revisa el detalle completo debajo/
+    /seller_action_label[\s\S]*getAdvisorAlertSearchTerms[\s\S]*product_title/
+  )
+  assert.doesNotMatch(
+    source,
+    /Revisa el detalle completo debajo/
   )
   assert.match(
     source,

@@ -4302,11 +4302,11 @@ function RadarAdvisorSellerRiskSummary({
   ]
 
   return (
-    <div className="mt-5 rounded-lg border border-white/10 bg-white/[0.025] p-3">
-      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">
+    <div className="mt-5 rounded-lg border border-white/10 bg-white/[0.025] p-4">
+      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/45">
         Resumen vendedor
       </p>
-      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
         {summaryItems.map(item => (
           <div
             key={item.label}
@@ -4314,15 +4314,14 @@ function RadarAdvisorSellerRiskSummary({
               min-w-0
               rounded-md
               border
-              px-2
-              py-2
+              p-3
               ${item.className}
             `}
           >
-            <p className="text-base font-black leading-5">
+            <p className="text-xl font-black leading-6">
               {item.count}
             </p>
-            <p className="mt-1 truncate text-[10px] font-bold uppercase tracking-[0.08em] opacity-70">
+            <p className="mt-1 break-words text-xs font-black leading-4 opacity-75">
               {item.label}
             </p>
           </div>
@@ -4360,53 +4359,60 @@ function RadarAdvisorReviewQueue({
     )
 
   return (
-    <div className="mt-5 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-100/45">
-            Cola Advisor
-          </p>
-          <span className="rounded-md border border-cyan-200/15 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-cyan-100/60">
-            {queueAlerts.length} prioritarias
-          </span>
-        </div>
+    <div className="mt-5 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-100/45">
+          Cola Advisor
+        </p>
+        <span className="rounded-md border border-cyan-200/15 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-cyan-100/60">
+          {queueAlerts.length} prioritarias
+        </span>
       </div>
 
       {queueAlerts.length ? (
-        <div className="mt-3 overflow-hidden rounded-md border border-white/10 bg-black/10">
+        <div className="mt-3 space-y-2">
           {queueAlerts.map((alert, index) => {
             const alertKey =
               getRadarAdvisorAlertKey(
                 alert
               )
+            const searchTerm =
+              getAdvisorAlertSearchTerms(
+                alert
+              )[0] || "Sin SKU"
 
             return (
               <div
                 key={`${alertKey}-${index}`}
-                className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 overflow-hidden border-b border-white/10 px-3 py-2 last:border-b-0 sm:grid-cols-[auto_auto_minmax(0,1fr)]"
+                className="min-w-0 rounded-md border border-white/10 bg-black/10 p-3"
               >
-                <span
-                  className={`
-                    shrink-0
-                    rounded-md
-                    border
-                    px-2
-                    py-0.5
-                    text-[10px]
-                    font-bold
-                    uppercase
-                    tracking-[0.08em]
-                    ${getAdvisorSellerPriorityClassName(alert.seller_priority)}
-                  `}
-                >
-                  {alert.seller_priority}
-                </span>
-                <span className="min-w-0 truncate text-xs font-black leading-5 text-white/75 sm:shrink-0">
-                  {alert.seller_action_label}
-                </span>
-                <span className="col-span-2 min-w-0 truncate text-xs font-semibold leading-5 text-white/50 sm:col-span-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={`
+                      shrink-0
+                      rounded-md
+                      border
+                      px-2
+                      py-0.5
+                      text-[10px]
+                      font-bold
+                      uppercase
+                      tracking-[0.08em]
+                      ${getAdvisorSellerPriorityClassName(alert.seller_priority)}
+                    `}
+                  >
+                    {alert.seller_priority}
+                  </span>
+                  <span className="min-w-0 break-words text-xs font-black leading-5 text-white/80">
+                    {alert.seller_action_label}
+                  </span>
+                  <span className="min-w-0 break-words text-[11px] font-bold leading-4 text-emerald-100/60">
+                    {searchTerm}
+                  </span>
+                </div>
+                <p className="mt-1 min-w-0 break-words text-xs font-semibold leading-5 text-white/50">
                   {alert.product_title}
-                </span>
+                </p>
               </div>
             )
           })}
@@ -4422,9 +4428,6 @@ function RadarAdvisorReviewQueue({
           +{hiddenAlertCount} alertas en detalle
         </p>
       )}
-      <p className="mt-2 text-[11px] font-semibold text-cyan-100/35">
-        Revisa el detalle completo debajo.
-      </p>
     </div>
   )
 }
@@ -4639,9 +4642,6 @@ function RadarAdvisorAlertItem({
               ? "Buscando producto..."
               : "Buscar SKU en Radar"}
           </button>
-          <p className="mt-2 text-[11px] leading-5 text-white/35">
-            Solo busca en Radar. No publica ni crea drafts.
-          </p>
         </div>
       )}
     </div>
@@ -6550,9 +6550,6 @@ export function MarketRadarPanel({
           <h3 className="mt-2 text-xl font-black text-white">
             Alertas Advisor del Radar
           </h3>
-          <p className="mt-2 text-xs leading-5 text-white/40">
-            Eventos traducidos a recomendaciones estrategicas. No ejecutan acciones reales.
-          </p>
           <p className="mt-2 text-[11px] font-bold uppercase tracking-[0.08em] text-cyan-100/45">
             Solo lectura · No ejecuta acciones reales
           </p>
