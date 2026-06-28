@@ -3983,17 +3983,15 @@ function getAdvisorAlertSearchTerms(
       .filter(Boolean)
 
   const fallbackTerms =
-    exactTerms.length
-      ? []
-      : [
-          alert.product_title,
-        ]
-          .map(value =>
-            typeof value === "string"
-              ? value.trim()
-              : ""
-          )
-          .filter(Boolean)
+    [
+      alert.product_title,
+    ]
+      .map(value =>
+        typeof value === "string"
+          ? value.trim()
+          : ""
+      )
+      .filter(Boolean)
 
   return Array.from(
     new Set([
@@ -5097,59 +5095,73 @@ export function MarketRadarPanel({
           matchesAlert
         )
 
-      if (loadedProduct) {
-        const searchTerm =
-          getAdvisorAlertPreferredSearchTerm(
-            alert,
-            loadedProduct
-          )
-
-        const searchDashboard =
-          searchTerm
-            ? await requestDashboard({
-                search:
-                  searchTerm,
-              })
-            : null
-        const resolvedProduct =
-          searchDashboard?.products.find(
-            matchesAlert
-          ) || loadedProduct
-
-        setFocusedRadarProductKey(
-          getProductEvaluationKey(
-            resolvedProduct
-          )
-        )
-        if (searchTerm) {
-          setRadarSearch(
-            searchTerm
-          )
-          setActiveRadarSearch(
-            searchTerm
-          )
-        }
-        setRankingFilter("all")
-
-        window.setTimeout(
-          () => {
-            searchResultsRef.current?.scrollIntoView({
-              behavior:
-                "smooth",
-              block:
-                "start",
-            })
-          },
-          50
-        )
-
-        return loadedProduct
-      }
-
+      const preferredSearchTerm =
+        loadedProduct
+          ? getAdvisorAlertPreferredSearchTerm(
+              alert,
+              loadedProduct
+            )
+          : ""
       const searchTerms =
-        getAdvisorAlertSearchTerms(
-          alert
+        Array.from(
+          new Set([
+            preferredSearchTerm,
+            ...getAdvisorAlertSearchTerms(
+              alert
+            ),
+          ].filter(Boolean))
         )
+
+      if (loadedProduct) {
+        for (const searchTerm of searchTerms) {
+          const searchDashboard =
+            await requestDashboard({
+              search:
+                searchTerm,
+            })
+
+          const resolvedProduct =
+            searchDashboard.products.find(
+              matchesAlert
+            ) ||
+            searchDashboard.products[0]
+
+          if (resolvedProduct) {
+            const visibleSearchTerm =
+              getAdvisorAlertPreferredSearchTerm(
+                alert,
+                resolvedProduct
+              ) || searchTerm
+
+            setFocusedRadarProductKey(
+              getProductEvaluationKey(
+                resolvedProduct
+              )
+            )
+            setRadarSearch(
+              visibleSearchTerm
+            )
+            setActiveRadarSearch(
+              visibleSearchTerm
+            )
+            setRankingFilter("all")
+
+            window.setTimeout(
+              () => {
+                searchResultsRef.current?.scrollIntoView({
+                  behavior:
+                    "smooth",
+                  block:
+                    "start",
+                })
+              },
+              50
+            )
+
+            return resolvedProduct
+          }
+        }
+      }
 
       for (const searchTerm of searchTerms) {
         const searchedDashboard =

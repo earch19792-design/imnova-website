@@ -871,7 +871,11 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /exactTerms\.length[\s\S]*\?\s*\[\][\s\S]*alert\.product_title/
+    /const fallbackTerms[\s\S]*alert\.product_title/
+  )
+  assert.match(
+    source,
+    /preferredSearchTerm[\s\S]*getAdvisorAlertSearchTerms/
   )
   assert.match(
     source,
@@ -879,7 +883,7 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /const searchDashboard[\s\S]*await requestDashboard\(\{\s*search:\s*searchTerm[\s\S]*searchDashboard\?\.products\.find/
+    /const searchDashboard[\s\S]*await requestDashboard\(\{\s*search:\s*searchTerm[\s\S]*searchDashboard\.products\.find/
   )
   assert.match(
     source,
