@@ -482,6 +482,55 @@ type EbayDashboardResponse = {
   error?: string
 }
 
+type ActiveListingRiskPriority =
+  | "critical"
+  | "high"
+  | "medium"
+  | "low"
+
+type ActiveListingRiskType =
+  | "out_of_stock"
+  | "stock_unknown"
+  | "price_up"
+  | "margin_review"
+  | "listing_stale"
+  | "manual_review"
+
+type ActiveListingRiskRow = {
+  active_listing_id: string | null
+  risk_event_id: string | null
+  ebay_item_id: string | null
+  ebay_sku: string | null
+  supplier_sku: string | null
+  title: string | null
+  listing_status: string | null
+  ebay_quantity: number | null
+  ebay_price: number | string | null
+  currency: string | null
+  risk_type: ActiveListingRiskType | string | null
+  risk_priority: ActiveListingRiskPriority | string | null
+  risk_summary: string | null
+  recommended_action: string | null
+  created_at: string | null
+  resolved_at: string | null
+}
+
+type ActiveListingRiskSummary = {
+  total_open: number
+  by_priority: Record<ActiveListingRiskPriority, number>
+  by_type: Record<ActiveListingRiskType, number>
+}
+
+type ActiveListingRiskApiResponse = {
+  success: boolean
+  dryRunOnly?: boolean
+  mode?: string
+  limit?: number
+  risks?: ActiveListingRiskRow[]
+  summary?: ActiveListingRiskSummary
+  error?: string
+}
+
 type ReprocessStatus = {
   status: "success" | "error"
   message: string
@@ -571,6 +620,81 @@ const reviewFilterOptions: {
       "Stock suficiente",
   },
 ]
+
+const activeListingRiskPriorityLabels: Record<string, string> = {
+  critical:
+    "Critico",
+  high:
+    "Alta",
+  medium:
+    "Media",
+  low:
+    "Baja",
+}
+
+const activeListingRiskTypeLabels: Record<string, string> = {
+  out_of_stock:
+    "Sin stock",
+  stock_unknown:
+    "Stock desconocido",
+  price_up:
+    "Precio subio",
+  margin_review:
+    "Margen por revisar",
+  listing_stale:
+    "Listing obsoleto",
+  manual_review:
+    "Revision manual",
+}
+
+function getActiveListingRiskPriorityClassName(
+  priority?: string | null
+) {
+  if (priority === "critical") {
+    return "border-red-300/25 bg-red-300/[0.1] text-red-100"
+  }
+
+  if (priority === "high") {
+    return "border-amber-300/25 bg-amber-300/[0.1] text-amber-100"
+  }
+
+  if (priority === "medium") {
+    return "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100"
+  }
+
+  return "border-white/10 bg-white/[0.04] text-white/60"
+}
+
+function getActiveListingRiskTypeLabel(
+  type?: string | null
+) {
+  return type
+    ? activeListingRiskTypeLabels[type] || type
+    : "Riesgo"
+}
+
+function getActiveListingRiskPriorityLabel(
+  priority?: string | null
+) {
+  return priority
+    ? activeListingRiskPriorityLabels[priority] || priority
+    : "Prioridad"
+}
+
+function getStockMarginReviewCount(
+  summary?: ActiveListingRiskSummary | null
+) {
+  if (!summary) {
+    return 0
+  }
+
+  return (
+    (summary.by_type.out_of_stock || 0) +
+    (summary.by_type.stock_unknown || 0) +
+    (summary.by_type.price_up || 0) +
+    (summary.by_type.margin_review || 0)
+  )
+}
 
 const candidateStateOptions = [
   "",
@@ -6625,6 +6749,26 @@ export function EbayWinnerPipelinePanel({
     setFocusedCandidateId,
   ] = useState("")
 
+  const [
+    activeListingRiskSummary,
+    setActiveListingRiskSummary,
+  ] = useState<ActiveListingRiskSummary | null>(null)
+
+  const [
+    activeListingRisks,
+    setActiveListingRisks,
+  ] = useState<ActiveListingRiskRow[]>([])
+
+  const [
+    isLoadingActiveListingRisks,
+    setIsLoadingActiveListingRisks,
+  ] = useState(true)
+
+  const [
+    activeListingRiskError,
+    setActiveListingRiskError,
+  ] = useState("")
+
   const getAccessToken =
     useCallback(async () => {
       const {
@@ -6733,6 +6877,42 @@ export function EbayWinnerPipelinePanel({
       return payload
     }, [getAccessToken])
 
+  const requestActiveListingRiskJson =
+    useCallback(async (
+      url: string
+    ) => {
+      const token =
+        await getAccessToken()
+
+      const response =
+        await fetch(
+          url,
+          {
+            method:
+              "GET",
+            headers: {
+              Authorization:
+                `Bearer ${token}`,
+            },
+          }
+        )
+
+      const payload =
+        await response.json() as ActiveListingRiskApiResponse
+
+      if (
+        !response.ok ||
+        !payload.success
+      ) {
+        throw new Error(
+          payload.error ||
+          "No se pudieron cargar los riesgos de listings activos."
+        )
+      }
+
+      return payload
+    }, [getAccessToken])
+
   const loadDashboard =
     useCallback(async () => {
       setIsLoading(true)
@@ -6764,6 +6944,51 @@ export function EbayWinnerPipelinePanel({
     }, [
       buildDashboardUrl,
       requestJson,
+    ])
+
+  const loadActiveListingRisks =
+    useCallback(async () => {
+      setIsLoadingActiveListingRisks(true)
+      setActiveListingRiskError("")
+
+      try {
+        const [
+          summaryPayload,
+          risksPayload,
+        ] =
+          await Promise.all([
+            requestActiveListingRiskJson(
+              "/api/admin/active-listing-risks?summary=true"
+            ),
+            requestActiveListingRiskJson(
+              "/api/admin/active-listing-risks?limit=10"
+            ),
+          ])
+
+        setActiveListingRiskSummary(
+          summaryPayload.summary || null
+        )
+        setActiveListingRisks(
+          risksPayload.risks || []
+        )
+      } catch (riskError) {
+        console.error(
+          "LOAD ACTIVE LISTING RISKS ERROR:",
+          riskError
+        )
+
+        setActiveListingRiskSummary(null)
+        setActiveListingRisks([])
+        setActiveListingRiskError(
+          riskError instanceof Error
+            ? riskError.message
+            : "No se pudieron cargar los riesgos de listings activos."
+        )
+      } finally {
+        setIsLoadingActiveListingRisks(false)
+      }
+    }, [
+      requestActiveListingRiskJson,
     ])
 
   const loadDetail =
@@ -7047,6 +7272,10 @@ export function EbayWinnerPipelinePanel({
   }, [loadDashboard])
 
   useEffect(() => {
+    loadActiveListingRisks()
+  }, [loadActiveListingRisks])
+
+  useEffect(() => {
     if (!focusCandidate) {
       return
     }
@@ -7138,6 +7367,17 @@ export function EbayWinnerPipelinePanel({
 
   const realDraftWarning =
     (summary?.realEbayDraftsDetected || 0) > 0
+
+  const activeRiskCriticalCount =
+    activeListingRiskSummary?.by_priority.critical || 0
+
+  const activeRiskHighCount =
+    activeListingRiskSummary?.by_priority.high || 0
+
+  const activeRiskStockMarginCount =
+    getStockMarginReviewCount(
+      activeListingRiskSummary
+    )
 
   const pageLabel =
     useMemo(
@@ -7274,6 +7514,202 @@ export function EbayWinnerPipelinePanel({
             {focusNotice}
           </div>
         )}
+      </section>
+
+      <section
+        className="
+          rounded-lg
+          border
+          border-amber-300/15
+          bg-amber-300/[0.045]
+          p-5
+        "
+      >
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.26em] text-amber-100/60">
+              Active Listing Risk
+            </p>
+            <h3 className="mt-2 text-2xl font-black text-white">
+              Riesgos de listings activos
+            </h3>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/50">
+              <span className="inline-flex items-center gap-2 rounded-md border border-emerald-300/20 bg-emerald-300/[0.08] px-3 py-1 text-emerald-100">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Solo lectura · No modifica eBay
+              </span>
+              <span>
+                Senales para revisar antes de vender; no ejecuta acciones automaticas.
+              </span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={loadActiveListingRisks}
+            disabled={isLoadingActiveListingRisks}
+            className="
+              inline-flex
+              items-center
+              justify-center
+              gap-2
+              rounded-lg
+              border
+              border-white/10
+              bg-white/[0.04]
+              px-4
+              py-3
+              text-sm
+              font-semibold
+              text-white
+              transition
+              hover:border-amber-300/25
+              hover:bg-amber-300/[0.06]
+              disabled:cursor-not-allowed
+              disabled:opacity-50
+            "
+          >
+            <RefreshCw
+              className={`
+                h-4
+                w-4
+                ${isLoadingActiveListingRisks ? "animate-spin" : ""}
+              `}
+            />
+            Actualizar
+          </button>
+        </div>
+
+        {activeListingRiskError && (
+          <div className="mt-5 rounded-lg border border-red-300/20 bg-red-300/[0.08] p-4 text-sm text-red-100">
+            {activeListingRiskError}
+          </div>
+        )}
+
+        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            title="Abiertos"
+            value={activeListingRiskSummary?.total_open || 0}
+            detail="Riesgos por revisar"
+            icon={ClipboardList}
+          />
+          <MetricCard
+            title="Criticos"
+            value={activeRiskCriticalCount}
+            detail="Atender primero"
+            icon={AlertTriangle}
+            isWarning={activeRiskCriticalCount > 0}
+          />
+          <MetricCard
+            title="Alta prioridad"
+            value={activeRiskHighCount}
+            detail="Revisar hoy"
+            icon={FileSearch}
+            isWarning={activeRiskHighCount > 0}
+          />
+          <MetricCard
+            title="Stock / margen"
+            value={activeRiskStockMarginCount}
+            detail="Inventario, precio o margen"
+            icon={PackageCheck}
+            isWarning={activeRiskStockMarginCount > 0}
+          />
+        </div>
+
+        <div className="mt-5 space-y-3">
+          {isLoadingActiveListingRisks ? (
+            <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5 text-sm text-white/45">
+              Cargando riesgos de listings activos...
+            </div>
+          ) : !activeListingRiskError && activeListingRisks.length === 0 ? (
+            <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5 text-sm text-white/45">
+              No hay riesgos abiertos detectados.
+            </div>
+          ) : (
+            activeListingRisks.map(risk => (
+              <article
+                key={risk.risk_event_id || `${risk.ebay_item_id}-${risk.created_at}`}
+                className="
+                  rounded-lg
+                  border
+                  border-white/10
+                  bg-black/25
+                  p-4
+                "
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex flex-wrap gap-2">
+                    <span
+                      className={`
+                        inline-flex
+                        rounded-md
+                        border
+                        px-2
+                        py-1
+                        text-[10px]
+                        font-black
+                        uppercase
+                        tracking-[0.12em]
+                        ${getActiveListingRiskPriorityClassName(risk.risk_priority)}
+                      `}
+                    >
+                      {getActiveListingRiskPriorityLabel(risk.risk_priority)}
+                    </span>
+                    <span className="inline-flex rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-white/60">
+                      {getActiveListingRiskTypeLabel(risk.risk_type)}
+                    </span>
+                  </div>
+                  <span className="text-xs text-white/35">
+                    {formatDate(risk.created_at)}
+                  </span>
+                </div>
+
+                <p className="mt-3 line-clamp-2 text-sm font-black leading-5 text-white">
+                  {risk.title || "Listing activo sin titulo"}
+                </p>
+
+                <div className="mt-3 grid gap-2 text-xs text-white/55 md:grid-cols-4">
+                  <span>
+                    SKU eBay:{" "}
+                    <span className="font-semibold text-white/75">
+                      {risk.ebay_sku || "-"}
+                    </span>
+                  </span>
+                  <span>
+                    SKU proveedor:{" "}
+                    <span className="font-semibold text-white/75">
+                      {risk.supplier_sku || "-"}
+                    </span>
+                  </span>
+                  <span>
+                    Cantidad:{" "}
+                    <span className="font-semibold text-white/75">
+                      {risk.ebay_quantity ?? "-"}
+                    </span>
+                  </span>
+                  <span>
+                    Precio:{" "}
+                    <span className="font-semibold text-white/75">
+                      {formatCurrency(risk.ebay_price)}
+                    </span>
+                  </span>
+                </div>
+
+                {risk.risk_summary && (
+                  <p className="mt-3 text-sm leading-6 text-white/60">
+                    {risk.risk_summary}
+                  </p>
+                )}
+
+                {risk.recommended_action && (
+                  <p className="mt-3 rounded-md border border-amber-300/15 bg-amber-300/[0.06] p-3 text-sm leading-6 text-amber-50/85">
+                    {risk.recommended_action}
+                  </p>
+                )}
+              </article>
+            ))
+          )}
+        </div>
       </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
