@@ -4130,13 +4130,10 @@ function getAdvisorAlertPreferredSearchTerm(
 
 function RadarAdvisorReviewQueue({
   alerts,
-  resolvingAlertKey,
-  onReviewCandidate,
 }: {
   alerts: RadarAdvisorAlert[]
-  resolvingAlertKey?: string | null
-  onReviewCandidate?: (alert: RadarAdvisorAlert) => void
 }) {
+  const maxQueueAlerts = 5
   const queueAlerts =
     [...alerts]
       .sort(
@@ -4150,94 +4147,70 @@ function RadarAdvisorReviewQueue({
       )
       .slice(
         0,
-        8
+        maxQueueAlerts
       )
+  const hiddenAlertCount =
+    Math.max(
+      alerts.length - queueAlerts.length,
+      0
+    )
 
   return (
-    <div className="mt-5 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+    <div className="mt-5 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-100/45">
             Cola Advisor
           </p>
-          <h4 className="mt-1 text-sm font-black text-cyan-50/90">
-            Revisar primero
-          </h4>
+          <span className="rounded-md border border-cyan-200/15 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-cyan-100/60">
+            {queueAlerts.length} prioritarias
+          </span>
         </div>
-        <span className="rounded-md border border-cyan-200/15 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-cyan-100/55">
+        <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-cyan-100/40">
           Read-only
         </span>
       </div>
 
       {queueAlerts.length ? (
-        <div className="mt-4 space-y-2">
+        <div className="mt-3 overflow-hidden rounded-md border border-white/10 bg-black/10">
           {queueAlerts.map((alert, index) => {
             const alertKey =
               getRadarAdvisorAlertKey(
-                alert
-              )
-            const canReviewCandidate =
-              canResolveAdvisorAlertProduct(
                 alert
               )
 
             return (
               <div
                 key={`${alertKey}-${index}`}
-                className="rounded-md border border-white/10 bg-black/15 p-3"
+                className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 overflow-hidden border-b border-white/10 px-3 py-2 last:border-b-0"
               >
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="break-words text-sm font-black leading-5 text-white">
-                      {alert.product_title}
-                    </p>
-                    <p className="mt-1 text-xs font-semibold leading-5 text-white/65">
-                      {alert.seller_action_label} · {alert.seller_reason}
-                    </p>
-                  </div>
-                  <span
-                    className={`
-                      rounded-md
-                      border
-                      px-2
-                      py-1
-                      text-[10px]
-                      font-bold
-                      uppercase
-                      tracking-[0.08em]
-                      ${getAdvisorSellerPriorityClassName(alert.seller_priority)}
-                    `}
-                  >
-                    {alert.seller_priority}
+                <span
+                  className={`
+                    shrink-0
+                    rounded-md
+                    border
+                    px-2
+                    py-0.5
+                    text-[10px]
+                    font-bold
+                    uppercase
+                    tracking-[0.08em]
+                    ${getAdvisorSellerPriorityClassName(alert.seller_priority)}
+                  `}
+                >
+                  {alert.seller_priority}
+                </span>
+                <span className="shrink-0 text-xs font-black leading-5 text-white/75">
+                  {alert.seller_action_label}
+                </span>
+                {alert.candidate_state && (
+                  <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-white/35">
+                    {alert.candidate_state}
                   </span>
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-white/45">
-                    {alert.seller_next_step}
-                  </span>
-                  {alert.candidate_state && (
-                    <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-white/35">
-                      {alert.candidate_state}
-                    </span>
-                  )}
-                  {canReviewCandidate && onReviewCandidate && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onReviewCandidate(alert)
-                      }
-                      disabled={
-                        resolvingAlertKey ===
-                        alertKey
-                      }
-                      className="rounded-md border border-emerald-300/25 bg-emerald-300/[0.08] px-2 py-1 text-[10px] font-bold text-emerald-50/80 transition hover:border-emerald-200/45 disabled:cursor-not-allowed disabled:opacity-45"
-                    >
-                      {resolvingAlertKey === alertKey
-                        ? "Buscando..."
-                        : "Buscar SKU en Radar"}
-                    </button>
-                  )}
-                </div>
+                )}
+                <span className="shrink-0 text-[11px] font-bold leading-5 text-cyan-100/45">
+                  Ver alerta abajo
+                </span>
               </div>
             )
           })}
@@ -4245,6 +4218,12 @@ function RadarAdvisorReviewQueue({
       ) : (
         <p className="mt-4 rounded-md border border-white/10 bg-white/[0.03] p-3 text-sm text-white/45">
           Sin alertas en cola.
+        </p>
+      )}
+
+      {hiddenAlertCount > 0 && (
+        <p className="mt-2 text-[11px] font-semibold text-cyan-100/35">
+          +{hiddenAlertCount} alertas en detalle
         </p>
       )}
     </div>
@@ -6339,12 +6318,6 @@ export function MarketRadarPanel({
           <RadarAdvisorReviewQueue
             alerts={
               dashboard?.advisorAlerts || []
-            }
-            resolvingAlertKey={
-              resolvingAdvisorAlertKey
-            }
-            onReviewCandidate={
-              reviewAdvisorAlertCandidate
             }
           />
 

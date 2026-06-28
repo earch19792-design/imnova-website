@@ -786,7 +786,7 @@ test("radar advisor seller risk: detecta restricciones por tipo de producto", ()
   )
   assert.match(
     paintAlert.seller_risk_summary,
-    /hazmat/
+    /restricciones de envio/
   )
 
   const supplementAlert =
@@ -951,7 +951,15 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /seller_action_label[\s\S]*seller_reason[\s\S]*seller_next_step/
+    /const maxQueueAlerts = 5/
+  )
+  assert.match(
+    source,
+    /seller_action_label[\s\S]*Ver alerta abajo/
+  )
+  assert.match(
+    source,
+    /\+{hiddenAlertCount} alertas en detalle/
   )
 })
 
