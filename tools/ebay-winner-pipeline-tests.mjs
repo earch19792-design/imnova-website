@@ -566,7 +566,121 @@ test("radar advisor: out_of_stock + DRAFT_CREATED -> review_existing_draft_inven
   assert.equal(alert.required_human_approval, true)
   assert.equal(alert.seller_action_label, "No listar")
   assert.equal(alert.seller_priority, "Urgente")
-  assert.equal(alert.seller_reason, "Sin stock")
+  assert.equal(alert.seller_reason, "Draft listo pero sin stock")
+  assert.equal(alert.seller_next_step, "Confirmar stock antes de publicar.")
+})
+
+test("radar advisor: LISTED + out_of_stock prioriza riesgo de cancelacion", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "out_of_stock",
+        new_value: {
+          available:
+            false,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          0,
+      },
+      {
+        id:
+          "candidate-listed-oos",
+        state:
+          "LISTED",
+      }
+    )
+
+  assert.equal(alert.recommended_action, "prepare_pause_or_reduce_quantity")
+  assert.equal(alert.severity, "critical")
+  assert.equal(alert.required_human_approval, true)
+  assert.equal(alert.seller_action_label, "No listar")
+  assert.equal(alert.seller_priority, "Urgente")
+  assert.equal(
+    alert.seller_reason,
+    "Riesgo de cancelacion por falta de stock"
+  )
+  assert.equal(
+    alert.seller_next_step,
+    "Confirmar stock manual y revisar publicacion."
+  )
+})
+
+test("radar advisor: LISTED + low_stock prioriza validar antes de vender", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "low_stock",
+        new_value: {
+          inventory_quantity:
+            3,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          3,
+      },
+      {
+        id:
+          "candidate-listed-low-stock",
+        state:
+          "LISTED",
+      }
+    )
+
+  assert.equal(alert.recommended_action, "prepare_pause_or_reduce_quantity")
+  assert.equal(alert.severity, "critical")
+  assert.equal(alert.seller_action_label, "Validar stock")
+  assert.equal(alert.seller_priority, "Urgente")
+  assert.equal(alert.seller_reason, "Producto listado con stock bajo")
+  assert.equal(
+    alert.seller_next_step,
+    "Confirmar disponibilidad antes de recibir venta."
+  )
+})
+
+test("radar advisor: VALIDATED + out_of_stock sube prioridad por producto avanzado", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "out_of_stock",
+        new_value: {
+          available:
+            false,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          0,
+      },
+      {
+        id:
+          "candidate-validated-oos",
+        state:
+          "VALIDATED",
+      }
+    )
+
+  assert.equal(alert.seller_action_label, "Validar stock")
+  assert.equal(alert.seller_priority, "Alta")
+  assert.equal(
+    alert.seller_reason,
+    "Producto ya validado perdio disponibilidad"
+  )
+  assert.equal(
+    alert.seller_next_step,
+    "Reconfirmar proveedor antes de avanzar."
+  )
 })
 
 test("radar advisor: restocked + BLOCKED -> resurface_for_reanalysis", () => {
@@ -750,6 +864,10 @@ test("radar event intelligence: stock ambiguo requiere validacion manual", () =>
   assert.equal(alert.seller_action_label, "Validar stock")
   assert.equal(alert.seller_priority, "Alta")
   assert.equal(alert.seller_reason, "Stock no confirmado")
+  assert.equal(
+    alert.seller_next_step,
+    "Confirmar disponibilidad antes de evaluar."
+  )
 })
 
 test("radar advisor seller risk: detecta restricciones por tipo de producto", () => {
@@ -1783,7 +1901,46 @@ test("radar advisor: price_up + VALIDATED -> recalculate_before_listing", () => 
   assert.equal(alert.severity, "high")
   assert.equal(alert.seller_action_label, "Recalcular margen")
   assert.equal(alert.seller_priority, "Alta")
-  assert.equal(alert.seller_reason, "Precio subio")
+  assert.equal(
+    alert.seller_reason,
+    "Precio subio y puede romper rentabilidad"
+  )
+  assert.equal(
+    alert.seller_next_step,
+    "Revisar margen antes de publicar o vender."
+  )
+})
+
+test("radar advisor: price_down + VALIDATED revisa oportunidad avanzada", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "price_down",
+        old_value: {
+          price:
+            30,
+        },
+        new_value: {
+          price:
+            20,
+        },
+      },
+      baseRadarAdvisorProduct,
+      {
+        id:
+          "candidate-price-down-validated",
+        state:
+          "VALIDATED",
+      }
+    )
+
+  assert.equal(alert.recommended_action, "reprocess_with_updated_cost")
+  assert.equal(alert.seller_action_label, "Revisar oportunidad")
+  assert.equal(alert.seller_priority, "Alta")
+  assert.equal(alert.seller_reason, "Bajo costo en producto ya evaluado")
+  assert.equal(alert.seller_next_step, "Reanalizar margen.")
 })
 
 test("radar advisor playbook: price_up revisa margen antes de escalar", () => {
