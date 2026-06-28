@@ -817,6 +817,41 @@ function getAdvisorActionLabel(
   }
 }
 
+function getAdvisorSellerPriorityRank(
+  priority: RadarAdvisorAlert["seller_priority"] | null | undefined
+) {
+  switch (priority) {
+    case "Urgente":
+      return 0
+    case "Alta":
+      return 1
+    case "Media":
+      return 2
+    case "Baja":
+      return 3
+    default:
+      return 4
+  }
+}
+
+function getAdvisorSellerPriorityClassName(
+  priority: RadarAdvisorAlert["seller_priority"] | null | undefined
+) {
+  if (priority === "Urgente") {
+    return "border-red-300/30 bg-red-300/[0.12] text-red-100"
+  }
+
+  if (priority === "Alta") {
+    return "border-amber-300/30 bg-amber-300/[0.12] text-amber-100"
+  }
+
+  if (priority === "Media") {
+    return "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100"
+  }
+
+  return "border-white/10 bg-white/[0.04] text-white/55"
+}
+
 function getProductStatusLabel(
   product: MarketRadarProductRow
 ) {
@@ -4093,6 +4128,129 @@ function getAdvisorAlertPreferredSearchTerm(
   )
 }
 
+function RadarAdvisorReviewQueue({
+  alerts,
+  resolvingAlertKey,
+  onReviewCandidate,
+}: {
+  alerts: RadarAdvisorAlert[]
+  resolvingAlertKey?: string | null
+  onReviewCandidate?: (alert: RadarAdvisorAlert) => void
+}) {
+  const queueAlerts =
+    [...alerts]
+      .sort(
+        (left, right) =>
+          getAdvisorSellerPriorityRank(
+            left.seller_priority
+          ) -
+          getAdvisorSellerPriorityRank(
+            right.seller_priority
+          )
+      )
+      .slice(
+        0,
+        8
+      )
+
+  return (
+    <div className="mt-5 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-100/45">
+            Cola Advisor
+          </p>
+          <h4 className="mt-1 text-sm font-black text-cyan-50/90">
+            Revisar primero
+          </h4>
+        </div>
+        <span className="rounded-md border border-cyan-200/15 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-cyan-100/55">
+          Read-only
+        </span>
+      </div>
+
+      {queueAlerts.length ? (
+        <div className="mt-4 space-y-2">
+          {queueAlerts.map((alert, index) => {
+            const alertKey =
+              getRadarAdvisorAlertKey(
+                alert
+              )
+            const canReviewCandidate =
+              canResolveAdvisorAlertProduct(
+                alert
+              )
+
+            return (
+              <div
+                key={`${alertKey}-${index}`}
+                className="rounded-md border border-white/10 bg-black/15 p-3"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="break-words text-sm font-black leading-5 text-white">
+                      {alert.product_title}
+                    </p>
+                    <p className="mt-1 text-xs font-semibold leading-5 text-white/65">
+                      {alert.seller_action_label} · {alert.seller_reason}
+                    </p>
+                  </div>
+                  <span
+                    className={`
+                      rounded-md
+                      border
+                      px-2
+                      py-1
+                      text-[10px]
+                      font-bold
+                      uppercase
+                      tracking-[0.08em]
+                      ${getAdvisorSellerPriorityClassName(alert.seller_priority)}
+                    `}
+                  >
+                    {alert.seller_priority}
+                  </span>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-white/45">
+                    {alert.seller_next_step}
+                  </span>
+                  {alert.candidate_state && (
+                    <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-white/35">
+                      {alert.candidate_state}
+                    </span>
+                  )}
+                  {canReviewCandidate && onReviewCandidate && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onReviewCandidate(alert)
+                      }
+                      disabled={
+                        resolvingAlertKey ===
+                        alertKey
+                      }
+                      className="rounded-md border border-emerald-300/25 bg-emerald-300/[0.08] px-2 py-1 text-[10px] font-bold text-emerald-50/80 transition hover:border-emerald-200/45 disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      {resolvingAlertKey === alertKey
+                        ? "Buscando..."
+                        : "Buscar SKU en Radar"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        <p className="mt-4 rounded-md border border-white/10 bg-white/[0.03] p-3 text-sm text-white/45">
+          Sin alertas en cola.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function RadarAdvisorAlertItem({
   alert,
   isResolving,
@@ -6177,6 +6335,18 @@ export function MarketRadarPanel({
           <p className="mt-2 text-xs leading-5 text-white/40">
             Eventos traducidos a recomendaciones estrategicas. No ejecutan acciones reales.
           </p>
+
+          <RadarAdvisorReviewQueue
+            alerts={
+              dashboard?.advisorAlerts || []
+            }
+            resolvingAlertKey={
+              resolvingAdvisorAlertKey
+            }
+            onReviewCandidate={
+              reviewAdvisorAlertCandidate
+            }
+          />
 
           <div className="mt-5 space-y-3">
             {dashboard?.advisorAlerts.length ? (
