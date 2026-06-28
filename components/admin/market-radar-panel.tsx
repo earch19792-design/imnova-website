@@ -4231,6 +4231,112 @@ function matchesRadarAdvisorReviewFilter(
   return true
 }
 
+function RadarAdvisorSellerRiskSummary({
+  alerts,
+}: {
+  alerts: RadarAdvisorAlert[]
+}) {
+  const summaryItems = [
+    {
+      label:
+        "Riesgo de cancelacion",
+      count:
+        alerts.filter(
+          alert =>
+            alert.seller_priority ===
+              "Urgente" &&
+            alert.seller_action_label ===
+              "No listar"
+        ).length,
+      className:
+        "border-red-300/20 bg-red-300/[0.08] text-red-50",
+    },
+    {
+      label:
+        "Stock por confirmar",
+      count:
+        alerts.filter(
+          alert =>
+            alert.seller_action_label ===
+            "Validar stock"
+        ).length,
+      className:
+        "border-amber-300/20 bg-amber-300/[0.08] text-amber-50",
+    },
+    {
+      label:
+        "Margen por recalcular",
+      count:
+        alerts.filter(
+          alert =>
+            alert.seller_action_label ===
+            "Recalcular margen"
+        ).length,
+      className:
+        "border-blue-300/20 bg-blue-300/[0.08] text-blue-50",
+    },
+    {
+      label:
+        "Riesgo eBay",
+      count:
+        alerts.filter(
+          alert =>
+            alert.seller_action_label ===
+            "Revisar riesgo eBay"
+        ).length,
+      className:
+        "border-rose-300/20 bg-rose-300/[0.08] text-rose-50",
+    },
+    {
+      label:
+        "Oportunidades",
+      count:
+        alerts.filter(
+          alert =>
+            alert.seller_action_label ===
+            "Revisar oportunidad"
+        ).length,
+      className:
+        "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-50",
+    },
+  ]
+
+  return (
+    <div className="mt-5 rounded-lg border border-white/10 bg-white/[0.025] p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">
+          Resumen vendedor
+        </p>
+        <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-white/35">
+          Solo lectura
+        </span>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+        {summaryItems.map(item => (
+          <div
+            key={item.label}
+            className={`
+              min-w-0
+              rounded-md
+              border
+              px-2
+              py-2
+              ${item.className}
+            `}
+          >
+            <p className="text-base font-black leading-5">
+              {item.count}
+            </p>
+            <p className="mt-1 truncate text-[10px] font-bold uppercase tracking-[0.08em] opacity-70">
+              {item.label}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function RadarAdvisorReviewQueue({
   alerts,
 }: {
@@ -6455,6 +6561,12 @@ export function MarketRadarPanel({
           <p className="mt-2 text-xs leading-5 text-white/40">
             Eventos traducidos a recomendaciones estrategicas. No ejecutan acciones reales.
           </p>
+
+          <RadarAdvisorSellerRiskSummary
+            alerts={
+              advisorAlerts
+            }
+          />
 
           <RadarAdvisorReviewQueue
             alerts={
