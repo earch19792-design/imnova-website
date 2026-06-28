@@ -210,6 +210,70 @@ type RadarRankingFilter =
   | "stock_needs_validation"
   | "reviewed"
 
+type RadarAdvisorReviewFilter =
+  | "all"
+  | "urgent"
+  | "high"
+  | "validate_stock"
+  | "recalculate_margin"
+  | "review_risk"
+  | "do_not_list"
+  | "review_opportunity"
+
+const radarAdvisorReviewFilterOptions: {
+  value: RadarAdvisorReviewFilter
+  label: string
+}[] = [
+  {
+    value:
+      "all",
+    label:
+      "Todas",
+  },
+  {
+    value:
+      "urgent",
+    label:
+      "Urgente",
+  },
+  {
+    value:
+      "high",
+    label:
+      "Alta",
+  },
+  {
+    value:
+      "validate_stock",
+    label:
+      "Validar stock",
+  },
+  {
+    value:
+      "recalculate_margin",
+    label:
+      "Recalcular margen",
+  },
+  {
+    value:
+      "review_risk",
+    label:
+      "Revisar riesgo eBay",
+  },
+  {
+    value:
+      "do_not_list",
+    label:
+      "No listar",
+  },
+  {
+    value:
+      "review_opportunity",
+    label:
+      "Revisar oportunidad",
+  },
+]
+
 const priceSourceOptions = [
   "terapeak",
   "ebay_research",
@@ -4128,6 +4192,45 @@ function getAdvisorAlertPreferredSearchTerm(
   )
 }
 
+function matchesRadarAdvisorReviewFilter(
+  alert: RadarAdvisorAlert,
+  filter: RadarAdvisorReviewFilter
+) {
+  if (filter === "all") {
+    return true
+  }
+
+  if (filter === "urgent") {
+    return alert.seller_priority === "Urgente"
+  }
+
+  if (filter === "high") {
+    return alert.seller_priority === "Alta"
+  }
+
+  if (filter === "validate_stock") {
+    return alert.seller_action_label === "Validar stock"
+  }
+
+  if (filter === "recalculate_margin") {
+    return alert.seller_action_label === "Recalcular margen"
+  }
+
+  if (filter === "review_risk") {
+    return alert.seller_action_label === "Revisar riesgo eBay"
+  }
+
+  if (filter === "do_not_list") {
+    return alert.seller_action_label === "No listar"
+  }
+
+  if (filter === "review_opportunity") {
+    return alert.seller_action_label === "Revisar oportunidad"
+  }
+
+  return true
+}
+
 function RadarAdvisorReviewQueue({
   alerts,
 }: {
@@ -4533,6 +4636,11 @@ export function MarketRadarPanel({
     advisorAlertReviewMessage,
     setAdvisorAlertReviewMessage,
   ] = useState("")
+
+  const [
+    advisorAlertFilter,
+    setAdvisorAlertFilter,
+  ] = useState<RadarAdvisorReviewFilter>("all")
 
   const [
     radarSearch,
@@ -5634,6 +5742,28 @@ export function MarketRadarPanel({
       ]
     )
 
+  const advisorAlerts =
+    useMemo(
+      () =>
+        dashboard?.advisorAlerts || [],
+      [dashboard]
+    )
+
+  const filteredAdvisorAlerts =
+    useMemo(
+      () =>
+        advisorAlerts.filter(alert =>
+          matchesRadarAdvisorReviewFilter(
+            alert,
+            advisorAlertFilter
+          )
+        ),
+      [
+        advisorAlertFilter,
+        advisorAlerts,
+      ]
+    )
+
   useEffect(() => {
     if (
       !activeRadarSearch ||
@@ -6317,27 +6447,74 @@ export function MarketRadarPanel({
 
           <RadarAdvisorReviewQueue
             alerts={
-              dashboard?.advisorAlerts || []
+              advisorAlerts
             }
           />
 
+          <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.025] p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {radarAdvisorReviewFilterOptions.map(option => {
+                const isActive =
+                  advisorAlertFilter ===
+                  option.value
+
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() =>
+                      setAdvisorAlertFilter(
+                        option.value
+                      )
+                    }
+                    className={`
+                      rounded-md
+                      border
+                      px-2
+                      py-1
+                      text-[10px]
+                      font-bold
+                      uppercase
+                      tracking-[0.08em]
+                      transition
+                      ${isActive
+                        ? "border-cyan-200/35 bg-cyan-300/[0.12] text-cyan-50"
+                        : "border-white/10 bg-black/10 text-white/40 hover:border-white/20 hover:text-white/65"}
+                    `}
+                  >
+                    {option.label}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="mt-2 text-[11px] font-semibold text-white/35">
+              Mostrando {filteredAdvisorAlerts.length} de {advisorAlerts.length} alertas
+            </p>
+          </div>
+
           <div className="mt-5 space-y-3">
-            {dashboard?.advisorAlerts.length ? (
-              dashboard.advisorAlerts.map((alert, index) => (
-                <RadarAdvisorAlertItem
-                  key={`${alert.product_id || "product"}-${alert.supplier_sku || alert.candidate_id || "variant"}-${alert.event_type}-${alert.created_at || "created"}-${index}`}
-                  alert={alert}
-                  isResolving={
-                    resolvingAdvisorAlertKey ===
-                    getRadarAdvisorAlertKey(
-                      alert
-                    )
-                  }
-                  onReviewCandidate={
-                    reviewAdvisorAlertCandidate
-                  }
-                />
-              ))
+            {advisorAlerts.length ? (
+              filteredAdvisorAlerts.length ? (
+                filteredAdvisorAlerts.map((alert, index) => (
+                  <RadarAdvisorAlertItem
+                    key={`${alert.product_id || "product"}-${alert.supplier_sku || alert.candidate_id || "variant"}-${alert.event_type}-${alert.created_at || "created"}-${index}`}
+                    alert={alert}
+                    isResolving={
+                      resolvingAdvisorAlertKey ===
+                      getRadarAdvisorAlertKey(
+                        alert
+                      )
+                    }
+                    onReviewCandidate={
+                      reviewAdvisorAlertCandidate
+                    }
+                  />
+                ))
+              ) : (
+                <p className="rounded-lg border border-white/10 bg-white/[0.03] p-4 text-sm text-white/45">
+                  Sin alertas para este filtro.
+                </p>
+              )
             ) : (
               <p className="rounded-lg border border-white/10 bg-white/[0.03] p-4 text-sm text-white/45">
                 Sin alertas Advisor por ahora.

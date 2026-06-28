@@ -961,6 +961,22 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
     source,
     /\+{hiddenAlertCount} alertas en detalle/
   )
+  assert.match(
+    source,
+    /radarAdvisorReviewFilterOptions[\s\S]*Validar stock[\s\S]*Recalcular margen[\s\S]*Revisar riesgo eBay/
+  )
+  assert.match(
+    source,
+    /matchesRadarAdvisorReviewFilter[\s\S]*seller_priority[\s\S]*seller_action_label/
+  )
+  assert.match(
+    source,
+    /Mostrando {filteredAdvisorAlerts\.length} de {advisorAlerts\.length} alertas/
+  )
+  assert.match(
+    source,
+    /Sin alertas para este filtro/
+  )
 })
 
 test("market radar dashboard: busqueda evita conteos globales exactos", () => {
