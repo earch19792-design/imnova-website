@@ -1165,6 +1165,18 @@ test("lunaportex sync: latest snapshots usa historial acotado para evitar timeou
     source,
     /function getLatestSnapshots[\s\S]*\.from\("market_radar_latest_snapshots"\)/
   )
+  assert.match(
+    source,
+    /function isStatementTimeoutError[\s\S]*57014[\s\S]*canceling statement due to statement timeout/
+  )
+  assert.match(
+    source,
+    /MARKET RADAR SNAPSHOT HISTORY LOOKUP TIMEOUT; CONTINUING WITHOUT PREVIOUS SNAPSHOTS FOR CHUNK/
+  )
+  assert.match(
+    source,
+    /MARKET RADAR RECENT EVENT LOOKUP TIMEOUT; CONTINUING WITH PARTIAL EVENT HISTORY/
+  )
 })
 
 test("radar advisor inventory: unknown requiere validacion manual", () => {
