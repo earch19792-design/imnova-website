@@ -664,6 +664,49 @@ test("active listing risk admin api: valida modos y queries ambiguas", () => {
   )
 })
 
+test("active listing risk admin ui: muestra riesgos activos solo lectura", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/ebay-winner-pipeline-panel.tsx"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /Riesgos de listings activos/
+  )
+  assert.match(
+    source,
+    /Solo lectura · No modifica eBay/
+  )
+  assert.match(
+    source,
+    /\/api\/admin\/active-listing-risks\?summary=true/
+  )
+  assert.match(
+    source,
+    /\/api\/admin\/active-listing-risks\?limit=10/
+  )
+  assert.match(
+    source,
+    /method:\s*"GET"[\s\S]*Authorization:\s*`Bearer \$\{token\}`/
+  )
+  assert.match(
+    source,
+    /No hay riesgos abiertos detectados\./
+  )
+  assert.match(
+    source,
+    /Cargando riesgos de listings activos/
+  )
+  assert.doesNotMatch(
+    source,
+    /ebay_active_listings|ebay_active_listing_risk_events/
+  )
+})
+
 test("market radar actionable ranking: producto ya analizado sin evento nuevo no reaparece", () => {
   const result =
     getMarketRadarActionability({
