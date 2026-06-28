@@ -951,7 +951,15 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /seller_action_label[\s\S]*seller_reason[\s\S]*seller_next_step/
+    /const maxQueueAlerts = 5/
+  )
+  assert.match(
+    source,
+    /seller_action_label[\s\S]*product_title[\s\S]*Ver alerta abajo/
+  )
+  assert.match(
+    source,
+    /\+{hiddenAlertCount} alertas en detalle/
   )
 })
 
