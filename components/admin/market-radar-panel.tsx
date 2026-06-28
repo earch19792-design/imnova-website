@@ -4204,12 +4204,6 @@ function RadarAdvisorReviewQueue({
                   <span className="shrink-0 text-xs font-black text-white/75">
                     {alert.seller_action_label}
                   </span>
-                  <span className="hidden text-xs text-white/20 sm:inline">
-                    ·
-                  </span>
-                  <span className="block min-w-0 flex-1 overflow-hidden truncate whitespace-nowrap text-xs font-semibold text-white/55">
-                    {alert.product_title}
-                  </span>
                 </div>
                 <div className="flex shrink-0 flex-nowrap items-center gap-2 overflow-hidden">
                   {alert.candidate_state && (

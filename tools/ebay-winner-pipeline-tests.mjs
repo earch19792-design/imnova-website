@@ -955,7 +955,7 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /seller_action_label[\s\S]*product_title[\s\S]*Ver alerta abajo/
+    /seller_action_label[\s\S]*Ver alerta abajo/
   )
   assert.match(
     source,
