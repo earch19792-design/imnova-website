@@ -19,6 +19,12 @@ import {
   evaluateStockRotationRisk,
 } from "../lib/ebay-winner-pipeline/stock-risk-guardrail.mjs"
 import {
+  getActiveListingRiskSummary,
+  getOpenActiveListingRisks,
+  getRisksByEbaySku,
+  getRisksBySupplierSku,
+} from "../lib/ebay-winner-pipeline/active-listing-risk-read-service.mjs"
+import {
   descriptionConverterTemplate,
   imageConversionTemplate,
   launchObservationTemplate,
@@ -154,6 +160,217 @@ const baseActionableRadarProduct = {
     "variant_level",
 }
 
+function createActiveListingRiskSupabaseMock(rows = []) {
+  const calls = []
+  const forbiddenWrites = []
+
+  class QueryMock {
+    constructor(tableName) {
+      this.tableName =
+        tableName
+      this.calls =
+        calls
+      this.resultRows =
+        rows
+    }
+
+    select(value) {
+      this.calls.push([
+        "select",
+        this.tableName,
+        value,
+      ])
+      return this
+    }
+
+    is(column, value) {
+      this.calls.push([
+        "is",
+        column,
+        value,
+      ])
+      return this
+    }
+
+    eq(column, value) {
+      this.calls.push([
+        "eq",
+        column,
+        value,
+      ])
+      return this
+    }
+
+    order(column, options) {
+      this.calls.push([
+        "order",
+        column,
+        options,
+      ])
+      return this
+    }
+
+    limit(value) {
+      this.calls.push([
+        "limit",
+        value,
+      ])
+      return this
+    }
+
+    then(resolve) {
+      return Promise.resolve({
+        data:
+          this.resultRows,
+        error:
+          null,
+      }).then(resolve)
+    }
+  }
+
+  const supabase = {
+    from(tableName) {
+      calls.push([
+        "from",
+        tableName,
+      ])
+      return new QueryMock(
+        tableName
+      )
+    },
+    insert(...args) {
+      forbiddenWrites.push([
+        "insert",
+        args,
+      ])
+      throw new Error(
+        "insert_not_allowed"
+      )
+    },
+    update(...args) {
+      forbiddenWrites.push([
+        "update",
+        args,
+      ])
+      throw new Error(
+        "update_not_allowed"
+      )
+    },
+    delete(...args) {
+      forbiddenWrites.push([
+        "delete",
+        args,
+      ])
+      throw new Error(
+        "delete_not_allowed"
+      )
+    },
+    upsert(...args) {
+      forbiddenWrites.push([
+        "upsert",
+        args,
+      ])
+      throw new Error(
+        "upsert_not_allowed"
+      )
+    },
+    rpc(...args) {
+      forbiddenWrites.push([
+        "rpc",
+        args,
+      ])
+      throw new Error(
+        "rpc_not_allowed"
+      )
+    },
+  }
+
+  return {
+    supabase,
+    calls,
+    forbiddenWrites,
+  }
+}
+
+const activeListingRiskRows = [
+  {
+    id:
+      "risk-medium-old",
+    active_listing_id:
+      "listing-2",
+    risk_type:
+      "price_up",
+    risk_priority:
+      "medium",
+    risk_summary:
+      "Price moved up",
+    recommended_action:
+      "Recalculate margin",
+    created_at:
+      "2026-06-27T10:00:00.000Z",
+    resolved_at:
+      null,
+    active_listing: {
+      id:
+        "listing-2",
+      ebay_item_id:
+        "TEST-ITEM-2",
+      ebay_sku:
+        "TEST-EBAY-SKU-2",
+      supplier_sku:
+        "TEST-SUPPLIER-SKU-2",
+      title:
+        "Test listing 2",
+      listing_status:
+        "active",
+      ebay_quantity:
+        4,
+      ebay_price:
+        29.99,
+      currency:
+        "USD",
+    },
+  },
+  {
+    id:
+      "risk-critical-new",
+    active_listing_id:
+      "listing-1",
+    risk_type:
+      "out_of_stock",
+    risk_priority:
+      "critical",
+    risk_summary:
+      "No stock",
+    recommended_action:
+      "Confirm stock manually",
+    created_at:
+      "2026-06-28T10:00:00.000Z",
+    resolved_at:
+      null,
+    active_listing: {
+      id:
+        "listing-1",
+      ebay_item_id:
+        "TEST-ITEM-1",
+      ebay_sku:
+        "TEST-EBAY-SKU-1",
+      supplier_sku:
+        "TEST-SUPPLIER-SKU-1",
+      title:
+        "Test listing 1",
+      listing_status:
+        "active",
+      ebay_quantity:
+        0,
+      ebay_price:
+        19.99,
+      currency:
+        "USD",
+    },
+  },
+]
+
 test("market radar actionable ranking: producto nunca analizado aparece como accionable", () => {
   const result =
     getMarketRadarActionability({
@@ -169,6 +386,191 @@ test("market radar actionable ranking: producto nunca analizado aparece como acc
   assert.equal(
     result.actionable_reason,
     "new_product_not_reviewed"
+  )
+})
+
+test("active listing risk read service: lee riesgos abiertos con limite seguro", async () => {
+  const {
+    supabase,
+    calls,
+    forbiddenWrites,
+  } =
+    createActiveListingRiskSupabaseMock(
+      activeListingRiskRows
+    )
+
+  const risks =
+    await getOpenActiveListingRisks({
+      supabase,
+    })
+
+  assert.equal(
+    risks.length,
+    2
+  )
+  assert.equal(
+    risks[0].risk_priority,
+    "critical"
+  )
+  assert.equal(
+    risks[0].risk_event_id,
+    "risk-critical-new"
+  )
+  assert.deepEqual(
+    calls.filter(call => call[0] === "is"),
+    [
+      [
+        "is",
+        "resolved_at",
+        null,
+      ],
+    ]
+  )
+  assert.ok(
+    calls.some(call =>
+      call[0] === "limit" &&
+      call[1] === 25
+    )
+  )
+  assert.deepEqual(
+    forbiddenWrites,
+    []
+  )
+})
+
+test("active listing risk read service: filtra por ebay sku y supplier sku", async () => {
+  const ebaySkuMock =
+    createActiveListingRiskSupabaseMock(
+      activeListingRiskRows
+    )
+
+  await getRisksByEbaySku({
+    supabase:
+      ebaySkuMock.supabase,
+    sku:
+      " TEST-EBAY-SKU-1 ",
+    limit:
+      5,
+  })
+
+  assert.ok(
+    ebaySkuMock.calls.some(call =>
+      call[0] === "eq" &&
+      call[1] === "active_listing.ebay_sku" &&
+      call[2] === "TEST-EBAY-SKU-1"
+    )
+  )
+  assert.ok(
+    ebaySkuMock.calls.some(call =>
+      call[0] === "limit" &&
+      call[1] === 5
+    )
+  )
+
+  const supplierSkuMock =
+    createActiveListingRiskSupabaseMock(
+      activeListingRiskRows
+    )
+
+  await getRisksBySupplierSku({
+    supabase:
+      supplierSkuMock.supabase,
+    supplierSku:
+      "TEST-SUPPLIER-SKU-1",
+  })
+
+  assert.ok(
+    supplierSkuMock.calls.some(call =>
+      call[0] === "eq" &&
+      call[1] === "active_listing.supplier_sku" &&
+      call[2] === "TEST-SUPPLIER-SKU-1"
+    )
+  )
+  assert.deepEqual(
+    ebaySkuMock.forbiddenWrites,
+    []
+  )
+  assert.deepEqual(
+    supplierSkuMock.forbiddenWrites,
+    []
+  )
+})
+
+test("active listing risk read service: summary cuenta prioridades y tipos", async () => {
+  const {
+    supabase,
+    calls,
+    forbiddenWrites,
+  } =
+    createActiveListingRiskSupabaseMock([
+      {
+        risk_type:
+          "out_of_stock",
+        risk_priority:
+          "critical",
+        resolved_at:
+          null,
+      },
+      {
+        risk_type:
+          "price_up",
+        risk_priority:
+          "high",
+        resolved_at:
+          null,
+      },
+      {
+        risk_type:
+          "out_of_stock",
+        risk_priority:
+          "critical",
+        resolved_at:
+          null,
+      },
+    ])
+
+  const summary =
+    await getActiveListingRiskSummary({
+      supabase,
+    })
+
+  assert.equal(
+    summary.total_open,
+    3
+  )
+  assert.equal(
+    summary.by_priority.critical,
+    2
+  )
+  assert.equal(
+    summary.by_priority.high,
+    1
+  )
+  assert.equal(
+    summary.by_type.out_of_stock,
+    2
+  )
+  assert.equal(
+    summary.by_type.price_up,
+    1
+  )
+  assert.ok(
+    calls.some(call =>
+      call[0] === "select" &&
+      /risk_type/.test(call[2]) &&
+      /risk_priority/.test(call[2])
+    )
+  )
+  assert.ok(
+    calls.some(call =>
+      call[0] === "is" &&
+      call[1] === "resolved_at" &&
+      call[2] === null
+    )
+  )
+  assert.deepEqual(
+    forbiddenWrites,
+    []
   )
 })
 
