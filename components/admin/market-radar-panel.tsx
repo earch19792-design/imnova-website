@@ -4182,9 +4182,9 @@ function RadarAdvisorReviewQueue({
             return (
               <div
                 key={`${alertKey}-${index}`}
-                className="flex flex-col gap-1 border-b border-white/10 px-3 py-2 last:border-b-0 sm:flex-row sm:items-center sm:gap-2"
+                className="flex min-w-0 flex-col gap-1 overflow-hidden border-b border-white/10 px-3 py-2 last:border-b-0 sm:flex-row sm:items-center sm:gap-2"
               >
-                <div className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-1 sm:flex-nowrap">
+                <div className="flex min-w-0 w-full flex-nowrap items-center gap-2 overflow-hidden sm:flex-1">
                   <span
                     className={`
                       shrink-0
@@ -4207,17 +4207,17 @@ function RadarAdvisorReviewQueue({
                   <span className="hidden text-xs text-white/20 sm:inline">
                     ·
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-xs font-semibold text-white/55">
+                  <span className="block min-w-0 flex-1 overflow-hidden truncate whitespace-nowrap text-xs font-semibold text-white/55">
                     {alert.product_title}
                   </span>
                 </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <div className="flex shrink-0 flex-nowrap items-center gap-2 overflow-hidden">
                   {alert.candidate_state && (
                     <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-white/35">
                       {alert.candidate_state}
                     </span>
                   )}
-                  <span className="text-[11px] font-bold text-cyan-100/45">
+                  <span className="shrink-0 text-[11px] font-bold text-cyan-100/45">
                     Ver alerta abajo
                   </span>
                 </div>
