@@ -4019,6 +4019,20 @@ function RadarAdvisorAlertItem({
         </div>
       )}
 
+      <div className="mt-3 rounded-md border border-sky-300/20 bg-sky-300/[0.06] px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-md border border-sky-200/20 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-sky-100/70">
+            {alert.event_intelligence_label}
+          </span>
+          <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-sky-100/45">
+            {alert.event_intelligence_severity}
+          </span>
+        </div>
+        <p className="mt-2 text-xs leading-5 text-sky-50/70">
+          {alert.event_intelligence_summary}
+        </p>
+      </div>
+
       {alert.commercial_playbook && (
         <div className="mt-4 rounded-md border border-amber-300/20 bg-amber-300/[0.06] p-3">
           <div className="flex flex-wrap items-start justify-between gap-2">

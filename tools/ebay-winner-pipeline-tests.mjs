@@ -649,6 +649,90 @@ test("radar advisor playbook: price_down recalcula margen y reabre oportunidad",
     alert.commercial_playbook.recommendation,
     /reabrir oportunidad/
   )
+  assert.equal(
+    alert.event_intelligence_label,
+    "Oportunidad de revision"
+  )
+  assert.match(
+    alert.event_intelligence_summary,
+    /Precio bajo con stock disponible/
+  )
+  assert.equal(
+    alert.event_intelligence_advisory_only,
+    true
+  )
+})
+
+test("radar event intelligence: out_of_stock marca riesgo de inventario", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "out_of_stock",
+        new_value: {
+          available:
+            false,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          0,
+        out_of_stock_count_7d:
+          2,
+      },
+      null
+    )
+
+  assert.equal(
+    alert.event_intelligence_label,
+    "Riesgo de inventario"
+  )
+  assert.equal(
+    alert.event_intelligence_severity,
+    "critical"
+  )
+  assert.match(
+    alert.event_intelligence_summary,
+    /Stock agotado/
+  )
+})
+
+test("radar event intelligence: stock ambiguo requiere validacion manual", () => {
+  const alert =
+    getRadarAdvisorEvent(
+      {
+        ...baseRadarEvent,
+        event_type:
+          "new_product",
+        new_value: {
+          available:
+            true,
+        },
+      },
+      {
+        ...baseRadarAdvisorProduct,
+        inventory_quantity:
+          null,
+        inventory_source:
+          "luna_availability",
+      },
+      null
+    )
+
+  assert.equal(
+    alert.event_intelligence_label,
+    "Validacion manual"
+  )
+  assert.equal(
+    alert.event_intelligence_severity,
+    "high"
+  )
+  assert.match(
+    alert.event_intelligence_summary,
+    /Datos de stock ambiguos/
+  )
 })
 
 test("radar advisor: conserva supplier_variant_id para resolver acciones desde alertas", () => {

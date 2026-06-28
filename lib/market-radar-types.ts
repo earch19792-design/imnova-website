@@ -144,6 +144,10 @@ export type RadarAdvisorAlert = {
   candidate_state: string | null
   candidate_id: string | null
   created_at: string | null
+  event_intelligence_label: string
+  event_intelligence_summary: string
+  event_intelligence_severity: "critical" | "high" | "medium" | "low"
+  event_intelligence_advisory_only: true
   commercial_playbook?: {
     label: string
     recommendation: string
