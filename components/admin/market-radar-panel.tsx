@@ -910,10 +910,10 @@ function getAdvisorSellerPriorityClassName(
   }
 
   if (priority === "Media") {
-    return "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100"
+    return "border-blue-300/25 bg-blue-300/[0.10] text-blue-100"
   }
 
-  return "border-white/10 bg-white/[0.04] text-white/55"
+  return "border-slate-300/15 bg-slate-300/[0.08] text-slate-100/65"
 }
 
 function getProductStatusLabel(
@@ -4484,6 +4484,19 @@ function RadarAdvisorAlertItem({
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.08em]">
+        {alert.seller_priority && (
+          <span
+            className={`
+              rounded-md
+              border
+              px-2
+              py-1
+              ${getAdvisorSellerPriorityClassName(alert.seller_priority)}
+            `}
+          >
+            {alert.seller_priority}
+          </span>
+        )}
         {alert.candidate_state && (
           <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-white/45">
             {alert.candidate_state}
