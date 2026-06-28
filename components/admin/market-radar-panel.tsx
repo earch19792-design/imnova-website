@@ -3999,6 +3999,34 @@ function getAdvisorAlertSearchTerms(
   )
 }
 
+function getAdvisorAlertPreferredSearchTerm(
+  alert: RadarAdvisorAlert,
+  product?: MarketRadarProductRow | null
+) {
+  const values =
+    [
+      product
+        ? getRealProductSku(
+            product
+          )
+        : null,
+      alert.supplier_sku,
+      product?.sku,
+      alert.supplier_variant_id,
+      product?.supplier_variant_id,
+      alert.product_id,
+      product?.product_id,
+      alert.product_title,
+    ]
+
+  return (
+    values.find(value =>
+      typeof value === "string" &&
+      value.trim()
+    )?.trim() || ""
+  )
+}
+
 function RadarAdvisorAlertItem({
   alert,
   isResolving,
@@ -5045,11 +5073,25 @@ export function MarketRadarPanel({
         )
 
       if (loadedProduct) {
+        const searchTerm =
+          getAdvisorAlertPreferredSearchTerm(
+            alert,
+            loadedProduct
+          )
+
         setFocusedRadarProductKey(
           getProductEvaluationKey(
             loadedProduct
           )
         )
+        if (searchTerm) {
+          setRadarSearch(
+            searchTerm
+          )
+          setActiveRadarSearch(
+            searchTerm
+          )
+        }
         setRankingFilter("all")
 
         window.setTimeout(
@@ -5086,16 +5128,22 @@ export function MarketRadarPanel({
           searchedDashboard.products[0]
 
         if (resolvedProduct) {
+          const preferredSearchTerm =
+            getAdvisorAlertPreferredSearchTerm(
+              alert,
+              resolvedProduct
+            ) || searchTerm
+
           setFocusedRadarProductKey(
             getProductEvaluationKey(
               resolvedProduct
             )
           )
           setRadarSearch(
-            searchTerm
+            preferredSearchTerm
           )
           setActiveRadarSearch(
-            searchTerm
+            preferredSearchTerm
           )
           setRankingFilter("all")
 
@@ -5149,8 +5197,15 @@ export function MarketRadarPanel({
         }
 
         setError("")
+        const searchTerm =
+          getAdvisorAlertPreferredSearchTerm(
+            alert,
+            product
+          )
         setAdvisorAlertReviewMessage(
-          "Producto encontrado en Radar. Revisa stock, precio y datos antes de decidir."
+          searchTerm
+            ? `Producto encontrado en Radar. Buscador listo con: ${searchTerm}. Presiona Buscar si quieres repetir la consulta.`
+            : "Producto encontrado en Radar. Revisa stock, precio y datos antes de decidir."
         )
       } catch (alertError) {
         console.error(

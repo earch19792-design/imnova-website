@@ -790,7 +790,11 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Producto encontrado en Radar\. Revisa stock, precio y datos antes de decidir\./
+    /getAdvisorAlertPreferredSearchTerm[\s\S]*setRadarSearch[\s\S]*setActiveRadarSearch/
+  )
+  assert.match(
+    source,
+    /Producto encontrado en Radar\. Buscador listo con:/
   )
   assert.doesNotMatch(
     source,
