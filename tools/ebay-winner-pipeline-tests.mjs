@@ -1105,7 +1105,11 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Mostrando {filteredAdvisorAlerts\.length} de {advisorAlerts\.length} alertas/
+    /Productos filtrados[\s\S]*getRadarAdvisorFilterResultTitle/
+  )
+  assert.match(
+    source,
+    /{filteredAdvisorAlerts\.length}\/{advisorAlerts\.length}/
   )
   assert.match(
     source,

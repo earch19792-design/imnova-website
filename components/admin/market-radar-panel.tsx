@@ -4236,6 +4236,40 @@ function matchesRadarAdvisorReviewFilter(
   return true
 }
 
+function getRadarAdvisorFilterResultTitle(
+  filter: RadarAdvisorReviewFilter
+) {
+  if (filter === "urgent") {
+    return "Alertas urgentes"
+  }
+
+  if (filter === "high") {
+    return "Alertas de prioridad alta"
+  }
+
+  if (filter === "validate_stock") {
+    return "Productos para validar stock"
+  }
+
+  if (filter === "recalculate_margin") {
+    return "Productos para recalcular margen"
+  }
+
+  if (filter === "review_risk") {
+    return "Productos con riesgo eBay"
+  }
+
+  if (filter === "do_not_list") {
+    return "Productos que no conviene listar"
+  }
+
+  if (filter === "review_opportunity") {
+    return "Oportunidades para revisar"
+  }
+
+  return "Todas las alertas"
+}
+
 function RadarAdvisorSellerRiskSummary({
   alerts,
 }: {
@@ -4338,8 +4372,12 @@ function RadarAdvisorSellerRiskSummary({
 
 function RadarAdvisorReviewQueue({
   alerts,
+  resolvingAlertKey,
+  onReviewCandidate,
 }: {
   alerts: RadarAdvisorAlert[]
+  resolvingAlertKey?: string
+  onReviewCandidate?: (alert: RadarAdvisorAlert) => void
 }) {
   const maxQueueAlerts = 5
   const queueAlerts =
@@ -4364,7 +4402,7 @@ function RadarAdvisorReviewQueue({
     )
 
   return (
-    <div className="mt-5 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] p-4">
+    <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-100/45">
           Cola Advisor
@@ -4385,11 +4423,48 @@ function RadarAdvisorReviewQueue({
               getAdvisorAlertSearchTerms(
                 alert
               )[0] || "Sin SKU"
+            const canSearch =
+              Boolean(onReviewCandidate) &&
+              canResolveAdvisorAlertProduct(
+                alert
+              )
+            const isResolving =
+              resolvingAlertKey ===
+              alertKey
 
             return (
-              <div
+              <button
                 key={`${alertKey}-${index}`}
-                className="min-w-0 rounded-md border border-white/10 bg-black/10 p-3"
+                type="button"
+                disabled={
+                  !canSearch ||
+                  isResolving
+                }
+                onClick={() =>
+                  onReviewCandidate?.(
+                    alert
+                  )
+                }
+                className="
+                  w-full
+                  min-w-0
+                  rounded-md
+                  border
+                  border-white/10
+                  bg-black/10
+                  p-3
+                  text-left
+                  transition
+                  hover:border-cyan-200/25
+                  hover:bg-cyan-300/[0.06]
+                  disabled:cursor-not-allowed
+                  disabled:opacity-55
+                "
+                title={
+                  canSearch
+                    ? `Buscar ${searchTerm} en Radar`
+                    : "Sin SKU o titulo suficiente para buscar"
+                }
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <span
@@ -4412,13 +4487,15 @@ function RadarAdvisorReviewQueue({
                     {alert.seller_action_label}
                   </span>
                   <span className="min-w-0 break-words text-[11px] font-bold leading-4 text-emerald-100/60">
-                    {searchTerm}
+                    {isResolving
+                      ? "Buscando..."
+                      : searchTerm}
                   </span>
                 </div>
                 <p className="mt-1 min-w-0 break-words text-xs font-semibold leading-5 text-white/50">
                   {alert.product_title}
                 </p>
-              </div>
+              </button>
             )
           })}
         </div>
@@ -4446,6 +4523,10 @@ function RadarAdvisorAlertItem({
   isResolving?: boolean
   onReviewCandidate?: (alert: RadarAdvisorAlert) => void
 }) {
+  const [
+    isExpanded,
+    setIsExpanded,
+  ] = useState(false)
   const stockMessage =
     getStockContextMessage(
       alert.stock_context
@@ -4459,10 +4540,31 @@ function RadarAdvisorAlertItem({
       "Evento monitoreado" ||
     alert.event_intelligence_severity === "high" ||
     alert.event_intelligence_severity === "critical"
+  const searchTerm =
+    getAdvisorAlertSearchTerms(
+      alert
+    )[0] || "Sin SKU"
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {alert.seller_priority && (
+          <span
+            className={`
+              rounded-md
+              border
+              px-2
+              py-1
+              text-[10px]
+              font-bold
+              uppercase
+              tracking-[0.08em]
+              ${getAdvisorSellerPriorityClassName(alert.seller_priority)}
+            `}
+          >
+            {alert.seller_priority}
+          </span>
+        )}
         <span
           className={`
             rounded-md
@@ -4472,103 +4574,30 @@ function RadarAdvisorAlertItem({
             text-[10px]
             font-bold
             uppercase
-            tracking-[0.14em]
+            tracking-[0.08em]
             ${getAdvisorSeverityClassName(alert.severity)}
           `}
         >
           {alert.severity}
         </span>
-        <span className="text-[11px] text-white/35">
+        <span className="text-[11px] font-semibold text-white/35">
           {formatDate(alert.created_at)}
         </span>
       </div>
 
-      <p className="mt-3 break-words text-sm font-black leading-5 text-white">
-        {alert.product_title}
-      </p>
-      <p className="mt-2 break-words text-sm font-semibold leading-5 text-white/70">
-        {alert.advisor_message}
+      <p className="mt-2 break-words text-sm font-black leading-5 text-white">
+        {alert.product_title || "Producto sin titulo"}
       </p>
 
-      {stockMessage && (
-        <div
-          className={`
-            mt-3
-            rounded-md
-            border
-            px-3
-            py-2
-            text-xs
-            font-semibold
-            leading-5
-            ${getStockContextClassName(alert.stock_context)}
-          `}
-        >
-          {stockMessage}
-        </div>
-      )}
-
-      {showEventIntelligence && (
-        <div className="mt-3 rounded-md border border-sky-300/20 bg-sky-300/[0.06] px-3 py-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-md border border-sky-200/20 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-sky-100/70">
-              {alert.event_intelligence_label}
-            </span>
-            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-sky-100/45">
-              {alert.event_intelligence_severity}
-            </span>
-          </div>
-          <p className="mt-2 text-xs leading-5 text-sky-50/70">
-            {alert.event_intelligence_summary}
+      <div className="mt-2 grid gap-2 text-xs leading-5 text-white/50 sm:grid-cols-[0.85fr_1fr]">
+        <div className="min-w-0 rounded-md border border-white/10 bg-black/10 px-2.5 py-2">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
+            SKU / busqueda
+          </p>
+          <p className="mt-1 break-words font-bold text-emerald-100/65">
+            {searchTerm}
           </p>
         </div>
-      )}
-
-      {alert.seller_risk_label &&
-        alert.seller_risk_summary && (
-          <div className="mt-3 rounded-md border border-rose-300/20 bg-rose-300/[0.06] px-3 py-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-md border border-rose-200/20 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-rose-100/70">
-                Riesgo vendedor
-              </span>
-              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-rose-100/55">
-                {alert.seller_risk_label}
-              </span>
-              {alert.seller_risk_severity && (
-                <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-rose-100/40">
-                  {alert.seller_risk_severity}
-                </span>
-              )}
-            </div>
-            <p className="mt-2 text-xs leading-5 text-rose-50/70">
-              {alert.seller_risk_summary}
-            </p>
-          </div>
-        )}
-
-      {alert.commercial_playbook &&
-        alert.commercial_playbook.risk_level !== "medium" && (
-        <div className="mt-4 rounded-md border border-amber-300/20 bg-amber-300/[0.06] p-3">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-amber-100/55">
-                Playbook comercial
-              </p>
-              <p className="mt-1 break-words text-sm font-black leading-5 text-amber-50/90">
-                {alert.commercial_playbook.label}
-              </p>
-            </div>
-            <span className="rounded-md border border-amber-200/20 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-amber-100/65">
-              {alert.commercial_playbook.risk_level}
-            </span>
-          </div>
-          <p className="mt-2 text-sm font-semibold leading-6 text-amber-50/85">
-            {alert.commercial_playbook.recommendation}
-          </p>
-        </div>
-      )}
-
-      <div className="mt-4 grid grid-cols-1 gap-3 text-xs leading-5 text-white/45 lg:grid-cols-2">
         <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-2.5">
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
             Accion
@@ -4577,49 +4606,24 @@ function RadarAdvisorAlertItem({
             {getAdvisorActionLabel(alert.recommended_action)}
           </p>
         </div>
-        <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-2.5">
-          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
-            Ahora
-          </p>
-          <p className="mt-1 break-words font-semibold text-white/80">
-            {alert.proposed_next_step}
-          </p>
-        </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.08em]">
-        {alert.seller_priority && (
-          <span
-            className={`
-              rounded-md
-              border
-              px-2
-              py-1
-              ${getAdvisorSellerPriorityClassName(alert.seller_priority)}
-            `}
-          >
-            {alert.seller_priority}
-          </span>
-        )}
-        {alert.candidate_state && (
-          <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-white/45">
-            {alert.candidate_state}
-          </span>
-        )}
-        <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-white/45">
-          {alert.required_human_approval
-            ? "Requiere aprobacion humana"
-            : "Solo recomendacion"}
-        </span>
-        {alert.automation_available && (
-          <span className="rounded-md border border-cyan-300/20 bg-cyan-300/[0.08] px-2 py-1 text-cyan-100/75">
-            Automation L{alert.automation_level}
-          </span>
-        )}
-      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() =>
+            setIsExpanded(current =>
+              !current
+            )
+          }
+          className="rounded-md border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-bold text-white/60 transition hover:border-cyan-300/25 hover:text-white"
+        >
+          {isExpanded
+            ? "Ocultar"
+            : "Ver detalle"}
+        </button>
 
-      {canReviewCandidate && onReviewCandidate && (
-        <div className="mt-4">
+        {canReviewCandidate && onReviewCandidate && (
           <button
             type="button"
             onClick={() =>
@@ -4647,6 +4651,125 @@ function RadarAdvisorAlertItem({
               ? "Buscando producto..."
               : "Buscar SKU en Radar"}
           </button>
+        )}
+      </div>
+
+      {isExpanded && (
+        <div className="mt-3 space-y-3 border-t border-white/10 pt-3">
+          <p className="break-words text-sm font-semibold leading-5 text-white/70">
+            {alert.advisor_message}
+          </p>
+
+          {stockMessage && (
+            <div
+              className={`
+                rounded-md
+                border
+                px-3
+                py-2
+                text-xs
+                font-semibold
+                leading-5
+                ${getStockContextClassName(alert.stock_context)}
+              `}
+            >
+              {stockMessage}
+            </div>
+          )}
+
+          {showEventIntelligence && (
+            <div className="rounded-md border border-sky-300/20 bg-sky-300/[0.06] px-3 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-md border border-sky-200/20 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-sky-100/70">
+                  {alert.event_intelligence_label}
+                </span>
+                <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-sky-100/45">
+                  {alert.event_intelligence_severity}
+                </span>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-sky-50/70">
+                {alert.event_intelligence_summary}
+              </p>
+            </div>
+          )}
+
+          {alert.seller_risk_label &&
+            alert.seller_risk_summary && (
+              <div className="rounded-md border border-rose-300/20 bg-rose-300/[0.06] px-3 py-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-md border border-rose-200/20 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-rose-100/70">
+                    Riesgo vendedor
+                  </span>
+                  <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-rose-100/55">
+                    {alert.seller_risk_label}
+                  </span>
+                  {alert.seller_risk_severity && (
+                    <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-rose-100/40">
+                      {alert.seller_risk_severity}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-2 text-xs leading-5 text-rose-50/70">
+                  {alert.seller_risk_summary}
+                </p>
+              </div>
+            )}
+
+          {alert.commercial_playbook &&
+            alert.commercial_playbook.risk_level !== "medium" && (
+              <div className="rounded-md border border-amber-300/20 bg-amber-300/[0.06] p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-amber-100/55">
+                      Playbook comercial
+                    </p>
+                    <p className="mt-1 break-words text-sm font-black leading-5 text-amber-50/90">
+                      {alert.commercial_playbook.label}
+                    </p>
+                  </div>
+                  <span className="rounded-md border border-amber-200/20 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-amber-100/65">
+                    {alert.commercial_playbook.risk_level}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm font-semibold leading-6 text-amber-50/85">
+                  {alert.commercial_playbook.recommendation}
+                </p>
+              </div>
+            )}
+
+          <div className="grid grid-cols-1 gap-3 text-xs leading-5 text-white/45 lg:grid-cols-2">
+            <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-2.5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
+                Ahora
+              </p>
+              <p className="mt-1 break-words font-semibold text-white/80">
+                {alert.proposed_next_step}
+              </p>
+            </div>
+            {alert.candidate_state && (
+              <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-2.5">
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
+                  Estado
+                </p>
+                <p className="mt-1 break-words font-semibold text-white/80">
+                  {alert.candidate_state}
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.08em]">
+            <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-white/45">
+              {alert.required_human_approval
+                ? "Requiere aprobacion humana"
+                : "Solo recomendacion"}
+            </span>
+            {alert.automation_available && (
+              <span className="rounded-md border border-cyan-300/20 bg-cyan-300/[0.08] px-2 py-1 text-cyan-100/75">
+                Automation L{alert.automation_level}
+              </span>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -4773,6 +4896,46 @@ export function MarketRadarPanel({
 
   const searchResultsRef =
     useRef<HTMLElement | null>(null)
+  const rankingTopScrollRef =
+    useRef<HTMLDivElement | null>(null)
+  const rankingTableScrollRef =
+    useRef<HTMLDivElement | null>(null)
+
+  const syncRankingHorizontalScroll =
+    useCallback((
+      source: "top" | "table"
+    ) => {
+      const topScroller =
+        rankingTopScrollRef.current
+      const tableScroller =
+        rankingTableScrollRef.current
+
+      if (
+        !topScroller ||
+        !tableScroller
+      ) {
+        return
+      }
+
+      const sourceScroller =
+        source === "top"
+          ? topScroller
+          : tableScroller
+      const targetScroller =
+        source === "top"
+          ? tableScroller
+          : topScroller
+
+      if (
+        Math.abs(
+          targetScroller.scrollLeft -
+            sourceScroller.scrollLeft
+        ) > 1
+      ) {
+        targetScroller.scrollLeft =
+          sourceScroller.scrollLeft
+      }
+    }, [])
 
   const getAccessToken =
     useCallback(async () => {
@@ -6444,7 +6607,28 @@ export function MarketRadarPanel({
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          <div
+            ref={rankingTopScrollRef}
+            onScroll={() =>
+              syncRankingHorizontalScroll(
+                "top"
+              )
+            }
+            className="overflow-x-auto border-b border-white/10 bg-black/20 px-4 py-2"
+            aria-label="Desplazar ranking horizontalmente"
+          >
+            <div className="h-2 min-w-[1040px]" />
+          </div>
+
+          <div
+            ref={rankingTableScrollRef}
+            onScroll={() =>
+              syncRankingHorizontalScroll(
+                "table"
+              )
+            }
+            className="overflow-x-auto"
+          >
             <table className="w-full min-w-[1040px] border-collapse text-left">
               <thead className="bg-white/[0.035] text-[10px] uppercase tracking-[0.18em] text-white/35">
                 <tr>
@@ -6576,13 +6760,22 @@ export function MarketRadarPanel({
             }
           />
 
-          <RadarAdvisorReviewQueue
-            alerts={
-              advisorAlerts
-            }
-          />
-
           <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.025] p-3">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/35">
+                  Productos filtrados
+                </p>
+                <p className="mt-1 text-sm font-black leading-5 text-white/80">
+                  {getRadarAdvisorFilterResultTitle(
+                    advisorAlertFilter
+                  )}
+                </p>
+              </div>
+              <span className="rounded-md border border-white/10 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-white/45">
+                {filteredAdvisorAlerts.length}/{advisorAlerts.length}
+              </span>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               {radarAdvisorReviewFilterOptions.map(option => {
                 const isActive =
@@ -6618,9 +6811,6 @@ export function MarketRadarPanel({
                 )
               })}
             </div>
-            <p className="mt-2 text-[11px] font-semibold text-white/35">
-              Mostrando {filteredAdvisorAlerts.length} de {advisorAlerts.length} alertas
-            </p>
           </div>
 
           <div className="mt-5 space-y-3">
@@ -6656,6 +6846,7 @@ export function MarketRadarPanel({
 
         <section
           className="
+            xl:col-span-2
             rounded-lg
             border
             border-white/10
@@ -6670,19 +6861,33 @@ export function MarketRadarPanel({
             Movimiento reciente
           </h3>
 
-          <div className="mt-5 space-y-3">
-            {dashboard?.recentEvents.length ? (
-              dashboard.recentEvents.slice(0, 12).map(event => (
-                <RecentEventItem
-                  key={event.id}
-                  event={event}
-                />
-              ))
-            ) : (
-              <p className="rounded-lg border border-white/10 bg-white/[0.03] p-4 text-sm text-white/45">
-                Sin eventos todavia.
-              </p>
-            )}
+          <div className="mt-5 grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
+            <RadarAdvisorReviewQueue
+              alerts={
+                advisorAlerts
+              }
+              resolvingAlertKey={
+                resolvingAdvisorAlertKey
+              }
+              onReviewCandidate={
+                reviewAdvisorAlertCandidate
+              }
+            />
+
+            <div className="space-y-3">
+              {dashboard?.recentEvents.length ? (
+                dashboard.recentEvents.slice(0, 12).map(event => (
+                  <RecentEventItem
+                    key={event.id}
+                    event={event}
+                  />
+                ))
+              ) : (
+                <p className="rounded-lg border border-white/10 bg-white/[0.03] p-4 text-sm text-white/45">
+                  Sin eventos todavia.
+                </p>
+              )}
+            </div>
           </div>
         </section>
       </div>
