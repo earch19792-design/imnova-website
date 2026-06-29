@@ -33,6 +33,13 @@ import {
   evaluateListingProposalQa,
 } from "../lib/ebay-winner-pipeline/listing-proposal-qa-runner.mjs"
 import {
+  formatDryRunSummary,
+  loadJsonFile as loadListingDryRunJsonFile,
+  normalizeDryRunInput,
+  runListingProposalDryRun,
+  selectDryRunCases,
+} from "./ebay-listing-proposal-dry-run.mjs"
+import {
   buildPipelineProductSelectionDecision,
   mapPipelineResultToProductSelectionCandidate,
 } from "../lib/ebay-winner-pipeline/service.mjs"
@@ -1796,14 +1803,7 @@ test("listing proposal generator fixture: no inventa Brand MPN Model ni certific
 
 function buildFixtureListingProposal(caseId) {
   const fixtureCase =
-    ebayListingGeneratorCases.find(item =>
-      item.caseId === caseId
-    )
-
-  assert.ok(
-    fixtureCase,
-    `missing listing generator fixture ${caseId}`
-  )
+    buildFixtureListingProposalCase(caseId)
 
   return buildListingProposalFromCandidate(
     fixtureCase.candidate,
@@ -1818,6 +1818,20 @@ function buildFixtureListingProposal(caseId) {
         "APPROVED_FOR_DRAFT",
     }
   )
+}
+
+function buildFixtureListingProposalCase(caseId) {
+  const fixtureCase =
+    ebayListingGeneratorCases.find(item =>
+      item.caseId === caseId
+    )
+
+  assert.ok(
+    fixtureCase,
+    `missing listing generator fixture ${caseId}`
+  )
+
+  return fixtureCase
 }
 
 test("listing proposal QA runner: propuesta ideal pasa para revision humana", () => {
@@ -2081,6 +2095,201 @@ test("listing proposal QA runner: modulo local sin red ni acciones reales", () =
   assert.doesNotMatch(
     source,
     /ebay\s+api|oa(?:uth)|to(?:ken)|draft real/i
+  )
+})
+
+test("listing proposal dry-run runner: procesa LISTING-GEN-001 con generador y QA", () => {
+  const cases =
+    loadListingDryRunJsonFile(
+      ebayListingGeneratorFixturePath
+    )
+  const selected =
+    selectDryRunCases(
+      cases,
+      {
+        caseId:
+          "LISTING-GEN-001",
+      }
+    )
+
+  const result =
+    runListingProposalDryRun(
+      selected[0]
+    )
+
+  assert.equal(
+    result.proposal.schemaVersion,
+    "EBAY_LISTING_DRAFT_SCHEMA_V1"
+  )
+  assert.equal(
+    result.qa.schemaVersion,
+    "EBAY_LISTING_QA_RESULT_V1"
+  )
+  assert.equal(
+    result.qa.qaState,
+    "QA_PASSED_FOR_HUMAN_REVIEW"
+  )
+})
+
+test("listing proposal dry-run runner: all procesa LISTING-GEN-001 a LISTING-GEN-006", () => {
+  const selected =
+    selectDryRunCases(
+      ebayListingGeneratorCases,
+      {
+        all:
+          true,
+      }
+    )
+
+  assert.deepEqual(
+    selected.map(item => item.caseId),
+    [
+      "LISTING-GEN-001",
+      "LISTING-GEN-002",
+      "LISTING-GEN-003",
+      "LISTING-GEN-004",
+      "LISTING-GEN-005",
+      "LISTING-GEN-006",
+    ]
+  )
+
+  const states =
+    selected.map(item =>
+      runListingProposalDryRun(item).qa.qaState
+    )
+
+  assert.deepEqual(
+    states,
+    [
+      "QA_PASSED_FOR_HUMAN_REVIEW",
+      "QA_INCOMPLETE",
+      "QA_INCOMPLETE",
+      "QA_BLOCKED",
+      "QA_BLOCKED",
+      "QA_REVIEW_REQUIRED",
+    ]
+  )
+})
+
+test("listing proposal dry-run runner: case faltante produce error claro", () => {
+  assert.throws(
+    () =>
+      selectDryRunCases(
+        ebayListingGeneratorCases,
+        {
+          caseId:
+            "LISTING-GEN-999",
+        }
+      ),
+    /Case not found: LISTING-GEN-999/
+  )
+})
+
+test("listing proposal dry-run runner: input invalido o sin candidate produce error claro", () => {
+  assert.throws(
+    () =>
+      normalizeDryRunInput(null),
+    /Dry-run input must be an object/
+  )
+
+  assert.throws(
+    () =>
+      normalizeDryRunInput({
+        candidate:
+          null,
+      }),
+    /Input candidate must be an object/
+  )
+})
+
+test("listing proposal dry-run runner: formato resume estados y safety sin payload completo", () => {
+  const result =
+    runListingProposalDryRun(
+      buildFixtureListingProposalCase(
+        "LISTING-GEN-001"
+      )
+    )
+  const summary =
+    formatDryRunSummary(result)
+
+  assert.match(
+    summary,
+    /Listing state: LISTING_DRAFT_READY/
+  )
+  assert.match(
+    summary,
+    /QA state: QA_PASSED_FOR_HUMAN_REVIEW/
+  )
+  assert.match(
+    summary,
+    /Advisory only: true/
+  )
+  assert.match(
+    summary,
+    /Human review required: true/
+  )
+  assert.match(
+    summary,
+    /Marketplace API used: false/
+  )
+  assert.match(
+    summary,
+    /Real draft created: false/
+  )
+  assert.match(
+    summary,
+    /Live listing created: false/
+  )
+  assert.match(
+    summary,
+    /Listing mutated: false/
+  )
+  assert.doesNotMatch(
+    summary,
+    /supplierCost|supplierShippingCost|itemSpecifics|fullDescription|schemaVersion"\s*:/
+  )
+})
+
+test("listing proposal dry-run runner: safety flags permanecen false para acciones reales", () => {
+  const result =
+    runListingProposalDryRun(
+      buildFixtureListingProposalCase(
+        "LISTING-GEN-004"
+      )
+    )
+
+  assert.equal(
+    result.proposal.safety.ebayApiUsed,
+    false
+  )
+  assert.equal(
+    result.proposal.safety.realDraftCreated,
+    false
+  )
+  assert.equal(
+    result.proposal.safety.publishedToEbay,
+    false
+  )
+  assert.equal(
+    result.proposal.safety.listingMutated,
+    false
+  )
+})
+
+test("listing proposal dry-run runner: modulo local sin red ni acciones reales", () => {
+  const source =
+    fs.readFileSync(
+      "tools/ebay-listing-proposal-dry-run.mjs",
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    source,
+    /fetch\(|createClient|supabase|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/i
+  )
+  assert.doesNotMatch(
+    source,
+    /callEbayApi|createDraft|createListing|publishListing|autoPublish|oa(?:uth)|to(?:ken)|draft real/i
   )
 })
 
