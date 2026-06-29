@@ -1,0 +1,280 @@
+[
+  {
+    "caseId": "LISTING-GEN-001",
+    "name": "Candidato ideal",
+    "candidate": {
+      "title": "Compact Desk Organizer with Drawer, Space Saving Office Storage, Black",
+      "category": "Home Office Organization",
+      "categoryId": "SIM-CAT-001",
+      "categoryConfidence": "high",
+      "productType": "Desk Organizer",
+      "condition": "New",
+      "supplierCost": 12,
+      "supplierShippingCost": 2,
+      "estimatedEbayPrice": 32,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 10,
+      "stockStatus": "available",
+      "weight": 1.2,
+      "weightUnit": "lb",
+      "dimensions": {
+        "length": 10,
+        "width": 6,
+        "height": 4,
+        "unit": "in"
+      },
+      "brand": "Generic Home",
+      "model": "SIM-ORG-001",
+      "mpn": "SIM-MPN-001",
+      "material": "Plastic",
+      "color": "Black",
+      "features": [
+        "Drawer",
+        "Space Saving"
+      ],
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "restrictedProductRisk": "low",
+      "returnRisk": "low",
+      "fragilityRisk": "low",
+      "shippingSpeedRisk": "low",
+      "imageAuthorizationStatus": "authorized",
+      "soldCompsMedianPrice": 31
+    },
+    "expected": {
+      "schemaVersion": "EBAY_LISTING_DRAFT_SCHEMA_V1",
+      "listingState": "LISTING_DRAFT_READY",
+      "blockedReasons": [],
+      "missingData": [],
+      "riskFlags": []
+    }
+  },
+  {
+    "caseId": "LISTING-GEN-002",
+    "name": "Stock peso y dimensiones incompletos",
+    "candidate": {
+      "title": "Simulated Cabinet Shelf Organizer",
+      "category": "Home Organization",
+      "categoryId": "SIM-CAT-002",
+      "productType": "Shelf Organizer",
+      "condition": "New",
+      "supplierCost": 11,
+      "supplierShippingCost": 3,
+      "estimatedEbayPrice": 30,
+      "buyerShippingCharge": 0,
+      "stockAvailable": null,
+      "stockStatus": "unknown",
+      "weight": null,
+      "dimensions": null,
+      "brand": "Generic Home",
+      "model": "SIM-SHELF-002",
+      "mpn": "SIM-MPN-002",
+      "material": "Plastic",
+      "color": "White",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "restrictedProductRisk": "low",
+      "returnRisk": "low",
+      "imageAuthorizationStatus": "authorized",
+      "soldCompsMedianPrice": 29
+    },
+    "expected": {
+      "schemaVersion": "EBAY_LISTING_DRAFT_SCHEMA_V1",
+      "listingState": "LISTING_DATA_INCOMPLETE",
+      "missingData": [
+        "weight",
+        "dimensions",
+        "stock"
+      ],
+      "humanReviewRequired": true
+    }
+  },
+  {
+    "caseId": "LISTING-GEN-003",
+    "name": "Imagen con autorización desconocida",
+    "candidate": {
+      "title": "Portable Drawer Divider Set for Kitchen Storage",
+      "category": "Kitchen Organization",
+      "categoryId": "SIM-CAT-003",
+      "productType": "Drawer Divider",
+      "condition": "New",
+      "supplierCost": 9,
+      "supplierShippingCost": 2,
+      "estimatedEbayPrice": 27,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 9,
+      "stockStatus": "available",
+      "weight": 0.9,
+      "weightUnit": "lb",
+      "dimensions": {
+        "length": 12,
+        "width": 3,
+        "height": 2,
+        "unit": "in"
+      },
+      "brand": "Generic Home",
+      "model": "SIM-DIV-003",
+      "mpn": "SIM-MPN-003",
+      "material": "Bamboo",
+      "color": "Natural",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "restrictedProductRisk": "low",
+      "returnRisk": "low",
+      "imageAuthorizationStatus": "unknown",
+      "soldCompsMedianPrice": 27
+    },
+    "expected": {
+      "schemaVersion": "EBAY_LISTING_DRAFT_SCHEMA_V1",
+      "allowedListingStates": [
+        "LISTING_DATA_INCOMPLETE",
+        "LISTING_REVIEW_REQUIRED"
+      ],
+      "notListingState": "LISTING_DRAFT_READY",
+      "riskFlags": [
+        "image_authorization_missing"
+      ]
+    }
+  },
+  {
+    "caseId": "LISTING-GEN-004",
+    "name": "VeRO o marca alto",
+    "candidate": {
+      "title": "Compact Cable Management Box for Desk Setup",
+      "category": "Cable Management",
+      "categoryId": "SIM-CAT-004",
+      "productType": "Cable Management Box",
+      "condition": "New",
+      "supplierCost": 13,
+      "supplierShippingCost": 3,
+      "estimatedEbayPrice": 35,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 6,
+      "stockStatus": "available",
+      "weight": 1.4,
+      "weightUnit": "lb",
+      "dimensions": {
+        "length": 14,
+        "width": 5,
+        "height": 5,
+        "unit": "in"
+      },
+      "brand": "Generic Home",
+      "model": "SIM-CABLE-004",
+      "mpn": "SIM-MPN-004",
+      "material": "Plastic",
+      "color": "Black",
+      "brandRisk": "high",
+      "veroRisk": "high",
+      "medicalClaimsRisk": "low",
+      "restrictedProductRisk": "low",
+      "returnRisk": "low",
+      "imageAuthorizationStatus": "authorized",
+      "soldCompsMedianPrice": 34
+    },
+    "expected": {
+      "schemaVersion": "EBAY_LISTING_DRAFT_SCHEMA_V1",
+      "listingState": "LISTING_BLOCKED",
+      "blockedReasons": [
+        "brand_or_vero_high"
+      ],
+      "notListingState": "LISTING_DRAFT_READY"
+    }
+  },
+  {
+    "caseId": "LISTING-GEN-005",
+    "name": "Claims médicos high",
+    "candidate": {
+      "title": "Adjustable Support Cushion for Seat Comfort",
+      "category": "Home Comfort",
+      "categoryId": "SIM-CAT-005",
+      "productType": "Support Cushion",
+      "condition": "New",
+      "supplierCost": 16,
+      "supplierShippingCost": 4,
+      "estimatedEbayPrice": 42,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 7,
+      "stockStatus": "available",
+      "weight": 2.2,
+      "weightUnit": "lb",
+      "dimensions": {
+        "length": 16,
+        "width": 14,
+        "height": 4,
+        "unit": "in"
+      },
+      "brand": "Generic Comfort",
+      "model": "SIM-CUSH-005",
+      "mpn": "SIM-MPN-005",
+      "material": "Foam",
+      "color": "Gray",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "high",
+      "restrictedProductRisk": "low",
+      "returnRisk": "medium",
+      "imageAuthorizationStatus": "authorized",
+      "soldCompsMedianPrice": 41
+    },
+    "expected": {
+      "schemaVersion": "EBAY_LISTING_DRAFT_SCHEMA_V1",
+      "listingState": "LISTING_BLOCKED",
+      "blockedReasons": [
+        "medical_claims_high"
+      ],
+      "descriptionMustNotContain": [
+        "cure",
+        "treats",
+        "prevents disease"
+      ]
+    }
+  },
+  {
+    "caseId": "LISTING-GEN-006",
+    "name": "Margen débil o precio sobre mercado",
+    "candidate": {
+      "title": "Foldable Counter Storage Rack for Kitchen",
+      "category": "Kitchen Organization",
+      "categoryId": "SIM-CAT-006",
+      "productType": "Storage Rack",
+      "condition": "New",
+      "supplierCost": 23,
+      "supplierShippingCost": 5,
+      "estimatedEbayPrice": 35,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 12,
+      "stockStatus": "available",
+      "weight": 2.5,
+      "weightUnit": "lb",
+      "dimensions": {
+        "length": 15,
+        "width": 9,
+        "height": 4,
+        "unit": "in"
+      },
+      "brand": "Generic Home",
+      "model": "SIM-RACK-006",
+      "mpn": "SIM-MPN-006",
+      "material": "Metal",
+      "color": "White",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "restrictedProductRisk": "low",
+      "returnRisk": "medium",
+      "imageAuthorizationStatus": "authorized",
+      "soldCompsMedianPrice": 29
+    },
+    "expected": {
+      "schemaVersion": "EBAY_LISTING_DRAFT_SCHEMA_V1",
+      "listingState": "LISTING_REVIEW_REQUIRED",
+      "riskFlags": [
+        "price_review_required"
+      ]
+    }
+  }
+]
