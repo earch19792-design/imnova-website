@@ -1,3 +1,5 @@
+export function getProductSelectionAdvisorFromCandidate(candidate?: Record<string, any> | null): Record<string, any> | null
+
 export function getEbayWinnerAdminDashboard(args?: {
   supabase: any
   filters?: {

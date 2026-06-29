@@ -37,6 +37,9 @@ import {
   getRisksBySupplierSku,
 } from "../lib/ebay-winner-pipeline/active-listing-risk-read-service.mjs"
 import {
+  getProductSelectionAdvisorFromCandidate,
+} from "../lib/ebay-winner-pipeline/admin-read-service.mjs"
+import {
   descriptionConverterTemplate,
   imageConversionTemplate,
   launchObservationTemplate,
@@ -984,6 +987,148 @@ test("product selection integration: sin stock bloquea advisory sin accion real"
   assert.doesNotMatch(
     JSON.stringify(advisor),
     /publish|created_draft|DRAFT_CREATED/i
+  )
+})
+
+test("product selection visibility: read service extrae advisor desde normalized payload", () => {
+  const advisor = {
+    decision:
+      "approve",
+    state:
+      "APPROVED_FOR_DRAFT",
+    mainReason:
+      "Candidate is ready for human review.",
+    riskFlags: [],
+    keyNumbers: {
+      netProfit:
+        8,
+    },
+    nextHumanAction:
+      "Review before draft.",
+    advisoryOnly:
+      true,
+  }
+
+  assert.deepEqual(
+    getProductSelectionAdvisorFromCandidate({
+      normalized_payload: {
+        product_selection_advisor:
+          advisor,
+      },
+      source_payload: {
+        product_selection_advisor: {
+          decision:
+            "review",
+        },
+      },
+    }),
+    advisor
+  )
+})
+
+test("product selection visibility: read service usa fallback desde source payload", () => {
+  const advisor = {
+    decision:
+      "review",
+    state:
+      "DATA_INCOMPLETE",
+    advisoryOnly:
+      true,
+  }
+
+  assert.deepEqual(
+    getProductSelectionAdvisorFromCandidate({
+      normalized_payload: {},
+      source_payload: {
+        product_selection_advisor:
+          advisor,
+      },
+    }),
+    advisor
+  )
+  assert.equal(
+    getProductSelectionAdvisorFromCandidate({
+      normalized_payload: {},
+      source_payload: {},
+    }),
+    null
+  )
+})
+
+test("product selection visibility: admin read service expone advisor en dashboard y detail", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "lib/ebay-winner-pipeline/admin-read-service.mjs"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /function getSafeAdminCandidate[\s\S]*productSelectionAdvisor/
+  )
+  assert.match(
+    source,
+    /candidates:[\s\S]*productSelectionAdvisor/
+  )
+  assert.match(
+    source,
+    /return \{[\s\S]*productSelectionAdvisor:[\s\S]*validation:/
+  )
+})
+
+test("product selection visibility: UI muestra bloque read-only y empty state seguro", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/ebay-winner-pipeline-panel.tsx"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /Selección de producto · Solo lectura/
+  )
+  assert.match(
+    source,
+    /Approve no publica ni crea draft real\. Requiere revisión humana\./
+  )
+  assert.match(
+    source,
+    /Evaluación de selección no disponible todavía\./
+  )
+  assert.match(
+    source,
+    /ProductSelectionSummary/
+  )
+  assert.match(
+    source,
+    /ProductSelectionDetail/
+  )
+  assert.match(
+    source,
+    /decision/
+  )
+  assert.match(
+    source,
+    /next_human_action/
+  )
+})
+
+test("product selection visibility: UI no agrega acciones reales nuevas", () => {
+  const diffSource =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/ebay-winner-pipeline-panel.tsx"
+      ),
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    diffSource,
+    /productSelection[\s\S]{0,600}(method:\s*["'](?:POST|PUT|PATCH|DELETE)["']|publishListing|createRealDraft|syncEbay|callEbayApi)/i
   )
 })
 
