@@ -19,6 +19,14 @@ import {
   evaluateStockRotationRisk,
 } from "../lib/ebay-winner-pipeline/stock-risk-guardrail.mjs"
 import {
+  buildProductSelectionAdvisorOutput,
+  calculateProductEconomics,
+  classifyEbayRisk,
+  classifyOperationalRisk,
+  determineProductSelectionDecision,
+  evaluateProductSelectionCandidate,
+} from "../lib/ebay-winner-pipeline/product-selection-decision-service.mjs"
+import {
   getActiveListingRiskSummary,
   getOpenActiveListingRisks,
   getRisksByEbaySku,
@@ -370,6 +378,409 @@ const activeListingRiskRows = [
     },
   },
 ]
+
+const goodProductSelectionCandidate = {
+  productName:
+    "Desk Cable Organizer",
+  supplierName:
+    "Example Supplier",
+  supplierSku:
+    "SUP-SEL-001",
+  internalSku:
+    "IMN-SEL-001",
+  category:
+    "Home Office",
+  niche:
+    "Desk organization",
+  supplierCost:
+    10,
+  supplierShippingCost:
+    2,
+  estimatedEbayPrice:
+    29.99,
+  buyerShippingCharge:
+    0,
+  stockAvailable:
+    12,
+  stockStatus:
+    "confirmed",
+  shippingTimeDays:
+    4,
+  weight:
+    1.2,
+  dimensions: {
+    length:
+      8,
+    width:
+      4,
+    height:
+      2,
+  },
+  fragile:
+    false,
+  returnRisk:
+    "low",
+  brandRisk:
+    "low",
+  veroRisk:
+    "low",
+  medicalClaimsRisk:
+    "low",
+  imageAuthorizationStatus:
+    "authorized",
+  competitorCount:
+    8,
+  soldCompsMedianPrice:
+    31,
+  marketConfidence:
+    "medium",
+}
+
+test("product selection decision service: producto bueno aprueba para preparacion interna", () => {
+  const result =
+    evaluateProductSelectionCandidate(
+      goodProductSelectionCandidate
+    )
+
+  assert.equal(result.decision, "approve")
+  assert.equal(
+    result.state,
+    "APPROVED_FOR_DRAFT"
+  )
+  assert.equal(result.advisoryOnly, true)
+  assert.equal(
+    result.riskFlags.length,
+    0
+  )
+  assert.ok(
+    result.keyNumbers.netProfit >= 5
+  )
+  assert.ok(
+    result.keyNumbers.roiPercent >= 30
+  )
+  assert.ok(
+    result.keyNumbers.netMarginPercent >= 20
+  )
+})
+
+test("product selection decision service: calcula economia V1 con defaults seguros", () => {
+  const economics =
+    calculateProductEconomics(
+      goodProductSelectionCandidate
+    )
+
+  assert.equal(
+    economics.estimatedShippingCost,
+    2
+  )
+  assert.equal(
+    economics.estimatedEbayFees,
+    4.27
+  )
+  assert.equal(
+    economics.netProfit,
+    13.72
+  )
+  assert.equal(
+    economics.thresholds.minimumProfitUsd,
+    5
+  )
+  assert.equal(
+    economics.thresholds.minimumRoiPercent,
+    30
+  )
+  assert.equal(
+    economics.thresholds.recommendedNetMarginPercent,
+    20
+  )
+})
+
+test("product selection decision service: sin stock bloquea", () => {
+  const result =
+    evaluateProductSelectionCandidate({
+      ...goodProductSelectionCandidate,
+      stockAvailable:
+        0,
+    })
+
+  assert.equal(result.decision, "blocked")
+  assert.equal(result.state, "BLOCKED")
+  assert.ok(
+    result.riskFlags.some(flag =>
+      flag.code === "stock_zero"
+    )
+  )
+})
+
+test("product selection decision service: riesgo VeRO alto bloquea", () => {
+  const ebayRisk =
+    classifyEbayRisk({
+      ...goodProductSelectionCandidate,
+      veroRisk:
+        "high",
+    })
+
+  assert.equal(
+    ebayRisk.riskLevel,
+    "critical"
+  )
+  assert.ok(
+    ebayRisk.riskFlags.some(flag =>
+      flag.code === "brand_or_vero_high" &&
+      flag.severity === "blocker"
+    )
+  )
+
+  const result =
+    evaluateProductSelectionCandidate({
+      ...goodProductSelectionCandidate,
+      veroRisk:
+        "high",
+    })
+
+  assert.equal(result.decision, "blocked")
+  assert.equal(result.state, "BLOCKED")
+})
+
+test("product selection decision service: falta peso o dimensiones deja DATA_INCOMPLETE", () => {
+  const operationalRisk =
+    classifyOperationalRisk({
+      ...goodProductSelectionCandidate,
+      weight:
+        null,
+      dimensions:
+        null,
+    })
+
+  assert.equal(
+    operationalRisk.riskLevel,
+    "review"
+  )
+  assert.ok(
+    operationalRisk.riskFlags.some(flag =>
+      flag.code === "missing_weight"
+    )
+  )
+  assert.ok(
+    operationalRisk.riskFlags.some(flag =>
+      flag.code === "missing_dimensions"
+    )
+  )
+
+  const result =
+    evaluateProductSelectionCandidate({
+      ...goodProductSelectionCandidate,
+      weight:
+        null,
+      dimensions:
+        null,
+    })
+
+  assert.equal(result.decision, "review")
+  assert.equal(
+    result.state,
+    "DATA_INCOMPLETE"
+  )
+})
+
+test("product selection decision service: profit bajo cae en MARGIN_REVIEW o rechazo", () => {
+  const result =
+    evaluateProductSelectionCandidate({
+      ...goodProductSelectionCandidate,
+      supplierCost:
+        20,
+      supplierShippingCost:
+        4,
+      estimatedEbayPrice:
+        29,
+    })
+
+  assert.ok(
+    [
+      "review",
+      "reject",
+    ].includes(result.decision)
+  )
+  assert.ok(
+    [
+      "MARGIN_REVIEW",
+      "REJECTED",
+    ].includes(result.state)
+  )
+})
+
+test("product selection decision service: ROI bajo requiere revision o rechazo", () => {
+  const result =
+    evaluateProductSelectionCandidate({
+      ...goodProductSelectionCandidate,
+      supplierCost:
+        35,
+      supplierShippingCost:
+        2,
+      estimatedEbayPrice:
+        50,
+      soldCompsMedianPrice:
+        52,
+    })
+
+  assert.ok(
+    [
+      "review",
+      "reject",
+    ].includes(result.decision)
+  )
+  assert.ok(
+    [
+      "MARGIN_REVIEW",
+      "REJECTED",
+    ].includes(result.state)
+  )
+  assert.ok(
+    result.keyNumbers.roiPercent < 30
+  )
+})
+
+test("product selection decision service: stock desconocido requiere revision", () => {
+  const result =
+    evaluateProductSelectionCandidate({
+      ...goodProductSelectionCandidate,
+      stockAvailable:
+        null,
+      stockStatus:
+        "unknown",
+    })
+
+  assert.equal(result.decision, "review")
+  assert.equal(
+    result.state,
+    "DATA_INCOMPLETE"
+  )
+  assert.ok(
+    result.riskFlags.some(flag =>
+      flag.code === "stock_unknown"
+    )
+  )
+})
+
+test("product selection decision service: precio sobre sold comps median mas 10 requiere revision", () => {
+  const result =
+    evaluateProductSelectionCandidate({
+      ...goodProductSelectionCandidate,
+      estimatedEbayPrice:
+        40,
+      soldCompsMedianPrice:
+        35,
+    })
+
+  assert.equal(result.decision, "review")
+  assert.equal(
+    result.state,
+    "MARGIN_REVIEW"
+  )
+  assert.ok(
+    result.riskFlags.some(flag =>
+      flag.code === "price_above_market"
+    )
+  )
+})
+
+test("product selection decision service: claims medicos fuertes bloquean", () => {
+  const result =
+    evaluateProductSelectionCandidate({
+      ...goodProductSelectionCandidate,
+      medicalClaimsRisk:
+        "high",
+    })
+
+  assert.equal(result.decision, "blocked")
+  assert.equal(result.state, "BLOCKED")
+  assert.ok(
+    result.riskFlags.some(flag =>
+      flag.code === "medical_claims_high"
+    )
+  )
+})
+
+test("product selection decision service: advisor output conserva estructura esperada", () => {
+  const evaluation = {
+    normalizedCandidate:
+      goodProductSelectionCandidate,
+    config: {},
+    economics:
+      calculateProductEconomics(
+        goodProductSelectionCandidate
+      ),
+    operationalRisk:
+      classifyOperationalRisk(
+        goodProductSelectionCandidate
+      ),
+    ebayRisk:
+      classifyEbayRisk(
+        goodProductSelectionCandidate
+      ),
+    marketReview:
+      null,
+  }
+
+  const decisionResult =
+    determineProductSelectionDecision(
+      evaluation
+    )
+  const output =
+    buildProductSelectionAdvisorOutput({
+      ...evaluation,
+      decisionResult,
+    })
+
+  assert.equal(output.decision, "approve")
+  assert.equal(
+    output.state,
+    "APPROVED_FOR_DRAFT"
+  )
+  assert.equal(
+    typeof output.mainReason,
+    "string"
+  )
+  assert.ok(
+    Array.isArray(output.riskFlags)
+  )
+  assert.equal(
+    typeof output.keyNumbers.netProfit,
+    "number"
+  )
+  assert.equal(
+    typeof output.nextHumanAction,
+    "string"
+  )
+  assert.equal(output.advisoryOnly, true)
+})
+
+test("product selection decision service: modulo puro sin IO ni escrituras", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "lib/ebay-winner-pipeline/product-selection-decision-service.mjs"
+      ),
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    source,
+    /fetch\(/
+  )
+  assert.doesNotMatch(
+    source,
+    /createClient|supabase/
+  )
+  assert.doesNotMatch(
+    source,
+    /\.(insert|update|delete|upsert|rpc)\(/
+  )
+  assert.doesNotMatch(
+    source,
+    /ebay.*api|oauth|token|publish/i
+  )
+})
 
 test("market radar actionable ranking: producto nunca analizado aparece como accionable", () => {
   const result =
