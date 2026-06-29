@@ -493,6 +493,19 @@ const ebayListingGeneratorCases =
     )
   )
 
+const ebayListingAdminReadOnlyFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-listing-admin-read-only-items-v1.json"
+  )
+
+const ebayListingAdminReadOnlyFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayListingAdminReadOnlyFixturePath,
+      "utf8"
+    )
+  )
+
 test("product selection decision service: producto bueno aprueba para preparacion interna", () => {
   const result =
     evaluateProductSelectionCandidate(
@@ -1613,6 +1626,222 @@ test("listing proposal generator fixture: no contiene datos sensibles ni reales"
       rawFixture.includes(fragment),
       false,
       `listing fixture contains forbidden fragment: ${fragment}`
+    )
+  }
+})
+
+test("listing admin read-only fixture: cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayListingAdminReadOnlyFixturePath
+    )
+  )
+  assert.equal(
+    ebayListingAdminReadOnlyFixture.contractVersion,
+    "EBAY_LISTING_ADMIN_READ_ONLY_DATA_CONTRACT_V1"
+  )
+  assert.equal(
+    ebayListingAdminReadOnlyFixture.source,
+    "simulated"
+  )
+  assert.ok(
+    Array.isArray(
+      ebayListingAdminReadOnlyFixture.items
+    )
+  )
+  assert.equal(
+    ebayListingAdminReadOnlyFixture.items.length,
+    3
+  )
+
+  assert.deepEqual(
+    ebayListingAdminReadOnlyFixture.items.map(
+      item => item.caseId
+    ),
+    [
+      "LISTING-GEN-001",
+      "LISTING-GEN-004",
+      "LISTING-GEN-006",
+    ]
+  )
+})
+
+test("listing admin read-only fixture: todos los items son simulados con safety flags seguros", () => {
+  const expectedSafetyFlags = {
+    advisoryOnly:
+      true,
+    localOnly:
+      true,
+    externalCallsMade:
+      false,
+    ebayApiUsed:
+      false,
+    realDraftCreated:
+      false,
+    publishedToEbay:
+      false,
+    listingMutated:
+      false,
+    requiresHumanReview:
+      true,
+  }
+
+  for (const item of ebayListingAdminReadOnlyFixture.items) {
+    assert.equal(
+      item.sourceType,
+      "simulated"
+    )
+    assert.deepEqual(
+      item.safetyFlags,
+      expectedSafetyFlags
+    )
+  }
+})
+
+test("listing admin read-only fixture: estados y decisiones esperadas", () => {
+  const byCaseId =
+    Object.fromEntries(
+      ebayListingAdminReadOnlyFixture.items.map(
+        item => [
+          item.caseId,
+          item,
+        ]
+      )
+    )
+
+  assert.equal(
+    byCaseId["LISTING-GEN-001"].listingState,
+    "LISTING_DRAFT_READY"
+  )
+  assert.equal(
+    byCaseId["LISTING-GEN-001"].qaState,
+    "QA_PASSED_FOR_HUMAN_REVIEW"
+  )
+  assert.equal(
+    byCaseId["LISTING-GEN-001"].recommendedDecision,
+    "PROCEED_TO_HUMAN_REVIEW"
+  )
+
+  assert.equal(
+    byCaseId["LISTING-GEN-004"].listingState,
+    "LISTING_BLOCKED"
+  )
+  assert.equal(
+    byCaseId["LISTING-GEN-004"].qaState,
+    "QA_BLOCKED"
+  )
+  assert.equal(
+    byCaseId["LISTING-GEN-004"].recommendedDecision,
+    "BLOCK_DO_NOT_ADVANCE"
+  )
+  assert.ok(
+    byCaseId["LISTING-GEN-004"].blockedReasons.length > 0
+  )
+
+  assert.equal(
+    byCaseId["LISTING-GEN-006"].listingState,
+    "LISTING_REVIEW_REQUIRED"
+  )
+  assert.equal(
+    byCaseId["LISTING-GEN-006"].qaState,
+    "QA_REVIEW_REQUIRED"
+  )
+  assert.equal(
+    byCaseId["LISTING-GEN-006"].recommendedDecision,
+    "REVIEW_ECONOMICS"
+  )
+})
+
+test("listing admin read-only fixture: safety summary coincide con items", () => {
+  const items =
+    ebayListingAdminReadOnlyFixture.items
+
+  assert.deepEqual(
+    ebayListingAdminReadOnlyFixture.safetySummary,
+    {
+      totalItems:
+        items.length,
+      blockedItems:
+        items.filter(
+          item =>
+            item.recommendedDecision ===
+            "BLOCK_DO_NOT_ADVANCE"
+        ).length,
+      itemsRequiringHumanReview:
+        items.filter(
+          item =>
+            item.safetyFlags?.requiresHumanReview ===
+            true
+        ).length,
+      unsafeItemsRejected:
+        0,
+    }
+  )
+})
+
+test("listing admin read-only fixture: no contiene campos prohibidos ni URLs", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayListingAdminReadOnlyFixturePath,
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    rawFixture,
+    /https?:\/\//i
+  )
+
+  const forbiddenFieldNames = [
+    "tok" + "en",
+    "pass" + "word",
+    "sec" + "ret",
+    "cred" + "ential",
+    "auth" + "orization",
+    "apiKey",
+    "supplierPrivateData",
+    "supplierUrl",
+    "customerData",
+    "cookies",
+    "base64Image",
+    "localPath",
+  ]
+
+  function collectKeys(value, keys = []) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        collectKeys(item, keys)
+      }
+      return keys
+    }
+
+    if (
+      value &&
+      typeof value === "object"
+    ) {
+      for (const [
+        key,
+        childValue,
+      ] of Object.entries(value)) {
+        keys.push(key)
+        collectKeys(childValue, keys)
+      }
+    }
+
+    return keys
+  }
+
+  const lowerKeys =
+    collectKeys(
+      ebayListingAdminReadOnlyFixture
+    ).map(key => key.toLowerCase())
+
+  for (const fieldName of forbiddenFieldNames) {
+    assert.equal(
+      lowerKeys.includes(
+        fieldName.toLowerCase()
+      ),
+      false,
+      `fixture contains forbidden field: ${fieldName}`
     )
   }
 })
