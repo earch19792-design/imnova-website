@@ -506,6 +506,19 @@ const ebayListingAdminReadOnlyFixture =
     )
   )
 
+const ebayListingImagePlanFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-listing-image-plan-v1.json"
+  )
+
+const ebayListingImagePlanFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayListingImagePlanFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayListingAdminPagePath =
   path.resolve(
     "app/admin/ebay-listings/page.tsx"
@@ -1631,6 +1644,299 @@ test("listing proposal generator fixture: no contiene datos sensibles ni reales"
       rawFixture.includes(fragment),
       false,
       `listing fixture contains forbidden fragment: ${fragment}`
+    )
+  }
+})
+
+test("listing image plan fixture: existe y cumple schema V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayListingImagePlanFixturePath
+    )
+  )
+  assert.equal(
+    ebayListingImagePlanFixture.schemaVersion,
+    "EBAY_LISTING_IMAGE_PLAN_SCHEMA_V1"
+  )
+  assert.equal(
+    ebayListingImagePlanFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.ok(
+    [
+      "IMAGE_PLAN_READY_FOR_REVIEW",
+      "IMAGE_PLAN_NEEDS_DATA",
+      "IMAGE_PLAN_NEEDS_REPLACEMENT",
+      "IMAGE_PLAN_COMPLIANCE_REVIEW_REQUIRED",
+      "IMAGE_PLAN_BLOCKED",
+    ].includes(
+      ebayListingImagePlanFixture.imagePlanStatus
+    )
+  )
+  assert.ok(
+    [
+      "authorized",
+      "unknown",
+      "unauthorized",
+    ].includes(
+      ebayListingImagePlanFixture.imageAuthorizationStatus
+    )
+  )
+})
+
+test("listing image plan fixture: required y optional images esperadas", () => {
+  assert.ok(
+    Array.isArray(
+      ebayListingImagePlanFixture.requiredImages
+    )
+  )
+  assert.ok(
+    Array.isArray(
+      ebayListingImagePlanFixture.optionalImages
+    )
+  )
+
+  const requiredRoles =
+    new Set(
+      ebayListingImagePlanFixture.requiredImages.map(
+        image => image.imageRole
+      )
+    )
+  const optionalRoles =
+    new Set(
+      ebayListingImagePlanFixture.optionalImages.map(
+        image => image.imageRole
+      )
+    )
+
+  for (const role of [
+    "main",
+    "angle",
+    "detail",
+    "dimensions",
+    "package_contents",
+  ]) {
+    assert.ok(
+      requiredRoles.has(role),
+      `missing required image role: ${role}`
+    )
+  }
+
+  for (const role of [
+    "lifestyle",
+    "infographic",
+    "comparison",
+  ]) {
+    assert.ok(
+      optionalRoles.has(role),
+      `missing optional image role: ${role}`
+    )
+  }
+})
+
+test("listing image plan fixture: slots usan valores permitidos", () => {
+  const allowedRoles =
+    new Set([
+      "main",
+      "angle",
+      "lifestyle",
+      "dimensions",
+      "detail",
+      "package_contents",
+      "comparison",
+      "infographic",
+      "variant",
+      "other",
+    ])
+  const allowedStatuses =
+    new Set([
+      "available",
+      "missing",
+      "needs_replacement",
+      "needs_authorization",
+      "blocked",
+    ])
+  const allowedAuthorizationStatuses =
+    new Set([
+      "authorized",
+      "unknown",
+      "unauthorized",
+    ])
+  const allowedQualityStatuses =
+    new Set([
+      "acceptable",
+      "low_resolution",
+      "unclear",
+      "misleading",
+      "compliance_risk",
+      "not_reviewed",
+    ])
+
+  const imageSlots = [
+    ...ebayListingImagePlanFixture.requiredImages,
+    ...ebayListingImagePlanFixture.optionalImages,
+  ]
+
+  for (const slot of imageSlots) {
+    assert.equal(
+      typeof slot.slotId,
+      "string"
+    )
+    assert.equal(
+      typeof slot.label,
+      "string"
+    )
+    assert.equal(
+      typeof slot.purpose,
+      "string"
+    )
+    assert.equal(
+      typeof slot.required,
+      "boolean"
+    )
+    assert.ok(
+      allowedRoles.has(slot.imageRole)
+    )
+    assert.ok(
+      allowedStatuses.has(slot.status)
+    )
+    assert.ok(
+      allowedAuthorizationStatuses.has(
+        slot.authorizationStatus
+      )
+    )
+    assert.ok(
+      allowedQualityStatuses.has(
+        slot.qualityStatus
+      )
+    )
+    assert.ok(
+      Array.isArray(slot.notes)
+    )
+  }
+})
+
+test("listing image plan fixture: safety flags seguros", () => {
+  assert.deepEqual(
+    ebayListingImagePlanFixture.safetyFlags,
+    {
+      advisoryOnly:
+        true,
+      localOnly:
+        true,
+      imageGenerationPerformed:
+        false,
+      externalCallsMade:
+        false,
+      ebayApiUsed:
+        false,
+      realDraftCreated:
+        false,
+      publishedToEbay:
+        false,
+      listingMutated:
+        false,
+      requiresHumanReview:
+        true,
+    }
+  )
+})
+
+test("listing image plan fixture: dimensions faltante refleja needs data", () => {
+  const dimensionsSlot =
+    ebayListingImagePlanFixture.requiredImages.find(
+      image =>
+        image.imageRole === "dimensions"
+    )
+
+  assert.equal(
+    dimensionsSlot?.required,
+    true
+  )
+  assert.equal(
+    dimensionsSlot?.status,
+    "missing"
+  )
+  assert.equal(
+    ebayListingImagePlanFixture.imagePlanStatus,
+    "IMAGE_PLAN_NEEDS_DATA"
+  )
+  assert.ok(
+    ebayListingImagePlanFixture.missingImages.includes(
+      "dimensions"
+    )
+  )
+  assert.ok(
+    ebayListingImagePlanFixture.requiredHumanActions.some(
+      action =>
+        /dimensions/i.test(action)
+    )
+  )
+})
+
+test("listing image plan fixture: no contiene campos prohibidos ni URLs", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayListingImagePlanFixturePath,
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    rawFixture,
+    /https?:\/\//i
+  )
+
+  const forbiddenFieldNames = [
+    "tok" + "en",
+    "pass" + "word",
+    "sec" + "ret",
+    "cred" + "ential",
+    "auth" + "orization",
+    "apiKey",
+    "supplierPrivateData",
+    "supplierUrl",
+    "customerData",
+    "cookies",
+    "base64Image",
+    "localPath",
+  ]
+
+  function collectKeys(value, keys = []) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        collectKeys(item, keys)
+      }
+      return keys
+    }
+
+    if (
+      value &&
+      typeof value === "object"
+    ) {
+      for (const [
+        key,
+        childValue,
+      ] of Object.entries(value)) {
+        keys.push(key)
+        collectKeys(childValue, keys)
+      }
+    }
+
+    return keys
+  }
+
+  const lowerKeys =
+    collectKeys(
+      ebayListingImagePlanFixture
+    ).map(key => key.toLowerCase())
+
+  for (const fieldName of forbiddenFieldNames) {
+    assert.equal(
+      lowerKeys.includes(
+        fieldName.toLowerCase()
+      ),
+      false,
+      `image plan fixture contains forbidden field: ${fieldName}`
     )
   }
 })
