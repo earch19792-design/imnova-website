@@ -33,6 +33,9 @@ import {
   evaluateListingProposalQa,
 } from "../lib/ebay-winner-pipeline/listing-proposal-qa-runner.mjs"
 import {
+  buildListingProposalReviewReport,
+} from "../lib/ebay-winner-pipeline/listing-proposal-review-report-formatter.mjs"
+import {
   formatDryRunSummary,
   loadJsonFile as loadListingDryRunJsonFile,
   normalizeDryRunInput,
@@ -2085,6 +2088,190 @@ test("listing proposal QA runner: modulo local sin red ni acciones reales", () =
   const source =
     fs.readFileSync(
       "lib/ebay-winner-pipeline/listing-proposal-qa-runner.mjs",
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    source,
+    /fetch\(|createClient|supabase|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/i
+  )
+  assert.doesNotMatch(
+    source,
+    /ebay\s+api|oa(?:uth)|to(?:ken)|draft real/i
+  )
+})
+
+function buildFixtureListingReviewReport(caseId) {
+  const fixtureCase =
+    buildFixtureListingProposalCase(caseId)
+  const listingProposalOutput =
+    buildFixtureListingProposal(caseId)
+  const qaResult =
+    evaluateListingProposalQa(
+      listingProposalOutput
+    )
+
+  return buildListingProposalReviewReport({
+    caseId:
+      fixtureCase.caseId,
+    name:
+      fixtureCase.name,
+    candidate:
+      fixtureCase.candidate,
+    listingProposalOutput,
+    qaResult,
+  })
+}
+
+test("listing proposal review report formatter: genera estructura V1", () => {
+  const report =
+    buildFixtureListingReviewReport(
+      "LISTING-GEN-001"
+    )
+
+  assert.equal(
+    report.reportVersion,
+    "EBAY_LISTING_PROPOSAL_REVIEW_REPORT_V1"
+  )
+
+  for (const key of [
+    "header",
+    "executiveSummary",
+    "candidateSource",
+    "listingProposalSummary",
+    "qaResultSummary",
+    "economicsReview",
+    "safetyFlags",
+    "recommendedDecision",
+  ]) {
+    assert.ok(
+      key in report,
+      `missing report key ${key}`
+    )
+  }
+})
+
+test("listing proposal review report formatter: decisiones esperadas por fixture", () => {
+  const expectedDecisions = {
+    "LISTING-GEN-001":
+      "PROCEED_TO_HUMAN_REVIEW",
+    "LISTING-GEN-002":
+      "COMPLETE_MISSING_DATA",
+    "LISTING-GEN-003":
+      "COMPLETE_MISSING_DATA",
+    "LISTING-GEN-004":
+      "BLOCK_DO_NOT_ADVANCE",
+    "LISTING-GEN-005":
+      "BLOCK_DO_NOT_ADVANCE",
+    "LISTING-GEN-006":
+      "REVIEW_ECONOMICS",
+  }
+
+  for (const item of ebayListingGeneratorCases) {
+    const report =
+      buildFixtureListingReviewReport(
+        item.caseId
+      )
+
+    assert.equal(
+      report.recommendedDecision,
+      expectedDecisions[item.caseId],
+      `${item.caseId} unexpected review report decision`
+    )
+    assert.notEqual(
+      report.recommendedDecision,
+      "QA_APPROVED_FOR_MANUAL_DRAFT"
+    )
+    assert.notEqual(
+      report.recommendedDecision,
+      "LISTING_APPROVED_FOR_MANUAL_DRAFT"
+    )
+  }
+})
+
+test("listing proposal review report formatter: caso ideal incluye resumen y acciones humanas", () => {
+  const report =
+    buildFixtureListingReviewReport(
+      "LISTING-GEN-001"
+    )
+
+  assert.equal(
+    report.header.listingState,
+    "LISTING_DRAFT_READY"
+  )
+  assert.equal(
+    report.header.qaState,
+    "QA_PASSED_FOR_HUMAN_REVIEW"
+  )
+  assert.equal(
+    report.executiveSummary.canProceedToHumanReview,
+    true
+  )
+  assert.ok(
+    report.requiredHumanActions.length > 0
+  )
+})
+
+test("listing proposal review report formatter: incompletos y bloqueados preservan razones", () => {
+  const incompleteReport =
+    buildFixtureListingReviewReport(
+      "LISTING-GEN-002"
+    )
+  const blockedReport =
+    buildFixtureListingReviewReport(
+      "LISTING-GEN-004"
+    )
+
+  assert.ok(
+    incompleteReport.missingData.includes(
+      "weight"
+    )
+  )
+  assert.ok(
+    incompleteReport.missingData.includes(
+      "dimensions"
+    )
+  )
+  assert.ok(
+    blockedReport.blockedReasons.includes(
+      "brand_or_vero_high"
+    )
+  )
+})
+
+test("listing proposal review report formatter: safety flags V1 correctos", () => {
+  const report =
+    buildFixtureListingReviewReport(
+      "LISTING-GEN-001"
+    )
+
+  assert.deepEqual(
+    report.safetyFlags,
+    {
+      advisoryOnly:
+        true,
+      localOnly:
+        true,
+      externalCallsMade:
+        false,
+      ebayApiUsed:
+        false,
+      realDraftCreated:
+        false,
+      publishedToEbay:
+        false,
+      listingMutated:
+        false,
+      requiresHumanReview:
+        true,
+    }
+  )
+})
+
+test("listing proposal review report formatter: modulo local sin red ni acciones reales", () => {
+  const source =
+    fs.readFileSync(
+      "lib/ebay-winner-pipeline/listing-proposal-review-report-formatter.mjs",
       "utf8"
     )
 
