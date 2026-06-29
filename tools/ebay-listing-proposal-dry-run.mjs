@@ -9,6 +9,9 @@ import {
 import {
   evaluateListingProposalQa,
 } from "../lib/ebay-winner-pipeline/listing-proposal-qa-runner.mjs"
+import {
+  buildListingProposalReviewReport,
+} from "../lib/ebay-winner-pipeline/listing-proposal-review-report-formatter.mjs"
 
 function isPlainObject(value) {
   return Boolean(value) &&
@@ -173,7 +176,7 @@ export function runListingProposalDryRun(caseEntry) {
     fail("Dry-run case is missing candidate.")
   }
 
-  const proposal =
+  const listingProposalOutput =
     buildListingProposalFromCandidate(
       caseEntry.candidate,
       {
@@ -188,48 +191,84 @@ export function runListingProposalDryRun(caseEntry) {
       }
     )
 
-  const qa =
-    evaluateListingProposalQa(proposal)
+  const qaResult =
+    evaluateListingProposalQa(
+      listingProposalOutput
+    )
+  const reviewReport =
+    buildListingProposalReviewReport({
+      caseId:
+        caseEntry.caseId,
+      name:
+        caseEntry.name,
+      candidate:
+        caseEntry.candidate,
+      listingProposalOutput,
+      qaResult,
+    })
 
   return {
+    caseId:
+      caseEntry.caseId,
+    name:
+      caseEntry.name,
+    candidate:
+      caseEntry.candidate,
     caseEntry,
-    proposal,
-    qa,
+    listingProposalOutput,
+    qaResult,
+    reviewReport,
+    proposal:
+      listingProposalOutput,
+    qa:
+      qaResult,
   }
 }
 
 export function formatDryRunSummary(result) {
   const {
     caseEntry,
-    proposal,
-    qa,
+    listingProposalOutput,
+    qaResult,
+    reviewReport,
   } = result
 
   const listingProposal =
-    proposal.listingProposal || {}
+    listingProposalOutput.listingProposal || {}
   const review =
-    proposal.review || {}
+    listingProposalOutput.review || {}
   const safety =
-    proposal.safety || {}
+    listingProposalOutput.safety || {}
+  const executiveSummary =
+    reviewReport.executiveSummary || {}
 
   return [
     "eBay Listing Proposal Dry Run",
     `Case: ${caseEntry.caseId} - ${caseEntry.name}`,
     "",
     "Listing:",
-    `- Schema: ${proposal.schemaVersion}`,
+    `- Schema: ${listingProposalOutput.schemaVersion}`,
     `- Listing state: ${review.listingState}`,
     `- Title: ${listingProposal.title?.value || "n/a"}`,
     `- Advisory only: ${listingProposal.advisoryOnly === true}`,
     `- Human review required: ${listingProposal.humanReviewRequired === true}`,
     "",
     "QA:",
-    `- Schema: ${qa.schemaVersion}`,
-    `- QA state: ${qa.qaState}`,
-    `- Missing data: ${formatList(qa.missingData)}`,
-    `- Risk flags: ${formatList(qa.riskFlags)}`,
-    `- Blocked reasons: ${formatList(qa.blockedReasons)}`,
-    `- Required human actions: ${formatList(qa.requiredHumanActions)}`,
+    `- Schema: ${qaResult.schemaVersion}`,
+    `- QA state: ${qaResult.qaState}`,
+    `- Missing data: ${formatList(qaResult.missingData)}`,
+    `- Risk flags: ${formatList(qaResult.riskFlags)}`,
+    `- Blocked reasons: ${formatList(qaResult.blockedReasons)}`,
+    `- Required human actions: ${formatList(qaResult.requiredHumanActions)}`,
+    "",
+    "Review report:",
+    `- Schema: ${reviewReport.reportVersion}`,
+    `- Recommended decision: ${reviewReport.recommendedDecision}`,
+    `- Executive summary: ${executiveSummary.summary || "n/a"}`,
+    `- Report missing data: ${formatList(reviewReport.missingData)}`,
+    `- Report risk flags: ${formatList(reviewReport.riskFlags)}`,
+    `- Report blocked reasons: ${formatList(reviewReport.blockedReasons)}`,
+    `- Report required human actions: ${formatList(reviewReport.requiredHumanActions)}`,
     "",
     "Safety:",
     `- Marketplace API used: ${safety.ebayApiUsed === true}`,

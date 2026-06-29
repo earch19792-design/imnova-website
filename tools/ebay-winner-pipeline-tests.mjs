@@ -2316,6 +2316,14 @@ test("listing proposal dry-run runner: procesa LISTING-GEN-001 con generador y Q
     result.qa.qaState,
     "QA_PASSED_FOR_HUMAN_REVIEW"
   )
+  assert.equal(
+    result.reviewReport.reportVersion,
+    "EBAY_LISTING_PROPOSAL_REVIEW_REPORT_V1"
+  )
+  assert.equal(
+    result.reviewReport.recommendedDecision,
+    "PROCEED_TO_HUMAN_REVIEW"
+  )
 })
 
 test("listing proposal dry-run runner: all procesa LISTING-GEN-001 a LISTING-GEN-006", () => {
@@ -2344,6 +2352,10 @@ test("listing proposal dry-run runner: all procesa LISTING-GEN-001 a LISTING-GEN
     selected.map(item =>
       runListingProposalDryRun(item).qa.qaState
     )
+  const reports =
+    selected.map(item =>
+      runListingProposalDryRun(item).reviewReport
+    )
 
   assert.deepEqual(
     states,
@@ -2356,6 +2368,51 @@ test("listing proposal dry-run runner: all procesa LISTING-GEN-001 a LISTING-GEN
       "QA_REVIEW_REQUIRED",
     ]
   )
+  assert.ok(
+    reports.every(report =>
+      report.reportVersion === "EBAY_LISTING_PROPOSAL_REVIEW_REPORT_V1"
+    )
+  )
+  assert.deepEqual(
+    reports.map(report =>
+      report.recommendedDecision
+    ),
+    [
+      "PROCEED_TO_HUMAN_REVIEW",
+      "COMPLETE_MISSING_DATA",
+      "COMPLETE_MISSING_DATA",
+      "BLOCK_DO_NOT_ADVANCE",
+      "BLOCK_DO_NOT_ADVANCE",
+      "REVIEW_ECONOMICS",
+    ]
+  )
+})
+
+test("listing proposal dry-run runner: review report recomienda decisiones esperadas", () => {
+  const expectedDecisions = {
+    "LISTING-GEN-001":
+      "PROCEED_TO_HUMAN_REVIEW",
+    "LISTING-GEN-002":
+      "COMPLETE_MISSING_DATA",
+    "LISTING-GEN-004":
+      "BLOCK_DO_NOT_ADVANCE",
+    "LISTING-GEN-006":
+      "REVIEW_ECONOMICS",
+  }
+
+  for (const [caseId, expectedDecision] of Object.entries(expectedDecisions)) {
+    const result =
+      runListingProposalDryRun(
+        buildFixtureListingProposalCase(
+          caseId
+        )
+      )
+
+    assert.equal(
+      result.reviewReport.recommendedDecision,
+      expectedDecision
+    )
+  }
 })
 
 test("listing proposal dry-run runner: case faltante produce error claro", () => {
@@ -2406,6 +2463,14 @@ test("listing proposal dry-run runner: formato resume estados y safety sin paylo
   assert.match(
     summary,
     /QA state: QA_PASSED_FOR_HUMAN_REVIEW/
+  )
+  assert.match(
+    summary,
+    /Recommended decision: PROCEED_TO_HUMAN_REVIEW/
+  )
+  assert.match(
+    summary,
+    /Executive summary: Ready for human review\./
   )
   assert.match(
     summary,
