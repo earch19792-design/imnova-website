@@ -27,6 +27,10 @@ import {
   evaluateProductSelectionCandidate,
 } from "../lib/ebay-winner-pipeline/product-selection-decision-service.mjs"
 import {
+  buildPipelineProductSelectionDecision,
+  mapPipelineResultToProductSelectionCandidate,
+} from "../lib/ebay-winner-pipeline/service.mjs"
+import {
   getActiveListingRiskSummary,
   getOpenActiveListingRisks,
   getRisksByEbaySku,
@@ -753,6 +757,234 @@ test("product selection decision service: advisor output conserva estructura esp
     "string"
   )
   assert.equal(output.advisoryOnly, true)
+})
+
+test("product selection integration: mapper convierte pipeline a candidato V1", () => {
+  const radarProduct = {
+    ...validRadarProduct,
+    dimensions: {
+      length: 8,
+      width: 4,
+      height: 3,
+    },
+  }
+  const result =
+    processRadarCandidate(
+      radarProduct
+    )
+
+  const mapped =
+    mapPipelineResultToProductSelectionCandidate({
+      radarProduct,
+      result,
+      priceIntelligence: {
+        recommended_sale_price:
+          34,
+        sold_median_price:
+          32,
+        confidence_score:
+          0.82,
+        active_count:
+          6,
+      },
+    })
+
+  assert.equal(
+    mapped.productName,
+    validRadarProduct.title
+  )
+  assert.equal(
+    mapped.supplierName,
+    "Luna Portex"
+  )
+  assert.equal(
+    mapped.supplierSku,
+    validRadarProduct.sku
+  )
+  assert.equal(
+    mapped.internalSku,
+    result.candidate.candidate_key
+  )
+  assert.equal(
+    mapped.supplierCost,
+    10
+  )
+  assert.equal(
+    mapped.estimatedEbayPrice,
+    34
+  )
+  assert.equal(
+    mapped.stockAvailable,
+    20
+  )
+  assert.deepEqual(
+    mapped.dimensions,
+    radarProduct.dimensions
+  )
+  assert.equal(
+    mapped.marketConfidence,
+    "high"
+  )
+})
+
+test("product selection integration: price intelligence recomendado alimenta precio estimado", () => {
+  const result =
+    processRadarCandidate(
+      validRadarProduct
+    )
+
+  const mapped =
+    mapPipelineResultToProductSelectionCandidate({
+      radarProduct:
+        validRadarProduct,
+      result,
+      priceIntelligence: {
+        recommended_sale_price:
+          28.5,
+        sold_median_price:
+          27,
+      },
+    })
+
+  assert.equal(
+    mapped.estimatedEbayPrice,
+    28.5
+  )
+  assert.equal(
+    mapped.soldCompsMedianPrice,
+    27
+  )
+})
+
+test("product selection integration: producto bueno agrega advisory approve sin mutar estado", () => {
+  const radarProduct = {
+    ...validRadarProduct,
+    dimensions: {
+      length: 8,
+      width: 4,
+      height: 3,
+    },
+  }
+  const result =
+    processRadarCandidate(
+      radarProduct
+    )
+  const originalState =
+    result.candidate.state
+
+  const advisor =
+    buildPipelineProductSelectionDecision({
+      radarProduct,
+      result,
+      priceIntelligence: {
+        recommended_sale_price:
+          34,
+        sold_median_price:
+          32,
+        confidence_score:
+          0.82,
+      },
+    })
+
+  assert.equal(
+    advisor.decision,
+    "approve"
+  )
+  assert.equal(
+    advisor.state,
+    "APPROVED_FOR_DRAFT"
+  )
+  assert.equal(
+    advisor.advisoryOnly,
+    true
+  )
+  assert.equal(
+    result.candidate.state,
+    originalState
+  )
+  assert.notEqual(
+    advisor.state,
+    "APPROVED"
+  )
+  assert.notEqual(
+    advisor.state,
+    "DRAFT_CREATED"
+  )
+})
+
+test("product selection integration: falta dimensiones queda advisory DATA_INCOMPLETE", () => {
+  const result =
+    processRadarCandidate(
+      validRadarProduct
+    )
+  const originalState =
+    result.candidate.state
+
+  const advisor =
+    buildPipelineProductSelectionDecision({
+      radarProduct:
+        validRadarProduct,
+      result,
+    })
+
+  assert.equal(
+    advisor.decision,
+    "review"
+  )
+  assert.equal(
+    advisor.state,
+    "DATA_INCOMPLETE"
+  )
+  assert.equal(
+    result.candidate.state,
+    originalState
+  )
+})
+
+test("product selection integration: sin stock bloquea advisory sin accion real", () => {
+  const radarProduct = {
+    ...validRadarProduct,
+    dimensions: {
+      length: 8,
+      width: 4,
+      height: 3,
+    },
+  }
+  const result =
+    processRadarCandidate(
+      radarProduct
+    )
+  result.candidate.inventory_quantity =
+    0
+  result.candidate.state =
+    "VALIDATED"
+
+  const advisor =
+    buildPipelineProductSelectionDecision({
+      radarProduct,
+      result,
+    })
+
+  assert.equal(
+    advisor.decision,
+    "blocked"
+  )
+  assert.equal(
+    advisor.state,
+    "BLOCKED"
+  )
+  assert.equal(
+    result.candidate.state,
+    "VALIDATED"
+  )
+  assert.equal(
+    advisor.advisoryOnly,
+    true
+  )
+  assert.doesNotMatch(
+    JSON.stringify(advisor),
+    /publish|created_draft|DRAFT_CREATED/i
+  )
 })
 
 test("product selection decision service: modulo puro sin IO ni escrituras", () => {
