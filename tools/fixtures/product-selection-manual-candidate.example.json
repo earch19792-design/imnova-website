@@ -1,0 +1,27 @@
+{
+  "candidate": {
+    "title": "Simulated Compact Desk Organizer",
+    "supplierCost": 12,
+    "supplierShippingCost": 2,
+    "estimatedEbayPrice": 32,
+    "buyerShippingCharge": 0,
+    "stockAvailable": 10,
+    "stockStatus": "available",
+    "weight": 1.2,
+    "weightUnit": "lb",
+    "dimensions": {
+      "length": 10,
+      "width": 6,
+      "height": 4,
+      "unit": "in"
+    },
+    "brandRisk": "low",
+    "veroRisk": "low",
+    "medicalClaimsRisk": "low",
+    "returnRisk": "low",
+    "fragilityRisk": "low",
+    "shippingSpeedRisk": "low",
+    "imageAuthorizationStatus": "authorized",
+    "soldCompsMedianPrice": 31
+  }
+}
