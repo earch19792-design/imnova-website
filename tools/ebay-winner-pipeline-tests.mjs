@@ -9022,3 +9022,42 @@ test("listing seller advisor prompts: estrategia combina decision readiness crea
     /active eBay listing risks first/i
   )
 })
+
+test("ebay listing admin read-only screen: human friendly copy and guardrails", () => {
+  const source =
+    fs.readFileSync(
+      "app/admin/ebay-listings/page.tsx",
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Qué estás viendo",
+    "Puede pasar a revisión humana",
+    "Bloqueado: no avanzar",
+    "Revisar precio, margen y ROI",
+    "Confirmaciones de seguridad",
+    "Acciones humanas requeridas",
+    "Data source: simulated fixture",
+    "EBAY_LISTING_ADMIN_READ_ONLY_DATA_CONTRACT_V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `expected admin screen source to include ${expectedText}`
+    )
+  }
+
+  for (const forbiddenPattern of [
+    /fetch\(/,
+    /createClient/,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern
+    )
+  }
+})

@@ -36,6 +36,54 @@ const decisionTones = {
     "border-slate-300/20 bg-slate-300/[0.05]",
 }
 
+const decisionLabels = {
+  PROCEED_TO_HUMAN_REVIEW:
+    "Puede pasar a revisión humana",
+  COMPLETE_MISSING_DATA:
+    "Faltan datos antes de avanzar",
+  REVIEW_ECONOMICS:
+    "Revisar precio, margen y ROI",
+  REVIEW_COMPLIANCE:
+    "Revisar cumplimiento y riesgos",
+  BLOCK_DO_NOT_ADVANCE:
+    "Bloqueado: no avanzar",
+  DISCARD_CANDIDATE:
+    "Descartar candidato",
+}
+
+const listingStateLabels = {
+  LISTING_DRAFT_READY:
+    "Propuesta lista para revisión interna",
+  LISTING_DATA_INCOMPLETE:
+    "Datos incompletos",
+  LISTING_REVIEW_REQUIRED:
+    "Revisión requerida",
+  LISTING_BLOCKED:
+    "Bloqueado",
+}
+
+const qaStateLabels = {
+  QA_PASSED_FOR_HUMAN_REVIEW:
+    "QA pasó para revisión humana",
+  QA_INCOMPLETE:
+    "QA incompleto",
+  QA_REVIEW_REQUIRED:
+    "QA requiere revisión",
+  QA_BLOCKED:
+    "QA bloqueado",
+}
+
+const safetySummaryLabels = {
+  totalItems:
+    "Propuestas simuladas",
+  blockedItems:
+    "Bloqueadas",
+  itemsRequiringHumanReview:
+    "Requieren revisión humana",
+  unsafeItemsRejected:
+    "Rechazadas por seguridad",
+}
+
 const safetyFlags =
   Object.entries(
     listingAdminReadOnlyData.items[0]?.safetyFlags ?? {}
@@ -95,6 +143,23 @@ export default function EbayListingProposalsPage() {
           </div>
         </section>
 
+        <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/50">
+            Qué estás viendo
+          </p>
+          <div className="mt-4 grid gap-4 text-sm leading-7 text-white/70 lg:grid-cols-3">
+            <p>
+              Esta pantalla muestra propuestas simuladas de listing para revisión interna.
+            </p>
+            <p>
+              No publica, no crea drafts reales y no se conecta con eBay.
+            </p>
+            <p>
+              Su objetivo es ayudarte a entender qué productos podrían avanzar, cuáles requieren datos y cuáles están bloqueados.
+            </p>
+          </div>
+        </section>
+
         <section className="grid gap-5 lg:grid-cols-2">
           <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
             <h2 className="text-lg font-black text-white">
@@ -108,6 +173,9 @@ export default function EbayListingProposalsPage() {
                 <p className="mt-2 text-sm font-semibold text-white">
                   simulated fixture
                 </p>
+                <p className="mt-1 text-xs text-white/40">
+                  Data source: simulated fixture
+                </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                 <p className="text-xs uppercase tracking-[0.24em] text-white/40">
@@ -116,14 +184,20 @@ export default function EbayListingProposalsPage() {
                 <p className="mt-2 break-words text-sm font-semibold text-white">
                   {contractVersion}
                 </p>
+                <p className="mt-1 font-mono text-[11px] text-white/35">
+                  contractVersion
+                </p>
               </div>
             </div>
           </div>
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
             <h2 className="text-lg font-black text-white">
-              Safety flags
+              Confirmaciones de seguridad
             </h2>
+            <p className="mt-2 font-mono text-[11px] text-white/35">
+              Safety flags
+            </p>
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               {safetyFlags.map(([label, value]) => (
                 <div
@@ -142,20 +216,37 @@ export default function EbayListingProposalsPage() {
           </div>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {Object.entries(safetySummary).map(([label, value]) => (
-            <div
-              key={label}
-              className="rounded-3xl border border-white/10 bg-white/[0.03] p-5"
-            >
-              <p className="text-xs uppercase tracking-[0.24em] text-white/40">
-                {label}
-              </p>
-              <p className="mt-3 text-3xl font-black text-cyan-100">
-                {value}
-              </p>
-            </div>
-          ))}
+        <section>
+          <div className="mb-4 flex flex-col gap-1">
+            <h2 className="text-lg font-black text-white">
+              Resumen seguro
+            </h2>
+            <p className="font-mono text-[11px] text-white/35">
+              safetySummary
+            </p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {Object.entries(safetySummary).map(([label, value]) => (
+              <div
+                key={label}
+                className="rounded-3xl border border-white/10 bg-white/[0.03] p-5"
+              >
+                <p className="text-xs uppercase tracking-[0.24em] text-white/40">
+                  {
+                    safetySummaryLabels[
+                      label as keyof typeof safetySummaryLabels
+                    ] ?? label
+                  }
+                </p>
+                <p className="mt-1 font-mono text-[11px] text-white/35">
+                  {label}
+                </p>
+                <p className="mt-3 text-3xl font-black text-cyan-100">
+                  {value}
+                </p>
+              </div>
+            ))}
+          </div>
         </section>
 
         <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
@@ -202,58 +293,91 @@ export default function EbayListingProposalsPage() {
                 <dl className="mt-5 space-y-4">
                   <div>
                     <dt className="text-xs text-white/40">
-                      listingState
+                      Estado del listing
                     </dt>
                     <dd className="mt-1 break-words text-sm font-bold text-white">
-                      {item.listingState}
+                      {
+                        listingStateLabels[
+                          item.listingState as keyof typeof listingStateLabels
+                        ] ?? item.listingState
+                      }
+                      <span className="mt-1 block font-mono text-[11px] font-semibold text-white/35">
+                        listingState: {item.listingState}
+                      </span>
                     </dd>
                   </div>
                   <div>
                     <dt className="text-xs text-white/40">
-                      qaState
+                      Estado QA
                     </dt>
                     <dd className="mt-1 break-words text-sm font-bold text-white">
-                      {item.qaState}
+                      {
+                        qaStateLabels[
+                          item.qaState as keyof typeof qaStateLabels
+                        ] ?? item.qaState
+                      }
+                      <span className="mt-1 block font-mono text-[11px] font-semibold text-white/35">
+                        qaState: {item.qaState}
+                      </span>
                     </dd>
                   </div>
                   <div>
                     <dt className="text-xs text-white/40">
-                      recommendedDecision
+                      Decisión recomendada
                     </dt>
                     <dd className="mt-1 break-words text-sm font-bold text-white">
-                      {item.recommendedDecision}
+                      {
+                        decisionLabels[
+                          item.recommendedDecision as keyof typeof decisionLabels
+                        ] ?? item.recommendedDecision
+                      }
+                      <span className="mt-1 block font-mono text-[11px] font-semibold text-white/35">
+                        recommendedDecision: {item.recommendedDecision}
+                      </span>
                     </dd>
                   </div>
                   <div>
                     <dt className="text-xs text-white/40">
-                      missingData
+                      Datos faltantes
                     </dt>
                     <dd className="mt-1 break-words text-sm font-bold text-white">
                       {item.missingData.length}:{" "}
                       {formatListSummary(item.missingData)}
+                      <span className="mt-1 block font-mono text-[11px] font-semibold text-white/35">
+                        missingData
+                      </span>
                     </dd>
                   </div>
                   <div>
                     <dt className="text-xs text-white/40">
-                      riskFlags
+                      Riesgos detectados
                     </dt>
                     <dd className="mt-1 break-words text-sm font-bold text-white">
                       {item.riskFlags.length}:{" "}
                       {formatListSummary(item.riskFlags)}
+                      <span className="mt-1 block font-mono text-[11px] font-semibold text-white/35">
+                        riskFlags
+                      </span>
                     </dd>
                   </div>
                   <div>
                     <dt className="text-xs text-white/40">
-                      blockedReasons
+                      Razones de bloqueo
                     </dt>
                     <dd className="mt-1 break-words text-sm font-bold text-white">
                       {item.blockedReasons.length}:{" "}
                       {formatListSummary(item.blockedReasons)}
+                      <span className="mt-1 block font-mono text-[11px] font-semibold text-white/35">
+                        blockedReasons
+                      </span>
                     </dd>
                   </div>
                 </dl>
                 <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
                   <p className="text-xs uppercase tracking-[0.2em] text-white/40">
+                    Acciones humanas requeridas
+                  </p>
+                  <p className="mt-1 font-mono text-[11px] text-white/35">
                     Required human actions
                   </p>
                   <ul className="mt-3 space-y-2 text-sm font-semibold text-white/75">
