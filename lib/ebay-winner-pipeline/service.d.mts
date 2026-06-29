@@ -1,3 +1,5 @@
+export function mapPipelineResultToProductSelectionCandidate(args?: { radarProduct?: Record<string, any>, result?: Record<string, any>, priceIntelligence?: Record<string, any> | null }): Record<string, any>
+export function buildPipelineProductSelectionDecision(args?: { radarProduct?: Record<string, any>, result?: Record<string, any>, priceIntelligence?: Record<string, any> | null, config?: Record<string, any> }): Record<string, any>
 export function processRadarCandidateWithPersistence(args: { supabase: any, radarProduct: Record<string, any>, config?: Record<string, any> }): Promise<Record<string, any>>
 export function reprocessCandidateWithPriceIntelligence(args: { supabase: any, candidateId?: string, supplierSku?: string, candidateKey?: string, priceIntelligenceSnapshotId?: string, actor?: string, config?: Record<string, any> }): Promise<Record<string, any>>
 export function reprocessCandidateWithSuggestedPrice(args: { supabase: any, candidateId?: string, supplierSku?: string, candidateKey?: string, suggestedTargetPrice: number | string, actor?: string, config?: Record<string, any> }): Promise<Record<string, any>>
