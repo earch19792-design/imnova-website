@@ -27,6 +27,9 @@ import {
   evaluateProductSelectionCandidate,
 } from "../lib/ebay-winner-pipeline/product-selection-decision-service.mjs"
 import {
+  buildListingProposalFromCandidate,
+} from "../lib/ebay-winner-pipeline/listing-proposal-generator.mjs"
+import {
   buildPipelineProductSelectionDecision,
   mapPipelineResultToProductSelectionCandidate,
 } from "../lib/ebay-winner-pipeline/service.mjs"
@@ -1174,6 +1177,338 @@ test("product selection manual runner: modulo local sin red ni acciones reales",
   assert.doesNotMatch(
     source,
     /ebay.*api|oa(?:uth)|to(?:ken)|Authorization|publish|publicar|draft real/i
+  )
+})
+
+const idealListingGeneratorCandidate = {
+  title:
+    "Compact Desk Organizer with Drawer, Space Saving Office Storage, Black",
+  category:
+    "Home Office Organization",
+  supplierCost:
+    12,
+  supplierShippingCost:
+    2,
+  estimatedEbayPrice:
+    32,
+  buyerShippingCharge:
+    0,
+  stockAvailable:
+    10,
+  stockStatus:
+    "available",
+  weight:
+    1.2,
+  weightUnit:
+    "lb",
+  dimensions: {
+    length:
+      10,
+    width:
+      6,
+    height:
+      4,
+    unit:
+      "in",
+  },
+  brand:
+    "Generic Home",
+  productType:
+    "Desk Organizer",
+  color:
+    "Black",
+  material:
+    "Plastic",
+  features: [
+    "Drawer",
+    "Space Saving",
+  ],
+  brandRisk:
+    "low",
+  veroRisk:
+    "low",
+  medicalClaimsRisk:
+    "low",
+  returnRisk:
+    "low",
+  imageAuthorizationStatus:
+    "authorized",
+  soldCompsMedianPrice:
+    31,
+}
+
+test("listing proposal generator: genera propuesta para candidato simulado ideal", () => {
+  const result =
+    buildListingProposalFromCandidate(
+      idealListingGeneratorCandidate,
+      {
+        sourceCaseId:
+          "GEN-001",
+        sourceType:
+          "unit_test_fixture",
+        selectionDecision:
+          "approve",
+        selectionState:
+          "APPROVED_FOR_DRAFT",
+      }
+    )
+
+  assert.equal(
+    result.schemaVersion,
+    "EBAY_LISTING_DRAFT_SCHEMA_V1"
+  )
+  assert.ok(result.source)
+  assert.ok(result.listingProposal)
+  assert.ok(result.review)
+  assert.ok(result.safety)
+  assert.equal(
+    result.listingProposal.advisoryOnly,
+    true
+  )
+  assert.equal(
+    result.listingProposal.humanReviewRequired,
+    true
+  )
+  assert.equal(
+    result.source.sourceCaseId,
+    "GEN-001"
+  )
+  assert.equal(
+    result.listingProposal.title.value,
+    idealListingGeneratorCandidate.title
+  )
+})
+
+test("listing proposal generator: safety flags V1 son conservadores", () => {
+  const result =
+    buildListingProposalFromCandidate(
+      idealListingGeneratorCandidate
+    )
+
+  assert.deepEqual(
+    result.safety,
+    {
+      advisoryOnly:
+        true,
+      localOnly:
+        true,
+      externalCallsMade:
+        false,
+      ebayApiUsed:
+        false,
+      realDraftCreated:
+        false,
+      publishedToEbay:
+        false,
+      listingMutated:
+        false,
+      requiresHumanReview:
+        true,
+    }
+  )
+})
+
+test("listing proposal generator: no aprueba manual draft automaticamente", () => {
+  const result =
+    buildListingProposalFromCandidate(
+      idealListingGeneratorCandidate
+    )
+
+  assert.notEqual(
+    result.review.listingState,
+    "LISTING_APPROVED_FOR_MANUAL_DRAFT"
+  )
+  assert.ok(
+    [
+      "LISTING_DRAFT_READY",
+      "LISTING_REVIEW_REQUIRED",
+      "LISTING_DATA_INCOMPLETE",
+    ].includes(result.review.listingState)
+  )
+})
+
+test("listing proposal generator: imagen unknown deja propuesta incompleta o en revision", () => {
+  const result =
+    buildListingProposalFromCandidate({
+      ...idealListingGeneratorCandidate,
+      imageAuthorizationStatus:
+        "unknown",
+    })
+
+  assert.ok(
+    [
+      "LISTING_DATA_INCOMPLETE",
+      "LISTING_REVIEW_REQUIRED",
+    ].includes(result.review.listingState)
+  )
+  assert.ok(
+    result.review.missingData.includes(
+      "imageAuthorizationStatus"
+    )
+  )
+  assert.ok(
+    result.review.riskFlags.includes(
+      "image_authorization_missing"
+    )
+  )
+})
+
+test("listing proposal generator: riesgo VeRO alto bloquea propuesta", () => {
+  const result =
+    buildListingProposalFromCandidate({
+      ...idealListingGeneratorCandidate,
+      veroRisk:
+        "high",
+    })
+
+  assert.equal(
+    result.review.listingState,
+    "LISTING_BLOCKED"
+  )
+  assert.ok(
+    result.review.riskFlags.includes(
+      "brand_or_vero_high"
+    )
+  )
+  assert.ok(
+    result.listingProposal.compliance.blockedReasons.includes(
+      "brand_or_vero_high"
+    )
+  )
+})
+
+test("listing proposal generator: claims medicos high bloquean propuesta", () => {
+  const result =
+    buildListingProposalFromCandidate({
+      ...idealListingGeneratorCandidate,
+      medicalClaimsRisk:
+        "high",
+    })
+
+  assert.equal(
+    result.review.listingState,
+    "LISTING_BLOCKED"
+  )
+  assert.ok(
+    result.review.riskFlags.includes(
+      "medical_claims_high"
+    )
+  )
+})
+
+test("listing proposal generator: sin peso o dimensiones registra missing data", () => {
+  const result =
+    buildListingProposalFromCandidate({
+      ...idealListingGeneratorCandidate,
+      weight:
+        null,
+      dimensions:
+        null,
+    })
+
+  assert.equal(
+    result.review.listingState,
+    "LISTING_DATA_INCOMPLETE"
+  )
+  assert.ok(
+    result.review.missingData.includes(
+      "weight"
+    )
+  )
+  assert.ok(
+    result.review.missingData.includes(
+      "dimensions"
+    )
+  )
+})
+
+test("listing proposal generator: no inventa Brand MPN Model ni certificaciones", () => {
+  const result =
+    buildListingProposalFromCandidate({
+      ...idealListingGeneratorCandidate,
+      brand:
+        null,
+      model:
+        null,
+      mpn:
+        null,
+      material:
+        null,
+    })
+
+  assert.deepEqual(
+    result.listingProposal.itemSpecifics.required,
+    {
+      Type:
+        "Desk Organizer",
+      Color:
+        "Black",
+    }
+  )
+  assert.ok(
+    result.listingProposal.itemSpecifics.missing.includes(
+      "Brand"
+    )
+  )
+  assert.ok(
+    result.listingProposal.itemSpecifics.missing.includes(
+      "MPN"
+    )
+  )
+  assert.ok(
+    result.listingProposal.itemSpecifics.missing.includes(
+      "Model"
+    )
+  )
+
+  const descriptionText =
+    JSON.stringify(
+      result.listingProposal.description
+    )
+
+  assert.doesNotMatch(
+    descriptionText,
+    /FDA|certified|official/i
+  )
+})
+
+test("listing proposal generator: description evita claims medicos y promesas absolutas", () => {
+  const result =
+    buildListingProposalFromCandidate({
+      ...idealListingGeneratorCandidate,
+      title:
+        "Guaranteed FDA Approved Organizer Cures Back Pain",
+    })
+
+  const descriptionText =
+    JSON.stringify(
+      result.listingProposal.description
+    )
+
+  assert.doesNotMatch(
+    descriptionText,
+    /cures back pain|FDA approved|guaranteed/i
+  )
+  assert.doesNotMatch(
+    result.listingProposal.title.value,
+    /cures|FDA approved|guaranteed/i
+  )
+})
+
+test("listing proposal generator: modulo local sin red ni acciones reales", () => {
+  const source =
+    fs.readFileSync(
+      "lib/ebay-winner-pipeline/listing-proposal-generator.mjs",
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    source,
+    /fetch\(|createClient|supabase|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/i
+  )
+  assert.doesNotMatch(
+    source,
+    /ebay\s+api|oa(?:uth)|to(?:ken)|draft real/i
   )
 })
 
