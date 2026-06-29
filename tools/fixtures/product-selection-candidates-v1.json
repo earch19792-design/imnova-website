@@ -1,0 +1,415 @@
+[
+  {
+    "caseId": "QA-001",
+    "name": "Producto ideal",
+    "candidate": {
+      "productName": "Simulated Desk Organizer",
+      "supplierName": "Simulated Supplier",
+      "supplierSku": "SIM-QA-001",
+      "internalSku": "IMN-QA-001",
+      "category": "Home Office",
+      "niche": "Desk organization",
+      "supplierCost": 12,
+      "supplierShippingCost": 2,
+      "estimatedEbayPrice": 32,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 10,
+      "stockStatus": "available",
+      "shippingTimeDays": 4,
+      "weight": 1.2,
+      "dimensions": {
+        "length": 8,
+        "width": 4,
+        "height": 2
+      },
+      "fragile": false,
+      "returnRisk": "low",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "imageAuthorizationStatus": "authorized",
+      "competitorCount": 8,
+      "soldCompsMedianPrice": 31,
+      "marketConfidence": "medium"
+    },
+    "expected": {
+      "decision": "approve",
+      "state": "APPROVED_FOR_DRAFT",
+      "riskFlags": []
+    }
+  },
+  {
+    "caseId": "QA-002",
+    "name": "Producto sin stock",
+    "candidate": {
+      "productName": "Simulated No Stock Organizer",
+      "supplierName": "Simulated Supplier",
+      "supplierSku": "SIM-QA-002",
+      "internalSku": "IMN-QA-002",
+      "category": "Home Office",
+      "niche": "Desk organization",
+      "supplierCost": 12,
+      "supplierShippingCost": 2,
+      "estimatedEbayPrice": 32,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 0,
+      "stockStatus": "available",
+      "shippingTimeDays": 4,
+      "weight": 1.2,
+      "dimensions": {
+        "length": 8,
+        "width": 4,
+        "height": 2
+      },
+      "fragile": false,
+      "returnRisk": "low",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "imageAuthorizationStatus": "authorized",
+      "competitorCount": 8,
+      "soldCompsMedianPrice": 31,
+      "marketConfidence": "medium"
+    },
+    "expected": {
+      "decision": "blocked",
+      "state": "BLOCKED",
+      "riskFlags": [
+        "stock_zero"
+      ]
+    }
+  },
+  {
+    "caseId": "QA-003",
+    "name": "Stock desconocido",
+    "candidate": {
+      "productName": "Simulated Unknown Stock Organizer",
+      "supplierName": "Simulated Supplier",
+      "supplierSku": "SIM-QA-003",
+      "internalSku": "IMN-QA-003",
+      "category": "Home Office",
+      "niche": "Desk organization",
+      "supplierCost": 12,
+      "supplierShippingCost": 2,
+      "estimatedEbayPrice": 32,
+      "buyerShippingCharge": 0,
+      "stockAvailable": null,
+      "stockStatus": "unknown",
+      "shippingTimeDays": 4,
+      "weight": 1.2,
+      "dimensions": {
+        "length": 8,
+        "width": 4,
+        "height": 2
+      },
+      "fragile": false,
+      "returnRisk": "low",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "imageAuthorizationStatus": "authorized",
+      "competitorCount": 8,
+      "soldCompsMedianPrice": 31,
+      "marketConfidence": "medium"
+    },
+    "expected": {
+      "decision": "review",
+      "state": "DATA_INCOMPLETE",
+      "riskFlags": [
+        "stock_unknown"
+      ]
+    }
+  },
+  {
+    "caseId": "QA-004",
+    "name": "Sin peso/dimensiones",
+    "candidate": {
+      "productName": "Simulated Missing Size Organizer",
+      "supplierName": "Simulated Supplier",
+      "supplierSku": "SIM-QA-004",
+      "internalSku": "IMN-QA-004",
+      "category": "Home Office",
+      "niche": "Desk organization",
+      "supplierCost": 12,
+      "supplierShippingCost": 2,
+      "estimatedEbayPrice": 32,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 10,
+      "stockStatus": "available",
+      "shippingTimeDays": 4,
+      "weight": null,
+      "dimensions": null,
+      "fragile": false,
+      "returnRisk": "low",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "imageAuthorizationStatus": "authorized",
+      "competitorCount": 8,
+      "soldCompsMedianPrice": 31,
+      "marketConfidence": "medium"
+    },
+    "expected": {
+      "decision": "review",
+      "state": "DATA_INCOMPLETE",
+      "riskFlags": [
+        "missing_weight",
+        "missing_dimensions"
+      ]
+    }
+  },
+  {
+    "caseId": "QA-005",
+    "name": "Margen bajo",
+    "candidate": {
+      "productName": "Simulated Low Margin Organizer",
+      "supplierName": "Simulated Supplier",
+      "supplierSku": "SIM-QA-005",
+      "internalSku": "IMN-QA-005",
+      "category": "Home Office",
+      "niche": "Desk organization",
+      "supplierCost": 20,
+      "supplierShippingCost": 4,
+      "estimatedEbayPrice": 29,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 10,
+      "stockStatus": "available",
+      "shippingTimeDays": 4,
+      "weight": 1.2,
+      "dimensions": {
+        "length": 8,
+        "width": 4,
+        "height": 2
+      },
+      "fragile": false,
+      "returnRisk": "low",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "imageAuthorizationStatus": "authorized",
+      "competitorCount": 8,
+      "soldCompsMedianPrice": 31,
+      "marketConfidence": "medium"
+    },
+    "expected": {
+      "allowedDecisions": [
+        "review",
+        "reject"
+      ],
+      "allowedStates": [
+        "MARGIN_REVIEW",
+        "REJECTED"
+      ],
+      "riskFlags": []
+    }
+  },
+  {
+    "caseId": "QA-006",
+    "name": "ROI bajo",
+    "candidate": {
+      "productName": "Simulated Low Roi Organizer",
+      "supplierName": "Simulated Supplier",
+      "supplierSku": "SIM-QA-006",
+      "internalSku": "IMN-QA-006",
+      "category": "Home Office",
+      "niche": "Desk organization",
+      "supplierCost": 35,
+      "supplierShippingCost": 2,
+      "estimatedEbayPrice": 50,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 10,
+      "stockStatus": "available",
+      "shippingTimeDays": 4,
+      "weight": 1.2,
+      "dimensions": {
+        "length": 8,
+        "width": 4,
+        "height": 2
+      },
+      "fragile": false,
+      "returnRisk": "low",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "imageAuthorizationStatus": "authorized",
+      "competitorCount": 8,
+      "soldCompsMedianPrice": 52,
+      "marketConfidence": "medium"
+    },
+    "expected": {
+      "allowedDecisions": [
+        "review",
+        "reject"
+      ],
+      "allowedStates": [
+        "MARGIN_REVIEW",
+        "REJECTED"
+      ],
+      "riskFlags": []
+    }
+  },
+  {
+    "caseId": "QA-007",
+    "name": "VeRO/IP alto",
+    "candidate": {
+      "productName": "Simulated Brand Risk Organizer",
+      "supplierName": "Simulated Supplier",
+      "supplierSku": "SIM-QA-007",
+      "internalSku": "IMN-QA-007",
+      "category": "Home Office",
+      "niche": "Desk organization",
+      "supplierCost": 12,
+      "supplierShippingCost": 2,
+      "estimatedEbayPrice": 32,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 10,
+      "stockStatus": "available",
+      "shippingTimeDays": 4,
+      "weight": 1.2,
+      "dimensions": {
+        "length": 8,
+        "width": 4,
+        "height": 2
+      },
+      "fragile": false,
+      "returnRisk": "low",
+      "brandRisk": "high",
+      "veroRisk": "high",
+      "medicalClaimsRisk": "low",
+      "imageAuthorizationStatus": "authorized",
+      "competitorCount": 8,
+      "soldCompsMedianPrice": 31,
+      "marketConfidence": "medium"
+    },
+    "expected": {
+      "decision": "blocked",
+      "state": "BLOCKED",
+      "riskFlags": [
+        "brand_or_vero_high"
+      ]
+    }
+  },
+  {
+    "caseId": "QA-008",
+    "name": "Claims médicos fuertes",
+    "candidate": {
+      "productName": "Simulated Health Claim Product",
+      "supplierName": "Simulated Supplier",
+      "supplierSku": "SIM-QA-008",
+      "internalSku": "IMN-QA-008",
+      "category": "Wellness",
+      "niche": "General wellness",
+      "supplierCost": 12,
+      "supplierShippingCost": 2,
+      "estimatedEbayPrice": 32,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 10,
+      "stockStatus": "available",
+      "shippingTimeDays": 4,
+      "weight": 1.2,
+      "dimensions": {
+        "length": 8,
+        "width": 4,
+        "height": 2
+      },
+      "fragile": false,
+      "returnRisk": "low",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "high",
+      "imageAuthorizationStatus": "authorized",
+      "competitorCount": 8,
+      "soldCompsMedianPrice": 31,
+      "marketConfidence": "medium"
+    },
+    "expected": {
+      "decision": "blocked",
+      "state": "BLOCKED",
+      "riskFlags": [
+        "medical_claims_high"
+      ]
+    }
+  },
+  {
+    "caseId": "QA-009",
+    "name": "Precio sobre mercado",
+    "candidate": {
+      "productName": "Simulated Over Market Organizer",
+      "supplierName": "Simulated Supplier",
+      "supplierSku": "SIM-QA-009",
+      "internalSku": "IMN-QA-009",
+      "category": "Home Office",
+      "niche": "Desk organization",
+      "supplierCost": 12,
+      "supplierShippingCost": 2,
+      "estimatedEbayPrice": 40,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 10,
+      "stockStatus": "available",
+      "shippingTimeDays": 4,
+      "weight": 1.2,
+      "dimensions": {
+        "length": 8,
+        "width": 4,
+        "height": 2
+      },
+      "fragile": false,
+      "returnRisk": "low",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "imageAuthorizationStatus": "authorized",
+      "competitorCount": 8,
+      "soldCompsMedianPrice": 35,
+      "marketConfidence": "medium"
+    },
+    "expected": {
+      "decision": "review",
+      "state": "MARGIN_REVIEW",
+      "riskFlags": [
+        "price_above_market"
+      ]
+    }
+  },
+  {
+    "caseId": "QA-010",
+    "name": "Imágenes no autorizadas",
+    "candidate": {
+      "productName": "Simulated Image Review Organizer",
+      "supplierName": "Simulated Supplier",
+      "supplierSku": "SIM-QA-010",
+      "internalSku": "IMN-QA-010",
+      "category": "Home Office",
+      "niche": "Desk organization",
+      "supplierCost": 12,
+      "supplierShippingCost": 2,
+      "estimatedEbayPrice": 32,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 10,
+      "stockStatus": "available",
+      "shippingTimeDays": 4,
+      "weight": 1.2,
+      "dimensions": {
+        "length": 8,
+        "width": 4,
+        "height": 2
+      },
+      "fragile": false,
+      "returnRisk": "low",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "imageAuthorizationStatus": "unknown",
+      "competitorCount": 8,
+      "soldCompsMedianPrice": 31,
+      "marketConfidence": "medium"
+    },
+    "expected": {
+      "decision": "review",
+      "state": "DATA_INCOMPLETE",
+      "riskFlags": [
+        "image_authorization_missing"
+      ]
+    }
+  }
+]

@@ -443,6 +443,19 @@ const goodProductSelectionCandidate = {
     "medium",
 }
 
+const productSelectionQaFixturePath =
+  path.resolve(
+    "tools/fixtures/product-selection-candidates-v1.json"
+  )
+
+const productSelectionQaCases =
+  JSON.parse(
+    fs.readFileSync(
+      productSelectionQaFixturePath,
+      "utf8"
+    )
+  )
+
 test("product selection decision service: producto bueno aprueba para preparacion interna", () => {
   const result =
     evaluateProductSelectionCandidate(
@@ -761,6 +774,177 @@ test("product selection decision service: advisor output conserva estructura esp
   )
   assert.equal(output.advisoryOnly, true)
 })
+
+test("product selection QA fixture: contiene exactamente QA-001 a QA-010", () => {
+  const expectedCaseIds =
+    Array.from(
+      {
+        length:
+          10,
+      },
+      (_, index) =>
+        `QA-${String(index + 1).padStart(3, "0")}`
+    )
+
+  assert.equal(
+    productSelectionQaCases.length,
+    expectedCaseIds.length
+  )
+
+  const caseIds =
+    productSelectionQaCases.map(item =>
+      item.caseId
+    )
+
+  assert.deepEqual(
+    caseIds,
+    expectedCaseIds
+  )
+  assert.equal(
+    new Set(caseIds).size,
+    caseIds.length
+  )
+
+  for (const item of productSelectionQaCases) {
+    assert.equal(
+      typeof item.caseId,
+      "string"
+    )
+    assert.equal(
+      typeof item.name,
+      "string"
+    )
+    assert.equal(
+      typeof item.candidate,
+      "object"
+    )
+    assert.ok(item.candidate)
+    assert.equal(
+      typeof item.expected,
+      "object"
+    )
+    assert.ok(item.expected)
+    assert.ok(
+      item.expected.decision ||
+        Array.isArray(item.expected.allowedDecisions)
+    )
+    assert.ok(
+      item.expected.state ||
+        Array.isArray(item.expected.allowedStates)
+    )
+    assert.ok(
+      Array.isArray(item.expected.riskFlags)
+    )
+  }
+})
+
+test("product selection QA fixture: no contiene datos sensibles ni reales", () => {
+  const rawFixture =
+    fs.readFileSync(
+      productSelectionQaFixturePath,
+      "utf8"
+    ).toLowerCase()
+
+  const forbiddenFragments = [
+    "bearer ",
+    "secret",
+    "cred" + "ential",
+    "pass" + "word",
+    "tok" + "en",
+    "oa" + "uth",
+    "http://",
+    "https://",
+  ]
+
+  for (const fragment of forbiddenFragments) {
+    assert.equal(
+      rawFixture.includes(fragment),
+      false,
+      `fixture contains forbidden fragment: ${fragment}`
+    )
+  }
+})
+
+for (const item of productSelectionQaCases) {
+  test(`product selection QA fixture: ${item.caseId} ${item.name}`, () => {
+    const result =
+      evaluateProductSelectionCandidate(
+        item.candidate
+      )
+
+    if (item.expected.allowedDecisions) {
+      assert.ok(
+        item.expected.allowedDecisions.includes(
+          result.decision
+        ),
+        `${item.caseId} unexpected decision ${result.decision}`
+      )
+    } else {
+      assert.equal(
+        result.decision,
+        item.expected.decision
+      )
+    }
+
+    if (item.expected.allowedStates) {
+      assert.ok(
+        item.expected.allowedStates.includes(
+          result.state
+        ),
+        `${item.caseId} unexpected state ${result.state}`
+      )
+    } else {
+      assert.equal(
+        result.state,
+        item.expected.state
+      )
+    }
+
+    const resultRiskCodes =
+      result.riskFlags.map(flag =>
+        flag.code
+      )
+
+    for (const expectedRisk of item.expected.riskFlags) {
+      assert.ok(
+        resultRiskCodes.includes(expectedRisk),
+        `${item.caseId} missing risk ${expectedRisk}`
+      )
+    }
+
+    assert.equal(result.advisoryOnly, true)
+    assert.equal(
+      typeof result.mainReason,
+      "string"
+    )
+    assert.ok(
+      result.mainReason.length > 0
+    )
+    assert.equal(
+      typeof result.nextHumanAction,
+      "string"
+    )
+    assert.ok(
+      result.nextHumanAction.length > 0
+    )
+    assert.equal(
+      typeof result.keyNumbers,
+      "object"
+    )
+    assert.equal(
+      typeof result.keyNumbers.netProfit,
+      "number"
+    )
+    assert.equal(
+      typeof result.keyNumbers.roiPercent,
+      "number"
+    )
+    assert.equal(
+      typeof result.keyNumbers.netMarginPercent,
+      "number"
+    )
+  })
+}
 
 test("product selection integration: mapper convierte pipeline a candidato V1", () => {
   const radarProduct = {
