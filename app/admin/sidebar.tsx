@@ -273,6 +273,34 @@ export function Sidebar({
           </button>
         ))}
 
+        <a
+          href="/admin/ebay-listings"
+          className="
+            block
+            rounded-2xl
+            border
+            border-cyan-300/15
+            bg-cyan-300/[0.05]
+            px-5
+            py-4
+            text-left
+            transition-all
+            duration-300
+            hover:border-cyan-300/30
+            hover:bg-cyan-300/[0.08]
+          "
+        >
+          <span className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/50">
+            Read-only
+          </span>
+          <span className="mt-2 block text-sm font-black text-white">
+            eBay Listing Proposals
+          </span>
+          <span className="mt-1 block text-xs leading-5 text-white/45">
+            No eBay API | No real draft | Not published
+          </span>
+        </a>
+
         <div
           className="
             mt-5
