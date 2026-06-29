@@ -144,6 +144,28 @@ type EbayDraft = {
   updated_at?: string | null
 }
 
+type ProductSelectionRiskFlag = {
+  code?: string | null
+  severity?: string | null
+  message?: string | null
+}
+
+type ProductSelectionAdvisor = {
+  decision?: string | null
+  state?: string | null
+  mainReason?: string | null
+  riskFlags?: ProductSelectionRiskFlag[] | null
+  keyNumbers?: {
+    netProfit?: number | string | null
+    roiPercent?: number | string | null
+    netMarginPercent?: number | string | null
+    estimatedEbayFees?: number | string | null
+    estimatedShippingCost?: number | string | null
+  } | null
+  nextHumanAction?: string | null
+  advisoryOnly?: boolean | null
+}
+
 type EbayCandidate = {
   id: string
   candidate_key: string
@@ -171,6 +193,7 @@ type EbayCandidate = {
   compliance?: EbayCompliance | null
   draft?: EbayDraft | null
   pipelineReanalysisAdvisor?: PipelineReanalysisAdvisor | null
+  productSelectionAdvisor?: ProductSelectionAdvisor | null
 }
 
 type PipelineReanalysisAdvisor = {
@@ -450,6 +473,7 @@ type EbayDecisionAdvisor = {
 type EbayCandidateDetail = {
   candidate: EbayCandidate
   pipelineReanalysisAdvisor?: PipelineReanalysisAdvisor | null
+  productSelectionAdvisor?: ProductSelectionAdvisor | null
   validation?: EbayValidation | null
   validations?: EbayValidation[]
   profitScenario?: EbayProfitScenario | null
@@ -1596,6 +1620,58 @@ function StatusBadge({
   )
 }
 
+function getProductSelectionClassName(
+  decision?: string | null
+) {
+  switch (decision) {
+    case "approve":
+      return "border-emerald-300/25 bg-emerald-300/[0.08] text-emerald-100"
+    case "blocked":
+      return "border-red-300/25 bg-red-300/[0.08] text-red-100"
+    case "reject":
+      return "border-orange-300/25 bg-orange-300/[0.08] text-orange-100"
+    case "review":
+      return "border-amber-300/25 bg-amber-300/[0.08] text-amber-100"
+    default:
+      return "border-white/10 bg-black/25 text-white/55"
+  }
+}
+
+function ProductSelectionSummary({
+  advisor,
+}: {
+  advisor?: ProductSelectionAdvisor | null
+}) {
+  if (!advisor) {
+    return null
+  }
+
+  return (
+    <div
+      className={`
+        mt-3
+        rounded-md
+        border
+        px-3
+        py-2
+        ${getProductSelectionClassName(advisor.decision)}
+      `}
+    >
+      <p className="text-[10px] font-black uppercase tracking-[0.14em]">
+        Selección de producto · Solo lectura
+      </p>
+      <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+        <span>
+          {humanizePipelineValue(advisor.decision)}
+        </span>
+        <span className="opacity-70">
+          {humanizePipelineValue(advisor.state)}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 function MetricCard({
   title,
   value,
@@ -1739,6 +1815,121 @@ function Field({
           : String(value)}
       </p>
     </div>
+  )
+}
+
+function ProductSelectionDetail({
+  advisor,
+}: {
+  advisor?: ProductSelectionAdvisor | null
+}) {
+  const riskFlags =
+    Array.isArray(advisor?.riskFlags)
+      ? advisor.riskFlags.slice(0, 5)
+      : []
+  const keyNumbers =
+    advisor?.keyNumbers || {}
+
+  return (
+    <DetailSection title="Selección de producto">
+      {advisor ? (
+        <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.06] p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md border border-emerald-200/20 bg-black/20 px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-emerald-50/75">
+              Selección de producto · Solo lectura
+            </span>
+            <span
+              className={`
+                rounded-md
+                border
+                px-2
+                py-1
+                text-[10px]
+                font-black
+                uppercase
+                tracking-[0.12em]
+                ${getProductSelectionClassName(advisor.decision)}
+              `}
+            >
+              {humanizePipelineValue(advisor.decision)}
+            </span>
+            <span className="rounded-md border border-white/10 bg-black/20 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-white/55">
+              {humanizePipelineValue(advisor.state)}
+            </span>
+          </div>
+
+          <p className="mt-4 text-sm leading-6 text-emerald-50/75">
+            {advisor.mainReason || "Sin razón principal disponible."}
+          </p>
+          <p className="mt-2 text-xs leading-5 text-emerald-50/60">
+            Approve no publica ni crea draft real. Requiere revisión humana.
+          </p>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <Field
+              label="decision"
+              value={advisor.decision}
+            />
+            <Field
+              label="state"
+              value={advisor.state}
+            />
+            <Field
+              label="advisory_only"
+              value={advisor.advisoryOnly === true}
+            />
+            <Field
+              label="net_profit"
+              value={formatCurrency(keyNumbers.netProfit)}
+            />
+            <Field
+              label="roi"
+              value={formatNumber(keyNumbers.roiPercent, "%")}
+            />
+            <Field
+              label="net_margin"
+              value={formatNumber(keyNumbers.netMarginPercent, "%")}
+            />
+            <Field
+              label="estimated_ebay_fees"
+              value={formatCurrency(keyNumbers.estimatedEbayFees)}
+            />
+            <Field
+              label="estimated_shipping"
+              value={formatCurrency(keyNumbers.estimatedShippingCost)}
+            />
+            <Field
+              label="next_human_action"
+              value={advisor.nextHumanAction}
+            />
+          </div>
+
+          {riskFlags.length ? (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {riskFlags.map((flag, index) => (
+                <span
+                  key={`${flag.code || "risk"}-${index}`}
+                  className="rounded-md border border-white/10 bg-black/25 px-2 py-1 text-[11px] text-white/60"
+                  title={flag.message || undefined}
+                >
+                  {humanizePipelineValue(flag.code)} · {humanizePipelineValue(flag.severity)}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-4 text-xs text-white/40">
+              Sin riesgos principales reportados por la evaluación.
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
+          <p className="text-sm text-white/55">
+            Evaluación de selección no disponible todavía.
+          </p>
+        </div>
+      )}
+    </DetailSection>
   )
 }
 
@@ -4791,6 +4982,13 @@ function CandidateDetailDrawer({
                 </div>
               </DetailSection>
             ) : null}
+
+            <ProductSelectionDetail
+              advisor={
+                detail.productSelectionAdvisor ||
+                detail.candidate.productSelectionAdvisor
+              }
+            />
 
             <DetailSection title="Detalle de opciones y simulaciones">
               {detail.decisionAdvisor ? (
@@ -8055,6 +8253,10 @@ export function EbayWinnerPipelinePanel({
                     <p className="mt-3 line-clamp-2 text-sm font-black leading-5 text-white">
                       {candidate.title}
                     </p>
+
+                    <ProductSelectionSummary
+                      advisor={candidate.productSelectionAdvisor}
+                    />
 
                     <div className="mt-3 grid gap-2 text-xs text-white/55 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
                       <span>
