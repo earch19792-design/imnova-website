@@ -506,6 +506,11 @@ const ebayListingAdminReadOnlyFixture =
     )
   )
 
+const ebayListingAdminPagePath =
+  path.resolve(
+    "app/admin/ebay-listings/page.tsx"
+  )
+
 test("product selection decision service: producto bueno aprueba para preparacion interna", () => {
   const result =
     evaluateProductSelectionCandidate(
@@ -1844,6 +1849,58 @@ test("listing admin read-only fixture: no contiene campos prohibidos ni URLs", (
       `fixture contains forbidden field: ${fieldName}`
     )
   }
+})
+
+test("listing admin read-only page: usa fixture seguro V1", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingAdminPagePath,
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /ebay-listing-admin-read-only-items-v1\.json/
+  )
+  assert.match(
+    source,
+    /EBAY_LISTING_ADMIN_READ_ONLY_DATA_CONTRACT_V1|contractVersion/
+  )
+  assert.match(source, /Data source/)
+  assert.match(source, /simulated fixture/)
+})
+
+test("listing admin read-only page: conserva copy de seguridad", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "No eBay API",
+    "No real draft",
+    "Not published",
+    "Human review required",
+  ]) {
+    assert.match(
+      source,
+      new RegExp(expectedText)
+    )
+  }
+})
+
+test("listing admin read-only page: no contiene integraciones reales", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingAdminPagePath,
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    source,
+    /fetch\(|createClient|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/i
+  )
 })
 
 for (const item of ebayListingGeneratorCases) {
