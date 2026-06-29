@@ -1,0 +1,158 @@
+{
+  "schemaVersion": "EBAY_LISTING_DRAFT_SCHEMA_V1",
+  "source": {
+    "productCandidateId": "SIM-LISTING-001",
+    "sourceCaseId": "SHORTLIST-001",
+    "sourceType": "manual_shortlist_fixture",
+    "selectionDecision": "approve",
+    "selectionState": "APPROVED_FOR_DRAFT",
+    "selectedAt": null,
+    "notes": "Simulated listing proposal fixture. No real supplier or product data."
+  },
+  "listingProposal": {
+    "title": {
+      "value": "Compact Desk Organizer with Drawer, Space Saving Office Storage, Black",
+      "keywordsUsed": [
+        "desk organizer",
+        "drawer",
+        "office storage"
+      ],
+      "excludedKeywords": [],
+      "titleRiskFlags": [],
+      "notes": "Simulated title for internal review only."
+    },
+    "subtitle": null,
+    "category": {
+      "categoryName": "Home Office Organization",
+      "categoryId": null,
+      "categoryConfidence": "medium",
+      "categoryNotes": "Simulated category. Human confirmation required.",
+      "requiresHumanConfirmation": true
+    },
+    "condition": "New",
+    "price": {
+      "listingPrice": 32,
+      "currency": "USD",
+      "soldCompsMedianPrice": 31,
+      "supplierCost": 12,
+      "supplierShippingCost": 2,
+      "buyerShippingCharge": 0,
+      "estimatedFees": 4.54,
+      "estimatedProfit": 13.46,
+      "estimatedRoiPercent": 112.17,
+      "estimatedNetMarginPercent": 42.06,
+      "priceReviewRequired": false,
+      "priceNotes": "Simulated economics based on safe fixture data."
+    },
+    "quantity": 1,
+    "itemSpecifics": {
+      "required": {
+        "Brand": "Unbranded",
+        "Type": "Desk Organizer",
+        "Color": "Black"
+      },
+      "recommended": {
+        "Material": "Plastic",
+        "Features": [
+          "Drawer",
+          "Space Saving"
+        ]
+      },
+      "missing": [
+        "Model",
+        "MPN"
+      ],
+      "notes": "Missing fields must be confirmed by a human."
+    },
+    "description": {
+      "headline": "Compact desk organizer for everyday office storage.",
+      "benefitBullets": [
+        "Helps keep small desk items organized.",
+        "Compact simulated design for limited workspaces.",
+        "Drawer-style storage for small accessories."
+      ],
+      "technicalDetails": [
+        "Simulated dimensions: 10 x 6 x 4 in",
+        "Simulated weight: 1.2 lb"
+      ],
+      "packageIncludes": [
+        "1 simulated desk organizer"
+      ],
+      "recommendedUse": "Home office, study desk, or workspace organization.",
+      "safetyNotes": [],
+      "shippingAndReturnsSummary": "Shipping and returns require human confirmation before any real listing step.",
+      "fullDescription": "Simulated listing copy for internal review only.",
+      "copyRiskFlags": []
+    },
+    "shippingPlan": {
+      "weight": {
+        "value": 1.2,
+        "unit": "lb"
+      },
+      "dimensions": {
+        "length": 10,
+        "width": 6,
+        "height": 4,
+        "unit": "in"
+      },
+      "shippingMethod": "standard_simulated",
+      "estimatedShippingCost": 2,
+      "handlingTime": "2 business days simulated",
+      "shippingRiskFlags": [],
+      "shippingNotes": "Simulated shipping plan. Human confirmation required."
+    },
+    "returnPlan": {
+      "returnsAccepted": true,
+      "returnWindowDays": 30,
+      "buyerPaysReturnShipping": false,
+      "returnRiskLevel": "low",
+      "returnNotes": "Simulated return policy for internal planning."
+    },
+    "imagePlan": [
+      {
+        "slot": 1,
+        "purpose": "main",
+        "imageStatus": "needed",
+        "authorizationStatus": "authorized_simulated",
+        "notes": "Use only authorized or original images in real workflows."
+      },
+      {
+        "slot": 2,
+        "purpose": "dimensions",
+        "imageStatus": "needed",
+        "authorizationStatus": "authorized_simulated",
+        "notes": "Simulated dimensions image placeholder."
+      }
+    ],
+    "complianceNotes": [],
+    "humanReviewRequired": true,
+    "advisoryOnly": true
+  },
+  "review": {
+    "listingState": "LISTING_DRAFT_READY",
+    "reviewStatus": "pending_human_review",
+    "requiredHumanActions": [
+      "Confirm category",
+      "Confirm item specifics",
+      "Confirm image rights"
+    ],
+    "missingData": [
+      "Model",
+      "MPN"
+    ],
+    "riskFlags": [],
+    "approvalNotes": null,
+    "reviewedBy": null,
+    "reviewedAt": null
+  },
+  "safety": {
+    "advisoryOnly": true,
+    "localOnly": true,
+    "externalCallsMade": false,
+    "ebayApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false,
+    "requiresHumanReview": true
+  }
+}
