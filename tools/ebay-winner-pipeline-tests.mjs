@@ -31,6 +31,14 @@ import {
   mapPipelineResultToProductSelectionCandidate,
 } from "../lib/ebay-winner-pipeline/service.mjs"
 import {
+  evaluateCandidateCases,
+  formatEvaluationSummary,
+  loadJsonFile,
+  parseArgs,
+  runCli,
+  selectCandidateCases,
+} from "./product-selection-evaluate-candidate.mjs"
+import {
   getActiveListingRiskSummary,
   getOpenActiveListingRisks,
   getRisksByEbaySku,
@@ -945,6 +953,229 @@ for (const item of productSelectionQaCases) {
     )
   })
 }
+
+test("product selection manual runner: evalua QA-001 desde fixture local", () => {
+  const input =
+    loadJsonFile(
+      productSelectionQaFixturePath
+    )
+  const [caseEntry] =
+    selectCandidateCases(input, {
+      caseId:
+        "QA-001",
+    })
+  const [result] =
+    evaluateCandidateCases([
+      caseEntry,
+    ])
+
+  assert.equal(
+    result.evaluation.decision,
+    "approve"
+  )
+  assert.equal(
+    result.evaluation.state,
+    "APPROVED_FOR_DRAFT"
+  )
+})
+
+test("product selection manual runner: all procesa QA-001 a QA-010", () => {
+  const input =
+    loadJsonFile(
+      productSelectionQaFixturePath
+    )
+  const caseEntries =
+    selectCandidateCases(input, {
+      all:
+        true,
+    })
+  const results =
+    evaluateCandidateCases(
+      caseEntries
+    )
+
+  assert.equal(
+    results.length,
+    10
+  )
+  assert.deepEqual(
+    results.map(item =>
+      item.caseEntry.caseId
+    ),
+    [
+      "QA-001",
+      "QA-002",
+      "QA-003",
+      "QA-004",
+      "QA-005",
+      "QA-006",
+      "QA-007",
+      "QA-008",
+      "QA-009",
+      "QA-010",
+    ]
+  )
+  assert.ok(
+    results.every(item =>
+      item.evaluation.advisoryOnly === true
+    )
+  )
+})
+
+test("product selection manual runner: case faltante produce error claro", () => {
+  assert.throws(
+    () =>
+      selectCandidateCases(
+        productSelectionQaCases,
+        {
+          caseId:
+            "QA-999",
+        }
+      ),
+    /Case not found: QA-999/
+  )
+})
+
+test("product selection manual runner: input invalido o sin candidate produce error claro", () => {
+  assert.throws(
+    () =>
+      selectCandidateCases(
+        null,
+        {
+          all:
+            true,
+        }
+      ),
+    /Candidate input must be an object/
+  )
+
+  assert.throws(
+    () =>
+      selectCandidateCases(
+        {
+          caseId:
+            "manual",
+          candidate:
+            null,
+        },
+        {
+          caseId:
+            "manual",
+        }
+      ),
+    /Input candidate must be an object/
+  )
+
+  assert.throws(
+    () =>
+      parseArgs([
+        "--file",
+        productSelectionQaFixturePath,
+      ]),
+    /Pass --case <caseId> or --all/
+  )
+})
+
+test("product selection manual runner: formato resume decision sin imprimir payload completo", () => {
+  const [caseEntry] =
+    selectCandidateCases(
+      productSelectionQaCases,
+      {
+        caseId:
+          "QA-010",
+      }
+    )
+  const [result] =
+    evaluateCandidateCases([
+      caseEntry,
+    ])
+  const summary =
+    formatEvaluationSummary(
+      result.caseEntry,
+      result.evaluation
+    )
+
+  assert.match(
+    summary,
+    /Decision: review/
+  )
+  assert.match(
+    summary,
+    /State: DATA_INCOMPLETE/
+  )
+  assert.match(
+    summary,
+    /Advisory only: true/
+  )
+  assert.match(
+    summary,
+    /Next human action:/
+  )
+  assert.doesNotMatch(
+    summary,
+    /supplierSku|internalSku|supplierName/
+  )
+  assert.doesNotMatch(
+    summary,
+    /"candidate"|"expected"/
+  )
+})
+
+test("product selection manual runner: CLI helper soporta case y all", () => {
+  const caseOutput =
+    runCli([
+      "--file",
+      productSelectionQaFixturePath,
+      "--case",
+      "QA-001",
+    ])
+
+  assert.match(
+    caseOutput,
+    /Case: QA-001 - Producto ideal/
+  )
+  assert.match(
+    caseOutput,
+    /Decision: approve/
+  )
+  assert.match(
+    caseOutput,
+    /State: APPROVED_FOR_DRAFT/
+  )
+
+  const allOutput =
+    runCli([
+      "--file",
+      productSelectionQaFixturePath,
+      "--all",
+    ])
+
+  assert.match(
+    allOutput,
+    /Case: QA-001 - Producto ideal/
+  )
+  assert.match(
+    allOutput,
+    /Case: QA-010 - Imágenes no autorizadas/
+  )
+})
+
+test("product selection manual runner: modulo local sin red ni acciones reales", () => {
+  const source =
+    fs.readFileSync(
+      "tools/product-selection-evaluate-candidate.mjs",
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    source,
+    /fetch\(|createClient|supabase|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/i
+  )
+  assert.doesNotMatch(
+    source,
+    /ebay.*api|oa(?:uth)|to(?:ken)|Authorization|publish|publicar|draft real/i
+  )
+})
 
 test("product selection integration: mapper convierte pipeline a candidato V1", () => {
   const radarProduct = {
