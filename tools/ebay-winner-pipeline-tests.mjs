@@ -467,6 +467,19 @@ const productSelectionQaCases =
     )
   )
 
+const ebayListingGeneratorFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-listing-generator-candidates-v1.json"
+  )
+
+const ebayListingGeneratorCases =
+  JSON.parse(
+    fs.readFileSync(
+      ebayListingGeneratorFixturePath,
+      "utf8"
+    )
+  )
+
 test("product selection decision service: producto bueno aprueba para preparacion interna", () => {
   const result =
     evaluateProductSelectionCandidate(
@@ -1509,6 +1522,272 @@ test("listing proposal generator: modulo local sin red ni acciones reales", () =
   assert.doesNotMatch(
     source,
     /ebay\s+api|oa(?:uth)|to(?:ken)|draft real/i
+  )
+})
+
+test("listing proposal generator fixture: contiene exactamente LISTING-GEN-001 a LISTING-GEN-006", () => {
+  const expectedCaseIds =
+    Array.from(
+      {
+        length:
+          6,
+      },
+      (_, index) =>
+        `LISTING-GEN-${String(index + 1).padStart(3, "0")}`
+    )
+
+  assert.equal(
+    ebayListingGeneratorCases.length,
+    expectedCaseIds.length
+  )
+
+  const caseIds =
+    ebayListingGeneratorCases.map(item =>
+      item.caseId
+    )
+
+  assert.deepEqual(
+    caseIds,
+    expectedCaseIds
+  )
+  assert.equal(
+    new Set(caseIds).size,
+    caseIds.length
+  )
+
+  for (const item of ebayListingGeneratorCases) {
+    assert.equal(
+      typeof item.caseId,
+      "string"
+    )
+    assert.equal(
+      typeof item.name,
+      "string"
+    )
+    assert.equal(
+      typeof item.candidate,
+      "object"
+    )
+    assert.ok(item.candidate)
+    assert.equal(
+      typeof item.expected,
+      "object"
+    )
+    assert.ok(item.expected)
+  }
+})
+
+test("listing proposal generator fixture: no contiene datos sensibles ni reales", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayListingGeneratorFixturePath,
+      "utf8"
+    ).toLowerCase()
+
+  const forbiddenFragments = [
+    "bearer ",
+    "secret",
+    "cred" + "ential",
+    "pass" + "word",
+    "tok" + "en",
+    "oa" + "uth",
+    "http://",
+    "https://",
+  ]
+
+  for (const fragment of forbiddenFragments) {
+    assert.equal(
+      rawFixture.includes(fragment),
+      false,
+      `listing fixture contains forbidden fragment: ${fragment}`
+    )
+  }
+})
+
+for (const item of ebayListingGeneratorCases) {
+  test(`listing proposal generator fixture: ${item.caseId} ${item.name}`, () => {
+    const result =
+      buildListingProposalFromCandidate(
+        item.candidate,
+        {
+          sourceCaseId:
+            item.caseId,
+          sourceType:
+            "listing_generator_fixture",
+          selectionDecision:
+            "approve",
+          selectionState:
+            "APPROVED_FOR_DRAFT",
+        }
+      )
+
+    assert.equal(
+      result.schemaVersion,
+      "EBAY_LISTING_DRAFT_SCHEMA_V1"
+    )
+    assert.ok(result.source)
+    assert.ok(result.listingProposal)
+    assert.ok(result.review)
+    assert.ok(result.safety)
+    assert.equal(
+      result.listingProposal.advisoryOnly,
+      true
+    )
+    assert.equal(
+      result.listingProposal.humanReviewRequired,
+      true
+    )
+    assert.deepEqual(
+      result.safety,
+      {
+        advisoryOnly:
+          true,
+        localOnly:
+          true,
+        externalCallsMade:
+          false,
+        ebayApiUsed:
+          false,
+        realDraftCreated:
+          false,
+        publishedToEbay:
+          false,
+        listingMutated:
+          false,
+        requiresHumanReview:
+          true,
+      }
+    )
+    assert.notEqual(
+      result.review.listingState,
+      "LISTING_APPROVED_FOR_MANUAL_DRAFT"
+    )
+
+    if (item.expected.listingState) {
+      assert.equal(
+        result.review.listingState,
+        item.expected.listingState
+      )
+    }
+
+    if (item.expected.allowedListingStates) {
+      assert.ok(
+        item.expected.allowedListingStates.includes(
+          result.review.listingState
+        ),
+        `${item.caseId} unexpected state ${result.review.listingState}`
+      )
+    }
+
+    if (item.expected.notListingState) {
+      assert.notEqual(
+        result.review.listingState,
+        item.expected.notListingState
+      )
+    }
+
+    for (const expectedMissing of item.expected.missingData || []) {
+      assert.ok(
+        result.review.missingData.includes(
+          expectedMissing
+        ),
+        `${item.caseId} missing expected data flag ${expectedMissing}`
+      )
+    }
+
+    for (const expectedRisk of item.expected.riskFlags || []) {
+      assert.ok(
+        result.review.riskFlags.includes(
+          expectedRisk
+        ),
+        `${item.caseId} missing expected risk flag ${expectedRisk}`
+      )
+    }
+
+    for (const expectedBlocker of item.expected.blockedReasons || []) {
+      assert.ok(
+        result.listingProposal.compliance.blockedReasons.includes(
+          expectedBlocker
+        ),
+        `${item.caseId} missing expected blocker ${expectedBlocker}`
+      )
+    }
+
+    for (const phrase of item.expected.descriptionMustNotContain || []) {
+      assert.doesNotMatch(
+        JSON.stringify(
+          result.listingProposal.description
+        ),
+        new RegExp(phrase, "i")
+      )
+    }
+  })
+}
+
+test("listing proposal generator fixture: ideal queda listo internamente", () => {
+  const idealCase =
+    ebayListingGeneratorCases.find(item =>
+      item.caseId === "LISTING-GEN-001"
+    )
+
+  const result =
+    buildListingProposalFromCandidate(
+      idealCase.candidate,
+      {
+        sourceCaseId:
+          idealCase.caseId,
+      }
+    )
+
+  assert.equal(
+    result.review.listingState,
+    "LISTING_DRAFT_READY"
+  )
+  assert.deepEqual(
+    result.listingProposal.compliance.blockedReasons,
+    []
+  )
+})
+
+test("listing proposal generator fixture: no inventa Brand MPN Model ni certificaciones", () => {
+  const incompleteCase =
+    ebayListingGeneratorCases.find(item =>
+      item.caseId === "LISTING-GEN-002"
+    )
+
+  const result =
+    buildListingProposalFromCandidate(
+      {
+        ...incompleteCase.candidate,
+        brand:
+          null,
+        model:
+          null,
+        mpn:
+          null,
+      }
+    )
+
+  assert.ok(
+    result.listingProposal.itemSpecifics.missing.includes(
+      "Brand"
+    )
+  )
+  assert.ok(
+    result.listingProposal.itemSpecifics.missing.includes(
+      "MPN"
+    )
+  )
+  assert.ok(
+    result.listingProposal.itemSpecifics.missing.includes(
+      "Model"
+    )
+  )
+  assert.doesNotMatch(
+    JSON.stringify(
+      result.listingProposal
+    ),
+    /FDA|certified|official/i
   )
 })
 
