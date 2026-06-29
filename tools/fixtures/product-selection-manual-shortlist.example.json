@@ -1,0 +1,130 @@
+[
+  {
+    "caseId": "SHORTLIST-001",
+    "name": "Promising simulated organizer",
+    "candidate": {
+      "productName": "Simulated Stackable Drawer Organizer",
+      "category": "Home Office",
+      "niche": "Desk organization",
+      "supplierCost": 11,
+      "supplierShippingCost": 2,
+      "estimatedEbayPrice": 33,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 12,
+      "stockStatus": "available",
+      "shippingTimeDays": 4,
+      "weight": 1.1,
+      "dimensions": {
+        "length": 9,
+        "width": 6,
+        "height": 3
+      },
+      "fragile": false,
+      "returnRisk": "low",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "imageAuthorizationStatus": "authorized",
+      "competitorCount": 7,
+      "soldCompsMedianPrice": 32,
+      "marketConfidence": "medium"
+    },
+    "intakeNotes": "Simulated P1-style candidate with complete data and low risk."
+  },
+  {
+    "caseId": "SHORTLIST-002",
+    "name": "Unknown stock simulated rack",
+    "candidate": {
+      "productName": "Simulated Foldable Storage Rack",
+      "category": "Home Organization",
+      "niche": "Kitchen storage",
+      "supplierCost": 14,
+      "supplierShippingCost": 3,
+      "estimatedEbayPrice": 36,
+      "buyerShippingCharge": 0,
+      "stockAvailable": null,
+      "stockStatus": "unknown",
+      "shippingTimeDays": 5,
+      "weight": 2.1,
+      "dimensions": {
+        "length": 14,
+        "width": 9,
+        "height": 3
+      },
+      "fragile": false,
+      "returnRisk": "medium",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "imageAuthorizationStatus": "authorized",
+      "competitorCount": 10,
+      "soldCompsMedianPrice": 35,
+      "marketConfidence": "medium"
+    },
+    "intakeNotes": "Simulated P2/P3 candidate because stock still needs confirmation."
+  },
+  {
+    "caseId": "SHORTLIST-003",
+    "name": "Weak margin simulated accessory",
+    "candidate": {
+      "productName": "Simulated Cable Sorting Tray",
+      "category": "Home Office",
+      "niche": "Cable management",
+      "supplierCost": 19,
+      "supplierShippingCost": 4,
+      "estimatedEbayPrice": 28,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 8,
+      "stockStatus": "available",
+      "shippingTimeDays": 4,
+      "weight": 1.4,
+      "dimensions": {
+        "length": 10,
+        "width": 5,
+        "height": 2
+      },
+      "fragile": false,
+      "returnRisk": "low",
+      "brandRisk": "low",
+      "veroRisk": "low",
+      "medicalClaimsRisk": "low",
+      "imageAuthorizationStatus": "authorized",
+      "competitorCount": 14,
+      "soldCompsMedianPrice": 29,
+      "marketConfidence": "medium"
+    },
+    "intakeNotes": "Simulated P2/P3 candidate because margin likely needs review."
+  },
+  {
+    "caseId": "SHORTLIST-004",
+    "name": "High brand risk simulated product",
+    "candidate": {
+      "productName": "Simulated Branded-Style Replacement Accessory",
+      "category": "Accessories",
+      "niche": "Replacement parts",
+      "supplierCost": 10,
+      "supplierShippingCost": 2,
+      "estimatedEbayPrice": 31,
+      "buyerShippingCharge": 0,
+      "stockAvailable": 6,
+      "stockStatus": "available",
+      "shippingTimeDays": 4,
+      "weight": 0.8,
+      "dimensions": {
+        "length": 6,
+        "width": 4,
+        "height": 2
+      },
+      "fragile": false,
+      "returnRisk": "medium",
+      "brandRisk": "high",
+      "veroRisk": "high",
+      "medicalClaimsRisk": "low",
+      "imageAuthorizationStatus": "unknown",
+      "competitorCount": 5,
+      "soldCompsMedianPrice": 30,
+      "marketConfidence": "low"
+    },
+    "intakeNotes": "Simulated Blocked candidate because brand and VeRO risk are high."
+  }
+]
