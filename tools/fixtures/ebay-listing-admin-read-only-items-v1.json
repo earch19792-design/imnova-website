@@ -1,0 +1,131 @@
+{
+  "contractVersion": "EBAY_LISTING_ADMIN_READ_ONLY_DATA_CONTRACT_V1",
+  "generatedAt": "2026-01-01T00:00:00.000Z",
+  "source": "simulated",
+  "items": [
+    {
+      "id": "sim-listing-gen-001",
+      "caseId": "LISTING-GEN-001",
+      "candidateName": "Simulated ideal listing candidate",
+      "generatedAt": "2026-01-01T00:00:00.000Z",
+      "sourceType": "simulated",
+      "listingState": "LISTING_DRAFT_READY",
+      "qaState": "QA_PASSED_FOR_HUMAN_REVIEW",
+      "recommendedDecision": "PROCEED_TO_HUMAN_REVIEW",
+      "executiveSummary": "Ready for human review.",
+      "missingData": [],
+      "riskFlags": [],
+      "blockedReasons": [],
+      "requiredHumanActions": [
+        "Review manually before any future preparation."
+      ],
+      "badges": [
+        "Read-only",
+        "Dry-run",
+        "No eBay API",
+        "No real draft",
+        "Not published",
+        "Human review required",
+        "Proceed to human review"
+      ],
+      "safetyFlags": {
+        "advisoryOnly": true,
+        "localOnly": true,
+        "externalCallsMade": false,
+        "ebayApiUsed": false,
+        "realDraftCreated": false,
+        "publishedToEbay": false,
+        "listingMutated": false,
+        "requiresHumanReview": true
+      }
+    },
+    {
+      "id": "sim-listing-gen-004",
+      "caseId": "LISTING-GEN-004",
+      "candidateName": "Simulated blocked compliance candidate",
+      "generatedAt": "2026-01-01T00:00:00.000Z",
+      "sourceType": "simulated",
+      "listingState": "LISTING_BLOCKED",
+      "qaState": "QA_BLOCKED",
+      "recommendedDecision": "BLOCK_DO_NOT_ADVANCE",
+      "executiveSummary": "Blocked by simulated brand, VeRO, and compliance risk.",
+      "missingData": [],
+      "riskFlags": [
+        "brand_or_vero_high",
+        "simulated_compliance_risk"
+      ],
+      "blockedReasons": [
+        "brand_or_vero_high",
+        "compliance_blocked"
+      ],
+      "requiredHumanActions": [
+        "Do not advance without audited human review."
+      ],
+      "badges": [
+        "Read-only",
+        "Dry-run",
+        "No eBay API",
+        "No real draft",
+        "Not published",
+        "Human review required",
+        "Blocked"
+      ],
+      "safetyFlags": {
+        "advisoryOnly": true,
+        "localOnly": true,
+        "externalCallsMade": false,
+        "ebayApiUsed": false,
+        "realDraftCreated": false,
+        "publishedToEbay": false,
+        "listingMutated": false,
+        "requiresHumanReview": true
+      }
+    },
+    {
+      "id": "sim-listing-gen-006",
+      "caseId": "LISTING-GEN-006",
+      "candidateName": "Simulated economics review candidate",
+      "generatedAt": "2026-01-01T00:00:00.000Z",
+      "sourceType": "simulated",
+      "listingState": "LISTING_REVIEW_REQUIRED",
+      "qaState": "QA_REVIEW_REQUIRED",
+      "recommendedDecision": "REVIEW_ECONOMICS",
+      "executiveSummary": "Review price, margin, ROI, fees, sold comps, shipping, and return risk.",
+      "missingData": [],
+      "riskFlags": [
+        "weak_margin",
+        "price_risk",
+        "roi_review"
+      ],
+      "blockedReasons": [],
+      "requiredHumanActions": [
+        "Review price, margin, ROI, fees, sold comps, shipping, and return risk."
+      ],
+      "badges": [
+        "Read-only",
+        "Dry-run",
+        "No eBay API",
+        "No real draft",
+        "Not published",
+        "Human review required",
+        "Review economics"
+      ],
+      "safetyFlags": {
+        "advisoryOnly": true,
+        "localOnly": true,
+        "externalCallsMade": false,
+        "ebayApiUsed": false,
+        "realDraftCreated": false,
+        "publishedToEbay": false,
+        "listingMutated": false,
+        "requiresHumanReview": true
+      }
+    }
+  ],
+  "safetySummary": {
+    "totalItems": 3,
+    "blockedItems": 1,
+    "itemsRequiringHumanReview": 3,
+    "unsafeItemsRejected": 0
+  }
+}
