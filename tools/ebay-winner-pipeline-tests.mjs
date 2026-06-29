@@ -30,6 +30,9 @@ import {
   buildListingProposalFromCandidate,
 } from "../lib/ebay-winner-pipeline/listing-proposal-generator.mjs"
 import {
+  evaluateListingProposalQa,
+} from "../lib/ebay-winner-pipeline/listing-proposal-qa-runner.mjs"
+import {
   buildPipelineProductSelectionDecision,
   mapPipelineResultToProductSelectionCandidate,
 } from "../lib/ebay-winner-pipeline/service.mjs"
@@ -1788,6 +1791,296 @@ test("listing proposal generator fixture: no inventa Brand MPN Model ni certific
       result.listingProposal
     ),
     /FDA|certified|official/i
+  )
+})
+
+function buildFixtureListingProposal(caseId) {
+  const fixtureCase =
+    ebayListingGeneratorCases.find(item =>
+      item.caseId === caseId
+    )
+
+  assert.ok(
+    fixtureCase,
+    `missing listing generator fixture ${caseId}`
+  )
+
+  return buildListingProposalFromCandidate(
+    fixtureCase.candidate,
+    {
+      sourceCaseId:
+        fixtureCase.caseId,
+      sourceType:
+        "listing_generator_fixture",
+      selectionDecision:
+        "approve",
+      selectionState:
+        "APPROVED_FOR_DRAFT",
+    }
+  )
+}
+
+test("listing proposal QA runner: propuesta ideal pasa para revision humana", () => {
+  const proposal =
+    buildFixtureListingProposal(
+      "LISTING-GEN-001"
+    )
+
+  const result =
+    evaluateListingProposalQa(proposal)
+
+  assert.equal(
+    result.schemaVersion,
+    "EBAY_LISTING_QA_RESULT_V1"
+  )
+  assert.equal(
+    result.qaState,
+    "QA_PASSED_FOR_HUMAN_REVIEW"
+  )
+  assert.equal(
+    result.advisoryOnly,
+    true
+  )
+  assert.equal(
+    result.humanReviewRequired,
+    true
+  )
+  assert.notEqual(
+    result.qaState,
+    "QA_APPROVED_FOR_MANUAL_DRAFT"
+  )
+  assert.deepEqual(
+    result.blockedReasons,
+    []
+  )
+  assert.deepEqual(
+    result.missingData,
+    []
+  )
+})
+
+test("listing proposal QA runner: safety flags V1 se mantienen en resultado", () => {
+  const result =
+    evaluateListingProposalQa(
+      buildFixtureListingProposal(
+        "LISTING-GEN-001"
+      )
+    )
+
+  assert.deepEqual(
+    result.safety,
+    {
+      advisoryOnly:
+        true,
+      localOnly:
+        true,
+      externalCallsMade:
+        false,
+      ebayApiUsed:
+        false,
+      realDraftCreated:
+        false,
+      publishedToEbay:
+        false,
+      listingMutated:
+        false,
+      requiresHumanReview:
+        true,
+    }
+  )
+})
+
+test("listing proposal QA runner: datos faltantes devuelven incomplete", () => {
+  const result =
+    evaluateListingProposalQa(
+      buildFixtureListingProposal(
+        "LISTING-GEN-002"
+      )
+    )
+
+  assert.equal(
+    result.qaState,
+    "QA_INCOMPLETE"
+  )
+  assert.ok(
+    result.missingData.includes(
+      "weight"
+    )
+  )
+  assert.ok(
+    result.missingData.includes(
+      "dimensions"
+    )
+  )
+  assert.ok(
+    result.missingData.includes(
+      "stock"
+    )
+  )
+})
+
+test("listing proposal QA runner: imagen unknown no pasa como final-ready", () => {
+  const result =
+    evaluateListingProposalQa(
+      buildFixtureListingProposal(
+        "LISTING-GEN-003"
+      )
+    )
+
+  assert.ok(
+    [
+      "QA_INCOMPLETE",
+      "QA_REVIEW_REQUIRED",
+    ].includes(result.qaState)
+  )
+  assert.notEqual(
+    result.qaState,
+    "QA_PASSED_FOR_HUMAN_REVIEW"
+  )
+  assert.ok(
+    result.riskFlags.includes(
+      "image_authorization_missing"
+    )
+  )
+})
+
+test("listing proposal QA runner: VeRO IP o marca high bloquea", () => {
+  const result =
+    evaluateListingProposalQa(
+      buildFixtureListingProposal(
+        "LISTING-GEN-004"
+      )
+    )
+
+  assert.equal(
+    result.qaState,
+    "QA_BLOCKED"
+  )
+  assert.ok(
+    result.blockedReasons.includes(
+      "brand_or_vero_high"
+    )
+  )
+})
+
+test("listing proposal QA runner: claims medicos high bloquean", () => {
+  const result =
+    evaluateListingProposalQa(
+      buildFixtureListingProposal(
+        "LISTING-GEN-005"
+      )
+    )
+
+  assert.equal(
+    result.qaState,
+    "QA_BLOCKED"
+  )
+  assert.ok(
+    result.blockedReasons.includes(
+      "medical_claims_high"
+    )
+  )
+})
+
+test("listing proposal QA runner: margen debil o precio riesgoso requiere revision", () => {
+  const result =
+    evaluateListingProposalQa(
+      buildFixtureListingProposal(
+        "LISTING-GEN-006"
+      )
+    )
+
+  assert.equal(
+    result.qaState,
+    "QA_REVIEW_REQUIRED"
+  )
+  assert.ok(
+    result.riskFlags.includes(
+      "price_review_required"
+    )
+  )
+})
+
+test("listing proposal QA runner: safety flags alterados bloquean", () => {
+  const proposal =
+    buildFixtureListingProposal(
+      "LISTING-GEN-001"
+    )
+
+  const result =
+    evaluateListingProposalQa({
+      ...proposal,
+      safety: {
+        ...proposal.safety,
+        ebayApiUsed:
+          true,
+      },
+    })
+
+  assert.equal(
+    result.qaState,
+    "QA_BLOCKED"
+  )
+  assert.ok(
+    result.blockedReasons.includes(
+      "invalid_safety_ebayApiUsed"
+    )
+  )
+})
+
+test("listing proposal QA runner: evalua todos los outputs del fixture del generador", () => {
+  const expectedStates = {
+    "LISTING-GEN-001":
+      "QA_PASSED_FOR_HUMAN_REVIEW",
+    "LISTING-GEN-002":
+      "QA_INCOMPLETE",
+    "LISTING-GEN-003":
+      "QA_INCOMPLETE",
+    "LISTING-GEN-004":
+      "QA_BLOCKED",
+    "LISTING-GEN-005":
+      "QA_BLOCKED",
+    "LISTING-GEN-006":
+      "QA_REVIEW_REQUIRED",
+  }
+
+  for (const item of ebayListingGeneratorCases) {
+    const result =
+      evaluateListingProposalQa(
+        buildFixtureListingProposal(
+          item.caseId
+        )
+      )
+
+    assert.equal(
+      result.schemaVersion,
+      "EBAY_LISTING_QA_RESULT_V1"
+    )
+    assert.equal(
+      result.qaState,
+      expectedStates[item.caseId]
+    )
+    assert.notEqual(
+      result.qaState,
+      "QA_APPROVED_FOR_MANUAL_DRAFT"
+    )
+  }
+})
+
+test("listing proposal QA runner: modulo local sin red ni acciones reales", () => {
+  const source =
+    fs.readFileSync(
+      "lib/ebay-winner-pipeline/listing-proposal-qa-runner.mjs",
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    source,
+    /fetch\(|createClient|supabase|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/i
+  )
+  assert.doesNotMatch(
+    source,
+    /ebay\s+api|oa(?:uth)|to(?:ken)|draft real/i
   )
 })
 
