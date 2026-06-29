@@ -1,3 +1,8 @@
+import listingAdminReadOnlyData from "../../../tools/fixtures/ebay-listing-admin-read-only-items-v1.json"
+
+const contractVersion =
+  "EBAY_LISTING_ADMIN_READ_ONLY_DATA_CONTRACT_V1"
+
 const safetyBadges = [
   "Read-only",
   "Dry-run",
@@ -5,41 +10,6 @@ const safetyBadges = [
   "No real draft",
   "Not published",
   "Human review required",
-]
-
-const safetyFlags = [
-  ["advisoryOnly", "true"],
-  ["localOnly", "true"],
-  ["externalCallsMade", "false"],
-  ["ebayApiUsed", "false"],
-  ["realDraftCreated", "false"],
-  ["publishedToEbay", "false"],
-  ["listingMutated", "false"],
-  ["requiresHumanReview", "true"],
-]
-
-const simulatedExamples = [
-  {
-    caseId: "LISTING-GEN-001",
-    listingState: "LISTING_DRAFT_READY",
-    qaState: "QA_PASSED_FOR_HUMAN_REVIEW",
-    recommendedDecision: "PROCEED_TO_HUMAN_REVIEW",
-    tone: "border-emerald-300/20 bg-emerald-300/[0.05]",
-  },
-  {
-    caseId: "LISTING-GEN-004",
-    listingState: "LISTING_BLOCKED",
-    qaState: "QA_BLOCKED",
-    recommendedDecision: "BLOCK_DO_NOT_ADVANCE",
-    tone: "border-red-300/20 bg-red-300/[0.05]",
-  },
-  {
-    caseId: "LISTING-GEN-006",
-    listingState: "LISTING_REVIEW_REQUIRED",
-    qaState: "QA_REVIEW_REQUIRED",
-    recommendedDecision: "REVIEW_ECONOMICS",
-    tone: "border-amber-300/20 bg-amber-300/[0.05]",
-  },
 ]
 
 const disabledActions = [
@@ -51,7 +21,43 @@ const disabledActions = [
   "No Supabase write",
 ]
 
+const decisionTones = {
+  PROCEED_TO_HUMAN_REVIEW:
+    "border-emerald-300/20 bg-emerald-300/[0.05]",
+  BLOCK_DO_NOT_ADVANCE:
+    "border-red-300/20 bg-red-300/[0.05]",
+  REVIEW_ECONOMICS:
+    "border-amber-300/20 bg-amber-300/[0.05]",
+  COMPLETE_MISSING_DATA:
+    "border-orange-300/20 bg-orange-300/[0.05]",
+  REVIEW_COMPLIANCE:
+    "border-yellow-300/20 bg-yellow-300/[0.05]",
+  DISCARD_CANDIDATE:
+    "border-slate-300/20 bg-slate-300/[0.05]",
+}
+
+const safetyFlags =
+  Object.entries(
+    listingAdminReadOnlyData.items[0]?.safetyFlags ?? {}
+  ).map(([label, value]) => [
+    label,
+    String(value),
+  ])
+
+function formatListSummary(values: string[]) {
+  if (values.length === 0) {
+    return "None"
+  }
+
+  return values.join(", ")
+}
+
 export default function EbayListingProposalsPage() {
+  const {
+    items,
+    safetySummary,
+  } = listingAdminReadOnlyData
+
   return (
     <main className="min-h-screen bg-[#05070d] px-6 py-8 text-white md:px-10 lg:px-14">
       <div className="mx-auto flex max-w-7xl flex-col gap-8">
@@ -100,15 +106,15 @@ export default function EbayListingProposalsPage() {
                   Data source
                 </p>
                 <p className="mt-2 text-sm font-semibold text-white">
-                  not connected yet
+                  simulated fixture
                 </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                 <p className="text-xs uppercase tracking-[0.24em] text-white/40">
-                  Future source
+                  Contract
                 </p>
-                <p className="mt-2 text-sm font-semibold text-white">
-                  safe reviewReport export / read-only data contract
+                <p className="mt-2 break-words text-sm font-semibold text-white">
+                  {contractVersion}
                 </p>
               </div>
             </div>
@@ -136,37 +142,70 @@ export default function EbayListingProposalsPage() {
           </div>
         </section>
 
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {Object.entries(safetySummary).map(([label, value]) => (
+            <div
+              key={label}
+              className="rounded-3xl border border-white/10 bg-white/[0.03] p-5"
+            >
+              <p className="text-xs uppercase tracking-[0.24em] text-white/40">
+                {label}
+              </p>
+              <p className="mt-3 text-3xl font-black text-cyan-100">
+                {value}
+              </p>
+            </div>
+          ))}
+        </section>
+
         <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/50">
-                Simulated examples
+                Simulated fixture
               </p>
               <h2 className="mt-2 text-2xl font-black text-white">
-                Placeholder review states
+                Read-only proposal items
               </h2>
             </div>
             <p className="text-sm text-white/45">
-              Static fixture examples only. No real product data.
+              Safe fixture records only. No real product data.
             </p>
           </div>
 
           <div className="mt-6 grid gap-4 xl:grid-cols-3">
-            {simulatedExamples.map((example) => (
+            {items.map((item) => (
               <article
-                key={example.caseId}
-                className={`rounded-3xl border p-5 ${example.tone}`}
+                key={item.caseId}
+                className={`rounded-3xl border p-5 ${
+                  decisionTones[
+                    item.recommendedDecision as keyof typeof decisionTones
+                  ]
+                }`}
               >
                 <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/45">
-                  {example.caseId}
+                  {item.caseId}
                 </p>
+                <h3 className="mt-3 text-lg font-black text-white">
+                  {item.candidateName}
+                </h3>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {item.badges.map((badge) => (
+                    <span
+                      key={badge}
+                      className="rounded-full border border-white/10 bg-black/25 px-3 py-1.5 text-[11px] font-semibold text-white/70"
+                    >
+                      {badge}
+                    </span>
+                  ))}
+                </div>
                 <dl className="mt-5 space-y-4">
                   <div>
                     <dt className="text-xs text-white/40">
                       listingState
                     </dt>
                     <dd className="mt-1 break-words text-sm font-bold text-white">
-                      {example.listingState}
+                      {item.listingState}
                     </dd>
                   </div>
                   <div>
@@ -174,7 +213,7 @@ export default function EbayListingProposalsPage() {
                       qaState
                     </dt>
                     <dd className="mt-1 break-words text-sm font-bold text-white">
-                      {example.qaState}
+                      {item.qaState}
                     </dd>
                   </div>
                   <div>
@@ -182,10 +221,49 @@ export default function EbayListingProposalsPage() {
                       recommendedDecision
                     </dt>
                     <dd className="mt-1 break-words text-sm font-bold text-white">
-                      {example.recommendedDecision}
+                      {item.recommendedDecision}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-white/40">
+                      missingData
+                    </dt>
+                    <dd className="mt-1 break-words text-sm font-bold text-white">
+                      {item.missingData.length}:{" "}
+                      {formatListSummary(item.missingData)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-white/40">
+                      riskFlags
+                    </dt>
+                    <dd className="mt-1 break-words text-sm font-bold text-white">
+                      {item.riskFlags.length}:{" "}
+                      {formatListSummary(item.riskFlags)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-white/40">
+                      blockedReasons
+                    </dt>
+                    <dd className="mt-1 break-words text-sm font-bold text-white">
+                      {item.blockedReasons.length}:{" "}
+                      {formatListSummary(item.blockedReasons)}
                     </dd>
                   </div>
                 </dl>
+                <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-white/40">
+                    Required human actions
+                  </p>
+                  <ul className="mt-3 space-y-2 text-sm font-semibold text-white/75">
+                    {item.requiredHumanActions.map((action) => (
+                      <li key={action}>
+                        {action}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </article>
             ))}
           </div>
