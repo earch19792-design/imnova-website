@@ -6064,11 +6064,14 @@ test("luna portex catalog coverage audit fixture: display exige advertencia visi
 
   for (const expectedCopy of [
     "Catalog coverage: Partial — synced configured collections only",
+    "Top 50 within synced Luna Portex scope",
     "Do not claim full Luna Portex catalog scan yet",
     "Configured collections only",
     "Coverage review required",
     "Partial coverage for discovery",
     "Mandatory monitoring for linked products",
+    "Protect existing reviewed/listed products",
+    "Find new opportunities within synced scope",
     "Linked product not covered by current sync scope",
     "Stock and price changes may be missed",
     "Manual Luna Portex check required",
@@ -6082,11 +6085,29 @@ test("luna portex catalog coverage audit fixture: display exige advertencia visi
 })
 
 test("luna portex catalog coverage audit fixture: separa discovery radar y linked product monitor", () => {
+  const radarOperatingModel =
+    ebayLunaPortexCatalogCoverageAuditFixture.radarOperatingModel
   const discoveryRadarCoverage =
     ebayLunaPortexCatalogCoverageAuditFixture.discoveryRadarCoverage
   const linkedProductMonitor =
     ebayLunaPortexCatalogCoverageAuditFixture.linkedProductMonitor
 
+  assert.equal(
+    radarOperatingModel.operatingMode,
+    "SYNCED_SCOPE_WITH_LINKED_PRODUCT_PROTECTION"
+  )
+  assert.equal(
+    radarOperatingModel.fullCatalogRequiredToOperate,
+    false
+  )
+  assert.equal(
+    radarOperatingModel.fullCatalogClaimAllowed,
+    false
+  )
+  assert.equal(
+    radarOperatingModel.discoveryRankingLabel,
+    "Top 50 within synced Luna Portex scope"
+  )
   assert.equal(
     discoveryRadarCoverage.coverageStatus,
     "CATALOG_COVERAGE_PARTIAL"
@@ -6094,6 +6115,10 @@ test("luna portex catalog coverage audit fixture: separa discovery radar y linke
   assert.equal(
     discoveryRadarCoverage.fullCatalogClaimAllowed,
     false
+  )
+  assert.equal(
+    discoveryRadarCoverage.operationAllowedWithinSyncedScope,
+    true
   )
   assert.equal(
     linkedProductMonitor.monitorStatus,
@@ -6106,6 +6131,10 @@ test("luna portex catalog coverage audit fixture: separa discovery radar y linke
   assert.equal(
     linkedProductMonitor.coverageDependency,
     "MUST_VERIFY_LINKED_PRODUCTS_IN_SYNC_SCOPE"
+  )
+  assert.equal(
+    linkedProductMonitor.operationBlockedByPartialCatalogCoverage,
+    false
   )
 
   for (const expectedState of [
@@ -10734,6 +10763,14 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
+    /Synced Scope Operating Model/
+  )
+  assert.match(
+    source,
+    /Top 50 within synced Luna Portex scope/
+  )
+  assert.match(
+    source,
     /Do not claim full Luna Portex catalog scan yet/
   )
   assert.match(
@@ -10759,6 +10796,14 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   assert.match(
     source,
     /Mandatory monitoring for linked products/
+  )
+  assert.match(
+    source,
+    /Protect existing reviewed\/listed products/
+  )
+  assert.match(
+    source,
+    /Find new opportunities within synced scope/
   )
   assert.match(
     source,

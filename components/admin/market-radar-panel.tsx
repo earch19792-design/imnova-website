@@ -77,6 +77,10 @@ const MARKET_RADAR_SYNC_TIMEOUT_MS =
 const catalogCoverageAuditCopy = {
   coverageLabel:
     "Catalog coverage: Partial — synced configured collections only",
+  operatingModelHeading:
+    "Synced Scope Operating Model",
+  syncedScopeRankingLabel:
+    "Top 50 within synced Luna Portex scope",
   discoveryMonitoringHeading:
     "Discovery vs Linked Product Monitoring",
   discoveryCoverageLabel:
@@ -85,6 +89,10 @@ const catalogCoverageAuditCopy = {
     "Partial coverage for discovery",
   mandatoryLinkedMonitoring:
     "Mandatory monitoring for linked products",
+  protectExistingReviewedListed:
+    "Protect existing reviewed/listed products",
+  findNewOpportunitiesWithinSyncedScope:
+    "Find new opportunities within synced scope",
   protectExistingProductsFirst:
     "Protect existing products first",
   linkedProductNotCovered:
@@ -6487,12 +6495,18 @@ export function MarketRadarPanel({
         </div>
         <div className="mt-5 rounded-lg border border-amber-200/15 bg-black/20 p-4">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-100/70">
-            {catalogCoverageAuditCopy.discoveryMonitoringHeading}
+            {catalogCoverageAuditCopy.operatingModelHeading}
           </p>
           <div className="mt-3 grid gap-2 text-sm font-semibold text-amber-50/80 md:grid-cols-2">
+            <span>{catalogCoverageAuditCopy.coverageLabel}</span>
+            <span>{catalogCoverageAuditCopy.syncedScopeRankingLabel}</span>
             <span>{catalogCoverageAuditCopy.discoveryCoverageLabel}</span>
             <span>{catalogCoverageAuditCopy.partialCoverageForDiscovery}</span>
             <span>{catalogCoverageAuditCopy.mandatoryLinkedMonitoring}</span>
+            <span>{catalogCoverageAuditCopy.protectExistingReviewedListed}</span>
+            <span>
+              {catalogCoverageAuditCopy.findNewOpportunitiesWithinSyncedScope}
+            </span>
             <span>{catalogCoverageAuditCopy.protectExistingProductsFirst}</span>
             <span>{catalogCoverageAuditCopy.linkedProductNotCovered}</span>
             <span>{catalogCoverageAuditCopy.stockAndPriceRisk}</span>

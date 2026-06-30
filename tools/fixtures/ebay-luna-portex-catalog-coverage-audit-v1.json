@@ -8,11 +8,36 @@
   "coverageStatus": "CATALOG_COVERAGE_PARTIAL",
   "coverageLabel": "Catalog coverage: Partial — synced configured collections only",
   "coverageDecision": "DO_NOT_CLAIM_FULL_CATALOG_SCAN",
+  "radarOperatingModel": {
+    "operatingMode": "SYNCED_SCOPE_WITH_LINKED_PRODUCT_PROTECTION",
+    "fullCatalogRequiredToOperate": false,
+    "fullCatalogClaimAllowed": false,
+    "coverageWarningAlwaysVisible": true,
+    "coverageLabelRequired": "Catalog coverage: Partial — synced configured collections only",
+    "discoveryRankingLabel": "Top 50 within synced Luna Portex scope",
+    "operatingInterpretation": "Market Radar can operate within the synced scope, but it must not claim full Luna Portex catalog coverage.",
+    "primaryQueues": [
+      {
+        "queueId": "protect_existing_reviewed_or_listed_products",
+        "label": "Protect existing reviewed/listed products",
+        "priority": 1,
+        "purpose": "Protect products already touched by the seller pipeline from stock, price, margin, image, and compliance changes."
+      },
+      {
+        "queueId": "find_new_opportunities_within_synced_scope",
+        "label": "Find new opportunities within synced scope",
+        "priority": 2,
+        "purpose": "Discover new product opportunities only inside the currently synced Luna Portex scope."
+      }
+    ]
+  },
   "discoveryRadarCoverage": {
     "purpose": "Discover new eBay opportunities from the currently configured Luna Portex sync scope.",
     "coverageStatus": "CATALOG_COVERAGE_PARTIAL",
     "coverageLabel": "Discovery coverage: Partial — synced configured collections only",
+    "rankingLabel": "Top 50 within synced Luna Portex scope",
     "fullCatalogClaimAllowed": false,
+    "operationAllowedWithinSyncedScope": true,
     "sellerInterpretation": "New opportunity rankings only represent products inside the currently configured sync scope."
   },
   "linkedProductMonitor": {
@@ -20,6 +45,7 @@
     "monitorStatus": "LINKED_PRODUCT_MONITOR_REQUIRED",
     "priorityPolicy": "PROTECT_EXISTING_PRODUCTS_FIRST",
     "coverageDependency": "MUST_VERIFY_LINKED_PRODUCTS_IN_SYNC_SCOPE",
+    "operationBlockedByPartialCatalogCoverage": false,
     "linkedPipelineStates": [
       "candidate_created",
       "listing_package_created",
@@ -105,11 +131,14 @@
     "mustDisplayFullCatalogClaimWarning": true,
     "requiredVisibleCopy": [
       "Catalog coverage: Partial — synced configured collections only",
+      "Top 50 within synced Luna Portex scope",
       "Do not claim full Luna Portex catalog scan yet",
       "Configured collections only",
       "Coverage review required",
       "Partial coverage for discovery",
       "Mandatory monitoring for linked products",
+      "Protect existing reviewed/listed products",
+      "Find new opportunities within synced scope",
       "Linked product not covered by current sync scope",
       "Stock and price changes may be missed",
       "Manual Luna Portex check required",
@@ -146,7 +175,7 @@
   "sellerImpact": {
     "sellerDecisionStatus": "USE_RADAR_AS_PARTIAL_CATALOG_SIGNAL",
     "rankingInterpretation": "Top products are top products within the currently configured sync scope, not necessarily the full Luna Portex catalog.",
-    "listingDecisionImpact": "Coverage may be partial for discovery, but linked products require priority monitoring. If a linked product is not covered by the current sync scope, the seller must manually check Luna Portex because stock and price changes may be missed.",
+    "listingDecisionImpact": "Coverage may be partial for discovery, but Market Radar can still operate within the synced scope. Linked products require priority monitoring. If a linked product is not covered by the current sync scope, the seller must manually check Luna Portex because stock and price changes may be missed.",
     "recommendedNextAction": "Audit configured collections and expected product counts before claiming full catalog coverage."
   },
   "safetyFlags": {
