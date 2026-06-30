@@ -77,92 +77,92 @@ const MARKET_RADAR_SYNC_TIMEOUT_MS =
 
 const catalogCoverageAuditCopy = {
   coverageLabel:
-    "Catalog coverage: Partial — synced configured collections only",
+    "Cobertura parcial: solo colecciones sincronizadas",
   operatingModelHeading:
-    "Synced Scope Operating Model",
+    "Detalle de cobertura",
   syncedScopeRankingLabel:
-    "Top 50 within synced Luna Portex scope",
+    "Top 50 dentro del alcance sincronizado",
   discoveryMonitoringHeading:
-    "Discovery vs Linked Product Monitoring",
+    "Descubrimiento y monitoreo",
   discoveryCoverageLabel:
-    "Discovery coverage: Partial — synced configured collections only",
+    "Descubrimiento parcial: solo colecciones sincronizadas",
   partialCoverageForDiscovery:
-    "Partial coverage for discovery",
+    "Cobertura parcial para descubrir productos",
   mandatoryLinkedMonitoring:
-    "Mandatory monitoring for linked products",
+    "Monitoreo obligatorio para productos vinculados",
   protectExistingReviewedListed:
-    "Protect existing reviewed/listed products",
+    "Proteger productos revisados o listados",
   findNewOpportunitiesWithinSyncedScope:
-    "Find new opportunities within synced scope",
+    "Buscar oportunidades dentro del alcance sincronizado",
   protectExistingProductsFirst:
-    "Protect existing products first",
+    "Primero proteger productos existentes",
   linkedProductNotCovered:
-    "Linked product not covered by current sync scope",
+    "Producto vinculado fuera del alcance sincronizado",
   stockAndPriceRisk:
-    "Stock and price changes may be missed",
+    "Podriamos perder cambios de stock o precio",
   manualLunaPortexCheck:
-    "Manual Luna Portex check required",
+    "Revision manual en Luna Portex requerida",
   fullCatalogWarning:
-    "Do not claim full Luna Portex catalog scan yet",
-  configuredCollectionsOnly: "Configured collections only",
-  coverageReviewRequired: "Coverage review required",
+    "No afirmar escaneo completo de Luna Portex todavia",
+  configuredCollectionsOnly: "Solo colecciones configuradas",
+  coverageReviewRequired: "Falta revisar cobertura",
   priorityOne:
-    "Priority 1: Published/listed products with stock or price risk",
+    "Prioridad 1: listados con riesgo de stock o precio",
   priorityTwo:
-    "Priority 2: Draft/listing package products with supplier changes",
+    "Prioridad 2: drafts o paquetes con cambios del proveedor",
   priorityThree:
-    "Priority 3: Blocked products back in stock",
+    "Prioridad 3: bloqueados que volvieron a stock",
   priorityFour:
-    "Priority 4: Reviewed products with margin improvement",
+    "Prioridad 4: revisados con mejora de margen",
   priorityFive:
-    "Priority 5: New opportunities from partial catalog",
+    "Prioridad 5: oportunidades nuevas del alcance parcial",
 }
 
 const sellerCommandCenterCopy = {
-  title: "eBay Seller Command Center",
+  title: "Centro de Venta eBay",
   protectFirst:
-    "Protect existing reviewed/listed products first",
+    "Primero protege productos revisados o listados",
   findWithinScope:
-    "Find new opportunities within synced scope",
+    "Despues revisa oportunidades sincronizadas",
   readOnlyRecommendations:
-    "Read-only seller recommendations",
+    "Recomendaciones de solo lectura",
   noAutomaticListingActions:
-    "No automatic listing actions",
+    "Sin acciones automaticas",
   currentRadarResults:
-    "Current Radar Results",
+    "Resultados actuales del Radar",
   referenceScenarios:
-    "Reference Scenarios",
+    "Escenarios de referencia",
   commandMenu:
-    "Seller Command Menu",
+    "Menu de trabajo",
   nextBestAction:
-    "Next best action",
+    "Siguiente accion",
   topCardLabels: [
-    "Catalog Coverage",
-    "Protect Existing Products",
-    "New Opportunities",
-    "Stock Risks",
-    "Next Best Action",
+    "Cobertura",
+    "Proteger existentes",
+    "Nuevas oportunidades",
+    "Riesgos de stock",
+    "Siguiente accion",
   ],
   queueLabels: [
-    "Protect Existing Reviewed/Listed Products",
-    "Find New Opportunities Within Synced Scope",
-    "Stock Risks",
-    "Margin Changes",
-    "Blocked / Needs Recheck",
+    "Proteger revisados o listados",
+    "Buscar oportunidades sincronizadas",
+    "Riesgo de stock",
+    "Cambios de margen",
+    "Bloqueados o por revisar",
   ],
   sampleProductLabels: [
-    "Sample linked product with stock risk",
-    "Sample linked product not covered by current sync scope",
-    "Sample blocked product back in stock",
-    "Sample reviewed product with margin improvement",
-    "Sample new opportunity within synced scope",
+    "Ejemplo vinculado con riesgo de stock",
+    "Ejemplo vinculado fuera del alcance sincronizado",
+    "Ejemplo bloqueado que volvio a stock",
+    "Ejemplo revisado con mejor margen",
+    "Ejemplo de oportunidad sincronizada",
   ],
   legend: [
-    "Green: Review for listing now",
-    "Yellow: Potential, missing validation",
-    "Red: Do not list",
-    "Blue: Reviewed, monitor",
-    "Purple: New event, reanalyze",
+    "Verde: revisar para listar",
+    "Amarillo: potencial con validacion pendiente",
+    "Rojo: no listar",
+    "Azul: revisado, monitorear",
+    "Morado: evento nuevo, reanalizar",
   ],
 }
 
@@ -6237,61 +6237,61 @@ export function MarketRadarPanel({
       id:
         "protect-existing",
       label:
-        "Protect Existing",
+        "Proteger existentes",
       filter:
         "reviewed",
       count:
         rankingCounts.reviewed,
       note:
-        "Reviewed/listed products",
+        "Revisados o listados",
     },
     {
       id:
         "new-opportunities",
       label:
-        "New Opportunities",
+        "Nuevas oportunidades",
       filter:
         "actionable",
       count:
         rankingCounts.actionable,
       note:
-        "Review now",
+        "Revisar ahora",
     },
     {
       id:
         "stock-risk",
       label:
-        "Stock Risk",
+        "Riesgo de stock",
       filter:
         "stock_needs_validation",
       count:
         rankingCounts.stockNeedsValidation,
       note:
-        "Needs stock confirmation",
+        "Confirmar cantidad",
     },
     {
       id:
         "stock-confirmed",
       label:
-        "Stock Confirmed",
+        "Stock confirmado",
       filter:
         "stock_confirmed",
       count:
         rankingCounts.stockConfirmed,
       note:
-        "Quantity confirmed",
+        "Cantidad confiable",
     },
     {
       id:
         "all-results",
       label:
-        "All Synced Results",
+        "Todo sincronizado",
       filter:
         "all",
       count:
         summary?.totalProducts || 0,
       note:
-        "Synced scope",
+        "Alcance actual",
     },
   ]
 
@@ -6616,63 +6616,6 @@ export function MarketRadarPanel({
         )}
       </section>
 
-      <section className="rounded-lg border border-amber-300/20 bg-amber-300/[0.06] p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.26em] text-amber-100/55">
-              Catalog Coverage
-            </p>
-            <h3 className="mt-2 text-lg font-black text-white">
-              {catalogCoverageAuditCopy.coverageLabel}
-            </h3>
-            <p className="mt-2 text-sm font-semibold leading-6 text-amber-50/75">
-              {catalogCoverageAuditCopy.fullCatalogWarning}
-            </p>
-          </div>
-          <div className="grid gap-2 text-xs font-bold uppercase tracking-[0.12em] text-amber-50/65 sm:grid-cols-2 lg:min-w-[420px]">
-            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
-              {catalogCoverageAuditCopy.configuredCollectionsOnly}
-            </span>
-            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
-              {catalogCoverageAuditCopy.coverageReviewRequired}
-            </span>
-            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
-              {catalogCoverageAudit.coverageStatus}
-            </span>
-            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
-              {catalogCoverageAudit.coverageDecision}
-            </span>
-          </div>
-        </div>
-        <div className="mt-5 rounded-lg border border-amber-200/15 bg-black/20 p-4">
-          <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-100/70">
-            {catalogCoverageAuditCopy.operatingModelHeading}
-          </p>
-          <div className="mt-3 grid gap-2 text-sm font-semibold text-amber-50/80 md:grid-cols-2">
-            <span>{catalogCoverageAuditCopy.coverageLabel}</span>
-            <span>{catalogCoverageAuditCopy.syncedScopeRankingLabel}</span>
-            <span>{catalogCoverageAuditCopy.discoveryCoverageLabel}</span>
-            <span>{catalogCoverageAuditCopy.partialCoverageForDiscovery}</span>
-            <span>{catalogCoverageAuditCopy.mandatoryLinkedMonitoring}</span>
-            <span>{catalogCoverageAuditCopy.protectExistingReviewedListed}</span>
-            <span>
-              {catalogCoverageAuditCopy.findNewOpportunitiesWithinSyncedScope}
-            </span>
-            <span>{catalogCoverageAuditCopy.protectExistingProductsFirst}</span>
-            <span>{catalogCoverageAuditCopy.linkedProductNotCovered}</span>
-            <span>{catalogCoverageAuditCopy.stockAndPriceRisk}</span>
-            <span>{catalogCoverageAuditCopy.manualLunaPortexCheck}</span>
-          </div>
-          <div className="mt-4 grid gap-2 text-xs font-bold uppercase tracking-[0.1em] text-amber-50/60 xl:grid-cols-5">
-            <span>{catalogCoverageAuditCopy.priorityOne}</span>
-            <span>{catalogCoverageAuditCopy.priorityTwo}</span>
-            <span>{catalogCoverageAuditCopy.priorityThree}</span>
-            <span>{catalogCoverageAuditCopy.priorityFour}</span>
-            <span>{catalogCoverageAuditCopy.priorityFive}</span>
-          </div>
-        </div>
-      </section>
-
       <section className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.055] p-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div>
@@ -6683,8 +6626,8 @@ export function MarketRadarPanel({
               {sellerCommandCenterCopy.title}
             </h2>
             <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold uppercase tracking-[0.08em] text-emerald-50/65">
-              <span>{sellerCommandCenterMvp.coverageLabel}</span>
-              <span>{sellerCommandCenterMvp.rankingLabel}</span>
+              <span>{catalogCoverageAuditCopy.coverageLabel}</span>
+              <span>{catalogCoverageAuditCopy.syncedScopeRankingLabel}</span>
               <span>{sellerCommandCenterCopy.readOnlyRecommendations}</span>
               <span>{sellerCommandCenterCopy.noAutomaticListingActions}</span>
             </div>
@@ -6755,10 +6698,10 @@ export function MarketRadarPanel({
           {sellerCommandCenterCopy.currentRadarResults}
         </p>
         <h2 className="mt-2 text-xl font-black text-white">
-          Synced Scope Product Ranking
+          Ranking del alcance sincronizado
         </h2>
         <p className="mt-2 text-xs font-semibold leading-5 text-white/45">
-          The command center stays compact so this live synced-scope ranking remains the main workspace.
+          {catalogCoverageAuditCopy.syncedScopeRankingLabel} · {catalogCoverageAuditCopy.coverageLabel} · Solo lectura
         </p>
       </section>
 
@@ -7282,6 +7225,56 @@ export function MarketRadarPanel({
               </p>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-amber-300/20 bg-amber-300/[0.045] p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.26em] text-amber-100/55">
+              Cobertura del catalogo
+            </p>
+            <h3 className="mt-2 text-lg font-black text-white">
+              {catalogCoverageAuditCopy.coverageLabel}
+            </h3>
+            <p className="mt-2 text-sm font-semibold leading-6 text-amber-50/70">
+              {catalogCoverageAuditCopy.fullCatalogWarning}
+            </p>
+          </div>
+          <div className="grid gap-2 text-xs font-bold uppercase tracking-[0.1em] text-amber-50/65 sm:grid-cols-2 lg:min-w-[420px]">
+            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
+              {catalogCoverageAuditCopy.configuredCollectionsOnly}
+            </span>
+            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
+              {catalogCoverageAuditCopy.coverageReviewRequired}
+            </span>
+            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
+              {catalogCoverageAudit.coverageStatus}
+            </span>
+            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
+              {catalogCoverageAudit.coverageDecision}
+            </span>
+          </div>
+        </div>
+        <div className="mt-4 rounded-lg border border-amber-200/15 bg-black/20 p-3">
+          <p className="text-xs font-black uppercase tracking-[0.16em] text-amber-100/70">
+            {catalogCoverageAuditCopy.operatingModelHeading}
+          </p>
+          <div className="mt-3 grid gap-2 text-sm font-semibold text-amber-50/75 md:grid-cols-2">
+            <span>{catalogCoverageAuditCopy.syncedScopeRankingLabel}</span>
+            <span>{catalogCoverageAuditCopy.discoveryCoverageLabel}</span>
+            <span>{catalogCoverageAuditCopy.mandatoryLinkedMonitoring}</span>
+            <span>{catalogCoverageAuditCopy.protectExistingProductsFirst}</span>
+            <span>{catalogCoverageAuditCopy.linkedProductNotCovered}</span>
+            <span>{catalogCoverageAuditCopy.manualLunaPortexCheck}</span>
+          </div>
+          <div className="mt-4 grid gap-2 text-xs font-bold uppercase tracking-[0.08em] text-amber-50/55 xl:grid-cols-5">
+            <span>{catalogCoverageAuditCopy.priorityOne}</span>
+            <span>{catalogCoverageAuditCopy.priorityTwo}</span>
+            <span>{catalogCoverageAuditCopy.priorityThree}</span>
+            <span>{catalogCoverageAuditCopy.priorityFour}</span>
+            <span>{catalogCoverageAuditCopy.priorityFive}</span>
+          </div>
         </div>
       </section>
     </div>

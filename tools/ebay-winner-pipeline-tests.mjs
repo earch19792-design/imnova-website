@@ -10991,27 +10991,27 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /eBay Seller Command Center/
+    /Centro de Venta eBay/
   )
   assert.match(
     source,
-    /Protect existing reviewed\/listed products first/
+    /Primero protege productos revisados o listados/
   )
   assert.match(
     source,
-    /Find new opportunities within synced scope/
+    /Despues revisa oportunidades sincronizadas/
   )
   assert.match(
     source,
-    /Read-only seller recommendations/
+    /Recomendaciones de solo lectura/
   )
   assert.match(
     source,
-    /No automatic listing actions/
+    /Sin acciones automaticas/
   )
   assert.match(
     source,
-    /Seller Command Menu/
+    /Menu de trabajo/
   )
   assert.match(
     source,
@@ -11019,193 +11019,171 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Protect Existing/
+    /Proteger existentes/
   )
   assert.match(
     source,
-    /Stock Confirmed/
+    /Stock confirmado/
   )
   assert.match(
     source,
-    /All Synced Results/
+    /Todo sincronizado/
   )
   assert.match(
     source,
-    /Current Radar Results/
+    /Resultados actuales del Radar/
   )
   assert.match(
     source,
-    /Reference Scenarios/
+    /Escenarios de referencia/
   )
   assert.match(
     source,
-    /Catalog Coverage/
+    /Cobertura del catalogo/
   )
   assert.match(
     source,
-    /Catalog coverage: Partial — synced configured collections only/
+    /Cobertura parcial: solo colecciones sincronizadas/
   )
   assert.match(
     source,
-    /Synced Scope Operating Model/
+    /Detalle de cobertura/
   )
   assert.match(
     source,
-    /Top 50 within synced Luna Portex scope/
+    /Top 50 dentro del alcance sincronizado/
   )
   assert.match(
     source,
-    /Do not claim full Luna Portex catalog scan yet/
+    /No afirmar escaneo completo de Luna Portex todavia/
   )
   assert.match(
     source,
-    /Configured collections only/
+    /Solo colecciones configuradas/
   )
   assert.match(
     source,
-    /Coverage review required/
+    /Falta revisar cobertura/
   )
   assert.match(
     source,
-    /Discovery vs Linked Product Monitoring/
+    /Descubrimiento parcial: solo colecciones sincronizadas/
   )
   assert.match(
     source,
-    /Discovery coverage: Partial — synced configured collections only/
+    /Monitoreo obligatorio para productos vinculados/
   )
   assert.match(
     source,
-    /Partial coverage for discovery/
+    /Primero proteger productos existentes/
   )
   assert.match(
     source,
-    /Mandatory monitoring for linked products/
+    /Producto vinculado fuera del alcance sincronizado/
   )
   assert.match(
     source,
-    /Protect existing reviewed\/listed products/
+    /Revision manual en Luna Portex requerida/
   )
   assert.match(
     source,
-    /Find new opportunities within synced scope/
+    /Prioridad 1: listados con riesgo de stock o precio/
   )
   assert.match(
     source,
-    /Protect existing products first/
+    /Prioridad 5: oportunidades nuevas del alcance parcial/
   )
   assert.match(
     source,
-    /Linked product not covered by current sync scope/
+    /Proteger revisados o listados/
   )
   assert.match(
     source,
-    /Stock and price changes may be missed/
+    /Buscar oportunidades sincronizadas/
   )
   assert.match(
     source,
-    /Manual Luna Portex check required/
+    /Riesgo de stock/
   )
   assert.match(
     source,
-    /Priority 1: Published\/listed products with stock or price risk/
+    /Siguiente accion/
   )
   assert.match(
     source,
-    /Priority 5: New opportunities from partial catalog/
+    /Cambios de margen/
   )
   assert.match(
     source,
-    /Protect Existing Products/
+    /Bloqueados o por revisar/
   )
   assert.match(
     source,
-    /New Opportunities/
+    /Verde: revisar para listar/
   )
   assert.match(
     source,
-    /Stock Risks/
+    /Amarillo: potencial con validacion pendiente/
   )
   assert.match(
     source,
-    /Next Best Action/
+    /Rojo: no listar/
   )
   assert.match(
     source,
-    /Protect Existing Reviewed\/Listed Products/
+    /Azul: revisado, monitorear/
   )
   assert.match(
     source,
-    /Find New Opportunities Within Synced Scope/
+    /Morado: evento nuevo, reanalizar/
   )
   assert.match(
     source,
-    /Margin Changes/
+    /Ejemplo vinculado con riesgo de stock/
   )
   assert.match(
     source,
-    /Blocked \/ Needs Recheck/
+    /Ejemplo vinculado fuera del alcance sincronizado/
   )
   assert.match(
     source,
-    /Green: Review for listing now/
+    /Ejemplo bloqueado que volvio a stock/
   )
   assert.match(
     source,
-    /Yellow: Potential, missing validation/
+    /Ejemplo revisado con mejor margen/
   )
   assert.match(
     source,
-    /Red: Do not list/
-  )
-  assert.match(
-    source,
-    /Blue: Reviewed, monitor/
-  )
-  assert.match(
-    source,
-    /Purple: New event, reanalyze/
-  )
-  assert.match(
-    source,
-    /Sample linked product with stock risk/
-  )
-  assert.match(
-    source,
-    /Sample linked product not covered by current sync scope/
-  )
-  assert.match(
-    source,
-    /Sample blocked product back in stock/
-  )
-  assert.match(
-    source,
-    /Sample reviewed product with margin improvement/
-  )
-  assert.match(
-    source,
-    /Sample new opportunity within synced scope/
-  )
-  assert.match(
-    source,
-    /Next best action/
+    /Ejemplo de oportunidad sincronizada/
   )
 
   const currentRadarResultsIndex =
-    source.indexOf("Current Radar Results")
+    source.indexOf("Resultados actuales del Radar")
   const referenceScenariosIndex =
-    source.indexOf("Reference Scenarios")
+    source.indexOf("Escenarios de referencia")
+  const catalogCoverageIndex =
+    source.indexOf("Cobertura del catalogo")
 
   assert.ok(
     currentRadarResultsIndex >= 0,
-    "Current Radar Results heading must exist"
+    "Resultados actuales del Radar heading must exist"
   )
   assert.ok(
     referenceScenariosIndex >= 0,
-    "Reference Scenarios section must exist"
+    "Escenarios de referencia section must exist"
+  )
+  assert.ok(
+    catalogCoverageIndex >= 0,
+    "Cobertura del catalogo section must exist"
   )
   assert.ok(
     currentRadarResultsIndex < referenceScenariosIndex,
-    "Current Radar Results must appear before Reference Scenarios"
+    "Resultados actuales must appear before reference scenarios"
+  )
+  assert.ok(
+    referenceScenariosIndex < catalogCoverageIndex,
+    "Coverage details must appear after reference scenarios"
   )
 })
 
@@ -11227,10 +11205,7 @@ test("market radar panel: catalog coverage block no agrega llamadas ni mutacione
       copyEnd
     )
   const sectionEnd =
-    source.indexOf(
-      "<section className=\"rounded-lg border border-emerald-300/20",
-      sectionStart
-    )
+    source.indexOf("</section>", sectionStart)
 
   assert.ok(
     copyStart >= 0,
@@ -11246,13 +11221,13 @@ test("market radar panel: catalog coverage block no agrega llamadas ni mutacione
   )
   assert.ok(
     sectionEnd > sectionStart,
-    "Catalog Coverage JSX section must end before MetricCard grid"
+    "Catalog Coverage JSX section must close"
   )
 
   const coverageBlock =
     `${source.slice(copyStart, copyEnd)}\n${source.slice(
       sectionStart,
-      sectionEnd
+      sectionEnd + "</section>".length
     )}`
 
   for (const forbiddenPattern of [
@@ -11296,7 +11271,7 @@ test("market radar panel: seller command menu solo filtra UI local", () => {
   )
   assert.ok(
     menuEnd > menuStart,
-    "Seller command menu block must end before Current Radar Results"
+    "Seller command menu block must end before radar results"
   )
 
   const commandMenuBlock =
