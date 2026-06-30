@@ -3,6 +3,7 @@ import type {
 } from "react"
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
 import imageAssetManifest from "../../../tools/fixtures/ebay-luna-portex-image-asset-manifest-v1.json"
+import mainImageEnhancementBrief from "../../../tools/fixtures/ebay-luna-portex-main-image-enhancement-brief-v1.json"
 import imageSourceIntake from "../../../tools/fixtures/ebay-luna-portex-image-source-intake-v1.json"
 import imageSourceReviewGate from "../../../tools/fixtures/ebay-luna-portex-image-source-review-gate-v1.json"
 import qaReview from "../../../tools/fixtures/ebay-first-listing-qa-review-v1.json"
@@ -92,6 +93,41 @@ const imageSourceReviewGateCopy = {
     "Human source review required",
   requestMoreEvidence:
     "Request more source evidence",
+}
+
+const mainImageEnhancementBriefCopy = {
+  briefStatus:
+    "ENHANCEMENT_BRIEF_READY_BUT_SOURCE_BLOCKED",
+  executionStatus:
+    "DO_NOT_ENHANCE_YET",
+  draftImpact:
+    "DRAFT_BLOCKED_UNTIL_SOURCE_REVIEW_AND_IMAGE_QA_APPROVED",
+  sourceReviewRequired:
+    "Source review required before enhancement",
+  authorizedSource:
+    "Authorized Luna Portex catalog image required",
+  pureWhiteBackground:
+    "Pure white background",
+  squareImage:
+    "1:1 eBay main image",
+  minimumResolution:
+    "Minimum 1600px",
+  productCentered:
+    "Product centered",
+  noProductAlteration:
+    "No product alteration",
+  noTextOverlay:
+    "No text overlay",
+  noTrustBadges:
+    "No trust badges",
+  noUsaFlag:
+    "No USA flag",
+  noCompetitorBranding:
+    "No competitor branding",
+  notOpenAiPayload:
+    "Not an OpenAI payload",
+  blocked:
+    "Enhancement blocked until source review approval",
 }
 
 const decisionCards = [
@@ -736,6 +772,222 @@ export default function EbayListingPackagePage() {
 
         <Section title="Image Plan">
           <div className="grid gap-5">
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Main Image Enhancement Brief
+              </h3>
+              <div className="mt-3 grid gap-4 lg:grid-cols-2">
+                <FieldGrid
+                  fields={[
+                    [
+                      "briefVersion",
+                      mainImageEnhancementBrief.briefVersion,
+                    ],
+                    [
+                      "briefStatus",
+                      mainImageEnhancementBriefCopy.briefStatus,
+                    ],
+                    [
+                      "executionStatus",
+                      mainImageEnhancementBriefCopy.executionStatus,
+                    ],
+                    [
+                      "draftImpact",
+                      mainImageEnhancementBriefCopy.draftImpact,
+                    ],
+                    [
+                      mainImageEnhancementBriefCopy.sourceReviewRequired,
+                      mainImageEnhancementBrief.sourceRequirements
+                        .sourceReviewStatusRequired,
+                    ],
+                    [
+                      mainImageEnhancementBriefCopy.authorizedSource,
+                      mainImageEnhancementBrief.sourceRequirements
+                        .requiredSource,
+                    ],
+                    [
+                      mainImageEnhancementBriefCopy.blocked,
+                      mainImageEnhancementBrief.approvalGate
+                        .currentGateStatus,
+                    ],
+                  ]}
+                />
+
+                <FieldGrid
+                  fields={[
+                    [
+                      mainImageEnhancementBriefCopy.pureWhiteBackground,
+                      mainImageEnhancementBrief.targetOutputSpec.background,
+                    ],
+                    [
+                      mainImageEnhancementBriefCopy.squareImage,
+                      mainImageEnhancementBrief.targetOutputSpec.aspectRatio,
+                    ],
+                    [
+                      mainImageEnhancementBriefCopy.minimumResolution,
+                      mainImageEnhancementBrief.targetOutputSpec
+                        .minimumResolutionPx,
+                    ],
+                    [
+                      mainImageEnhancementBriefCopy.productCentered,
+                      mainImageEnhancementBrief.targetOutputSpec
+                        .productCentered,
+                    ],
+                    [
+                      mainImageEnhancementBriefCopy.noProductAlteration,
+                      mainImageEnhancementBrief.approvalGate
+                        .enhancementAllowedNow,
+                    ],
+                    [
+                      mainImageEnhancementBriefCopy.notOpenAiPayload,
+                      mainImageEnhancementBrief.enhancementInstruction
+                        .notAnOpenAiPayload,
+                    ],
+                  ]}
+                />
+              </div>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <h4 className="text-sm font-black text-white">
+                    Allowed Enhancements
+                  </h4>
+                  <div className="mt-3">
+                    <ListBlock
+                      items={mainImageEnhancementBrief.allowedEnhancements}
+                    />
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <h4 className="text-sm font-black text-white">
+                    Prohibited Enhancements
+                  </h4>
+                  <div className="mt-3">
+                    <ListBlock
+                      items={mainImageEnhancementBrief.prohibitedEnhancements}
+                    />
+                  </div>
+                </article>
+              </div>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <h4 className="text-sm font-black text-white">
+                    Quality Checklist
+                  </h4>
+                  <div className="mt-4 grid gap-3">
+                    {mainImageEnhancementBrief.qualityChecklist.map((check) => (
+                      <div
+                        key={check.checkId}
+                        className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                      >
+                        <p className="text-sm font-bold text-white">
+                          {check.label}
+                        </p>
+                        <p className="mt-2 text-xs uppercase tracking-[0.16em] text-amber-100/70">
+                          {check.status}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <h4 className="text-sm font-black text-white">
+                    Compliance Checklist
+                  </h4>
+                  <div className="mt-4 grid gap-3">
+                    {mainImageEnhancementBrief.complianceChecklist.map((check) => (
+                      <div
+                        key={check.checkId}
+                        className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                      >
+                        <p className="text-sm font-bold text-white">
+                          {check.label}
+                        </p>
+                        <p className="mt-2 text-xs uppercase tracking-[0.16em] text-amber-100/70">
+                          {check.status}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </div>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                <FieldGrid
+                  fields={[
+                    [
+                      "approvalGate",
+                      mainImageEnhancementBrief.approvalGate
+                        .currentGateStatus,
+                    ],
+                    [
+                      "sourceReviewApproved",
+                      mainImageEnhancementBrief.approvalGate
+                        .sourceReviewApproved,
+                    ],
+                    [
+                      "enhancementAllowedNow",
+                      mainImageEnhancementBrief.approvalGate
+                        .enhancementAllowedNow,
+                    ],
+                    [
+                      "imageQaApproved",
+                      mainImageEnhancementBrief.approvalGate
+                        .imageQaApproved,
+                    ],
+                    [
+                      "draftCreationAllowed",
+                      mainImageEnhancementBrief.approvalGate
+                        .draftCreationAllowed,
+                    ],
+                  ]}
+                />
+
+                <FieldGrid
+                  fields={[
+                    [
+                      "advisoryOnly",
+                      mainImageEnhancementBrief.safetyFlags.advisoryOnly,
+                    ],
+                    [
+                      "sourceApproved",
+                      mainImageEnhancementBrief.safetyFlags.sourceApproved,
+                    ],
+                    [
+                      "enhancementExecuted",
+                      mainImageEnhancementBrief.safetyFlags
+                        .enhancementExecuted,
+                    ],
+                    [
+                      "imageGenerated",
+                      mainImageEnhancementBrief.safetyFlags.imageGenerated,
+                    ],
+                    [
+                      "ebayApiUsed",
+                      mainImageEnhancementBrief.safetyFlags.ebayApiUsed,
+                    ],
+                  ]}
+                />
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Enhancement Instruction
+                </h4>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  {mainImageEnhancementBrief.enhancementInstruction.summary}
+                </p>
+                <div className="mt-3">
+                  <ListBlock
+                    items={mainImageEnhancementBrief.enhancementInstruction.steps}
+                  />
+                </div>
+              </div>
+            </div>
+
             <div>
               <h3 className="text-sm font-black text-white">
                 Image Source Review Gate
