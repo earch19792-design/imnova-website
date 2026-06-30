@@ -166,6 +166,90 @@ const sellerCommandCenterCopy = {
   ],
 }
 
+const sellerScenarioEventLabels: Record<string, string> = {
+  low_stock:
+    "Riesgo de stock",
+  linked_product_not_covered:
+    "Fuera del alcance",
+  back_in_stock:
+    "Volvio a stock",
+  margin_improved:
+    "Margen mejoro",
+  new_opportunity:
+    "Nueva oportunidad",
+}
+
+const sellerScenarioPipelineLabels: Record<string, string> = {
+  listing_package_created:
+    "Paquete creado",
+  published_on_ebay:
+    "Publicado en eBay",
+  blocked_by_stock:
+    "Bloqueado por stock",
+  candidate_created:
+    "Candidato creado",
+  not_analyzed:
+    "Sin analizar",
+}
+
+const sellerScenarioActionLabels: Record<string, string> = {
+  RECHECK_STOCK_AND_MARGIN:
+    "Revisar stock y margen",
+  MANUAL_LUNA_PORTEX_CHECK_REQUIRED:
+    "Revisar manualmente en Luna",
+  REACTIVATE_ANALYSIS:
+    "Reactivar analisis",
+  RECALCULATE_MARGIN:
+    "Recalcular margen",
+  CREATE_LISTING_PACKAGE:
+    "Crear paquete de listing",
+}
+
+const sellerScenarioReasonLabels: Record<string, string> = {
+  SAMPLE_LUNA_001:
+    "Producto vinculado con riesgo de stock. Revisarlo antes de buscar oportunidades nuevas.",
+  SAMPLE_LUNA_002:
+    "Producto vinculado fuera del alcance sincronizado. Requiere chequeo manual para no perder cambios.",
+  SAMPLE_LUNA_003:
+    "Producto antes bloqueado que volvio a stock. Conviene reabrir analisis.",
+  SAMPLE_LUNA_004:
+    "Producto revisado con mejor margen potencial. Conviene recalcular antes de decidir.",
+  SAMPLE_LUNA_005:
+    "Producto nuevo dentro del alcance sincronizado. Puede entrar a revision de listing.",
+}
+
+function getSellerScenarioToneClassName(
+  trafficLight: string
+) {
+  if (trafficLight === "green") {
+    return "border-emerald-200/25 bg-emerald-300/[0.08] text-emerald-50"
+  }
+
+  if (trafficLight === "red") {
+    return "border-red-200/25 bg-red-300/[0.08] text-red-50"
+  }
+
+  if (trafficLight === "blue") {
+    return "border-cyan-200/25 bg-cyan-300/[0.08] text-cyan-50"
+  }
+
+  if (trafficLight === "purple") {
+    return "border-fuchsia-200/25 bg-fuchsia-300/[0.08] text-fuchsia-50"
+  }
+
+  return "border-white/10 bg-white/[0.04] text-white/60"
+}
+
+function getSellerScenarioReasonLabel(
+  productId: string
+) {
+  return (
+    sellerScenarioReasonLabels[
+      productId.replace(/-/g, "_")
+    ] || "Revisar este caso antes de tomar accion."
+  )
+}
+
 function getAbortErrorMessage(
   fallbackMessage: string
 ) {
@@ -7598,14 +7682,17 @@ export function MarketRadarPanel({
               {sellerCommandCenterCopy.referenceScenarios}
             </p>
             <h2 className="mt-2 text-lg font-black text-white">
-              Read-only Scenario Examples
+              Casos de decision del vendedor
             </h2>
+            <p className="mt-2 max-w-2xl text-xs font-semibold leading-5 text-emerald-50/55">
+              Ejemplos de lectura rapida para entender como el Radar separa riesgo, monitoreo y descubrimiento.
+            </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="grid gap-2 text-[11px] font-bold text-emerald-50/65 sm:grid-cols-2 lg:max-w-xl">
             {sellerCommandCenterCopy.legend.map(label => (
               <span
                 key={label}
-                className="rounded-md border border-emerald-200/15 bg-black/20 px-2 py-1 text-[11px] font-bold text-emerald-50/65"
+                className="rounded-md border border-emerald-200/15 bg-black/20 px-2.5 py-2 leading-4"
               >
                 {label}
               </span>
@@ -7613,30 +7700,52 @@ export function MarketRadarPanel({
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {sellerCommandCenterMvp.sampleProducts.map((product, index) => (
             <article
               key={product.productId}
-              className="rounded-lg border border-emerald-200/15 bg-black/20 p-3"
+              className={`
+                rounded-lg
+                border
+                p-4
+                ${getSellerScenarioToneClassName(product.trafficLight)}
+              `}
             >
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-emerald-100/45">
-                {product.eventType} · {product.trafficLight}
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-md border border-current/20 bg-black/20 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em]">
+                  {sellerScenarioEventLabels[product.eventType] ||
+                    product.eventType}
+                </span>
+                <span className="rounded-md border border-current/15 bg-black/15 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] opacity-75">
+                  {product.trafficLight}
+                </span>
+              </div>
               <h3 className="mt-2 text-sm font-black leading-5 text-white">
                 {sellerCommandCenterCopy.sampleProductLabels[index] ||
                   product.displayName}
               </h3>
-              <div className="mt-3 space-y-1 text-xs text-emerald-50/65">
-                <p>
-                  Pipeline state: {product.pipelineState}
-                </p>
-                <p>
-                  {sellerCommandCenterCopy.nextBestAction}:{" "}
-                  {product.nextBestAction}
-                </p>
+              <div className="mt-3 grid gap-2 text-xs font-semibold sm:grid-cols-2">
+                <div className="rounded-md border border-current/15 bg-black/15 px-2.5 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.12em] opacity-55">
+                    Estado pipeline
+                  </p>
+                  <p className="mt-1 leading-4">
+                    {sellerScenarioPipelineLabels[product.pipelineState] ||
+                      product.pipelineState}
+                  </p>
+                </div>
+                <div className="rounded-md border border-current/15 bg-black/15 px-2.5 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.12em] opacity-55">
+                    Siguiente accion
+                  </p>
+                  <p className="mt-1 leading-4">
+                    {sellerScenarioActionLabels[product.nextBestAction] ||
+                      product.nextBestAction}
+                  </p>
+                </div>
               </div>
-              <p className="mt-2 text-xs leading-5 text-emerald-50/50">
-                {product.reason}
+              <p className="mt-3 text-xs font-semibold leading-5 opacity-75">
+                {getSellerScenarioReasonLabel(product.productId)}
               </p>
             </article>
           ))}
@@ -7664,10 +7773,10 @@ export function MarketRadarPanel({
               {catalogCoverageAuditCopy.coverageReviewRequired}
             </span>
             <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
-              {catalogCoverageAudit.coverageStatus}
+              Alcance parcial confirmado
             </span>
             <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
-              {catalogCoverageAudit.coverageDecision}
+              No vender como catalogo completo
             </span>
           </div>
         </div>
@@ -7676,19 +7785,37 @@ export function MarketRadarPanel({
             {catalogCoverageAuditCopy.operatingModelHeading}
           </p>
           <div className="mt-3 grid gap-2 text-sm font-semibold text-amber-50/75 md:grid-cols-2">
-            <span>{catalogCoverageAuditCopy.syncedScopeRankingLabel}</span>
-            <span>{catalogCoverageAuditCopy.discoveryCoverageLabel}</span>
-            <span>{catalogCoverageAuditCopy.mandatoryLinkedMonitoring}</span>
-            <span>{catalogCoverageAuditCopy.protectExistingProductsFirst}</span>
-            <span>{catalogCoverageAuditCopy.linkedProductNotCovered}</span>
-            <span>{catalogCoverageAuditCopy.manualLunaPortexCheck}</span>
+            {[
+              catalogCoverageAuditCopy.syncedScopeRankingLabel,
+              catalogCoverageAuditCopy.discoveryCoverageLabel,
+              catalogCoverageAuditCopy.mandatoryLinkedMonitoring,
+              catalogCoverageAuditCopy.protectExistingProductsFirst,
+              catalogCoverageAuditCopy.linkedProductNotCovered,
+              catalogCoverageAuditCopy.manualLunaPortexCheck,
+            ].map(item => (
+              <span
+                key={item}
+                className="rounded-md border border-amber-200/10 bg-black/15 px-3 py-2 leading-5"
+              >
+                {item}
+              </span>
+            ))}
           </div>
-          <div className="mt-4 grid gap-2 text-xs font-bold uppercase tracking-[0.08em] text-amber-50/55 xl:grid-cols-5">
-            <span>{catalogCoverageAuditCopy.priorityOne}</span>
-            <span>{catalogCoverageAuditCopy.priorityTwo}</span>
-            <span>{catalogCoverageAuditCopy.priorityThree}</span>
-            <span>{catalogCoverageAuditCopy.priorityFour}</span>
-            <span>{catalogCoverageAuditCopy.priorityFive}</span>
+          <div className="mt-4 grid gap-2 text-xs font-bold uppercase tracking-[0.08em] text-amber-50/55 md:grid-cols-2 xl:grid-cols-3">
+            {[
+              catalogCoverageAuditCopy.priorityOne,
+              catalogCoverageAuditCopy.priorityTwo,
+              catalogCoverageAuditCopy.priorityThree,
+              catalogCoverageAuditCopy.priorityFour,
+              catalogCoverageAuditCopy.priorityFive,
+            ].map(item => (
+              <span
+                key={item}
+                className="rounded-md border border-amber-200/10 bg-black/15 px-3 py-2 leading-5"
+              >
+                {item}
+              </span>
+            ))}
           </div>
         </div>
       </section>

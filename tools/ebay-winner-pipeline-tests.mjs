@@ -11123,6 +11123,30 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
+    /Casos de decision del vendedor/
+  )
+  assert.match(
+    source,
+    /getSellerScenarioToneClassName/
+  )
+  assert.match(
+    source,
+    /sellerScenarioEventLabels/
+  )
+  assert.match(
+    source,
+    /sellerScenarioPipelineLabels/
+  )
+  assert.match(
+    source,
+    /sellerScenarioActionLabels/
+  )
+  assert.match(
+    source,
+    /Producto vinculado con riesgo de stock\. Revisarlo antes de buscar oportunidades nuevas/
+  )
+  assert.match(
+    source,
     /Cobertura del catalogo/
   )
   assert.match(
@@ -11148,6 +11172,14 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   assert.match(
     source,
     /Falta revisar cobertura/
+  )
+  assert.match(
+    source,
+    /Alcance parcial confirmado/
+  )
+  assert.match(
+    source,
+    /No vender como catalogo completo/
   )
   assert.match(
     source,
@@ -11289,6 +11321,32 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
     referenceScenariosIndex < catalogCoverageIndex,
     "Coverage details must appear after reference scenarios"
   )
+
+  const scenarioSectionStart =
+    source.indexOf(
+      "<section className=\"rounded-lg border border-emerald-300/15",
+      currentRadarResultsIndex
+    )
+  const scenarioSectionEnd =
+    source.indexOf("</section>", scenarioSectionStart)
+  const scenarioBlock =
+    source.slice(
+      scenarioSectionStart,
+      scenarioSectionEnd
+    )
+
+  assert.doesNotMatch(
+    scenarioBlock,
+    /Read-only Scenario Examples/
+  )
+  assert.doesNotMatch(
+    scenarioBlock,
+    /Pipeline state:/
+  )
+  assert.doesNotMatch(
+    scenarioBlock,
+    /product\.reason/
+  )
 })
 
 test("market radar api: advisor alerts resuelven candidato por variante", () => {
@@ -11378,6 +11436,15 @@ test("market radar panel: catalog coverage block no agrega llamadas ni mutacione
       forbiddenPattern
     )
   }
+
+  assert.doesNotMatch(
+    coverageBlock,
+    /catalogCoverageAudit\.coverageStatus/
+  )
+  assert.doesNotMatch(
+    coverageBlock,
+    /catalogCoverageAudit\.coverageDecision/
+  )
 })
 
 test("market radar panel: seller command menu solo filtra UI local", () => {
