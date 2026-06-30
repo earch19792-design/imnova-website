@@ -4493,6 +4493,65 @@ function getRadarAdvisorFilterResultTitle(
   return "Todas las oportunidades"
 }
 
+function isSalesDiscoveryOpportunity(
+  alert: RadarAdvisorAlert
+) {
+  return Boolean(
+    matchesRadarAdvisorReviewFilter(
+      alert,
+      "review_opportunity"
+    ) &&
+    !alert.candidate_id &&
+    !alert.candidate_state
+  )
+}
+
+function getSalesOpportunitySignalLabel(
+  alert: RadarAdvisorAlert
+) {
+  if (alert.event_type === "new_product") {
+    return "Producto nuevo"
+  }
+
+  if (
+    alert.event_type === "price_down" ||
+    alert.event_type === "discount_started"
+  ) {
+    return "Precio/descuento"
+  }
+
+  if (alert.event_type === "restocked") {
+    return "Volvio a stock"
+  }
+
+  if (alert.event_type === "entered_collection") {
+    return "Coleccion activa"
+  }
+
+  return "Senal comercial"
+}
+
+function getSalesOpportunitySignalClassName(
+  alert: RadarAdvisorAlert
+) {
+  if (alert.event_type === "new_product") {
+    return "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100"
+  }
+
+  if (
+    alert.event_type === "price_down" ||
+    alert.event_type === "discount_started"
+  ) {
+    return "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100"
+  }
+
+  if (alert.event_type === "restocked") {
+    return "border-amber-300/25 bg-amber-300/[0.10] text-amber-100"
+  }
+
+  return "border-white/10 bg-white/[0.04] text-white/55"
+}
+
 function RadarAdvisorReviewQueue({
   alerts,
   resolvingAlertKey,
@@ -4609,6 +4668,22 @@ function RadarAdvisorReviewQueue({
                   <span className="min-w-0 break-words text-xs font-black leading-5 text-white/80">
                     {alert.seller_action_label}
                   </span>
+                  <span
+                    className={`
+                      shrink-0
+                      rounded-md
+                      border
+                      px-2
+                      py-0.5
+                      text-[10px]
+                      font-bold
+                      uppercase
+                      tracking-[0.08em]
+                      ${getSalesOpportunitySignalClassName(alert)}
+                    `}
+                  >
+                    {getSalesOpportunitySignalLabel(alert)}
+                  </span>
                   <span className="min-w-0 break-words text-[11px] font-bold leading-4 text-emerald-100/60">
                     {isResolving
                       ? "Buscando..."
@@ -4706,10 +4781,29 @@ function RadarAdvisorAlertItem({
         <span className="text-[11px] font-semibold text-white/35">
           {formatDate(alert.created_at)}
         </span>
+        <span
+          className={`
+            rounded-md
+            border
+            px-2
+            py-1
+            text-[10px]
+            font-bold
+            uppercase
+            tracking-[0.08em]
+            ${getSalesOpportunitySignalClassName(alert)}
+          `}
+        >
+          {getSalesOpportunitySignalLabel(alert)}
+        </span>
       </div>
 
       <p className="mt-2 break-words text-sm font-black leading-5 text-white">
         {alert.product_title || "Producto sin titulo"}
+      </p>
+
+      <p className="mt-2 text-xs font-semibold leading-5 text-cyan-50/65">
+        {alert.seller_reason || alert.business_signal}
       </p>
 
       <div className="mt-2 grid gap-2 text-xs leading-5 text-white/50 sm:grid-cols-[0.85fr_1fr]">
@@ -6187,13 +6281,74 @@ export function MarketRadarPanel({
   const salesOpportunityAlerts =
     useMemo(
       () =>
-        advisorAlerts.filter(alert =>
-          matchesRadarAdvisorReviewFilter(
-            alert,
-            "review_opportunity"
+        advisorAlerts
+          .filter(
+            isSalesDiscoveryOpportunity
           )
-        ),
+          .sort(
+            (left, right) =>
+              getAdvisorSellerPriorityRank(
+                left.seller_priority
+              ) -
+                getAdvisorSellerPriorityRank(
+                  right.seller_priority
+                ) ||
+              (
+                new Date(
+                  right.created_at || 0
+                ).getTime() -
+                new Date(
+                  left.created_at || 0
+                ).getTime()
+              )
+          ),
       [advisorAlerts]
+    )
+
+  const salesOpportunityScanCounts =
+    useMemo(
+      () => {
+        const reviewedOpportunityCount =
+          advisorAlerts.filter(alert =>
+            matchesRadarAdvisorReviewFilter(
+              alert,
+              "review_opportunity"
+            )
+          ).length
+
+        return {
+          newProducts:
+            salesOpportunityAlerts.filter(
+              alert =>
+                alert.event_type ===
+                "new_product"
+            ).length,
+          priceOrDiscount:
+            salesOpportunityAlerts.filter(
+              alert =>
+                alert.event_type ===
+                  "price_down" ||
+                alert.event_type ===
+                  "discount_started"
+            ).length,
+          restocked:
+            salesOpportunityAlerts.filter(
+              alert =>
+                alert.event_type ===
+                "restocked"
+            ).length,
+          alreadyKnown:
+            Math.max(
+              reviewedOpportunityCount -
+                salesOpportunityAlerts.length,
+              0
+            ),
+        }
+      },
+      [
+        advisorAlerts,
+        salesOpportunityAlerts,
+      ]
     )
 
   const advisorFilterCounts =
@@ -7254,7 +7409,7 @@ export function MarketRadarPanel({
             Oportunidades encontradas
           </h3>
           <p className="mt-2 text-[11px] font-bold uppercase tracking-[0.08em] text-cyan-100/45">
-            Productos detectados para revisar
+            Productos nuevos sin evaluacion previa
           </p>
 
           <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.025] p-3">
@@ -7273,7 +7428,34 @@ export function MarketRadarPanel({
                   "oportunidades altas"
                 )}
               </span>
+              <span>
+                {formatCountLabel(
+                  salesOpportunityScanCounts.newProducts,
+                  "producto nuevo",
+                  "productos nuevos"
+                )}
+              </span>
+              <span>
+                {formatCountLabel(
+                  salesOpportunityScanCounts.priceOrDiscount,
+                  "precio/descuento",
+                  "precio/descuento"
+                )}
+              </span>
+              <span>
+                {formatCountLabel(
+                  salesOpportunityScanCounts.restocked,
+                  "volvio a stock",
+                  "volvieron a stock"
+                )}
+              </span>
             </div>
+            <p className="mt-3 text-[11px] font-semibold leading-5 text-cyan-50/45">
+              Este escaner evita repetir productos ya evaluados. Las oportunidades conocidas con cambio de stock, precio o margen pasan al Centro de Venta eBay.
+              {salesOpportunityScanCounts.alreadyKnown > 0
+                ? ` ${salesOpportunityScanCounts.alreadyKnown} oportunidad${salesOpportunityScanCounts.alreadyKnown === 1 ? "" : "es"} ya conocida${salesOpportunityScanCounts.alreadyKnown === 1 ? "" : "s"} fue${salesOpportunityScanCounts.alreadyKnown === 1 ? "" : "ron"} enviada${salesOpportunityScanCounts.alreadyKnown === 1 ? "" : "s"} a monitoreo.`
+                : ""}
+            </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {radarAdvisorReviewFilterOptions.map(option => {
                 const isActive =

@@ -10904,7 +10904,31 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Productos detectados para revisar/
+    /Productos nuevos sin evaluacion previa/
+  )
+  assert.match(
+    source,
+    /isSalesDiscoveryOpportunity/
+  )
+  assert.match(
+    source,
+    /salesOpportunityScanCounts/
+  )
+  assert.match(
+    source,
+    /getSalesOpportunitySignalLabel/
+  )
+  assert.match(
+    source,
+    /getSalesOpportunitySignalClassName/
+  )
+  assert.match(
+    source,
+    /Este escaner evita repetir productos ya evaluados/
+  )
+  assert.match(
+    source,
+    /oportunidades conocidas con cambio de stock, precio o margen pasan al Centro de Venta eBay/
   )
   assert.match(
     source,
