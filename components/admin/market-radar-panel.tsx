@@ -41,6 +41,7 @@ import {
 import {
   type EbayPipelineFocusCandidate,
 } from "@/components/admin/ebay-winner-pipeline-panel"
+import catalogCoverageAudit from "../../tools/fixtures/ebay-luna-portex-catalog-coverage-audit-v1.json"
 
 type MarketRadarApiResponse = {
   success: boolean
@@ -72,6 +73,15 @@ const MARKET_RADAR_REQUEST_TIMEOUT_MS =
 
 const MARKET_RADAR_SYNC_TIMEOUT_MS =
   240000
+
+const catalogCoverageAuditCopy = {
+  coverageLabel:
+    "Catalog coverage: Partial — synced configured collections only",
+  fullCatalogWarning:
+    "Do not claim full Luna Portex catalog scan yet",
+  configuredCollectionsOnly: "Configured collections only",
+  coverageReviewRequired: "Coverage review required",
+}
 
 function getAbortErrorMessage(
   fallbackMessage: string
@@ -6419,6 +6429,36 @@ export function MarketRadarPanel({
             {error}
           </div>
         )}
+      </section>
+
+      <section className="rounded-lg border border-amber-300/20 bg-amber-300/[0.06] p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.26em] text-amber-100/55">
+              Catalog Coverage
+            </p>
+            <h3 className="mt-2 text-lg font-black text-white">
+              {catalogCoverageAuditCopy.coverageLabel}
+            </h3>
+            <p className="mt-2 text-sm font-semibold leading-6 text-amber-50/75">
+              {catalogCoverageAuditCopy.fullCatalogWarning}
+            </p>
+          </div>
+          <div className="grid gap-2 text-xs font-bold uppercase tracking-[0.12em] text-amber-50/65 sm:grid-cols-2 lg:min-w-[420px]">
+            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
+              {catalogCoverageAuditCopy.configuredCollectionsOnly}
+            </span>
+            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
+              {catalogCoverageAuditCopy.coverageReviewRequired}
+            </span>
+            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
+              {catalogCoverageAudit.coverageStatus}
+            </span>
+            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
+              {catalogCoverageAudit.coverageDecision}
+            </span>
+          </div>
+        </div>
       </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">

@@ -1,0 +1,91 @@
+{
+  "auditVersion": "EBAY_LUNA_PORTEX_CATALOG_COVERAGE_AUDIT_V1",
+  "caseId": "MARKET-RADAR-LUNA-PORTEX-001",
+  "sourceProvider": "luna_portex",
+  "radarContext": "ebay_market_radar",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "coverageStatus": "CATALOG_COVERAGE_PARTIAL",
+  "coverageLabel": "Catalog coverage: Partial — synced configured collections only",
+  "coverageDecision": "DO_NOT_CLAIM_FULL_CATALOG_SCAN",
+  "syncScope": {
+    "syncMode": "configured_collections_only",
+    "fullCatalogSyncConfirmed": false,
+    "configuredCollectionsKnown": false,
+    "additionalCollectionsMayExist": true,
+    "sourceApiConnected": false,
+    "realCatalogScanned": false,
+    "realSupplierDataIncluded": false,
+    "currentScopeDescription": "Market Radar should treat Luna Portex coverage as partial until configured collections and total catalog coverage are verified."
+  },
+  "collectionCoverage": {
+    "configuredCollections": [],
+    "configuredCollectionCount": 0,
+    "expectedTotalCollectionCountKnown": false,
+    "expectedTotalCollectionCount": null,
+    "additionalCollectionsDetected": false,
+    "additionalCollectionsDetectionStatus": "NOT_CHECKED",
+    "missingCollectionReviewRequired": true,
+    "coverageReviewStatus": "NEEDS_COLLECTION_SCOPE_REVIEW"
+  },
+  "countComparison": {
+    "expectedProductCountKnown": false,
+    "expectedProductCount": null,
+    "syncedProductCountKnown": false,
+    "syncedProductCount": null,
+    "coveragePercentKnown": false,
+    "coveragePercent": null,
+    "countComparisonStatus": "COUNT_COMPARISON_NOT_AVAILABLE",
+    "requiredBeforeFullCatalogClaim": true
+  },
+  "coverageRisks": [
+    "Radar may only represent configured Luna Portex collections.",
+    "Additional Luna Portex collections may exist outside the current sync scope.",
+    "Top products ranking may be incomplete if catalog coverage is partial.",
+    "Seller decisions should not assume full catalog visibility until coverage is confirmed."
+  ],
+  "requiredHumanActions": [
+    "Confirm which Luna Portex collections are configured for sync.",
+    "Confirm whether additional Luna Portex collections exist.",
+    "Compare expected product count against synced product count.",
+    "Label Market Radar coverage as partial until full coverage is verified.",
+    "Avoid claiming full Luna Portex catalog scan before coverage is confirmed."
+  ],
+  "radarDisplayRequirements": {
+    "mustDisplayCoverageStatus": true,
+    "mustDisplayCoverageLabel": true,
+    "mustDisplaySyncScope": true,
+    "mustDisplayLastCoverageReviewStatus": true,
+    "mustDisplayFullCatalogClaimWarning": true,
+    "requiredVisibleCopy": [
+      "Catalog coverage: Partial — synced configured collections only",
+      "Do not claim full Luna Portex catalog scan yet",
+      "Configured collections only",
+      "Coverage review required"
+    ]
+  },
+  "sellerImpact": {
+    "sellerDecisionStatus": "USE_RADAR_AS_PARTIAL_CATALOG_SIGNAL",
+    "rankingInterpretation": "Top products are top products within the currently configured sync scope, not necessarily the full Luna Portex catalog.",
+    "listingDecisionImpact": "Products may be reviewed for listing, but radar coverage should be treated as partial until collection and count coverage are confirmed.",
+    "recommendedNextAction": "Audit configured collections and expected product counts before claiming full catalog coverage."
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "humanReviewRequired": true,
+    "fullCatalogClaimAllowed": false,
+    "sourceApiConnected": false,
+    "lunaPortexApiUsed": false,
+    "realSupplierDataIncluded": false,
+    "supplierPrivateDataIncluded": false,
+    "externalUrlsIncluded": false,
+    "apiCallsMade": false,
+    "supabaseUsed": false,
+    "sqlUsed": false,
+    "ebayApiUsed": false,
+    "openAiApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}

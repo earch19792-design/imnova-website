@@ -652,6 +652,19 @@ const ebayLunaPortexMainImageEnhancementBriefFixture =
     )
   )
 
+const ebayLunaPortexCatalogCoverageAuditFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-luna-portex-catalog-coverage-audit-v1.json"
+  )
+
+const ebayLunaPortexCatalogCoverageAuditFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayLunaPortexCatalogCoverageAuditFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayListingImageGenerationDryRunRunnerFixtureSetPath =
   path.resolve(
     "tools/fixtures/ebay-listing-image-generation-dry-run-runner-fixture-set-v1.json"
@@ -5909,6 +5922,239 @@ test("luna portex main image enhancement brief fixture: no contiene URLs, payloa
   }
 })
 
+test("luna portex catalog coverage audit fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayLunaPortexCatalogCoverageAuditFixturePath
+    )
+  )
+  assert.equal(
+    ebayLunaPortexCatalogCoverageAuditFixture.auditVersion,
+    "EBAY_LUNA_PORTEX_CATALOG_COVERAGE_AUDIT_V1"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogCoverageAuditFixture.caseId,
+    "MARKET-RADAR-LUNA-PORTEX-001"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogCoverageAuditFixture.sourceProvider,
+    "luna_portex"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogCoverageAuditFixture.radarContext,
+    "ebay_market_radar"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogCoverageAuditFixture.marketplace,
+    "ebay_us"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogCoverageAuditFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogCoverageAuditFixture.coverageStatus,
+    "CATALOG_COVERAGE_PARTIAL"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogCoverageAuditFixture.coverageLabel,
+    "Catalog coverage: Partial — synced configured collections only"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogCoverageAuditFixture.coverageDecision,
+    "DO_NOT_CLAIM_FULL_CATALOG_SCAN"
+  )
+})
+
+test("luna portex catalog coverage audit fixture: sync scope queda parcial", () => {
+  const syncScope =
+    ebayLunaPortexCatalogCoverageAuditFixture.syncScope
+
+  assert.equal(
+    syncScope.syncMode,
+    "configured_collections_only"
+  )
+  assert.equal(
+    syncScope.fullCatalogSyncConfirmed,
+    false
+  )
+  assert.equal(
+    syncScope.additionalCollectionsMayExist,
+    true
+  )
+  assert.equal(
+    syncScope.sourceApiConnected,
+    false
+  )
+  assert.equal(
+    syncScope.realCatalogScanned,
+    false
+  )
+  assert.equal(
+    syncScope.realSupplierDataIncluded,
+    false
+  )
+})
+
+test("luna portex catalog coverage audit fixture: collection coverage requiere revision", () => {
+  const collectionCoverage =
+    ebayLunaPortexCatalogCoverageAuditFixture.collectionCoverage
+
+  assert.ok(
+    Array.isArray(
+      collectionCoverage.configuredCollections
+    )
+  )
+  assert.equal(
+    collectionCoverage.configuredCollectionCount,
+    0
+  )
+  assert.equal(
+    collectionCoverage.expectedTotalCollectionCountKnown,
+    false
+  )
+  assert.equal(
+    collectionCoverage.additionalCollectionsDetectionStatus,
+    "NOT_CHECKED"
+  )
+  assert.equal(
+    collectionCoverage.missingCollectionReviewRequired,
+    true
+  )
+})
+
+test("luna portex catalog coverage audit fixture: count comparison no esta disponible", () => {
+  const countComparison =
+    ebayLunaPortexCatalogCoverageAuditFixture.countComparison
+
+  assert.equal(
+    countComparison.expectedProductCountKnown,
+    false
+  )
+  assert.equal(
+    countComparison.syncedProductCountKnown,
+    false
+  )
+  assert.equal(
+    countComparison.coveragePercentKnown,
+    false
+  )
+  assert.equal(
+    countComparison.countComparisonStatus,
+    "COUNT_COMPARISON_NOT_AVAILABLE"
+  )
+  assert.equal(
+    countComparison.requiredBeforeFullCatalogClaim,
+    true
+  )
+})
+
+test("luna portex catalog coverage audit fixture: display exige advertencia visible", () => {
+  const displayRequirements =
+    ebayLunaPortexCatalogCoverageAuditFixture.radarDisplayRequirements
+
+  assert.equal(
+    displayRequirements.mustDisplayCoverageStatus,
+    true
+  )
+  assert.equal(
+    displayRequirements.mustDisplayFullCatalogClaimWarning,
+    true
+  )
+
+  for (const expectedCopy of [
+    "Catalog coverage: Partial — synced configured collections only",
+    "Do not claim full Luna Portex catalog scan yet",
+    "Configured collections only",
+    "Coverage review required",
+  ]) {
+    assert.ok(
+      displayRequirements.requiredVisibleCopy.includes(expectedCopy),
+      `coverage requiredVisibleCopy must include: ${expectedCopy}`
+    )
+  }
+})
+
+test("luna portex catalog coverage audit fixture: safety flags bloquean full catalog claim", () => {
+  const safetyFlags =
+    ebayLunaPortexCatalogCoverageAuditFixture.safetyFlags
+
+  for (const [
+    flagName,
+    expectedValue,
+  ] of [
+    [
+      "fullCatalogClaimAllowed",
+      false,
+    ],
+    [
+      "sourceApiConnected",
+      false,
+    ],
+    [
+      "lunaPortexApiUsed",
+      false,
+    ],
+    [
+      "realSupplierDataIncluded",
+      false,
+    ],
+    [
+      "apiCallsMade",
+      false,
+    ],
+    [
+      "supabaseUsed",
+      false,
+    ],
+    [
+      "sqlUsed",
+      false,
+    ],
+    [
+      "ebayApiUsed",
+      false,
+    ],
+    [
+      "openAiApiUsed",
+      false,
+    ],
+    [
+      "publishedToEbay",
+      false,
+    ],
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      expectedValue,
+      `${flagName} must be ${expectedValue}`
+    )
+  }
+})
+
+test("luna portex catalog coverage audit fixture: no contiene URLs ni credenciales", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayLunaPortexCatalogCoverageAuditFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /supplier private data/i,
+    /credential/i,
+    /token/i,
+    /supplierUrl/i,
+    /productUrl/i,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("image generation dry run runner fixture set: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -10330,6 +10576,41 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   assert.match(
     source,
     /Sin alertas para este filtro/
+  )
+})
+
+test("market radar panel: muestra catalog coverage parcial sin acciones nuevas", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/market-radar-panel.tsx"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /ebay-luna-portex-catalog-coverage-audit-v1\.json/
+  )
+  assert.match(
+    source,
+    /Catalog Coverage/
+  )
+  assert.match(
+    source,
+    /Catalog coverage: Partial — synced configured collections only/
+  )
+  assert.match(
+    source,
+    /Do not claim full Luna Portex catalog scan yet/
+  )
+  assert.match(
+    source,
+    /Configured collections only/
+  )
+  assert.match(
+    source,
+    /Coverage review required/
   )
 })
 
