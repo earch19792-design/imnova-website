@@ -132,6 +132,8 @@ const sellerCommandCenterCopy = {
     "Current Radar Results",
   referenceScenarios:
     "Reference Scenarios",
+  commandMenu:
+    "Seller Command Menu",
   nextBestAction:
     "Next best action",
   topCardLabels: [
@@ -6055,6 +6057,26 @@ export function MarketRadarPanel({
       [dashboard]
     )
 
+  const openSellerCommandQueue =
+    useCallback(
+      (filter: RadarRankingFilter) => {
+        setRankingFilter(filter)
+
+        window.setTimeout(
+          () => {
+            searchResultsRef.current?.scrollIntoView({
+              behavior:
+                "smooth",
+              block:
+                "start",
+            })
+          },
+          50
+        )
+      },
+      []
+    )
+
   const hotProducts =
     useMemo(
       () => {
@@ -6190,6 +6212,75 @@ export function MarketRadarPanel({
 
   const summary =
     dashboard?.summary
+
+  const sellerCommandMenuItems: Array<{
+    id: string
+    label: string
+    filter: RadarRankingFilter
+    count: number
+    note: string
+  }> = [
+    {
+      id:
+        "protect-existing",
+      label:
+        "Protect Existing",
+      filter:
+        "reviewed",
+      count:
+        rankingCounts.reviewed,
+      note:
+        "Reviewed/listed products",
+    },
+    {
+      id:
+        "new-opportunities",
+      label:
+        "New Opportunities",
+      filter:
+        "actionable",
+      count:
+        rankingCounts.actionable,
+      note:
+        "Review now",
+    },
+    {
+      id:
+        "stock-risk",
+      label:
+        "Stock Risk",
+      filter:
+        "stock_needs_validation",
+      count:
+        rankingCounts.stockNeedsValidation,
+      note:
+        "Needs stock confirmation",
+    },
+    {
+      id:
+        "stock-confirmed",
+      label:
+        "Stock Confirmed",
+      filter:
+        "stock_confirmed",
+      count:
+        rankingCounts.stockConfirmed,
+      note:
+        "Quantity confirmed",
+    },
+    {
+      id:
+        "all-results",
+      label:
+        "All Synced Results",
+      filter:
+        "all",
+      count:
+        summary?.totalProducts || 0,
+      note:
+        "Synced scope",
+    },
+  ]
 
   return (
     <div className="mt-16 space-y-6">
@@ -6570,7 +6661,7 @@ export function MarketRadarPanel({
       </section>
 
       <section className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.055] p-4">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <p className="text-[10px] uppercase tracking-[0.26em] text-emerald-100/55">
               {sellerCommandCenterMvp.commandCenterStatus}
@@ -6578,59 +6669,70 @@ export function MarketRadarPanel({
             <h2 className="mt-2 text-xl font-black text-white">
               {sellerCommandCenterCopy.title}
             </h2>
-            <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-emerald-50/75">
-              <span>{sellerCommandCenterCopy.protectFirst}</span>
-              <span>{sellerCommandCenterCopy.findWithinScope}</span>
+            <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold uppercase tracking-[0.08em] text-emerald-50/65">
               <span>{sellerCommandCenterMvp.coverageLabel}</span>
               <span>{sellerCommandCenterMvp.rankingLabel}</span>
               <span>{sellerCommandCenterCopy.readOnlyRecommendations}</span>
               <span>{sellerCommandCenterCopy.noAutomaticListingActions}</span>
             </div>
           </div>
-          <div className="grid gap-2 text-[11px] font-bold uppercase tracking-[0.08em] text-emerald-50/65 sm:grid-cols-2 xl:min-w-[500px]">
-            {sellerCommandCenterMvp.topCards.map((card, index) => (
-              <span
-                key={card.cardId}
-                className="rounded-md border border-emerald-200/15 bg-black/20 px-3 py-2 leading-4"
-              >
-                {sellerCommandCenterCopy.topCardLabels[index] || card.label}:{" "}
-                {card.value}
-              </span>
-            ))}
-          </div>
+          <p className="text-xs font-semibold text-emerald-50/60 xl:max-w-sm xl:text-right">
+            {sellerCommandCenterCopy.protectFirst}.{" "}
+            {sellerCommandCenterCopy.findWithinScope}.
+          </p>
         </div>
 
-        <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_1.2fr]">
-          {sellerCommandCenterMvp.primaryQueues.slice(0, 2).map((queue, index) => (
-            <div
-              key={queue.queueId}
-              className="rounded-lg border border-emerald-200/15 bg-black/20 p-3"
-            >
-              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-100/50">
-                Priority {queue.priority}
-              </p>
-              <h3 className="mt-2 text-sm font-black text-white">
-                {sellerCommandCenterCopy.queueLabels[index] || queue.label}
-              </h3>
-              <p className="mt-2 text-xs leading-5 text-emerald-50/60">
-                {queue.purpose}
-              </p>
-            </div>
-          ))}
-          <div className="rounded-lg border border-emerald-200/15 bg-black/20 p-3">
-            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-100/50">
-              Secondary queues
+        <div className="mt-4 rounded-lg border border-emerald-200/15 bg-black/20 p-3">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-100/50">
+              {sellerCommandCenterCopy.commandMenu}
             </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {sellerCommandCenterMvp.primaryQueues.slice(2).map((queue, index) => (
-                <span
-                  key={queue.queueId}
-                  className="rounded-md border border-emerald-200/15 bg-emerald-300/[0.06] px-2 py-1 text-[11px] font-bold text-emerald-50/70"
-                >
-                  {sellerCommandCenterCopy.queueLabels[index + 2] || queue.label}
-                </span>
-              ))}
+            <div className="flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-50/55">
+              <span>{sellerCommandCenterCopy.queueLabels[0]}</span>
+              <span>{sellerCommandCenterCopy.queueLabels[1]}</span>
+              <span>{sellerCommandCenterCopy.queueLabels[2]}</span>
+              <span>{sellerCommandCenterCopy.queueLabels[3]}</span>
+              <span>{sellerCommandCenterCopy.queueLabels[4]}</span>
             </div>
+          </div>
+          <div className="mt-3 grid gap-2 md:grid-cols-3 xl:grid-cols-5">
+            {sellerCommandMenuItems.map(item => {
+              const isActive =
+                rankingFilter === item.filter
+
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() =>
+                    openSellerCommandQueue(
+                      item.filter
+                    )
+                  }
+                  className={`
+                    rounded-md
+                    border
+                    px-3
+                    py-3
+                    text-left
+                    transition
+                    ${isActive
+                      ? "border-emerald-200/45 bg-emerald-300/[0.18] text-white"
+                      : "border-emerald-200/15 bg-black/20 text-emerald-50/75 hover:border-emerald-200/30 hover:bg-emerald-300/[0.08]"}
+                  `}
+                >
+                  <span className="block text-[11px] font-black uppercase tracking-[0.1em]">
+                    {item.label}
+                  </span>
+                  <span className="mt-2 block text-2xl font-black">
+                    {item.count}
+                  </span>
+                  <span className="mt-1 block text-[11px] font-semibold text-emerald-50/55">
+                    {item.note}
+                  </span>
+                </button>
+              )
+            })}
           </div>
         </div>
       </section>

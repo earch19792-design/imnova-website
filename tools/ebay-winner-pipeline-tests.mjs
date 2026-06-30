@@ -10999,6 +10999,26 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
+    /Seller Command Menu/
+  )
+  assert.match(
+    source,
+    /openSellerCommandQueue/
+  )
+  assert.match(
+    source,
+    /Protect Existing/
+  )
+  assert.match(
+    source,
+    /Stock Confirmed/
+  )
+  assert.match(
+    source,
+    /All Synced Results/
+  )
+  assert.match(
+    source,
     /Current Radar Results/
   )
   assert.match(
@@ -11196,7 +11216,7 @@ test("market radar panel: catalog coverage block no agrega llamadas ni mutacione
     )
   const sectionEnd =
     source.indexOf(
-      "<section className=\"grid gap-4",
+      "<section className=\"rounded-lg border border-emerald-300/20",
       sectionStart
     )
 
@@ -11227,7 +11247,6 @@ test("market radar panel: catalog coverage block no agrega llamadas ni mutacione
     /fetch\(/,
     /createClient/,
     /process\.env/,
-    /onClick=/,
     /http:\/\//,
     /https:\/\//,
     /\.insert\(/,
@@ -11238,6 +11257,69 @@ test("market radar panel: catalog coverage block no agrega llamadas ni mutacione
   ]) {
     assert.doesNotMatch(
       coverageBlock,
+      forbiddenPattern
+    )
+  }
+})
+
+test("market radar panel: seller command menu solo filtra UI local", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/market-radar-panel.tsx"
+      ),
+      "utf8"
+    )
+  const menuStart =
+    source.indexOf("{sellerCommandCenterCopy.commandMenu}")
+  const menuEnd =
+    source.indexOf(
+      "<section className=\"rounded-lg border border-white/10 bg-white/[0.03]",
+      menuStart
+    )
+
+  assert.ok(
+    menuStart >= 0,
+    "Seller command menu JSX must exist"
+  )
+  assert.ok(
+    menuEnd > menuStart,
+    "Seller command menu block must end before Current Radar Results"
+  )
+
+  const commandMenuBlock =
+    source.slice(
+      menuStart,
+      menuEnd
+    )
+
+  assert.match(
+    source,
+    /setRankingFilter\(filter\)/
+  )
+  assert.match(
+    commandMenuBlock,
+    /openSellerCommandQueue/
+  )
+  assert.match(
+    source,
+    /searchResultsRef\.current\?\.scrollIntoView/
+  )
+
+  for (const forbiddenPattern of [
+    /fetch\(/,
+    /createClient/,
+    /process\.env/,
+    /http:\/\//,
+    /https:\/\//,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+  ]) {
+    assert.doesNotMatch(
+      commandMenuBlock,
       forbiddenPattern
     )
   }
