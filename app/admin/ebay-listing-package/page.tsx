@@ -1,8 +1,8 @@
-import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
-import qaReview from "../../../tools/fixtures/ebay-first-listing-qa-review-v1.json"
 import type {
   ReactNode,
 } from "react"
+import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
+import qaReview from "../../../tools/fixtures/ebay-first-listing-qa-review-v1.json"
 
 const safetyBadges = [
   "Read-only preview",
@@ -12,13 +12,125 @@ const safetyBadges = [
   "Human review required",
 ]
 
+const executiveBlockers = [
+  "Terapeak validation missing",
+  "Sold listings benchmark missing",
+  "Real main product photo required",
+  "Shipping/returns not confirmed",
+  "Price and margin not validated",
+]
+
+const decisionCards = [
+  {
+    label:
+      "Do not create draft",
+    detail:
+      "QA needs data before any eBay draft can be considered.",
+    tone:
+      "border-rose-300/25 bg-rose-300/[0.06] text-rose-50",
+  },
+  {
+    label:
+      "Do not publish",
+    detail:
+      "Terapeak, benchmark, shipping, images, and margin are incomplete.",
+    tone:
+      "border-rose-300/25 bg-rose-300/[0.06] text-rose-50",
+  },
+  {
+    label:
+      "Ready for internal preparation only",
+    detail:
+      "Use this package to organize work, not to create live marketplace actions.",
+    tone:
+      "border-amber-300/25 bg-amber-300/[0.06] text-amber-50",
+  },
+]
+
+const actionPlan = [
+  {
+    title:
+      "Product facts",
+    items: [
+      "dimensions",
+      "material",
+      "package contents",
+    ],
+  },
+  {
+    title:
+      "Market validation",
+    items: [
+      "Terapeak validation",
+      "Sold listings benchmark",
+    ],
+  },
+  {
+    title:
+      "Operations",
+    items: [
+      "shipping policy",
+      "return policy",
+      "stock location",
+      "Luna Portex packing fee",
+    ],
+  },
+  {
+    title:
+      "Assets",
+    items: [
+      "real main product photo",
+      "secondary images",
+      "image QA",
+    ],
+  },
+  {
+    title:
+      "Approval",
+    items: [
+      "human review before draft",
+      "human approval before publish",
+    ],
+  },
+]
+
 const disabledActions = [
-  "Import Sold Listings -- Disabled",
-  "Validate Terapeak -- Disabled",
-  "Create eBay Draft -- Disabled",
-  "Publish to eBay -- Disabled",
-  "Create Pack Listing -- Disabled",
-  "Generate Images -- Disabled",
+  {
+    label:
+      "Import Sold Listings -- Disabled",
+    reason:
+      "benchmark import not implemented yet",
+  },
+  {
+    label:
+      "Validate Terapeak -- Disabled",
+    reason:
+      "manual validation required first",
+  },
+  {
+    label:
+      "Create eBay Draft -- Disabled",
+    reason:
+      "QA needs data",
+  },
+  {
+    label:
+      "Publish to eBay -- Disabled",
+    reason:
+      "Terapeak and benchmark missing",
+  },
+  {
+    label:
+      "Create Pack Listing -- Disabled",
+    reason:
+      "waiting for conversion data",
+  },
+  {
+    label:
+      "Generate Images -- Disabled",
+    reason:
+      "real photo and image QA required",
+  },
 ]
 
 const statusMarkers = [
@@ -62,6 +174,32 @@ function formatValue(value: unknown) {
   return String(value)
 }
 
+function Section({
+  title,
+  eyebrow,
+  children,
+}: {
+  title: string
+  eyebrow?: string
+  children: ReactNode
+}) {
+  return (
+    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
+      {eyebrow ? (
+        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-100/50">
+          {eyebrow}
+        </p>
+      ) : null}
+      <h2 className="text-lg font-black text-white">
+        {title}
+      </h2>
+      <div className="mt-5">
+        {children}
+      </div>
+    </section>
+  )
+}
+
 function FieldGrid({
   fields,
 }: {
@@ -74,7 +212,7 @@ function FieldGrid({
           key={label}
           className="rounded-2xl border border-white/10 bg-black/20 p-4"
         >
-          <dt className="text-xs uppercase tracking-[0.22em] text-white/40">
+          <dt className="text-xs uppercase tracking-[0.2em] text-white/40">
             {label}
           </dt>
           <dd className="mt-2 break-words text-sm font-bold text-white">
@@ -83,25 +221,6 @@ function FieldGrid({
         </div>
       ))}
     </dl>
-  )
-}
-
-function Section({
-  title,
-  children,
-}: {
-  title: string
-  children: ReactNode
-}) {
-  return (
-    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
-      <h2 className="text-lg font-black text-white">
-        {title}
-      </h2>
-      <div className="mt-5">
-        {children}
-      </div>
-    </section>
   )
 }
 
@@ -154,7 +273,7 @@ export default function EbayListingPackagePage() {
                 eBay Listing Package
               </h1>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-white/60">
-                Read-only preview for the first listing package and QA review. No eBay connection. No draft created. Do not publish yet. Human review required.
+                Seller View for the first listing package and QA review. Read-only preview. No eBay connection. No draft created. Do not publish yet. Human review required.
               </p>
             </div>
 
@@ -171,254 +290,541 @@ export default function EbayListingPackagePage() {
           </div>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          {[
-            [
-              "Listing Status",
-              `${listingPackage.listingPackageStatus} / ${listingPackage.publicationStatus}`,
-            ],
-            [
-              "QA Decision",
-              `${qaReview.qaStatus} / ${qaReview.draftRecommendation} / ${qaReview.publicationRecommendation}`,
-            ],
-            [
-              "Marketplace",
-              `${listingPackage.marketplace} / ${listingPackage.language}`,
-            ],
-            [
-              "Case ID",
-              listingPackage.caseId,
-            ],
-            [
-              "Safety",
-              `eBay API ${listingPackage.safetyFlags.ebayApiUsed}; OpenAI API ${listingPackage.safetyFlags.openAiApiUsed}; imageGenerated ${listingPackage.safetyFlags.imageGenerated}; publishedToEbay ${listingPackage.safetyFlags.publishedToEbay}`,
-            ],
-          ].map(([label, value]) => (
-            <div
-              key={label}
-              className="rounded-3xl border border-white/10 bg-white/[0.03] p-5"
-            >
-              <p className="text-xs uppercase tracking-[0.24em] text-white/40">
-                {label}
-              </p>
-              <p className="mt-3 break-words text-sm font-black text-cyan-100">
-                {value}
-              </p>
+        <Section
+          title="Executive Status"
+          eyebrow="Seller View"
+        >
+          <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="rounded-3xl border border-rose-300/25 bg-rose-300/[0.06] p-5">
+              <div className="grid gap-3 sm:grid-cols-2">
+                {[
+                  [
+                    "Status: Not ready",
+                    "Critical listing requirements are incomplete.",
+                  ],
+                  [
+                    "Main risk: Do not publish yet",
+                    "Publishing now would rely on unverified facts.",
+                  ],
+                  [
+                    "Next step: Complete critical data before creating an eBay draft",
+                    "Resolve market, operations, image, and margin blockers.",
+                  ],
+                  [
+                    "Ready for: Internal preparation only",
+                    "Use this view to organize seller work safely.",
+                  ],
+                ].map(([title, detail]) => (
+                  <div
+                    key={title}
+                    className="rounded-2xl border border-white/10 bg-black/25 p-4"
+                  >
+                    <h3 className="text-sm font-black text-white">
+                      {title}
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-white/65">
+                      {detail}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
-          ))}
-        </section>
 
-        <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
-          <h2 className="text-lg font-black text-white">
-            Control Markers
-          </h2>
-          <div className="mt-5 flex flex-wrap gap-2">
-            {statusMarkers.map((marker) => (
-              <span
-                key={marker}
-                className="rounded-full border border-white/10 bg-black/25 px-3 py-2 text-xs font-semibold text-white/70"
+            <div className="rounded-3xl border border-amber-300/20 bg-amber-300/[0.055] p-5">
+              <h3 className="text-sm font-black text-white">
+                What Blocks Publishing
+              </h3>
+              <ul className="mt-4 space-y-3 text-sm font-semibold text-amber-50/85">
+                {executiveBlockers.map((blocker) => (
+                  <li
+                    key={blocker}
+                    className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3"
+                  >
+                    {blocker}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-4 lg:grid-cols-3">
+            {decisionCards.map((card) => (
+              <article
+                key={card.label}
+                className={`rounded-3xl border p-5 ${card.tone}`}
               >
-                {marker}
-              </span>
+                <h3 className="text-lg font-black">
+                  {card.label}
+                </h3>
+                <p className="mt-3 text-sm leading-6 opacity-80">
+                  {card.detail}
+                </p>
+              </article>
             ))}
           </div>
-        </section>
-
-        <Section title="Listing Overview">
-          <FieldGrid
-            fields={[
-              [
-                "caseId",
-                listingPackage.caseId,
-              ],
-              [
-                "marketplace",
-                listingPackage.marketplace,
-              ],
-              [
-                "language",
-                listingPackage.language,
-              ],
-              [
-                "listingPackageStatus",
-                listingPackage.listingPackageStatus,
-              ],
-              [
-                "publicationStatus",
-                listingPackage.publicationStatus,
-              ],
-              [
-                "candidateName",
-                listingPackage.candidateName,
-              ],
-              [
-                "listingTitle",
-                listingPackage.listingTitle,
-              ],
-              [
-                "subtitleSuggestion",
-                listingPackage.subtitleSuggestion,
-              ],
-              [
-                "condition",
-                listingPackage.condition.suggestedCondition,
-              ],
-              [
-                "categorySuggestion",
-                listingPackage.categorySuggestion.primaryCategoryName,
-              ],
-            ]}
-          />
         </Section>
 
-        <Section title="Buyer-Facing Copy">
-          <div className="grid gap-5 lg:grid-cols-2">
-            <div>
-              <FieldGrid
-                fields={[
-                  [
-                    "listingTitle",
-                    listingPackage.listingTitle,
-                  ],
-                  [
-                    "subtitleSuggestion",
-                    listingPackage.subtitleSuggestion,
-                  ],
-                ]}
-              />
-              <div className="mt-5">
-                <h3 className="text-sm font-black text-white">
-                  titleAlternatives
-                </h3>
-                <div className="mt-3">
-                  <ListBlock items={listingPackage.titleAlternatives} />
-                </div>
-              </div>
-              <div className="mt-5">
-                <h3 className="text-sm font-black text-white">
-                  bullets
-                </h3>
-                <div className="mt-3">
-                  <ListBlock items={listingPackage.buyerFacingCopy.bullets} />
-                </div>
-              </div>
-            </div>
-            <div className="space-y-5">
-              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                <h3 className="text-sm font-black text-white">
-                  descriptionPlainText
-                </h3>
-                <p className="mt-3 text-sm leading-7 text-white/65">
-                  {listingPackage.buyerFacingCopy.descriptionPlainText}
+        <Section title="Listing Preview">
+          <div className="grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
+            <div className="flex aspect-square min-h-[280px] flex-col items-center justify-center rounded-3xl border border-dashed border-white/20 bg-white/[0.035] p-6 text-center">
+              <p className="text-lg font-black text-white">
+                Main image placeholder: Real product photo required
+              </p>
+              <div className="mt-5 space-y-2 text-sm font-semibold text-white/65">
+                <p>
+                  Real product photo required
+                </p>
+                <p>
+                  Pure white background
+                </p>
+                <p>
+                  No AI main image
+                </p>
+                <p>
+                  No badges or flags
                 </p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+            </div>
+
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <p className="text-xs uppercase tracking-[0.22em] text-white/40">
+                Seller listing preview
+              </p>
+              <h2 className="mt-3 text-2xl font-black text-white">
+                Title
+              </h2>
+              <p className="mt-2 text-lg font-bold text-cyan-100">
+                {listingPackage.listingTitle}
+              </p>
+              <ul className="mt-5 space-y-2 text-sm leading-6 text-white/70">
+                {listingPackage.buyerFacingCopy.bullets.map((bullet) => (
+                  <li key={bullet}>
+                    {bullet}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-5 text-sm leading-7 text-white/60">
+                Short description: {listingPackage.buyerFacingCopy.descriptionPlainText}
+              </p>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                {[
+                  [
+                    "Condition",
+                    listingPackage.condition.suggestedCondition,
+                  ],
+                  [
+                    "Category",
+                    "Pending confirmation",
+                  ],
+                  [
+                    "Price: Pending",
+                    "Cost, fees, margin, and sold price benchmark required.",
+                  ],
+                  [
+                    "Shipping: Pending",
+                    "Shipping policy and stock location must be confirmed.",
+                  ],
+                  [
+                    "Returns: Pending",
+                    "Return policy must be confirmed.",
+                  ],
+                  [
+                    "Draft status: Blocked",
+                    qaReview.draftRecommendation,
+                  ],
+                  [
+                    "Publish status: Blocked",
+                    qaReview.publicationRecommendation,
+                  ],
+                ].map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <p className="text-xs uppercase tracking-[0.18em] text-white/40">
+                      {label}
+                    </p>
+                    <p className="mt-2 text-sm font-bold text-white">
+                      {value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Action Plan">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            {actionPlan.map((group) => (
+              <article
+                key={group.title}
+                className="rounded-3xl border border-white/10 bg-black/20 p-5"
+              >
                 <h3 className="text-sm font-black text-white">
-                  descriptionHtml read-only text
+                  {group.title}
                 </h3>
+                <ul className="mt-4 space-y-2 text-sm leading-6 text-white/65">
+                  {group.items.map((item) => (
+                    <li key={item}>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+        </Section>
+
+        <Section title="Required Human Actions">
+          <ListBlock items={qaReview.requiredHumanActions} />
+        </Section>
+
+        <Section title="Product / Pricing / Shipping">
+          <div className="grid gap-5">
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Listing Overview
+              </h3>
+              <div className="mt-3">
+                <FieldGrid
+                  fields={[
+                    [
+                      "caseId",
+                      listingPackage.caseId,
+                    ],
+                    [
+                      "marketplace",
+                      listingPackage.marketplace,
+                    ],
+                    [
+                      "language",
+                      listingPackage.language,
+                    ],
+                    [
+                      "candidateName",
+                      listingPackage.candidateName,
+                    ],
+                    [
+                      "listingTitle",
+                      listingPackage.listingTitle,
+                    ],
+                    [
+                      "subtitleSuggestion",
+                      listingPackage.subtitleSuggestion,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Buyer-Facing Copy
+              </h3>
+              <div className="mt-3 grid gap-5 lg:grid-cols-2">
+                <ListBlock items={listingPackage.titleAlternatives} />
+                <ListBlock items={listingPackage.buyerFacingCopy.bullets} />
+              </div>
+              <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
+                <p className="text-sm font-black text-white">
+                  descriptionHtml read-only text
+                </p>
                 <pre className="mt-3 whitespace-pre-wrap break-words text-xs leading-6 text-white/60">
                   {listingPackage.buyerFacingCopy.descriptionHtml}
                 </pre>
               </div>
             </div>
-          </div>
-        </Section>
 
-        <Section title="Item Specifics">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {listingPackage.itemSpecifics.map((item) => (
-              <div
-                key={item.name}
-                className="rounded-2xl border border-white/10 bg-black/20 p-4"
-              >
-                <p className="text-sm font-black text-white">
-                  {item.name}
-                </p>
-                <p className="mt-2 text-sm text-cyan-100">
-                  {item.value}
-                </p>
-                <p className="mt-2 text-xs uppercase tracking-[0.18em] text-amber-100/70">
-                  {item.verificationStatus.includes("missing")
-                    ? "needs data"
-                    : item.verificationStatus}
-                </p>
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Item Specifics
+              </h3>
+              <div className="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {listingPackage.itemSpecifics.map((item) => (
+                  <div
+                    key={item.name}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                  >
+                    <p className="text-sm font-black text-white">
+                      {item.name}
+                    </p>
+                    <p className="mt-2 text-sm text-cyan-100">
+                      {item.value}
+                    </p>
+                    <p className="mt-2 text-xs uppercase tracking-[0.18em] text-amber-100/70">
+                      {item.verificationStatus.includes("missing")
+                        ? "needs data"
+                        : item.verificationStatus}
+                    </p>
+                  </div>
+                ))}
               </div>
-            ))}
+            </div>
+
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Price Strategy
+              </h3>
+              <div className="mt-3">
+                <FieldGrid
+                  fields={[
+                    [
+                      "suggestedPriceUsd",
+                      listingPackage.priceStrategy.suggestedPriceUsd,
+                    ],
+                    [
+                      "minimumPriceUsd",
+                      listingPackage.priceStrategy.minimumPriceUsd,
+                    ],
+                    [
+                      "targetProfitUsd",
+                      listingPackage.priceStrategy.targetProfitUsd,
+                    ],
+                    [
+                      "needsCostVerification",
+                      listingPackage.priceStrategy.needsCostVerification,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Shipping & Returns
+              </h3>
+              <div className="mt-3">
+                <FieldGrid
+                  fields={[
+                    [
+                      "shippingCopy",
+                      listingPackage.shipping.shippingCopy,
+                    ],
+                    [
+                      "freeShippingAllowed",
+                      listingPackage.shipping.freeShippingAllowed,
+                    ],
+                    [
+                      "freeShippingVerified",
+                      listingPackage.shipping.freeShippingVerified,
+                    ],
+                    [
+                      "shipsFromUsaAllowed",
+                      listingPackage.shipping.shipsFromUsaAllowed,
+                    ],
+                    [
+                      "shipsFromUsaVerified",
+                      listingPackage.shipping.shipsFromUsaVerified,
+                    ],
+                    [
+                      "inStockInUsaAllowed",
+                      listingPackage.shipping.inStockInUsaAllowed,
+                    ],
+                    [
+                      "inStockInUsaVerified",
+                      listingPackage.shipping.inStockInUsaVerified,
+                    ],
+                    [
+                      "returnPolicyCopy",
+                      listingPackage.returns.returnPolicyCopy,
+                    ],
+                    [
+                      "needsHumanConfirmation",
+                      listingPackage.returns.needsHumanConfirmation,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
           </div>
         </Section>
 
-        <Section title="Price Strategy">
-          <FieldGrid
-            fields={[
-              [
-                "suggestedPriceUsd",
-                listingPackage.priceStrategy.suggestedPriceUsd,
-              ],
-              [
-                "minimumPriceUsd",
-                listingPackage.priceStrategy.minimumPriceUsd,
-              ],
-              [
-                "targetProfitUsd",
-                listingPackage.priceStrategy.targetProfitUsd,
-              ],
-              [
-                "needsCostVerification",
-                listingPackage.priceStrategy.needsCostVerification,
-              ],
-            ]}
-          />
-          <p className="mt-5 rounded-2xl border border-amber-300/20 bg-amber-300/[0.045] p-4 text-sm leading-7 text-amber-50/80">
-            Final price cannot be set until cost, fees, shipping, margin, sold price benchmark, and Terapeak validation are complete.
-          </p>
+        <Section title="Image Plan">
+          <div className="grid gap-5">
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Main Image Policy
+              </h3>
+              <div className="mt-3">
+                <FieldGrid
+                  fields={[
+                    [
+                      "real product photo required",
+                      listingPackage.mainImagePolicy.imageSourceRequired,
+                    ],
+                    [
+                      "AI generated allowed",
+                      listingPackage.mainImagePolicy.aiGeneratedAllowed,
+                    ],
+                    [
+                      "pure white background",
+                      listingPackage.mainImagePolicy.backgroundRequired,
+                    ],
+                    [
+                      "1600 px minimum",
+                      listingPackage.mainImagePolicy.minimumResolutionPx,
+                    ],
+                    [
+                      "no text",
+                      listingPackage.mainImagePolicy.textAllowed,
+                    ],
+                    [
+                      "no trust badges",
+                      optionalTrustVisual.mainImageExclusions.includes("no trust badges"),
+                    ],
+                    [
+                      "no USA flag",
+                      optionalTrustVisual.mainImageExclusions.includes("no USA flag"),
+                    ],
+                    [
+                      "no watermarks",
+                      listingPackage.mainImagePolicy.watermarksAllowed,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Secondary Image Strategy
+              </h3>
+              <div className="mt-3 grid gap-4 lg:grid-cols-2">
+                {listingPackage.imagePlan.secondaryImages.map((image) => (
+                  <article
+                    key={image.role}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-5"
+                  >
+                    <p className="text-xs uppercase tracking-[0.22em] text-white/40">
+                      Image {image.imageNumber}
+                    </p>
+                    <h4 className="mt-2 text-base font-black text-white">
+                      {image.role}
+                    </h4>
+                    <p className="mt-2 text-sm text-cyan-100">
+                      {image.title}
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-white/65">
+                      {image.purpose}
+                    </p>
+                    <div className="mt-4 grid gap-2 text-sm text-white/65 sm:grid-cols-2">
+                      <p>
+                        status: {image.status}
+                      </p>
+                      <p>
+                        textAllowed: {formatValue(image.textAllowed)}
+                      </p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+              <p className="mt-5 rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.04] p-4 text-sm font-semibold text-cyan-50/80">
+                Only dimensions allows text.
+              </p>
+            </div>
+          </div>
         </Section>
 
-        <Section title="Shipping & Returns">
-          <FieldGrid
-            fields={[
-              [
-                "shippingCopy",
-                listingPackage.shipping.shippingCopy,
-              ],
-              [
-                "freeShippingAllowed",
-                listingPackage.shipping.freeShippingAllowed,
-              ],
-              [
-                "freeShippingVerified",
-                listingPackage.shipping.freeShippingVerified,
-              ],
-              [
-                "shipsFromUsaAllowed",
-                listingPackage.shipping.shipsFromUsaAllowed,
-              ],
-              [
-                "shipsFromUsaVerified",
-                listingPackage.shipping.shipsFromUsaVerified,
-              ],
-              [
-                "inStockInUsaAllowed",
-                listingPackage.shipping.inStockInUsaAllowed,
-              ],
-              [
-                "inStockInUsaVerified",
-                listingPackage.shipping.inStockInUsaVerified,
-              ],
-              [
-                "returnPolicyCopy",
-                listingPackage.returns.returnPolicyCopy,
-              ],
-              [
-                "needsHumanConfirmation",
-                listingPackage.returns.needsHumanConfirmation,
-              ],
-            ]}
-          />
+        <Section title="Market Validation">
+          <div className="grid gap-5 lg:grid-cols-2">
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Terapeak Validation
+              </h3>
+              <div className="mt-3">
+                <FieldGrid
+                  fields={[
+                    [
+                      "requiredBeforePublish",
+                      listingPackage.terapeakValidation.requiredBeforePublish,
+                    ],
+                    [
+                      "status",
+                      listingPackage.terapeakValidation.status,
+                    ],
+                    [
+                      "sales volume",
+                      listingPackage.terapeakValidation.salesVolumeRequired,
+                    ],
+                    [
+                      "average sold price",
+                      listingPackage.terapeakValidation.averageSoldPriceRequired,
+                    ],
+                    [
+                      "sell-through rate",
+                      listingPackage.terapeakValidation.sellThroughRateRequired,
+                    ],
+                    [
+                      "active listings",
+                      listingPackage.terapeakValidation.activeListingsRequired,
+                    ],
+                    [
+                      "competition review",
+                      listingPackage.terapeakValidation.competitionReviewRequired,
+                    ],
+                    [
+                      "margin validation",
+                      listingPackage.terapeakValidation.marginValidationRequired,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Sold Listings Benchmark
+              </h3>
+              <div className="mt-3">
+                <FieldGrid
+                  fields={[
+                    [
+                      "strategyStatus",
+                      soldListingsBenchmark.strategyStatus,
+                    ],
+                    [
+                      "manualCopyNotScalable",
+                      soldListingsBenchmark.manualCopyNotScalable,
+                    ],
+                    [
+                      "preferredFutureAcquisitionMode",
+                      soldListingsBenchmark.preferredFutureAcquisitionMode,
+                    ],
+                    [
+                      "currentLoopAcquisitionMode",
+                      soldListingsBenchmark.currentLoopAcquisitionMode,
+                    ],
+                    [
+                      "Sell One Like This",
+                      sellOneLikeThis.status,
+                    ],
+                    [
+                      "mustRewriteTitle",
+                      sellOneLikeThis.mustRewriteTitle,
+                    ],
+                    [
+                      "mustRewriteDescription",
+                      sellOneLikeThis.mustRewriteDescription,
+                    ],
+                    [
+                      "mustReplacePhotos",
+                      sellOneLikeThis.mustReplacePhotos,
+                    ],
+                    [
+                      "mustNotCopyCompetitorContent",
+                      sellOneLikeThis.mustNotCopyCompetitorContent,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+          </div>
         </Section>
 
-        <Section title="US Buyer Trust Signals">
+        <Section title="Trust Signals">
           <p className="mb-5 text-sm leading-7 text-white/60">
-            Do not use if not verified. Do not use on main image. USA flag must not imply Made in USA.
+            US Buyer Trust Signals must stay inactive until verified. Do not use on main image. USA flag must not imply Made in USA.
           </p>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {Object.entries(trustSignals).map(([key, signal]) => (
@@ -447,189 +853,33 @@ export default function EbayListingPackagePage() {
               </div>
             ))}
           </div>
-        </Section>
-
-        <Section title="Main Image Policy">
-          <FieldGrid
-            fields={[
-              [
-                "real product photo required",
-                listingPackage.mainImagePolicy.imageSourceRequired,
-              ],
-              [
-                "AI generated allowed",
-                listingPackage.mainImagePolicy.aiGeneratedAllowed,
-              ],
-              [
-                "pure white background",
-                listingPackage.mainImagePolicy.backgroundRequired,
-              ],
-              [
-                "1600 px minimo",
-                listingPackage.mainImagePolicy.minimumResolutionPx,
-              ],
-              [
-                "no text",
-                listingPackage.mainImagePolicy.textAllowed,
-              ],
-              [
-                "no trust badges",
-                optionalTrustVisual.mainImageExclusions.includes("no trust badges"),
-              ],
-              [
-                "no USA flag",
-                optionalTrustVisual.mainImageExclusions.includes("no USA flag"),
-              ],
-              [
-                "no watermarks",
-                listingPackage.mainImagePolicy.watermarksAllowed,
-              ],
-              [
-                "status",
-                listingPackage.mainImagePolicy.status,
-              ],
-            ]}
-          />
-        </Section>
-
-        <Section title="Secondary Image Strategy">
-          <div className="grid gap-4 lg:grid-cols-2">
-            {listingPackage.imagePlan.secondaryImages.map((image) => (
-              <article
-                key={image.role}
-                className="rounded-2xl border border-white/10 bg-black/20 p-5"
-              >
-                <p className="text-xs uppercase tracking-[0.22em] text-white/40">
-                  Image {image.imageNumber}
-                </p>
-                <h3 className="mt-2 text-base font-black text-white">
-                  {image.role}
-                </h3>
-                <p className="mt-2 text-sm text-cyan-100">
-                  {image.title}
-                </p>
-                <p className="mt-3 text-sm leading-6 text-white/65">
-                  {image.purpose}
-                </p>
-                <div className="mt-4 grid gap-2 text-sm text-white/65 sm:grid-cols-2">
-                  <p>
-                    status: {image.status}
-                  </p>
-                  <p>
-                    textAllowed: {formatValue(image.textAllowed)}
-                  </p>
-                </div>
-              </article>
-            ))}
+          <div className="mt-5">
+            <h3 className="text-sm font-black text-white">
+              Optional US Buyer Trust Visual
+            </h3>
+            <div className="mt-3">
+              <FieldGrid
+                fields={[
+                  [
+                    "allowedOnlyIfVerified",
+                    optionalTrustVisual.allowedOnlyAfterVerification,
+                  ],
+                  [
+                    "notMainImage",
+                    optionalTrustVisual.neverOnMainImage,
+                  ],
+                  [
+                    "USA flag allowed only if verified",
+                    optionalTrustVisual.signals.usaFlag.verified,
+                  ],
+                  [
+                    "mustNotImplyMadeInUsa",
+                    optionalTrustVisual.signals.usaFlag.mustNotImplyMadeInUsa,
+                  ],
+                ]}
+              />
+            </div>
           </div>
-          <p className="mt-5 rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.04] p-4 text-sm font-semibold text-cyan-50/80">
-            Only dimensions allows text.
-          </p>
-        </Section>
-
-        <Section title="Optional US Buyer Trust Visual">
-          <FieldGrid
-            fields={[
-              [
-                "allowedOnlyIfVerified",
-                optionalTrustVisual.allowedOnlyAfterVerification,
-              ],
-              [
-                "notMainImage",
-                optionalTrustVisual.neverOnMainImage,
-              ],
-              [
-                "USA flag allowed only if verified",
-                optionalTrustVisual.signals.usaFlag.verified,
-              ],
-              [
-                "mustNotImplyMadeInUsa",
-                optionalTrustVisual.signals.usaFlag.mustNotImplyMadeInUsa,
-              ],
-            ]}
-          />
-        </Section>
-
-        <Section title="Terapeak Validation">
-          <FieldGrid
-            fields={[
-              [
-                "requiredBeforePublish",
-                listingPackage.terapeakValidation.requiredBeforePublish,
-              ],
-              [
-                "status",
-                listingPackage.terapeakValidation.status,
-              ],
-              [
-                "sales volume",
-                listingPackage.terapeakValidation.salesVolumeRequired,
-              ],
-              [
-                "average sold price",
-                listingPackage.terapeakValidation.averageSoldPriceRequired,
-              ],
-              [
-                "sell-through rate",
-                listingPackage.terapeakValidation.sellThroughRateRequired,
-              ],
-              [
-                "active listings",
-                listingPackage.terapeakValidation.activeListingsRequired,
-              ],
-              [
-                "competition review",
-                listingPackage.terapeakValidation.competitionReviewRequired,
-              ],
-              [
-                "margin validation",
-                listingPackage.terapeakValidation.marginValidationRequired,
-              ],
-            ]}
-          />
-        </Section>
-
-        <Section title="Sold Listings Benchmark">
-          <FieldGrid
-            fields={[
-              [
-                "strategyStatus",
-                soldListingsBenchmark.strategyStatus,
-              ],
-              [
-                "manualCopyNotScalable",
-                soldListingsBenchmark.manualCopyNotScalable,
-              ],
-              [
-                "preferredFutureAcquisitionMode",
-                soldListingsBenchmark.preferredFutureAcquisitionMode,
-              ],
-              [
-                "currentLoopAcquisitionMode",
-                soldListingsBenchmark.currentLoopAcquisitionMode,
-              ],
-              [
-                "Sell One Like This",
-                sellOneLikeThis.status,
-              ],
-              [
-                "mustRewriteTitle",
-                sellOneLikeThis.mustRewriteTitle,
-              ],
-              [
-                "mustRewriteDescription",
-                sellOneLikeThis.mustRewriteDescription,
-              ],
-              [
-                "mustReplacePhotos",
-                sellOneLikeThis.mustReplacePhotos,
-              ],
-              [
-                "mustNotCopyCompetitorContent",
-                sellOneLikeThis.mustNotCopyCompetitorContent,
-              ],
-            ]}
-          />
         </Section>
 
         <Section title="Pack Strategy">
@@ -657,138 +907,178 @@ export default function EbayListingPackagePage() {
               </div>
             ))}
           </div>
-        </Section>
-
-        <Section title="Luna Portex Pack Fulfillment Review">
-          <FieldGrid
-            fields={[
-              [
-                "status",
-                listingPackage.lunaPortexPackFulfillmentReview.status,
-              ],
-              [
-                "requiredBeforePackListing",
-                listingPackage.lunaPortexPackFulfillmentReview.requiredBeforePackListing,
-              ],
-              [
-                "marginRule",
-                listingPackage.lunaPortexPackFulfillmentReview.marginRule,
-              ],
-            ]}
-          />
-          <div className="mt-5 grid gap-5 lg:grid-cols-2">
-            <div>
-              <h3 className="text-sm font-black text-white">
-                feesToVerify
-              </h3>
-              <div className="mt-3">
-                <ListBlock
-                  items={listingPackage.lunaPortexPackFulfillmentReview.feesToVerify}
-                />
-              </div>
-            </div>
-            <div>
-              <h3 className="text-sm font-black text-white">
-                requiredHumanActions
-              </h3>
-              <div className="mt-3">
-                <ListBlock
-                  items={listingPackage.lunaPortexPackFulfillmentReview.requiredHumanActions}
-                />
-              </div>
+          <div className="mt-6">
+            <h3 className="text-sm font-black text-white">
+              Luna Portex Pack Fulfillment Review
+            </h3>
+            <div className="mt-3">
+              <FieldGrid
+                fields={[
+                  [
+                    "status",
+                    listingPackage.lunaPortexPackFulfillmentReview.status,
+                  ],
+                  [
+                    "requiredBeforePackListing",
+                    listingPackage.lunaPortexPackFulfillmentReview.requiredBeforePackListing,
+                  ],
+                  [
+                    "marginRule",
+                    listingPackage.lunaPortexPackFulfillmentReview.marginRule,
+                  ],
+                ]}
+              />
             </div>
           </div>
         </Section>
 
-        <Section title="QA Review">
-          <FieldGrid
-            fields={[
-              [
-                "qaStatus",
-                qaReview.qaStatus,
-              ],
-              [
-                "publicationRecommendation",
-                qaReview.publicationRecommendation,
-              ],
-              [
-                "draftRecommendation",
-                qaReview.draftRecommendation,
-              ],
-              [
-                "overallDecision",
-                qaReview.overallDecision,
-              ],
-              [
-                "decisionSummary",
-                qaReview.decisionSummary,
-              ],
-            ]}
-          />
-          <div className="mt-5 grid gap-4 lg:grid-cols-2">
-            {Object.entries(qaReview.sectionReviews).map(([key, review]) => (
-              <article
-                key={key}
-                className="rounded-2xl border border-white/10 bg-black/20 p-4"
-              >
+        <Section title="QA Details">
+          <div className="grid gap-5">
+            <div>
+              <h3 className="text-sm font-black text-white">
+                QA Review
+              </h3>
+              <div className="mt-3">
+                <FieldGrid
+                  fields={[
+                    [
+                      "qaStatus",
+                      qaReview.qaStatus,
+                    ],
+                    [
+                      "publicationRecommendation",
+                      qaReview.publicationRecommendation,
+                    ],
+                    [
+                      "draftRecommendation",
+                      qaReview.draftRecommendation,
+                    ],
+                    [
+                      "overallDecision",
+                      qaReview.overallDecision,
+                    ],
+                    [
+                      "decisionSummary",
+                      qaReview.decisionSummary,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-5 lg:grid-cols-2">
+              <div>
                 <h3 className="text-sm font-black text-white">
-                  {key}
+                  Blocking Reasons
                 </h3>
-                <p className="mt-2 text-sm font-bold text-amber-100">
-                  {review.status}
-                </p>
-                <ul className="mt-3 space-y-2 text-sm leading-6 text-white/65">
-                  {review.checks.map((check) => (
-                    <li key={check}>
-                      {check}
-                    </li>
-                  ))}
-                </ul>
-              </article>
-            ))}
+                <div className="mt-3">
+                  <ListBlock items={qaReview.blockingReasons} />
+                </div>
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-white">
+                  Missing Data
+                </h3>
+                <div className="mt-3">
+                  <ListBlock items={qaReview.missingData} />
+                </div>
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-white">
+                  Pre-Draft Checklist
+                </h3>
+                <div className="mt-3">
+                  <ListBlock items={qaReview.preDraftChecklist} />
+                </div>
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-white">
+                  Pre-Publish Checklist
+                </h3>
+                <div className="mt-3">
+                  <ListBlock items={qaReview.prePublishChecklist} />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              {Object.entries(qaReview.sectionReviews).map(([key, review]) => (
+                <article
+                  key={key}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
+                  <h3 className="text-sm font-black text-white">
+                    {key}
+                  </h3>
+                  <p className="mt-2 text-sm font-bold text-amber-100">
+                    {review.status}
+                  </p>
+                  <ul className="mt-3 space-y-2 text-sm leading-6 text-white/65">
+                    {review.checks.map((check) => (
+                      <li key={check}>
+                        {check}
+                      </li>
+                    ))}
+                  </ul>
+                </article>
+              ))}
+            </div>
           </div>
         </Section>
 
-        <section className="grid gap-5 lg:grid-cols-2">
-          <Section title="Blocking Reasons">
-            <ListBlock items={qaReview.blockingReasons} />
-          </Section>
-          <Section title="Missing Data">
-            <ListBlock items={qaReview.missingData} />
-          </Section>
-          <Section title="Required Human Actions">
-            <ListBlock items={qaReview.requiredHumanActions} />
-          </Section>
-          <Section title="Pre-Draft Checklist">
-            <ListBlock items={qaReview.preDraftChecklist} />
-          </Section>
-          <Section title="Pre-Publish Checklist">
-            <ListBlock items={qaReview.prePublishChecklist} />
-          </Section>
-          <Section title="Safety Flags">
-            <FieldGrid
-              fields={Object.entries(qaReview.safetyFlags)}
-            />
-          </Section>
-        </section>
+        <Section title="System Safety / Audit">
+          <div className="grid gap-5">
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Technical status markers
+              </h3>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {statusMarkers.map((marker) => (
+                  <span
+                    key={marker}
+                    className="rounded-full border border-white/10 bg-black/25 px-3 py-2 text-xs font-semibold text-white/70"
+                  >
+                    {marker}
+                  </span>
+                ))}
+              </div>
+            </div>
 
-        <section className="rounded-3xl border border-red-300/15 bg-red-300/[0.04] p-6">
-          <h2 className="text-lg font-black text-white">
-            Disabled Actions
-          </h2>
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {disabledActions.map((action) => (
-              <button
-                key={action}
-                type="button"
-                disabled
-                className="cursor-not-allowed rounded-2xl border border-red-200/10 bg-black/20 px-4 py-3 text-sm font-black text-red-50/65"
-              >
-                {action}
-              </button>
-            ))}
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Safety Flags
+              </h3>
+              <div className="mt-3">
+                <FieldGrid
+                  fields={Object.entries(qaReview.safetyFlags)}
+                />
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Disabled Actions
+              </h3>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {disabledActions.map((action) => (
+                  <button
+                    key={action.label}
+                    type="button"
+                    disabled
+                    className="cursor-not-allowed rounded-2xl border border-red-200/10 bg-black/20 px-4 py-3 text-left text-sm text-red-50/70"
+                  >
+                    <span className="block font-black">
+                      {action.label}
+                    </span>
+                    <span className="mt-2 block leading-6 text-red-50/55">
+                      {action.reason}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
-        </section>
+        </Section>
       </div>
     </main>
   )

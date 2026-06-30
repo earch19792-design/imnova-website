@@ -5651,11 +5651,21 @@ test("ebay listing package admin MVP: muestra copy, estados y estrategia princip
   for (const expectedText of [
     "eBay Listing Package",
     "Professional Listing MVP",
+    "Seller View",
     "Read-only preview",
     "No eBay connection",
     "No draft created",
     "Do not publish yet",
     "Human review required",
+    "Status: Not ready",
+    "Main risk: Do not publish yet",
+    "Next step: Complete critical data before creating an eBay draft",
+    "Ready for: Internal preparation only",
+    "Terapeak validation missing",
+    "Sold listings benchmark missing",
+    "Real main product photo required",
+    "Shipping/returns not confirmed",
+    "Price and margin not validated",
     "LISTING_PACKAGE_NEEDS_DATA",
     "NOT_READY_TO_PUBLISH",
     "LISTING_QA_NEEDS_DATA",
@@ -5695,6 +5705,22 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     )
 
   for (const expectedSection of [
+    "Executive Status",
+    "Seller View",
+    "Listing Preview",
+    "What Blocks Publishing",
+    "Action Plan",
+    "Product facts",
+    "Market validation",
+    "Operations",
+    "Assets",
+    "Approval",
+    "Product / Pricing / Shipping",
+    "Image Plan",
+    "Market Validation",
+    "Trust Signals",
+    "QA Details",
+    "System Safety / Audit",
     "Listing Overview",
     "Buyer-Facing Copy",
     "Item Specifics",
@@ -5723,6 +5749,32 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
   }
 })
 
+test("ebay listing package admin MVP: muestra preview vendedor y plan de accion", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Real product photo required",
+    "Pure white background",
+    "No AI main image",
+    "No badges or flags",
+    "Price: Pending",
+    "Shipping: Pending",
+    "Returns: Pending",
+    "Do not create draft",
+    "Do not publish",
+    "Ready for internal preparation only",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing seller preview/action text: ${expectedText}`
+    )
+  }
+})
+
 test("ebay listing package admin MVP: acciones visibles permanecen deshabilitadas", () => {
   const source =
     fs.readFileSync(
@@ -5744,6 +5796,20 @@ test("ebay listing package admin MVP: acciones visibles permanecen deshabilitada
     )
   }
 
+  for (const expectedReason of [
+    "benchmark import not implemented yet",
+    "manual validation required first",
+    "QA needs data",
+    "Terapeak and benchmark missing",
+    "waiting for conversion data",
+    "real photo and image QA required",
+  ]) {
+    assert.ok(
+      source.includes(expectedReason),
+      `missing disabled action reason: ${expectedReason}`
+    )
+  }
+
   assert.match(
     source,
     /disabled/
@@ -5755,6 +5821,27 @@ test("ebay listing package admin MVP: acciones visibles permanecen deshabilitada
   assert.doesNotMatch(
     source,
     /<form/i
+  )
+})
+
+test("ebay listing package admin MVP: mantiene orden ejecutivo antes de auditoria", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  assert.ok(
+    source.indexOf("Executive Status") <
+      source.indexOf("System Safety / Audit")
+  )
+  assert.ok(
+    source.indexOf("Listing Preview") <
+      source.indexOf("QA Details")
+  )
+  assert.ok(
+    source.indexOf("What Blocks Publishing") <
+      source.indexOf("System Safety / Audit")
   )
 })
 
@@ -5782,6 +5869,8 @@ test("ebay listing package admin MVP: no contiene integraciones reales", () => {
     /createDraft/,
     /publishListing/,
     /onClick=/,
+    /<img/i,
+    /next\/image/i,
   ]) {
     assert.doesNotMatch(
       source,
