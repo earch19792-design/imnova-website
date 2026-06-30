@@ -4,6 +4,7 @@ import type {
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
 import imageAssetManifest from "../../../tools/fixtures/ebay-luna-portex-image-asset-manifest-v1.json"
 import imageSourceIntake from "../../../tools/fixtures/ebay-luna-portex-image-source-intake-v1.json"
+import imageSourceReviewGate from "../../../tools/fixtures/ebay-luna-portex-image-source-review-gate-v1.json"
 import qaReview from "../../../tools/fixtures/ebay-first-listing-qa-review-v1.json"
 
 const safetyBadges = [
@@ -68,6 +69,29 @@ const imageSourceIntakeCopy = {
     "No restricted watermark or competitor logo",
     "White-background enhancement permission confirmed",
   ],
+}
+
+const imageSourceReviewGateCopy = {
+  gateStatus:
+    "SOURCE_REVIEW_NOT_APPROVED",
+  gateDecision:
+    "BLOCK_IMAGE_WORKFLOW",
+  draftImpact:
+    "DRAFT_BLOCKED_UNTIL_SOURCE_REVIEW_APPROVED",
+  summary:
+    "Source evidence has not been approved yet",
+  imageEnhancementBlocked:
+    "Image enhancement: Blocked",
+  imageQaBlocked:
+    "Image QA: Blocked",
+  draftMappingBlocked:
+    "eBay draft mapping: Blocked",
+  draftCreationBlocked:
+    "eBay draft creation: Blocked",
+  humanReviewRequired:
+    "Human source review required",
+  requestMoreEvidence:
+    "Request more source evidence",
 }
 
 const decisionCards = [
@@ -712,6 +736,102 @@ export default function EbayListingPackagePage() {
 
         <Section title="Image Plan">
           <div className="grid gap-5">
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Image Source Review Gate
+              </h3>
+              <div className="mt-3 grid gap-4 lg:grid-cols-2">
+                <FieldGrid
+                  fields={[
+                    [
+                      "gateVersion",
+                      imageSourceReviewGate.gateVersion,
+                    ],
+                    [
+                      "gateStatus",
+                      imageSourceReviewGateCopy.gateStatus,
+                    ],
+                    [
+                      "gateDecision",
+                      imageSourceReviewGateCopy.gateDecision,
+                    ],
+                    [
+                      "draftImpact",
+                      imageSourceReviewGateCopy.draftImpact,
+                    ],
+                    [
+                      imageSourceReviewGateCopy.summary,
+                      imageSourceReviewGate.sourceReviewSummary,
+                    ],
+                    [
+                      imageSourceReviewGateCopy.humanReviewRequired,
+                      imageSourceReviewGate.humanDecision.required,
+                    ],
+                    [
+                      imageSourceReviewGateCopy.requestMoreEvidence,
+                      imageSourceReviewGate.humanDecision.currentDecision,
+                    ],
+                  ]}
+                />
+
+                <FieldGrid
+                  fields={[
+                    [
+                      imageSourceReviewGateCopy.imageEnhancementBlocked,
+                      imageSourceReviewGate.safetyFlags.imageEnhancementUnlocked,
+                    ],
+                    [
+                      imageSourceReviewGateCopy.imageQaBlocked,
+                      imageSourceReviewGate.safetyFlags.imageQaUnlocked,
+                    ],
+                    [
+                      imageSourceReviewGateCopy.draftMappingBlocked,
+                      imageSourceReviewGate.safetyFlags.draftMappingUnlocked,
+                    ],
+                    [
+                      imageSourceReviewGateCopy.draftCreationBlocked,
+                      imageSourceReviewGate.safetyFlags.draftCreationUnlocked,
+                    ],
+                  ]}
+                />
+              </div>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <h4 className="text-sm font-black text-white">
+                    Blocked Workflows
+                  </h4>
+                  <div className="mt-4 grid gap-3">
+                    {imageSourceReviewGate.blockedWorkflows.map((workflow) => (
+                      <div
+                        key={workflow.workflow}
+                        className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                      >
+                        <p className="text-sm font-bold text-white">
+                          {workflow.workflow}
+                        </p>
+                        <p className="mt-2 text-xs uppercase tracking-[0.16em] text-amber-100/70">
+                          {workflow.status}
+                        </p>
+                        <p className="mt-2 text-sm leading-6 text-white/60">
+                          {workflow.reason}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <h4 className="text-sm font-black text-white">
+                    Unlock Requirements
+                  </h4>
+                  <div className="mt-3">
+                    <ListBlock items={imageSourceReviewGate.unlockRequirements} />
+                  </div>
+                </article>
+              </div>
+            </div>
+
             <div>
               <h3 className="text-sm font-black text-white">
                 Image Source Intake
