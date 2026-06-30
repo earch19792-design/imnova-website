@@ -128,6 +128,10 @@ const sellerCommandCenterCopy = {
     "Read-only seller recommendations",
   noAutomaticListingActions:
     "No automatic listing actions",
+  currentRadarResults:
+    "Current Radar Results",
+  referenceScenarios:
+    "Reference Scenarios",
   nextBestAction:
     "Next best action",
   topCardLabels: [
@@ -6565,16 +6569,16 @@ export function MarketRadarPanel({
         </div>
       </section>
 
-      <section className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.055] p-5">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+      <section className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.055] p-4">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
             <p className="text-[10px] uppercase tracking-[0.26em] text-emerald-100/55">
               {sellerCommandCenterMvp.commandCenterStatus}
             </p>
-            <h2 className="mt-2 text-2xl font-black text-white">
+            <h2 className="mt-2 text-xl font-black text-white">
               {sellerCommandCenterCopy.title}
             </h2>
-            <div className="mt-3 grid gap-2 text-sm font-semibold text-emerald-50/75 md:grid-cols-2">
+            <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-emerald-50/75">
               <span>{sellerCommandCenterCopy.protectFirst}</span>
               <span>{sellerCommandCenterCopy.findWithinScope}</span>
               <span>{sellerCommandCenterMvp.coverageLabel}</span>
@@ -6583,11 +6587,11 @@ export function MarketRadarPanel({
               <span>{sellerCommandCenterCopy.noAutomaticListingActions}</span>
             </div>
           </div>
-          <div className="grid gap-2 text-xs font-bold uppercase tracking-[0.1em] text-emerald-50/65 sm:grid-cols-2 lg:min-w-[440px]">
+          <div className="grid gap-2 text-[11px] font-bold uppercase tracking-[0.08em] text-emerald-50/65 sm:grid-cols-2 xl:min-w-[500px]">
             {sellerCommandCenterMvp.topCards.map((card, index) => (
               <span
                 key={card.cardId}
-                className="rounded-md border border-emerald-200/15 bg-black/20 px-3 py-2"
+                className="rounded-md border border-emerald-200/15 bg-black/20 px-3 py-2 leading-4"
               >
                 {sellerCommandCenterCopy.topCardLabels[index] || card.label}:{" "}
                 {card.value}
@@ -6596,8 +6600,8 @@ export function MarketRadarPanel({
           </div>
         </div>
 
-        <div className="mt-5 grid gap-3 lg:grid-cols-5">
-          {sellerCommandCenterMvp.primaryQueues.map((queue, index) => (
+        <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_1.2fr]">
+          {sellerCommandCenterMvp.primaryQueues.slice(0, 2).map((queue, index) => (
             <div
               key={queue.queueId}
               className="rounded-lg border border-emerald-200/15 bg-black/20 p-3"
@@ -6613,76 +6617,34 @@ export function MarketRadarPanel({
               </p>
             </div>
           ))}
+          <div className="rounded-lg border border-emerald-200/15 bg-black/20 p-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-100/50">
+              Secondary queues
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {sellerCommandCenterMvp.primaryQueues.slice(2).map((queue, index) => (
+                <span
+                  key={queue.queueId}
+                  className="rounded-md border border-emerald-200/15 bg-emerald-300/[0.06] px-2 py-1 text-[11px] font-bold text-emerald-50/70"
+                >
+                  {sellerCommandCenterCopy.queueLabels[index + 2] || queue.label}
+                </span>
+              ))}
+            </div>
+          </div>
         </div>
+      </section>
 
-        <div className="mt-5 grid gap-3 lg:grid-cols-5">
-          {sellerCommandCenterCopy.legend.map(label => (
-            <span
-              key={label}
-              className="rounded-md border border-emerald-200/15 bg-black/20 px-3 py-2 text-xs font-bold uppercase tracking-[0.1em] text-emerald-50/60"
-            >
-              {label}
-            </span>
-          ))}
-        </div>
-
-        <div className="mt-5 grid gap-3 xl:grid-cols-5">
-          {sellerCommandCenterMvp.sampleProducts.map((product, index) => (
-            <article
-              key={product.productId}
-              className="rounded-lg border border-emerald-200/15 bg-black/20 p-4"
-            >
-              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-100/45">
-                {product.eventType} · {product.trafficLight}
-              </p>
-              <h3 className="mt-2 text-sm font-black leading-5 text-white">
-                {sellerCommandCenterCopy.sampleProductLabels[index] ||
-                  product.displayName}
-              </h3>
-              <dl className="mt-3 space-y-2 text-xs text-emerald-50/65">
-                <div>
-                  <dt className="font-black uppercase tracking-[0.12em] text-emerald-100/40">
-                    Stock status
-                  </dt>
-                  <dd>{product.stockStatus}</dd>
-                </div>
-                <div>
-                  <dt className="font-black uppercase tracking-[0.12em] text-emerald-100/40">
-                    Margin status
-                  </dt>
-                  <dd>{product.marginStatus}</dd>
-                </div>
-                <div>
-                  <dt className="font-black uppercase tracking-[0.12em] text-emerald-100/40">
-                    Image readiness
-                  </dt>
-                  <dd>{product.imageReadiness}</dd>
-                </div>
-                <div>
-                  <dt className="font-black uppercase tracking-[0.12em] text-emerald-100/40">
-                    Compliance risk
-                  </dt>
-                  <dd>{product.complianceRisk}</dd>
-                </div>
-                <div>
-                  <dt className="font-black uppercase tracking-[0.12em] text-emerald-100/40">
-                    Pipeline state
-                  </dt>
-                  <dd>{product.pipelineState}</dd>
-                </div>
-                <div>
-                  <dt className="font-black uppercase tracking-[0.12em] text-emerald-100/40">
-                    {sellerCommandCenterCopy.nextBestAction}
-                  </dt>
-                  <dd>{product.nextBestAction}</dd>
-                </div>
-              </dl>
-              <p className="mt-3 text-xs leading-5 text-emerald-50/55">
-                {product.reason}
-              </p>
-            </article>
-          ))}
-        </div>
+      <section className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
+        <p className="text-[10px] uppercase tracking-[0.26em] text-white/40">
+          {sellerCommandCenterCopy.currentRadarResults}
+        </p>
+        <h2 className="mt-2 text-xl font-black text-white">
+          Synced Scope Product Ranking
+        </h2>
+        <p className="mt-2 text-xs font-semibold leading-5 text-white/45">
+          The command center stays compact so this live synced-scope ranking remains the main workspace.
+        </p>
       </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
@@ -7155,6 +7117,58 @@ export function MarketRadarPanel({
           </div>
         </section>
       </div>
+
+      <section className="rounded-lg border border-emerald-300/15 bg-emerald-300/[0.035] p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.26em] text-emerald-100/55">
+              {sellerCommandCenterCopy.referenceScenarios}
+            </p>
+            <h2 className="mt-2 text-lg font-black text-white">
+              Read-only Scenario Examples
+            </h2>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {sellerCommandCenterCopy.legend.map(label => (
+              <span
+                key={label}
+                className="rounded-md border border-emerald-200/15 bg-black/20 px-2 py-1 text-[11px] font-bold text-emerald-50/65"
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {sellerCommandCenterMvp.sampleProducts.map((product, index) => (
+            <article
+              key={product.productId}
+              className="rounded-lg border border-emerald-200/15 bg-black/20 p-3"
+            >
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-emerald-100/45">
+                {product.eventType} · {product.trafficLight}
+              </p>
+              <h3 className="mt-2 text-sm font-black leading-5 text-white">
+                {sellerCommandCenterCopy.sampleProductLabels[index] ||
+                  product.displayName}
+              </h3>
+              <div className="mt-3 space-y-1 text-xs text-emerald-50/65">
+                <p>
+                  Pipeline state: {product.pipelineState}
+                </p>
+                <p>
+                  {sellerCommandCenterCopy.nextBestAction}:{" "}
+                  {product.nextBestAction}
+                </p>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-emerald-50/50">
+                {product.reason}
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
     </div>
   )
 }

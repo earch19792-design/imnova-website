@@ -10999,6 +10999,14 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
+    /Current Radar Results/
+  )
+  assert.match(
+    source,
+    /Reference Scenarios/
+  )
+  assert.match(
+    source,
     /Catalog Coverage/
   )
   assert.match(
@@ -11148,6 +11156,24 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   assert.match(
     source,
     /Next best action/
+  )
+
+  const currentRadarResultsIndex =
+    source.indexOf("Current Radar Results")
+  const referenceScenariosIndex =
+    source.indexOf("Reference Scenarios")
+
+  assert.ok(
+    currentRadarResultsIndex >= 0,
+    "Current Radar Results heading must exist"
+  )
+  assert.ok(
+    referenceScenariosIndex >= 0,
+    "Reference Scenarios section must exist"
+  )
+  assert.ok(
+    currentRadarResultsIndex < referenceScenariosIndex,
+    "Current Radar Results must appear before Reference Scenarios"
   )
 })
 
