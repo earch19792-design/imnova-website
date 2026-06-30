@@ -1,0 +1,142 @@
+{
+  "briefVersion": "IMAGE_GENERATION_MANUAL_IMAGE_BRIEF_SCHEMA_V1",
+  "caseId": "LISTING-GEN-001",
+  "candidateName": "Simulated manual image brief candidate",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "sourcePromptPlanVersion": "IMAGE_GENERATION_PROMPT_PLAN_SCHEMA_V1",
+  "sourceDryRunResultVersion": "IMAGE_GENERATION_DRY_RUN_RESULT_SCHEMA_V1",
+  "imageRole": "lifestyle_product_in_use",
+  "targetBuyer": "us_ebay_buyer",
+  "language": "en",
+  "briefStatus": "MANUAL_IMAGE_BRIEF_NEEDS_DATA",
+  "creationMode": "manual_external_tool",
+  "productFacts": {
+    "productName": "Simulated compact organizer",
+    "category": "Simulated home organization",
+    "color": "neutral gray",
+    "material": "not_verified",
+    "packageContents": [
+      "One simulated organizer unit"
+    ],
+    "allowedUseCases": [
+      "Everyday use in a clean home workspace",
+      "Simple organization in an office setting"
+    ],
+    "knownLimitations": [
+      "Verified dimensions are still missing.",
+      "Material must be confirmed before manual image creation.",
+      "Shipping and stock claims are not verified."
+    ],
+    "factsVerified": false
+  },
+  "visualGoal": {
+    "primaryGoal": "Prepare a safe lifestyle image concept for human review only.",
+    "backgroundStyle": "lifestyle",
+    "composition": "Keep the product as the clear hero in a realistic everyday setting.",
+    "lighting": "Clean, bright, natural-looking light.",
+    "mobileFirst": true,
+    "productMustRemainHero": true,
+    "lifestyleContext": "Clean home or office context with no brands, private data, or distracting props.",
+    "avoidVisualClutter": true
+  },
+  "allowedClaims": [
+    "Product in Use",
+    "Easy to Use",
+    "Designed for Daily Use"
+  ],
+  "prohibitedClaims": [
+    "Free Shipping",
+    "Ships from USA",
+    "In Stock in USA",
+    "Certified",
+    "Medical benefit",
+    "Guaranteed results"
+  ],
+  "requiredElements": [
+    "Product visible and dominant",
+    "Realistic lifestyle context",
+    "English-only buyer-facing text if text is used",
+    "No invented dimensions",
+    "No implied shipping or stock location"
+  ],
+  "forbiddenElements": [
+    "Unauthorized logos",
+    "Medical claims",
+    "Guaranteed outcome claims",
+    "Unverified USA shipping or stock signals",
+    "Private data",
+    "Encoded image data",
+    "Sensitive local file references"
+  ],
+  "trustSignals": {
+    "freeShipping": {
+      "allowed": false,
+      "verified": false,
+      "instruction": "needs_verification"
+    },
+    "shipsFromUsa": {
+      "allowed": false,
+      "verified": false,
+      "instruction": "needs_verification"
+    },
+    "inStockInUsa": {
+      "allowed": false,
+      "verified": false,
+      "instruction": "needs_verification"
+    },
+    "usaFlag": {
+      "allowed": false,
+      "verified": false,
+      "instruction": "do_not_use"
+    }
+  },
+  "manualInstructions": [
+    "Do not create a final commercial image yet.",
+    "Use this brief only to understand what data is missing.",
+    "Keep any draft concept internal and subject to human review.",
+    "Do not include buyer-facing trust signals until the related facts are verified."
+  ],
+  "safetyNotes": [
+    "Do not include unverified shipping, stock, or Free Shipping signals.",
+    "Do not invent dimensions or material.",
+    "Do not include logos, private data, sensitive data, or encoded image data.",
+    "Manual creation remains blocked for final listing use until QA and human approval are complete."
+  ],
+  "qaChecklist": [
+    "Product matches verified facts.",
+    "No unverified dimensions or material are shown.",
+    "No unverified trust signal is shown.",
+    "Product remains the visual hero.",
+    "Text is in English if buyer-facing text is used.",
+    "Human review is required before any use."
+  ],
+  "requiredHumanActions": [
+    "Verify product dimensions.",
+    "Verify product material.",
+    "Verify shipping cost, shipping origin, and stock location.",
+    "Review model or image authorization before lifestyle image creation.",
+    "Run visual QA before any image can be considered for listing review."
+  ],
+  "approvalRequirements": {
+    "requiresImageQa": true,
+    "requiresHumanReview": true,
+    "requiresPolicyReviewBeforeEbayUse": true,
+    "approvedForInternalUseOnly": false,
+    "approvedForListingReview": false,
+    "doNotPublish": true,
+    "doNotCreateRealDraft": true
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "manualWorkflowOnly": true,
+    "imageGenerated": false,
+    "openAiApiUsed": false,
+    "externalCallsMade": false,
+    "ebayApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false,
+    "reportPersisted": false,
+    "humanReviewRequired": true
+  }
+}

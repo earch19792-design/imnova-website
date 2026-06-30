@@ -561,6 +561,19 @@ const ebayListingImageGenerationDryRunResultFixture =
     )
   )
 
+const ebayListingManualImageBriefFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-listing-manual-image-brief-v1.json"
+  )
+
+const ebayListingManualImageBriefFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayListingManualImageBriefFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayListingImageGenerationDryRunRunnerFixtureSetPath =
   path.resolve(
     "tools/fixtures/ebay-listing-image-generation-dry-run-runner-fixture-set-v1.json"
@@ -2827,6 +2840,292 @@ test("image generation dry run result fixture: no contiene campos prohibidos, UR
       ),
       false,
       `dry run result fixture contains forbidden field: ${fieldName}`
+    )
+  }
+
+  for (const value of collected.values) {
+    assert.doesNotMatch(
+      value,
+      /https?:\/\//i
+    )
+    assert.doesNotMatch(
+      value,
+      /bearer\s+|sk-[a-z0-9_-]+|api[_ -]?key|auth(?:orization)?\s*header|password|secret|credential|token/i
+    )
+  }
+})
+
+test("manual image brief fixture: existe y cumple schema V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayListingManualImageBriefFixturePath
+    )
+  )
+  assert.equal(
+    ebayListingManualImageBriefFixture.briefVersion,
+    "IMAGE_GENERATION_MANUAL_IMAGE_BRIEF_SCHEMA_V1"
+  )
+  assert.equal(
+    ebayListingManualImageBriefFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebayListingManualImageBriefFixture.sourcePromptPlanVersion,
+    "IMAGE_GENERATION_PROMPT_PLAN_SCHEMA_V1"
+  )
+  assert.equal(
+    ebayListingManualImageBriefFixture.sourceDryRunResultVersion,
+    "IMAGE_GENERATION_DRY_RUN_RESULT_SCHEMA_V1"
+  )
+  assert.equal(
+    ebayListingManualImageBriefFixture.imageRole,
+    "lifestyle_product_in_use"
+  )
+  assert.equal(
+    ebayListingManualImageBriefFixture.targetBuyer,
+    "us_ebay_buyer"
+  )
+  assert.equal(
+    ebayListingManualImageBriefFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebayListingManualImageBriefFixture.briefStatus,
+    "MANUAL_IMAGE_BRIEF_NEEDS_DATA"
+  )
+  assert.ok(
+    [
+      "manual_external_tool",
+      "manual_photo_editing",
+      "manual_design",
+    ].includes(
+      ebayListingManualImageBriefFixture.creationMode
+    )
+  )
+
+  for (const fieldName of [
+    "productFacts",
+    "visualGoal",
+    "trustSignals",
+    "manualInstructions",
+    "safetyNotes",
+    "qaChecklist",
+    "requiredHumanActions",
+    "approvalRequirements",
+    "safetyFlags",
+  ]) {
+    assert.equal(
+      typeof ebayListingManualImageBriefFixture[fieldName],
+      "object",
+      `manual image brief missing object field: ${fieldName}`
+    )
+    assert.ok(
+      ebayListingManualImageBriefFixture[fieldName]
+    )
+  }
+
+  for (const fieldName of [
+    "allowedClaims",
+    "prohibitedClaims",
+    "requiredElements",
+    "forbiddenElements",
+    "manualInstructions",
+    "safetyNotes",
+    "qaChecklist",
+    "requiredHumanActions",
+  ]) {
+    assert.ok(
+      Array.isArray(
+        ebayListingManualImageBriefFixture[fieldName]
+      ),
+      `manual image brief missing array field: ${fieldName}`
+    )
+    assert.ok(
+      ebayListingManualImageBriefFixture[fieldName].length > 0
+    )
+  }
+})
+
+test("manual image brief fixture: trust signals no verificados no se usan", () => {
+  const trustSignals =
+    ebayListingManualImageBriefFixture.trustSignals
+
+  for (const signalName of [
+    "freeShipping",
+    "shipsFromUsa",
+    "inStockInUsa",
+    "usaFlag",
+  ]) {
+    const signal =
+      trustSignals[signalName]
+
+    assert.equal(
+      typeof signal,
+      "object"
+    )
+    assert.ok(signal)
+    assert.equal(
+      signal.allowed,
+      false
+    )
+    assert.equal(
+      signal.verified,
+      false
+    )
+    assert.ok(
+      [
+        "needs_verification",
+        "do_not_use",
+      ].includes(signal.instruction)
+    )
+    assert.notEqual(
+      signal.instruction,
+      "use",
+      `unverified trust signal cannot be used: ${signalName}`
+    )
+  }
+})
+
+test("manual image brief fixture: approval requirements bloquean publicacion y draft real", () => {
+  assert.deepEqual(
+    ebayListingManualImageBriefFixture.approvalRequirements,
+    {
+      requiresImageQa:
+        true,
+      requiresHumanReview:
+        true,
+      requiresPolicyReviewBeforeEbayUse:
+        true,
+      approvedForInternalUseOnly:
+        false,
+      approvedForListingReview:
+        false,
+      doNotPublish:
+        true,
+      doNotCreateRealDraft:
+        true,
+    }
+  )
+})
+
+test("manual image brief fixture: safety flags mantienen side effects false", () => {
+  assert.deepEqual(
+    ebayListingManualImageBriefFixture.safetyFlags,
+    {
+      advisoryOnly:
+        true,
+      manualWorkflowOnly:
+        true,
+      imageGenerated:
+        false,
+      openAiApiUsed:
+        false,
+      externalCallsMade:
+        false,
+      ebayApiUsed:
+        false,
+      realDraftCreated:
+        false,
+      publishedToEbay:
+        false,
+      listingMutated:
+        false,
+      reportPersisted:
+        false,
+      humanReviewRequired:
+        true,
+    }
+  )
+})
+
+test("manual image brief fixture: no contiene campos prohibidos, URLs ni secretos", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayListingManualImageBriefFixturePath,
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    rawFixture,
+    /https?:\/\//i
+  )
+
+  const forbiddenFieldNames = [
+    "finalPrompt",
+    "productionPrompt",
+    "openAiPayload",
+    "apiKey",
+    "auth" + "orization",
+    "tok" + "en",
+    "sec" + "ret",
+    "pass" + "word",
+    "base64Image",
+    "imageUrl",
+    "draftId",
+    "listingId",
+    "publishedListingId",
+  ]
+
+  function collectKeysAndValues(
+    value,
+    collected = {
+      keys:
+        [],
+      values:
+        [],
+    }
+  ) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        collectKeysAndValues(
+          item,
+          collected
+        )
+      }
+      return collected
+    }
+
+    if (
+      value &&
+      typeof value === "object"
+    ) {
+      for (const [
+        key,
+        childValue,
+      ] of Object.entries(value)) {
+        collected.keys.push(key)
+        collectKeysAndValues(
+          childValue,
+          collected
+        )
+      }
+      return collected
+    }
+
+    if (typeof value === "string") {
+      collected.values.push(value)
+    }
+
+    return collected
+  }
+
+  const collected =
+    collectKeysAndValues(
+      ebayListingManualImageBriefFixture
+    )
+
+  const lowerKeys =
+    collected.keys.map(key =>
+      key.toLowerCase()
+    )
+
+  for (const fieldName of forbiddenFieldNames) {
+    assert.equal(
+      lowerKeys.includes(
+        fieldName.toLowerCase()
+      ),
+      false,
+      `manual image brief fixture contains forbidden field: ${fieldName}`
     )
   }
 
