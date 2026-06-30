@@ -3,6 +3,7 @@ import type {
 } from "react"
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
 import imageAssetManifest from "../../../tools/fixtures/ebay-luna-portex-image-asset-manifest-v1.json"
+import imageSourceIntake from "../../../tools/fixtures/ebay-luna-portex-image-source-intake-v1.json"
 import qaReview from "../../../tools/fixtures/ebay-first-listing-qa-review-v1.json"
 
 const safetyBadges = [
@@ -45,6 +46,27 @@ const imageAssetManifestCopy = {
     "main_benefit_in_action",
     "aspirational_lifestyle",
     "hands_real_use",
+  ],
+}
+
+const imageSourceIntakeCopy = {
+  intakeStatus:
+    "SOURCE_EVIDENCE_REQUIRED",
+  draftImpact:
+    "DRAFT_BLOCKED_UNTIL_SOURCE_EVIDENCE_APPROVED",
+  humanReviewRequired:
+    "Human source review required",
+  reviewStatus:
+    "Source review not started",
+  approvalGate:
+    "Approval required before image QA and eBay draft",
+  checklistLabels: [
+    "Source is Luna Portex catalog",
+    "Authorized use confirmed",
+    "Image matches the listing product",
+    "No competitor image is used",
+    "No restricted watermark or competitor logo",
+    "White-background enhancement permission confirmed",
   ],
 }
 
@@ -690,6 +712,119 @@ export default function EbayListingPackagePage() {
 
         <Section title="Image Plan">
           <div className="grid gap-5">
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Image Source Intake
+              </h3>
+              <div className="mt-3 grid gap-4 lg:grid-cols-2">
+                <FieldGrid
+                  fields={[
+                    [
+                      "intakeVersion",
+                      imageSourceIntake.intakeVersion,
+                    ],
+                    [
+                      "intakeStatus",
+                      imageSourceIntakeCopy.intakeStatus,
+                    ],
+                    [
+                      "draftImpact",
+                      imageSourceIntakeCopy.draftImpact,
+                    ],
+                    [
+                      "sourceType",
+                      imageSourceIntake.primaryImageSourceEvidence.sourceType,
+                    ],
+                    [
+                      imageSourceIntakeCopy.humanReviewRequired,
+                      imageSourceIntake.humanReview.required,
+                    ],
+                    [
+                      imageSourceIntakeCopy.reviewStatus,
+                      imageSourceIntake.humanReview.reviewStatus,
+                    ],
+                    [
+                      imageSourceIntakeCopy.approvalGate,
+                      imageSourceIntake.humanReview.approvalStatus,
+                    ],
+                    [
+                      "authorizationChecklist",
+                      imageSourceIntakeCopy.checklistLabels.join(", "),
+                    ],
+                  ]}
+                />
+
+                <FieldGrid
+                  fields={Object.entries(
+                    imageSourceIntake.primaryImageSourceEvidence
+                  ).filter(([
+                    _label,
+                    value,
+                  ]) => !Array.isArray(value))}
+                />
+              </div>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <h4 className="text-sm font-black text-white">
+                    Authorization Checklist
+                  </h4>
+                  <div className="mt-4 grid gap-3">
+                    {imageSourceIntake.authorizationChecklist.map((check) => (
+                      <div
+                        key={check.checkId}
+                        className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                      >
+                        <p className="text-sm font-bold text-white">
+                          {check.label}
+                        </p>
+                        <p className="mt-2 text-xs uppercase tracking-[0.16em] text-amber-100/70">
+                          {check.status}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <h4 className="text-sm font-black text-white">
+                    Source Validation Rules
+                  </h4>
+                  <div className="mt-4">
+                    <FieldGrid
+                      fields={Object.entries(
+                        imageSourceIntake.sourceValidationRules
+                      )}
+                    />
+                  </div>
+                </article>
+              </div>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                <div>
+                  <h4 className="text-sm font-black text-white">
+                    Blocked Until
+                  </h4>
+                  <div className="mt-3">
+                    <ListBlock items={imageSourceIntake.blockedUntil} />
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="text-sm font-black text-white">
+                    Source Intake Safety Flags
+                  </h4>
+                  <div className="mt-3">
+                    <FieldGrid
+                      fields={Object.entries(
+                        imageSourceIntake.safetyFlags
+                      )}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div>
               <h3 className="text-sm font-black text-white">
                 Image Asset Manifest
