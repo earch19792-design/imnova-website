@@ -1,0 +1,399 @@
+{
+  "packageVersion": "EBAY_FIRST_LISTING_PACKAGE_V1",
+  "caseId": "LISTING-GEN-001",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "listingPackageStatus": "LISTING_PACKAGE_NEEDS_DATA",
+  "publicationStatus": "NOT_READY_TO_PUBLISH",
+  "candidateName": "Simulated compact organizer listing package",
+  "listingTitle": "Simulated Compact Organizer for Home Office Storage, Neutral Gray",
+  "titleAlternatives": [
+    "Compact Organizer for Home Office Storage, Neutral Gray",
+    "Simulated Home Office Organizer for Everyday Storage",
+    "Neutral Gray Compact Organizer for Workspace Storage"
+  ],
+  "subtitleSuggestion": "Requires verified product details before final listing use.",
+  "categorySuggestion": {
+    "primaryCategoryName": "Home Organization",
+    "confidence": "low",
+    "needsHumanConfirmation": true
+  },
+  "condition": {
+    "suggestedCondition": "New",
+    "needsHumanConfirmation": true
+  },
+  "itemSpecifics": [
+    {
+      "name": "Type",
+      "value": "Organizer",
+      "verificationStatus": "needs_human_confirmation"
+    },
+    {
+      "name": "Color",
+      "value": "Neutral Gray",
+      "verificationStatus": "from_prompt_plan"
+    },
+    {
+      "name": "Material",
+      "value": "Needs verification",
+      "verificationStatus": "missing"
+    },
+    {
+      "name": "Dimensions",
+      "value": "Needs verification",
+      "verificationStatus": "missing"
+    },
+    {
+      "name": "Package Contents",
+      "value": "Needs verification before publication",
+      "verificationStatus": "missing"
+    }
+  ],
+  "priceStrategy": {
+    "suggestedPriceUsd": null,
+    "minimumPriceUsd": null,
+    "targetProfitUsd": null,
+    "needsCostVerification": true
+  },
+  "shipping": {
+    "freeShippingAllowed": false,
+    "freeShippingVerified": false,
+    "shipsFromUsaAllowed": false,
+    "shipsFromUsaVerified": false,
+    "inStockInUsaAllowed": false,
+    "inStockInUsaVerified": false,
+    "shippingCopy": "Shipping details must be verified before publishing."
+  },
+  "returns": {
+    "returnPolicyCopy": "Return policy must be confirmed before publishing.",
+    "needsHumanConfirmation": true
+  },
+  "trustSignals": {
+    "freeShipping": {
+      "allowed": false,
+      "verified": false,
+      "text": "Free Shipping",
+      "instruction": "do_not_use"
+    },
+    "shipsFromUsa": {
+      "allowed": false,
+      "verified": false,
+      "text": "Ships from USA",
+      "instruction": "do_not_use"
+    },
+    "inStockInUsa": {
+      "allowed": false,
+      "verified": false,
+      "text": "In Stock in USA",
+      "instruction": "do_not_use"
+    },
+    "usaFlag": {
+      "allowed": false,
+      "verified": false,
+      "instruction": "do_not_use"
+    }
+  },
+  "buyerFacingCopy": {
+    "bullets": [
+      "Compact organizer concept for a clean home or office workspace.",
+      "Neutral gray style intended to fit simple everyday organization setups.",
+      "Product details require verification before this listing can be published.",
+      "Shipping, stock location, and package contents must be confirmed before use."
+    ],
+    "descriptionPlainText": "This listing package describes a simulated compact organizer for home or office storage. The product is intended for simple everyday organization in a clean workspace. Critical details such as dimensions, material, package contents, stock location, shipping terms, return policy, and final price still require human verification before this listing can be used for a real eBay draft or publication.",
+    "descriptionHtml": "<p>This listing package describes a simulated compact organizer for home or office storage.</p><p>The product is intended for simple everyday organization in a clean workspace.</p><p>Critical details such as dimensions, material, package contents, stock location, shipping terms, return policy, and final price still require human verification before this listing can be used for a real eBay draft or publication.</p>"
+  },
+  "mainImagePolicy": {
+    "imageSourceRequired": "real_product_photo",
+    "aiGeneratedAllowed": false,
+    "backgroundRequired": "pure_white",
+    "minimumResolutionPx": 1600,
+    "productCentered": true,
+    "productShouldFillFramePercent": 80,
+    "textAllowed": false,
+    "thirdPartyLogosAllowed": false,
+    "watermarksAllowed": false,
+    "status": "MAIN_IMAGE_REAL_PHOTO_REQUIRED"
+  },
+  "imagePlan": {
+    "mainImage": "Use a real physical product photo on a pure white background. Do not use AI generation for the main image.",
+    "secondaryImages": [
+      {
+        "imageNumber": 2,
+        "role": "material_zoom",
+        "title": "Material close-up",
+        "purpose": "Show texture, finish, and perceived quality",
+        "source": "manual_or_ai_assisted_secondary_only",
+        "requiresRealProductReference": true,
+        "requiresVerifiedMaterial": true,
+        "textAllowed": false,
+        "status": "NEEDS_DATA"
+      },
+      {
+        "imageNumber": 3,
+        "role": "package_contents",
+        "title": "Package contents",
+        "purpose": "Show everything included in the shipment",
+        "source": "manual_or_ai_assisted_secondary_only",
+        "requiresVerifiedPackageContents": true,
+        "textAllowed": false,
+        "status": "NEEDS_DATA"
+      },
+      {
+        "imageNumber": 4,
+        "role": "dimensions",
+        "title": "Dimensions and measurements",
+        "purpose": "Show verified measurements to reduce returns",
+        "source": "manual_or_ai_assisted_secondary_only",
+        "requiresVerifiedDimensions": true,
+        "textAllowed": true,
+        "allowedTextOnlyForMeasurements": true,
+        "status": "NEEDS_DATA"
+      },
+      {
+        "imageNumber": 5,
+        "role": "main_benefit_in_action",
+        "title": "Main benefit in action",
+        "purpose": "Show the problem solved visually without exaggerated claims",
+        "source": "manual_or_ai_assisted_secondary_only",
+        "requiresVerifiedUseCase": true,
+        "textAllowed": false,
+        "status": "NEEDS_DATA"
+      },
+      {
+        "imageNumber": 6,
+        "role": "aspirational_lifestyle",
+        "title": "Aspirational lifestyle context",
+        "purpose": "Show the product in a realistic premium environment",
+        "source": "manual_or_ai_assisted_secondary_only",
+        "requiresRealisticContext": true,
+        "textAllowed": false,
+        "status": "NEEDS_DATA"
+      },
+      {
+        "imageNumber": 7,
+        "role": "hands_real_use",
+        "title": "Product in real use with hands",
+        "purpose": "Show scale, usability, and human trust",
+        "source": "manual_or_ai_assisted_secondary_only",
+        "requiresModelOrHandsAuthorizationReview": true,
+        "textAllowed": false,
+        "status": "NEEDS_DATA"
+      }
+    ],
+    "manualImageBriefRequired": true,
+    "imageQaRequired": true
+  },
+  "recoveredImagePromptStrategy": {
+    "source": "user_uploaded_pdf_prompt",
+    "secondaryImageCount": 6,
+    "primaryImageAiAllowed": false,
+    "secondaryImagesAiAssistedAllowedAfterHumanReview": true,
+    "generalRequirements": [
+      "1:1 square format",
+      "1600x1600 px",
+      "high sharpness",
+      "realistic colors",
+      "no watermarks",
+      "no third-party logos",
+      "no borders",
+      "keep product faithful to original reference",
+      "do not invent accessories or product variations"
+    ]
+  },
+  "terapeakValidation": {
+    "requiredBeforePublish": true,
+    "status": "TERAPEAK_VALIDATION_REQUIRED",
+    "specificSearchQueryRequired": true,
+    "salesVolumeRequired": true,
+    "averageSoldPriceRequired": true,
+    "sellThroughRateRequired": true,
+    "activeListingsRequired": true,
+    "competitionReviewRequired": true,
+    "marginValidationRequired": true,
+    "recommendedThresholds": {
+      "minimumSellThroughRatePercent": 30,
+      "preferredSellThroughRatePercent": 50,
+      "minimumNetMarginPercent": 20
+    }
+  },
+  "postConversionPackStrategy": {
+    "strategyStatus": "WAITING_FOR_CONVERSION_DATA",
+    "appliesToConsumables": true,
+    "appliesToHighRotationProducts": true,
+    "activationRule": "Create pack listings only after the single-unit listing shows real conversion signals or Terapeak validates recurring demand.",
+    "conversionSignalsRequired": [
+      "first_sales_detected",
+      "watchers_or_cart_activity",
+      "repeat_purchase_potential_confirmed",
+      "Terapeak demand validated",
+      "margin after pack fees confirmed"
+    ],
+    "recommendedPackOptions": [
+      {
+        "packSize": 2,
+        "status": "FUTURE_TEST_OPTION",
+        "purpose": "Entry bundle for buyers who want backup quantity",
+        "requiresMarginValidation": true
+      },
+      {
+        "packSize": 3,
+        "status": "FUTURE_TEST_OPTION",
+        "purpose": "Small value pack for repeat-use products",
+        "requiresMarginValidation": true
+      },
+      {
+        "packSize": 6,
+        "status": "FUTURE_SCALE_OPTION",
+        "purpose": "High-rotation household or personal care pack",
+        "requiresMarginValidation": true
+      },
+      {
+        "packSize": 12,
+        "status": "FUTURE_SCALE_OPTION",
+        "purpose": "Bulk value pack for repeat buyers",
+        "requiresMarginValidation": true
+      }
+    ],
+    "exampleProductTypes": [
+      "soap",
+      "toothpaste",
+      "coffee",
+      "supplements",
+      "vitamins",
+      "cleaning products",
+      "personal care consumables",
+      "small replacement items"
+    ],
+    "bundleListingRule": "Each pack size should have its own listing package, pricing strategy, image plan, shipping review, and margin validation.",
+    "doNotCreatePackBefore": [
+      "single-unit listing has conversion evidence",
+      "pack cost is confirmed",
+      "shipping cost is confirmed",
+      "Luna Portex packing or bundling fee is confirmed",
+      "Terapeak or sales data supports demand"
+    ]
+  },
+  "lunaPortexPackFulfillmentReview": {
+    "requiredBeforePackListing": true,
+    "status": "PACKING_FEE_VERIFICATION_REQUIRED",
+    "reason": "Packing or bundling multiple units may have a Luna Portex service fee that affects margin.",
+    "feesToVerify": [
+      "packaging_material_fee",
+      "bundle_preparation_fee",
+      "labeling_or_handling_fee",
+      "storage_impact_if_packaged",
+      "shipping_weight_or_dimension_change",
+      "pick_and_pack_fee"
+    ],
+    "marginRule": "Do not approve pack listings until product cost, eBay fees, shipping, packaging, Luna Portex packing fee, and target profit are calculated.",
+    "requiredHumanActions": [
+      "Confirm Luna Portex fee for pack x2",
+      "Confirm Luna Portex fee for pack x3",
+      "Confirm Luna Portex fee for pack x6",
+      "Confirm Luna Portex fee for pack x12",
+      "Calculate margin per pack size before creating pack listing"
+    ]
+  },
+  "packImageStrategy": {
+    "status": "PACK_IMAGES_NOT_READY",
+    "mainImageRule": "Main image for each pack listing must still be a real product photo on pure white background.",
+    "aiGeneratedMainImageAllowed": false,
+    "packSecondaryImagesAllowedAfterReview": true,
+    "recommendedPackImages": [
+      {
+        "role": "pack_quantity_visual",
+        "purpose": "Show clearly that the buyer receives multiple units",
+        "requiresActualPackConfirmation": true,
+        "textAllowed": true,
+        "allowedTextExamples": [
+          "Pack of 6",
+          "Pack of 12"
+        ]
+      },
+      {
+        "role": "bulk_value_visual",
+        "purpose": "Show value of buying multiple units without false savings claims",
+        "requiresPriceValidation": true,
+        "textAllowed": true
+      },
+      {
+        "role": "household_stockup_lifestyle",
+        "purpose": "Show product as a practical stock-up purchase for repeat use",
+        "requiresRealisticUseCase": true,
+        "textAllowed": false
+      }
+    ],
+    "rules": [
+      "Do not show 6 or 12 units unless pack quantity is real.",
+      "Do not claim savings unless price comparison is verified.",
+      "Do not imply wholesale or bulk discount unless verified.",
+      "Do not use Free Shipping or Ships from USA unless verified.",
+      "Do not use USA flag unless verified and not implying Made in USA."
+    ]
+  },
+  "missingData": [
+    "verified dimensions required",
+    "verified material required",
+    "verified package contents required",
+    "verified stock location required",
+    "verified shipping policy required",
+    "Verified return policy required.",
+    "Verified cost, margin, and target price required.",
+    "Terapeak validation required",
+    "real main product photo required",
+    "manual image QA required",
+    "conversion data required before pack strategy activation",
+    "Luna Portex packing fee required before pack listings",
+    "pack shipping cost required",
+    "pack margin validation required",
+    "pack images require actual pack quantity confirmation",
+    "Free Shipping verification required before using the signal.",
+    "Ships from USA verification required before using the signal.",
+    "In Stock in USA verification required before using the signal."
+  ],
+  "riskFlags": [
+    "listing_package_needs_data",
+    "unverified_product_facts",
+    "unverified_shipping_and_stock_signals",
+    "price_not_ready",
+    "image_assets_not_ready"
+  ],
+  "requiredHumanActions": [
+    "Verify product dimensions.",
+    "Verify product material.",
+    "Verify package contents.",
+    "Verify stock location and inventory availability.",
+    "Verify shipping cost, shipping origin, and shipping terms.",
+    "Confirm return policy before listing use.",
+    "Confirm cost, fees, margin, and final listing price.",
+    "Review item specifics and category before listing use.",
+    "Complete image QA before any image can be used.",
+    "Monitor single-unit listing conversion before creating pack listings",
+    "Verify Luna Portex packing or bundling fee for pack sizes",
+    "Calculate pack x6 margin before creating pack listing",
+    "Calculate pack x12 margin before creating pack listing",
+    "Create separate image plan for each approved pack size"
+  ],
+  "prePublishChecklist": [
+    "Confirm all product facts are accurate.",
+    "Confirm title remains under 80 characters.",
+    "Confirm item specifics match the actual product.",
+    "Confirm price, cost, margin, shipping, and returns.",
+    "Confirm no unverified trust signal appears in the listing.",
+    "Confirm images pass manual QA.",
+    "Confirm eBay policy review is complete.",
+    "Confirm human approval before any draft or publication."
+  ],
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "humanReviewRequired": true,
+    "ebayApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false,
+    "openAiApiUsed": false,
+    "imageGenerated": false,
+    "externalCallsMade": false
+  }
+}

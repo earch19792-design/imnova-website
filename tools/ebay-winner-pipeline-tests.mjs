@@ -574,6 +574,19 @@ const ebayListingManualImageBriefFixture =
     )
   )
 
+const ebayFirstListingPackageFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-first-listing-package-v1.json"
+  )
+
+const ebayFirstListingPackageFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayFirstListingPackageFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayListingImageGenerationDryRunRunnerFixtureSetPath =
   path.resolve(
     "tools/fixtures/ebay-listing-image-generation-dry-run-runner-fixture-set-v1.json"
@@ -3126,6 +3139,714 @@ test("manual image brief fixture: no contiene campos prohibidos, URLs ni secreto
       ),
       false,
       `manual image brief fixture contains forbidden field: ${fieldName}`
+    )
+  }
+
+  for (const value of collected.values) {
+    assert.doesNotMatch(
+      value,
+      /https?:\/\//i
+    )
+    assert.doesNotMatch(
+      value,
+      /bearer\s+|sk-[a-z0-9_-]+|api[_ -]?key|auth(?:orization)?\s*header|password|secret|credential|token/i
+    )
+  }
+})
+
+test("first ebay listing package fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayFirstListingPackageFixturePath
+    )
+  )
+  assert.equal(
+    ebayFirstListingPackageFixture.packageVersion,
+    "EBAY_FIRST_LISTING_PACKAGE_V1"
+  )
+  assert.equal(
+    ebayFirstListingPackageFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebayFirstListingPackageFixture.marketplace,
+    "ebay_us"
+  )
+  assert.equal(
+    ebayFirstListingPackageFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebayFirstListingPackageFixture.listingPackageStatus,
+    "LISTING_PACKAGE_NEEDS_DATA"
+  )
+  assert.equal(
+    ebayFirstListingPackageFixture.publicationStatus,
+    "NOT_READY_TO_PUBLISH"
+  )
+  assert.ok(
+    ebayFirstListingPackageFixture.listingTitle.length > 0
+  )
+  assert.ok(
+    ebayFirstListingPackageFixture.listingTitle.length <= 80
+  )
+  assert.ok(
+    Array.isArray(
+      ebayFirstListingPackageFixture.titleAlternatives
+    )
+  )
+  assert.ok(
+    ebayFirstListingPackageFixture.categorySuggestion
+  )
+  assert.equal(
+    ebayFirstListingPackageFixture.categorySuggestion.needsHumanConfirmation,
+    true
+  )
+  assert.ok(
+    ebayFirstListingPackageFixture.condition
+  )
+  assert.equal(
+    ebayFirstListingPackageFixture.condition.needsHumanConfirmation,
+    true
+  )
+})
+
+test("first ebay listing package fixture: contiene copy, specifics y secciones operativas", () => {
+  assert.ok(
+    ebayFirstListingPackageFixture.buyerFacingCopy
+  )
+  assert.ok(
+    Array.isArray(
+      ebayFirstListingPackageFixture.buyerFacingCopy.bullets
+    )
+  )
+  assert.ok(
+    ebayFirstListingPackageFixture.buyerFacingCopy.bullets.length > 0
+  )
+  assert.equal(
+    typeof ebayFirstListingPackageFixture.buyerFacingCopy.descriptionPlainText,
+    "string"
+  )
+  assert.ok(
+    ebayFirstListingPackageFixture.buyerFacingCopy.descriptionPlainText.length > 0
+  )
+  assert.equal(
+    typeof ebayFirstListingPackageFixture.buyerFacingCopy.descriptionHtml,
+    "string"
+  )
+  assert.ok(
+    ebayFirstListingPackageFixture.buyerFacingCopy.descriptionHtml.length > 0
+  )
+
+  const requiredArrays = [
+    "itemSpecifics",
+    "missingData",
+    "riskFlags",
+    "requiredHumanActions",
+    "prePublishChecklist",
+  ]
+
+  for (const fieldName of requiredArrays) {
+    assert.ok(
+      Array.isArray(
+        ebayFirstListingPackageFixture[fieldName]
+      ),
+      `${fieldName} must be an array`
+    )
+    assert.ok(
+      ebayFirstListingPackageFixture[fieldName].length > 0,
+      `${fieldName} must not be empty`
+    )
+  }
+
+  const requiredObjects = [
+    "priceStrategy",
+    "shipping",
+    "returns",
+    "trustSignals",
+    "mainImagePolicy",
+    "imagePlan",
+    "recoveredImagePromptStrategy",
+    "terapeakValidation",
+    "postConversionPackStrategy",
+    "lunaPortexPackFulfillmentReview",
+    "packImageStrategy",
+    "safetyFlags",
+  ]
+
+  for (const fieldName of requiredObjects) {
+    assert.equal(
+      typeof ebayFirstListingPackageFixture[fieldName],
+      "object"
+    )
+    assert.notEqual(
+      ebayFirstListingPackageFixture[fieldName],
+      null
+    )
+  }
+})
+
+test("first ebay listing package fixture: post conversion pack strategy espera datos reales", () => {
+  const packStrategy =
+    ebayFirstListingPackageFixture.postConversionPackStrategy
+
+  assert.equal(
+    packStrategy.strategyStatus,
+    "WAITING_FOR_CONVERSION_DATA"
+  )
+  assert.equal(
+    packStrategy.appliesToConsumables,
+    true
+  )
+  assert.equal(
+    packStrategy.appliesToHighRotationProducts,
+    true
+  )
+  assert.match(
+    packStrategy.activationRule,
+    /after the single-unit listing shows real conversion signals/i
+  )
+
+  for (const requiredSignal of [
+    "first_sales_detected",
+    "watchers_or_cart_activity",
+    "repeat_purchase_potential_confirmed",
+    "Terapeak demand validated",
+    "margin after pack fees confirmed",
+  ]) {
+    assert.ok(
+      packStrategy.conversionSignalsRequired.includes(requiredSignal),
+      `missing conversion signal: ${requiredSignal}`
+    )
+  }
+
+  const packSizes =
+    packStrategy.recommendedPackOptions.map(option =>
+      option.packSize
+    )
+
+  assert.deepEqual(
+    packSizes,
+    [
+      2,
+      3,
+      6,
+      12,
+    ]
+  )
+
+  for (const option of packStrategy.recommendedPackOptions) {
+    assert.equal(
+      option.requiresMarginValidation,
+      true,
+      `pack x${option.packSize} must require margin validation`
+    )
+  }
+
+  for (const blocker of [
+    "single-unit listing has conversion evidence",
+    "Luna Portex packing or bundling fee is confirmed",
+    "Terapeak or sales data supports demand",
+  ]) {
+    assert.ok(
+      packStrategy.doNotCreatePackBefore.includes(blocker),
+      `missing pack blocker: ${blocker}`
+    )
+  }
+})
+
+test("first ebay listing package fixture: Luna Portex pack fulfillment fee requiere verificacion", () => {
+  const fulfillmentReview =
+    ebayFirstListingPackageFixture.lunaPortexPackFulfillmentReview
+
+  assert.equal(
+    fulfillmentReview.requiredBeforePackListing,
+    true
+  )
+  assert.equal(
+    fulfillmentReview.status,
+    "PACKING_FEE_VERIFICATION_REQUIRED"
+  )
+  assert.match(
+    fulfillmentReview.reason,
+    /Luna Portex service fee/i
+  )
+
+  for (const fee of [
+    "bundle_preparation_fee",
+    "pick_and_pack_fee",
+  ]) {
+    assert.ok(
+      fulfillmentReview.feesToVerify.includes(fee),
+      `missing Luna Portex fee to verify: ${fee}`
+    )
+  }
+
+  assert.match(
+    fulfillmentReview.marginRule,
+    /Do not approve pack listings/i
+  )
+  assert.match(
+    fulfillmentReview.marginRule,
+    /Luna Portex packing fee/i
+  )
+
+  for (const action of [
+    "Confirm Luna Portex fee for pack x6",
+    "Confirm Luna Portex fee for pack x12",
+    "Calculate margin per pack size before creating pack listing",
+  ]) {
+    assert.ok(
+      fulfillmentReview.requiredHumanActions.includes(action),
+      `missing Luna Portex pack action: ${action}`
+    )
+  }
+})
+
+test("first ebay listing package fixture: pack image strategy mantiene main image real y evita packs falsos", () => {
+  const packImageStrategy =
+    ebayFirstListingPackageFixture.packImageStrategy
+
+  assert.equal(
+    packImageStrategy.status,
+    "PACK_IMAGES_NOT_READY"
+  )
+  assert.match(
+    packImageStrategy.mainImageRule,
+    /real product photo on pure white background/i
+  )
+  assert.equal(
+    packImageStrategy.aiGeneratedMainImageAllowed,
+    false
+  )
+  assert.equal(
+    packImageStrategy.packSecondaryImagesAllowedAfterReview,
+    true
+  )
+
+  const packImageRoles =
+    packImageStrategy.recommendedPackImages.map(image =>
+      image.role
+    )
+
+  assert.deepEqual(
+    packImageRoles,
+    [
+      "pack_quantity_visual",
+      "bulk_value_visual",
+      "household_stockup_lifestyle",
+    ]
+  )
+
+  assert.ok(
+    packImageStrategy.rules.some(rule =>
+      /Do not show 6 or 12 units unless pack quantity is real\./.test(rule)
+    )
+  )
+  assert.ok(
+    packImageStrategy.rules.some(rule =>
+      /Do not use Free Shipping or Ships from USA unless verified\./.test(rule)
+    )
+  )
+})
+
+test("first ebay listing package fixture: main image requiere foto real no IA", () => {
+  const mainImagePolicy =
+    ebayFirstListingPackageFixture.mainImagePolicy
+
+  assert.equal(
+    mainImagePolicy.imageSourceRequired,
+    "real_product_photo"
+  )
+  assert.equal(
+    mainImagePolicy.aiGeneratedAllowed,
+    false
+  )
+  assert.equal(
+    mainImagePolicy.backgroundRequired,
+    "pure_white"
+  )
+  assert.ok(
+    mainImagePolicy.minimumResolutionPx >= 1600
+  )
+  assert.equal(
+    mainImagePolicy.productCentered,
+    true
+  )
+  assert.equal(
+    mainImagePolicy.productShouldFillFramePercent,
+    80
+  )
+  assert.equal(
+    mainImagePolicy.textAllowed,
+    false
+  )
+  assert.equal(
+    mainImagePolicy.thirdPartyLogosAllowed,
+    false
+  )
+  assert.equal(
+    mainImagePolicy.watermarksAllowed,
+    false
+  )
+  assert.equal(
+    mainImagePolicy.status,
+    "MAIN_IMAGE_REAL_PHOTO_REQUIRED"
+  )
+})
+
+test("first ebay listing package fixture: secondary images siguen prompt recuperado", () => {
+  const secondaryImages =
+    ebayFirstListingPackageFixture.imagePlan.secondaryImages
+
+  assert.ok(
+    Array.isArray(secondaryImages)
+  )
+  assert.equal(
+    secondaryImages.length,
+    6
+  )
+
+  const expectedRoles = [
+    "material_zoom",
+    "package_contents",
+    "dimensions",
+    "main_benefit_in_action",
+    "aspirational_lifestyle",
+    "hands_real_use",
+  ]
+
+  assert.deepEqual(
+    secondaryImages.map(image => image.role),
+    expectedRoles
+  )
+  assert.deepEqual(
+    secondaryImages.map(image => image.imageNumber),
+    [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+    ]
+  )
+
+  for (const image of secondaryImages) {
+    assert.equal(
+      image.source,
+      "manual_or_ai_assisted_secondary_only"
+    )
+    assert.equal(
+      image.status,
+      "NEEDS_DATA"
+    )
+
+    if (image.role === "dimensions") {
+      assert.equal(
+        image.textAllowed,
+        true
+      )
+      assert.equal(
+        image.allowedTextOnlyForMeasurements,
+        true
+      )
+      continue
+    }
+
+    assert.equal(
+      image.textAllowed,
+      false,
+      `${image.role} must not allow text`
+    )
+  }
+})
+
+test("first ebay listing package fixture: recovered image prompt strategy es secundaria y controlada", () => {
+  const promptStrategy =
+    ebayFirstListingPackageFixture.recoveredImagePromptStrategy
+
+  assert.equal(
+    promptStrategy.source,
+    "user_uploaded_pdf_prompt"
+  )
+  assert.equal(
+    promptStrategy.secondaryImageCount,
+    6
+  )
+  assert.equal(
+    promptStrategy.primaryImageAiAllowed,
+    false
+  )
+  assert.equal(
+    promptStrategy.secondaryImagesAiAssistedAllowedAfterHumanReview,
+    true
+  )
+
+  for (const requirement of [
+    "1:1 square format",
+    "1600x1600 px",
+    "no watermarks",
+    "no third-party logos",
+    "keep product faithful to original reference",
+    "do not invent accessories or product variations",
+  ]) {
+    assert.ok(
+      promptStrategy.generalRequirements.includes(requirement),
+      `missing prompt strategy requirement: ${requirement}`
+    )
+  }
+})
+
+test("first ebay listing package fixture: Terapeak validation bloquea publicacion", () => {
+  const terapeakValidation =
+    ebayFirstListingPackageFixture.terapeakValidation
+
+  assert.equal(
+    terapeakValidation.requiredBeforePublish,
+    true
+  )
+  assert.equal(
+    terapeakValidation.status,
+    "TERAPEAK_VALIDATION_REQUIRED"
+  )
+  assert.equal(
+    terapeakValidation.specificSearchQueryRequired,
+    true
+  )
+  assert.equal(
+    terapeakValidation.salesVolumeRequired,
+    true
+  )
+  assert.equal(
+    terapeakValidation.averageSoldPriceRequired,
+    true
+  )
+  assert.equal(
+    terapeakValidation.sellThroughRateRequired,
+    true
+  )
+  assert.equal(
+    terapeakValidation.activeListingsRequired,
+    true
+  )
+  assert.equal(
+    terapeakValidation.competitionReviewRequired,
+    true
+  )
+  assert.equal(
+    terapeakValidation.marginValidationRequired,
+    true
+  )
+  assert.ok(
+    terapeakValidation.recommendedThresholds.minimumSellThroughRatePercent >= 30
+  )
+  assert.ok(
+    terapeakValidation.recommendedThresholds.minimumNetMarginPercent >= 20
+  )
+  assert.notEqual(
+    ebayFirstListingPackageFixture.publicationStatus,
+    "READY_TO_PUBLISH"
+  )
+})
+
+test("first ebay listing package fixture: missing data incluye bloqueos criticos", () => {
+  const missingData =
+    ebayFirstListingPackageFixture.missingData
+
+  for (const item of [
+    "verified dimensions required",
+    "verified material required",
+    "verified package contents required",
+    "verified stock location required",
+    "verified shipping policy required",
+    "Terapeak validation required",
+    "real main product photo required",
+    "manual image QA required",
+    "conversion data required before pack strategy activation",
+    "Luna Portex packing fee required before pack listings",
+    "pack shipping cost required",
+    "pack margin validation required",
+    "pack images require actual pack quantity confirmation",
+  ]) {
+    assert.ok(
+      missingData.includes(item),
+      `missingData must include: ${item}`
+    )
+  }
+})
+
+test("first ebay listing package fixture: human actions incluyen pack fee y margen", () => {
+  const requiredHumanActions =
+    ebayFirstListingPackageFixture.requiredHumanActions
+
+  for (const action of [
+    "Monitor single-unit listing conversion before creating pack listings",
+    "Verify Luna Portex packing or bundling fee for pack sizes",
+    "Calculate pack x6 margin before creating pack listing",
+    "Calculate pack x12 margin before creating pack listing",
+    "Create separate image plan for each approved pack size",
+  ]) {
+    assert.ok(
+      requiredHumanActions.includes(action),
+      `requiredHumanActions must include: ${action}`
+    )
+  }
+})
+
+test("first ebay listing package fixture: trust signals no verificados no se usan", () => {
+  const trustSignals =
+    ebayFirstListingPackageFixture.trustSignals
+
+  for (const [
+    signalName,
+    signal,
+  ] of Object.entries(trustSignals)) {
+    assert.equal(
+      signal.verified,
+      false,
+      `${signalName} must remain unverified in this fixture`
+    )
+    assert.notEqual(
+      signal.instruction,
+      "use",
+      `${signalName} must not be used when unverified`
+    )
+    assert.ok(
+      [
+        "do_not_use",
+        "needs_verification",
+      ].includes(signal.instruction)
+    )
+  }
+})
+
+test("first ebay listing package fixture: no esta listo para publicar con missing data", () => {
+  assert.ok(
+    ebayFirstListingPackageFixture.missingData.length > 0
+  )
+  assert.notEqual(
+    ebayFirstListingPackageFixture.publicationStatus,
+    "READY_TO_PUBLISH"
+  )
+  assert.equal(
+    ebayFirstListingPackageFixture.listingPackageStatus,
+    "LISTING_PACKAGE_NEEDS_DATA"
+  )
+})
+
+test("first ebay listing package fixture: safety flags mantienen side effects false", () => {
+  assert.deepEqual(
+    ebayFirstListingPackageFixture.safetyFlags,
+    {
+      advisoryOnly:
+        true,
+      humanReviewRequired:
+        true,
+      ebayApiUsed:
+        false,
+      realDraftCreated:
+        false,
+      publishedToEbay:
+        false,
+      listingMutated:
+        false,
+      openAiApiUsed:
+        false,
+      imageGenerated:
+        false,
+      externalCallsMade:
+        false,
+    }
+  )
+})
+
+test("first ebay listing package fixture: no contiene campos prohibidos ni URLs", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayFirstListingPackageFixturePath,
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    rawFixture,
+    /https?:\/\//i
+  )
+
+  const forbiddenFieldNames = [
+    "draftId",
+    "listingId",
+    "publishedListingId",
+    "oa" + "uth",
+    "tok" + "en",
+    "sec" + "ret",
+    "apiKey",
+    "auth" + "orization",
+    "openAiPayload",
+    "imageUrl",
+    "base64Image",
+  ]
+
+  function collectKeysAndValues(
+    value,
+    collected = {
+      keys:
+        [],
+      values:
+        [],
+    }
+  ) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        collectKeysAndValues(
+          item,
+          collected
+        )
+      }
+      return collected
+    }
+
+    if (
+      value &&
+      typeof value === "object"
+    ) {
+      for (const [
+        key,
+        childValue,
+      ] of Object.entries(value)) {
+        collected.keys.push(key)
+        collectKeysAndValues(
+          childValue,
+          collected
+        )
+      }
+      return collected
+    }
+
+    if (typeof value === "string") {
+      collected.values.push(value)
+    }
+
+    return collected
+  }
+
+  const collected =
+    collectKeysAndValues(
+      ebayFirstListingPackageFixture
+    )
+
+  const lowerKeys =
+    collected.keys.map(key =>
+      key.toLowerCase()
+    )
+
+  for (const fieldName of forbiddenFieldNames) {
+    assert.equal(
+      lowerKeys.includes(
+        fieldName.toLowerCase()
+      ),
+      false,
+      `first ebay listing package fixture contains forbidden field: ${fieldName}`
     )
   }
 
