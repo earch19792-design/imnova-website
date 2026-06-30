@@ -623,6 +623,11 @@ const ebayImageGeneratorAdminPagePath =
     "app/admin/ebay-image-generator/page.tsx"
   )
 
+const ebayListingPackageAdminPagePath =
+  path.resolve(
+    "app/admin/ebay-listing-package/page.tsx"
+  )
+
 const adminSidebarPath =
   path.resolve(
     "app/admin/sidebar.tsx"
@@ -5610,6 +5615,195 @@ test("image generator admin placeholder: sidebar incluye ruta segura", () => {
   assert.match(
     source,
     /eBay Image Generator/
+  )
+})
+
+test("ebay listing package admin MVP: existe y usa fixtures seguros", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayListingPackageAdminPagePath
+    )
+  )
+
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /ebay-first-listing-package-v1\.json/
+  )
+  assert.match(
+    source,
+    /ebay-first-listing-qa-review-v1\.json/
+  )
+})
+
+test("ebay listing package admin MVP: muestra copy, estados y estrategia principal", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "eBay Listing Package",
+    "Professional Listing MVP",
+    "Read-only preview",
+    "No eBay connection",
+    "No draft created",
+    "Do not publish yet",
+    "Human review required",
+    "LISTING_PACKAGE_NEEDS_DATA",
+    "NOT_READY_TO_PUBLISH",
+    "LISTING_QA_NEEDS_DATA",
+    "DO_NOT_CREATE_DRAFT",
+    "DO_NOT_PUBLISH",
+    "TERAPEAK_VALIDATION_REQUIRED",
+    "SOLD_LISTINGS_BENCHMARK_REQUIRED",
+    "WAITING_FOR_CONVERSION_DATA",
+    "PACKING_FEE_VERIFICATION_REQUIRED",
+    "ebay_only_connector_or_import",
+    "structured_requirement_only",
+    "Sell One Like This",
+    "manualCopyNotScalable",
+    "Free Shipping",
+    "Ships from USA",
+    "In Stock in USA",
+    "USA flag",
+    "Made in USA",
+    "pack x2",
+    "pack x3",
+    "pack x6",
+    "pack x12",
+    "Luna Portex",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing listing package admin text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: contiene secciones requeridas", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedSection of [
+    "Listing Overview",
+    "Buyer-Facing Copy",
+    "Item Specifics",
+    "Price Strategy",
+    "Shipping & Returns",
+    "US Buyer Trust Signals",
+    "Main Image Policy",
+    "Secondary Image Strategy",
+    "Optional US Buyer Trust Visual",
+    "Terapeak Validation",
+    "Sold Listings Benchmark",
+    "Pack Strategy",
+    "Luna Portex Pack Fulfillment Review",
+    "QA Review",
+    "Blocking Reasons",
+    "Missing Data",
+    "Required Human Actions",
+    "Pre-Draft Checklist",
+    "Pre-Publish Checklist",
+    "Safety Flags",
+  ]) {
+    assert.ok(
+      source.includes(expectedSection),
+      `missing listing package admin section: ${expectedSection}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: acciones visibles permanecen deshabilitadas", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedButton of [
+    "Import Sold Listings",
+    "Validate Terapeak",
+    "Create eBay Draft",
+    "Publish to eBay",
+    "Create Pack Listing",
+    "Generate Images",
+  ]) {
+    assert.ok(
+      source.includes(expectedButton),
+      `missing disabled action: ${expectedButton}`
+    )
+  }
+
+  assert.match(
+    source,
+    /disabled/
+  )
+  assert.doesNotMatch(
+    source,
+    /onClick=/
+  )
+  assert.doesNotMatch(
+    source,
+    /<form/i
+  )
+})
+
+test("ebay listing package admin MVP: no contiene integraciones reales", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /fetch\(/,
+    /createClient/,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /process\.env/,
+    /OPENAI_API_KEY/,
+    /new OpenAI/,
+    /images\.generate/,
+    /openai\.images/,
+    /ebayApi\.create/,
+    /createDraft/,
+    /publishListing/,
+    /onClick=/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern
+    )
+  }
+})
+
+test("ebay listing package admin MVP: sidebar incluye ruta segura", () => {
+  const source =
+    fs.readFileSync(
+      adminSidebarPath,
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /\/admin\/ebay-listing-package/
+  )
+  assert.match(
+    source,
+    /eBay Listing Package/
   )
 })
 
