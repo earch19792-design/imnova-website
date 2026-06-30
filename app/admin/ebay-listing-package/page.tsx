@@ -2,6 +2,7 @@ import type {
   ReactNode,
 } from "react"
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
+import imageAssetManifest from "../../../tools/fixtures/ebay-luna-portex-image-asset-manifest-v1.json"
 import qaReview from "../../../tools/fixtures/ebay-first-listing-qa-review-v1.json"
 
 const safetyBadges = [
@@ -21,6 +22,31 @@ const executiveBlockers = [
   "Shipping/returns not confirmed",
   "Price and margin not validated",
 ]
+
+const imageAssetManifestCopy = {
+  manifestStatus:
+    "IMAGE_ASSETS_NEED_SOURCE",
+  publicationImpact:
+    "DO_NOT_CREATE_DRAFT_UNTIL_IMAGE_QA_APPROVED",
+  sourceLabel:
+    "Authorized Luna Portex catalog image",
+  currentStep:
+    "Waiting for authorized Luna Portex catalog image",
+  enhancementStatus:
+    "White-background enhancement pending",
+  qaStatus:
+    "Image QA required",
+  draftGate:
+    "Draft gate: blocked until image QA approved",
+  secondarySlotRoles: [
+    "material_zoom",
+    "package_contents",
+    "dimensions",
+    "main_benefit_in_action",
+    "aspirational_lifestyle",
+    "hands_real_use",
+  ],
+}
 
 const decisionCards = [
   {
@@ -664,6 +690,169 @@ export default function EbayListingPackagePage() {
 
         <Section title="Image Plan">
           <div className="grid gap-5">
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Image Asset Manifest
+              </h3>
+              <div className="mt-3 grid gap-4 lg:grid-cols-2">
+                <FieldGrid
+                  fields={[
+                    [
+                      "manifestVersion",
+                      imageAssetManifest.manifestVersion,
+                    ],
+                    [
+                      "manifestStatus",
+                      imageAssetManifestCopy.manifestStatus,
+                    ],
+                    [
+                      "publicationImpact",
+                      imageAssetManifestCopy.publicationImpact,
+                    ],
+                    [
+                      "primarySource",
+                      imageAssetManifest.imageSourceModel.primarySource,
+                    ],
+                    [
+                      "source label",
+                      imageAssetManifestCopy.sourceLabel,
+                    ],
+                    [
+                      "workflow current step",
+                      imageAssetManifestCopy.currentStep,
+                    ],
+                    [
+                      "nextStep",
+                      imageAssetManifest.workflow.nextStep,
+                    ],
+                    [
+                      imageAssetManifestCopy.draftGate,
+                      imageAssetManifest.workflow.draftGate,
+                    ],
+                    [
+                      "secondarySlotRoles",
+                      imageAssetManifestCopy.secondarySlotRoles.join(", "),
+                    ],
+                  ]}
+                />
+
+                <FieldGrid
+                  fields={Object.entries(
+                    imageAssetManifest.imageSourceModel
+                  )}
+                />
+              </div>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/40">
+                    Main Image Slot
+                  </p>
+                  <h4 className="mt-3 text-base font-black text-white">
+                    {imageAssetManifest.mainImageSlot.role}
+                  </h4>
+                  <div className="mt-4 grid gap-3 text-sm text-white/65">
+                    {[
+                      [
+                        "sourceRequired",
+                        imageAssetManifest.mainImageSlot.sourceRequired,
+                      ],
+                      [
+                        "sourceStatus",
+                        imageAssetManifest.mainImageSlot.sourceStatus,
+                      ],
+                      [
+                        "authorizationStatus",
+                        imageAssetManifest.mainImageSlot.authorizationStatus,
+                      ],
+                      [
+                        "enhancementStatus",
+                        imageAssetManifestCopy.enhancementStatus,
+                      ],
+                      [
+                        "qaStatus",
+                        imageAssetManifestCopy.qaStatus,
+                      ],
+                    ].map(([label, value]) => (
+                      <p
+                        key={label}
+                        className="break-words rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2"
+                      >
+                        <span className="font-bold text-white">
+                          {label}:
+                        </span>{" "}
+                        {value}
+                      </p>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/40">
+                    Workflow
+                  </p>
+                  <div className="mt-4 grid gap-3 text-sm text-white/65">
+                    {imageAssetManifest.workflow.steps.map((step) => (
+                      <p
+                        key={step}
+                        className="break-words rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2"
+                      >
+                        {step}
+                      </p>
+                    ))}
+                  </div>
+                </article>
+              </div>
+
+              <div className="mt-5">
+                <h4 className="text-sm font-black text-white">
+                  Secondary Image Slots
+                </h4>
+                <div className="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {imageAssetManifest.secondaryImageSlots.map((slot) => (
+                    <article
+                      key={slot.slotId}
+                      className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                    >
+                      <p className="text-xs uppercase tracking-[0.2em] text-white/40">
+                        {slot.slotId}
+                      </p>
+                      <h5 className="mt-2 text-sm font-black text-white">
+                        {slot.role}
+                      </h5>
+                      <div className="mt-3 space-y-2 text-sm text-white/65">
+                        <p>
+                          status: {slot.status}
+                        </p>
+                        <p>
+                          factVerificationRequired: {formatValue(slot.factVerificationRequired)}
+                        </p>
+                        <p>
+                          imageQaRequired: {formatValue(slot.imageQaRequired)}
+                        </p>
+                        <p>
+                          textAllowed: {formatValue(slot.textAllowed)}
+                        </p>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <h4 className="text-sm font-black text-white">
+                  Image Asset Safety Flags
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      imageAssetManifest.safetyFlags
+                    )}
+                  />
+                </div>
+              </div>
+            </div>
+
             <div>
               <h3 className="text-sm font-black text-white">
                 Main Image Policy

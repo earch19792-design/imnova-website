@@ -600,6 +600,19 @@ const ebayFirstListingQaReviewFixture =
     )
   )
 
+const ebayLunaPortexImageAssetManifestFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-luna-portex-image-asset-manifest-v1.json"
+  )
+
+const ebayLunaPortexImageAssetManifestFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayLunaPortexImageAssetManifestFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayListingImageGenerationDryRunRunnerFixtureSetPath =
   path.resolve(
     "tools/fixtures/ebay-listing-image-generation-dry-run-runner-fixture-set-v1.json"
@@ -4495,6 +4508,320 @@ test("first listing QA review fixture: no contiene campos prohibidos ni URLs", (
   }
 })
 
+test("luna portex image asset manifest fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayLunaPortexImageAssetManifestFixturePath
+    )
+  )
+  assert.equal(
+    ebayLunaPortexImageAssetManifestFixture.manifestVersion,
+    "EBAY_LUNA_PORTEX_IMAGE_ASSET_MANIFEST_V1"
+  )
+  assert.equal(
+    ebayLunaPortexImageAssetManifestFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebayLunaPortexImageAssetManifestFixture.sourceListingPackageVersion,
+    "EBAY_FIRST_LISTING_PACKAGE_V1"
+  )
+  assert.equal(
+    ebayLunaPortexImageAssetManifestFixture.marketplace,
+    "ebay_us"
+  )
+  assert.equal(
+    ebayLunaPortexImageAssetManifestFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebayLunaPortexImageAssetManifestFixture.manifestStatus,
+    "IMAGE_ASSETS_NEED_SOURCE"
+  )
+  assert.equal(
+    ebayLunaPortexImageAssetManifestFixture.publicationImpact,
+    "DO_NOT_CREATE_DRAFT_UNTIL_IMAGE_QA_APPROVED"
+  )
+
+  const sourceModel =
+    ebayLunaPortexImageAssetManifestFixture.imageSourceModel
+
+  assert.equal(
+    sourceModel.primarySource,
+    "luna_portex_catalog"
+  )
+  assert.equal(
+    sourceModel.authorizedCatalogImageRequired,
+    true
+  )
+  assert.equal(
+    sourceModel.physicalProductInSellerPossessionRequired,
+    false
+  )
+  assert.equal(
+    sourceModel.externalUrlsAllowedInManifest,
+    false
+  )
+  assert.equal(
+    sourceModel.base64ImagesAllowedInManifest,
+    false
+  )
+  assert.equal(
+    sourceModel.realImagesIncludedInThisManifest,
+    false
+  )
+  assert.equal(
+    sourceModel.generatedImagesIncludedInThisManifest,
+    false
+  )
+})
+
+test("luna portex image asset manifest fixture: main image slot bloquea draft hasta QA", () => {
+  const mainImageSlot =
+    ebayLunaPortexImageAssetManifestFixture.mainImageSlot
+
+  assert.equal(
+    mainImageSlot.sourceRequired,
+    "authorized_luna_portex_catalog_product_image"
+  )
+  assert.equal(
+    mainImageSlot.sourceStatus,
+    "MISSING_SOURCE_IMAGE"
+  )
+  assert.equal(
+    mainImageSlot.authorizationStatus,
+    "AUTHORIZATION_REQUIRED"
+  )
+  assert.equal(
+    mainImageSlot.enhancementStatus,
+    "WHITE_BACKGROUND_ENHANCEMENT_PENDING"
+  )
+  assert.equal(
+    mainImageSlot.qaStatus,
+    "IMAGE_QA_REQUIRED"
+  )
+  assert.equal(
+    mainImageSlot.requirements.finalBackgroundRequired,
+    "pure_white"
+  )
+  assert.equal(
+    mainImageSlot.requirements.textAllowed,
+    false
+  )
+  assert.equal(
+    mainImageSlot.requirements.trustBadgesAllowed,
+    false
+  )
+  assert.equal(
+    mainImageSlot.requirements.usaFlagAllowed,
+    false
+  )
+  assert.equal(
+    mainImageSlot.requirements.aiGeneratedProductAllowed,
+    false
+  )
+  assert.equal(
+    mainImageSlot.requirements.productAlterationAllowed,
+    false
+  )
+  assert.ok(
+    mainImageSlot.allowedEnhancements.includes(
+      "background_cleanup_to_pure_white"
+    )
+  )
+
+  for (const prohibitedEnhancement of [
+    "change_product_shape",
+    "invent_accessories",
+    "add_trust_badges",
+    "add_usa_flag",
+    "create_product_from_scratch",
+  ]) {
+    assert.ok(
+      mainImageSlot.prohibitedEnhancements.includes(
+        prohibitedEnhancement
+      ),
+      `main image slot must prohibit: ${prohibitedEnhancement}`
+    )
+  }
+})
+
+test("luna portex image asset manifest fixture: secondary slots requieren verificacion y QA", () => {
+  const secondaryImageSlots =
+    ebayLunaPortexImageAssetManifestFixture.secondaryImageSlots
+  const expectedRoles = [
+    "material_zoom",
+    "package_contents",
+    "dimensions",
+    "main_benefit_in_action",
+    "aspirational_lifestyle",
+    "hands_real_use",
+  ]
+
+  assert.equal(
+    secondaryImageSlots.length,
+    6
+  )
+  assert.deepEqual(
+    secondaryImageSlots.map(slot => slot.role),
+    expectedRoles
+  )
+
+  for (const slot of secondaryImageSlots) {
+    assert.equal(
+      slot.factVerificationRequired,
+      true,
+      `${slot.role} must require fact verification`
+    )
+    assert.equal(
+      slot.imageQaRequired,
+      true,
+      `${slot.role} must require image QA`
+    )
+
+    if (slot.role === "dimensions") {
+      assert.equal(
+        slot.textAllowed,
+        true
+      )
+      assert.equal(
+        slot.allowedTextOnlyForMeasurements,
+        true
+      )
+    } else {
+      assert.equal(
+        slot.textAllowed,
+        false,
+        `${slot.role} must not allow text`
+      )
+    }
+  }
+})
+
+test("luna portex image asset manifest fixture: safety flags mantienen side effects false", () => {
+  const safetyFlags =
+    ebayLunaPortexImageAssetManifestFixture.safetyFlags
+
+  for (const [
+    flagName,
+    expectedValue,
+  ] of [
+    [
+      "realImagesIncluded",
+      false,
+    ],
+    [
+      "imageUrlsIncluded",
+      false,
+    ],
+    [
+      "base64ImagesIncluded",
+      false,
+    ],
+    [
+      "imageGenerated",
+      false,
+    ],
+    [
+      "openAiApiUsed",
+      false,
+    ],
+    [
+      "externalCallsMade",
+      false,
+    ],
+    [
+      "ebayApiUsed",
+      false,
+    ],
+    [
+      "realDraftCreated",
+      false,
+    ],
+    [
+      "publishedToEbay",
+      false,
+    ],
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      expectedValue,
+      `${flagName} must be ${expectedValue}`
+    )
+  }
+})
+
+test("luna portex image asset manifest fixture: no contiene URLs, imagenes embebidas ni asset URLs", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayLunaPortexImageAssetManifestFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /imageUrl/,
+    /assetUrl/,
+    /uploadedUrl/,
+    /<img/i,
+    /next\/image/i,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+
+  function collectStringValues(
+    value,
+    collected = []
+  ) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        collectStringValues(
+          item,
+          collected
+        )
+      }
+      return collected
+    }
+
+    if (
+      value &&
+      typeof value === "object"
+    ) {
+      for (const childValue of Object.values(value)) {
+        collectStringValues(
+          childValue,
+          collected
+        )
+      }
+      return collected
+    }
+
+    if (typeof value === "string") {
+      collected.push(value)
+    }
+
+    return collected
+  }
+
+  for (const value of collectStringValues(
+    ebayLunaPortexImageAssetManifestFixture
+  )) {
+    assert.doesNotMatch(
+      value,
+      /https?:\/\//i
+    )
+    assert.doesNotMatch(
+      value,
+      /base64|imageUrl|assetUrl|uploadedUrl/i
+    )
+  }
+})
+
 test("image generation dry run runner fixture set: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -5717,6 +6044,10 @@ test("ebay listing package admin MVP: existe y usa fixtures seguros", () => {
     source,
     /ebay-first-listing-qa-review-v1\.json/
   )
+  assert.match(
+    source,
+    /ebay-luna-portex-image-asset-manifest-v1\.json/
+  )
 })
 
 test("ebay listing package admin MVP: muestra copy, estados y estrategia principal", () => {
@@ -5799,6 +6130,7 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "Approval",
     "Product / Pricing / Shipping",
     "Image Plan",
+    "Image Asset Manifest",
     "Market Validation",
     "Trust Signals",
     "QA Details",
@@ -5856,6 +6188,38 @@ test("ebay listing package admin MVP: muestra preview vendedor y plan de accion"
     assert.ok(
       source.includes(expectedText),
       `missing seller preview/action text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: muestra image asset manifest", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Image Asset Manifest",
+    "IMAGE_ASSETS_NEED_SOURCE",
+    "DO_NOT_CREATE_DRAFT_UNTIL_IMAGE_QA_APPROVED",
+    "Authorized Luna Portex catalog image",
+    "Waiting for authorized Luna Portex catalog image",
+    "White-background enhancement pending",
+    "Image QA required",
+    "Main Image Slot",
+    "Secondary Image Slots",
+    "material_zoom",
+    "package_contents",
+    "dimensions",
+    "main_benefit_in_action",
+    "aspirational_lifestyle",
+    "hands_real_use",
+    "Draft gate: blocked until image QA approved",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing image asset manifest admin text: ${expectedText}`
     )
   }
 })
