@@ -1,0 +1,173 @@
+{
+  "qaVersion": "EBAY_FIRST_LISTING_QA_REVIEW_V1",
+  "caseId": "LISTING-GEN-001",
+  "sourceListingPackageVersion": "EBAY_FIRST_LISTING_PACKAGE_V1",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "qaStatus": "LISTING_QA_NEEDS_DATA",
+  "publicationRecommendation": "DO_NOT_PUBLISH",
+  "draftRecommendation": "DO_NOT_CREATE_DRAFT",
+  "overallDecision": "NEEDS_DATA_BEFORE_DRAFT",
+  "decisionSummary": "The first listing package is a useful professional base for LISTING-GEN-001, but it is not ready for draft creation or publication. Critical validations are still missing, including Terapeak, sold listings benchmark review, verified product facts, shipping and returns confirmation, real main product photo, image QA, margin calculation, and human approval.",
+  "sectionReviews": {
+    "titleReview": {
+      "status": "NEEDS_HUMAN_REVIEW",
+      "checks": [
+        "Confirm listing title stays at or below 80 characters.",
+        "Remove any unverified claims before draft creation.",
+        "Keep title original and based on verified product facts."
+      ]
+    },
+    "categoryReview": {
+      "status": "NEEDS_CONFIRMATION",
+      "checks": [
+        "Confirm category with Terapeak and sold listings benchmark before draft creation.",
+        "Do not rely on competitor category choices without verification."
+      ]
+    },
+    "itemSpecificsReview": {
+      "status": "NEEDS_DATA",
+      "checks": [
+        "Verify item specifics from real product facts.",
+        "Do not copy competitor item specifics field by field.",
+        "Confirm material, dimensions, package contents, and condition before draft creation."
+      ]
+    },
+    "priceMarginReview": {
+      "status": "NEEDS_DATA",
+      "checks": [
+        "Confirm product cost, marketplace fees, shipping cost, packing fees, and target margin.",
+        "Do not use active listing price as final pricing proof.",
+        "Use sold price data and Terapeak validation before price approval."
+      ]
+    },
+    "shippingReturnsReview": {
+      "status": "NEEDS_CONFIRMATION",
+      "checks": [
+        "Confirm shipping policy before draft creation.",
+        "Confirm return policy before draft creation.",
+        "Verify stock location before using any US buyer trust signal.",
+        "Do not use Free Shipping until it is verified."
+      ]
+    },
+    "trustSignalsReview": {
+      "status": "NEEDS_VERIFICATION",
+      "checks": [
+        "Free Shipping cannot be used until verified.",
+        "Ships from USA cannot be used until verified.",
+        "In Stock in USA cannot be used until verified.",
+        "USA flag cannot be used until verified and must not imply Made in USA."
+      ]
+    },
+    "imageStrategyReview": {
+      "status": "NEEDS_DATA",
+      "checks": [
+        "Real main product photo is required.",
+        "Main image must not be AI generated.",
+        "Main image must use pure white background.",
+        "Six secondary images are defined but still need product data and QA.",
+        "Only the dimensions image may include text."
+      ]
+    },
+    "terapeakReview": {
+      "status": "REQUIRED_NOT_COMPLETE",
+      "checks": [
+        "Validate real sales activity before publication.",
+        "Review average sold price, sell-through rate, competition, and margin."
+      ]
+    },
+    "soldListingsBenchmarkReview": {
+      "status": "REQUIRED_NOT_IMPORTED",
+      "checks": [
+        "Sold listings benchmark is required before publication.",
+        "Future benchmark import should be eBay-only and read-only.",
+        "Do not require manual full-copy of competitor listings."
+      ]
+    },
+    "packStrategyReview": {
+      "status": "WAITING_FOR_CONVERSION_DATA",
+      "checks": [
+        "Pack x2, x3, x6, and x12 strategy should wait for real conversion data.",
+        "Do not create pack listings before demand, cost, shipping, and margin validation."
+      ]
+    },
+    "lunaPortexReview": {
+      "status": "PACKING_FEE_VERIFICATION_REQUIRED",
+      "checks": [
+        "Confirm Luna Portex packing or bundling fee before pack listings.",
+        "Include packing fee in margin calculation for each pack size."
+      ]
+    },
+    "complianceReview": {
+      "status": "NEEDS_HUMAN_REVIEW",
+      "checks": [
+        "Do not copy competitor content.",
+        "Do not copy competitor photos.",
+        "Do not publish without final human review."
+      ]
+    }
+  },
+  "blockingReasons": [
+    "Terapeak validation required",
+    "Sold listings benchmark required",
+    "Real main product photo required",
+    "Verified shipping policy required",
+    "Trust signals verification required",
+    "Price and margin validation required",
+    "Manual image QA required"
+  ],
+  "missingData": [
+    "verified dimensions required",
+    "verified material required",
+    "verified package contents required",
+    "verified stock location required",
+    "verified shipping policy required",
+    "return policy confirmation required",
+    "Terapeak validation required",
+    "sold listings benchmark required",
+    "real main product photo required",
+    "image QA required",
+    "Luna Portex packing fee for packs required",
+    "margin validation required"
+  ],
+  "requiredHumanActions": [
+    "Validate Terapeak data before draft creation",
+    "Review sold items benchmark before draft creation",
+    "Confirm product facts from the real item",
+    "Confirm shipping and returns policy",
+    "Calculate margin after cost, fees, shipping, and packing review",
+    "Prepare real main product photo",
+    "Prepare secondary images for QA",
+    "Review all trust signals before use",
+    "Approve manually before draft creation"
+  ],
+  "preDraftChecklist": [
+    "Terapeak validation complete",
+    "Sold listings benchmark review complete",
+    "Item specifics verified from product facts",
+    "Shipping and returns confirmed",
+    "Real main image prepared and approved",
+    "Secondary images passed QA",
+    "Margin validated",
+    "Human approval recorded before draft creation"
+  ],
+  "prePublishChecklist": [
+    "Do not publish without draft review",
+    "Do not publish without policy review",
+    "Do not publish without real stock and shipping confirmation",
+    "Do not publish without final human approval",
+    "Do not publish while any blocking reason remains open"
+  ],
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "humanReviewRequired": true,
+    "ebayApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false,
+    "openAiApiUsed": false,
+    "imageGenerated": false,
+    "externalCallsMade": false,
+    "reportPersisted": false
+  }
+}
