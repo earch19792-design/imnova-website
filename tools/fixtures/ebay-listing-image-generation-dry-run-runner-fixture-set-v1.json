@@ -1,0 +1,562 @@
+{
+  "fixtureSetVersion": "IMAGE_GENERATION_DRY_RUN_RUNNER_FIXTURE_SET_V1",
+  "runnerDesignVersion": "IMAGE_GENERATION_DRY_RUN_RUNNER_DESIGN_V1",
+  "fixtureTestDesignVersion": "IMAGE_GENERATION_DRY_RUN_RUNNER_FIXTURE_TEST_DESIGN_V1",
+  "dryRunResultSchemaVersion": "IMAGE_GENERATION_DRY_RUN_RESULT_SCHEMA_V1",
+  "promptPlanSchemaVersion": "IMAGE_GENERATION_PROMPT_PLAN_SCHEMA_V1",
+  "advisoryOnly": true,
+  "dryRunOnly": true,
+  "fixtureOnly": true,
+  "externalCallsAllowed": false,
+  "openAiCallsAllowed": false,
+  "imageGenerationAllowed": false,
+  "ebayMutationAllowed": false,
+  "reportPersistenceAllowed": false,
+  "humanReviewRequired": true,
+  "appliesToAllScenarios": {
+    "openAiApiUsed": false,
+    "imageGenerated": false,
+    "externalCallsMade": false,
+    "ebayApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false,
+    "reportPersisted": false,
+    "mayGenerateImage": false,
+    "mayCallOpenAi": false,
+    "mayCreateRealDraft": false,
+    "mayPublish": false,
+    "mayMutateListing": false
+  },
+  "scenarios": [
+    {
+      "scenarioId": "needs_data_incomplete_prompt_plan",
+      "description": "Incomplete PromptPlan for LISTING-GEN-001 cannot advance because product facts, trust signals, and model or image authorization still need review.",
+      "caseId": "LISTING-GEN-001",
+      "sourceFixture": "tools/fixtures/ebay-listing-image-generation-prompt-plan-v1.json",
+      "imageRole": "lifestyle_product_in_use",
+      "expectedDryRunStatus": "DRY_RUN_NEEDS_DATA",
+      "expectedRecommendedNextState": "REQUEST_MORE_PRODUCT_DATA",
+      "expectedMissingData": [
+        "verified dimensions required",
+        "verified material required",
+        "free shipping verification required",
+        "ships from USA verification required",
+        "in stock in USA verification required",
+        "model/image authorization review required"
+      ],
+      "expectedBlockingReasons": [],
+      "expectedTrustSignalDecisions": {
+        "freeShipping": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "needs_data"
+        },
+        "shipsFromUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "needs_data"
+        },
+        "inStockInUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "needs_data"
+        },
+        "usaFlag": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "needs_data"
+        }
+      },
+      "expectedSafetyFlags": {
+        "openAiApiUsed": false,
+        "imageGenerated": false,
+        "externalCallsMade": false,
+        "ebayApiUsed": false,
+        "realDraftCreated": false,
+        "publishedToEbay": false,
+        "listingMutated": false,
+        "reportPersisted": false
+      },
+      "expectedOutputRequirements": {
+        "mayGenerateImage": false,
+        "mayCallOpenAi": false,
+        "mayCreateRealDraft": false,
+        "mayPublish": false,
+        "mayMutateListing": false
+      },
+      "requiresHumanReview": true,
+      "sideEffectsAllowed": false
+    },
+    {
+      "scenarioId": "ready_for_human_review_verified_facts",
+      "description": "Verified product facts and no risky trust signals allow internal human review, but still do not allow generation or external actions.",
+      "caseId": "LISTING-GEN-READY-001",
+      "imageRole": "white_background_product_image",
+      "expectedDryRunStatus": "DRY_RUN_READY_FOR_HUMAN_REVIEW",
+      "expectedRecommendedNextState": "READY_FOR_PROMPT_HUMAN_REVIEW",
+      "expectedMissingData": [],
+      "expectedBlockingReasons": [],
+      "expectedTrustSignalDecisions": {
+        "freeShipping": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "shipsFromUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "inStockInUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "usaFlag": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        }
+      },
+      "expectedSafetyFlags": {
+        "openAiApiUsed": false,
+        "imageGenerated": false,
+        "externalCallsMade": false,
+        "ebayApiUsed": false,
+        "realDraftCreated": false,
+        "publishedToEbay": false,
+        "listingMutated": false,
+        "reportPersisted": false
+      },
+      "expectedOutputRequirements": {
+        "mayGenerateImage": false,
+        "mayCallOpenAi": false,
+        "mayCreateRealDraft": false,
+        "mayPublish": false,
+        "mayMutateListing": false
+      },
+      "requiresHumanReview": true,
+      "sideEffectsAllowed": false
+    },
+    {
+      "scenarioId": "blocked_unverified_trust_signals",
+      "description": "Buyer trust visual requests Free Shipping and Ships from USA without verification and must be blocked.",
+      "caseId": "LISTING-GEN-BLOCK-TRUST-001",
+      "imageRole": "us_buyer_trust_visual",
+      "expectedDryRunStatus": "DRY_RUN_BLOCKED",
+      "expectedRecommendedNextState": "REQUEST_TRUST_SIGNAL_VERIFICATION",
+      "simulatedViolation": "unverified_trust_signals_requested",
+      "expectedMissingData": [
+        "free shipping verification required",
+        "ships from USA verification required"
+      ],
+      "expectedBlockingReasons": [
+        "unverified Free Shipping cannot be used",
+        "unverified Ships from USA cannot be used"
+      ],
+      "expectedTrustSignalDecisions": {
+        "freeShipping": {
+          "requested": true,
+          "allowed": false,
+          "verified": false,
+          "decision": "blocked"
+        },
+        "shipsFromUsa": {
+          "requested": true,
+          "allowed": false,
+          "verified": false,
+          "decision": "blocked"
+        },
+        "inStockInUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "needs_data"
+        },
+        "usaFlag": {
+          "requested": true,
+          "allowed": false,
+          "verified": false,
+          "decision": "blocked"
+        }
+      },
+      "expectedSafetyFlags": {
+        "openAiApiUsed": false,
+        "imageGenerated": false,
+        "externalCallsMade": false,
+        "ebayApiUsed": false,
+        "realDraftCreated": false,
+        "publishedToEbay": false,
+        "listingMutated": false,
+        "reportPersisted": false
+      },
+      "expectedOutputRequirements": {
+        "mayGenerateImage": false,
+        "mayCallOpenAi": false,
+        "mayCreateRealDraft": false,
+        "mayPublish": false,
+        "mayMutateListing": false
+      },
+      "requiresHumanReview": true,
+      "sideEffectsAllowed": false
+    },
+    {
+      "scenarioId": "rejected_openai_payload_in_dry_run",
+      "description": "A dry run scenario that simulates a prohibited model payload marker without including a real payload field.",
+      "caseId": "LISTING-GEN-REJECT-PAYLOAD-001",
+      "imageRole": "lifestyle_product_in_use",
+      "expectedDryRunStatus": "DRY_RUN_REJECTED",
+      "expectedRecommendedNextState": "BLOCK_IMAGE_GENERATION",
+      "simulatedViolation": "openai_payload_in_dry_run",
+      "expectedMissingData": [],
+      "expectedBlockingReasons": [
+        "model payload marker is not allowed in dry run"
+      ],
+      "expectedTrustSignalDecisions": {
+        "freeShipping": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "shipsFromUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "inStockInUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "usaFlag": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        }
+      },
+      "expectedSafetyFlags": {
+        "openAiApiUsed": false,
+        "imageGenerated": false,
+        "externalCallsMade": false,
+        "ebayApiUsed": false,
+        "realDraftCreated": false,
+        "publishedToEbay": false,
+        "listingMutated": false,
+        "reportPersisted": false
+      },
+      "expectedOutputRequirements": {
+        "mayGenerateImage": false,
+        "mayCallOpenAi": false,
+        "mayCreateRealDraft": false,
+        "mayPublish": false,
+        "mayMutateListing": false
+      },
+      "requiresHumanReview": true,
+      "sideEffectsAllowed": false
+    },
+    {
+      "scenarioId": "rejected_secret_or_token_placeholder",
+      "description": "A dry run scenario that simulates a safe credential placeholder finding without storing any credential-like value.",
+      "caseId": "LISTING-GEN-REJECT-CREDENTIAL-001",
+      "imageRole": "infographic_visual",
+      "expectedDryRunStatus": "DRY_RUN_REJECTED",
+      "expectedRecommendedNextState": "BLOCK_IMAGE_GENERATION",
+      "simulatedViolation": "credential_placeholder_detected",
+      "expectedMissingData": [],
+      "expectedBlockingReasons": [
+        "credential placeholder is not allowed in dry run"
+      ],
+      "expectedTrustSignalDecisions": {
+        "freeShipping": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "shipsFromUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "inStockInUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "usaFlag": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        }
+      },
+      "expectedSafetyFlags": {
+        "openAiApiUsed": false,
+        "imageGenerated": false,
+        "externalCallsMade": false,
+        "ebayApiUsed": false,
+        "realDraftCreated": false,
+        "publishedToEbay": false,
+        "listingMutated": false,
+        "reportPersisted": false
+      },
+      "expectedOutputRequirements": {
+        "mayGenerateImage": false,
+        "mayCallOpenAi": false,
+        "mayCreateRealDraft": false,
+        "mayPublish": false,
+        "mayMutateListing": false
+      },
+      "requiresHumanReview": true,
+      "sideEffectsAllowed": false
+    },
+    {
+      "scenarioId": "rejected_real_url_placeholder",
+      "description": "A dry run scenario that simulates a prohibited real URL placeholder without storing a URL value.",
+      "caseId": "LISTING-GEN-REJECT-URL-001",
+      "imageRole": "detail_closeup",
+      "expectedDryRunStatus": "DRY_RUN_REJECTED",
+      "expectedRecommendedNextState": "BLOCK_IMAGE_GENERATION",
+      "simulatedViolation": "real_url_placeholder_detected",
+      "expectedMissingData": [],
+      "expectedBlockingReasons": [
+        "real URL placeholder is not allowed in dry run"
+      ],
+      "expectedTrustSignalDecisions": {
+        "freeShipping": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "shipsFromUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "inStockInUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "usaFlag": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        }
+      },
+      "expectedSafetyFlags": {
+        "openAiApiUsed": false,
+        "imageGenerated": false,
+        "externalCallsMade": false,
+        "ebayApiUsed": false,
+        "realDraftCreated": false,
+        "publishedToEbay": false,
+        "listingMutated": false,
+        "reportPersisted": false
+      },
+      "expectedOutputRequirements": {
+        "mayGenerateImage": false,
+        "mayCallOpenAi": false,
+        "mayCreateRealDraft": false,
+        "mayPublish": false,
+        "mayMutateListing": false
+      },
+      "requiresHumanReview": true,
+      "sideEffectsAllowed": false
+    },
+    {
+      "scenarioId": "blocked_unauthorized_brand_logo",
+      "description": "Unauthorized third-party brand or logo request must block image generation.",
+      "caseId": "LISTING-GEN-BLOCK-BRAND-001",
+      "imageRole": "comparison_visual",
+      "expectedDryRunStatus": "DRY_RUN_BLOCKED",
+      "expectedRecommendedNextState": "BLOCK_IMAGE_GENERATION",
+      "simulatedViolation": "unauthorized_brand_or_logo_requested",
+      "expectedMissingData": [],
+      "expectedBlockingReasons": [
+        "unauthorized brand/logo requested"
+      ],
+      "expectedTrustSignalDecisions": {
+        "freeShipping": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "shipsFromUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "inStockInUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "usaFlag": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        }
+      },
+      "expectedSafetyFlags": {
+        "openAiApiUsed": false,
+        "imageGenerated": false,
+        "externalCallsMade": false,
+        "ebayApiUsed": false,
+        "realDraftCreated": false,
+        "publishedToEbay": false,
+        "listingMutated": false,
+        "reportPersisted": false
+      },
+      "expectedOutputRequirements": {
+        "mayGenerateImage": false,
+        "mayCallOpenAi": false,
+        "mayCreateRealDraft": false,
+        "mayPublish": false,
+        "mayMutateListing": false
+      },
+      "requiresHumanReview": true,
+      "sideEffectsAllowed": false
+    },
+    {
+      "scenarioId": "blocked_medical_claim",
+      "description": "Medical claim request must block future image generation.",
+      "caseId": "LISTING-GEN-BLOCK-MEDICAL-001",
+      "imageRole": "infographic_visual",
+      "expectedDryRunStatus": "DRY_RUN_BLOCKED",
+      "expectedRecommendedNextState": "BLOCK_IMAGE_GENERATION",
+      "simulatedViolation": "medical_claim_requested",
+      "expectedMissingData": [],
+      "expectedBlockingReasons": [
+        "medical claim requested"
+      ],
+      "expectedTrustSignalDecisions": {
+        "freeShipping": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "shipsFromUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "inStockInUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "usaFlag": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        }
+      },
+      "expectedSafetyFlags": {
+        "openAiApiUsed": false,
+        "imageGenerated": false,
+        "externalCallsMade": false,
+        "ebayApiUsed": false,
+        "realDraftCreated": false,
+        "publishedToEbay": false,
+        "listingMutated": false,
+        "reportPersisted": false
+      },
+      "expectedOutputRequirements": {
+        "mayGenerateImage": false,
+        "mayCallOpenAi": false,
+        "mayCreateRealDraft": false,
+        "mayPublish": false,
+        "mayMutateListing": false
+      },
+      "requiresHumanReview": true,
+      "sideEffectsAllowed": false
+    },
+    {
+      "scenarioId": "lifestyle_model_authorization_required",
+      "description": "Lifestyle image with person or model context requires model or image authorization review before any future generation.",
+      "caseId": "LISTING-GEN-MODEL-AUTH-001",
+      "imageRole": "lifestyle_product_in_use",
+      "expectedDryRunStatus": "DRY_RUN_NEEDS_DATA",
+      "expectedRecommendedNextState": "REQUEST_MODEL_OR_IMAGE_AUTHORIZATION",
+      "simulatedViolation": "model_image_authorization_required",
+      "requiresModelRelease": true,
+      "expectedMissingData": [
+        "model/image authorization review required"
+      ],
+      "expectedBlockingReasons": [],
+      "expectedTrustSignalDecisions": {
+        "freeShipping": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "shipsFromUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "inStockInUsa": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        },
+        "usaFlag": {
+          "requested": false,
+          "allowed": false,
+          "verified": false,
+          "decision": "not_requested"
+        }
+      },
+      "expectedSafetyFlags": {
+        "openAiApiUsed": false,
+        "imageGenerated": false,
+        "externalCallsMade": false,
+        "ebayApiUsed": false,
+        "realDraftCreated": false,
+        "publishedToEbay": false,
+        "listingMutated": false,
+        "reportPersisted": false
+      },
+      "expectedOutputRequirements": {
+        "mayGenerateImage": false,
+        "mayCallOpenAi": false,
+        "mayCreateRealDraft": false,
+        "mayPublish": false,
+        "mayMutateListing": false
+      },
+      "requiresHumanReview": true,
+      "sideEffectsAllowed": false
+    }
+  ]
+}

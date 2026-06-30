@@ -558,6 +558,19 @@ const ebayListingImageGenerationDryRunResultFixture =
     )
   )
 
+const ebayListingImageGenerationDryRunRunnerFixtureSetPath =
+  path.resolve(
+    "tools/fixtures/ebay-listing-image-generation-dry-run-runner-fixture-set-v1.json"
+  )
+
+const ebayListingImageGenerationDryRunRunnerFixtureSet =
+  JSON.parse(
+    fs.readFileSync(
+      ebayListingImageGenerationDryRunRunnerFixtureSetPath,
+      "utf8"
+    )
+  )
+
 const ebayListingAdminPagePath =
   path.resolve(
     "app/admin/ebay-listings/page.tsx"
@@ -2822,6 +2835,392 @@ test("image generation dry run result fixture: no contiene campos prohibidos, UR
     assert.doesNotMatch(
       value,
       /bearer\s+|sk-[a-z0-9_-]+|api[_ -]?key|auth(?:orization)?\s*header|password|secret|credential|token/i
+    )
+  }
+})
+
+test("image generation dry run runner fixture set: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayListingImageGenerationDryRunRunnerFixtureSetPath
+    )
+  )
+  assert.equal(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.fixtureSetVersion,
+    "IMAGE_GENERATION_DRY_RUN_RUNNER_FIXTURE_SET_V1"
+  )
+  assert.equal(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.runnerDesignVersion,
+    "IMAGE_GENERATION_DRY_RUN_RUNNER_DESIGN_V1"
+  )
+  assert.equal(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.fixtureTestDesignVersion,
+    "IMAGE_GENERATION_DRY_RUN_RUNNER_FIXTURE_TEST_DESIGN_V1"
+  )
+  assert.equal(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.dryRunResultSchemaVersion,
+    "IMAGE_GENERATION_DRY_RUN_RESULT_SCHEMA_V1"
+  )
+  assert.equal(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.promptPlanSchemaVersion,
+    "IMAGE_GENERATION_PROMPT_PLAN_SCHEMA_V1"
+  )
+  assert.equal(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.advisoryOnly,
+    true
+  )
+  assert.equal(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.dryRunOnly,
+    true
+  )
+  assert.equal(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.fixtureOnly,
+    true
+  )
+  assert.equal(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.externalCallsAllowed,
+    false
+  )
+  assert.equal(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.openAiCallsAllowed,
+    false
+  )
+  assert.equal(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.imageGenerationAllowed,
+    false
+  )
+  assert.equal(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.ebayMutationAllowed,
+    false
+  )
+  assert.equal(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.reportPersistenceAllowed,
+    false
+  )
+  assert.equal(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.humanReviewRequired,
+    true
+  )
+  assert.ok(
+    Array.isArray(
+      ebayListingImageGenerationDryRunRunnerFixtureSet.scenarios
+    )
+  )
+  assert.ok(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.scenarios.length >= 8
+  )
+})
+
+test("image generation dry run runner fixture set: contiene escenarios esperados y unicos", () => {
+  const scenarios =
+    ebayListingImageGenerationDryRunRunnerFixtureSet.scenarios
+
+  const scenarioIds =
+    scenarios.map(scenario =>
+      scenario.scenarioId
+    )
+
+  assert.equal(
+    new Set(scenarioIds).size,
+    scenarioIds.length
+  )
+
+  for (const expectedScenarioId of [
+    "needs_data_incomplete_prompt_plan",
+    "ready_for_human_review_verified_facts",
+    "blocked_unverified_trust_signals",
+    "rejected_openai_payload_in_dry_run",
+    "rejected_secret_or_token_placeholder",
+    "rejected_real_url_placeholder",
+    "blocked_unauthorized_brand_logo",
+    "blocked_medical_claim",
+    "lifestyle_model_authorization_required",
+  ]) {
+    assert.ok(
+      scenarioIds.includes(
+        expectedScenarioId
+      ),
+      `missing dry run runner scenario: ${expectedScenarioId}`
+    )
+  }
+})
+
+test("image generation dry run runner fixture set: scenarios mantienen enums y side effects seguros", () => {
+  const allowedStatuses = [
+    "DRY_RUN_READY_FOR_HUMAN_REVIEW",
+    "DRY_RUN_NEEDS_DATA",
+    "DRY_RUN_BLOCKED",
+    "DRY_RUN_REJECTED",
+  ]
+
+  const allowedNextStates = [
+    "KEEP_AS_PROMPT_PLAN_NEEDS_DATA",
+    "READY_FOR_PROMPT_HUMAN_REVIEW",
+    "BLOCK_IMAGE_GENERATION",
+    "REQUEST_MORE_PRODUCT_DATA",
+    "REQUEST_TRUST_SIGNAL_VERIFICATION",
+    "REQUEST_MODEL_OR_IMAGE_AUTHORIZATION",
+  ]
+
+  for (const scenario of ebayListingImageGenerationDryRunRunnerFixtureSet.scenarios) {
+    for (const fieldName of [
+      "scenarioId",
+      "description",
+      "caseId",
+      "imageRole",
+      "expectedDryRunStatus",
+      "expectedRecommendedNextState",
+      "expectedSafetyFlags",
+      "expectedOutputRequirements",
+    ]) {
+      assert.ok(
+        Object.hasOwn(
+          scenario,
+          fieldName
+        ),
+        `runner fixture scenario missing field: ${fieldName}`
+      )
+    }
+
+    assert.ok(
+      allowedStatuses.includes(
+        scenario.expectedDryRunStatus
+      )
+    )
+    assert.ok(
+      allowedNextStates.includes(
+        scenario.expectedRecommendedNextState
+      )
+    )
+    assert.equal(
+      scenario.requiresHumanReview,
+      true
+    )
+    assert.equal(
+      scenario.sideEffectsAllowed,
+      false
+    )
+
+    assert.deepEqual(
+      scenario.expectedSafetyFlags,
+      {
+        openAiApiUsed:
+          false,
+        imageGenerated:
+          false,
+        externalCallsMade:
+          false,
+        ebayApiUsed:
+          false,
+        realDraftCreated:
+          false,
+        publishedToEbay:
+          false,
+        listingMutated:
+          false,
+        reportPersisted:
+          false,
+      }
+    )
+    assert.deepEqual(
+      scenario.expectedOutputRequirements,
+      {
+        mayGenerateImage:
+          false,
+        mayCallOpenAi:
+          false,
+        mayCreateRealDraft:
+          false,
+        mayPublish:
+          false,
+        mayMutateListing:
+          false,
+      }
+    )
+  }
+})
+
+test("image generation dry run runner fixture set: appliesToAllScenarios bloquea ejecucion real", () => {
+  assert.deepEqual(
+    ebayListingImageGenerationDryRunRunnerFixtureSet.appliesToAllScenarios,
+    {
+      openAiApiUsed:
+        false,
+      imageGenerated:
+        false,
+      externalCallsMade:
+        false,
+      ebayApiUsed:
+        false,
+      realDraftCreated:
+        false,
+      publishedToEbay:
+        false,
+      listingMutated:
+        false,
+      reportPersisted:
+        false,
+      mayGenerateImage:
+        false,
+      mayCallOpenAi:
+        false,
+      mayCreateRealDraft:
+        false,
+      mayPublish:
+        false,
+      mayMutateListing:
+        false,
+    }
+  )
+})
+
+test("image generation dry run runner fixture set: trust signals no verificados nunca quedan allowed", () => {
+  for (const scenario of ebayListingImageGenerationDryRunRunnerFixtureSet.scenarios) {
+    assert.equal(
+      typeof scenario.expectedTrustSignalDecisions,
+      "object"
+    )
+    assert.ok(
+      scenario.expectedTrustSignalDecisions
+    )
+
+    for (const [
+      signalName,
+      signal,
+    ] of Object.entries(
+      scenario.expectedTrustSignalDecisions
+    )) {
+      assert.ok(
+        [
+          "freeShipping",
+          "shipsFromUsa",
+          "inStockInUsa",
+          "usaFlag",
+        ].includes(signalName)
+      )
+      assert.ok(
+        [
+          "allowed",
+          "needs_data",
+          "blocked",
+          "not_requested",
+        ].includes(signal.decision)
+      )
+
+      if (signal.verified === false) {
+        assert.notEqual(
+          signal.decision,
+          "allowed",
+          `unverified trust signal cannot be allowed in scenario ${scenario.scenarioId}: ${signalName}`
+        )
+        assert.equal(
+          signal.allowed,
+          false
+        )
+      }
+    }
+  }
+})
+
+test("image generation dry run runner fixture set: no contiene campos prohibidos, URLs ni credenciales reales", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayListingImageGenerationDryRunRunnerFixtureSetPath,
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    rawFixture,
+    /https?:\/\//i
+  )
+
+  const forbiddenFieldNames = [
+    "finalPrompt",
+    "productionPrompt",
+    "openAiPayload",
+    "apiKey",
+    "auth" + "orization",
+    "tok" + "en",
+    "sec" + "ret",
+    "pass" + "word",
+    "base64Image",
+    "imageUrl",
+    "draftId",
+    "listingId",
+    "publishedListingId",
+  ]
+
+  function collectKeysAndValues(
+    value,
+    collected = {
+      keys:
+        [],
+      values:
+        [],
+    }
+  ) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        collectKeysAndValues(
+          item,
+          collected
+        )
+      }
+      return collected
+    }
+
+    if (
+      value &&
+      typeof value === "object"
+    ) {
+      for (const [
+        key,
+        childValue,
+      ] of Object.entries(value)) {
+        collected.keys.push(key)
+        collectKeysAndValues(
+          childValue,
+          collected
+        )
+      }
+      return collected
+    }
+
+    if (typeof value === "string") {
+      collected.values.push(value)
+    }
+
+    return collected
+  }
+
+  const collected =
+    collectKeysAndValues(
+      ebayListingImageGenerationDryRunRunnerFixtureSet
+    )
+
+  const lowerKeys =
+    collected.keys.map(key =>
+      key.toLowerCase()
+    )
+
+  for (const fieldName of forbiddenFieldNames) {
+    assert.equal(
+      lowerKeys.includes(
+        fieldName.toLowerCase()
+      ),
+      false,
+      `dry run runner fixture set contains forbidden field: ${fieldName}`
+    )
+  }
+
+  for (const value of collected.values) {
+    assert.doesNotMatch(
+      value,
+      /https?:\/\//i
+    )
+    assert.doesNotMatch(
+      value,
+      /bearer\s+|sk-[a-z0-9_-]{8,}|[a-z0-9_-]{24,}\.[a-z0-9_-]{6,}\.[a-z0-9_-]{20,}/i
     )
   }
 })
