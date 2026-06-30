@@ -1,0 +1,141 @@
+{
+  "schemaVersion": "EBAY_LISTING_IMAGE_PLAN_SCHEMA_V1",
+  "caseId": "LISTING-GEN-001",
+  "candidateName": "Simulated listing image plan candidate",
+  "generatedAt": "2026-01-01T00:00:00.000Z",
+  "imagePlanStatus": "IMAGE_PLAN_NEEDS_DATA",
+  "imageAuthorizationStatus": "authorized",
+  "requiredImages": [
+    {
+      "slotId": "main-001",
+      "imageRole": "main",
+      "label": "Main product image",
+      "purpose": "Explain the product clearly as the first buyer-facing visual.",
+      "required": true,
+      "status": "available",
+      "authorizationStatus": "authorized",
+      "qualityStatus": "acceptable",
+      "notes": [
+        "Simulated main image slot for internal planning.",
+        "No real image file is included."
+      ]
+    },
+    {
+      "slotId": "angle-001",
+      "imageRole": "angle",
+      "label": "Second angle image",
+      "purpose": "Show another side of the product for visual clarity.",
+      "required": true,
+      "status": "available",
+      "authorizationStatus": "authorized",
+      "qualityStatus": "acceptable",
+      "notes": [
+        "Simulated angle image slot for review."
+      ]
+    },
+    {
+      "slotId": "detail-001",
+      "imageRole": "detail",
+      "label": "Detail image",
+      "purpose": "Show material, texture, finish, or important product detail.",
+      "required": true,
+      "status": "available",
+      "authorizationStatus": "authorized",
+      "qualityStatus": "acceptable",
+      "notes": [
+        "Simulated detail image slot for review."
+      ]
+    },
+    {
+      "slotId": "dimensions-001",
+      "imageRole": "dimensions",
+      "label": "Dimensions image",
+      "purpose": "Show verified size or scale before the plan becomes final-ready.",
+      "required": true,
+      "status": "missing",
+      "authorizationStatus": "unknown",
+      "qualityStatus": "not_reviewed",
+      "notes": [
+        "Verified dimensions are missing.",
+        "Add an authorized dimensions or scale image before final-ready review."
+      ]
+    },
+    {
+      "slotId": "package-contents-001",
+      "imageRole": "package_contents",
+      "label": "Package contents image",
+      "purpose": "Clarify what the buyer receives in the package.",
+      "required": true,
+      "status": "available",
+      "authorizationStatus": "authorized",
+      "qualityStatus": "acceptable",
+      "notes": [
+        "Simulated package contents slot for buyer clarity."
+      ]
+    }
+  ],
+  "optionalImages": [
+    {
+      "slotId": "lifestyle-001",
+      "imageRole": "lifestyle",
+      "label": "Lifestyle image",
+      "purpose": "Show a realistic use case without exaggerating results.",
+      "required": false,
+      "status": "needs_authorization",
+      "authorizationStatus": "unknown",
+      "qualityStatus": "not_reviewed",
+      "notes": [
+        "Optional lifestyle image needs authorization before use."
+      ]
+    },
+    {
+      "slotId": "infographic-001",
+      "imageRole": "infographic",
+      "label": "Simple infographic",
+      "purpose": "Explain key visual details in a simple non-misleading format.",
+      "required": false,
+      "status": "missing",
+      "authorizationStatus": "unknown",
+      "qualityStatus": "not_reviewed",
+      "notes": [
+        "Optional infographic can be created in a future approved loop."
+      ]
+    },
+    {
+      "slotId": "comparison-001",
+      "imageRole": "comparison",
+      "label": "Safe comparison image",
+      "purpose": "Compare size or benefit only with verified and non-misleading data.",
+      "required": false,
+      "status": "missing",
+      "authorizationStatus": "unknown",
+      "qualityStatus": "not_reviewed",
+      "notes": [
+        "Optional comparison requires verified data before use."
+      ]
+    }
+  ],
+  "missingImages": [
+    "dimensions"
+  ],
+  "blockedImages": [],
+  "visualRisks": [
+    "dimensions_missing"
+  ],
+  "requiredHumanActions": [
+    "Add or verify a dimensions image before final-ready review.",
+    "Confirm all image rights before any future listing step.",
+    "Review optional lifestyle, infographic, and comparison images before use."
+  ],
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "localOnly": true,
+    "imageGenerationPerformed": false,
+    "externalCallsMade": false,
+    "ebayApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false,
+    "requiresHumanReview": true
+  }
+}
