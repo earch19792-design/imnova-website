@@ -519,6 +519,19 @@ const ebayListingImagePlanFixture =
     )
   )
 
+const ebayListingImageQaResultFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-listing-image-qa-result-v1.json"
+  )
+
+const ebayListingImageQaResultFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayListingImageQaResultFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayListingAdminPagePath =
   path.resolve(
     "app/admin/ebay-listings/page.tsx"
@@ -1937,6 +1950,188 @@ test("listing image plan fixture: no contiene campos prohibidos ni URLs", () => 
       ),
       false,
       `image plan fixture contains forbidden field: ${fieldName}`
+    )
+  }
+})
+
+test("listing image QA result fixture: existe y cumple schema V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayListingImageQaResultFixturePath
+    )
+  )
+  assert.equal(
+    ebayListingImageQaResultFixture.resultVersion,
+    "EBAY_LISTING_IMAGE_QA_RESULT_SCHEMA_V1"
+  )
+  assert.equal(
+    ebayListingImageQaResultFixture.sourceSchemaVersion,
+    "EBAY_LISTING_IMAGE_PLAN_SCHEMA_V1"
+  )
+  assert.equal(
+    ebayListingImageQaResultFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebayListingImageQaResultFixture.sourceImagePlanStatus,
+    "IMAGE_PLAN_NEEDS_DATA"
+  )
+  assert.equal(
+    ebayListingImageQaResultFixture.imageQaStatus,
+    "IMAGE_QA_NEEDS_DATA"
+  )
+  assert.equal(
+    ebayListingImageQaResultFixture.recommendedPipelineState,
+    "LISTING_DATA_INCOMPLETE"
+  )
+  assert.ok(
+    ebayListingImageQaResultFixture.missingImageRoles.includes(
+      "dimensions"
+    )
+  )
+})
+
+test("listing image QA result fixture: evaluated slots esperados", () => {
+  assert.ok(
+    Array.isArray(
+      ebayListingImageQaResultFixture.evaluatedSlots
+    )
+  )
+
+  const slotsById =
+    Object.fromEntries(
+      ebayListingImageQaResultFixture.evaluatedSlots.map(
+        slot => [
+          slot.slotId,
+          slot,
+        ]
+      )
+    )
+
+  for (const slotId of [
+    "main-001",
+    "angle-001",
+    "detail-001",
+    "dimensions-001",
+    "package-contents-001",
+  ]) {
+    assert.ok(
+      slotsById[slotId],
+      `missing evaluated slot: ${slotId}`
+    )
+  }
+
+  assert.equal(
+    slotsById["dimensions-001"].slotStatus,
+    "needs_data"
+  )
+  assert.equal(
+    typeof slotsById["dimensions-001"].requiredHumanAction,
+    "string"
+  )
+
+  for (const slotId of [
+    "main-001",
+    "angle-001",
+    "detail-001",
+    "package-contents-001",
+  ]) {
+    assert.equal(
+      slotsById[slotId].slotStatus,
+      "passed"
+    )
+  }
+})
+
+test("listing image QA result fixture: safety flags seguros", () => {
+  assert.deepEqual(
+    ebayListingImageQaResultFixture.safetyFlags,
+    {
+      advisoryOnly:
+        true,
+      localOnly:
+        true,
+      imageGenerationPerformed:
+        false,
+      externalCallsMade:
+        false,
+      ebayApiUsed:
+        false,
+      realDraftCreated:
+        false,
+      publishedToEbay:
+        false,
+      listingMutated:
+        false,
+      requiresHumanReview:
+        true,
+    }
+  )
+})
+
+test("listing image QA result fixture: no contiene campos prohibidos ni URLs", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayListingImageQaResultFixturePath,
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    rawFixture,
+    /https?:\/\//i
+  )
+
+  const forbiddenFieldNames = [
+    "tok" + "en",
+    "pass" + "word",
+    "sec" + "ret",
+    "cred" + "ential",
+    "auth" + "orization",
+    "apiKey",
+    "supplierPrivateData",
+    "supplierUrl",
+    "customerData",
+    "cookies",
+    "base64Image",
+    "localPath",
+  ]
+
+  function collectKeys(value, keys = []) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        collectKeys(item, keys)
+      }
+      return keys
+    }
+
+    if (
+      value &&
+      typeof value === "object"
+    ) {
+      for (const [
+        key,
+        childValue,
+      ] of Object.entries(value)) {
+        keys.push(key)
+        collectKeys(childValue, keys)
+      }
+    }
+
+    return keys
+  }
+
+  const lowerKeys =
+    collectKeys(
+      ebayListingImageQaResultFixture
+    ).map(key => key.toLowerCase())
+
+  for (const fieldName of forbiddenFieldNames) {
+    assert.equal(
+      lowerKeys.includes(
+        fieldName.toLowerCase()
+      ),
+      false,
+      `image QA result fixture contains forbidden field: ${fieldName}`
     )
   }
 })
