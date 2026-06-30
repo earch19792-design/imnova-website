@@ -3609,7 +3609,7 @@ test("first ebay listing package fixture: Luna Portex pack fulfillment fee requi
   }
 })
 
-test("first ebay listing package fixture: pack image strategy mantiene main image real y evita packs falsos", () => {
+test("first ebay listing package fixture: pack image strategy mantiene catalog image autorizado y evita packs falsos", () => {
   const packImageStrategy =
     ebayFirstListingPackageFixture.packImageStrategy
 
@@ -3619,7 +3619,7 @@ test("first ebay listing package fixture: pack image strategy mantiene main imag
   )
   assert.match(
     packImageStrategy.mainImageRule,
-    /real product photo on pure white background/i
+    /authorized Luna Portex catalog product image/i
   )
   assert.equal(
     packImageStrategy.aiGeneratedMainImageAllowed,
@@ -3656,20 +3656,34 @@ test("first ebay listing package fixture: pack image strategy mantiene main imag
   )
 })
 
-test("first ebay listing package fixture: main image requiere foto real no IA", () => {
+test("first ebay listing package fixture: main image requiere catalog image autorizado y enhancement controlado", () => {
   const mainImagePolicy =
     ebayFirstListingPackageFixture.mainImagePolicy
+  const enhancementPolicy =
+    ebayFirstListingPackageFixture.mainImageEnhancementPolicy
 
   assert.equal(
     mainImagePolicy.imageSourceRequired,
-    "real_product_photo"
+    "authorized_luna_portex_catalog_product_image"
   )
   assert.equal(
-    mainImagePolicy.aiGeneratedAllowed,
+    mainImagePolicy.sourceAuthorizationRequired,
+    true
+  )
+  assert.equal(
+    mainImagePolicy.catalogSource,
+    "luna_portex"
+  )
+  assert.equal(
+    mainImagePolicy.physicalProductInSellerPossessionRequired,
     false
   )
   assert.equal(
-    mainImagePolicy.backgroundRequired,
+    mainImagePolicy.enhancementRequired,
+    true
+  )
+  assert.equal(
+    mainImagePolicy.finalBackgroundRequired,
     "pure_white"
   )
   assert.ok(
@@ -3688,6 +3702,14 @@ test("first ebay listing package fixture: main image requiere foto real no IA", 
     false
   )
   assert.equal(
+    mainImagePolicy.trustBadgesAllowed,
+    false
+  )
+  assert.equal(
+    mainImagePolicy.usaFlagAllowed,
+    false
+  )
+  assert.equal(
     mainImagePolicy.thirdPartyLogosAllowed,
     false
   )
@@ -3697,7 +3719,52 @@ test("first ebay listing package fixture: main image requiere foto real no IA", 
   )
   assert.equal(
     mainImagePolicy.status,
-    "MAIN_IMAGE_REAL_PHOTO_REQUIRED"
+    "AUTHORIZED_CATALOG_IMAGE_REQUIRED_FOR_MAIN_IMAGE"
+  )
+  assert.equal(
+    mainImagePolicy.aiGeneratedProductAllowed,
+    false
+  )
+  assert.equal(
+    mainImagePolicy.aiAssistedBackgroundCleanupAllowedAfterHumanReview,
+    true
+  )
+  assert.equal(
+    enhancementPolicy.sourceImageRequired,
+    "authorized_luna_portex_catalog_product_image"
+  )
+  assert.equal(
+    enhancementPolicy.status,
+    "CATALOG_IMAGE_ENHANCEMENT_REQUIRED"
+  )
+  assert.ok(
+    enhancementPolicy.allowedEnhancements.includes(
+      "background_cleanup_to_pure_white"
+    )
+  )
+
+  for (const prohibitedEnhancement of [
+    "change_product_shape",
+    "invent_accessories",
+    "add_trust_badges",
+    "add_usa_flag",
+    "create_product_from_scratch",
+  ]) {
+    assert.ok(
+      enhancementPolicy.prohibitedEnhancements.includes(
+        prohibitedEnhancement
+      ),
+      `missing prohibited enhancement: ${prohibitedEnhancement}`
+    )
+  }
+
+  assert.equal(
+    enhancementPolicy.qaRequiredBeforeUse,
+    true
+  )
+  assert.equal(
+    enhancementPolicy.humanApprovalRequired,
+    true
   )
 })
 
@@ -3874,8 +3941,10 @@ test("first ebay listing package fixture: missing data incluye bloqueos criticos
     "winning item specifics review required",
     "competitor image sequence review required",
     "original title and description rewrite required",
-    "real main product photo required",
-    "manual image QA required",
+    "authorized Luna Portex catalog product image required",
+    "source authorization required",
+    "white-background main image enhancement required",
+    "main image QA required",
     "conversion data required before pack strategy activation",
     "Luna Portex packing fee required before pack listings",
     "pack shipping cost required",
@@ -3905,6 +3974,9 @@ test("first ebay listing package fixture: human actions incluyen pack fee y marg
     "Define future eBay-only import method for sold listing benchmark",
     "Rewrite title and description from scratch",
     "Verify item specifics from product facts, not competitor copy",
+    "Confirm authorized Luna Portex catalog product image source.",
+    "Confirm source authorization before image use.",
+    "Prepare white-background main image enhancement.",
     "Replace all competitor images with owned or approved images",
     "Compare sold price against margin before publishing",
   ]) {
@@ -4220,7 +4292,10 @@ test("first listing QA review fixture: contiene bloqueos y acciones humanas", ()
   for (const blockingReason of [
     "Terapeak validation required",
     "Sold listings benchmark required",
-    "Real main product photo required",
+    "Authorized Luna Portex catalog product image required",
+    "White-background main image enhancement required",
+    "Main image source authorization required",
+    "Main image QA required",
     "Trust signals verification required",
   ]) {
     assert.ok(
@@ -4252,7 +4327,10 @@ test("first listing QA review fixture: contiene bloqueos y acciones humanas", ()
   for (const missingDataItem of [
     "Terapeak validation required",
     "sold listings benchmark required",
-    "real main product photo required",
+    "authorized Luna Portex catalog product image required",
+    "source authorization required",
+    "white-background main image enhancement required",
+    "main image QA required",
     "margin validation required",
   ]) {
     assert.ok(
@@ -5663,7 +5741,11 @@ test("ebay listing package admin MVP: muestra copy, estados y estrategia princip
     "Ready for: Internal preparation only",
     "Terapeak validation missing",
     "Sold listings benchmark missing",
-    "Real main product photo required",
+    "Authorized Luna Portex catalog image missing",
+    "White-background main image enhancement pending",
+    "Main image QA pending",
+    "AUTHORIZED_CATALOG_IMAGE_REQUIRED_FOR_MAIN_IMAGE",
+    "CATALOG_IMAGE_ENHANCEMENT_REQUIRED",
     "Shipping/returns not confirmed",
     "Price and margin not validated",
     "LISTING_PACKAGE_NEEDS_DATA",
@@ -5728,6 +5810,7 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "Shipping & Returns",
     "US Buyer Trust Signals",
     "Main Image Policy",
+    "Main Image Enhancement Policy",
     "Secondary Image Strategy",
     "Optional US Buyer Trust Visual",
     "Terapeak Validation",
@@ -5757,10 +5840,12 @@ test("ebay listing package admin MVP: muestra preview vendedor y plan de accion"
     )
 
   for (const expectedText of [
-    "Real product photo required",
-    "Pure white background",
-    "No AI main image",
+    "Authorized Luna Portex catalog image required",
+    "White-background enhancement required",
+    "No AI-generated product",
+    "No product alteration",
     "No badges or flags",
+    "Source authorization required",
     "Price: Pending",
     "Shipping: Pending",
     "Returns: Pending",
@@ -5802,7 +5887,7 @@ test("ebay listing package admin MVP: acciones visibles permanecen deshabilitada
     "Disabled: QA needs data",
     "Disabled: Terapeak and benchmark missing",
     "Disabled: waiting for conversion data",
-    "Disabled: real photo and image QA required",
+    "Disabled: authorized catalog source and image QA required",
   ]) {
     assert.ok(
       source.includes(expectedReason),
@@ -6034,10 +6119,13 @@ test("ebay listing package admin MVP: mantiene resumen ejecutivo en ingles", () 
     "Price: Pending",
     "Shipping: Pending",
     "Returns: Pending",
-    "Real product photo required",
-    "Pure white background",
-    "No AI main image",
+    "Authorized Luna Portex catalog image required",
+    "White-background enhancement required",
+    "White-background main image required",
+    "No AI-generated product",
+    "No product alteration",
     "No badges or flags",
+    "Source authorization required",
   ]) {
     assert.ok(
       source.includes(expectedText),

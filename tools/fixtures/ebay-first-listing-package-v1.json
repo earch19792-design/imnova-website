@@ -163,19 +163,55 @@
     "descriptionHtml": "<p>This listing package describes a simulated compact organizer for home or office storage.</p><p>The product is intended for simple everyday organization in a clean workspace.</p><p>Critical details such as dimensions, material, package contents, stock location, shipping terms, return policy, and final price still require human verification before this listing can be used for a real eBay draft or publication.</p>"
   },
   "mainImagePolicy": {
-    "imageSourceRequired": "real_product_photo",
-    "aiGeneratedAllowed": false,
-    "backgroundRequired": "pure_white",
+    "imageSourceRequired": "authorized_luna_portex_catalog_product_image",
+    "sourceAuthorizationRequired": true,
+    "catalogSource": "luna_portex",
+    "physicalProductInSellerPossessionRequired": false,
+    "enhancementRequired": true,
+    "finalBackgroundRequired": "pure_white",
     "minimumResolutionPx": 1600,
     "productCentered": true,
     "productShouldFillFramePercent": 80,
     "textAllowed": false,
+    "trustBadgesAllowed": false,
+    "usaFlagAllowed": false,
     "thirdPartyLogosAllowed": false,
     "watermarksAllowed": false,
-    "status": "MAIN_IMAGE_REAL_PHOTO_REQUIRED"
+    "aiGeneratedProductAllowed": false,
+    "aiAssistedBackgroundCleanupAllowedAfterHumanReview": true,
+    "status": "AUTHORIZED_CATALOG_IMAGE_REQUIRED_FOR_MAIN_IMAGE"
+  },
+  "mainImageEnhancementPolicy": {
+    "sourceImageRequired": "authorized_luna_portex_catalog_product_image",
+    "allowedEnhancements": [
+      "background_cleanup_to_pure_white",
+      "product_centering",
+      "crop_and_frame_optimization",
+      "lighting_balance",
+      "sharpness_and_resolution_improvement",
+      "minor_shadow_cleanup",
+      "color_accuracy_preservation"
+    ],
+    "prohibitedEnhancements": [
+      "change_product_shape",
+      "change_product_material",
+      "change_product_color",
+      "invent_accessories",
+      "invent_packaging",
+      "add_text",
+      "add_trust_badges",
+      "add_usa_flag",
+      "add_competitor_logo",
+      "remove_required_product_label",
+      "misrepresent_size_or_quantity",
+      "create_product_from_scratch"
+    ],
+    "qaRequiredBeforeUse": true,
+    "humanApprovalRequired": true,
+    "status": "CATALOG_IMAGE_ENHANCEMENT_REQUIRED"
   },
   "imagePlan": {
-    "mainImage": "Use a real physical product photo on a pure white background. Do not use AI generation for the main image.",
+    "mainImage": "Use an authorized Luna Portex catalog product image as the source. Enhance it to a clean pure white background with centered framing, sharpness, and no product alteration.",
     "secondaryImages": [
       {
         "imageNumber": 2,
@@ -425,7 +461,7 @@
   },
   "packImageStrategy": {
     "status": "PACK_IMAGES_NOT_READY",
-    "mainImageRule": "Main image for each pack listing must still be a real product photo on pure white background.",
+    "mainImageRule": "Main image for each pack listing must start from an authorized Luna Portex catalog product image and pass white-background enhancement QA.",
     "aiGeneratedMainImageAllowed": false,
     "packSecondaryImagesAllowedAfterReview": true,
     "recommendedPackImages": [
@@ -476,8 +512,10 @@
     "winning item specifics review required",
     "competitor image sequence review required",
     "original title and description rewrite required",
-    "real main product photo required",
-    "manual image QA required",
+    "authorized Luna Portex catalog product image required",
+    "source authorization required",
+    "white-background main image enhancement required",
+    "main image QA required",
     "conversion data required before pack strategy activation",
     "Luna Portex packing fee required before pack listings",
     "pack shipping cost required",
@@ -503,6 +541,9 @@
     "Confirm return policy before listing use.",
     "Confirm cost, fees, margin, and final listing price.",
     "Review item specifics and category before listing use.",
+    "Confirm authorized Luna Portex catalog product image source.",
+    "Confirm source authorization before image use.",
+    "Prepare white-background main image enhancement.",
     "Complete image QA before any image can be used.",
     "Monitor single-unit listing conversion before creating pack listings",
     "Verify Luna Portex packing or bundling fee for pack sizes",

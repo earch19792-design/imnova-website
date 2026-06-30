@@ -15,7 +15,9 @@ const safetyBadges = [
 const executiveBlockers = [
   "Terapeak validation missing",
   "Sold listings benchmark missing",
-  "Real main product photo required",
+  "Authorized Luna Portex catalog image missing",
+  "White-background main image enhancement pending",
+  "Main image QA pending",
   "Shipping/returns not confirmed",
   "Price and margin not validated",
 ]
@@ -79,7 +81,8 @@ const actionPlan = [
     title:
       "Assets",
     items: [
-      "real main product photo",
+      "authorized Luna Portex catalog image",
+      "white-background main image enhancement",
       "secondary images",
       "image QA",
     ],
@@ -129,7 +132,7 @@ const disabledActions = [
     label:
       "Generate Images",
     reason:
-      "Disabled: real photo and image QA required",
+      "Disabled: authorized catalog source and image QA required",
   },
 ]
 
@@ -143,6 +146,8 @@ const statusMarkers = [
   "SOLD_LISTINGS_BENCHMARK_REQUIRED",
   "WAITING_FOR_CONVERSION_DATA",
   "PACKING_FEE_VERIFICATION_REQUIRED",
+  "AUTHORIZED_CATALOG_IMAGE_REQUIRED_FOR_MAIN_IMAGE",
+  "CATALOG_IMAGE_ENHANCEMENT_REQUIRED",
   "ebay_only_connector_or_import",
   "structured_requirement_only",
   "pack x2",
@@ -365,23 +370,26 @@ export default function EbayListingPackagePage() {
         </Section>
 
         <Section title="Listing Preview">
-          <div className="grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
-            <div className="flex aspect-square min-h-[280px] flex-col items-center justify-center rounded-3xl border border-dashed border-white/20 bg-white/[0.035] p-6 text-center">
+          <div className="grid gap-5 xl:grid-cols-[minmax(220px,280px)_minmax(0,1fr)]">
+            <div className="flex min-h-[240px] flex-col items-center justify-center rounded-3xl border border-dashed border-white/20 bg-white/[0.035] p-6 text-center xl:min-h-0">
               <p className="text-lg font-black text-white">
-                Main image placeholder: Real product photo required
+                Authorized Luna Portex catalog image required
               </p>
               <div className="mt-5 space-y-2 text-sm font-semibold text-white/65">
                 <p>
-                  Real product photo required
+                  White-background enhancement required
                 </p>
                 <p>
-                  Pure white background
+                  No AI-generated product
                 </p>
                 <p>
-                  No AI main image
+                  No product alteration
                 </p>
                 <p>
                   No badges or flags
+                </p>
+                <p>
+                  Source authorization required
                 </p>
               </div>
             </div>
@@ -664,16 +672,28 @@ export default function EbayListingPackagePage() {
                 <FieldGrid
                   fields={[
                     [
-                      "real product photo required",
+                      "authorized catalog source",
                       listingPackage.mainImagePolicy.imageSourceRequired,
                     ],
                     [
-                      "AI generated allowed",
-                      listingPackage.mainImagePolicy.aiGeneratedAllowed,
+                      "sourceAuthorizationRequired",
+                      listingPackage.mainImagePolicy.sourceAuthorizationRequired,
                     ],
                     [
-                      "pure white background",
-                      listingPackage.mainImagePolicy.backgroundRequired,
+                      "catalogSource",
+                      listingPackage.mainImagePolicy.catalogSource,
+                    ],
+                    [
+                      "physicalProductInSellerPossessionRequired",
+                      listingPackage.mainImagePolicy.physicalProductInSellerPossessionRequired,
+                    ],
+                    [
+                      "enhancementRequired",
+                      listingPackage.mainImagePolicy.enhancementRequired,
+                    ],
+                    [
+                      "White-background main image required",
+                      listingPackage.mainImagePolicy.finalBackgroundRequired,
                     ],
                     [
                       "1600 px minimum",
@@ -685,6 +705,10 @@ export default function EbayListingPackagePage() {
                     ],
                     [
                       "no trust badges",
+                      listingPackage.mainImagePolicy.trustBadgesAllowed,
+                    ],
+                    [
+                      "no trust badges",
                       optionalTrustVisual.mainImageExclusions.includes("no trust badges"),
                     ],
                     [
@@ -692,11 +716,47 @@ export default function EbayListingPackagePage() {
                       optionalTrustVisual.mainImageExclusions.includes("no USA flag"),
                     ],
                     [
+                      "No AI-generated product",
+                      listingPackage.mainImagePolicy.aiGeneratedProductAllowed,
+                    ],
+                    [
+                      "controlled background cleanup after review",
+                      listingPackage.mainImagePolicy.aiAssistedBackgroundCleanupAllowedAfterHumanReview,
+                    ],
+                    [
+                      "status",
+                      listingPackage.mainImagePolicy.status,
+                    ],
+                    [
+                      "enhancementStatus",
+                      listingPackage.mainImageEnhancementPolicy.status,
+                    ],
+                    [
                       "no watermarks",
                       listingPackage.mainImagePolicy.watermarksAllowed,
                     ],
                   ]}
                 />
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Main Image Enhancement Policy
+              </h3>
+              <div className="mt-3 grid gap-4 lg:grid-cols-2">
+                <div>
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-white/40">
+                    Allowed enhancements
+                  </p>
+                  <ListBlock items={listingPackage.mainImageEnhancementPolicy.allowedEnhancements} />
+                </div>
+                <div>
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-white/40">
+                    Prohibited enhancements
+                  </p>
+                  <ListBlock items={listingPackage.mainImageEnhancementPolicy.prohibitedEnhancements} />
+                </div>
               </div>
             </div>
 
