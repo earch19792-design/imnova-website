@@ -1,0 +1,125 @@
+{
+  "intakeVersion": "EBAY_LUNA_PORTEX_IMAGE_SOURCE_INTAKE_V1",
+  "caseId": "LISTING-GEN-001",
+  "sourceManifestVersion": "EBAY_LUNA_PORTEX_IMAGE_ASSET_MANIFEST_V1",
+  "sourceListingPackageVersion": "EBAY_FIRST_LISTING_PACKAGE_V1",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "intakeStatus": "SOURCE_EVIDENCE_REQUIRED",
+  "draftImpact": "DRAFT_BLOCKED_UNTIL_SOURCE_EVIDENCE_APPROVED",
+  "primaryImageSourceEvidence": {
+    "sourceType": "luna_portex_catalog",
+    "sourceEvidenceStatus": "MISSING_EVIDENCE",
+    "authorizedUseStatus": "AUTHORIZATION_NOT_CONFIRMED",
+    "catalogImageReferenceStatus": "CATALOG_REFERENCE_REQUIRED",
+    "supplierPermissionStatus": "SUPPLIER_PERMISSION_REQUIRED",
+    "physicalProductInSellerPossessionRequired": false,
+    "realImageIncluded": false,
+    "image\u0055rlIncluded": false,
+    "base\u0036\u0034Included": false,
+    "fileUploadIncluded": false,
+    "evidenceFieldsRequired": [
+      "luna_portex_catalog_product_reference",
+      "supplier_or_catalog_source_confirmation",
+      "authorized_use_confirmation",
+      "image_matches_listing_product_confirmation",
+      "no_competitor_image_confirmation",
+      "no_watermark_or_restricted_logo_confirmation",
+      "main_image_enhancement_permission_confirmation"
+    ],
+    "nextHumanAction": "Collect source evidence for the authorized Luna Portex catalog image before image QA."
+  },
+  "authorizationChecklist": [
+    {
+      "checkId": "source_is_luna_portex_catalog",
+      "label": "Source is Luna Portex catalog",
+      "status": "PENDING_CONFIRMATION",
+      "requiredBeforeImageQa": true
+    },
+    {
+      "checkId": "authorized_use_confirmed",
+      "label": "Authorized use confirmed",
+      "status": "PENDING_CONFIRMATION",
+      "requiredBeforeImageQa": true
+    },
+    {
+      "checkId": "product_match_confirmed",
+      "label": "Image matches the listing product",
+      "status": "PENDING_CONFIRMATION",
+      "requiredBeforeImageQa": true
+    },
+    {
+      "checkId": "no_competitor_image",
+      "label": "No competitor image is used",
+      "status": "PENDING_CONFIRMATION",
+      "requiredBeforeImageQa": true
+    },
+    {
+      "checkId": "no_restricted_watermark",
+      "label": "No restricted watermark or competitor logo",
+      "status": "PENDING_CONFIRMATION",
+      "requiredBeforeImageQa": true
+    },
+    {
+      "checkId": "enhancement_permission_confirmed",
+      "label": "White-background enhancement permission confirmed",
+      "status": "PENDING_CONFIRMATION",
+      "requiredBeforeImageQa": true
+    }
+  ],
+  "sourceValidationRules": {
+    "mustBeAuthorizedLunaPortexCatalogImage": true,
+    "mustMatchListingProduct": true,
+    "mustNotUseCompetitorImage": true,
+    "mustNotUseUnauthorizedSupplierImage": true,
+    "mustNotContainRestrictedWatermark": true,
+    "mustNotContainCompetitorBranding": true,
+    "mustNotRequirePhysicalProductInSellerPossession": true,
+    "mustConfirmEnhancementPermission": true,
+    "mustPassHumanSourceReviewBeforeImageQa": true,
+    "mustPassImageQaBeforeDraft": true
+  },
+  "blockedUntil": [
+    "authorized_luna_portex_catalog_source_confirmed",
+    "product_match_confirmed",
+    "usage_permission_confirmed",
+    "watermark_and_logo_review_completed",
+    "enhancement_permission_confirmed",
+    "human_source_review_approved"
+  ],
+  "humanReview": {
+    "required": true,
+    "reviewStatus": "SOURCE_REVIEW_NOT_STARTED",
+    "reviewerRole": "seller_or_admin",
+    "approvalStatus": "NOT_APPROVED",
+    "approvalRequiredBefore": [
+      "main_image_enhancement",
+      "manual_image_qa",
+      "ebay_draft_mapping",
+      "ebay_draft_creation"
+    ],
+    "reviewNotes": [
+      "Confirm the catalog image is authorized for eBay listing use.",
+      "Confirm the image matches the exact product in the listing package.",
+      "Confirm the image can be enhanced to a white-background main image without altering the product.",
+      "Do not use competitor images, restricted logos, watermarks, or unauthorized supplier assets."
+    ]
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "humanReviewRequired": true,
+    "realImagesIncluded": false,
+    "image\u0055rlsIncluded": false,
+    "base\u0036\u0034ImagesIncluded": false,
+    "fileUploadsIncluded": false,
+    "supplier\u0050rivateDataIncluded": false,
+    "customer\u0044ataIncluded": false,
+    "imageGenerated": false,
+    "openAiApiUsed": false,
+    "externalCallsMade": false,
+    "ebayApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}
