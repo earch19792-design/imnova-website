@@ -3264,13 +3264,16 @@ test("first ebay listing package fixture: contiene copy, specifics y secciones o
     "shipping",
     "returns",
     "trustSignals",
+    "optionalUsBuyerTrustVisual",
     "mainImagePolicy",
     "imagePlan",
     "recoveredImagePromptStrategy",
     "terapeakValidation",
+    "soldListingsBenchmarkStrategy",
     "postConversionPackStrategy",
     "lunaPortexPackFulfillmentReview",
     "packImageStrategy",
+    "recommendedNextLoop",
     "safetyFlags",
   ]
 
@@ -3284,6 +3287,191 @@ test("first ebay listing package fixture: contiene copy, specifics y secciones o
       null
     )
   }
+})
+
+test("first ebay listing package fixture: optional US buyer trust visual nunca va en main image", () => {
+  const trustVisual =
+    ebayFirstListingPackageFixture.optionalUsBuyerTrustVisual
+
+  assert.equal(
+    trustVisual.status,
+    "TRUST_VISUAL_NEEDS_VERIFICATION"
+  )
+  assert.equal(
+    trustVisual.allowedOnlyAfterVerification,
+    true
+  )
+  assert.equal(
+    trustVisual.neverOnMainImage,
+    true
+  )
+  assert.deepEqual(
+    trustVisual.recommendedPlacementsAfterVerification,
+    [
+      "shipping section",
+      "description top trust bar",
+      "secondary trust visual",
+    ]
+  )
+
+  for (const exclusion of [
+    "no trust badges",
+    "no USA flag",
+    "no shipping badges",
+  ]) {
+    assert.ok(
+      trustVisual.mainImageExclusions.includes(exclusion),
+      `main image exclusion missing: ${exclusion}`
+    )
+  }
+
+  for (const [
+    signalName,
+    signal,
+  ] of Object.entries(trustVisual.signals)) {
+    assert.equal(
+      signal.verified,
+      false,
+      `${signalName} must remain unverified`
+    )
+    assert.equal(
+      signal.allowed,
+      false,
+      `${signalName} must remain disallowed until verified`
+    )
+    assert.equal(
+      signal.instruction,
+      "do_not_use_until_verified"
+    )
+  }
+
+  assert.equal(
+    trustVisual.signals.usaFlag.mustNotImplyMadeInUsa,
+    true
+  )
+  assert.deepEqual(
+    trustVisual.signals.usaFlag.placementAllowedAfterVerification,
+    [
+      "secondary trust visual",
+    ]
+  )
+})
+
+test("first ebay listing package fixture: sold listings benchmark no requiere copia manual completa", () => {
+  const benchmarkStrategy =
+    ebayFirstListingPackageFixture.soldListingsBenchmarkStrategy
+
+  assert.equal(
+    benchmarkStrategy.strategyStatus,
+    "SOLD_LISTINGS_BENCHMARK_REQUIRED"
+  )
+  assert.equal(
+    benchmarkStrategy.requiredBeforePublish,
+    true
+  )
+  assert.equal(
+    benchmarkStrategy.manualCopyNotScalable,
+    true
+  )
+  assert.equal(
+    benchmarkStrategy.preferredFutureAcquisitionMode,
+    "ebay_only_connector_or_import"
+  )
+  assert.equal(
+    benchmarkStrategy.currentLoopAcquisitionMode,
+    "structured_requirement_only"
+  )
+  assert.ok(
+    benchmarkStrategy.sourceOptionsFuture.includes(
+      "ebay_api_or_authorized_ebay_connector_if_supported"
+    )
+  )
+
+  for (const item of [
+    "ebay_api_connection",
+    "oauth",
+    "automated_sold_items_import",
+    "sell_one_like_this_import",
+    "scraping",
+    "browser_automation",
+  ]) {
+    assert.ok(
+      benchmarkStrategy.notImplementedInThisLoop.includes(item),
+      `notImplementedInThisLoop must include: ${item}`
+    )
+  }
+
+  assert.match(
+    benchmarkStrategy.manualWorkflowLimit,
+    /should not require copying a full competitor listing manually field by field/i
+  )
+  assert.match(
+    benchmarkStrategy.professionalUseRule,
+    /create an original, verified, compliant listing package/i
+  )
+  assert.match(
+    benchmarkStrategy.publicationRule,
+    /Do not mark listing as ready to publish/i
+  )
+})
+
+test("first ebay listing package fixture: Sell one like this queda como referencia estructural", () => {
+  const sellOneLikeThisStrategy =
+    ebayFirstListingPackageFixture.soldListingsBenchmarkStrategy
+      .sellOneLikeThisStrategy
+
+  assert.equal(
+    sellOneLikeThisStrategy.allowedAsReference,
+    true
+  )
+  assert.equal(
+    sellOneLikeThisStrategy.futureAutomationPreferred,
+    true
+  )
+  assert.equal(
+    sellOneLikeThisStrategy.manualFullCopyRequired,
+    false
+  )
+  assert.equal(
+    sellOneLikeThisStrategy.mustRewriteTitle,
+    true
+  )
+  assert.equal(
+    sellOneLikeThisStrategy.mustRewriteDescription,
+    true
+  )
+  assert.equal(
+    sellOneLikeThisStrategy.mustVerifyItemSpecifics,
+    true
+  )
+  assert.equal(
+    sellOneLikeThisStrategy.mustReplacePhotos,
+    true
+  )
+  assert.equal(
+    sellOneLikeThisStrategy.mustVerifyShipping,
+    true
+  )
+  assert.equal(
+    sellOneLikeThisStrategy.mustVerifyReturns,
+    true
+  )
+  assert.equal(
+    sellOneLikeThisStrategy.mustVerifyCondition,
+    true
+  )
+  assert.equal(
+    sellOneLikeThisStrategy.mustVerifyPriceAndMargin,
+    true
+  )
+  assert.equal(
+    sellOneLikeThisStrategy.mustNotCopyCompetitorContent,
+    true
+  )
+  assert.equal(
+    sellOneLikeThisStrategy.status,
+    "REFERENCE_ONLY_IMPORT_NOT_IMPLEMENTED"
+  )
 })
 
 test("first ebay listing package fixture: post conversion pack strategy espera datos reales", () => {
@@ -3661,6 +3849,13 @@ test("first ebay listing package fixture: missing data incluye bloqueos criticos
     "verified stock location required",
     "verified shipping policy required",
     "Terapeak validation required",
+    "sold listings benchmark required",
+    "eBay sold listings benchmark import method required",
+    "Sell one like this structure review required",
+    "comparable sold listing price review required",
+    "winning item specifics review required",
+    "competitor image sequence review required",
+    "original title and description rewrite required",
     "real main product photo required",
     "manual image QA required",
     "conversion data required before pack strategy activation",
@@ -3686,10 +3881,44 @@ test("first ebay listing package fixture: human actions incluyen pack fee y marg
     "Calculate pack x6 margin before creating pack listing",
     "Calculate pack x12 margin before creating pack listing",
     "Create separate image plan for each approved pack size",
+    "Review comparable sold listings for strategy before publishing",
+    "Do not manually copy competitor listing field by field",
+    "Use Sell one like this only as a structural reference",
+    "Define future eBay-only import method for sold listing benchmark",
+    "Rewrite title and description from scratch",
+    "Verify item specifics from product facts, not competitor copy",
+    "Replace all competitor images with owned or approved images",
+    "Compare sold price against margin before publishing",
   ]) {
     assert.ok(
       requiredHumanActions.includes(action),
       `requiredHumanActions must include: ${action}`
+    )
+  }
+})
+
+test("first ebay listing package fixture: recomienda Loop 094 para import de benchmark", () => {
+  assert.equal(
+    ebayFirstListingPackageFixture.recommendedNextLoop.loop,
+    "LOOP 094 — eBay Sold Listings Benchmark Import Design V1"
+  )
+  assert.equal(
+    ebayFirstListingPackageFixture.recommendedNextLoop.connectionPreference,
+    "eBay only, no OpenAI API"
+  )
+
+  for (const safetyRule of [
+    "no publishing",
+    "no drafts",
+    "no listing mutation",
+    "no scraping",
+    "no unauthorized data copying",
+  ]) {
+    assert.ok(
+      ebayFirstListingPackageFixture.recommendedNextLoop.safety.includes(
+        safetyRule
+      ),
+      `recommendedNextLoop.safety must include: ${safetyRule}`
     )
   }
 })
