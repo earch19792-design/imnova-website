@@ -93,6 +93,65 @@
       "instruction": "do_not_use"
     }
   },
+  "optionalUsBuyerTrustVisual": {
+    "status": "TRUST_VISUAL_NEEDS_VERIFICATION",
+    "allowedOnlyAfterVerification": true,
+    "neverOnMainImage": true,
+    "mainImageExclusions": [
+      "no trust badges",
+      "no USA flag",
+      "no shipping badges",
+      "no stock badges"
+    ],
+    "recommendedPlacementsAfterVerification": [
+      "shipping section",
+      "description top trust bar",
+      "secondary trust visual"
+    ],
+    "signals": {
+      "freeShipping": {
+        "text": "Free Shipping",
+        "allowed": false,
+        "verified": false,
+        "placementAllowedAfterVerification": [
+          "shipping section",
+          "description top trust bar",
+          "secondary trust visual"
+        ],
+        "instruction": "do_not_use_until_verified"
+      },
+      "shipsFromUsa": {
+        "text": "Ships from USA",
+        "allowed": false,
+        "verified": false,
+        "placementAllowedAfterVerification": [
+          "shipping section",
+          "description top trust bar",
+          "secondary trust visual"
+        ],
+        "instruction": "do_not_use_until_verified"
+      },
+      "inStockInUsa": {
+        "text": "In Stock in USA",
+        "allowed": false,
+        "verified": false,
+        "placementAllowedAfterVerification": [
+          "description top trust bar",
+          "secondary trust visual"
+        ],
+        "instruction": "do_not_use_until_verified"
+      },
+      "usaFlag": {
+        "allowed": false,
+        "verified": false,
+        "mustNotImplyMadeInUsa": true,
+        "placementAllowedAfterVerification": [
+          "secondary trust visual"
+        ],
+        "instruction": "do_not_use_until_verified"
+      }
+    }
+  },
   "buyerFacingCopy": {
     "bullets": [
       "Compact organizer concept for a clean home or office workspace.",
@@ -216,6 +275,75 @@
       "preferredSellThroughRatePercent": 50,
       "minimumNetMarginPercent": 20
     }
+  },
+  "soldListingsBenchmarkStrategy": {
+    "strategyStatus": "SOLD_LISTINGS_BENCHMARK_REQUIRED",
+    "requiredBeforePublish": true,
+    "manualCopyNotScalable": true,
+    "preferredFutureAcquisitionMode": "ebay_only_connector_or_import",
+    "currentLoopAcquisitionMode": "structured_requirement_only",
+    "sourceOptionsFuture": [
+      "ebay_api_or_authorized_ebay_connector_if_supported",
+      "seller_hub_or_terapeak_export_if_available",
+      "structured_admin_import",
+      "minimal_human_review_fallback"
+    ],
+    "notImplementedInThisLoop": [
+      "ebay_api_connection",
+      "oauth",
+      "automated_sold_items_import",
+      "sell_one_like_this_import",
+      "scraping",
+      "browser_automation",
+      "real_listing_copy"
+    ],
+    "manualWorkflowLimit": "Human may review sold listings for strategy, but IMNOVA should not require copying a full competitor listing manually field by field.",
+    "benchmarkFieldsToImportLater": [
+      "sold_price",
+      "title_pattern",
+      "category",
+      "condition",
+      "item_specifics",
+      "shipping_policy",
+      "returns_policy",
+      "description_structure",
+      "image_count",
+      "image_sequence",
+      "bundle_or_pack_format",
+      "seller_trust_signals",
+      "variation_strategy"
+    ],
+    "sellOneLikeThisStrategy": {
+      "allowedAsReference": true,
+      "allowedPurpose": "Use as a structural benchmark only after authorized access or human review.",
+      "futureAutomationPreferred": true,
+      "manualFullCopyRequired": false,
+      "mustRewriteTitle": true,
+      "mustRewriteDescription": true,
+      "mustVerifyItemSpecifics": true,
+      "mustReplacePhotos": true,
+      "mustVerifyShipping": true,
+      "mustVerifyReturns": true,
+      "mustVerifyCondition": true,
+      "mustVerifyPriceAndMargin": true,
+      "mustNotCopyCompetitorContent": true,
+      "status": "REFERENCE_ONLY_IMPORT_NOT_IMPLEMENTED"
+    },
+    "mustNotCopy": [
+      "competitor_photos",
+      "competitor_description_verbatim",
+      "competitor_title_verbatim",
+      "competitor_store_branding",
+      "competitor_watermarks",
+      "competitor_private_labels",
+      "unverified_claims",
+      "unverified_shipping_promises",
+      "unverified_trust_badges",
+      "unverified_made_in_usa_claims"
+    ],
+    "professionalUseRule": "Use sold listings to understand what already converts, then create an original, verified, compliant listing package for IMNOVA.",
+    "futureModuleRecommendation": "Create an eBay Sold Listings Benchmark Import module before scaling listing creation.",
+    "publicationRule": "Do not mark listing as ready to publish until sold listing benchmark, Terapeak validation, product facts, margin, shipping, returns and images are verified."
   },
   "postConversionPackStrategy": {
     "strategyStatus": "WAITING_FOR_CONVERSION_DATA",
@@ -341,6 +469,13 @@
     "Verified return policy required.",
     "Verified cost, margin, and target price required.",
     "Terapeak validation required",
+    "sold listings benchmark required",
+    "eBay sold listings benchmark import method required",
+    "Sell one like this structure review required",
+    "comparable sold listing price review required",
+    "winning item specifics review required",
+    "competitor image sequence review required",
+    "original title and description rewrite required",
     "real main product photo required",
     "manual image QA required",
     "conversion data required before pack strategy activation",
@@ -373,7 +508,15 @@
     "Verify Luna Portex packing or bundling fee for pack sizes",
     "Calculate pack x6 margin before creating pack listing",
     "Calculate pack x12 margin before creating pack listing",
-    "Create separate image plan for each approved pack size"
+    "Create separate image plan for each approved pack size",
+    "Review comparable sold listings for strategy before publishing",
+    "Do not manually copy competitor listing field by field",
+    "Use Sell one like this only as a structural reference",
+    "Define future eBay-only import method for sold listing benchmark",
+    "Rewrite title and description from scratch",
+    "Verify item specifics from product facts, not competitor copy",
+    "Replace all competitor images with owned or approved images",
+    "Compare sold price against margin before publishing"
   ],
   "prePublishChecklist": [
     "Confirm all product facts are accurate.",
@@ -395,5 +538,17 @@
     "openAiApiUsed": false,
     "imageGenerated": false,
     "externalCallsMade": false
+  },
+  "recommendedNextLoop": {
+    "loop": "LOOP 094 — eBay Sold Listings Benchmark Import Design V1",
+    "purpose": "Design how IMNOVA will capture sold listing benchmark data without requiring manual full-copy workflows.",
+    "connectionPreference": "eBay only, no OpenAI API",
+    "safety": [
+      "no publishing",
+      "no drafts",
+      "no listing mutation",
+      "no scraping",
+      "no unauthorized data copying"
+    ]
   }
 }
