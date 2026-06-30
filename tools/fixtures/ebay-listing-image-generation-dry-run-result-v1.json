@@ -1,0 +1,115 @@
+{
+  "resultVersion": "IMAGE_GENERATION_DRY_RUN_RESULT_SCHEMA_V1",
+  "caseId": "LISTING-GEN-001",
+  "candidateName": "Simulated listing image generation dry run result candidate",
+  "evaluatedAt": "2026-01-01T00:00:00.000Z",
+  "sourcePromptPlanVersion": "IMAGE_GENERATION_PROMPT_PLAN_SCHEMA_V1",
+  "imageRole": "lifestyle_product_in_use",
+  "targetBuyer": "us_ebay_buyer",
+  "language": "en",
+  "dryRunStatus": "DRY_RUN_NEEDS_DATA",
+  "recommendedNextState": "REQUEST_MORE_PRODUCT_DATA",
+  "decisionSummary": "The simulated PromptPlan cannot advance to image generation because critical product facts, model or image authorization review, and buyer trust signal verification are still missing.",
+  "blockingReasons": [],
+  "missingData": [
+    "verified dimensions required",
+    "verified material required",
+    "free shipping verification required",
+    "ships from USA verification required",
+    "in stock in USA verification required",
+    "model/image authorization review required"
+  ],
+  "verifiedFactsUsed": [
+    "caseId LISTING-GEN-001",
+    "imageRole lifestyle_product_in_use",
+    "targetBuyer us_ebay_buyer",
+    "language en",
+    "intendedUse internal_review_only"
+  ],
+  "unverifiedFacts": [
+    "product dimensions",
+    "product material",
+    "free shipping status",
+    "shipping origin",
+    "stock location",
+    "model or image authorization"
+  ],
+  "trustSignalEvaluation": {
+    "freeShipping": {
+      "requested": false,
+      "allowed": false,
+      "verified": false,
+      "decision": "needs_data",
+      "reason": "Free Shipping is not verified and must not be used in a final prompt."
+    },
+    "shipsFromUsa": {
+      "requested": false,
+      "allowed": false,
+      "verified": false,
+      "decision": "needs_data",
+      "reason": "Ships from USA is not verified and must not be used in a final prompt."
+    },
+    "inStockInUsa": {
+      "requested": false,
+      "allowed": false,
+      "verified": false,
+      "decision": "needs_data",
+      "reason": "In Stock in USA is not verified and must not be used in a final prompt."
+    },
+    "usaFlag": {
+      "requested": false,
+      "allowed": false,
+      "verified": false,
+      "decision": "needs_data",
+      "reason": "USA flag must stay blocked until shipping origin or stock location claims are verified."
+    }
+  },
+  "promptSafetyEvaluation": {
+    "promptPlanBasedOnVerifiedFacts": false,
+    "containsFinalProductionPrompt": false,
+    "containsOpenAiPayload": false,
+    "containsApiKeyOrSecret": false,
+    "containsBase64Image": false,
+    "containsRealImageUrl": false,
+    "containsUnauthorizedBrandOrLogo": false,
+    "containsMedicalClaim": false,
+    "containsGuaranteedResultClaim": false,
+    "containsUnverifiedTrustSignal": true,
+    "containsUnverifiedDimensions": true,
+    "containsUnverifiedMaterial": true,
+    "containsPersonOrModel": true,
+    "requiresModelRelease": true,
+    "safeForInternalReviewOnly": true
+  },
+  "humanReviewRequirements": [
+    "Verify product dimensions before allowing any future image generation.",
+    "Verify product material before allowing any future image generation.",
+    "Verify shipping cost, shipping origin, and stock location before using buyer trust signals.",
+    "Review whether the future lifestyle image needs model or image authorization.",
+    "Keep the result in internal human review before any future OpenAI image generation."
+  ],
+  "outputRequirements": {
+    "intendedUse": "internal_review_only",
+    "mayGenerateImage": false,
+    "mayCallOpenAi": false,
+    "mayCreateRealDraft": false,
+    "mayPublish": false,
+    "mayMutateListing": false,
+    "requiresImageQaBeforeUse": true,
+    "requiresHumanReview": true
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "dryRunOnly": true,
+    "documentationOnly": false,
+    "openAiApiUsed": false,
+    "imageGenerated": false,
+    "externalCallsMade": false,
+    "ebayApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false,
+    "reportPersisted": false,
+    "humanReviewRequired": true
+  }
+}
