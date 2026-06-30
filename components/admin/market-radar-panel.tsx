@@ -41,6 +41,7 @@ import {
 import {
   type EbayPipelineFocusCandidate,
 } from "@/components/admin/ebay-winner-pipeline-panel"
+import catalogCoverageAudit from "../../tools/fixtures/ebay-luna-portex-catalog-coverage-audit-v1.json"
 
 type MarketRadarApiResponse = {
   success: boolean
@@ -72,6 +73,49 @@ const MARKET_RADAR_REQUEST_TIMEOUT_MS =
 
 const MARKET_RADAR_SYNC_TIMEOUT_MS =
   240000
+
+const catalogCoverageAuditCopy = {
+  coverageLabel:
+    "Catalog coverage: Partial — synced configured collections only",
+  operatingModelHeading:
+    "Synced Scope Operating Model",
+  syncedScopeRankingLabel:
+    "Top 50 within synced Luna Portex scope",
+  discoveryMonitoringHeading:
+    "Discovery vs Linked Product Monitoring",
+  discoveryCoverageLabel:
+    "Discovery coverage: Partial — synced configured collections only",
+  partialCoverageForDiscovery:
+    "Partial coverage for discovery",
+  mandatoryLinkedMonitoring:
+    "Mandatory monitoring for linked products",
+  protectExistingReviewedListed:
+    "Protect existing reviewed/listed products",
+  findNewOpportunitiesWithinSyncedScope:
+    "Find new opportunities within synced scope",
+  protectExistingProductsFirst:
+    "Protect existing products first",
+  linkedProductNotCovered:
+    "Linked product not covered by current sync scope",
+  stockAndPriceRisk:
+    "Stock and price changes may be missed",
+  manualLunaPortexCheck:
+    "Manual Luna Portex check required",
+  fullCatalogWarning:
+    "Do not claim full Luna Portex catalog scan yet",
+  configuredCollectionsOnly: "Configured collections only",
+  coverageReviewRequired: "Coverage review required",
+  priorityOne:
+    "Priority 1: Published/listed products with stock or price risk",
+  priorityTwo:
+    "Priority 2: Draft/listing package products with supplier changes",
+  priorityThree:
+    "Priority 3: Blocked products back in stock",
+  priorityFour:
+    "Priority 4: Reviewed products with margin improvement",
+  priorityFive:
+    "Priority 5: New opportunities from partial catalog",
+}
 
 function getAbortErrorMessage(
   fallbackMessage: string
@@ -6419,6 +6463,63 @@ export function MarketRadarPanel({
             {error}
           </div>
         )}
+      </section>
+
+      <section className="rounded-lg border border-amber-300/20 bg-amber-300/[0.06] p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.26em] text-amber-100/55">
+              Catalog Coverage
+            </p>
+            <h3 className="mt-2 text-lg font-black text-white">
+              {catalogCoverageAuditCopy.coverageLabel}
+            </h3>
+            <p className="mt-2 text-sm font-semibold leading-6 text-amber-50/75">
+              {catalogCoverageAuditCopy.fullCatalogWarning}
+            </p>
+          </div>
+          <div className="grid gap-2 text-xs font-bold uppercase tracking-[0.12em] text-amber-50/65 sm:grid-cols-2 lg:min-w-[420px]">
+            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
+              {catalogCoverageAuditCopy.configuredCollectionsOnly}
+            </span>
+            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
+              {catalogCoverageAuditCopy.coverageReviewRequired}
+            </span>
+            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
+              {catalogCoverageAudit.coverageStatus}
+            </span>
+            <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
+              {catalogCoverageAudit.coverageDecision}
+            </span>
+          </div>
+        </div>
+        <div className="mt-5 rounded-lg border border-amber-200/15 bg-black/20 p-4">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-100/70">
+            {catalogCoverageAuditCopy.operatingModelHeading}
+          </p>
+          <div className="mt-3 grid gap-2 text-sm font-semibold text-amber-50/80 md:grid-cols-2">
+            <span>{catalogCoverageAuditCopy.coverageLabel}</span>
+            <span>{catalogCoverageAuditCopy.syncedScopeRankingLabel}</span>
+            <span>{catalogCoverageAuditCopy.discoveryCoverageLabel}</span>
+            <span>{catalogCoverageAuditCopy.partialCoverageForDiscovery}</span>
+            <span>{catalogCoverageAuditCopy.mandatoryLinkedMonitoring}</span>
+            <span>{catalogCoverageAuditCopy.protectExistingReviewedListed}</span>
+            <span>
+              {catalogCoverageAuditCopy.findNewOpportunitiesWithinSyncedScope}
+            </span>
+            <span>{catalogCoverageAuditCopy.protectExistingProductsFirst}</span>
+            <span>{catalogCoverageAuditCopy.linkedProductNotCovered}</span>
+            <span>{catalogCoverageAuditCopy.stockAndPriceRisk}</span>
+            <span>{catalogCoverageAuditCopy.manualLunaPortexCheck}</span>
+          </div>
+          <div className="mt-4 grid gap-2 text-xs font-bold uppercase tracking-[0.1em] text-amber-50/60 xl:grid-cols-5">
+            <span>{catalogCoverageAuditCopy.priorityOne}</span>
+            <span>{catalogCoverageAuditCopy.priorityTwo}</span>
+            <span>{catalogCoverageAuditCopy.priorityThree}</span>
+            <span>{catalogCoverageAuditCopy.priorityFour}</span>
+            <span>{catalogCoverageAuditCopy.priorityFive}</span>
+          </div>
+        </div>
       </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">

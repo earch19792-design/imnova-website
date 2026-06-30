@@ -1,0 +1,199 @@
+{
+  "auditVersion": "EBAY_LUNA_PORTEX_CATALOG_COVERAGE_AUDIT_V1",
+  "caseId": "MARKET-RADAR-LUNA-PORTEX-001",
+  "sourceProvider": "luna_portex",
+  "radarContext": "ebay_market_radar",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "coverageStatus": "CATALOG_COVERAGE_PARTIAL",
+  "coverageLabel": "Catalog coverage: Partial — synced configured collections only",
+  "coverageDecision": "DO_NOT_CLAIM_FULL_CATALOG_SCAN",
+  "radarOperatingModel": {
+    "operatingMode": "SYNCED_SCOPE_WITH_LINKED_PRODUCT_PROTECTION",
+    "fullCatalogRequiredToOperate": false,
+    "fullCatalogClaimAllowed": false,
+    "coverageWarningAlwaysVisible": true,
+    "coverageLabelRequired": "Catalog coverage: Partial — synced configured collections only",
+    "discoveryRankingLabel": "Top 50 within synced Luna Portex scope",
+    "operatingInterpretation": "Market Radar can operate within the synced scope, but it must not claim full Luna Portex catalog coverage.",
+    "primaryQueues": [
+      {
+        "queueId": "protect_existing_reviewed_or_listed_products",
+        "label": "Protect existing reviewed/listed products",
+        "priority": 1,
+        "purpose": "Protect products already touched by the seller pipeline from stock, price, margin, image, and compliance changes."
+      },
+      {
+        "queueId": "find_new_opportunities_within_synced_scope",
+        "label": "Find new opportunities within synced scope",
+        "priority": 2,
+        "purpose": "Discover new product opportunities only inside the currently synced Luna Portex scope."
+      }
+    ]
+  },
+  "discoveryRadarCoverage": {
+    "purpose": "Discover new eBay opportunities from the currently configured Luna Portex sync scope.",
+    "coverageStatus": "CATALOG_COVERAGE_PARTIAL",
+    "coverageLabel": "Discovery coverage: Partial — synced configured collections only",
+    "rankingLabel": "Top 50 within synced Luna Portex scope",
+    "fullCatalogClaimAllowed": false,
+    "operationAllowedWithinSyncedScope": true,
+    "sellerInterpretation": "New opportunity rankings only represent products inside the currently configured sync scope."
+  },
+  "linkedProductMonitor": {
+    "purpose": "Protect products already touched by the seller pipeline regardless of full catalog coverage.",
+    "monitorStatus": "LINKED_PRODUCT_MONITOR_REQUIRED",
+    "priorityPolicy": "PROTECT_EXISTING_PRODUCTS_FIRST",
+    "coverageDependency": "MUST_VERIFY_LINKED_PRODUCTS_IN_SYNC_SCOPE",
+    "operationBlockedByPartialCatalogCoverage": false,
+    "linkedPipelineStates": [
+      "candidate_created",
+      "listing_package_created",
+      "qa_created",
+      "internal_draft_created",
+      "published_on_ebay",
+      "paused",
+      "blocked_by_stock",
+      "blocked_by_price",
+      "blocked_by_image"
+    ],
+    "linkedProductCoverageStates": [
+      "LINKED_PRODUCT_COVERED_BY_CURRENT_SYNC_SCOPE",
+      "LINKED_PRODUCT_NOT_COVERED_BY_CURRENT_SYNC_SCOPE",
+      "LINKED_PRODUCT_COVERAGE_UNKNOWN"
+    ],
+    "notCoveredAlert": {
+      "alertStatus": "CRITICAL_MANUAL_REVIEW_REQUIRED",
+      "alertLabel": "Linked product not covered by current sync scope",
+      "risk": "Stock and price changes may be missed.",
+      "requiredAction": "Manual Luna Portex check required."
+    },
+    "coveredChangeEventsToMonitor": [
+      "out_of_stock",
+      "low_stock",
+      "back_in_stock",
+      "price_drop",
+      "price_increase",
+      "margin_changed",
+      "source_status_changed",
+      "image_status_changed",
+      "compliance_status_changed"
+    ]
+  },
+  "syncScope": {
+    "syncMode": "configured_collections_only",
+    "fullCatalogSyncConfirmed": false,
+    "configuredCollectionsKnown": false,
+    "additionalCollectionsMayExist": true,
+    "sourceApiConnected": false,
+    "realCatalogScanned": false,
+    "realSupplierDataIncluded": false,
+    "currentScopeDescription": "Market Radar should treat Luna Portex coverage as partial until configured collections and total catalog coverage are verified."
+  },
+  "collectionCoverage": {
+    "configuredCollections": [],
+    "configuredCollectionCount": 0,
+    "expectedTotalCollectionCountKnown": false,
+    "expectedTotalCollectionCount": null,
+    "additionalCollectionsDetected": false,
+    "additionalCollectionsDetectionStatus": "NOT_CHECKED",
+    "missingCollectionReviewRequired": true,
+    "coverageReviewStatus": "NEEDS_COLLECTION_SCOPE_REVIEW"
+  },
+  "countComparison": {
+    "expectedProductCountKnown": false,
+    "expectedProductCount": null,
+    "syncedProductCountKnown": false,
+    "syncedProductCount": null,
+    "coveragePercentKnown": false,
+    "coveragePercent": null,
+    "countComparisonStatus": "COUNT_COMPARISON_NOT_AVAILABLE",
+    "requiredBeforeFullCatalogClaim": true
+  },
+  "coverageRisks": [
+    "Radar may only represent configured Luna Portex collections.",
+    "Additional Luna Portex collections may exist outside the current sync scope.",
+    "Top products ranking may be incomplete if catalog coverage is partial.",
+    "Seller decisions should not assume full catalog visibility until coverage is confirmed."
+  ],
+  "requiredHumanActions": [
+    "Confirm which Luna Portex collections are configured for sync.",
+    "Confirm whether additional Luna Portex collections exist.",
+    "Compare expected product count against synced product count.",
+    "Label Market Radar coverage as partial until full coverage is verified.",
+    "Avoid claiming full Luna Portex catalog scan before coverage is confirmed."
+  ],
+  "radarDisplayRequirements": {
+    "mustDisplayCoverageStatus": true,
+    "mustDisplayCoverageLabel": true,
+    "mustDisplaySyncScope": true,
+    "mustDisplayLastCoverageReviewStatus": true,
+    "mustDisplayFullCatalogClaimWarning": true,
+    "requiredVisibleCopy": [
+      "Catalog coverage: Partial — synced configured collections only",
+      "Top 50 within synced Luna Portex scope",
+      "Do not claim full Luna Portex catalog scan yet",
+      "Configured collections only",
+      "Coverage review required",
+      "Partial coverage for discovery",
+      "Mandatory monitoring for linked products",
+      "Protect existing reviewed/listed products",
+      "Find new opportunities within synced scope",
+      "Linked product not covered by current sync scope",
+      "Stock and price changes may be missed",
+      "Manual Luna Portex check required",
+      "Protect existing products first"
+    ]
+  },
+  "sellerPriorityOrder": [
+    {
+      "priority": 1,
+      "queue": "published_or_listed_products_with_stock_or_price_risk",
+      "reason": "Protect active selling risk before looking for new products."
+    },
+    {
+      "priority": 2,
+      "queue": "draft_or_listing_package_products_with_supplier_changes",
+      "reason": "Prevent incomplete or outdated drafts/listing packages."
+    },
+    {
+      "priority": 3,
+      "queue": "blocked_products_back_in_stock",
+      "reason": "Reactivate products that may now be viable."
+    },
+    {
+      "priority": 4,
+      "queue": "reviewed_products_with_margin_improvement",
+      "reason": "Recheck products that may have become profitable."
+    },
+    {
+      "priority": 5,
+      "queue": "new_opportunities_from_partial_catalog",
+      "reason": "Discovery remains useful but must be interpreted as partial coverage."
+    }
+  ],
+  "sellerImpact": {
+    "sellerDecisionStatus": "USE_RADAR_AS_PARTIAL_CATALOG_SIGNAL",
+    "rankingInterpretation": "Top products are top products within the currently configured sync scope, not necessarily the full Luna Portex catalog.",
+    "listingDecisionImpact": "Coverage may be partial for discovery, but Market Radar can still operate within the synced scope. Linked products require priority monitoring. If a linked product is not covered by the current sync scope, the seller must manually check Luna Portex because stock and price changes may be missed.",
+    "recommendedNextAction": "Audit configured collections and expected product counts before claiming full catalog coverage."
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "humanReviewRequired": true,
+    "fullCatalogClaimAllowed": false,
+    "sourceApiConnected": false,
+    "lunaPortexApiUsed": false,
+    "realSupplierDataIncluded": false,
+    "supplierPrivateDataIncluded": false,
+    "externalUrlsIncluded": false,
+    "apiCallsMade": false,
+    "supabaseUsed": false,
+    "sqlUsed": false,
+    "ebayApiUsed": false,
+    "openAiApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}
