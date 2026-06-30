@@ -1,9 +1,11 @@
 import promptPlan from "../../../tools/fixtures/ebay-listing-image-generation-prompt-plan-v1.json"
+import dryRunResult from "../../../tools/fixtures/ebay-listing-image-generation-dry-run-result-v1.json"
 
 const safetyBadges = [
   "Safe Preview",
   "OpenAI is not connected",
   "No image is generated",
+  "No OpenAI call was made",
   "Internal review only",
   "Human review required",
 ]
@@ -96,6 +98,12 @@ export default function EbayImageGeneratorPage() {
     outputRequirements,
     safetyFlags,
   } = promptPlan
+  const {
+    trustSignalEvaluation,
+    promptSafetyEvaluation,
+    outputRequirements: dryRunOutputRequirements,
+    safetyFlags: dryRunSafetyFlags,
+  } = dryRunResult
 
   return (
     <main className="min-h-screen bg-[#05070d] px-6 py-8 text-white md:px-10 lg:px-14">
@@ -138,7 +146,7 @@ export default function EbayImageGeneratorPage() {
           {[
             [
               "Data source",
-              "Simulated PromptPlan fixture",
+              "Simulated PromptPlan fixture and dry run result fixture",
             ],
             [
               "Case ID",
@@ -151,6 +159,10 @@ export default function EbayImageGeneratorPage() {
             [
               "Prompt status",
               promptPlan.promptStatus,
+            ],
+            [
+              "Dry run status",
+              dryRunResult.dryRunStatus,
             ],
           ].map(([label, value]) => (
             <div
@@ -184,6 +196,274 @@ export default function EbayImageGeneratorPage() {
             <p>
               Every future image requires QA and human review before use.
             </p>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-amber-300/20 bg-amber-300/[0.045] p-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-amber-100/60">
+                Dry Run Result
+              </p>
+              <h2 className="mt-3 text-2xl font-black text-white">
+                Image generation cannot proceed yet
+              </h2>
+              <p className="mt-3 max-w-4xl text-sm leading-7 text-white/65">
+                No OpenAI call was made. No image was generated. No eBay draft was created. No listing was published. Human review required.
+              </p>
+            </div>
+            <div className="grid gap-2 text-sm font-black text-amber-100 sm:grid-cols-2">
+              <span className="rounded-2xl border border-amber-200/20 bg-black/25 px-4 py-3">
+                {dryRunResult.dryRunStatus}
+              </span>
+              <span className="rounded-2xl border border-amber-200/20 bg-black/25 px-4 py-3">
+                {dryRunResult.recommendedNextState}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
+          <h2 className="text-lg font-black text-white">
+            Dry Run Summary
+          </h2>
+          <div className="mt-5">
+            <FieldGrid
+              fields={[
+                [
+                  "resultVersion",
+                  dryRunResult.resultVersion,
+                ],
+                [
+                  "caseId",
+                  dryRunResult.caseId,
+                ],
+                [
+                  "candidateName",
+                  dryRunResult.candidateName,
+                ],
+                [
+                  "evaluatedAt",
+                  dryRunResult.evaluatedAt,
+                ],
+                [
+                  "sourcePromptPlanVersion",
+                  dryRunResult.sourcePromptPlanVersion,
+                ],
+                [
+                  "imageRole",
+                  dryRunResult.imageRole,
+                ],
+                [
+                  "targetBuyer",
+                  dryRunResult.targetBuyer,
+                ],
+                [
+                  "language",
+                  dryRunResult.language,
+                ],
+                [
+                  "dryRunStatus",
+                  dryRunResult.dryRunStatus,
+                ],
+                [
+                  "recommendedNextState",
+                  dryRunResult.recommendedNextState,
+                ],
+                [
+                  "decisionSummary",
+                  dryRunResult.decisionSummary,
+                ],
+              ]}
+            />
+          </div>
+        </section>
+
+        <section className="grid gap-5 lg:grid-cols-2">
+          <ListBlock
+            title="Missing Data"
+            items={dryRunResult.missingData}
+          />
+          <ListBlock
+            title="Blocking Reasons"
+            items={
+              dryRunResult.blockingReasons.length > 0
+                ? dryRunResult.blockingReasons
+                : [
+                    "No final blocking reason was applied, but more data is required before generation.",
+                  ]
+            }
+          />
+        </section>
+
+        <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
+          <h2 className="text-lg font-black text-white">
+            Trust Signal Evaluation
+          </h2>
+          <p className="mt-2 text-sm text-white/55">
+            Unverified trust signals are shown as not verified and needs data or blocked. They are not usable for a final image.
+          </p>
+          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {Object.entries(trustSignalEvaluation).map(([key, signal]) => (
+              <div
+                key={key}
+                className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.045] p-5"
+              >
+                <p className="text-sm font-black text-white">
+                  {
+                    trustSignalLabels[
+                      key as keyof typeof trustSignalLabels
+                    ]
+                  }
+                </p>
+                <div className="mt-4 space-y-2 text-sm text-white/65">
+                  <p>
+                    requested: {formatValue(signal.requested)}
+                  </p>
+                  <p>
+                    allowed: {formatValue(signal.allowed)}
+                  </p>
+                  <p>
+                    verified: {formatValue(signal.verified)}
+                  </p>
+                  <p className="font-bold text-amber-100">
+                    decision: {signal.decision}
+                  </p>
+                  <p>
+                    reason: {signal.reason}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
+          <h2 className="text-lg font-black text-white">
+            Prompt Safety Evaluation
+          </h2>
+          <div className="mt-5">
+            <FieldGrid
+              fields={Object.entries(promptSafetyEvaluation)}
+            />
+          </div>
+        </section>
+
+        <section className="grid gap-5 lg:grid-cols-2">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
+            <h2 className="text-lg font-black text-white">
+              Dry Run Output Requirements
+            </h2>
+            <div className="mt-5">
+              <FieldGrid
+                fields={[
+                  [
+                    "intendedUse",
+                    dryRunOutputRequirements.intendedUse,
+                  ],
+                  [
+                    "mayGenerateImage",
+                    dryRunOutputRequirements.mayGenerateImage,
+                  ],
+                  [
+                    "mayCallOpenAi",
+                    dryRunOutputRequirements.mayCallOpenAi,
+                  ],
+                  [
+                    "mayCreateRealDraft",
+                    dryRunOutputRequirements.mayCreateRealDraft,
+                  ],
+                  [
+                    "mayPublish",
+                    dryRunOutputRequirements.mayPublish,
+                  ],
+                  [
+                    "mayMutateListing",
+                    dryRunOutputRequirements.mayMutateListing,
+                  ],
+                  [
+                    "requiresImageQaBeforeUse",
+                    dryRunOutputRequirements.requiresImageQaBeforeUse,
+                  ],
+                  [
+                    "requiresHumanReview",
+                    dryRunOutputRequirements.requiresHumanReview,
+                  ],
+                ]}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
+            <h2 className="text-lg font-black text-white">
+              Dry Run Safety Flags
+            </h2>
+            <div className="mt-5">
+              <FieldGrid
+                fields={[
+                  [
+                    "advisoryOnly",
+                    dryRunSafetyFlags.advisoryOnly,
+                  ],
+                  [
+                    "dryRunOnly",
+                    dryRunSafetyFlags.dryRunOnly,
+                  ],
+                  [
+                    "documentationOnly",
+                    dryRunSafetyFlags.documentationOnly,
+                  ],
+                  [
+                    "openAiApiUsed",
+                    dryRunSafetyFlags.openAiApiUsed,
+                  ],
+                  [
+                    "imageGenerated",
+                    dryRunSafetyFlags.imageGenerated,
+                  ],
+                  [
+                    "externalCallsMade",
+                    dryRunSafetyFlags.externalCallsMade,
+                  ],
+                  [
+                    "ebayApiUsed",
+                    dryRunSafetyFlags.ebayApiUsed,
+                  ],
+                  [
+                    "realDraftCreated",
+                    dryRunSafetyFlags.realDraftCreated,
+                  ],
+                  [
+                    "publishedToEbay",
+                    dryRunSafetyFlags.publishedToEbay,
+                  ],
+                  [
+                    "listingMutated",
+                    dryRunSafetyFlags.listingMutated,
+                  ],
+                  [
+                    "reportPersisted",
+                    dryRunSafetyFlags.reportPersisted,
+                  ],
+                  [
+                    "humanReviewRequired",
+                    dryRunSafetyFlags.humanReviewRequired,
+                  ],
+                ]}
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
+          <h2 className="text-lg font-black text-white">
+            Human Review Requirements
+          </h2>
+          <div className="mt-5">
+            <ListBlock
+              title="humanReviewRequirements"
+              items={dryRunResult.humanReviewRequirements}
+            />
           </div>
         </section>
 

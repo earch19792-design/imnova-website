@@ -3113,6 +3113,10 @@ test("image generator admin placeholder: existe y usa PromptPlan fixture", () =>
   )
   assert.match(
     source,
+    /ebay-listing-image-generation-dry-run-result-v1\.json/
+  )
+  assert.match(
+    source,
     /Image Generator/
   )
   assert.match(
@@ -3122,6 +3126,14 @@ test("image generator admin placeholder: existe y usa PromptPlan fixture", () =>
   assert.match(
     source,
     /PROMPT_PLAN_NEEDS_DATA|promptStatus/
+  )
+  assert.match(
+    source,
+    /DRY_RUN_NEEDS_DATA|dryRunStatus/
+  )
+  assert.match(
+    source,
+    /REQUEST_MORE_PRODUCT_DATA|recommendedNextState/
   )
 })
 
@@ -3138,6 +3150,64 @@ test("image generator admin placeholder: conserva copy de seguridad", () => {
     "Human review required",
     "Internal review only",
     "Simulated PromptPlan fixture",
+    "Dry Run Result",
+    "Image generation cannot proceed yet",
+    "No OpenAI call was made",
+    "No image was generated",
+    "No eBay draft was created",
+    "No listing was published",
+  ]) {
+    assert.match(
+      source,
+      new RegExp(expectedText)
+    )
+  }
+})
+
+test("image generator admin placeholder: muestra secciones de dry run result", () => {
+  const source =
+    fs.readFileSync(
+      ebayImageGeneratorAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Dry Run Summary",
+    "Missing Data",
+    "Blocking Reasons",
+    "Trust Signal Evaluation",
+    "Prompt Safety Evaluation",
+    "Dry Run Output Requirements",
+    "Dry Run Safety Flags",
+    "Human Review Requirements",
+  ]) {
+    assert.match(
+      source,
+      new RegExp(expectedText)
+    )
+  }
+})
+
+test("image generator admin placeholder: muestra campos de dry run seguros", () => {
+  const source =
+    fs.readFileSync(
+      ebayImageGeneratorAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "mayGenerateImage",
+    "mayCallOpenAi",
+    "mayCreateRealDraft",
+    "mayPublish",
+    "mayMutateListing",
+    "openAiApiUsed",
+    "imageGenerated",
+    "ebayApiUsed",
+    "realDraftCreated",
+    "publishedToEbay",
+    "listingMutated",
+    "reportPersisted",
   ]) {
     assert.match(
       source,
@@ -3202,6 +3272,7 @@ test("image generator admin placeholder: no contiene integraciones reales", () =
     /ebayApi\.create/,
     /createDraft/,
     /publishListing/,
+    /onClick=/,
   ]) {
     assert.doesNotMatch(
       source,
