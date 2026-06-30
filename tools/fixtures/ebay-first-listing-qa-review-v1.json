@@ -8,7 +8,7 @@
   "publicationRecommendation": "DO_NOT_PUBLISH",
   "draftRecommendation": "DO_NOT_CREATE_DRAFT",
   "overallDecision": "NEEDS_DATA_BEFORE_DRAFT",
-  "decisionSummary": "The first listing package is a useful professional base for LISTING-GEN-001, but it is not ready for draft creation or publication. Critical validations are still missing, including Terapeak, sold listings benchmark review, verified product facts, shipping and returns confirmation, real main product photo, image QA, margin calculation, and human approval.",
+  "decisionSummary": "The first listing package is a useful professional base for LISTING-GEN-001, but it is not ready for draft creation or publication. Critical validations are still missing, including Terapeak, sold listings benchmark review, verified product facts, shipping and returns confirmation, authorized Luna Portex catalog product image, main image QA, margin calculation, and human approval.",
   "sectionReviews": {
     "titleReview": {
       "status": "NEEDS_HUMAN_REVIEW",
@@ -60,11 +60,14 @@
       ]
     },
     "imageStrategyReview": {
-      "status": "NEEDS_DATA",
+      "status": "NEEDS_AUTHORIZED_CATALOG_IMAGE",
+      "summary": "Main image must start from an authorized Luna Portex catalog product image, then be enhanced into a clean white-background eBay-ready main image without altering the product.",
       "checks": [
-        "Real main product photo is required.",
-        "Main image must not be AI generated.",
-        "Main image must use pure white background.",
+        "Authorized Luna Portex catalog product image required.",
+        "White-background main image enhancement required.",
+        "Main image source authorization required.",
+        "Main image QA required.",
+        "No AI-generated product or product alteration allowed.",
         "Six secondary images are defined but still need product data and QA.",
         "Only the dimensions image may include text."
       ]
@@ -110,7 +113,10 @@
   "blockingReasons": [
     "Terapeak validation required",
     "Sold listings benchmark required",
-    "Real main product photo required",
+    "Authorized Luna Portex catalog product image required",
+    "White-background main image enhancement required",
+    "Main image source authorization required",
+    "Main image QA required",
     "Verified shipping policy required",
     "Trust signals verification required",
     "Price and margin validation required",
@@ -125,8 +131,10 @@
     "return policy confirmation required",
     "Terapeak validation required",
     "sold listings benchmark required",
-    "real main product photo required",
-    "image QA required",
+    "authorized Luna Portex catalog product image required",
+    "source authorization required",
+    "white-background main image enhancement required",
+    "main image QA required",
     "Luna Portex packing fee for packs required",
     "margin validation required"
   ],
@@ -136,7 +144,9 @@
     "Confirm product facts from the real item",
     "Confirm shipping and returns policy",
     "Calculate margin after cost, fees, shipping, and packing review",
-    "Prepare real main product photo",
+    "Confirm authorized Luna Portex catalog product image source",
+    "Confirm main image source authorization",
+    "Prepare white-background main image enhancement",
     "Prepare secondary images for QA",
     "Review all trust signals before use",
     "Approve manually before draft creation"
@@ -146,7 +156,8 @@
     "Sold listings benchmark review complete",
     "Item specifics verified from product facts",
     "Shipping and returns confirmed",
-    "Real main image prepared and approved",
+    "Authorized catalog main image prepared and approved",
+    "Main image source authorization confirmed",
     "Secondary images passed QA",
     "Margin validated",
     "Human approval recorded before draft creation"
