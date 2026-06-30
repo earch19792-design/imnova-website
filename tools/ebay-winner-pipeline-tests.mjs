@@ -11023,7 +11023,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Despues revisa oportunidades sincronizadas/
+    /Despues reevalua cambios de stock, precio o margen/
   )
   assert.match(
     source,
@@ -11071,11 +11071,23 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Stock confirmado/
+    /Cambios precio\/margen/
   )
   assert.match(
     source,
-    /Todo sincronizado/
+    /Todo monitoreado/
+  )
+  assert.match(
+    source,
+    /Productos evaluados o vinculados/
+  )
+  assert.match(
+    source,
+    /price_margin_changes/
+  )
+  assert.match(
+    source,
+    /blocked_or_review/
   )
   assert.match(
     source,
@@ -11147,7 +11159,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Buscar oportunidades sincronizadas/
+    /Revisar cambios de precio o margen/
   )
   assert.match(
     source,

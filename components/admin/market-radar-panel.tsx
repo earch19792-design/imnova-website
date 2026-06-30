@@ -123,7 +123,7 @@ const sellerCommandCenterCopy = {
   protectFirst:
     "Primero protege productos revisados o listados",
   findWithinScope:
-    "Despues revisa oportunidades sincronizadas",
+    "Despues reevalua cambios de stock, precio o margen",
   readOnlyRecommendations:
     "Recomendaciones de solo lectura",
   noAutomaticListingActions:
@@ -139,13 +139,13 @@ const sellerCommandCenterCopy = {
   topCardLabels: [
     "Cobertura",
     "Proteger existentes",
-    "Nuevas oportunidades",
+    "Cambios precio/margen",
     "Riesgos de stock",
     "Siguiente accion",
   ],
   queueLabels: [
     "Proteger revisados o listados",
-    "Buscar oportunidades sincronizadas",
+    "Revisar cambios de precio o margen",
     "Riesgo de stock",
     "Cambios de margen",
     "Bloqueados o por revisar",
@@ -304,8 +304,11 @@ type PriceIntelligenceFormState = {
 type RadarRankingFilter =
   | "all"
   | "actionable"
+  | "existing"
+  | "price_margin_changes"
   | "stock_confirmed"
   | "stock_needs_validation"
+  | "blocked_or_review"
   | "reviewed"
 
 type RadarAdvisorReviewFilter =
@@ -1193,6 +1196,57 @@ function isRadarProductActionable(
   return !product.pipeline_candidate_id
 }
 
+function isExistingRadarProduct(
+  product: MarketRadarProductRow
+) {
+  return Boolean(
+    product.pipeline_candidate_id ||
+    !isRadarProductActionable(product)
+  )
+}
+
+function hasPriceOrMarginChangeSignal(
+  product: MarketRadarProductRow
+) {
+  return Boolean(
+    isExistingRadarProduct(product) &&
+    (
+      product.actionable_reason ===
+        "price_down_after_review" ||
+      product.actionable_reason ===
+        "discount_started_after_review" ||
+      product.actionable_reason ===
+        "price_up_after_review"
+    )
+  )
+}
+
+function isBlockedOrNeedsReviewSignal(
+  product: MarketRadarProductRow
+) {
+  const candidateState =
+    String(
+      product.pipeline_candidate_state || ""
+    ).toUpperCase()
+
+  return Boolean(
+    isExistingRadarProduct(product) &&
+    (
+      candidateState.includes("BLOCK") ||
+      product.actionable_reason ===
+        "pipeline_candidate_not_evaluated" ||
+      product.actionable_reason ===
+        "restocked_after_review" ||
+      product.actionable_reason ===
+        "stock_increased_after_review" ||
+      product.actionable_reason ===
+        "quantity_changed_after_review" ||
+      product.actionable_reason ===
+        "collection_changed_after_review"
+    )
+  )
+}
+
 function matchesRadarRankingFilter(
   product: MarketRadarProductRow,
   filter: RadarRankingFilter
@@ -1205,15 +1259,31 @@ function matchesRadarRankingFilter(
     return isRadarProductActionable(product)
   }
 
+  if (filter === "existing") {
+    return isExistingRadarProduct(product)
+  }
+
+  if (filter === "price_margin_changes") {
+    return hasPriceOrMarginChangeSignal(product)
+  }
+
   if (filter === "stock_confirmed") {
-    return isStrictStockConfirmed(product)
+    return (
+      isExistingRadarProduct(product) &&
+      isStrictStockConfirmed(product)
+    )
   }
 
   if (filter === "stock_needs_validation") {
     return (
+      isExistingRadarProduct(product) &&
       getRadarStockValidationStatus(product) ===
       "stock_needs_validation"
     )
+  }
+
+  if (filter === "blocked_or_review") {
+    return isBlockedOrNeedsReviewSignal(product)
   }
 
   if (filter === "reviewed") {
@@ -1230,12 +1300,24 @@ function getRadarRankingFilterTitle(
     return "Nuevas oportunidades para revisar"
   }
 
+  if (filter === "existing") {
+    return "Productos ya evaluados o vinculados"
+  }
+
+  if (filter === "price_margin_changes") {
+    return "Productos con cambios de precio o margen"
+  }
+
   if (filter === "stock_confirmed") {
-    return "Productos con stock confirmado"
+    return "Productos existentes con stock confirmado"
   }
 
   if (filter === "stock_needs_validation") {
-    return "Productos con riesgo de stock"
+    return "Productos existentes con riesgo de stock"
+  }
+
+  if (filter === "blocked_or_review") {
+    return "Productos bloqueados o por revisar"
   }
 
   if (filter === "reviewed") {
@@ -4933,7 +5015,7 @@ export function MarketRadarPanel({
   const [
     rankingFilter,
     setRankingFilter,
-  ] = useState<RadarRankingFilter>("actionable")
+  ] = useState<RadarRankingFilter>("existing")
 
   const searchResultsRef =
     useRef<HTMLElement | null>(null)
@@ -5200,7 +5282,7 @@ export function MarketRadarPanel({
     useCallback(() => {
       setRadarSearch("")
       setActiveRadarSearch("")
-      setRankingFilter("actionable")
+      setRankingFilter("existing")
       loadDashboard({
         search:
           "",
@@ -5977,16 +6059,37 @@ export function MarketRadarPanel({
             isRadarProductActionable
           ).length
 
+        const existing =
+          products.filter(
+            isExistingRadarProduct
+          ).length
+
+        const priceMarginChanges =
+          products.filter(
+            hasPriceOrMarginChangeSignal
+          ).length
+
         const stockConfirmed =
           products.filter(
-            isStrictStockConfirmed
+            product =>
+              matchesRadarRankingFilter(
+                product,
+                "stock_confirmed"
+              )
           ).length
 
         const stockNeedsValidation =
           products.filter(
             product =>
-              getRadarStockValidationStatus(product) ===
-              "stock_needs_validation"
+              matchesRadarRankingFilter(
+                product,
+                "stock_needs_validation"
+              )
+          ).length
+
+        const blockedOrReview =
+          products.filter(
+            isBlockedOrNeedsReviewSignal
           ).length
 
         const reviewed =
@@ -5997,8 +6100,11 @@ export function MarketRadarPanel({
 
         return {
           actionable,
+          existing,
+          priceMarginChanges,
           stockConfirmed,
           stockNeedsValidation,
+          blockedOrReview,
           reviewed,
         }
       },
@@ -6191,19 +6297,7 @@ export function MarketRadarPanel({
       count:
         rankingCounts.reviewed,
       note:
-        "Revisados o listados",
-    },
-    {
-      id:
-        "new-opportunities",
-      label:
-        "Nuevas oportunidades",
-      filter:
-        "actionable",
-      count:
-        rankingCounts.actionable,
-      note:
-        "Revisar ahora",
+        "Sin nueva señal",
     },
     {
       id:
@@ -6219,27 +6313,39 @@ export function MarketRadarPanel({
     },
     {
       id:
-        "stock-confirmed",
+        "price-margin-changes",
       label:
-        "Stock confirmado",
+        "Cambios precio/margen",
       filter:
-        "stock_confirmed",
+        "price_margin_changes",
       count:
-        rankingCounts.stockConfirmed,
+        rankingCounts.priceMarginChanges,
       note:
-        "Cantidad confiable",
+        "Reevaluar margen",
     },
     {
       id:
-        "all-results",
+        "blocked-or-review",
       label:
-        "Todo sincronizado",
+        "Bloqueados o por revisar",
       filter:
-        "all",
+        "blocked_or_review",
       count:
-        summary?.totalProducts || 0,
+        rankingCounts.blockedOrReview,
       note:
-        "Alcance actual",
+        "Nueva señal",
+    },
+    {
+      id:
+        "all-monitored",
+      label:
+        "Todo monitoreado",
+      filter:
+        "existing",
+      count:
+        rankingCounts.existing,
+      note:
+        "Flujo eBay",
     },
   ]
 
@@ -6597,7 +6703,7 @@ export function MarketRadarPanel({
             <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold uppercase tracking-[0.08em] text-emerald-50/65">
               <span>{catalogCoverageAuditCopy.coverageLabel}</span>
               <span>{catalogCoverageAuditCopy.syncedScopeRankingLabel}</span>
-              <span>{sellerCommandCenterCopy.readOnlyRecommendations}</span>
+              <span>Productos evaluados o vinculados</span>
               <span>{sellerCommandCenterCopy.noAutomaticListingActions}</span>
             </div>
           </div>
@@ -6881,6 +6987,12 @@ export function MarketRadarPanel({
                   },
                   {
                     value:
+                      "existing" as const,
+                    label:
+                      "Monitoreados",
+                  },
+                  {
+                    value:
                       "actionable" as const,
                     label:
                       "Revisar ahora",
@@ -6896,6 +7008,18 @@ export function MarketRadarPanel({
                       "stock_needs_validation" as const,
                     label:
                       "Falta confirmar stock",
+                  },
+                  {
+                    value:
+                      "price_margin_changes" as const,
+                    label:
+                      "Precio/margen",
+                  },
+                  {
+                    value:
+                      "blocked_or_review" as const,
+                    label:
+                      "Bloqueados",
                   },
                   {
                     value:
