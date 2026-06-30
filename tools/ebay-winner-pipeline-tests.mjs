@@ -587,6 +587,19 @@ const ebayFirstListingPackageFixture =
     )
   )
 
+const ebayFirstListingQaReviewFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-first-listing-qa-review-v1.json"
+  )
+
+const ebayFirstListingQaReviewFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayFirstListingQaReviewFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayListingImageGenerationDryRunRunnerFixtureSetPath =
   path.resolve(
     "tools/fixtures/ebay-listing-image-generation-dry-run-runner-fixture-set-v1.json"
@@ -4076,6 +4089,314 @@ test("first ebay listing package fixture: no contiene campos prohibidos ni URLs"
       ),
       false,
       `first ebay listing package fixture contains forbidden field: ${fieldName}`
+    )
+  }
+
+  for (const value of collected.values) {
+    assert.doesNotMatch(
+      value,
+      /https?:\/\//i
+    )
+    assert.doesNotMatch(
+      value,
+      /bearer\s+|sk-[a-z0-9_-]+|api[_ -]?key|auth(?:orization)?\s*header|password|secret|credential|token/i
+    )
+  }
+})
+
+test("first listing QA review fixture: existe y bloquea draft/publicacion", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayFirstListingQaReviewFixturePath
+    )
+  )
+  assert.equal(
+    ebayFirstListingQaReviewFixture.qaVersion,
+    "EBAY_FIRST_LISTING_QA_REVIEW_V1"
+  )
+  assert.equal(
+    ebayFirstListingQaReviewFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebayFirstListingQaReviewFixture.sourceListingPackageVersion,
+    "EBAY_FIRST_LISTING_PACKAGE_V1"
+  )
+  assert.equal(
+    ebayFirstListingQaReviewFixture.marketplace,
+    "ebay_us"
+  )
+  assert.equal(
+    ebayFirstListingQaReviewFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebayFirstListingQaReviewFixture.qaStatus,
+    "LISTING_QA_NEEDS_DATA"
+  )
+  assert.equal(
+    ebayFirstListingQaReviewFixture.publicationRecommendation,
+    "DO_NOT_PUBLISH"
+  )
+  assert.equal(
+    ebayFirstListingQaReviewFixture.draftRecommendation,
+    "DO_NOT_CREATE_DRAFT"
+  )
+  assert.equal(
+    ebayFirstListingQaReviewFixture.overallDecision,
+    "NEEDS_DATA_BEFORE_DRAFT"
+  )
+})
+
+test("first listing QA review fixture: incluye section reviews criticos", () => {
+  const sectionReviews =
+    ebayFirstListingQaReviewFixture.sectionReviews
+
+  assert.equal(
+    typeof sectionReviews,
+    "object"
+  )
+  assert.notEqual(
+    sectionReviews,
+    null
+  )
+
+  for (const reviewName of [
+    "titleReview",
+    "categoryReview",
+    "itemSpecificsReview",
+    "priceMarginReview",
+    "shippingReturnsReview",
+    "trustSignalsReview",
+    "imageStrategyReview",
+    "terapeakReview",
+    "soldListingsBenchmarkReview",
+    "packStrategyReview",
+    "lunaPortexReview",
+    "complianceReview",
+  ]) {
+    assert.ok(
+      sectionReviews[reviewName],
+      `sectionReviews must include: ${reviewName}`
+    )
+  }
+
+  assert.equal(
+    sectionReviews.terapeakReview.status,
+    "REQUIRED_NOT_COMPLETE"
+  )
+  assert.equal(
+    sectionReviews.soldListingsBenchmarkReview.status,
+    "REQUIRED_NOT_IMPORTED"
+  )
+  assert.equal(
+    sectionReviews.packStrategyReview.status,
+    "WAITING_FOR_CONVERSION_DATA"
+  )
+  assert.equal(
+    sectionReviews.lunaPortexReview.status,
+    "PACKING_FEE_VERIFICATION_REQUIRED"
+  )
+  assert.match(
+    sectionReviews.soldListingsBenchmarkReview.checks.join(" "),
+    /eBay-only and read-only/i
+  )
+  assert.match(
+    sectionReviews.imageStrategyReview.checks.join(" "),
+    /Only the dimensions image may include text/i
+  )
+  assert.match(
+    sectionReviews.trustSignalsReview.checks.join(" "),
+    /must not imply Made in USA/i
+  )
+})
+
+test("first listing QA review fixture: contiene bloqueos y acciones humanas", () => {
+  for (const blockingReason of [
+    "Terapeak validation required",
+    "Sold listings benchmark required",
+    "Real main product photo required",
+    "Trust signals verification required",
+  ]) {
+    assert.ok(
+      ebayFirstListingQaReviewFixture.blockingReasons.includes(
+        blockingReason
+      ),
+      `blockingReasons must include: ${blockingReason}`
+    )
+  }
+
+  for (const fieldName of [
+    "missingData",
+    "requiredHumanActions",
+    "preDraftChecklist",
+    "prePublishChecklist",
+  ]) {
+    assert.ok(
+      Array.isArray(
+        ebayFirstListingQaReviewFixture[fieldName]
+      ),
+      `${fieldName} must be an array`
+    )
+    assert.ok(
+      ebayFirstListingQaReviewFixture[fieldName].length > 0,
+      `${fieldName} must not be empty`
+    )
+  }
+
+  for (const missingDataItem of [
+    "Terapeak validation required",
+    "sold listings benchmark required",
+    "real main product photo required",
+    "margin validation required",
+  ]) {
+    assert.ok(
+      ebayFirstListingQaReviewFixture.missingData.includes(
+        missingDataItem
+      ),
+      `missingData must include: ${missingDataItem}`
+    )
+  }
+
+  assert.ok(
+    ebayFirstListingQaReviewFixture.requiredHumanActions.includes(
+      "Approve manually before draft creation"
+    )
+  )
+  assert.ok(
+    ebayFirstListingQaReviewFixture.preDraftChecklist.includes(
+      "Human approval recorded before draft creation"
+    )
+  )
+  assert.ok(
+    ebayFirstListingQaReviewFixture.prePublishChecklist.includes(
+      "Do not publish without final human approval"
+    )
+  )
+})
+
+test("first listing QA review fixture: safety flags mantienen side effects false", () => {
+  assert.deepEqual(
+    ebayFirstListingQaReviewFixture.safetyFlags,
+    {
+      advisoryOnly:
+        true,
+      humanReviewRequired:
+        true,
+      ebayApiUsed:
+        false,
+      realDraftCreated:
+        false,
+      publishedToEbay:
+        false,
+      listingMutated:
+        false,
+      openAiApiUsed:
+        false,
+      imageGenerated:
+        false,
+      externalCallsMade:
+        false,
+      reportPersisted:
+        false,
+    }
+  )
+  assert.notEqual(
+    ebayFirstListingQaReviewFixture.publicationRecommendation,
+    "READY_TO_PUBLISH"
+  )
+  assert.notEqual(
+    ebayFirstListingQaReviewFixture.draftRecommendation,
+    "READY_TO_CREATE_DRAFT"
+  )
+})
+
+test("first listing QA review fixture: no contiene campos prohibidos ni URLs", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayFirstListingQaReviewFixturePath,
+      "utf8"
+    )
+
+  assert.doesNotMatch(
+    rawFixture,
+    /https?:\/\//i
+  )
+
+  const forbiddenFieldNames = [
+    "draftId",
+    "listingId",
+    "publishedListingId",
+    "oa" + "uth",
+    "tok" + "en",
+    "sec" + "ret",
+    "apiKey",
+    "auth" + "orization",
+    "openAiPayload",
+    "imageUrl",
+    "base64Image",
+  ]
+
+  function collectKeysAndValues(
+    value,
+    collected = {
+      keys:
+        [],
+      values:
+        [],
+    }
+  ) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        collectKeysAndValues(
+          item,
+          collected
+        )
+      }
+      return collected
+    }
+
+    if (
+      value &&
+      typeof value === "object"
+    ) {
+      for (const [
+        key,
+        childValue,
+      ] of Object.entries(value)) {
+        collected.keys.push(key)
+        collectKeysAndValues(
+          childValue,
+          collected
+        )
+      }
+      return collected
+    }
+
+    if (typeof value === "string") {
+      collected.values.push(value)
+    }
+
+    return collected
+  }
+
+  const collected =
+    collectKeysAndValues(
+      ebayFirstListingQaReviewFixture
+    )
+
+  const lowerKeys =
+    collected.keys.map(key =>
+      key.toLowerCase()
+    )
+
+  for (const fieldName of forbiddenFieldNames) {
+    assert.equal(
+      lowerKeys.includes(
+        fieldName.toLowerCase()
+      ),
+      false,
+      `first listing QA review fixture contains forbidden field: ${fieldName}`
     )
   }
 
