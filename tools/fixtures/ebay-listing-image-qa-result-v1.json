@@ -1,0 +1,72 @@
+{
+  "resultVersion": "EBAY_LISTING_IMAGE_QA_RESULT_SCHEMA_V1",
+  "sourceSchemaVersion": "EBAY_LISTING_IMAGE_PLAN_SCHEMA_V1",
+  "caseId": "LISTING-GEN-001",
+  "candidateName": "Simulated listing image plan candidate",
+  "evaluatedAt": "2026-01-01T00:00:00.000Z",
+  "sourceImagePlanStatus": "IMAGE_PLAN_NEEDS_DATA",
+  "imageQaStatus": "IMAGE_QA_NEEDS_DATA",
+  "recommendedPipelineState": "LISTING_DATA_INCOMPLETE",
+  "summary": "The simulated image plan needs verified dimensions before it can move to final human review.",
+  "decisionReasons": [
+    "The dimensions image role is missing.",
+    "The listing cannot be considered final-ready until dimensions are verified."
+  ],
+  "missingImageRoles": [
+    "dimensions"
+  ],
+  "imagesNeedingReplacement": [],
+  "complianceRisks": [],
+  "conversionRisks": [
+    "Missing dimensions may reduce buyer confidence and increase return risk."
+  ],
+  "blockedReasons": [],
+  "requiredHumanActions": [
+    "Add or verify a dimensions image before advancing the listing image plan.",
+    "Keep the result in human review before any future listing preparation."
+  ],
+  "evaluatedSlots": [
+    {
+      "slotId": "main-001",
+      "imageRole": "main",
+      "slotStatus": "passed",
+      "reason": "The simulated main image is available, clear, and authorized for internal review."
+    },
+    {
+      "slotId": "angle-001",
+      "imageRole": "angle",
+      "slotStatus": "passed",
+      "reason": "The simulated angle image is available and supports visual clarity."
+    },
+    {
+      "slotId": "detail-001",
+      "imageRole": "detail",
+      "slotStatus": "passed",
+      "reason": "The simulated detail image is available and acceptable for internal review."
+    },
+    {
+      "slotId": "dimensions-001",
+      "imageRole": "dimensions",
+      "slotStatus": "needs_data",
+      "reason": "A verified dimensions image is missing.",
+      "requiredHumanAction": "Add or verify a dimensions image before advancing the listing image plan."
+    },
+    {
+      "slotId": "package-contents-001",
+      "imageRole": "package_contents",
+      "slotStatus": "passed",
+      "reason": "The simulated package contents image is available and helps clarify what is included."
+    }
+  ],
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "localOnly": true,
+    "imageGenerationPerformed": false,
+    "externalCallsMade": false,
+    "ebayApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false,
+    "requiresHumanReview": true
+  }
+}
