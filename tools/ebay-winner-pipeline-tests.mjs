@@ -36,6 +36,9 @@ import {
   buildListingProposalReviewReport,
 } from "../lib/ebay-winner-pipeline/listing-proposal-review-report-formatter.mjs"
 import {
+  runImageGenerationDryRun,
+} from "../lib/ebay-winner-pipeline/image-generation-dry-run-runner.mjs"
+import {
   formatDryRunSummary,
   loadJsonFile as loadListingDryRunJsonFile,
   normalizeDryRunInput,
@@ -3223,6 +3226,264 @@ test("image generation dry run runner fixture set: no contiene campos prohibidos
       /bearer\s+|sk-[a-z0-9_-]{8,}|[a-z0-9_-]{24,}\.[a-z0-9_-]{6,}\.[a-z0-9_-]{20,}/i
     )
   }
+})
+
+test("image generation dry run runner returns needs data for incomplete prompt plan", () => {
+  const result =
+    runImageGenerationDryRun(
+      ebayListingImageGenerationPromptPlanFixture,
+      {
+        evaluatedAt:
+          "2026-01-01T00:00:00.000Z",
+      }
+    )
+
+  assert.equal(
+    result.resultVersion,
+    "IMAGE_GENERATION_DRY_RUN_RESULT_SCHEMA_V1"
+  )
+  assert.equal(
+    result.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    result.sourcePromptPlanVersion,
+    "IMAGE_GENERATION_PROMPT_PLAN_SCHEMA_V1"
+  )
+  assert.equal(
+    result.imageRole,
+    "lifestyle_product_in_use"
+  )
+  assert.equal(
+    result.targetBuyer,
+    "us_ebay_buyer"
+  )
+  assert.equal(
+    result.language,
+    "en"
+  )
+  assert.equal(
+    result.dryRunStatus,
+    "DRY_RUN_NEEDS_DATA"
+  )
+  assert.equal(
+    result.recommendedNextState,
+    "REQUEST_MORE_PRODUCT_DATA"
+  )
+  assert.ok(
+    Array.isArray(result.missingData)
+  )
+  assert.ok(
+    result.missingData.length > 0
+  )
+  assert.ok(
+    result.missingData.includes(
+      "verified dimensions required"
+    )
+  )
+  assert.ok(
+    result.missingData.includes(
+      "verified material required"
+    )
+  )
+  assert.equal(
+    typeof result.trustSignalEvaluation,
+    "object"
+  )
+
+  for (const signal of Object.values(
+    result.trustSignalEvaluation
+  )) {
+    if (signal.verified === false) {
+      assert.notEqual(
+        signal.decision,
+        "allowed"
+      )
+    }
+  }
+
+  assert.deepEqual(
+    result.outputRequirements,
+    {
+      intendedUse:
+        "internal_review_only",
+      mayGenerateImage:
+        false,
+      mayCallOpenAi:
+        false,
+      mayCreateRealDraft:
+        false,
+      mayPublish:
+        false,
+      mayMutateListing:
+        false,
+      requiresImageQaBeforeUse:
+        true,
+      requiresHumanReview:
+        true,
+    }
+  )
+  assert.equal(
+    result.safetyFlags.openAiApiUsed,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.imageGenerated,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.externalCallsMade,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.ebayApiUsed,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.realDraftCreated,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.publishedToEbay,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.listingMutated,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.reportPersisted,
+    false
+  )
+})
+
+test("image generation dry run runner rejects prohibited OpenAI payload fields", () => {
+  const promptPlan =
+    JSON.parse(
+      JSON.stringify(
+        ebayListingImageGenerationPromptPlanFixture
+      )
+    )
+
+  promptPlan.openAiPayload =
+    "simulated prohibited payload placeholder"
+
+  const result =
+    runImageGenerationDryRun(
+      promptPlan,
+      {
+        evaluatedAt:
+          "2026-01-01T00:00:00.000Z",
+      }
+    )
+
+  assert.equal(
+    result.dryRunStatus,
+    "DRY_RUN_REJECTED"
+  )
+  assert.equal(
+    result.recommendedNextState,
+    "BLOCK_IMAGE_GENERATION"
+  )
+  assert.ok(
+    result.blockingReasons.some(reason =>
+      /prohibited field detected: openAiPayload/i.test(reason)
+    )
+  )
+  assert.equal(
+    result.safetyFlags.openAiApiUsed,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.imageGenerated,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.externalCallsMade,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.ebayApiUsed,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.reportPersisted,
+    false
+  )
+})
+
+test("image generation dry run runner never allows unverified trust signals", () => {
+  const promptPlan =
+    JSON.parse(
+      JSON.stringify(
+        ebayListingImageGenerationPromptPlanFixture
+      )
+    )
+
+  promptPlan.trustSignals.freeShipping = {
+    requested:
+      true,
+    allowed:
+      true,
+    verified:
+      false,
+    label:
+      "Free Shipping",
+  }
+
+  const result =
+    runImageGenerationDryRun(
+      promptPlan,
+      {
+        evaluatedAt:
+          "2026-01-01T00:00:00.000Z",
+      }
+    )
+
+  assert.notEqual(
+    result.trustSignalEvaluation.freeShipping.decision,
+    "allowed"
+  )
+  assert.equal(
+    result.trustSignalEvaluation.freeShipping.allowed,
+    false
+  )
+  assert.equal(
+    result.trustSignalEvaluation.freeShipping.verified,
+    false
+  )
+  assert.ok(
+    [
+      "DRY_RUN_NEEDS_DATA",
+      "DRY_RUN_BLOCKED",
+    ].includes(
+      result.dryRunStatus
+    )
+  )
+})
+
+test("image generation dry run runner is deterministic for same safe input", () => {
+  const options = {
+    evaluatedAt:
+      "2026-01-01T00:00:00.000Z",
+  }
+
+  const firstResult =
+    runImageGenerationDryRun(
+      ebayListingImageGenerationPromptPlanFixture,
+      options
+    )
+
+  const secondResult =
+    runImageGenerationDryRun(
+      ebayListingImageGenerationPromptPlanFixture,
+      options
+    )
+
+  assert.equal(
+    JSON.stringify(firstResult),
+    JSON.stringify(secondResult)
+  )
 })
 
 test("listing admin read-only fixture: cumple contrato V1", () => {
