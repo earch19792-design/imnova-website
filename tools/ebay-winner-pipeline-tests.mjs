@@ -550,6 +550,16 @@ const ebayListingAdminPagePath =
     "app/admin/ebay-listings/page.tsx"
   )
 
+const ebayImageGeneratorAdminPagePath =
+  path.resolve(
+    "app/admin/ebay-image-generator/page.tsx"
+  )
+
+const adminSidebarPath =
+  path.resolve(
+    "app/admin/sidebar.tsx"
+  )
+
 test("product selection decision service: producto bueno aprueba para preparacion interna", () => {
   const result =
     evaluateProductSelectionCandidate(
@@ -2706,6 +2716,139 @@ test("listing admin read-only page: no contiene integraciones reales", () => {
   assert.doesNotMatch(
     source,
     /fetch\(|createClient|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/i
+  )
+})
+
+test("image generator admin placeholder: existe y usa PromptPlan fixture", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayImageGeneratorAdminPagePath
+    )
+  )
+
+  const source =
+    fs.readFileSync(
+      ebayImageGeneratorAdminPagePath,
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /ebay-listing-image-generation-prompt-plan-v1\.json/
+  )
+  assert.match(
+    source,
+    /Image Generator/
+  )
+  assert.match(
+    source,
+    /Safe Preview/
+  )
+  assert.match(
+    source,
+    /PROMPT_PLAN_NEEDS_DATA|promptStatus/
+  )
+})
+
+test("image generator admin placeholder: conserva copy de seguridad", () => {
+  const source =
+    fs.readFileSync(
+      ebayImageGeneratorAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "OpenAI is not connected",
+    "No image is generated",
+    "Human review required",
+    "Internal review only",
+    "Simulated PromptPlan fixture",
+  ]) {
+    assert.match(
+      source,
+      new RegExp(expectedText)
+    )
+  }
+})
+
+test("image generator admin placeholder: acciones visibles permanecen deshabilitadas", () => {
+  const source =
+    fs.readFileSync(
+      ebayImageGeneratorAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Generate Image",
+    "Send to OpenAI",
+    "Create eBay Draft",
+    "Publish",
+  ]) {
+    assert.match(
+      source,
+      new RegExp(expectedText)
+    )
+  }
+
+  assert.match(
+    source,
+    /disabled/
+  )
+  assert.doesNotMatch(
+    source,
+    /onClick=/
+  )
+  assert.doesNotMatch(
+    source,
+    /<form/i
+  )
+})
+
+test("image generator admin placeholder: no contiene integraciones reales", () => {
+  const source =
+    fs.readFileSync(
+      ebayImageGeneratorAdminPagePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /fetch\(/,
+    /createClient/,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /process\.env/,
+    /OPENAI_API_KEY/,
+    /new OpenAI/,
+    /images\.generate/,
+    /openai\.images/,
+    /ebayApi\.create/,
+    /createDraft/,
+    /publishListing/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern
+    )
+  }
+})
+
+test("image generator admin placeholder: sidebar incluye ruta segura", () => {
+  const source =
+    fs.readFileSync(
+      adminSidebarPath,
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /\/admin\/ebay-image-generator/
+  )
+  assert.match(
+    source,
+    /eBay Image Generator/
   )
 })
 

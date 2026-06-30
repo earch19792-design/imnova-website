@@ -301,6 +301,34 @@ export function Sidebar({
           </span>
         </a>
 
+        <a
+          href="/admin/ebay-image-generator"
+          className="
+            block
+            rounded-2xl
+            border
+            border-cyan-300/15
+            bg-cyan-300/[0.05]
+            px-5
+            py-4
+            text-left
+            transition-all
+            duration-300
+            hover:border-cyan-300/30
+            hover:bg-cyan-300/[0.08]
+          "
+        >
+          <span className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/50">
+            Safe Preview
+          </span>
+          <span className="mt-2 block text-sm font-black text-white">
+            eBay Image Generator
+          </span>
+          <span className="mt-1 block text-xs leading-5 text-white/45">
+            OpenAI offline | No generated image | Human review required
+          </span>
+        </a>
+
         <div
           className="
             mt-5
