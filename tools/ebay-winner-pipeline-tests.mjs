@@ -6067,12 +6067,144 @@ test("luna portex catalog coverage audit fixture: display exige advertencia visi
     "Do not claim full Luna Portex catalog scan yet",
     "Configured collections only",
     "Coverage review required",
+    "Partial coverage for discovery",
+    "Mandatory monitoring for linked products",
+    "Linked product not covered by current sync scope",
+    "Stock and price changes may be missed",
+    "Manual Luna Portex check required",
+    "Protect existing products first",
   ]) {
     assert.ok(
       displayRequirements.requiredVisibleCopy.includes(expectedCopy),
       `coverage requiredVisibleCopy must include: ${expectedCopy}`
     )
   }
+})
+
+test("luna portex catalog coverage audit fixture: separa discovery radar y linked product monitor", () => {
+  const discoveryRadarCoverage =
+    ebayLunaPortexCatalogCoverageAuditFixture.discoveryRadarCoverage
+  const linkedProductMonitor =
+    ebayLunaPortexCatalogCoverageAuditFixture.linkedProductMonitor
+
+  assert.equal(
+    discoveryRadarCoverage.coverageStatus,
+    "CATALOG_COVERAGE_PARTIAL"
+  )
+  assert.equal(
+    discoveryRadarCoverage.fullCatalogClaimAllowed,
+    false
+  )
+  assert.equal(
+    linkedProductMonitor.monitorStatus,
+    "LINKED_PRODUCT_MONITOR_REQUIRED"
+  )
+  assert.equal(
+    linkedProductMonitor.priorityPolicy,
+    "PROTECT_EXISTING_PRODUCTS_FIRST"
+  )
+  assert.equal(
+    linkedProductMonitor.coverageDependency,
+    "MUST_VERIFY_LINKED_PRODUCTS_IN_SYNC_SCOPE"
+  )
+
+  for (const expectedState of [
+    "candidate_created",
+    "listing_package_created",
+    "qa_created",
+    "internal_draft_created",
+    "published_on_ebay",
+    "paused",
+    "blocked_by_stock",
+    "blocked_by_price",
+    "blocked_by_image",
+  ]) {
+    assert.ok(
+      linkedProductMonitor.linkedPipelineStates.includes(expectedState),
+      `linkedPipelineStates must include: ${expectedState}`
+    )
+  }
+
+  for (const expectedCoverageState of [
+    "LINKED_PRODUCT_COVERED_BY_CURRENT_SYNC_SCOPE",
+    "LINKED_PRODUCT_NOT_COVERED_BY_CURRENT_SYNC_SCOPE",
+    "LINKED_PRODUCT_COVERAGE_UNKNOWN",
+  ]) {
+    assert.ok(
+      linkedProductMonitor.linkedProductCoverageStates.includes(
+        expectedCoverageState
+      ),
+      `linkedProductCoverageStates must include: ${expectedCoverageState}`
+    )
+  }
+})
+
+test("luna portex catalog coverage audit fixture: alerta critica productos vinculados fuera de cobertura", () => {
+  const linkedProductMonitor =
+    ebayLunaPortexCatalogCoverageAuditFixture.linkedProductMonitor
+  const notCoveredAlert =
+    linkedProductMonitor.notCoveredAlert
+
+  assert.equal(
+    notCoveredAlert.alertStatus,
+    "CRITICAL_MANUAL_REVIEW_REQUIRED"
+  )
+  assert.equal(
+    notCoveredAlert.alertLabel,
+    "Linked product not covered by current sync scope"
+  )
+  assert.equal(
+    notCoveredAlert.requiredAction,
+    "Manual Luna Portex check required."
+  )
+
+  for (const expectedEvent of [
+    "out_of_stock",
+    "low_stock",
+    "back_in_stock",
+    "price_drop",
+    "price_increase",
+    "margin_changed",
+    "source_status_changed",
+    "image_status_changed",
+    "compliance_status_changed",
+  ]) {
+    assert.ok(
+      linkedProductMonitor.coveredChangeEventsToMonitor.includes(
+        expectedEvent
+      ),
+      `coveredChangeEventsToMonitor must include: ${expectedEvent}`
+    )
+  }
+})
+
+test("luna portex catalog coverage audit fixture: seller priority order protege existentes primero", () => {
+  const sellerPriorityOrder =
+    ebayLunaPortexCatalogCoverageAuditFixture.sellerPriorityOrder
+
+  assert.ok(
+    Array.isArray(sellerPriorityOrder)
+  )
+  assert.equal(
+    sellerPriorityOrder.length,
+    5
+  )
+  assert.equal(
+    sellerPriorityOrder[0].priority,
+    1
+  )
+  assert.equal(
+    sellerPriorityOrder[0].queue,
+    "published_or_listed_products_with_stock_or_price_risk"
+  )
+  assert.equal(
+    sellerPriorityOrder[4].priority,
+    5
+  )
+  assert.equal(
+    sellerPriorityOrder[4].queue,
+    "new_opportunities_from_partial_catalog"
+  )
 })
 
 test("luna portex catalog coverage audit fixture: safety flags bloquean full catalog claim", () => {
@@ -10612,6 +10744,103 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
     source,
     /Coverage review required/
   )
+  assert.match(
+    source,
+    /Discovery vs Linked Product Monitoring/
+  )
+  assert.match(
+    source,
+    /Discovery coverage: Partial — synced configured collections only/
+  )
+  assert.match(
+    source,
+    /Partial coverage for discovery/
+  )
+  assert.match(
+    source,
+    /Mandatory monitoring for linked products/
+  )
+  assert.match(
+    source,
+    /Protect existing products first/
+  )
+  assert.match(
+    source,
+    /Linked product not covered by current sync scope/
+  )
+  assert.match(
+    source,
+    /Stock and price changes may be missed/
+  )
+  assert.match(
+    source,
+    /Manual Luna Portex check required/
+  )
+  assert.match(
+    source,
+    /Priority 1: Published\/listed products with stock or price risk/
+  )
+  assert.match(
+    source,
+    /Priority 5: New opportunities from partial catalog/
+  )
+})
+
+test("market radar panel: catalog coverage block no agrega llamadas ni mutaciones", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/market-radar-panel.tsx"
+      ),
+      "utf8"
+    )
+  const copyStart =
+    source.indexOf("const catalogCoverageAuditCopy")
+  const copyEnd =
+    source.indexOf("function getAbortErrorMessage", copyStart)
+  const sectionStart =
+    source.indexOf("Catalog Coverage")
+  const sectionEnd =
+    source.indexOf("<MetricCard", sectionStart)
+
+  assert.ok(
+    copyStart >= 0,
+    "catalogCoverageAuditCopy must exist"
+  )
+  assert.ok(
+    copyEnd > copyStart,
+    "catalogCoverageAuditCopy must end before helper functions"
+  )
+  assert.ok(
+    sectionStart >= 0,
+    "Catalog Coverage section must exist"
+  )
+  assert.ok(
+    sectionEnd > sectionStart,
+    "Catalog Coverage section must end before MetricCard grid"
+  )
+
+  const coverageBlock =
+    `${source.slice(copyStart, copyEnd)}\n${source.slice(
+      sectionStart,
+      sectionEnd
+    )}`
+
+  for (const forbiddenPattern of [
+    /fetch\(/,
+    /createClient/,
+    /process\.env/,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+  ]) {
+    assert.doesNotMatch(
+      coverageBlock,
+      forbiddenPattern
+    )
+  }
 })
 
 test("market radar dashboard: busqueda evita conteos globales exactos", () => {

@@ -77,10 +77,36 @@ const MARKET_RADAR_SYNC_TIMEOUT_MS =
 const catalogCoverageAuditCopy = {
   coverageLabel:
     "Catalog coverage: Partial — synced configured collections only",
+  discoveryMonitoringHeading:
+    "Discovery vs Linked Product Monitoring",
+  discoveryCoverageLabel:
+    "Discovery coverage: Partial — synced configured collections only",
+  partialCoverageForDiscovery:
+    "Partial coverage for discovery",
+  mandatoryLinkedMonitoring:
+    "Mandatory monitoring for linked products",
+  protectExistingProductsFirst:
+    "Protect existing products first",
+  linkedProductNotCovered:
+    "Linked product not covered by current sync scope",
+  stockAndPriceRisk:
+    "Stock and price changes may be missed",
+  manualLunaPortexCheck:
+    "Manual Luna Portex check required",
   fullCatalogWarning:
     "Do not claim full Luna Portex catalog scan yet",
   configuredCollectionsOnly: "Configured collections only",
   coverageReviewRequired: "Coverage review required",
+  priorityOne:
+    "Priority 1: Published/listed products with stock or price risk",
+  priorityTwo:
+    "Priority 2: Draft/listing package products with supplier changes",
+  priorityThree:
+    "Priority 3: Blocked products back in stock",
+  priorityFour:
+    "Priority 4: Reviewed products with margin improvement",
+  priorityFive:
+    "Priority 5: New opportunities from partial catalog",
 }
 
 function getAbortErrorMessage(
@@ -6457,6 +6483,27 @@ export function MarketRadarPanel({
             <span className="rounded-md border border-amber-200/15 bg-black/20 px-3 py-2">
               {catalogCoverageAudit.coverageDecision}
             </span>
+          </div>
+        </div>
+        <div className="mt-5 rounded-lg border border-amber-200/15 bg-black/20 p-4">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-100/70">
+            {catalogCoverageAuditCopy.discoveryMonitoringHeading}
+          </p>
+          <div className="mt-3 grid gap-2 text-sm font-semibold text-amber-50/80 md:grid-cols-2">
+            <span>{catalogCoverageAuditCopy.discoveryCoverageLabel}</span>
+            <span>{catalogCoverageAuditCopy.partialCoverageForDiscovery}</span>
+            <span>{catalogCoverageAuditCopy.mandatoryLinkedMonitoring}</span>
+            <span>{catalogCoverageAuditCopy.protectExistingProductsFirst}</span>
+            <span>{catalogCoverageAuditCopy.linkedProductNotCovered}</span>
+            <span>{catalogCoverageAuditCopy.stockAndPriceRisk}</span>
+            <span>{catalogCoverageAuditCopy.manualLunaPortexCheck}</span>
+          </div>
+          <div className="mt-4 grid gap-2 text-xs font-bold uppercase tracking-[0.1em] text-amber-50/60 xl:grid-cols-5">
+            <span>{catalogCoverageAuditCopy.priorityOne}</span>
+            <span>{catalogCoverageAuditCopy.priorityTwo}</span>
+            <span>{catalogCoverageAuditCopy.priorityThree}</span>
+            <span>{catalogCoverageAuditCopy.priorityFour}</span>
+            <span>{catalogCoverageAuditCopy.priorityFive}</span>
           </div>
         </div>
       </section>
