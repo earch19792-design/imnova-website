@@ -665,6 +665,19 @@ const ebayLunaPortexCatalogCoverageAuditFixture =
     )
   )
 
+const ebayMarketRadarSellerCommandCenterMvpFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-market-radar-seller-command-center-mvp-v1.json"
+  )
+
+const ebayMarketRadarSellerCommandCenterMvpFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayMarketRadarSellerCommandCenterMvpFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayListingImageGenerationDryRunRunnerFixtureSetPath =
   path.resolve(
     "tools/fixtures/ebay-listing-image-generation-dry-run-runner-fixture-set-v1.json"
@@ -6316,6 +6329,213 @@ test("luna portex catalog coverage audit fixture: no contiene URLs ni credencial
   }
 })
 
+test("market radar seller command center fixture: existe y cumple contrato MVP V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayMarketRadarSellerCommandCenterMvpFixturePath
+    )
+  )
+  assert.equal(
+    ebayMarketRadarSellerCommandCenterMvpFixture.commandCenterVersion,
+    "EBAY_MARKET_RADAR_SELLER_COMMAND_CENTER_MVP_V1"
+  )
+  assert.equal(
+    ebayMarketRadarSellerCommandCenterMvpFixture.commandCenterStatus,
+    "SELLER_COMMAND_CENTER_READ_ONLY_MVP"
+  )
+  assert.equal(
+    ebayMarketRadarSellerCommandCenterMvpFixture.coverageStatus,
+    "CATALOG_COVERAGE_PARTIAL"
+  )
+  assert.equal(
+    ebayMarketRadarSellerCommandCenterMvpFixture.coverageLabel,
+    "Catalog coverage: Partial — synced configured collections only"
+  )
+  assert.equal(
+    ebayMarketRadarSellerCommandCenterMvpFixture.rankingLabel,
+    "Top 50 within synced Luna Portex scope"
+  )
+  assert.equal(
+    ebayMarketRadarSellerCommandCenterMvpFixture.operatingRule,
+    "Partial coverage for discovery, mandatory monitoring for linked products"
+  )
+})
+
+test("market radar seller command center fixture: queues cards y semaforo profesional", () => {
+  const primaryQueueIds =
+    ebayMarketRadarSellerCommandCenterMvpFixture.primaryQueues.map(
+      queue => queue.queueId
+    )
+  const topCardIds =
+    ebayMarketRadarSellerCommandCenterMvpFixture.topCards.map(
+      card => card.cardId
+    )
+  const trafficLightColors =
+    ebayMarketRadarSellerCommandCenterMvpFixture.trafficLightLegend.map(
+      item => item.color
+    )
+
+  for (const expectedQueue of [
+    "protect_existing_reviewed_or_listed_products",
+    "find_new_opportunities_within_synced_scope",
+    "stock_risks",
+    "margin_changes",
+    "blocked_or_needs_recheck",
+  ]) {
+    assert.ok(
+      primaryQueueIds.includes(expectedQueue),
+      `primaryQueues must include: ${expectedQueue}`
+    )
+  }
+
+  for (const expectedCard of [
+    "coverage",
+    "protect_existing",
+    "new_opportunities",
+    "stock_risk",
+    "next_best_action",
+  ]) {
+    assert.ok(
+      topCardIds.includes(expectedCard),
+      `topCards must include: ${expectedCard}`
+    )
+  }
+
+  for (const expectedColor of [
+    "green",
+    "yellow",
+    "red",
+    "blue",
+    "purple",
+  ]) {
+    assert.ok(
+      trafficLightColors.includes(expectedColor),
+      `trafficLightLegend must include: ${expectedColor}`
+    )
+  }
+})
+
+test("market radar seller command center fixture: sample products cubren escenarios clave", () => {
+  const sampleProducts =
+    ebayMarketRadarSellerCommandCenterMvpFixture.sampleProducts
+  const eventTypes =
+    sampleProducts.map(product => product.eventType)
+
+  assert.equal(
+    sampleProducts.length,
+    5
+  )
+
+  for (const expectedEventType of [
+    "low_stock",
+    "linked_product_not_covered",
+    "back_in_stock",
+    "margin_improved",
+    "new_opportunity",
+  ]) {
+    assert.ok(
+      eventTypes.includes(expectedEventType),
+      `sampleProducts must include eventType: ${expectedEventType}`
+    )
+  }
+
+  for (const product of sampleProducts) {
+    assert.equal(
+      product.readOnly,
+      true
+    )
+    assert.ok(
+      product.nextBestAction,
+      `${product.productId} must include nextBestAction`
+    )
+  }
+})
+
+test("market radar seller command center fixture: next best action y safety siguen read-only", () => {
+  const nextBestActionModel =
+    ebayMarketRadarSellerCommandCenterMvpFixture.nextBestActionModel
+  const safetyFlags =
+    ebayMarketRadarSellerCommandCenterMvpFixture.safetyFlags
+
+  assert.equal(
+    nextBestActionModel.automationAllowed,
+    false
+  )
+  assert.equal(
+    nextBestActionModel.humanApprovalRequired,
+    true
+  )
+
+  for (const [
+    flagName,
+    expectedValue,
+  ] of [
+    [
+      "readOnly",
+      true,
+    ],
+    [
+      "automationAllowed",
+      false,
+    ],
+    [
+      "lunaPortexApiUsed",
+      false,
+    ],
+    [
+      "ebayApiUsed",
+      false,
+    ],
+    [
+      "openAiApiUsed",
+      false,
+    ],
+    [
+      "supabaseUsed",
+      false,
+    ],
+    [
+      "sqlUsed",
+      false,
+    ],
+    [
+      "publishedToEbay",
+      false,
+    ],
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      expectedValue,
+      `${flagName} must be ${expectedValue}`
+    )
+  }
+})
+
+test("market radar seller command center fixture: no contiene URLs secretos ni datos reales", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayMarketRadarSellerCommandCenterMvpFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /token/i,
+    /secret/i,
+    /supplier private data/i,
+    /customer data/i,
+    /REAL-/i,
+    /supplierUrl/i,
+    /productUrl/i,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("image generation dry run runner fixture set: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -10755,6 +10975,30 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
+    /ebay-market-radar-seller-command-center-mvp-v1\.json/
+  )
+  assert.match(
+    source,
+    /eBay Seller Command Center/
+  )
+  assert.match(
+    source,
+    /Protect existing reviewed\/listed products first/
+  )
+  assert.match(
+    source,
+    /Find new opportunities within synced scope/
+  )
+  assert.match(
+    source,
+    /Read-only seller recommendations/
+  )
+  assert.match(
+    source,
+    /No automatic listing actions/
+  )
+  assert.match(
+    source,
     /Catalog Coverage/
   )
   assert.match(
@@ -10829,6 +11073,82 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
     source,
     /Priority 5: New opportunities from partial catalog/
   )
+  assert.match(
+    source,
+    /Protect Existing Products/
+  )
+  assert.match(
+    source,
+    /New Opportunities/
+  )
+  assert.match(
+    source,
+    /Stock Risks/
+  )
+  assert.match(
+    source,
+    /Next Best Action/
+  )
+  assert.match(
+    source,
+    /Protect Existing Reviewed\/Listed Products/
+  )
+  assert.match(
+    source,
+    /Find New Opportunities Within Synced Scope/
+  )
+  assert.match(
+    source,
+    /Margin Changes/
+  )
+  assert.match(
+    source,
+    /Blocked \/ Needs Recheck/
+  )
+  assert.match(
+    source,
+    /Green: Review for listing now/
+  )
+  assert.match(
+    source,
+    /Yellow: Potential, missing validation/
+  )
+  assert.match(
+    source,
+    /Red: Do not list/
+  )
+  assert.match(
+    source,
+    /Blue: Reviewed, monitor/
+  )
+  assert.match(
+    source,
+    /Purple: New event, reanalyze/
+  )
+  assert.match(
+    source,
+    /Sample linked product with stock risk/
+  )
+  assert.match(
+    source,
+    /Sample linked product not covered by current sync scope/
+  )
+  assert.match(
+    source,
+    /Sample blocked product back in stock/
+  )
+  assert.match(
+    source,
+    /Sample reviewed product with margin improvement/
+  )
+  assert.match(
+    source,
+    /Sample new opportunity within synced scope/
+  )
+  assert.match(
+    source,
+    /Next best action/
+  )
 })
 
 test("market radar panel: catalog coverage block no agrega llamadas ni mutaciones", () => {
@@ -10844,9 +11164,15 @@ test("market radar panel: catalog coverage block no agrega llamadas ni mutacione
   const copyEnd =
     source.indexOf("function getAbortErrorMessage", copyStart)
   const sectionStart =
-    source.indexOf("Catalog Coverage")
+    source.indexOf(
+      "<section className=\"rounded-lg border border-amber-300/20",
+      copyEnd
+    )
   const sectionEnd =
-    source.indexOf("<MetricCard", sectionStart)
+    source.indexOf(
+      "<section className=\"grid gap-4",
+      sectionStart
+    )
 
   assert.ok(
     copyStart >= 0,
@@ -10858,11 +11184,11 @@ test("market radar panel: catalog coverage block no agrega llamadas ni mutacione
   )
   assert.ok(
     sectionStart >= 0,
-    "Catalog Coverage section must exist"
+    "Catalog Coverage JSX section must exist"
   )
   assert.ok(
     sectionEnd > sectionStart,
-    "Catalog Coverage section must end before MetricCard grid"
+    "Catalog Coverage JSX section must end before MetricCard grid"
   )
 
   const coverageBlock =
@@ -10875,6 +11201,9 @@ test("market radar panel: catalog coverage block no agrega llamadas ni mutacione
     /fetch\(/,
     /createClient/,
     /process\.env/,
+    /onClick=/,
+    /http:\/\//,
+    /https:\/\//,
     /\.insert\(/,
     /\.update\(/,
     /\.delete\(/,

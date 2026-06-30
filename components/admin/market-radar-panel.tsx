@@ -41,6 +41,7 @@ import {
 import {
   type EbayPipelineFocusCandidate,
 } from "@/components/admin/ebay-winner-pipeline-panel"
+import sellerCommandCenterMvp from "../../tools/fixtures/ebay-market-radar-seller-command-center-mvp-v1.json"
 import catalogCoverageAudit from "../../tools/fixtures/ebay-luna-portex-catalog-coverage-audit-v1.json"
 
 type MarketRadarApiResponse = {
@@ -115,6 +116,48 @@ const catalogCoverageAuditCopy = {
     "Priority 4: Reviewed products with margin improvement",
   priorityFive:
     "Priority 5: New opportunities from partial catalog",
+}
+
+const sellerCommandCenterCopy = {
+  title: "eBay Seller Command Center",
+  protectFirst:
+    "Protect existing reviewed/listed products first",
+  findWithinScope:
+    "Find new opportunities within synced scope",
+  readOnlyRecommendations:
+    "Read-only seller recommendations",
+  noAutomaticListingActions:
+    "No automatic listing actions",
+  nextBestAction:
+    "Next best action",
+  topCardLabels: [
+    "Catalog Coverage",
+    "Protect Existing Products",
+    "New Opportunities",
+    "Stock Risks",
+    "Next Best Action",
+  ],
+  queueLabels: [
+    "Protect Existing Reviewed/Listed Products",
+    "Find New Opportunities Within Synced Scope",
+    "Stock Risks",
+    "Margin Changes",
+    "Blocked / Needs Recheck",
+  ],
+  sampleProductLabels: [
+    "Sample linked product with stock risk",
+    "Sample linked product not covered by current sync scope",
+    "Sample blocked product back in stock",
+    "Sample reviewed product with margin improvement",
+    "Sample new opportunity within synced scope",
+  ],
+  legend: [
+    "Green: Review for listing now",
+    "Yellow: Potential, missing validation",
+    "Red: Do not list",
+    "Blue: Reviewed, monitor",
+    "Purple: New event, reanalyze",
+  ],
 }
 
 function getAbortErrorMessage(
@@ -6519,6 +6562,126 @@ export function MarketRadarPanel({
             <span>{catalogCoverageAuditCopy.priorityFour}</span>
             <span>{catalogCoverageAuditCopy.priorityFive}</span>
           </div>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.055] p-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.26em] text-emerald-100/55">
+              {sellerCommandCenterMvp.commandCenterStatus}
+            </p>
+            <h2 className="mt-2 text-2xl font-black text-white">
+              {sellerCommandCenterCopy.title}
+            </h2>
+            <div className="mt-3 grid gap-2 text-sm font-semibold text-emerald-50/75 md:grid-cols-2">
+              <span>{sellerCommandCenterCopy.protectFirst}</span>
+              <span>{sellerCommandCenterCopy.findWithinScope}</span>
+              <span>{sellerCommandCenterMvp.coverageLabel}</span>
+              <span>{sellerCommandCenterMvp.rankingLabel}</span>
+              <span>{sellerCommandCenterCopy.readOnlyRecommendations}</span>
+              <span>{sellerCommandCenterCopy.noAutomaticListingActions}</span>
+            </div>
+          </div>
+          <div className="grid gap-2 text-xs font-bold uppercase tracking-[0.1em] text-emerald-50/65 sm:grid-cols-2 lg:min-w-[440px]">
+            {sellerCommandCenterMvp.topCards.map((card, index) => (
+              <span
+                key={card.cardId}
+                className="rounded-md border border-emerald-200/15 bg-black/20 px-3 py-2"
+              >
+                {sellerCommandCenterCopy.topCardLabels[index] || card.label}:{" "}
+                {card.value}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-3 lg:grid-cols-5">
+          {sellerCommandCenterMvp.primaryQueues.map((queue, index) => (
+            <div
+              key={queue.queueId}
+              className="rounded-lg border border-emerald-200/15 bg-black/20 p-3"
+            >
+              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-100/50">
+                Priority {queue.priority}
+              </p>
+              <h3 className="mt-2 text-sm font-black text-white">
+                {sellerCommandCenterCopy.queueLabels[index] || queue.label}
+              </h3>
+              <p className="mt-2 text-xs leading-5 text-emerald-50/60">
+                {queue.purpose}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5 grid gap-3 lg:grid-cols-5">
+          {sellerCommandCenterCopy.legend.map(label => (
+            <span
+              key={label}
+              className="rounded-md border border-emerald-200/15 bg-black/20 px-3 py-2 text-xs font-bold uppercase tracking-[0.1em] text-emerald-50/60"
+            >
+              {label}
+            </span>
+          ))}
+        </div>
+
+        <div className="mt-5 grid gap-3 xl:grid-cols-5">
+          {sellerCommandCenterMvp.sampleProducts.map((product, index) => (
+            <article
+              key={product.productId}
+              className="rounded-lg border border-emerald-200/15 bg-black/20 p-4"
+            >
+              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-100/45">
+                {product.eventType} · {product.trafficLight}
+              </p>
+              <h3 className="mt-2 text-sm font-black leading-5 text-white">
+                {sellerCommandCenterCopy.sampleProductLabels[index] ||
+                  product.displayName}
+              </h3>
+              <dl className="mt-3 space-y-2 text-xs text-emerald-50/65">
+                <div>
+                  <dt className="font-black uppercase tracking-[0.12em] text-emerald-100/40">
+                    Stock status
+                  </dt>
+                  <dd>{product.stockStatus}</dd>
+                </div>
+                <div>
+                  <dt className="font-black uppercase tracking-[0.12em] text-emerald-100/40">
+                    Margin status
+                  </dt>
+                  <dd>{product.marginStatus}</dd>
+                </div>
+                <div>
+                  <dt className="font-black uppercase tracking-[0.12em] text-emerald-100/40">
+                    Image readiness
+                  </dt>
+                  <dd>{product.imageReadiness}</dd>
+                </div>
+                <div>
+                  <dt className="font-black uppercase tracking-[0.12em] text-emerald-100/40">
+                    Compliance risk
+                  </dt>
+                  <dd>{product.complianceRisk}</dd>
+                </div>
+                <div>
+                  <dt className="font-black uppercase tracking-[0.12em] text-emerald-100/40">
+                    Pipeline state
+                  </dt>
+                  <dd>{product.pipelineState}</dd>
+                </div>
+                <div>
+                  <dt className="font-black uppercase tracking-[0.12em] text-emerald-100/40">
+                    {sellerCommandCenterCopy.nextBestAction}
+                  </dt>
+                  <dd>{product.nextBestAction}</dd>
+                </div>
+              </dl>
+              <p className="mt-3 text-xs leading-5 text-emerald-50/55">
+                {product.reason}
+              </p>
+            </article>
+          ))}
         </div>
       </section>
 
