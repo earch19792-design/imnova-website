@@ -10932,19 +10932,19 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /{advisorAlerts\.length} alertas/
+    /formatCountLabel\([\s\S]*advisorAlerts\.length[\s\S]*"alerta"[\s\S]*"alertas"/
   )
   assert.match(
     source,
-    /{advisorFilterCounts\.review_opportunity \|\| 0} oportunidades/
+    /formatCountLabel\([\s\S]*advisorFilterCounts\.review_opportunity \|\| 0[\s\S]*"oportunidad"[\s\S]*"oportunidades"/
   )
   assert.match(
     source,
-    /{advisorFilterCounts\.review_risk \|\| 0} riesgos eBay/
+    /formatCountLabel\([\s\S]*advisorFilterCounts\.review_risk \|\| 0[\s\S]*"riesgo eBay"[\s\S]*"riesgos eBay"/
   )
   assert.match(
     source,
-    /{advisorFilterCounts\.do_not_list \|\| 0} no listar/
+    /formatCountLabel\([\s\S]*advisorFilterCounts\.do_not_list \|\| 0[\s\S]*"no listar"[\s\S]*"no listar"/
   )
   assert.match(
     source,

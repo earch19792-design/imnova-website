@@ -590,6 +590,14 @@ function formatNumber(
   ).format(numericValue)
 }
 
+function formatCountLabel(
+  count: number,
+  singular: string,
+  plural: string
+) {
+  return `${count} ${count === 1 ? singular : plural}`
+}
+
 function roundPriceValue(
   value: number
 ) {
@@ -7146,16 +7154,32 @@ export function MarketRadarPanel({
           <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.025] p-3">
             <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/55">
               <span className="font-black text-white/80">
-                {advisorAlerts.length} alertas
+                {formatCountLabel(
+                  advisorAlerts.length,
+                  "alerta",
+                  "alertas"
+                )}
               </span>
               <span>
-                {advisorFilterCounts.review_opportunity || 0} oportunidades
+                {formatCountLabel(
+                  advisorFilterCounts.review_opportunity || 0,
+                  "oportunidad",
+                  "oportunidades"
+                )}
               </span>
               <span>
-                {advisorFilterCounts.review_risk || 0} riesgos eBay
+                {formatCountLabel(
+                  advisorFilterCounts.review_risk || 0,
+                  "riesgo eBay",
+                  "riesgos eBay"
+                )}
               </span>
               <span>
-                {advisorFilterCounts.do_not_list || 0} no listar
+                {formatCountLabel(
+                  advisorFilterCounts.do_not_list || 0,
+                  "no listar",
+                  "no listar"
+                )}
               </span>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
