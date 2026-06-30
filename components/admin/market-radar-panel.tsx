@@ -1215,6 +1215,58 @@ function isRadarProductActionable(
   return !product.pipeline_candidate_id
 }
 
+function matchesRadarRankingFilter(
+  product: MarketRadarProductRow,
+  filter: RadarRankingFilter
+) {
+  if (filter === "all") {
+    return true
+  }
+
+  if (filter === "actionable") {
+    return isRadarProductActionable(product)
+  }
+
+  if (filter === "stock_confirmed") {
+    return isStrictStockConfirmed(product)
+  }
+
+  if (filter === "stock_needs_validation") {
+    return (
+      getRadarStockValidationStatus(product) ===
+      "stock_needs_validation"
+    )
+  }
+
+  if (filter === "reviewed") {
+    return !isRadarProductActionable(product)
+  }
+
+  return true
+}
+
+function getRadarRankingFilterTitle(
+  filter: RadarRankingFilter
+) {
+  if (filter === "actionable") {
+    return "Nuevas oportunidades para revisar"
+  }
+
+  if (filter === "stock_confirmed") {
+    return "Productos con stock confirmado"
+  }
+
+  if (filter === "stock_needs_validation") {
+    return "Productos con riesgo de stock"
+  }
+
+  if (filter === "reviewed") {
+    return "Productos revisados o listados"
+  }
+
+  return "Todo el alcance sincronizado"
+}
+
 function getRadarActionStatusLabel(
   product: MarketRadarProductRow
 ) {
@@ -6003,32 +6055,12 @@ export function MarketRadarPanel({
 
         const filteredProducts =
           products
-          .filter(product => {
-            if (rankingFilter === "all") {
-              return true
-            }
-
-            if (rankingFilter === "actionable") {
-              return isRadarProductActionable(product)
-            }
-
-            if (rankingFilter === "stock_confirmed") {
-              return isStrictStockConfirmed(product)
-            }
-
-            if (rankingFilter === "stock_needs_validation") {
-              return (
-                getRadarStockValidationStatus(product) ===
-                "stock_needs_validation"
-              )
-            }
-
-            if (rankingFilter === "reviewed") {
-              return !isRadarProductActionable(product)
-            }
-
-            return true
-          })
+          .filter(product =>
+            matchesRadarRankingFilter(
+              product,
+              rankingFilter
+            )
+          )
 
         if (activeRadarSearch) {
           filteredProducts.sort(
@@ -6220,6 +6252,27 @@ export function MarketRadarPanel({
         "Alcance actual",
     },
   ]
+
+  const activeSellerCommandProducts =
+    (dashboard?.products || [])
+      .filter(product =>
+        matchesRadarRankingFilter(
+          product,
+          rankingFilter
+        )
+      )
+      .slice(
+        0,
+        6
+      )
+
+  const activeSellerCommandItem =
+    sellerCommandMenuItems.find(
+      item =>
+        item.filter === rankingFilter
+    ) || sellerCommandMenuItems[
+      sellerCommandMenuItems.length - 1
+    ]
 
   return (
     <div className="mt-16 space-y-6">
@@ -6612,9 +6665,135 @@ export function MarketRadarPanel({
                   <span className="mt-1 block text-[11px] font-semibold text-emerald-50/55">
                     {item.note}
                   </span>
+                  <span className="mt-3 inline-flex rounded-md border border-emerald-200/15 bg-black/20 px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-emerald-50/65">
+                    Ver productos
+                  </span>
                 </button>
               )
             })}
+          </div>
+
+          <div className="mt-3 rounded-md border border-emerald-200/15 bg-black/20">
+            <div className="flex flex-col gap-2 border-b border-emerald-200/10 p-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-100/45">
+                  Productos en esta cola
+                </p>
+                <p className="mt-1 text-sm font-black text-white">
+                  {getRadarRankingFilterTitle(
+                    rankingFilter
+                  )}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  openSellerCommandQueue(
+                    activeSellerCommandItem.filter
+                  )
+                }
+                className="rounded-md border border-emerald-200/20 bg-emerald-300/[0.08] px-3 py-2 text-xs font-black text-emerald-50 transition hover:border-emerald-200/35 hover:bg-emerald-300/[0.14]"
+              >
+                Ver lista completa ({activeSellerCommandItem.count})
+              </button>
+            </div>
+
+            {activeSellerCommandProducts.length ? (
+              <div className="divide-y divide-emerald-200/10">
+                {activeSellerCommandProducts.map(product => {
+                  const stableSku =
+                    getStableSupplierSku(product) ||
+                    "Sin SKU"
+
+                  return (
+                    <button
+                      key={`${product.product_id}-${product.supplier_variant_id || stableSku}`}
+                      type="button"
+                      onClick={() => {
+                        setFocusedRadarProductKey(
+                          getProductEvaluationKey(
+                            product
+                          )
+                        )
+                        setRadarSearch(stableSku)
+                        setActiveRadarSearch(stableSku)
+                        setRankingFilter("all")
+                        setAdvisorAlertReviewMessage(
+                          `Producto seleccionado desde Centro de Venta: ${stableSku}`
+                        )
+
+                        window.setTimeout(
+                          () => {
+                            searchResultsRef.current?.scrollIntoView({
+                              behavior:
+                                "smooth",
+                              block:
+                                "start",
+                            })
+                          },
+                          50
+                        )
+                      }}
+                      className="grid w-full gap-3 p-3 text-left transition hover:bg-emerald-300/[0.06] md:grid-cols-[minmax(0,1.4fr)_0.55fr_0.55fr_0.35fr]"
+                      title={`Ver ${stableSku} en el ranking`}
+                    >
+                      <div className="min-w-0">
+                        <p className="line-clamp-2 text-sm font-bold leading-5 text-white">
+                          {product.title || "Producto sin titulo"}
+                        </p>
+                        <p className="mt-1 break-words text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-100/45">
+                          {stableSku}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
+                          Estado
+                        </p>
+                        <p className="mt-1 text-xs font-semibold leading-5 text-white/70">
+                          {getActionableReasonLabel(product)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
+                          Stock
+                        </p>
+                        <p className="mt-1 text-xs font-semibold leading-5 text-white/70">
+                          {getStockValidationLabel(product)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
+                          Score
+                        </p>
+                        <p
+                          className={`
+                            mt-1
+                            text-sm
+                            font-black
+                            ${getScoreClassName(product.opportunity_score)}
+                          `}
+                        >
+                          {formatNumber(
+                            product.opportunity_score
+                          )}
+                        </p>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="p-4 text-sm font-semibold text-emerald-50/45">
+                No hay productos en esta cola con el alcance sincronizado actual.
+              </p>
+            )}
+
+            {activeSellerCommandItem.count >
+              activeSellerCommandProducts.length && (
+              <p className="border-t border-emerald-200/10 p-3 text-[11px] font-semibold text-emerald-50/45">
+                Mostrando {activeSellerCommandProducts.length} de {activeSellerCommandItem.count}. Abre la lista completa para trabajar todos.
+              </p>
+            )}
           </div>
         </div>
       </section>

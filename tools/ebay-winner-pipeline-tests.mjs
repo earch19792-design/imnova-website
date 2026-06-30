@@ -11039,6 +11039,30 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
+    /Productos en esta cola/
+  )
+  assert.match(
+    source,
+    /activeSellerCommandProducts/
+  )
+  assert.match(
+    source,
+    /getRadarRankingFilterTitle/
+  )
+  assert.match(
+    source,
+    /Ver lista completa/
+  )
+  assert.match(
+    source,
+    /setFocusedRadarProductKey\([\s\S]*getProductEvaluationKey/
+  )
+  assert.match(
+    source,
+    /Producto seleccionado desde Centro de Venta:/
+  )
+  assert.match(
+    source,
     /Proteger existentes/
   )
   assert.match(
