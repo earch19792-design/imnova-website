@@ -951,6 +951,24 @@ function getAdvisorSeverityClassName(
   return "border-white/10 bg-white/[0.04] text-white/55"
 }
 
+function getAdvisorSeverityLabel(
+  severity: RadarAdvisorAlert["severity"]
+) {
+  if (severity === "critical") {
+    return "Critica"
+  }
+
+  if (severity === "high") {
+    return "Alta"
+  }
+
+  if (severity === "medium") {
+    return "Media"
+  }
+
+  return "Baja"
+}
+
 function getAdvisorActionLabel(
   action: string | null | undefined
 ) {
@@ -4371,7 +4389,7 @@ function RadarAdvisorSellerRiskSummary({
   const summaryItems = [
     {
       label:
-        "Cancelacion",
+        "No listar",
       count:
         alerts.filter(
           alert =>
@@ -4434,31 +4452,26 @@ function RadarAdvisorSellerRiskSummary({
   ]
 
   return (
-    <div className="mt-5 rounded-lg border border-white/10 bg-white/[0.025] p-4">
-      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/45">
-        Resumen vendedor
-      </p>
-      <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(104px,1fr))] gap-2">
-        {summaryItems.map(item => (
-          <div
-            key={item.label}
-            className={`
-              min-w-0
-              rounded-md
-              border
-              p-3
-              ${item.className}
-            `}
-          >
-            <p className="text-xl font-black leading-6">
-              {item.count}
-            </p>
-            <p className="mt-1 break-words text-xs font-black leading-4 opacity-75">
-              {item.label}
-            </p>
-          </div>
-        ))}
-      </div>
+    <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(104px,1fr))] gap-2">
+      {summaryItems.map(item => (
+        <div
+          key={item.label}
+          className={`
+            min-w-0
+            rounded-md
+            border
+            p-3
+            ${item.className}
+          `}
+        >
+          <p className="text-xl font-black leading-6">
+            {item.count}
+          </p>
+          <p className="mt-1 break-words text-xs font-black leading-4 opacity-75">
+            {item.label}
+          </p>
+        </div>
+      ))}
     </div>
   )
 }
@@ -4498,7 +4511,7 @@ function RadarAdvisorReviewQueue({
     <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-100/45">
-          Cola Advisor
+          Prioridad de venta
         </p>
         <span className="rounded-md border border-cyan-200/15 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-cyan-100/60">
           {queueAlerts.length} prioritarias
@@ -4671,7 +4684,7 @@ function RadarAdvisorAlertItem({
             ${getAdvisorSeverityClassName(alert.severity)}
           `}
         >
-          {alert.severity}
+          {getAdvisorSeverityLabel(alert.severity)}
         </span>
         <span className="text-[11px] font-semibold text-white/35">
           {formatDate(alert.created_at)}
@@ -4693,7 +4706,7 @@ function RadarAdvisorAlertItem({
         </div>
         <div className="min-w-0 rounded-md border border-white/10 bg-black/10 p-2.5">
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
-            Accion
+            Siguiente accion
           </p>
           <p className="mt-1 break-words font-semibold text-white/80">
             {getAdvisorActionLabel(alert.recommended_action)}
@@ -4742,7 +4755,7 @@ function RadarAdvisorAlertItem({
           >
             {isResolving
               ? "Buscando producto..."
-              : "Buscar SKU en Radar"}
+              : "Buscar en Radar"}
           </button>
         )}
       </div>
@@ -7073,13 +7086,13 @@ export function MarketRadarPanel({
           "
         >
           <p className="text-[10px] uppercase tracking-[0.26em] text-white/40">
-            Advisor
+            Advisor del Vendedor
           </p>
           <h3 className="mt-2 text-xl font-black text-white">
-            Alertas Advisor del Radar
+            Alertas de venta
           </h3>
           <p className="mt-2 text-[11px] font-bold uppercase tracking-[0.08em] text-cyan-100/45">
-            Solo lectura · No ejecuta acciones reales
+            Recomendaciones de solo lectura
           </p>
 
           <RadarAdvisorSellerRiskSummary
@@ -7092,7 +7105,7 @@ export function MarketRadarPanel({
             <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/35">
-                  Productos filtrados
+                  Filtro activo
                 </p>
                 <p className="mt-1 text-sm font-black leading-5 text-white/80">
                   {getRadarAdvisorFilterResultTitle(

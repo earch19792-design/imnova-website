@@ -10844,7 +10844,7 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
 
   assert.match(
     source,
-    /Buscar SKU en Radar/
+    /Buscar en Radar/
   )
   assert.match(
     source,
@@ -10896,7 +10896,23 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Solo lectura · No ejecuta acciones reales/
+    /Recomendaciones de solo lectura/
+  )
+  assert.match(
+    source,
+    /Advisor del Vendedor/
+  )
+  assert.match(
+    source,
+    /Alertas de venta/
+  )
+  assert.match(
+    source,
+    /Siguiente accion/
+  )
+  assert.match(
+    source,
+    /getAdvisorSeverityLabel/
   )
   assert.doesNotMatch(
     source,
@@ -10908,15 +10924,11 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Cola Advisor/
+    /Prioridad de venta/
   )
   assert.match(
     source,
-    /Resumen vendedor/
-  )
-  assert.match(
-    source,
-    /Cancelacion[\s\S]*Stock[\s\S]*Margen[\s\S]*Riesgo eBay[\s\S]*Oportunidad/
+    /No listar[\s\S]*Stock[\s\S]*Margen[\s\S]*Riesgo eBay[\s\S]*Oportunidad/
   )
   assert.match(
     source,
@@ -10948,7 +10960,7 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Productos filtrados[\s\S]*getRadarAdvisorFilterResultTitle/
+    /Filtro activo[\s\S]*getRadarAdvisorFilterResultTitle/
   )
   assert.match(
     source,
