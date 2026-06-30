@@ -386,26 +386,40 @@ export default function EbayListingPackagePage() {
               </div>
             </div>
 
-            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+            <div className="min-w-0 rounded-3xl border border-white/10 bg-black/20 p-5">
               <p className="text-xs uppercase tracking-[0.22em] text-white/40">
                 Seller listing preview
               </p>
-              <h2 className="mt-3 text-2xl font-black text-white">
-                Title
-              </h2>
-              <p className="mt-2 text-lg font-bold text-cyan-100">
-                {listingPackage.listingTitle}
-              </p>
-              <ul className="mt-5 space-y-2 text-sm leading-6 text-white/70">
+
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <h2 className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">
+                  Title
+                </h2>
+                <p className="mt-3 break-words text-lg font-bold leading-7 text-cyan-100">
+                  {listingPackage.listingTitle}
+                </p>
+              </div>
+
+              <ul className="mt-4 grid gap-3 text-sm leading-6 text-white/70">
                 {listingPackage.buyerFacingCopy.bullets.map((bullet) => (
-                  <li key={bullet}>
+                  <li
+                    key={bullet}
+                    className="break-words rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3"
+                  >
                     {bullet}
                   </li>
                 ))}
               </ul>
-              <p className="mt-5 text-sm leading-7 text-white/60">
-                Short description: {listingPackage.buyerFacingCopy.descriptionPlainText}
-              </p>
+
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">
+                  Short description
+                </p>
+                <p className="mt-3 break-words text-sm leading-7 text-white/60">
+                  {listingPackage.buyerFacingCopy.descriptionPlainText}
+                </p>
+              </div>
+
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 {[
                   [
