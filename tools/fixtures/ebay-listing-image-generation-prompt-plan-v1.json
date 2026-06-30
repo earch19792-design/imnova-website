@@ -1,0 +1,120 @@
+{
+  "promptVersion": "IMAGE_GENERATION_PROMPT_PLAN_SCHEMA_V1",
+  "caseId": "LISTING-GEN-001",
+  "candidateName": "Simulated listing image generation prompt plan candidate",
+  "generatedAt": "2026-01-01T00:00:00.000Z",
+  "imageRole": "lifestyle_product_in_use",
+  "targetBuyer": "us_ebay_buyer",
+  "language": "en",
+  "promptStatus": "PROMPT_PLAN_NEEDS_DATA",
+  "productFacts": {
+    "productName": "Simulated compact organizer",
+    "category": "Simulated home organization",
+    "color": "neutral gray",
+    "material": "not_verified",
+    "packageContents": [
+      "One simulated organizer unit"
+    ],
+    "allowedUseCases": [
+      "Everyday use in a clean home workspace",
+      "Simple organization in an office setting"
+    ],
+    "knownLimitations": [
+      "Verified dimensions are still missing.",
+      "Material must be confirmed before final image generation."
+    ],
+    "factsVerified": false
+  },
+  "visualStrategy": {
+    "backgroundStyle": "lifestyle",
+    "composition": "Show the simulated product as the clear hero in a realistic everyday use setting.",
+    "lighting": "Clean, bright, natural-looking light.",
+    "cameraAngle": "Straight or slightly angled view that keeps product details visible on mobile.",
+    "mobileFirst": true,
+    "productMustRemainHero": true,
+    "lifestyleContext": "Clean home office environment with no private data, no brands, and no distracting props.",
+    "avoidVisualClutter": true
+  },
+  "trustSignals": {
+    "freeShipping": {
+      "allowed": false,
+      "verified": false
+    },
+    "shipsFromUsa": {
+      "allowed": false,
+      "verified": false
+    },
+    "inStockInUsa": {
+      "allowed": false,
+      "verified": false
+    },
+    "usaFlag": {
+      "allowed": false,
+      "verified": false,
+      "purpose": "Do not use until stock location and shipping claims are verified."
+    }
+  },
+  "allowedClaims": [
+    "Product in Use",
+    "Easy to Use",
+    "Designed for Daily Use"
+  ],
+  "prohibitedClaims": [
+    "Medical benefit",
+    "Guaranteed results",
+    "Certified",
+    "Free Shipping",
+    "Ships from USA",
+    "In Stock in USA"
+  ],
+  "requiredElements": [
+    "Product visible and dominant",
+    "Realistic lifestyle context",
+    "English-only buyer-facing text if text is used",
+    "No invented dimensions",
+    "No implied shipping or stock location"
+  ],
+  "forbiddenElements": [
+    "Unauthorized logos",
+    "Medical claims",
+    "Guaranteed outcome claims",
+    "Unverified USA shipping or stock signals",
+    "Private data",
+    "Encoded image data",
+    "Sensitive local file references"
+  ],
+  "safetyRules": [
+    "Do not invent dimensions.",
+    "Do not invent material.",
+    "Do not imply verified USA stock or shipping.",
+    "Do not show third-party logos.",
+    "Keep the product as the visual hero.",
+    "Require human review before any future image use."
+  ],
+  "outputRequirements": {
+    "intendedUse": "internal_review_only",
+    "imageGenerationAllowed": false,
+    "requiresImageQa": true,
+    "requiresHumanReview": true,
+    "doNotPublish": true,
+    "doNotCreateRealDraft": true
+  },
+  "requiredHumanActions": [
+    "Verify product dimensions before allowing final image generation.",
+    "Verify product material before allowing final image generation.",
+    "Verify shipping, stock location, and shipping cost before using buyer trust signals.",
+    "Review the plan before any future generated image can enter QA."
+  ],
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "localOnly": true,
+    "openAiApiUsed": false,
+    "imageGenerated": false,
+    "externalCallsMade": false,
+    "ebayApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false,
+    "requiresHumanReview": true
+  }
+}
