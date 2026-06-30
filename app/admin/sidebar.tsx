@@ -294,38 +294,10 @@ export function Sidebar({
             Read-only
           </span>
           <span className="mt-2 block text-sm font-black text-white">
-            eBay Listing Proposals
+            eBay Proposals
           </span>
           <span className="mt-1 block text-xs leading-5 text-white/45">
-            No eBay API | No real draft | Not published
-          </span>
-        </a>
-
-        <a
-          href="/admin/ebay-image-generator"
-          className="
-            block
-            rounded-2xl
-            border
-            border-cyan-300/15
-            bg-cyan-300/[0.05]
-            px-5
-            py-4
-            text-left
-            transition-all
-            duration-300
-            hover:border-cyan-300/30
-            hover:bg-cyan-300/[0.08]
-          "
-        >
-          <span className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/50">
-            Safe Preview
-          </span>
-          <span className="mt-2 block text-sm font-black text-white">
-            eBay Image Generator
-          </span>
-          <span className="mt-1 block text-xs leading-5 text-white/45">
-            OpenAI offline | No generated image | Human review required
+            Candidate ideas | No eBay API | No draft
           </span>
         </a>
 
@@ -350,10 +322,38 @@ export function Sidebar({
             Seller QA
           </span>
           <span className="mt-2 block text-sm font-black text-white">
-            eBay Listing Package
+            Listing Package QA
           </span>
           <span className="mt-1 block text-xs leading-5 text-white/45">
-            Package + QA review | No draft | Do not publish
+            Package + QA review | Do not publish
+          </span>
+        </a>
+
+        <a
+          href="/admin/ebay-image-generator"
+          className="
+            block
+            rounded-2xl
+            border
+            border-cyan-300/15
+            bg-cyan-300/[0.05]
+            px-5
+            py-4
+            text-left
+            transition-all
+            duration-300
+            hover:border-cyan-300/30
+            hover:bg-cyan-300/[0.08]
+          "
+        >
+          <span className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/50">
+            Image Dry Run
+          </span>
+          <span className="mt-2 block text-sm font-black text-white">
+            Image Dry Run
+          </span>
+          <span className="mt-1 block text-xs leading-5 text-white/45">
+            PromptPlan + safety check | No image generated
           </span>
         </a>
 

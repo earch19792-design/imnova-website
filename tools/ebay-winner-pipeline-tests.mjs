@@ -5614,7 +5614,7 @@ test("image generator admin placeholder: sidebar incluye ruta segura", () => {
   )
   assert.match(
     source,
-    /eBay Image Generator/
+    /Image Dry Run/
   )
 })
 
@@ -5649,7 +5649,7 @@ test("ebay listing package admin MVP: muestra copy, estados y estrategia princip
     )
 
   for (const expectedText of [
-    "eBay Listing Package",
+    "Listing Package QA",
     "Professional Listing MVP",
     "Seller View",
     "Read-only preview",
@@ -5797,12 +5797,12 @@ test("ebay listing package admin MVP: acciones visibles permanecen deshabilitada
   }
 
   for (const expectedReason of [
-    "benchmark import not implemented yet",
-    "manual validation required first",
-    "QA needs data",
-    "Terapeak and benchmark missing",
-    "waiting for conversion data",
-    "real photo and image QA required",
+    "Disabled: benchmark import not implemented yet",
+    "Disabled: manual validation required first",
+    "Disabled: QA needs data",
+    "Disabled: Terapeak and benchmark missing",
+    "Disabled: waiting for conversion data",
+    "Disabled: real photo and image QA required",
   ]) {
     assert.ok(
       source.includes(expectedReason),
@@ -5892,7 +5892,194 @@ test("ebay listing package admin MVP: sidebar incluye ruta segura", () => {
   )
   assert.match(
     source,
-    /eBay Listing Package/
+    /Listing Package QA/
+  )
+  assert.match(
+    source,
+    /eBay Proposals/
+  )
+  assert.match(
+    source,
+    /Image Dry Run/
+  )
+  assert.match(
+    source,
+    /Candidate ideas/
+  )
+  assert.match(
+    source,
+    /No eBay API/
+  )
+  assert.match(
+    source,
+    /No draft/
+  )
+  assert.match(
+    source,
+    /Package \+ QA review/
+  )
+  assert.match(
+    source,
+    /Do not publish/
+  )
+  assert.match(
+    source,
+    /PromptPlan \+ safety check/
+  )
+  assert.match(
+    source,
+    /No image generated/
+  )
+})
+
+test("ebay listing package admin MVP: no contiene espanol operativo visible", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const forbiddenText of [
+    "Acciones",
+    "Qué estás viendo",
+    "Pendiente",
+    "Publicación",
+    "Borrador",
+    "mínimo",
+    "minimo",
+    "Faltan",
+    "Imagen principal",
+    "Precio pendiente",
+    "Categoría pendiente",
+    "Requiere",
+    "Revisión",
+    "Verificación",
+  ]) {
+    assert.ok(
+      !source.includes(forbiddenText),
+      `listing package admin source should not include Spanish operational text: ${forbiddenText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: no contiene patrones de seguridad prohibidos", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /<img/i,
+    /next\/image/i,
+    /fetch\(/,
+    /createClient/,
+    /process\.env/,
+    /new OpenAI/,
+    /images\.generate/,
+    /openai\.images/,
+    /createDraft/,
+    /publishListing/,
+    /onClick=/,
+    /http:\/\//,
+    /https:\/\//,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern
+    )
+  }
+})
+
+test("ebay admin sidebar: normaliza labels eBay en ingles", () => {
+  const source =
+    fs.readFileSync(
+      adminSidebarPath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "eBay Proposals",
+    "Listing Package QA",
+    "Image Dry Run",
+    "/admin/ebay-listings",
+    "/admin/ebay-listing-package",
+    "/admin/ebay-image-generator",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing eBay sidebar text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: mantiene resumen ejecutivo en ingles", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Executive Status",
+    "Seller View",
+    "Listing Preview",
+    "What Blocks Publishing",
+    "Action Plan",
+    "System Safety / Audit",
+    "Status: Not ready",
+    "Main risk: Do not publish yet",
+    "Next step: Complete critical data before creating an eBay draft",
+    "Ready for: Internal preparation only",
+    "Price: Pending",
+    "Shipping: Pending",
+    "Returns: Pending",
+    "Real product photo required",
+    "Pure white background",
+    "No AI main image",
+    "No badges or flags",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing English listing package admin text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: conserva enums tecnicos", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedEnum of [
+    "LISTING_PACKAGE_NEEDS_DATA",
+    "LISTING_QA_NEEDS_DATA",
+    "DO_NOT_CREATE_DRAFT",
+    "DO_NOT_PUBLISH",
+    "TERAPEAK_VALIDATION_REQUIRED",
+    "SOLD_LISTINGS_BENCHMARK_REQUIRED",
+    "WAITING_FOR_CONVERSION_DATA",
+    "PACKING_FEE_VERIFICATION_REQUIRED",
+  ]) {
+    assert.ok(
+      source.includes(expectedEnum),
+      `missing technical enum: ${expectedEnum}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: sidebar conserva propuestas eBay", () => {
+  const source =
+    fs.readFileSync(
+      adminSidebarPath,
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /eBay Proposals/
   )
 })
 

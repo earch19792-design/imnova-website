@@ -97,39 +97,39 @@ const actionPlan = [
 const disabledActions = [
   {
     label:
-      "Import Sold Listings -- Disabled",
+      "Import Sold Listings",
     reason:
-      "benchmark import not implemented yet",
+      "Disabled: benchmark import not implemented yet",
   },
   {
     label:
-      "Validate Terapeak -- Disabled",
+      "Validate Terapeak",
     reason:
-      "manual validation required first",
+      "Disabled: manual validation required first",
   },
   {
     label:
-      "Create eBay Draft -- Disabled",
+      "Create eBay Draft",
     reason:
-      "QA needs data",
+      "Disabled: QA needs data",
   },
   {
     label:
-      "Publish to eBay -- Disabled",
+      "Publish to eBay",
     reason:
-      "Terapeak and benchmark missing",
+      "Disabled: Terapeak and benchmark missing",
   },
   {
     label:
-      "Create Pack Listing -- Disabled",
+      "Create Pack Listing",
     reason:
-      "waiting for conversion data",
+      "Disabled: waiting for conversion data",
   },
   {
     label:
-      "Generate Images -- Disabled",
+      "Generate Images",
     reason:
-      "real photo and image QA required",
+      "Disabled: real photo and image QA required",
   },
 ]
 
@@ -270,7 +270,7 @@ export default function EbayListingPackagePage() {
                 Professional Listing MVP
               </p>
               <h1 className="mt-4 text-4xl font-black text-white md:text-5xl">
-                eBay Listing Package
+                Listing Package QA
               </h1>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-white/60">
                 Seller View for the first listing package and QA review. Read-only preview. No eBay connection. No draft created. Do not publish yet. Human review required.
