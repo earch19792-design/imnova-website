@@ -1,0 +1,199 @@
+{
+  "manifestVersion": "EBAY_LUNA_PORTEX_IMAGE_ASSET_MANIFEST_V1",
+  "caseId": "LISTING-GEN-001",
+  "sourceListingPackageVersion": "EBAY_FIRST_LISTING_PACKAGE_V1",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "manifestStatus": "IMAGE_ASSETS_NEED_SOURCE",
+  "publicationImpact": "DO_NOT_CREATE_DRAFT_UNTIL_IMAGE_QA_APPROVED",
+  "imageSourceModel": {
+    "primarySource": "luna_portex_catalog",
+    "authorizedCatalogImageRequired": true,
+    "physicalProductInSellerPossessionRequired": false,
+    "competitorImagesAllowed": false,
+    "externalUrlsAllowedInManifest": false,
+    "base\u0036\u0034ImagesAllowedInManifest": false,
+    "realImagesIncludedInThisManifest": false,
+    "generatedImagesIncludedInThisManifest": false
+  },
+  "mainImageSlot": {
+    "slotId": "main_image",
+    "role": "main_product_image",
+    "sourceRequired": "authorized_luna_portex_catalog_product_image",
+    "sourceStatus": "MISSING_SOURCE_IMAGE",
+    "authorizationStatus": "AUTHORIZATION_REQUIRED",
+    "enhancementStatus": "WHITE_BACKGROUND_ENHANCEMENT_PENDING",
+    "qaStatus": "IMAGE_QA_REQUIRED",
+    "finalUse": "ebay_main_image",
+    "requirements": {
+      "finalBackgroundRequired": "pure_white",
+      "minimumResolutionPx": 1600,
+      "productCentered": true,
+      "textAllowed": false,
+      "trustBadgesAllowed": false,
+      "usaFlagAllowed": false,
+      "thirdPartyLogosAllowed": false,
+      "watermarksAllowed": false,
+      "aiGeneratedProductAllowed": false,
+      "productAlterationAllowed": false
+    },
+    "allowedEnhancements": [
+      "background_cleanup_to_pure_white",
+      "product_centering",
+      "crop_and_frame_optimization",
+      "lighting_balance",
+      "sharpness_and_resolution_improvement",
+      "minor_shadow_cleanup",
+      "color_accuracy_preservation"
+    ],
+    "prohibitedEnhancements": [
+      "change_product_shape",
+      "change_product_material",
+      "change_product_color",
+      "invent_accessories",
+      "invent_packaging",
+      "add_text",
+      "add_trust_badges",
+      "add_usa_flag",
+      "add_competitor_logo",
+      "misrepresent_size_or_quantity",
+      "create_product_from_scratch"
+    ],
+    "humanApprovalRequired": true
+  },
+  "secondaryImageSlots": [
+    {
+      "slotId": "secondary_material_zoom",
+      "role": "material_zoom",
+      "sourceBasis": "verified_product_facts_and_authorized_catalog_reference",
+      "status": "NEEDS_SOURCE_AND_BRIEF",
+      "factVerificationRequired": true,
+      "imageQaRequired": true,
+      "textAllowed": false,
+      "mustNotInvent": [
+        "material",
+        "texture",
+        "finish",
+        "product_detail"
+      ],
+      "notesForHumanReview": "Verify material and finish before preparing this secondary image."
+    },
+    {
+      "slotId": "secondary_package_contents",
+      "role": "package_contents",
+      "sourceBasis": "verified_package_contents_and_authorized_catalog_reference",
+      "status": "NEEDS_SOURCE_AND_BRIEF",
+      "factVerificationRequired": true,
+      "imageQaRequired": true,
+      "textAllowed": false,
+      "mustNotInvent": [
+        "included_items",
+        "bundle_quantity",
+        "packaging"
+      ],
+      "notesForHumanReview": "Confirm package contents before preparing this secondary image."
+    },
+    {
+      "slotId": "secondary_dimensions",
+      "role": "dimensions",
+      "sourceBasis": "verified_dimensions_and_authorized_catalog_reference",
+      "status": "NEEDS_SOURCE_AND_BRIEF",
+      "factVerificationRequired": true,
+      "imageQaRequired": true,
+      "textAllowed": true,
+      "allowedTextOnlyForMeasurements": true,
+      "mustNotInvent": [
+        "dimensions",
+        "scale",
+        "measurement_units"
+      ],
+      "notesForHumanReview": "Only verified measurement labels are allowed in this image."
+    },
+    {
+      "slotId": "secondary_main_benefit_in_action",
+      "role": "main_benefit_in_action",
+      "sourceBasis": "verified_use_case_and_authorized_catalog_reference",
+      "status": "NEEDS_SOURCE_AND_BRIEF",
+      "factVerificationRequired": true,
+      "imageQaRequired": true,
+      "textAllowed": false,
+      "mustNotInvent": [
+        "use_case",
+        "performance_claim",
+        "accessory"
+      ],
+      "notesForHumanReview": "Show only a verified use case without exaggerated claims."
+    },
+    {
+      "slotId": "secondary_aspirational_lifestyle",
+      "role": "aspirational_lifestyle",
+      "sourceBasis": "realistic_context_and_authorized_catalog_reference",
+      "status": "NEEDS_SOURCE_AND_BRIEF",
+      "factVerificationRequired": true,
+      "imageQaRequired": true,
+      "textAllowed": false,
+      "mustNotInvent": [
+        "premium_claim",
+        "room_context",
+        "product_variant"
+      ],
+      "notesForHumanReview": "Context must stay realistic and must not change the product identity."
+    },
+    {
+      "slotId": "secondary_hands_real_use",
+      "role": "hands_real_use",
+      "sourceBasis": "authorized_model_or_hands_reference_and_catalog_reference",
+      "status": "NEEDS_SOURCE_AND_BRIEF",
+      "factVerificationRequired": true,
+      "imageQaRequired": true,
+      "textAllowed": false,
+      "mustNotInvent": [
+        "hand_scale",
+        "human_model",
+        "usage_claim"
+      ],
+      "notesForHumanReview": "Confirm model or hands authorization before this image can be prepared."
+    }
+  ],
+  "assetRules": {
+    "mustUseAuthorizedSource": true,
+    "mustNotUseCompetitorImages": true,
+    "mustNotUseUnauthorizedSupplierImages": true,
+    "mustNotAlterProductIdentity": true,
+    "mustNotInventAccessories": true,
+    "mustNotInventPackaging": true,
+    "mustNotAddTrustBadgesToMainImage": true,
+    "mustNotAddUsaFlagToMainImage": true,
+    "mustNotClaimMadeInUsa": true,
+    "mustPreserveColorAccuracy": true,
+    "mustPassHumanImageQaBeforeDraft": true
+  },
+  "workflow": {
+    "currentStep": "WAITING_FOR_AUTHORIZED_LUNA_PORTEX_CATALOG_IMAGE",
+    "nextStep": "COLLECT_AUTHORIZED_CATALOG_IMAGE_AND_SOURCE_CONFIRMATION",
+    "steps": [
+      "collect_authorized_luna_portex_catalog_image",
+      "confirm_source_authorization",
+      "enhance_main_image_to_white_background",
+      "prepare_secondary_image_briefs",
+      "run_manual_image_qa",
+      "approve_images_for_draft",
+      "unlock_ebay_draft_mapping"
+    ],
+    "draftGate": "BLOCKED_UNTIL_IMAGE_QA_APPROVED"
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "humanReviewRequired": true,
+    "realImagesIncluded": false,
+    "image\u0055rlsIncluded": false,
+    "base\u0036\u0034ImagesIncluded": false,
+    "imageGenerated": false,
+    "openAiApiUsed": false,
+    "externalCallsMade": false,
+    "ebayApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}
