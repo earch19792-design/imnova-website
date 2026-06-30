@@ -4381,101 +4381,6 @@ function getRadarAdvisorFilterResultTitle(
   return "Todas las alertas"
 }
 
-function RadarAdvisorSellerRiskSummary({
-  alerts,
-}: {
-  alerts: RadarAdvisorAlert[]
-}) {
-  const summaryItems = [
-    {
-      label:
-        "No listar",
-      count:
-        alerts.filter(
-          alert =>
-            alert.seller_priority ===
-              "Urgente" &&
-            alert.seller_action_label ===
-              "No listar"
-        ).length,
-      className:
-        "border-red-300/20 bg-red-300/[0.08] text-red-50",
-    },
-    {
-      label:
-        "Stock",
-      count:
-        alerts.filter(
-          alert =>
-            alert.seller_action_label ===
-            "Validar stock"
-        ).length,
-      className:
-        "border-amber-300/20 bg-amber-300/[0.08] text-amber-50",
-    },
-    {
-      label:
-        "Margen",
-      count:
-        alerts.filter(
-          alert =>
-            alert.seller_action_label ===
-            "Recalcular margen"
-        ).length,
-      className:
-        "border-blue-300/20 bg-blue-300/[0.08] text-blue-50",
-    },
-    {
-      label:
-        "Riesgo eBay",
-      count:
-        alerts.filter(
-          alert =>
-            alert.seller_action_label ===
-            "Revisar riesgo eBay"
-        ).length,
-      className:
-        "border-rose-300/20 bg-rose-300/[0.08] text-rose-50",
-    },
-    {
-      label:
-        "Oportunidad",
-      count:
-        alerts.filter(
-          alert =>
-            alert.seller_action_label ===
-            "Revisar oportunidad"
-        ).length,
-      className:
-        "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-50",
-    },
-  ]
-
-  return (
-    <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(104px,1fr))] gap-2">
-      {summaryItems.map(item => (
-        <div
-          key={item.label}
-          className={`
-            min-w-0
-            rounded-md
-            border
-            p-3
-            ${item.className}
-          `}
-        >
-          <p className="text-xl font-black leading-6">
-            {item.count}
-          </p>
-          <p className="mt-1 break-words text-xs font-black leading-4 opacity-75">
-            {item.label}
-          </p>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 function RadarAdvisorReviewQueue({
   alerts,
   resolvingAlertKey,
@@ -6163,6 +6068,27 @@ export function MarketRadarPanel({
       [dashboard]
     )
 
+  const advisorFilterCounts =
+    useMemo(
+      () => {
+        const counts =
+          {} as Record<RadarAdvisorReviewFilter, number>
+
+        for (const option of radarAdvisorReviewFilterOptions) {
+          counts[option.value] =
+            advisorAlerts.filter(alert =>
+              matchesRadarAdvisorReviewFilter(
+                alert,
+                option.value
+              )
+            ).length
+        }
+
+        return counts
+      },
+      [advisorAlerts]
+    )
+
   const filteredAdvisorAlerts =
     useMemo(
       () =>
@@ -7038,29 +6964,22 @@ export function MarketRadarPanel({
             Recomendaciones de solo lectura
           </p>
 
-          <RadarAdvisorSellerRiskSummary
-            alerts={
-              advisorAlerts
-            }
-          />
-
           <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.025] p-3">
-            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/35">
-                  Filtro activo
-                </p>
-                <p className="mt-1 text-sm font-black leading-5 text-white/80">
-                  {getRadarAdvisorFilterResultTitle(
-                    advisorAlertFilter
-                  )}
-                </p>
-              </div>
-              <span className="rounded-md border border-white/10 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-white/45">
-                {filteredAdvisorAlerts.length}/{advisorAlerts.length}
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/55">
+              <span className="font-black text-white/80">
+                {advisorAlerts.length} alertas
+              </span>
+              <span>
+                {advisorFilterCounts.review_opportunity || 0} oportunidades
+              </span>
+              <span>
+                {advisorFilterCounts.review_risk || 0} riesgos eBay
+              </span>
+              <span>
+                {advisorFilterCounts.do_not_list || 0} no listar
               </span>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               {radarAdvisorReviewFilterOptions.map(option => {
                 const isActive =
                   advisorAlertFilter ===
@@ -7090,11 +7009,16 @@ export function MarketRadarPanel({
                         : "border-white/10 bg-black/10 text-white/40 hover:border-white/20 hover:text-white/65"}
                     `}
                   >
-                    {option.label}
+                    {option.label}{" "}
+                    {advisorFilterCounts[option.value] || 0}
                   </button>
                 )
               })}
             </div>
+            <p className="mt-3 text-[11px] font-semibold text-white/40">
+              Mostrando {filteredAdvisorAlerts.length} de {advisorAlerts.length}:{" "}
+              {getRadarAdvisorFilterResultTitle(advisorAlertFilter)}
+            </p>
           </div>
 
           <div className="mt-5 space-y-3">

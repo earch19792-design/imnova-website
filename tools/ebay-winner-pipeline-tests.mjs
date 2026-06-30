@@ -10928,7 +10928,31 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /No listar[\s\S]*Stock[\s\S]*Margen[\s\S]*Riesgo eBay[\s\S]*Oportunidad/
+    /advisorFilterCounts/
+  )
+  assert.match(
+    source,
+    /{advisorAlerts\.length} alertas/
+  )
+  assert.match(
+    source,
+    /{advisorFilterCounts\.review_opportunity \|\| 0} oportunidades/
+  )
+  assert.match(
+    source,
+    /{advisorFilterCounts\.review_risk \|\| 0} riesgos eBay/
+  )
+  assert.match(
+    source,
+    /{advisorFilterCounts\.do_not_list \|\| 0} no listar/
+  )
+  assert.match(
+    source,
+    /{option\.label}{" "}[\s\S]*{advisorFilterCounts\[option\.value\] \|\| 0}/
+  )
+  assert.doesNotMatch(
+    source,
+    /Filtro activo/
   )
   assert.match(
     source,
@@ -10960,11 +10984,7 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Filtro activo[\s\S]*getRadarAdvisorFilterResultTitle/
-  )
-  assert.match(
-    source,
-    /{filteredAdvisorAlerts\.length}\/{advisorAlerts\.length}/
+    /Mostrando {filteredAdvisorAlerts\.length} de {advisorAlerts\.length}[\s\S]*getRadarAdvisorFilterResultTitle/
   )
   assert.match(
     source,
