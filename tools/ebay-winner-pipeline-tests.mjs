@@ -3773,6 +3773,14 @@ test("image generator admin placeholder: existe y usa PromptPlan fixture", () =>
   )
   assert.match(
     source,
+    /image-generation-dry-run-runner\.mjs/
+  )
+  assert.match(
+    source,
+    /runImageGenerationDryRun/
+  )
+  assert.doesNotMatch(
+    source,
     /ebay-listing-image-generation-dry-run-result-v1\.json/
   )
   assert.match(
@@ -3809,7 +3817,9 @@ test("image generator admin placeholder: conserva copy de seguridad", () => {
     "No image is generated",
     "Human review required",
     "Internal review only",
-    "Simulated PromptPlan fixture",
+    "Calculated locally by runImageGenerationDryRun",
+    "Source: PromptPlan fixture + local dry run runner",
+    "No external calls were made",
     "Dry Run Result",
     "Image generation cannot proceed yet",
     "No OpenAI call was made",
@@ -3817,11 +3827,86 @@ test("image generator admin placeholder: conserva copy de seguridad", () => {
     "No eBay draft was created",
     "No listing was published",
   ]) {
-    assert.match(
-      source,
-      new RegExp(expectedText)
+    assert.ok(
+      source.includes(expectedText),
+      `missing image generator safety copy: ${expectedText}`
     )
   }
+})
+
+test("image generator admin placeholder: runner local calcula dry run seguro desde PromptPlan fixture", () => {
+  const result =
+    runImageGenerationDryRun(
+      ebayListingImageGenerationPromptPlanFixture,
+      {
+        evaluatedAt:
+          ebayListingImageGenerationPromptPlanFixture.generatedAt ||
+          "2026-01-01T00:00:00.000Z",
+        runnerVersion:
+          "IMAGE_GENERATION_DRY_RUN_RUNNER_LOCAL_IMPLEMENTATION_V1",
+      }
+    )
+
+  assert.equal(
+    result.dryRunStatus,
+    "DRY_RUN_NEEDS_DATA"
+  )
+  assert.equal(
+    result.recommendedNextState,
+    "REQUEST_MORE_PRODUCT_DATA"
+  )
+  assert.equal(
+    result.outputRequirements.mayGenerateImage,
+    false
+  )
+  assert.equal(
+    result.outputRequirements.mayCallOpenAi,
+    false
+  )
+  assert.equal(
+    result.outputRequirements.mayCreateRealDraft,
+    false
+  )
+  assert.equal(
+    result.outputRequirements.mayPublish,
+    false
+  )
+  assert.equal(
+    result.outputRequirements.mayMutateListing,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.openAiApiUsed,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.imageGenerated,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.externalCallsMade,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.ebayApiUsed,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.realDraftCreated,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.publishedToEbay,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.listingMutated,
+    false
+  )
+  assert.equal(
+    result.safetyFlags.reportPersisted,
+    false
+  )
 })
 
 test("image generator admin placeholder: muestra secciones de dry run result", () => {

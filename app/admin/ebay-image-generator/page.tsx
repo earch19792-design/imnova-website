@@ -1,5 +1,7 @@
 import promptPlan from "../../../tools/fixtures/ebay-listing-image-generation-prompt-plan-v1.json"
-import dryRunResult from "../../../tools/fixtures/ebay-listing-image-generation-dry-run-result-v1.json"
+import {
+  runImageGenerationDryRun,
+} from "../../../lib/ebay-winner-pipeline/image-generation-dry-run-runner.mjs"
 
 const safetyBadges = [
   "Safe Preview",
@@ -27,6 +29,16 @@ const trustSignalLabels = {
   usaFlag:
     "USA flag",
 }
+
+const dryRunResult = runImageGenerationDryRun(
+  promptPlan,
+  {
+    evaluatedAt:
+      promptPlan.generatedAt || "2026-01-01T00:00:00.000Z",
+    runnerVersion:
+      "IMAGE_GENERATION_DRY_RUN_RUNNER_LOCAL_IMPLEMENTATION_V1",
+  }
+)
 
 function formatValue(value: unknown) {
   if (value === undefined || value === null || value === "") {
@@ -146,7 +158,15 @@ export default function EbayImageGeneratorPage() {
           {[
             [
               "Data source",
-              "Simulated PromptPlan fixture and dry run result fixture",
+              "Source: PromptPlan fixture + local dry run runner",
+            ],
+            [
+              "Runner",
+              "Calculated locally by runImageGenerationDryRun",
+            ],
+            [
+              "External calls",
+              "No external calls were made",
             ],
             [
               "Case ID",
@@ -411,7 +431,8 @@ export default function EbayImageGeneratorPage() {
                   ],
                   [
                     "documentationOnly",
-                    dryRunSafetyFlags.documentationOnly,
+                    (dryRunSafetyFlags as Record<string, unknown>)
+                      .documentationOnly,
                   ],
                   [
                     "openAiApiUsed",
