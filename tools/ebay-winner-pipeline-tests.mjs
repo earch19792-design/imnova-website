@@ -10896,15 +10896,15 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Recomendaciones de solo lectura/
-  )
-  assert.match(
-    source,
     /Advisor del Vendedor/
   )
   assert.match(
     source,
-    /Alertas de venta/
+    /Oportunidades encontradas/
+  )
+  assert.match(
+    source,
+    /Productos detectados para revisar/
   )
   assert.match(
     source,
@@ -10932,19 +10932,15 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /formatCountLabel\([\s\S]*advisorAlerts\.length[\s\S]*"alerta"[\s\S]*"alertas"/
+    /salesOpportunityAlerts/
   )
   assert.match(
     source,
-    /formatCountLabel\([\s\S]*advisorFilterCounts\.review_opportunity \|\| 0[\s\S]*"oportunidad"[\s\S]*"oportunidades"/
+    /formatCountLabel\([\s\S]*salesOpportunityAlerts\.length[\s\S]*"oportunidad encontrada"[\s\S]*"oportunidades encontradas"/
   )
   assert.match(
     source,
-    /formatCountLabel\([\s\S]*advisorFilterCounts\.review_risk \|\| 0[\s\S]*"riesgo eBay"[\s\S]*"riesgos eBay"/
-  )
-  assert.match(
-    source,
-    /formatCountLabel\([\s\S]*advisorFilterCounts\.do_not_list \|\| 0[\s\S]*"no listar"[\s\S]*"no listar"/
+    /formatCountLabel\([\s\S]*advisorFilterCounts\.high \|\| 0[\s\S]*"oportunidad alta"[\s\S]*"oportunidades altas"/
   )
   assert.match(
     source,
@@ -10976,6 +10972,10 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
+    /radarAdvisorReviewFilterOptions[\s\S]*Todas[\s\S]*Urgente[\s\S]*Alta/
+  )
+  assert.doesNotMatch(
+    source,
     /radarAdvisorReviewFilterOptions[\s\S]*Stock[\s\S]*Margen[\s\S]*Riesgo/
   )
   assert.match(
@@ -10984,11 +10984,15 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Mostrando {filteredAdvisorAlerts\.length} de {advisorAlerts\.length}[\s\S]*getRadarAdvisorFilterResultTitle/
+    /Mostrando {filteredAdvisorAlerts\.length} de {salesOpportunityAlerts\.length}[\s\S]*getRadarAdvisorFilterResultTitle/
   )
   assert.match(
     source,
-    /Sin alertas para este filtro/
+    /Sin oportunidades para este filtro/
+  )
+  assert.match(
+    source,
+    /Sin oportunidades encontradas por ahora/
   )
 })
 

@@ -340,36 +340,6 @@ const radarAdvisorReviewFilterOptions: {
     label:
       "Alta",
   },
-  {
-    value:
-      "validate_stock",
-    label:
-      "Stock",
-  },
-  {
-    value:
-      "recalculate_margin",
-    label:
-      "Margen",
-  },
-  {
-    value:
-      "review_risk",
-    label:
-      "Riesgo",
-  },
-  {
-    value:
-      "do_not_list",
-    label:
-      "No listar",
-  },
-  {
-    value:
-      "review_opportunity",
-    label:
-      "Oportunidad",
-  },
 ]
 
 const priceSourceOptions = [
@@ -4411,11 +4381,11 @@ function getRadarAdvisorFilterResultTitle(
   filter: RadarAdvisorReviewFilter
 ) {
   if (filter === "urgent") {
-    return "Alertas urgentes"
+    return "Oportunidades urgentes"
   }
 
   if (filter === "high") {
-    return "Alertas de prioridad alta"
+    return "Oportunidades de prioridad alta"
   }
 
   if (filter === "validate_stock") {
@@ -4438,7 +4408,7 @@ function getRadarAdvisorFilterResultTitle(
     return "Oportunidades para revisar"
   }
 
-  return "Todas las alertas"
+  return "Todas las oportunidades"
 }
 
 function RadarAdvisorReviewQueue({
@@ -6108,6 +6078,18 @@ export function MarketRadarPanel({
       [dashboard]
     )
 
+  const salesOpportunityAlerts =
+    useMemo(
+      () =>
+        advisorAlerts.filter(alert =>
+          matchesRadarAdvisorReviewFilter(
+            alert,
+            "review_opportunity"
+          )
+        ),
+      [advisorAlerts]
+    )
+
   const advisorFilterCounts =
     useMemo(
       () => {
@@ -6116,7 +6098,7 @@ export function MarketRadarPanel({
 
         for (const option of radarAdvisorReviewFilterOptions) {
           counts[option.value] =
-            advisorAlerts.filter(alert =>
+            salesOpportunityAlerts.filter(alert =>
               matchesRadarAdvisorReviewFilter(
                 alert,
                 option.value
@@ -6126,13 +6108,13 @@ export function MarketRadarPanel({
 
         return counts
       },
-      [advisorAlerts]
+      [salesOpportunityAlerts]
     )
 
   const filteredAdvisorAlerts =
     useMemo(
       () =>
-        advisorAlerts.filter(alert =>
+        salesOpportunityAlerts.filter(alert =>
           matchesRadarAdvisorReviewFilter(
             alert,
             advisorAlertFilter
@@ -6140,7 +6122,7 @@ export function MarketRadarPanel({
         ),
       [
         advisorAlertFilter,
-        advisorAlerts,
+        salesOpportunityAlerts,
       ]
     )
 
@@ -7145,40 +7127,26 @@ export function MarketRadarPanel({
             Advisor del Vendedor
           </p>
           <h3 className="mt-2 text-xl font-black text-white">
-            Alertas de venta
+            Oportunidades encontradas
           </h3>
           <p className="mt-2 text-[11px] font-bold uppercase tracking-[0.08em] text-cyan-100/45">
-            Recomendaciones de solo lectura
+            Productos detectados para revisar
           </p>
 
           <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.025] p-3">
             <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/55">
               <span className="font-black text-white/80">
                 {formatCountLabel(
-                  advisorAlerts.length,
-                  "alerta",
-                  "alertas"
+                  salesOpportunityAlerts.length,
+                  "oportunidad encontrada",
+                  "oportunidades encontradas"
                 )}
               </span>
               <span>
                 {formatCountLabel(
-                  advisorFilterCounts.review_opportunity || 0,
-                  "oportunidad",
-                  "oportunidades"
-                )}
-              </span>
-              <span>
-                {formatCountLabel(
-                  advisorFilterCounts.review_risk || 0,
-                  "riesgo eBay",
-                  "riesgos eBay"
-                )}
-              </span>
-              <span>
-                {formatCountLabel(
-                  advisorFilterCounts.do_not_list || 0,
-                  "no listar",
-                  "no listar"
+                  advisorFilterCounts.high || 0,
+                  "oportunidad alta",
+                  "oportunidades altas"
                 )}
               </span>
             </div>
@@ -7219,13 +7187,13 @@ export function MarketRadarPanel({
               })}
             </div>
             <p className="mt-3 text-[11px] font-semibold text-white/40">
-              Mostrando {filteredAdvisorAlerts.length} de {advisorAlerts.length}:{" "}
+              Mostrando {filteredAdvisorAlerts.length} de {salesOpportunityAlerts.length}:{" "}
               {getRadarAdvisorFilterResultTitle(advisorAlertFilter)}
             </p>
           </div>
 
           <div className="mt-5 space-y-3">
-            {advisorAlerts.length ? (
+            {salesOpportunityAlerts.length ? (
               filteredAdvisorAlerts.length ? (
                 filteredAdvisorAlerts.map((alert, index) => (
                   <RadarAdvisorAlertItem
@@ -7244,12 +7212,12 @@ export function MarketRadarPanel({
                 ))
               ) : (
                 <p className="rounded-lg border border-white/10 bg-white/[0.03] p-4 text-sm text-white/45">
-                  Sin alertas para este filtro.
+                  Sin oportunidades para este filtro.
                 </p>
               )
             ) : (
               <p className="rounded-lg border border-white/10 bg-white/[0.03] p-4 text-sm text-white/45">
-                Sin alertas Advisor por ahora.
+                Sin oportunidades encontradas por ahora.
               </p>
             )}
           </div>
@@ -7275,7 +7243,7 @@ export function MarketRadarPanel({
           <div className="mt-5 grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
             <RadarAdvisorReviewQueue
               alerts={
-                advisorAlerts
+                salesOpportunityAlerts
               }
               resolvingAlertKey={
                 resolvingAdvisorAlertKey
