@@ -626,6 +626,19 @@ const ebayLunaPortexImageSourceIntakeFixture =
     )
   )
 
+const ebayLunaPortexImageSourceReviewGateFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-luna-portex-image-source-review-gate-v1.json"
+  )
+
+const ebayLunaPortexImageSourceReviewGateFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayLunaPortexImageSourceReviewGateFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayListingImageGenerationDryRunRunnerFixtureSetPath =
   path.resolve(
     "tools/fixtures/ebay-listing-image-generation-dry-run-runner-fixture-set-v1.json"
@@ -5150,6 +5163,354 @@ test("luna portex image source intake fixture: no contiene URLs, payloads ni dat
   }
 })
 
+test("luna portex image source review gate fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayLunaPortexImageSourceReviewGateFixturePath
+    )
+  )
+  assert.equal(
+    ebayLunaPortexImageSourceReviewGateFixture.gateVersion,
+    "EBAY_LUNA_PORTEX_IMAGE_SOURCE_REVIEW_GATE_V1"
+  )
+  assert.equal(
+    ebayLunaPortexImageSourceReviewGateFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebayLunaPortexImageSourceReviewGateFixture.sourceIntakeVersion,
+    "EBAY_LUNA_PORTEX_IMAGE_SOURCE_INTAKE_V1"
+  )
+  assert.equal(
+    ebayLunaPortexImageSourceReviewGateFixture.sourceManifestVersion,
+    "EBAY_LUNA_PORTEX_IMAGE_ASSET_MANIFEST_V1"
+  )
+  assert.equal(
+    ebayLunaPortexImageSourceReviewGateFixture.sourceListingPackageVersion,
+    "EBAY_FIRST_LISTING_PACKAGE_V1"
+  )
+  assert.equal(
+    ebayLunaPortexImageSourceReviewGateFixture.marketplace,
+    "ebay_us"
+  )
+  assert.equal(
+    ebayLunaPortexImageSourceReviewGateFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebayLunaPortexImageSourceReviewGateFixture.gateStatus,
+    "SOURCE_REVIEW_NOT_APPROVED"
+  )
+  assert.equal(
+    ebayLunaPortexImageSourceReviewGateFixture.gateDecision,
+    "BLOCK_IMAGE_WORKFLOW"
+  )
+  assert.equal(
+    ebayLunaPortexImageSourceReviewGateFixture.draftImpact,
+    "DRAFT_BLOCKED_UNTIL_SOURCE_REVIEW_APPROVED"
+  )
+})
+
+test("luna portex image source review gate fixture: review inputs siguen sin evidencia aprobada", () => {
+  const reviewInputs =
+    ebayLunaPortexImageSourceReviewGateFixture.reviewInputs
+
+  assert.equal(
+    reviewInputs.sourceType,
+    "luna_portex_catalog"
+  )
+  assert.equal(
+    reviewInputs.sourceEvidenceStatus,
+    "MISSING_EVIDENCE"
+  )
+  assert.equal(
+    reviewInputs.authorizedUseStatus,
+    "AUTHORIZATION_NOT_CONFIRMED"
+  )
+  assert.equal(
+    reviewInputs.humanSourceReviewStatus,
+    "SOURCE_REVIEW_NOT_STARTED"
+  )
+  assert.equal(
+    reviewInputs.realImageIncluded,
+    false
+  )
+  assert.equal(
+    reviewInputs.imageUrlIncluded,
+    false
+  )
+  assert.equal(
+    reviewInputs.base64Included,
+    false
+  )
+  assert.equal(
+    reviewInputs.fileUploadIncluded,
+    false
+  )
+})
+
+test("luna portex image source review gate fixture: gate checks fallan y bloquean unlock", () => {
+  const gateChecks =
+    ebayLunaPortexImageSourceReviewGateFixture.gateChecks
+  const checkIds =
+    gateChecks.map(check => check.checkId)
+
+  assert.equal(
+    gateChecks.length,
+    7
+  )
+
+  for (const check of gateChecks) {
+    assert.equal(
+      check.status,
+      "FAILED"
+    )
+    assert.equal(
+      check.requiredToUnlock,
+      true
+    )
+  }
+
+  for (const expectedCheckId of [
+    "source_evidence_present",
+    "authorized_use_confirmed",
+    "product_match_confirmed",
+    "no_competitor_image_confirmed",
+    "watermark_logo_review_completed",
+    "enhancement_permission_confirmed",
+    "human_source_review_approved",
+  ]) {
+    assert.ok(
+      checkIds.includes(expectedCheckId),
+      `review gate checks must include: ${expectedCheckId}`
+    )
+  }
+})
+
+test("luna portex image source review gate fixture: workflows criticos permanecen bloqueados", () => {
+  const blockedWorkflows =
+    ebayLunaPortexImageSourceReviewGateFixture.blockedWorkflows
+  const workflowNames =
+    blockedWorkflows.map(item => item.workflow)
+
+  assert.equal(
+    blockedWorkflows.length,
+    4
+  )
+
+  for (const workflow of blockedWorkflows) {
+    assert.equal(
+      workflow.status,
+      "BLOCKED"
+    )
+  }
+
+  for (const expectedWorkflow of [
+    "main_image_enhancement",
+    "manual_image_qa",
+    "ebay_draft_mapping",
+    "ebay_draft_creation",
+  ]) {
+    assert.ok(
+      workflowNames.includes(expectedWorkflow),
+      `blockedWorkflows must include: ${expectedWorkflow}`
+    )
+  }
+})
+
+test("luna portex image source review gate fixture: human decision pide mas evidencia", () => {
+  const humanDecision =
+    ebayLunaPortexImageSourceReviewGateFixture.humanDecision
+
+  assert.equal(
+    humanDecision.required,
+    true
+  )
+  assert.equal(
+    humanDecision.decisionStatus,
+    "NOT_REVIEWED"
+  )
+  assert.equal(
+    humanDecision.approvalStatus,
+    "NOT_APPROVED"
+  )
+  assert.equal(
+    humanDecision.currentDecision,
+    "REQUEST_MORE_SOURCE_EVIDENCE"
+  )
+
+  for (const allowedDecision of [
+    "APPROVE_SOURCE_FOR_IMAGE_QA",
+    "REQUEST_MORE_SOURCE_EVIDENCE",
+    "REJECT_SOURCE",
+  ]) {
+    assert.ok(
+      humanDecision.allowedDecisionValues.includes(
+        allowedDecision
+      ),
+      `allowedDecisionValues must include: ${allowedDecision}`
+    )
+  }
+})
+
+test("luna portex image source review gate fixture: safety flags mantienen workflow bloqueado", () => {
+  const safetyFlags =
+    ebayLunaPortexImageSourceReviewGateFixture.safetyFlags
+
+  for (const [
+    flagName,
+    expectedValue,
+  ] of [
+    [
+      "sourceApproved",
+      false,
+    ],
+    [
+      "imageEnhancementUnlocked",
+      false,
+    ],
+    [
+      "imageQaUnlocked",
+      false,
+    ],
+    [
+      "draftMappingUnlocked",
+      false,
+    ],
+    [
+      "draftCreationUnlocked",
+      false,
+    ],
+    [
+      "realImagesIncluded",
+      false,
+    ],
+    [
+      "imageUrlsIncluded",
+      false,
+    ],
+    [
+      "base64ImagesIncluded",
+      false,
+    ],
+    [
+      "fileUploadsIncluded",
+      false,
+    ],
+    [
+      "supplierPrivateDataIncluded",
+      false,
+    ],
+    [
+      "customerDataIncluded",
+      false,
+    ],
+    [
+      "imageGenerated",
+      false,
+    ],
+    [
+      "openAiApiUsed",
+      false,
+    ],
+    [
+      "externalCallsMade",
+      false,
+    ],
+    [
+      "ebayApiUsed",
+      false,
+    ],
+    [
+      "realDraftCreated",
+      false,
+    ],
+    [
+      "publishedToEbay",
+      false,
+    ],
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      expectedValue,
+      `${flagName} must be ${expectedValue}`
+    )
+  }
+})
+
+test("luna portex image source review gate fixture: no contiene URLs, payloads ni datos privados", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayLunaPortexImageSourceReviewGateFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /imageUrl/,
+    /assetUrl/,
+    /uploadedUrl/,
+    /<img/i,
+    /next\/image/i,
+    /supplierPrivateData/,
+    /customerData/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+
+  function collectStringValues(
+    value,
+    collected = []
+  ) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        collectStringValues(
+          item,
+          collected
+        )
+      }
+      return collected
+    }
+
+    if (
+      value &&
+      typeof value === "object"
+    ) {
+      for (const childValue of Object.values(value)) {
+        collectStringValues(
+          childValue,
+          collected
+        )
+      }
+      return collected
+    }
+
+    if (typeof value === "string") {
+      collected.push(value)
+    }
+
+    return collected
+  }
+
+  for (const value of collectStringValues(
+    ebayLunaPortexImageSourceReviewGateFixture
+  )) {
+    assert.doesNotMatch(
+      value,
+      /https?:\/\//i
+    )
+    assert.doesNotMatch(
+      value,
+      /base64|imageUrl|assetUrl|uploadedUrl|real image payload|supplier private data|customer data/i
+    )
+  }
+})
+
 test("image generation dry run runner fixture set: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -6380,6 +6741,10 @@ test("ebay listing package admin MVP: existe y usa fixtures seguros", () => {
     source,
     /ebay-luna-portex-image-source-intake-v1\.json/
   )
+  assert.match(
+    source,
+    /ebay-luna-portex-image-source-review-gate-v1\.json/
+  )
 })
 
 test("ebay listing package admin MVP: muestra copy, estados y estrategia principal", () => {
@@ -6462,6 +6827,7 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "Approval",
     "Product / Pricing / Shipping",
     "Image Plan",
+    "Image Source Review Gate",
     "Image Source Intake",
     "Image Asset Manifest",
     "Market Validation",
@@ -6581,6 +6947,35 @@ test("ebay listing package admin MVP: muestra image source intake", () => {
     assert.ok(
       source.includes(expectedText),
       `missing image source intake admin text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: muestra image source review gate", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Image Source Review Gate",
+    "SOURCE_REVIEW_NOT_APPROVED",
+    "BLOCK_IMAGE_WORKFLOW",
+    "DRAFT_BLOCKED_UNTIL_SOURCE_REVIEW_APPROVED",
+    "Source evidence has not been approved yet",
+    "Image enhancement: Blocked",
+    "Image QA: Blocked",
+    "eBay draft mapping: Blocked",
+    "eBay draft creation: Blocked",
+    "Human source review required",
+    "Request more source evidence",
+    "Unlock Requirements",
+    "Blocked Workflows",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing image source review gate admin text: ${expectedText}`
     )
   }
 })

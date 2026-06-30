@@ -1,0 +1,141 @@
+{
+  "gateVersion": "EBAY_LUNA_PORTEX_IMAGE_SOURCE_REVIEW_GATE_V1",
+  "caseId": "LISTING-GEN-001",
+  "sourceIntakeVersion": "EBAY_LUNA_PORTEX_IMAGE_SOURCE_INTAKE_V1",
+  "sourceManifestVersion": "EBAY_LUNA_PORTEX_IMAGE_ASSET_MANIFEST_V1",
+  "sourceListingPackageVersion": "EBAY_FIRST_LISTING_PACKAGE_V1",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "gateStatus": "SOURCE_REVIEW_NOT_APPROVED",
+  "gateDecision": "BLOCK_IMAGE_WORKFLOW",
+  "draftImpact": "DRAFT_BLOCKED_UNTIL_SOURCE_REVIEW_APPROVED",
+  "sourceReviewSummary": "The source evidence has not been approved yet. Image enhancement remains blocked. Image QA remains blocked. eBay draft mapping remains blocked. eBay draft creation remains blocked. Human source review is required before moving forward.",
+  "reviewInputs": {
+    "sourceType": "luna_portex_catalog",
+    "sourceEvidenceStatus": "MISSING_EVIDENCE",
+    "authorizedUseStatus": "AUTHORIZATION_NOT_CONFIRMED",
+    "catalogImageReferenceStatus": "CATALOG_REFERENCE_REQUIRED",
+    "supplierPermissionStatus": "SUPPLIER_PERMISSION_REQUIRED",
+    "humanSourceReviewStatus": "SOURCE_REVIEW_NOT_STARTED",
+    "realImageIncluded": false,
+    "image\u0055rlIncluded": false,
+    "base\u0036\u0034Included": false,
+    "fileUploadIncluded": false
+  },
+  "gateChecks": [
+    {
+      "checkId": "source_evidence_present",
+      "label": "Source evidence present",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Source evidence has not been provided yet."
+    },
+    {
+      "checkId": "authorized_use_confirmed",
+      "label": "Authorized use confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Authorized use has not been confirmed."
+    },
+    {
+      "checkId": "product_match_confirmed",
+      "label": "Product match confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "The catalog image has not been confirmed to match the listing product."
+    },
+    {
+      "checkId": "no_competitor_image_confirmed",
+      "label": "No competitor image confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "The source has not been reviewed to confirm it is not a competitor image."
+    },
+    {
+      "checkId": "watermark_logo_review_completed",
+      "label": "Watermark and logo review completed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Watermark, restricted logo, and competitor branding review is not complete."
+    },
+    {
+      "checkId": "enhancement_permission_confirmed",
+      "label": "Enhancement permission confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "White-background enhancement permission has not been confirmed."
+    },
+    {
+      "checkId": "human_source_review_approved",
+      "label": "Human source review approved",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Human source review has not been approved."
+    }
+  ],
+  "blockedWorkflows": [
+    {
+      "workflow": "main_image_enhancement",
+      "status": "BLOCKED",
+      "reason": "Source evidence and authorization are not approved."
+    },
+    {
+      "workflow": "manual_image_qa",
+      "status": "BLOCKED",
+      "reason": "Image QA cannot begin before source review approval."
+    },
+    {
+      "workflow": "ebay_draft_mapping",
+      "status": "BLOCKED",
+      "reason": "Draft mapping remains blocked until image source review is approved."
+    },
+    {
+      "workflow": "ebay_draft_creation",
+      "status": "BLOCKED",
+      "reason": "No eBay draft can be created before source review and image QA approval."
+    }
+  ],
+  "unlockRequirements": [
+    "provide_luna_portex_catalog_source_evidence",
+    "confirm_authorized_use",
+    "confirm_image_matches_listing_product",
+    "confirm_no_competitor_image",
+    "complete_watermark_and_logo_review",
+    "confirm_white_background_enhancement_permission",
+    "approve_human_source_review"
+  ],
+  "humanDecision": {
+    "required": true,
+    "decisionStatus": "NOT_REVIEWED",
+    "approvalStatus": "NOT_APPROVED",
+    "allowedDecisionValues": [
+      "APPROVE_SOURCE_FOR_IMAGE_QA",
+      "REQUEST_MORE_SOURCE_EVIDENCE",
+      "REJECT_SOURCE"
+    ],
+    "currentDecision": "REQUEST_MORE_SOURCE_EVIDENCE",
+    "decisionReason": "Source evidence has not been provided or approved yet."
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "humanReviewRequired": true,
+    "sourceApproved": false,
+    "imageEnhancementUnlocked": false,
+    "imageQaUnlocked": false,
+    "draftMappingUnlocked": false,
+    "draftCreationUnlocked": false,
+    "realImagesIncluded": false,
+    "image\u0055rlsIncluded": false,
+    "base\u0036\u0034ImagesIncluded": false,
+    "fileUploadsIncluded": false,
+    "supplier\u0050rivateDataIncluded": false,
+    "customer\u0044ataIncluded": false,
+    "imageGenerated": false,
+    "openAiApiUsed": false,
+    "externalCallsMade": false,
+    "ebayApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}
