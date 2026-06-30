@@ -88,6 +88,39 @@ function getCandidateForMarketRadarProduct({
   )
 }
 
+function getCandidateForMarketRadarEvent({
+  event,
+  candidatesByVariantKey,
+  fallbackCandidatesByProductId,
+}: {
+  event: MarketRadarEventRow
+  candidatesByVariantKey: Map<string, MarketRadarPipelineCandidateLookup>
+  fallbackCandidatesByProductId: Map<string, MarketRadarPipelineCandidateLookup>
+}) {
+  const productId =
+    event.product_id
+
+  if (!productId) {
+    return null
+  }
+
+  if (event.supplier_variant_id) {
+    return (
+      candidatesByVariantKey.get(
+        getPipelineCandidateVariantKey(
+          productId,
+          event.supplier_variant_id
+        )
+      ) || null
+    )
+  }
+
+  return (
+    fallbackCandidatesByProductId.get(productId) ||
+    null
+  )
+}
+
 function getCount(
   count: number | null
 ) {
@@ -2216,8 +2249,11 @@ async function getMarketRadarDashboard(
           getRadarAdvisorEvent(
             event,
             productById.get(event.product_id) || null,
-            fallbackCandidatesByProductId.get(event.product_id) ||
-              null
+            getCandidateForMarketRadarEvent({
+              event,
+              candidatesByVariantKey,
+              fallbackCandidatesByProductId,
+            })
           )
         )
         .filter(Boolean) as RadarAdvisorAlert[]

@@ -1221,6 +1221,28 @@ function hasPriceOrMarginChangeSignal(
   )
 }
 
+function isExistingStockRiskSignal(
+  product: MarketRadarProductRow
+) {
+  const status =
+    getRadarStockValidationStatus(product)
+  const confirmedQuantity =
+    toNumber(product.inventory_quantity)
+
+  return Boolean(
+    isExistingRadarProduct(product) &&
+    (
+      status === "stock_needs_validation" ||
+      status === "out_of_stock" ||
+      (
+        status === "stock_confirmed" &&
+        confirmedQuantity !== null &&
+        confirmedQuantity <= 3
+      )
+    )
+  )
+}
+
 function isBlockedOrNeedsReviewSignal(
   product: MarketRadarProductRow
 ) {
@@ -1275,11 +1297,7 @@ function matchesRadarRankingFilter(
   }
 
   if (filter === "stock_needs_validation") {
-    return (
-      isExistingRadarProduct(product) &&
-      getRadarStockValidationStatus(product) ===
-      "stock_needs_validation"
-    )
+    return isExistingStockRiskSignal(product)
   }
 
   if (filter === "blocked_or_review") {
@@ -6174,11 +6192,7 @@ export function MarketRadarPanel({
 
         const stockNeedsValidation =
           products.filter(
-            product =>
-              matchesRadarRankingFilter(
-                product,
-                "stock_needs_validation"
-              )
+            isExistingStockRiskSignal
           ).length
 
         const blockedOrReview =
@@ -6464,7 +6478,7 @@ export function MarketRadarPanel({
       count:
         rankingCounts.stockNeedsValidation,
       note:
-        "Confirmar cantidad",
+        "Agotado, bajo o validar",
     },
     {
       id:
@@ -7075,9 +7089,9 @@ export function MarketRadarPanel({
           icon={CheckCircle2}
         />
         <MetricCard
-          title="Falta confirmar"
+          title="Riesgo de stock"
           value={rankingCounts.stockNeedsValidation}
-          detail="Disponible sin cantidad confiable"
+          detail="Agotado, bajo o sin cantidad confiable"
           icon={TriangleAlert}
         />
         <MetricCard
@@ -7127,7 +7141,7 @@ export function MarketRadarPanel({
                   {rankingCounts.reviewed} ya fueron revisados sin cambios nuevos.
                 </p>
                 <p>
-                  {rankingCounts.stockNeedsValidation} necesitan confirmar stock antes de decidir.
+                  {rankingCounts.stockNeedsValidation} tienen riesgo de stock y requieren validacion antes de vender.
                 </p>
               </div>
             </div>
@@ -7162,7 +7176,7 @@ export function MarketRadarPanel({
                     value:
                       "stock_needs_validation" as const,
                     label:
-                      "Falta confirmar stock",
+                      "Riesgo de stock",
                   },
                   {
                     value:

@@ -11191,6 +11191,26 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
+    /isExistingStockRiskSignal/
+  )
+  assert.match(
+    source,
+    /status === "stock_needs_validation"[\s\S]*status === "out_of_stock"[\s\S]*confirmedQuantity <= 3/
+  )
+  assert.match(
+    source,
+    /Agotado, bajo o validar/
+  )
+  assert.match(
+    source,
+    /Agotado, bajo o sin cantidad confiable/
+  )
+  assert.match(
+    source,
+    /riesgo de stock y requieren validacion antes de vender/
+  )
+  assert.match(
+    source,
     /Siguiente accion/
   )
   assert.match(
@@ -11268,6 +11288,33 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   assert.ok(
     referenceScenariosIndex < catalogCoverageIndex,
     "Coverage details must appear after reference scenarios"
+  )
+})
+
+test("market radar api: advisor alerts resuelven candidato por variante", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "app/api/admin/market-radar/route.ts"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /function getCandidateForMarketRadarEvent/
+  )
+  assert.match(
+    source,
+    /event\.supplier_variant_id[\s\S]*candidatesByVariantKey\.get[\s\S]*getPipelineCandidateVariantKey\([\s\S]*productId,[\s\S]*event\.supplier_variant_id/
+  )
+  assert.match(
+    source,
+    /event\.supplier_variant_id[\s\S]*\|\| null[\s\S]*fallbackCandidatesByProductId\.get\(productId\)/
+  )
+  assert.match(
+    source,
+    /getRadarAdvisorEvent\([\s\S]*getCandidateForMarketRadarEvent\({[\s\S]*event,[\s\S]*candidatesByVariantKey,[\s\S]*fallbackCandidatesByProductId/
   )
 })
 
