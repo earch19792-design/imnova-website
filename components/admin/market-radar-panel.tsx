@@ -909,6 +909,27 @@ function getProductInventoryMessage(
   return "Cantidad no disponible."
 }
 
+function getStockConfirmationInitialQuantity(
+  product: MarketRadarProductRow
+) {
+  const variantQuantity =
+    toNumber(product.inventory_quantity)
+
+  if (variantQuantity !== null) {
+    return String(variantQuantity)
+  }
+
+  if (
+    product.available === false ||
+    product.inventory_status === "out_of_stock" ||
+    product.stock_validation_status === "out_of_stock"
+  ) {
+    return "0"
+  }
+
+  return ""
+}
+
 function formatDate(
   value?: string | null
 ) {
@@ -7057,6 +7078,10 @@ export function MarketRadarPanel({
                   const stableSku =
                     getStableSupplierSku(product) ||
                     "Sin SKU"
+                  const productKey =
+                    getProductEvaluationKey(
+                      product
+                    )
 
                   return (
                     <button
@@ -7064,10 +7089,20 @@ export function MarketRadarPanel({
                       type="button"
                       onClick={() => {
                         setFocusedRadarProductKey(
-                          getProductEvaluationKey(
-                            product
-                          )
+                          productKey
                         )
+                        setStockConfirmationForms(current => ({
+                          ...current,
+                          [productKey]: {
+                            quantity:
+                              current[productKey]?.quantity ||
+                              getStockConfirmationInitialQuantity(
+                                product
+                              ),
+                            note:
+                              current[productKey]?.note || "",
+                          },
+                        }))
                         setAdvisorAlertReviewMessage(
                           `Producto enfocado desde Centro de Venta: ${stableSku}`
                         )
