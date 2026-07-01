@@ -665,6 +665,19 @@ const ebayLunaPortexCatalogCoverageAuditFixture =
     )
   )
 
+const ebayMarketRadarSellerCommandCenterMvpFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-market-radar-seller-command-center-mvp-v1.json"
+  )
+
+const ebayMarketRadarSellerCommandCenterMvpFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayMarketRadarSellerCommandCenterMvpFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayListingImageGenerationDryRunRunnerFixtureSetPath =
   path.resolve(
     "tools/fixtures/ebay-listing-image-generation-dry-run-runner-fixture-set-v1.json"
@@ -6316,6 +6329,213 @@ test("luna portex catalog coverage audit fixture: no contiene URLs ni credencial
   }
 })
 
+test("market radar seller command center fixture: existe y cumple contrato MVP V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayMarketRadarSellerCommandCenterMvpFixturePath
+    )
+  )
+  assert.equal(
+    ebayMarketRadarSellerCommandCenterMvpFixture.commandCenterVersion,
+    "EBAY_MARKET_RADAR_SELLER_COMMAND_CENTER_MVP_V1"
+  )
+  assert.equal(
+    ebayMarketRadarSellerCommandCenterMvpFixture.commandCenterStatus,
+    "SELLER_COMMAND_CENTER_READ_ONLY_MVP"
+  )
+  assert.equal(
+    ebayMarketRadarSellerCommandCenterMvpFixture.coverageStatus,
+    "CATALOG_COVERAGE_PARTIAL"
+  )
+  assert.equal(
+    ebayMarketRadarSellerCommandCenterMvpFixture.coverageLabel,
+    "Catalog coverage: Partial — synced configured collections only"
+  )
+  assert.equal(
+    ebayMarketRadarSellerCommandCenterMvpFixture.rankingLabel,
+    "Top 50 within synced Luna Portex scope"
+  )
+  assert.equal(
+    ebayMarketRadarSellerCommandCenterMvpFixture.operatingRule,
+    "Partial coverage for discovery, mandatory monitoring for linked products"
+  )
+})
+
+test("market radar seller command center fixture: queues cards y semaforo profesional", () => {
+  const primaryQueueIds =
+    ebayMarketRadarSellerCommandCenterMvpFixture.primaryQueues.map(
+      queue => queue.queueId
+    )
+  const topCardIds =
+    ebayMarketRadarSellerCommandCenterMvpFixture.topCards.map(
+      card => card.cardId
+    )
+  const trafficLightColors =
+    ebayMarketRadarSellerCommandCenterMvpFixture.trafficLightLegend.map(
+      item => item.color
+    )
+
+  for (const expectedQueue of [
+    "protect_existing_reviewed_or_listed_products",
+    "find_new_opportunities_within_synced_scope",
+    "stock_risks",
+    "margin_changes",
+    "blocked_or_needs_recheck",
+  ]) {
+    assert.ok(
+      primaryQueueIds.includes(expectedQueue),
+      `primaryQueues must include: ${expectedQueue}`
+    )
+  }
+
+  for (const expectedCard of [
+    "coverage",
+    "protect_existing",
+    "new_opportunities",
+    "stock_risk",
+    "next_best_action",
+  ]) {
+    assert.ok(
+      topCardIds.includes(expectedCard),
+      `topCards must include: ${expectedCard}`
+    )
+  }
+
+  for (const expectedColor of [
+    "green",
+    "yellow",
+    "red",
+    "blue",
+    "purple",
+  ]) {
+    assert.ok(
+      trafficLightColors.includes(expectedColor),
+      `trafficLightLegend must include: ${expectedColor}`
+    )
+  }
+})
+
+test("market radar seller command center fixture: sample products cubren escenarios clave", () => {
+  const sampleProducts =
+    ebayMarketRadarSellerCommandCenterMvpFixture.sampleProducts
+  const eventTypes =
+    sampleProducts.map(product => product.eventType)
+
+  assert.equal(
+    sampleProducts.length,
+    5
+  )
+
+  for (const expectedEventType of [
+    "low_stock",
+    "linked_product_not_covered",
+    "back_in_stock",
+    "margin_improved",
+    "new_opportunity",
+  ]) {
+    assert.ok(
+      eventTypes.includes(expectedEventType),
+      `sampleProducts must include eventType: ${expectedEventType}`
+    )
+  }
+
+  for (const product of sampleProducts) {
+    assert.equal(
+      product.readOnly,
+      true
+    )
+    assert.ok(
+      product.nextBestAction,
+      `${product.productId} must include nextBestAction`
+    )
+  }
+})
+
+test("market radar seller command center fixture: next best action y safety siguen read-only", () => {
+  const nextBestActionModel =
+    ebayMarketRadarSellerCommandCenterMvpFixture.nextBestActionModel
+  const safetyFlags =
+    ebayMarketRadarSellerCommandCenterMvpFixture.safetyFlags
+
+  assert.equal(
+    nextBestActionModel.automationAllowed,
+    false
+  )
+  assert.equal(
+    nextBestActionModel.humanApprovalRequired,
+    true
+  )
+
+  for (const [
+    flagName,
+    expectedValue,
+  ] of [
+    [
+      "readOnly",
+      true,
+    ],
+    [
+      "automationAllowed",
+      false,
+    ],
+    [
+      "lunaPortexApiUsed",
+      false,
+    ],
+    [
+      "ebayApiUsed",
+      false,
+    ],
+    [
+      "openAiApiUsed",
+      false,
+    ],
+    [
+      "supabaseUsed",
+      false,
+    ],
+    [
+      "sqlUsed",
+      false,
+    ],
+    [
+      "publishedToEbay",
+      false,
+    ],
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      expectedValue,
+      `${flagName} must be ${expectedValue}`
+    )
+  }
+})
+
+test("market radar seller command center fixture: no contiene URLs secretos ni datos reales", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayMarketRadarSellerCommandCenterMvpFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /token/i,
+    /secret/i,
+    /supplier private data/i,
+    /customer data/i,
+    /REAL-/i,
+    /supplierUrl/i,
+    /productUrl/i,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("image generation dry run runner fixture set: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -9417,6 +9637,45 @@ test("product selection visibility: UI muestra bloque read-only y empty state se
   )
 })
 
+test("pipeline reactivation visibility: UI muestra ruta de desbloqueo operativa", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/ebay-winner-pipeline-panel.tsx"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /Ruta de reactivacion del producto bloqueado/
+  )
+  assert.match(
+    source,
+    /Producto bloqueado reactivable/
+  )
+  assert.match(
+    source,
+    /Condiciones para desbloquear/
+  )
+  assert.match(
+    source,
+    /puede sacar este producto de bloqueado y continuar hacia paquete, listing, draft y publicacion/
+  )
+  assert.match(
+    source,
+    /getPipelineSignalLabel/
+  )
+  assert.match(
+    source,
+    /getRecoverySignalTypeLabel/
+  )
+  assert.match(
+    source,
+    /blocked_reactivation_review/
+  )
+})
+
 test("product selection visibility: UI no agrega acciones reales nuevas", () => {
   const diffSource =
     fs.readFileSync(
@@ -10120,6 +10379,14 @@ test("producto válido se evalúa completo y genera WhatsApp dryRun", () => {
   assert.equal(result.whatsappDryRunPayload.dryRun, true)
   assert.equal(result.whatsappDryRunPayload.enableRealSend, false)
   assert.equal(result.whatsappDryRunPayload.interactive.action.buttons.length, 4)
+  assert.equal(
+    result.whatsappDryRunPayload.interactive.action.buttons[0].reply.title,
+    "Preparar draft"
+  )
+  assert.notEqual(
+    result.whatsappDryRunPayload.interactive.action.buttons[0].reply.title,
+    "Crear borrador"
+  )
 })
 
 test("winner pipeline normaliza stock confirmado desde inventory_context", () => {
@@ -10306,7 +10573,7 @@ test("radar advisor: VALIDATED + out_of_stock sube prioridad por producto avanza
   )
 })
 
-test("radar advisor: restocked + BLOCKED -> resurface_for_reanalysis", () => {
+test("radar advisor: restocked + BLOCKED -> reanalizar candidato", () => {
   const alert =
     getRadarAdvisorEvent(
       {
@@ -10335,7 +10602,14 @@ test("radar advisor: restocked + BLOCKED -> resurface_for_reanalysis", () => {
   assert.equal(alert.severity, "medium")
   assert.equal(alert.seller_action_label, "Reanalizar candidato")
   assert.equal(alert.seller_priority, "Alta")
-  assert.equal(alert.seller_reason, "Producto volvio a stock")
+  assert.equal(
+    alert.seller_reason,
+    "Producto bloqueado con condicion comercial nueva"
+  )
+  assert.match(
+    alert.seller_next_step,
+    /puede salir de bloqueado/
+  )
 })
 
 test("radar advisor: price_down -> reprocess_with_updated_cost", () => {
@@ -10624,7 +10898,7 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
 
   assert.match(
     source,
-    /Buscar SKU en Radar/
+    /Buscar en Radar/
   )
   assert.match(
     source,
@@ -10676,7 +10950,47 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Solo lectura · No ejecuta acciones reales/
+    /Advisor del Vendedor/
+  )
+  assert.match(
+    source,
+    /Oportunidades encontradas/
+  )
+  assert.match(
+    source,
+    /Productos nuevos sin evaluacion previa/
+  )
+  assert.match(
+    source,
+    /isSalesDiscoveryOpportunity/
+  )
+  assert.match(
+    source,
+    /salesOpportunityScanCounts/
+  )
+  assert.match(
+    source,
+    /getSalesOpportunitySignalLabel/
+  )
+  assert.match(
+    source,
+    /getSalesOpportunitySignalClassName/
+  )
+  assert.match(
+    source,
+    /Este escaner evita repetir productos ya evaluados/
+  )
+  assert.match(
+    source,
+    /oportunidades conocidas con cambio de stock, precio o margen pasan al Centro de Venta eBay/
+  )
+  assert.match(
+    source,
+    /Siguiente accion/
+  )
+  assert.match(
+    source,
+    /getAdvisorSeverityLabel/
   )
   assert.doesNotMatch(
     source,
@@ -10688,15 +11002,31 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Cola Advisor/
+    /Prioridad de venta/
   )
   assert.match(
     source,
-    /Resumen vendedor/
+    /advisorFilterCounts/
   )
   assert.match(
     source,
-    /Cancelacion[\s\S]*Stock[\s\S]*Margen[\s\S]*Riesgo eBay[\s\S]*Oportunidad/
+    /salesOpportunityAlerts/
+  )
+  assert.match(
+    source,
+    /formatCountLabel\([\s\S]*salesOpportunityAlerts\.length[\s\S]*"oportunidad encontrada"[\s\S]*"oportunidades encontradas"/
+  )
+  assert.match(
+    source,
+    /formatCountLabel\([\s\S]*advisorFilterCounts\.high \|\| 0[\s\S]*"oportunidad alta"[\s\S]*"oportunidades altas"/
+  )
+  assert.match(
+    source,
+    /{option\.label}{" "}[\s\S]*{advisorFilterCounts\[option\.value\] \|\| 0}/
+  )
+  assert.doesNotMatch(
+    source,
+    /Filtro activo/
   )
   assert.match(
     source,
@@ -10720,6 +11050,10 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
+    /radarAdvisorReviewFilterOptions[\s\S]*Todas[\s\S]*Urgente[\s\S]*Alta/
+  )
+  assert.doesNotMatch(
+    source,
     /radarAdvisorReviewFilterOptions[\s\S]*Stock[\s\S]*Margen[\s\S]*Riesgo/
   )
   assert.match(
@@ -10728,15 +11062,15 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
   )
   assert.match(
     source,
-    /Productos filtrados[\s\S]*getRadarAdvisorFilterResultTitle/
+    /Mostrando {filteredAdvisorAlerts\.length} de {salesOpportunityAlerts\.length}[\s\S]*getRadarAdvisorFilterResultTitle/
   )
   assert.match(
     source,
-    /{filteredAdvisorAlerts\.length}\/{advisorAlerts\.length}/
+    /Sin oportunidades para este filtro/
   )
   assert.match(
     source,
-    /Sin alertas para este filtro/
+    /Sin oportunidades encontradas por ahora/
   )
 })
 
@@ -10755,79 +11089,344 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Catalog Coverage/
+    /ebay-market-radar-seller-command-center-mvp-v1\.json/
   )
   assert.match(
     source,
-    /Catalog coverage: Partial — synced configured collections only/
+    /Centro de Venta eBay/
   )
   assert.match(
     source,
-    /Synced Scope Operating Model/
+    /Primero protege productos revisados o listados/
   )
   assert.match(
     source,
-    /Top 50 within synced Luna Portex scope/
+    /Despues reevalua cambios de stock, precio o margen/
   )
   assert.match(
     source,
-    /Do not claim full Luna Portex catalog scan yet/
+    /Recomendaciones de solo lectura/
   )
   assert.match(
     source,
-    /Configured collections only/
+    /Sin acciones automaticas/
   )
   assert.match(
     source,
-    /Coverage review required/
+    /Menu de trabajo/
   )
   assert.match(
     source,
-    /Discovery vs Linked Product Monitoring/
+    /openSellerCommandQueue/
   )
   assert.match(
     source,
-    /Discovery coverage: Partial — synced configured collections only/
+    /Productos en esta cola/
   )
   assert.match(
     source,
-    /Partial coverage for discovery/
+    /activeSellerCommandProducts/
   )
   assert.match(
     source,
-    /Mandatory monitoring for linked products/
+    /getRadarRankingFilterTitle/
   )
   assert.match(
     source,
-    /Protect existing reviewed\/listed products/
+    /Ver lista completa/
   )
   assert.match(
     source,
-    /Find new opportunities within synced scope/
+    /setFocusedRadarProductKey\([\s\S]*getProductEvaluationKey/
   )
   assert.match(
     source,
-    /Protect existing products first/
+    /Producto seleccionado desde Centro de Venta:/
   )
   assert.match(
     source,
-    /Linked product not covered by current sync scope/
+    /Proteger existentes/
   )
   assert.match(
     source,
-    /Stock and price changes may be missed/
+    /Cambios precio\/margen/
   )
   assert.match(
     source,
-    /Manual Luna Portex check required/
+    /Todo monitoreado/
   )
   assert.match(
     source,
-    /Priority 1: Published\/listed products with stock or price risk/
+    /Productos evaluados o vinculados/
   )
   assert.match(
     source,
-    /Priority 5: New opportunities from partial catalog/
+    /price_margin_changes/
+  )
+  assert.match(
+    source,
+    /blocked_or_review/
+  )
+  assert.match(
+    source,
+    /Resultados actuales del Radar/
+  )
+  assert.match(
+    source,
+    /Escenarios de referencia/
+  )
+  assert.match(
+    source,
+    /Casos de decision del vendedor/
+  )
+  assert.match(
+    source,
+    /getSellerScenarioToneClassName/
+  )
+  assert.match(
+    source,
+    /sellerScenarioEventLabels/
+  )
+  assert.match(
+    source,
+    /sellerScenarioPipelineLabels/
+  )
+  assert.match(
+    source,
+    /sellerScenarioActionLabels/
+  )
+  assert.match(
+    source,
+    /Producto vinculado con riesgo de stock\. Revisarlo antes de buscar oportunidades nuevas/
+  )
+  assert.match(
+    source,
+    /Cobertura del catalogo/
+  )
+  assert.match(
+    source,
+    /Cobertura parcial: solo colecciones sincronizadas/
+  )
+  assert.match(
+    source,
+    /Detalle de cobertura/
+  )
+  assert.match(
+    source,
+    /Top 50 dentro del alcance sincronizado/
+  )
+  assert.match(
+    source,
+    /No afirmar escaneo completo de Luna Portex todavia/
+  )
+  assert.match(
+    source,
+    /Solo colecciones configuradas/
+  )
+  assert.match(
+    source,
+    /Falta revisar cobertura/
+  )
+  assert.match(
+    source,
+    /Alcance parcial confirmado/
+  )
+  assert.match(
+    source,
+    /No vender como catalogo completo/
+  )
+  assert.match(
+    source,
+    /Descubrimiento parcial: solo colecciones sincronizadas/
+  )
+  assert.match(
+    source,
+    /Monitoreo obligatorio para productos vinculados/
+  )
+  assert.match(
+    source,
+    /Primero proteger productos existentes/
+  )
+  assert.match(
+    source,
+    /Producto vinculado fuera del alcance sincronizado/
+  )
+  assert.match(
+    source,
+    /Revision manual en Luna Portex requerida/
+  )
+  assert.match(
+    source,
+    /Prioridad 1: listados con riesgo de stock o precio/
+  )
+  assert.match(
+    source,
+    /Prioridad 5: oportunidades nuevas del alcance parcial/
+  )
+  assert.match(
+    source,
+    /Proteger revisados o listados/
+  )
+  assert.match(
+    source,
+    /Revisar cambios de precio o margen/
+  )
+  assert.match(
+    source,
+    /Riesgo de stock/
+  )
+  assert.match(
+    source,
+    /isExistingStockRiskSignal/
+  )
+  assert.match(
+    source,
+    /status === "stock_needs_validation"[\s\S]*status === "out_of_stock"[\s\S]*confirmedQuantity <= 3/
+  )
+  assert.match(
+    source,
+    /Agotado, bajo o validar/
+  )
+  assert.match(
+    source,
+    /Agotado, bajo o sin cantidad confiable/
+  )
+  assert.match(
+    source,
+    /riesgo de stock y requieren validacion antes de vender/
+  )
+  assert.match(
+    source,
+    /Siguiente accion/
+  )
+  assert.match(
+    source,
+    /Cambios de margen/
+  )
+  assert.match(
+    source,
+    /Bloqueados o por revisar/
+  )
+  assert.match(
+    source,
+    /Verde: revisar para listar/
+  )
+  assert.match(
+    source,
+    /Amarillo: potencial con validacion pendiente/
+  )
+  assert.match(
+    source,
+    /Rojo: no listar/
+  )
+  assert.match(
+    source,
+    /Azul: revisado, monitorear/
+  )
+  assert.match(
+    source,
+    /Morado: evento nuevo, reanalizar/
+  )
+  assert.match(
+    source,
+    /Ejemplo vinculado con riesgo de stock/
+  )
+  assert.match(
+    source,
+    /Ejemplo vinculado fuera del alcance sincronizado/
+  )
+  assert.match(
+    source,
+    /Ejemplo bloqueado que volvio a stock/
+  )
+  assert.match(
+    source,
+    /Ejemplo revisado con mejor margen/
+  )
+  assert.match(
+    source,
+    /Ejemplo de oportunidad sincronizada/
+  )
+
+  const currentRadarResultsIndex =
+    source.indexOf("Resultados actuales del Radar")
+  const referenceScenariosIndex =
+    source.indexOf("Escenarios de referencia")
+  const catalogCoverageIndex =
+    source.indexOf("Cobertura del catalogo")
+
+  assert.ok(
+    currentRadarResultsIndex >= 0,
+    "Resultados actuales del Radar heading must exist"
+  )
+  assert.ok(
+    referenceScenariosIndex >= 0,
+    "Escenarios de referencia section must exist"
+  )
+  assert.ok(
+    catalogCoverageIndex >= 0,
+    "Cobertura del catalogo section must exist"
+  )
+  assert.ok(
+    currentRadarResultsIndex < referenceScenariosIndex,
+    "Resultados actuales must appear before reference scenarios"
+  )
+  assert.ok(
+    referenceScenariosIndex < catalogCoverageIndex,
+    "Coverage details must appear after reference scenarios"
+  )
+
+  const scenarioSectionStart =
+    source.indexOf(
+      "<section className=\"rounded-lg border border-emerald-300/15",
+      currentRadarResultsIndex
+    )
+  const scenarioSectionEnd =
+    source.indexOf("</section>", scenarioSectionStart)
+  const scenarioBlock =
+    source.slice(
+      scenarioSectionStart,
+      scenarioSectionEnd
+    )
+
+  assert.doesNotMatch(
+    scenarioBlock,
+    /Read-only Scenario Examples/
+  )
+  assert.doesNotMatch(
+    scenarioBlock,
+    /Pipeline state:/
+  )
+  assert.doesNotMatch(
+    scenarioBlock,
+    /product\.reason/
+  )
+})
+
+test("market radar api: advisor alerts resuelven candidato por variante", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "app/api/admin/market-radar/route.ts"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /function getCandidateForMarketRadarEvent/
+  )
+  assert.match(
+    source,
+    /event\.supplier_variant_id[\s\S]*candidatesByVariantKey\.get[\s\S]*getPipelineCandidateVariantKey\([\s\S]*productId,[\s\S]*event\.supplier_variant_id/
+  )
+  assert.match(
+    source,
+    /event\.supplier_variant_id[\s\S]*\|\| null[\s\S]*fallbackCandidatesByProductId\.get\(productId\)/
+  )
+  assert.match(
+    source,
+    /getRadarAdvisorEvent\([\s\S]*getCandidateForMarketRadarEvent\({[\s\S]*event,[\s\S]*candidatesByVariantKey,[\s\S]*fallbackCandidatesByProductId/
   )
 })
 
@@ -10844,9 +11443,12 @@ test("market radar panel: catalog coverage block no agrega llamadas ni mutacione
   const copyEnd =
     source.indexOf("function getAbortErrorMessage", copyStart)
   const sectionStart =
-    source.indexOf("Catalog Coverage")
+    source.indexOf(
+      "<section className=\"rounded-lg border border-amber-300/20",
+      copyEnd
+    )
   const sectionEnd =
-    source.indexOf("<MetricCard", sectionStart)
+    source.indexOf("</section>", sectionStart)
 
   assert.ok(
     copyStart >= 0,
@@ -10858,23 +11460,25 @@ test("market radar panel: catalog coverage block no agrega llamadas ni mutacione
   )
   assert.ok(
     sectionStart >= 0,
-    "Catalog Coverage section must exist"
+    "Catalog Coverage JSX section must exist"
   )
   assert.ok(
     sectionEnd > sectionStart,
-    "Catalog Coverage section must end before MetricCard grid"
+    "Catalog Coverage JSX section must close"
   )
 
   const coverageBlock =
     `${source.slice(copyStart, copyEnd)}\n${source.slice(
       sectionStart,
-      sectionEnd
+      sectionEnd + "</section>".length
     )}`
 
   for (const forbiddenPattern of [
     /fetch\(/,
     /createClient/,
     /process\.env/,
+    /http:\/\//,
+    /https:\/\//,
     /\.insert\(/,
     /\.update\(/,
     /\.delete\(/,
@@ -10883,6 +11487,78 @@ test("market radar panel: catalog coverage block no agrega llamadas ni mutacione
   ]) {
     assert.doesNotMatch(
       coverageBlock,
+      forbiddenPattern
+    )
+  }
+
+  assert.doesNotMatch(
+    coverageBlock,
+    /catalogCoverageAudit\.coverageStatus/
+  )
+  assert.doesNotMatch(
+    coverageBlock,
+    /catalogCoverageAudit\.coverageDecision/
+  )
+})
+
+test("market radar panel: seller command menu solo filtra UI local", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/market-radar-panel.tsx"
+      ),
+      "utf8"
+    )
+  const menuStart =
+    source.indexOf("{sellerCommandCenterCopy.commandMenu}")
+  const menuEnd =
+    source.indexOf(
+      "<section className=\"rounded-lg border border-white/10 bg-white/[0.03]",
+      menuStart
+    )
+
+  assert.ok(
+    menuStart >= 0,
+    "Seller command menu JSX must exist"
+  )
+  assert.ok(
+    menuEnd > menuStart,
+    "Seller command menu block must end before radar results"
+  )
+
+  const commandMenuBlock =
+    source.slice(
+      menuStart,
+      menuEnd
+    )
+
+  assert.match(
+    source,
+    /setRankingFilter\(filter\)/
+  )
+  assert.match(
+    commandMenuBlock,
+    /openSellerCommandQueue/
+  )
+  assert.match(
+    source,
+    /searchResultsRef\.current\?\.scrollIntoView/
+  )
+
+  for (const forbiddenPattern of [
+    /fetch\(/,
+    /createClient/,
+    /process\.env/,
+    /http:\/\//,
+    /https:\/\//,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+  ]) {
+    assert.doesNotMatch(
+      commandMenuBlock,
       forbiddenPattern
     )
   }
@@ -12757,7 +13433,7 @@ test("pipeline reanalysis: DRAFT_CREATED + price_down revisa draft sin degradar"
   )
 })
 
-test("pipeline reanalysis: BLOCKED + restocked resurface_blocked", () => {
+test("pipeline reanalysis: BLOCKED + restocked crea ruta de reactivacion", () => {
   const advisor =
     getPipelineReanalysisAdvisor({
       existingCandidate: {
@@ -12782,8 +13458,27 @@ test("pipeline reanalysis: BLOCKED + restocked resurface_blocked", () => {
       },
     })
 
-  assert.equal(advisor.action, "resurface_blocked")
+  assert.equal(advisor.action, "blocked_reactivation_review")
   assert.equal(advisor.priority, "high")
+  assert.equal(advisor.unlock_policy, "paused_until_blocker_changes")
+  assert.equal(advisor.recovery_signal_type, "stock")
+  assert.ok(
+    advisor.unlock_conditions.some(condition =>
+      /Stock confirmado/.test(condition)
+    )
+  )
+  assert.match(
+    advisor.reason,
+    /No se desbloquea automaticamente/
+  )
+  assert.match(
+    advisor.proposed_next_step,
+    /puede salir de BLOCKED/
+  )
+  assert.match(
+    advisor.success_path,
+    /listing package, draft y publicacion/
+  )
 })
 
 test("pipeline reanalysis: product_or_category_signal requiere validar inventario", () => {

@@ -206,6 +206,10 @@ type PipelineReanalysisAdvisor = {
   required_human_approval?: boolean | null
   priority?: string | null
   proposed_next_step?: string | null
+  unlock_policy?: string | null
+  unlock_conditions?: string[] | null
+  success_path?: string | null
+  recovery_signal_type?: string | null
 }
 
 type EbayValidation = {
@@ -1182,6 +1186,62 @@ function getStateClassName(
   }
 
   return "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100"
+}
+
+function isBlockedReactivationAdvisor(
+  advisor?: PipelineReanalysisAdvisor | null
+) {
+  return Boolean(
+    advisor &&
+    (
+      advisor.action ===
+        "blocked_reactivation_review" ||
+      (
+        advisor.previous_state === "BLOCKED" &&
+        advisor.unlock_conditions?.length
+      )
+    )
+  )
+}
+
+function getPipelineSignalLabel(
+  signal: string
+) {
+  const labels: Record<string, string> = {
+    restocked:
+      "Volvio a stock",
+    stock_increased:
+      "Subio stock",
+    quantity_changed:
+      "Cambio cantidad",
+    price_down:
+      "Bajo precio/costo",
+    discount_started:
+      "Empezo descuento",
+  }
+
+  return labels[signal] ||
+    signal
+      .replaceAll("_", " ")
+      .trim()
+}
+
+function getRecoverySignalTypeLabel(
+  signalType?: string | null
+) {
+  if (signalType === "stock_and_margin") {
+    return "Stock y margen cambiaron"
+  }
+
+  if (signalType === "stock") {
+    return "Stock cambio"
+  }
+
+  if (signalType === "margin") {
+    return "Precio o margen cambio"
+  }
+
+  return "Nueva senal comercial"
 }
 
 function getComplianceClassName(
@@ -4933,48 +4993,113 @@ function CandidateDetailDrawer({
             </DetailSection>
 
             {detail.pipelineReanalysisAdvisor ? (
-              <DetailSection title="Evidencia tecnica: revision operativa">
-                <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.07] p-4">
+              <DetailSection
+                title={
+                  isBlockedReactivationAdvisor(
+                    detail.pipelineReanalysisAdvisor
+                  )
+                    ? "Ruta de reactivacion del producto bloqueado"
+                    : "Evidencia tecnica: revision operativa"
+                }
+              >
+                <div
+                  className={`
+                    rounded-lg
+                    border
+                    p-4
+                    ${
+                      isBlockedReactivationAdvisor(
+                        detail.pipelineReanalysisAdvisor
+                      )
+                        ? "border-emerald-300/25 bg-emerald-300/[0.08]"
+                        : "border-amber-300/20 bg-amber-300/[0.07]"
+                    }
+                  `}
+                >
+                  {isBlockedReactivationAdvisor(
+                    detail.pipelineReanalysisAdvisor
+                  ) ? (
+                    <div className="mb-4 rounded-lg border border-emerald-200/20 bg-black/20 p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-md border border-emerald-200/20 bg-emerald-300/[0.12] px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-emerald-50">
+                          Producto bloqueado reactivable
+                        </span>
+                        <span className="rounded-md border border-emerald-200/15 bg-black/20 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-emerald-50/70">
+                          {getRecoverySignalTypeLabel(
+                            detail.pipelineReanalysisAdvisor.recovery_signal_type
+                          )}
+                        </span>
+                      </div>
+                      <p className="mt-3 text-sm font-semibold leading-6 text-emerald-50/75">
+                        Si el reproceso confirma stock, margen, riesgo y estrategia comercial, el Pipeline puede sacar este producto de bloqueado y continuar hacia paquete, listing, draft y publicacion con aprobacion humana.
+                      </p>
+                    </div>
+                  ) : null}
+
                   <div className="grid gap-3 md:grid-cols-3">
                     <Field
-                      label="action"
+                      label="accion"
                       value={detail.pipelineReanalysisAdvisor.action}
                     />
                     <Field
-                      label="priority"
+                      label="prioridad"
                       value={detail.pipelineReanalysisAdvisor.priority}
                     />
                     <Field
-                      label="previous_state"
+                      label="estado anterior"
                       value={detail.pipelineReanalysisAdvisor.previous_state}
                     />
                     <Field
-                      label="inventory_scope"
+                      label="alcance inventario"
                       value={detail.pipelineReanalysisAdvisor.inventory_scope}
                     />
                     <Field
-                      label="inventory_confidence"
+                      label="confianza inventario"
                       value={detail.pipelineReanalysisAdvisor.inventory_confidence}
                     />
                     <Field
-                      label="human_approval"
+                      label="aprobacion humana"
                       value={detail.pipelineReanalysisAdvisor.required_human_approval}
                     />
                   </div>
-                  <p className="mt-4 text-sm leading-6 text-amber-50/75">
+
+                  {detail.pipelineReanalysisAdvisor.unlock_conditions?.length ? (
+                    <div className="mt-4 rounded-lg border border-emerald-200/15 bg-black/15 p-3">
+                      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-50/55">
+                        Condiciones para desbloquear
+                      </p>
+                      <ul className="mt-3 space-y-2 text-xs font-semibold leading-5 text-emerald-50/70">
+                        {detail.pipelineReanalysisAdvisor.unlock_conditions.map(condition => (
+                          <li
+                            key={condition}
+                            className="rounded-md border border-emerald-200/10 bg-black/15 px-3 py-2"
+                          >
+                            {condition}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  <p className="mt-4 text-sm leading-6 text-white/75">
                     {detail.pipelineReanalysisAdvisor.reason}
                   </p>
-                  <p className="mt-2 text-xs leading-5 text-amber-50/60">
+                  <p className="mt-2 text-xs leading-5 text-white/60">
                     {detail.pipelineReanalysisAdvisor.proposed_next_step}
                   </p>
+                  {detail.pipelineReanalysisAdvisor.success_path ? (
+                    <p className="mt-2 text-xs font-semibold leading-5 text-emerald-50/70">
+                      {detail.pipelineReanalysisAdvisor.success_path}
+                    </p>
+                  ) : null}
                   {detail.pipelineReanalysisAdvisor.new_signals?.length ? (
                     <div className="mt-3 flex flex-wrap gap-2">
                       {detail.pipelineReanalysisAdvisor.new_signals.map(signal => (
                         <span
                           key={signal}
-                          className="rounded-md border border-amber-200/15 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-50/60"
+                          className="rounded-md border border-white/10 bg-black/20 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white/65"
                         >
-                          {signal}
+                          {getPipelineSignalLabel(signal)}
                         </span>
                       ))}
                     </div>

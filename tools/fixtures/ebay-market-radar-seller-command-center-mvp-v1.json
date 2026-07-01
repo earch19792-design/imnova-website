@@ -1,0 +1,240 @@
+{
+  "commandCenterVersion": "EBAY_MARKET_RADAR_SELLER_COMMAND_CENTER_MVP_V1",
+  "radarContext": "ebay_market_radar",
+  "sourceProvider": "luna_portex",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "commandCenterStatus": "SELLER_COMMAND_CENTER_READ_ONLY_MVP",
+  "coverageStatus": "CATALOG_COVERAGE_PARTIAL",
+  "coverageLabel": "Catalog coverage: Partial — synced configured collections only",
+  "rankingLabel": "Top 50 within synced Luna Portex scope",
+  "operatingRule": "Partial coverage for discovery, mandatory monitoring for linked products",
+  "primaryQueues": [
+    {
+      "queueId": "protect_existing_reviewed_or_listed_products",
+      "label": "Protect Existing Reviewed/Listed Products",
+      "priority": 1,
+      "purpose": "Protect products already touched by the seller pipeline before searching for new opportunities.",
+      "readOnly": true
+    },
+    {
+      "queueId": "find_new_opportunities_within_synced_scope",
+      "label": "Find New Opportunities Within Synced Scope",
+      "priority": 2,
+      "purpose": "Discover new opportunities only inside the currently synced Luna Portex scope.",
+      "readOnly": true
+    },
+    {
+      "queueId": "stock_risks",
+      "label": "Stock Risks",
+      "priority": 3,
+      "purpose": "Review out-of-stock, low-stock, and back-in-stock signals.",
+      "readOnly": true
+    },
+    {
+      "queueId": "margin_changes",
+      "label": "Margin Changes",
+      "priority": 4,
+      "purpose": "Review products with cost, price, shipping, or fee changes.",
+      "readOnly": true
+    },
+    {
+      "queueId": "blocked_or_needs_recheck",
+      "label": "Blocked / Needs Recheck",
+      "priority": 5,
+      "purpose": "Review blocked products, missing data, compliance risk, or manual recheck cases.",
+      "readOnly": true
+    }
+  ],
+  "topCards": [
+    {
+      "cardId": "coverage",
+      "label": "Catalog Coverage",
+      "value": "Partial",
+      "status": "CATALOG_COVERAGE_PARTIAL",
+      "note": "Synced configured collections only"
+    },
+    {
+      "cardId": "protect_existing",
+      "label": "Protect Existing Products",
+      "value": "Priority 1",
+      "status": "REVIEW_FIRST",
+      "note": "Reviewed/listed products are monitored before new discovery."
+    },
+    {
+      "cardId": "new_opportunities",
+      "label": "New Opportunities",
+      "value": "Synced Scope",
+      "status": "DISCOVERY_PARTIAL",
+      "note": "Top products are ranked only within synced Luna Portex scope."
+    },
+    {
+      "cardId": "stock_risk",
+      "label": "Stock Risks",
+      "value": "Needs Review",
+      "status": "WATCH_QUEUE",
+      "note": "Out-of-stock, low-stock, and back-in-stock events require review."
+    },
+    {
+      "cardId": "next_best_action",
+      "label": "Next Best Action",
+      "value": "Human Review",
+      "status": "READ_ONLY_RECOMMENDATIONS",
+      "note": "Actions are recommendations only; no automatic listing changes."
+    }
+  ],
+  "sampleProducts": [
+    {
+      "productId": "SAMPLE-LUNA-001",
+      "displayName": "Sample linked product with stock risk",
+      "sourceProvider": "luna_portex",
+      "queue": "protect_existing_reviewed_or_listed_products",
+      "eventType": "low_stock",
+      "trafficLight": "purple",
+      "opportunityScoreStatus": "REANALYZE_REQUIRED",
+      "stockStatus": "LOW_STOCK_RISK",
+      "marginStatus": "MARGIN_NOT_RECHECKED",
+      "imageReadiness": "SOURCE_REVIEW_NOT_APPROVED",
+      "complianceRisk": "REVIEW_REQUIRED",
+      "pipelineState": "listing_package_created",
+      "coverageState": "LINKED_PRODUCT_COVERED_BY_CURRENT_SYNC_SCOPE",
+      "nextBestAction": "RECHECK_STOCK_AND_MARGIN",
+      "reason": "Linked product has stock risk and should be reviewed before new discovery.",
+      "readOnly": true
+    },
+    {
+      "productId": "SAMPLE-LUNA-002",
+      "displayName": "Sample linked product not covered by current sync scope",
+      "sourceProvider": "luna_portex",
+      "queue": "protect_existing_reviewed_or_listed_products",
+      "eventType": "linked_product_not_covered",
+      "trafficLight": "red",
+      "opportunityScoreStatus": "MANUAL_REVIEW_REQUIRED",
+      "stockStatus": "UNKNOWN_OUTSIDE_SYNC_SCOPE",
+      "marginStatus": "MARGIN_UNKNOWN",
+      "imageReadiness": "SOURCE_REVIEW_NOT_APPROVED",
+      "complianceRisk": "REVIEW_REQUIRED",
+      "pipelineState": "published_on_ebay",
+      "coverageState": "LINKED_PRODUCT_NOT_COVERED_BY_CURRENT_SYNC_SCOPE",
+      "nextBestAction": "MANUAL_LUNA_PORTEX_CHECK_REQUIRED",
+      "reason": "Linked product is not covered by the current sync scope, so stock and price changes may be missed.",
+      "readOnly": true
+    },
+    {
+      "productId": "SAMPLE-LUNA-003",
+      "displayName": "Sample blocked product back in stock",
+      "sourceProvider": "luna_portex",
+      "queue": "stock_risks",
+      "eventType": "back_in_stock",
+      "trafficLight": "purple",
+      "opportunityScoreStatus": "REANALYZE_REQUIRED",
+      "stockStatus": "BACK_IN_STOCK",
+      "marginStatus": "MARGIN_NOT_RECHECKED",
+      "imageReadiness": "SOURCE_REVIEW_NOT_APPROVED",
+      "complianceRisk": "REVIEW_REQUIRED",
+      "pipelineState": "blocked_by_stock",
+      "coverageState": "LINKED_PRODUCT_COVERED_BY_CURRENT_SYNC_SCOPE",
+      "nextBestAction": "REACTIVATE_ANALYSIS",
+      "reason": "Product was blocked by stock and should be rechecked now that availability changed.",
+      "readOnly": true
+    },
+    {
+      "productId": "SAMPLE-LUNA-004",
+      "displayName": "Sample reviewed product with margin improvement",
+      "sourceProvider": "luna_portex",
+      "queue": "margin_changes",
+      "eventType": "margin_improved",
+      "trafficLight": "blue",
+      "opportunityScoreStatus": "RECHECK_REQUIRED",
+      "stockStatus": "IN_STOCK",
+      "marginStatus": "MARGIN_IMPROVED",
+      "imageReadiness": "SOURCE_REVIEW_NOT_APPROVED",
+      "complianceRisk": "LOW_RISK_PENDING_REVIEW",
+      "pipelineState": "candidate_created",
+      "coverageState": "LINKED_PRODUCT_COVERED_BY_CURRENT_SYNC_SCOPE",
+      "nextBestAction": "RECALCULATE_MARGIN",
+      "reason": "Reviewed product may now support margin and should be recalculated.",
+      "readOnly": true
+    },
+    {
+      "productId": "SAMPLE-LUNA-005",
+      "displayName": "Sample new opportunity within synced scope",
+      "sourceProvider": "luna_portex",
+      "queue": "find_new_opportunities_within_synced_scope",
+      "eventType": "new_opportunity",
+      "trafficLight": "green",
+      "opportunityScoreStatus": "PROMISING_WITHIN_SYNCED_SCOPE",
+      "stockStatus": "IN_STOCK",
+      "marginStatus": "MARGIN_REVIEW_REQUIRED",
+      "imageReadiness": "SOURCE_EVIDENCE_REQUIRED",
+      "complianceRisk": "REVIEW_REQUIRED",
+      "pipelineState": "not_analyzed",
+      "coverageState": "SYNCED_SCOPE_PRODUCT",
+      "nextBestAction": "CREATE_LISTING_PACKAGE",
+      "reason": "New product looks promising inside the synced scope and should enter listing package review.",
+      "readOnly": true
+    }
+  ],
+  "nextBestActionModel": {
+    "automationAllowed": false,
+    "humanApprovalRequired": true,
+    "availableRecommendations": [
+      "RECHECK_STOCK_AND_MARGIN",
+      "MANUAL_LUNA_PORTEX_CHECK_REQUIRED",
+      "REACTIVATE_ANALYSIS",
+      "RECALCULATE_MARGIN",
+      "CREATE_LISTING_PACKAGE",
+      "REQUEST_SOURCE_IMAGE_EVIDENCE",
+      "RUN_SOLD_LISTINGS_BENCHMARK",
+      "REJECT_PRODUCT",
+      "MONITOR_ONLY"
+    ],
+    "rule": "Every radar product should end with a next best action recommendation, not an automatic action."
+  },
+  "trafficLightLegend": [
+    {
+      "color": "green",
+      "label": "Review for listing now",
+      "meaning": "Promising opportunity, but still requires human validation."
+    },
+    {
+      "color": "yellow",
+      "label": "Potential, missing validation",
+      "meaning": "Interesting product with missing data or unresolved gates."
+    },
+    {
+      "color": "red",
+      "label": "Do not list",
+      "meaning": "Blocked by risk, missing data, margin, stock, image, or compliance."
+    },
+    {
+      "color": "blue",
+      "label": "Reviewed, monitor",
+      "meaning": "Already reviewed; monitor for stock, price, margin, or status changes."
+    },
+    {
+      "color": "purple",
+      "label": "New event, reanalyze",
+      "meaning": "A new event requires seller review."
+    }
+  ],
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "readOnly": true,
+    "humanReviewRequired": true,
+    "automationAllowed": false,
+    "realSupplierDataIncluded": false,
+    "supplierPrivateDataIncluded": false,
+    "externalUrlsIncluded": false,
+    "apiCallsMade": false,
+    "supabaseUsed": false,
+    "sqlUsed": false,
+    "lunaPortexApiUsed": false,
+    "ebayApiUsed": false,
+    "openAiApiUsed": false,
+    "imageGenerated": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}
