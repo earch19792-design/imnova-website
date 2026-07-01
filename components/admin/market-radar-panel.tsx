@@ -123,9 +123,9 @@ const catalogCoverageAuditCopy = {
 const sellerCommandCenterCopy = {
   title: "Centro de Venta eBay",
   protectFirst:
-    "Primero protege productos revisados o listados",
+    "Primero protege listings activos con riesgo real",
   findWithinScope:
-    "Despues reevalua cambios de stock, precio o margen",
+    "Despues revisa stock, margen y nuevas oportunidades",
   readOnlyRecommendations:
     "Recomendaciones de solo lectura",
   noAutomaticListingActions:
@@ -146,13 +146,13 @@ const sellerCommandCenterCopy = {
     "Siguiente accion",
   ],
   queueLabels: [
-    "Proteger revisados o listados",
     "Listings en riesgo",
-    "Revisar cambios de precio o margen",
     "Riesgo de stock",
     "Out of Stock",
-    "Cambios de margen",
+    "Cambios precio/margen",
     "Bloqueados o por revisar",
+    "Revisados sin cambios",
+    "Todo monitoreado",
   ],
   sampleProductLabels: [
     "Ejemplo vinculado con riesgo de stock",
@@ -6393,7 +6393,10 @@ export function MarketRadarPanel({
         const reviewed =
           products.filter(
             product =>
-              !isRadarProductActionable(product)
+              matchesRadarRankingFilter(
+                product,
+                "reviewed"
+              )
           ).length
 
         return {
@@ -6650,18 +6653,6 @@ export function MarketRadarPanel({
   }> = [
     {
       id:
-        "protect-existing",
-      label:
-        "Proteger existentes",
-      filter:
-        "reviewed",
-      count:
-        rankingCounts.reviewed,
-      note:
-        "Sin nueva señal",
-    },
-    {
-      id:
         "listing-risk",
       label:
         "Listings en riesgo",
@@ -6719,6 +6710,18 @@ export function MarketRadarPanel({
         rankingCounts.blockedOrReview,
       note:
         "Nueva señal",
+    },
+    {
+      id:
+        "reviewed",
+      label:
+        "Revisados sin cambios",
+      filter:
+        "reviewed",
+      count:
+        rankingCounts.reviewed,
+      note:
+        "Monitorear",
     },
     {
       id:
@@ -7300,7 +7303,7 @@ export function MarketRadarPanel({
         </p>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           title="Productos Radar"
           value={summary?.totalProducts || 0}
@@ -7368,7 +7371,7 @@ export function MarketRadarPanel({
                 Ranking
               </p>
               <h3 className="mt-2 text-xl font-black text-white">
-                Oportunidades para revisar ahora
+                Lista operativa del vendedor
               </h3>
               <div className="mt-2 space-y-1 text-xs leading-5 text-white/45">
                 <p>
@@ -7393,27 +7396,15 @@ export function MarketRadarPanel({
                 {[
                   {
                     value:
-                      "all" as const,
+                      "listing_risk" as const,
                     label:
-                      "Todos",
-                  },
-                  {
-                    value:
-                      "existing" as const,
-                    label:
-                      "Monitoreados",
+                      "Listings en riesgo",
                   },
                   {
                     value:
                       "actionable" as const,
                     label:
                       "Revisar ahora",
-                  },
-                  {
-                    value:
-                      "listing_risk" as const,
-                    label:
-                      "Listings en riesgo",
                   },
                   {
                     value:
@@ -7450,6 +7441,18 @@ export function MarketRadarPanel({
                       "reviewed" as const,
                     label:
                       "Ya revisados",
+                  },
+                  {
+                    value:
+                      "existing" as const,
+                    label:
+                      "Monitoreados",
+                  },
+                  {
+                    value:
+                      "all" as const,
+                    label:
+                      "Todos",
                   },
                 ].map(option => (
                   <button

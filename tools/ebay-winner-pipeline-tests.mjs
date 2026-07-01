@@ -11403,11 +11403,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Primero protege productos revisados o listados/
+    /Primero protege listings activos con riesgo real/
   )
   assert.match(
     source,
-    /Despues reevalua cambios de stock, precio o margen/
+    /Despues revisa stock, margen y nuevas oportunidades/
   )
   assert.match(
     source,
@@ -11571,11 +11571,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Proteger revisados o listados/
+    /Primero protege listings activos con riesgo real/
   )
   assert.match(
     source,
-    /Revisar cambios de precio o margen/
+    /Despues revisa stock, margen y nuevas oportunidades/
   )
   assert.match(
     source,
@@ -11623,6 +11623,10 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
+    /const reviewed =[\s\S]*matchesRadarRankingFilter\([\s\S]*"reviewed"/
+  )
+  assert.match(
+    source,
     /Bajo o validar/
   )
   assert.match(
@@ -11651,11 +11655,19 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Cambios de margen/
+    /Cambios precio\/margen/
   )
   assert.match(
     source,
     /Bloqueados o por revisar/
+  )
+  assert.doesNotMatch(
+    source,
+    /Cambios de margen/
+  )
+  assert.match(
+    source,
+    /Lista operativa del vendedor/
   )
   assert.match(
     source,
