@@ -11447,7 +11447,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Producto seleccionado desde Centro de Venta:/
+    /Producto enfocado desde Centro de Venta:/
   )
   assert.match(
     source,
@@ -11868,6 +11868,62 @@ test("market radar panel: seller command menu solo filtra UI local", () => {
       forbiddenPattern
     )
   }
+})
+
+test("market radar panel: seleccionar producto del centro de venta no activa busqueda global", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/market-radar-panel.tsx"
+      ),
+      "utf8"
+    )
+  const selectedMessageIndex =
+    source.indexOf(
+      "Producto enfocado desde Centro de Venta"
+    )
+  const previousProductListIndex =
+    source.lastIndexOf(
+      "{activeSellerCommandProducts.map(product =>",
+      selectedMessageIndex
+    )
+  const nextProductListEnd =
+    source.indexOf(
+      "title={`Ver ${stableSku} en el ranking`}",
+      selectedMessageIndex
+    )
+
+  assert.ok(
+    previousProductListIndex >= 0,
+    "Seller command product list must exist"
+  )
+  assert.ok(
+    nextProductListEnd > selectedMessageIndex,
+    "Seller command product selection block must be found"
+  )
+
+  const selectionBlock =
+    source.slice(
+      previousProductListIndex,
+      nextProductListEnd
+    )
+
+  assert.match(
+    selectionBlock,
+    /setFocusedRadarProductKey/
+  )
+  assert.doesNotMatch(
+    selectionBlock,
+    /setActiveRadarSearch/
+  )
+  assert.doesNotMatch(
+    selectionBlock,
+    /setRadarSearch/
+  )
+  assert.doesNotMatch(
+    selectionBlock,
+    /setRankingFilter\("all"\)/
+  )
 })
 
 test("market radar dashboard: busqueda evita conteos globales exactos", () => {
