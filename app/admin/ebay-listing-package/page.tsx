@@ -14,21 +14,21 @@ import imageSourceReviewGate from "../../../tools/fixtures/ebay-luna-portex-imag
 import qaReview from "../../../tools/fixtures/ebay-first-listing-qa-review-v1.json"
 
 const safetyBadges = [
-  "Read-only preview",
-  "No eBay connection",
-  "No draft created",
-  "Do not publish yet",
-  "Human review required",
+  "Preview read-only",
+  "Sin conexion eBay",
+  "Sin draft creado",
+  "No publicar",
+  "Revision humana requerida",
 ]
 
 const executiveBlockers = [
-  "Terapeak validation missing",
-  "Sold listings benchmark missing",
-  "Authorized Luna Portex catalog image missing",
-  "White-background main image enhancement pending",
-  "Main image QA pending",
-  "Shipping/returns not confirmed",
-  "Price and margin not validated",
+  "Falta validar Terapeak",
+  "Falta benchmark de ventas comparables",
+  "Falta imagen autorizada de Luna Portex",
+  "Pendiente imagen principal con fondo blanco",
+  "Pendiente QA de imagen principal",
+  "Shipping y devoluciones sin confirmar",
+  "Precio y margen sin validar",
 ]
 
 const imageAssetManifestCopy = {
@@ -344,25 +344,25 @@ const imageQaReviewGateCopy = {
 const decisionCards = [
   {
     label:
-      "Do not create draft",
+      "No crear draft",
     detail:
-      "QA needs data before any eBay draft can be considered.",
+      "QA necesita datos antes de considerar cualquier draft de eBay.",
     tone:
       "border-rose-300/25 bg-rose-300/[0.06] text-rose-50",
   },
   {
     label:
-      "Do not publish",
+      "No publicar",
     detail:
-      "Terapeak, benchmark, shipping, images, and margin are incomplete.",
+      "Terapeak, benchmark, shipping, imagenes y margen siguen incompletos.",
     tone:
       "border-rose-300/25 bg-rose-300/[0.06] text-rose-50",
   },
   {
     label:
-      "Ready for internal preparation only",
+      "Solo preparacion interna",
     detail:
-      "Use this package to organize work, not to create live marketplace actions.",
+      "Usar este paquete para ordenar el trabajo, no para ejecutar acciones reales.",
     tone:
       "border-amber-300/25 bg-amber-300/[0.06] text-amber-50",
   },
@@ -371,7 +371,7 @@ const decisionCards = [
 const actionPlan = [
   {
     title:
-      "Product facts",
+      "Datos del producto",
     items: [
       "dimensions",
       "material",
@@ -380,7 +380,7 @@ const actionPlan = [
   },
   {
     title:
-      "Market validation",
+      "Validacion de mercado",
     items: [
       "Terapeak validation",
       "Sold listings benchmark",
@@ -388,7 +388,7 @@ const actionPlan = [
   },
   {
     title:
-      "Operations",
+      "Operacion",
     items: [
       "shipping policy",
       "return policy",
@@ -398,7 +398,7 @@ const actionPlan = [
   },
   {
     title:
-      "Assets",
+      "Imagenes",
     items: [
       "authorized Luna Portex catalog image",
       "white-background main image enhancement",
@@ -408,11 +408,148 @@ const actionPlan = [
   },
   {
     title:
-      "Approval",
+      "Aprobacion",
     items: [
       "human review before draft",
       "human approval before publish",
     ],
+  },
+]
+
+const sellerWorkflowOrder = [
+  {
+    step:
+      "1",
+    title:
+      "Confirmar producto fuente",
+    detail:
+      "Seleccionar el producto del catalogo Luna Portex y validar el snapshot antes de usarlo en el listing package.",
+  },
+  {
+    step:
+      "2",
+    title:
+      "Validar datos del listing",
+    detail:
+      "Confirmar titulo, marca, categoria, condicion, dimensiones, peso, contenido, cantidad, compatibilidad y claims.",
+  },
+  {
+    step:
+      "3",
+    title:
+      "Validar rentabilidad",
+    detail:
+      "Confirmar costo, fees, shipping, riesgo de devolucion, margen, Terapeak, ventas comparables, stock y politicas operativas.",
+  },
+  {
+    step:
+      "4",
+    title:
+      "Aprobar fuente e imagenes",
+    detail:
+      "Aprobar evidencia autorizada de imagen antes de enhancement, image QA, imagenes secundarias o eBay draft mapping.",
+  },
+  {
+    step:
+      "5",
+    title:
+      "Actualizar paquete y mapear draft",
+    detail:
+      "Actualizar el listing package y mapear un eBay draft solo despues de aprobar fuente, datos, rentabilidad, imagenes y revision humana.",
+  },
+]
+
+const sellerCommandMenu = [
+  {
+    href:
+      "#source-product",
+    label:
+      "Producto fuente",
+    detail:
+      "Empezar aqui. Confirmar que producto Luna Portex usaria este listing.",
+  },
+  {
+    href:
+      "#facts-gate",
+    label:
+      "Datos del listing",
+    detail:
+      "Validar los datos del producto que eBay y el comprador necesitan.",
+  },
+  {
+    href:
+      "#commercial-gate",
+    label:
+      "Rentabilidad",
+    detail:
+      "Revisar costo, fees, margen, shipping, devoluciones, stock y prueba de mercado.",
+  },
+  {
+    href:
+      "#image-plan",
+    label:
+      "Imagenes",
+    detail:
+      "Revisar evidencia de fuente, readiness de enhancement e image QA.",
+  },
+  {
+    href:
+      "#source-aware-refresh",
+    label:
+      "Refresh del paquete",
+    detail:
+      "Ver por que el listing package aun no puede actualizarse ni mapearse a eBay.",
+  },
+  {
+    href:
+      "#qa-details",
+    label:
+      "QA final",
+    detail:
+      "Revisar bloqueos pendientes antes de cualquier draft o decision de publicacion.",
+  },
+]
+
+const imageWorkflowOrder = [
+  {
+    step:
+      "1",
+    title:
+      "Capturar fuente",
+    detail:
+      "Registrar evidencia Luna Portex sin usar imagenes reales, URLs, uploads ni llamadas externas.",
+  },
+  {
+    step:
+      "2",
+    title:
+      "Revisar fuente",
+    detail:
+      "La revision humana debe aprobar el uso autorizado antes de cualquier enhancement o QA.",
+  },
+  {
+    step:
+      "3",
+    title:
+      "Brief de imagen principal",
+    detail:
+      "El brief puede describir requisitos, pero la ejecucion sigue bloqueada hasta aprobar la fuente.",
+  },
+  {
+    step:
+      "4",
+    title:
+      "QA de imagenes",
+    detail:
+      "QA sigue bloqueado hasta tener candidato final, paquete secundario, policy review y revision humana.",
+  },
+  {
+    step:
+      "5",
+    title:
+      "Mapeo de imagenes al draft",
+    detail:
+      "No mapear imagenes a un eBay draft hasta que image QA este aprobado.",
   },
 ]
 
@@ -499,22 +636,27 @@ function formatValue(value: unknown) {
 }
 
 function Section({
+  id,
   title,
   eyebrow,
   children,
 }: {
+  id?: string
   title: string
   eyebrow?: string
   children: ReactNode
 }) {
   return (
-    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
+    <section
+      id={id}
+      className="min-w-0 rounded-3xl border border-white/10 bg-white/[0.03] p-6"
+    >
       {eyebrow ? (
-        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-100/50">
+        <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/50 [overflow-wrap:anywhere]">
           {eyebrow}
         </p>
       ) : null}
-      <h2 className="text-lg font-black text-white">
+      <h2 className="break-words text-lg font-black text-white [overflow-wrap:anywhere]">
         {title}
       </h2>
       <div className="mt-5">
@@ -530,16 +672,16 @@ function FieldGrid({
   fields: Array<[string, unknown]>
 }) {
   return (
-    <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    <dl className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {fields.map(([label, value]) => (
         <div
           key={label}
-          className="rounded-2xl border border-white/10 bg-black/20 p-4"
+          className="min-w-0 rounded-2xl border border-white/10 bg-black/20 p-4"
         >
-          <dt className="text-xs uppercase tracking-[0.2em] text-white/40">
+          <dt className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-white/40 [overflow-wrap:anywhere]">
             {label}
           </dt>
-          <dd className="mt-2 break-words text-sm font-bold text-white">
+          <dd className="mt-2 break-words text-sm font-bold leading-6 text-white [overflow-wrap:anywhere]">
             {formatValue(value)}
           </dd>
         </div>
@@ -558,7 +700,7 @@ function ListBlock({
       {items.map((item) => (
         <li
           key={item}
-          className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3"
+          className="min-w-0 break-words rounded-2xl border border-white/10 bg-black/20 px-4 py-3 [overflow-wrap:anywhere]"
         >
           {item}
         </li>
@@ -582,30 +724,30 @@ export default function EbayListingPackagePage() {
       <div className="mx-auto flex max-w-7xl flex-col gap-8">
         <a
           href="/admin"
-          className="w-fit rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-100/70 transition hover:border-cyan-300/30 hover:text-cyan-100"
+          className="w-fit rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-cyan-100/70 transition hover:border-cyan-300/30 hover:text-cyan-100"
         >
-          Back to Admin
+          Volver a Admin
         </a>
 
         <section className="rounded-[28px] border border-cyan-300/15 bg-cyan-300/[0.04] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.3)] md:p-8">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.32em] text-cyan-100/60">
+              <p className="text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60">
                 Professional Listing MVP
               </p>
               <h1 className="mt-4 text-4xl font-black text-white md:text-5xl">
                 Listing Package QA
               </h1>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-white/60">
-                Seller View for the first listing package and QA review. Read-only preview. No eBay connection. No draft created. Do not publish yet. Human review required.
+                Vista vendedor del primer listing package y QA review. Preview read-only. Sin conexion eBay. No se creo draft. No publicar todavia. Requiere revision humana.
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex max-w-xl flex-wrap gap-2 lg:justify-end">
               {safetyBadges.map((badge) => (
                 <span
                   key={badge}
-                  className="rounded-full border border-white/10 bg-black/25 px-3 py-2 text-xs font-semibold text-white/70"
+                  className="break-words rounded-full border border-white/10 bg-black/25 px-3 py-2 text-xs font-semibold leading-5 text-white/70 [overflow-wrap:anywhere]"
                 >
                   {badge}
                 </span>
@@ -614,36 +756,56 @@ export default function EbayListingPackagePage() {
           </div>
         </section>
 
+        <Section title="Menu del vendedor" eyebrow="Vista vendedor">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {sellerCommandMenu.map((item) => (
+              <a
+                key={item.href}
+                href={item.href}
+                className="min-w-0 rounded-3xl border border-white/10 bg-black/20 p-5 transition hover:border-cyan-300/30 hover:bg-cyan-300/[0.055]"
+              >
+                <h3 className="break-words text-base font-black text-white [overflow-wrap:anywhere]">
+                  {item.label}
+                </h3>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  {item.detail}
+                </p>
+              </a>
+            ))}
+          </div>
+        </Section>
+
         <Section
-          title="Executive Status"
-          eyebrow="Seller View"
+          id="executive-status"
+          title="Estado ejecutivo"
+          eyebrow="Vista vendedor"
         >
           <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
             <div className="rounded-3xl border border-rose-300/25 bg-rose-300/[0.06] p-5">
               <div className="grid gap-3 sm:grid-cols-2">
                 {[
                   [
-                    "Status: Not ready",
-                    "Critical listing requirements are incomplete.",
+                    "Estado: no listo",
+                    "Faltan requisitos criticos del listing.",
                   ],
                   [
-                    "Main risk: Do not publish yet",
-                    "Publishing now would rely on unverified facts.",
+                    "Riesgo principal: no publicar",
+                    "Publicar ahora dependeria de datos sin validar.",
                   ],
                   [
-                    "Next step: Complete critical data before creating an eBay draft",
-                    "Resolve market, operations, image, and margin blockers.",
+                    "Siguiente paso: completar datos criticos",
+                    "Resolver bloqueos de mercado, operacion, imagen y margen antes de crear un draft.",
                   ],
                   [
-                    "Ready for: Internal preparation only",
-                    "Use this view to organize seller work safely.",
+                    "Uso permitido: preparacion interna",
+                    "Usar esta vista para ordenar el trabajo del vendedor con seguridad.",
                   ],
                 ].map(([title, detail]) => (
                   <div
                     key={title}
-                    className="rounded-2xl border border-white/10 bg-black/25 p-4"
+                    className="min-w-0 rounded-2xl border border-white/10 bg-black/25 p-4"
                   >
-                    <h3 className="text-sm font-black text-white">
+                    <h3 className="break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
                       {title}
                     </h3>
                     <p className="mt-2 text-sm leading-6 text-white/65">
@@ -656,13 +818,13 @@ export default function EbayListingPackagePage() {
 
             <div className="rounded-3xl border border-amber-300/20 bg-amber-300/[0.055] p-5">
               <h3 className="text-sm font-black text-white">
-                What Blocks Publishing
+                Bloqueos para publicar
               </h3>
               <ul className="mt-4 space-y-3 text-sm font-semibold text-amber-50/85">
                 {executiveBlockers.map((blocker) => (
                   <li
                     key={blocker}
-                    className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3"
+                    className="break-words rounded-2xl border border-white/10 bg-black/20 px-4 py-3 [overflow-wrap:anywhere]"
                   >
                     {blocker}
                   </li>
@@ -675,9 +837,9 @@ export default function EbayListingPackagePage() {
             {decisionCards.map((card) => (
               <article
                 key={card.label}
-                className={`rounded-3xl border p-5 ${card.tone}`}
+                className={`min-w-0 rounded-3xl border p-5 ${card.tone}`}
               >
-                <h3 className="text-lg font-black">
+                <h3 className="break-words text-lg font-black leading-7 [overflow-wrap:anywhere]">
                   {card.label}
                 </h3>
                 <p className="mt-3 text-sm leading-6 opacity-80">
@@ -688,39 +850,60 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section title="Listing Preview">
+        <Section title="Ruta de trabajo del vendedor" eyebrow="Vista vendedor">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            {sellerWorkflowOrder.map((item) => (
+              <article
+                key={item.step}
+                className="min-w-0 rounded-3xl border border-cyan-300/15 bg-cyan-300/[0.04] p-5"
+              >
+                <p className="text-[11px] font-black uppercase leading-5 tracking-[0.08em] text-cyan-100/60">
+                  Paso {item.step}
+                </p>
+                <h3 className="mt-3 break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+                  {item.title}
+                </h3>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  {item.detail}
+                </p>
+              </article>
+            ))}
+          </div>
+        </Section>
+
+        <Section title="Vista previa del listing">
           <div className="grid gap-5 xl:grid-cols-[minmax(220px,280px)_minmax(0,1fr)]">
             <div className="flex min-h-[240px] flex-col items-center justify-center rounded-3xl border border-dashed border-white/20 bg-white/[0.035] p-6 text-center xl:min-h-0">
-              <p className="text-lg font-black text-white">
-                Authorized Luna Portex catalog image required
+              <p className="break-words text-lg font-black leading-7 text-white [overflow-wrap:anywhere]">
+                Falta imagen autorizada de Luna Portex
               </p>
               <div className="mt-5 space-y-2 text-sm font-semibold text-white/65">
                 <p>
-                  White-background enhancement required
+                  Requiere fondo blanco
                 </p>
                 <p>
-                  No AI-generated product
+                  No generar producto con AI
                 </p>
                 <p>
-                  No product alteration
+                  No alterar el producto
                 </p>
                 <p>
-                  No badges or flags
+                  Sin badges ni banderas
                 </p>
                 <p>
-                  Source authorization required
+                  Requiere autorizacion de fuente
                 </p>
               </div>
             </div>
 
             <div className="min-w-0 rounded-3xl border border-white/10 bg-black/20 p-5">
-              <p className="text-xs uppercase tracking-[0.22em] text-white/40">
-                Seller listing preview
+              <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-white/40 [overflow-wrap:anywhere]">
+                Vista previa para vendedor
               </p>
 
               <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                <h2 className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">
-                  Title
+                <h2 className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-white/40 [overflow-wrap:anywhere]">
+                  Titulo
                 </h2>
                 <p className="mt-3 break-words text-lg font-bold leading-7 text-cyan-100">
                   {listingPackage.listingTitle}
@@ -780,12 +963,12 @@ export default function EbayListingPackagePage() {
                 ].map(([label, value]) => (
                   <div
                     key={label}
-                    className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"
+                    className="min-w-0 rounded-2xl border border-white/10 bg-white/[0.03] p-4"
                   >
-                    <p className="text-xs uppercase tracking-[0.18em] text-white/40">
+                    <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-white/40 [overflow-wrap:anywhere]">
                       {label}
                     </p>
-                    <p className="mt-2 text-sm font-bold text-white">
+                    <p className="mt-2 break-words text-sm font-bold leading-6 text-white [overflow-wrap:anywhere]">
                       {value}
                     </p>
                   </div>
@@ -795,19 +978,19 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section title="Action Plan">
+        <Section title="Plan de accion">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             {actionPlan.map((group) => (
               <article
                 key={group.title}
-                className="rounded-3xl border border-white/10 bg-black/20 p-5"
+                className="min-w-0 rounded-3xl border border-white/10 bg-black/20 p-5"
               >
-                <h3 className="text-sm font-black text-white">
+                <h3 className="break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
                   {group.title}
                 </h3>
                 <ul className="mt-4 space-y-2 text-sm leading-6 text-white/65">
                   {group.items.map((item) => (
-                    <li key={item}>
+                    <li key={item} className="break-words [overflow-wrap:anywhere]">
                       {item}
                     </li>
                   ))}
@@ -817,16 +1000,16 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section title="Required Human Actions">
+        <Section title="Acciones humanas requeridas">
           <ListBlock items={qaReview.requiredHumanActions} />
         </Section>
 
-        <Section title="Linked Source Product" eyebrow="Seller View">
+        <Section id="source-product" title="Linked Source Product" eyebrow="Vista vendedor">
           <div className="grid gap-5">
             <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-cyan-100/60">
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
                     {productSnapshotCopy.title}
                   </p>
                   <h3 className="mt-2 text-xl font-black text-white">
@@ -838,10 +1021,10 @@ export default function EbayListingPackagePage() {
                 </div>
 
                 <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
-                  <span className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3">
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
                     {productSnapshotCopy.snapshotStatus}
                   </span>
-                  <span className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
                     {productSnapshotCopy.listingImpact}
                   </span>
                 </div>
@@ -941,12 +1124,12 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section title="Product Facts Readiness Gate" eyebrow="Seller View">
+        <Section id="facts-gate" title="Product Facts Readiness Gate" eyebrow="Vista vendedor">
           <div className="grid gap-5">
             <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-cyan-100/60">
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
                     {productFactsReadinessGateCopy.title}
                   </p>
                   <h3 className="mt-2 text-xl font-black text-white">
@@ -959,13 +1142,13 @@ export default function EbayListingPackagePage() {
                 </div>
 
                 <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
-                  <span className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
                     {productFactsReadinessGateCopy.gateDecision}
                   </span>
-                  <span className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
                     {productFactsReadinessGateCopy.listingImpact}
                   </span>
-                  <span className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3">
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
                     {productFactsReadinessGateCopy.draftImpact}
                   </span>
                 </div>
@@ -1055,7 +1238,7 @@ export default function EbayListingPackagePage() {
                     <p className="text-sm font-black text-white">
                       {check.label}
                     </p>
-                    <p className="mt-2 text-xs font-bold uppercase tracking-[0.18em] text-rose-100/70">
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-rose-100/70 [overflow-wrap:anywhere]">
                       {check.status}
                     </p>
                     <p className="mt-3 text-sm leading-6 text-white/60">
@@ -1080,7 +1263,7 @@ export default function EbayListingPackagePage() {
                       <p className="text-sm font-bold text-white">
                         {workflow.workflow}
                       </p>
-                      <p className="mt-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-100/70">
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
                         {workflow.status}
                       </p>
                       <p className="mt-2 text-sm leading-6 text-white/60">
@@ -1112,12 +1295,12 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section title="Commercial Readiness Gate" eyebrow="Seller View">
+        <Section id="commercial-gate" title="Commercial Readiness Gate" eyebrow="Vista vendedor">
           <div className="grid gap-5">
             <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-cyan-100/60">
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
                     {commercialReadinessGateCopy.title}
                   </p>
                   <h3 className="mt-2 text-xl font-black text-white">
@@ -1130,13 +1313,13 @@ export default function EbayListingPackagePage() {
                 </div>
 
                 <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
-                  <span className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
                     {commercialReadinessGateCopy.gateDecision}
                   </span>
-                  <span className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
                     {commercialReadinessGateCopy.listingImpact}
                   </span>
-                  <span className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3">
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
                     {commercialReadinessGateCopy.draftImpact}
                   </span>
                 </div>
@@ -1226,7 +1409,7 @@ export default function EbayListingPackagePage() {
                     <p className="text-sm font-black text-white">
                       {check.label}
                     </p>
-                    <p className="mt-2 text-xs font-bold uppercase tracking-[0.18em] text-rose-100/70">
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-rose-100/70 [overflow-wrap:anywhere]">
                       {check.status}
                     </p>
                     <p className="mt-3 text-sm leading-6 text-white/60">
@@ -1251,7 +1434,7 @@ export default function EbayListingPackagePage() {
                       <p className="text-sm font-bold text-white">
                         {workflow.workflow}
                       </p>
-                      <p className="mt-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-100/70">
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
                         {workflow.status}
                       </p>
                       <p className="mt-2 text-sm leading-6 text-white/60">
@@ -1283,12 +1466,12 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section title="Listing Package Source-Aware Refresh" eyebrow="Seller View">
+        <Section id="source-aware-refresh" title="Listing Package Source-Aware Refresh" eyebrow="Vista vendedor">
           <div className="grid gap-5">
             <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-cyan-100/60">
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
                     {listingPackageSourceAwareRefreshCopy.title}
                   </p>
                   <h3 className="mt-2 text-xl font-black text-white">
@@ -1300,13 +1483,13 @@ export default function EbayListingPackagePage() {
                 </div>
 
                 <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
-                  <span className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
                     {listingPackageSourceAwareRefreshCopy.refreshDecision}
                   </span>
-                  <span className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
                     {listingPackageSourceAwareRefreshCopy.draftImpact}
                   </span>
-                  <span className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3">
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
                     {listingPackageSourceAwareRefreshCopy.publicationImpact}
                   </span>
                 </div>
@@ -1379,7 +1562,7 @@ export default function EbayListingPackagePage() {
                         gate.gateId as keyof typeof listingPackageSourceAwareGateLabels
                       ] ?? gate.label}
                     </p>
-                    <p className="mt-2 text-xs font-bold uppercase tracking-[0.18em] text-rose-100/70">
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-rose-100/70 [overflow-wrap:anywhere]">
                       {gate.status}
                     </p>
                     <p className="mt-3 text-sm leading-6 text-white/60">
@@ -1404,7 +1587,7 @@ export default function EbayListingPackagePage() {
                       <p className="text-sm font-bold text-white">
                         {workflow.workflow}
                       </p>
-                      <p className="mt-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-100/70">
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
                         {workflow.status}
                       </p>
                       <p className="mt-2 text-sm leading-6 text-white/60">
@@ -1534,7 +1717,7 @@ export default function EbayListingPackagePage() {
                     <p className="mt-2 text-sm text-cyan-100">
                       {item.value}
                     </p>
-                    <p className="mt-2 text-xs uppercase tracking-[0.18em] text-amber-100/70">
+                    <p className="mt-2 break-words text-[11px] uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
                       {item.verificationStatus.includes("missing")
                         ? "needs data"
                         : item.verificationStatus}
@@ -1622,8 +1805,32 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section title="Image Plan">
+        <Section id="image-plan" title="Image Plan">
           <div className="grid gap-5">
+            <div className="rounded-3xl border border-cyan-300/15 bg-cyan-300/[0.04] p-5">
+              <h3 className="text-sm font-black text-white">
+                Orden de trabajo de imagenes
+              </h3>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                {imageWorkflowOrder.map((item) => (
+                  <article
+                    key={item.step}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                  >
+                    <p className="break-words text-[11px] font-black uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                      Paso {item.step}
+                    </p>
+                    <h4 className="mt-3 text-sm font-black text-white">
+                      {item.title}
+                    </h4>
+                    <p className="mt-3 text-sm leading-6 text-white/60">
+                      {item.detail}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
             <div>
               <h3 className="text-sm font-black text-white">
                 Main Image Enhancement Brief
@@ -1737,7 +1944,7 @@ export default function EbayListingPackagePage() {
                         <p className="text-sm font-bold text-white">
                           {check.label}
                         </p>
-                        <p className="mt-2 text-xs uppercase tracking-[0.16em] text-amber-100/70">
+                        <p className="mt-2 break-words text-[11px] uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
                           {check.status}
                         </p>
                       </div>
@@ -1758,7 +1965,7 @@ export default function EbayListingPackagePage() {
                         <p className="text-sm font-bold text-white">
                           {check.label}
                         </p>
-                        <p className="mt-2 text-xs uppercase tracking-[0.16em] text-amber-100/70">
+                        <p className="mt-2 break-words text-[11px] uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
                           {check.status}
                         </p>
                       </div>
@@ -1901,7 +2108,7 @@ export default function EbayListingPackagePage() {
                         <p className="text-sm font-bold text-white">
                           {check.label}
                         </p>
-                        <p className="mt-2 text-xs font-bold uppercase tracking-[0.16em] text-rose-100/70">
+                        <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-rose-100/70 [overflow-wrap:anywhere]">
                           {check.status}
                         </p>
                         <p className="mt-2 text-sm leading-6 text-white/60">
@@ -1925,7 +2132,7 @@ export default function EbayListingPackagePage() {
                         <p className="text-sm font-bold text-white">
                           {workflow.workflow}
                         </p>
-                        <p className="mt-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-100/70">
+                        <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
                           {workflow.status}
                         </p>
                         <p className="mt-2 text-sm leading-6 text-white/60">
@@ -2041,7 +2248,7 @@ export default function EbayListingPackagePage() {
                         <p className="text-sm font-bold text-white">
                           {workflow.workflow}
                         </p>
-                        <p className="mt-2 text-xs uppercase tracking-[0.16em] text-amber-100/70">
+                        <p className="mt-2 break-words text-[11px] uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
                           {workflow.status}
                         </p>
                         <p className="mt-2 text-sm leading-6 text-white/60">
@@ -2129,7 +2336,7 @@ export default function EbayListingPackagePage() {
                         <p className="text-sm font-bold text-white">
                           {check.label}
                         </p>
-                        <p className="mt-2 text-xs uppercase tracking-[0.16em] text-amber-100/70">
+                        <p className="mt-2 break-words text-[11px] uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
                           {check.status}
                         </p>
                       </div>
@@ -2231,7 +2438,7 @@ export default function EbayListingPackagePage() {
 
               <div className="mt-5 grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
                 <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/40">
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-white/40 [overflow-wrap:anywhere]">
                     Main Image Slot
                   </p>
                   <h4 className="mt-3 text-base font-black text-white">
@@ -2274,7 +2481,7 @@ export default function EbayListingPackagePage() {
                 </article>
 
                 <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/40">
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-white/40 [overflow-wrap:anywhere]">
                     Workflow
                   </p>
                   <div className="mt-4 grid gap-3 text-sm text-white/65">
@@ -2300,7 +2507,7 @@ export default function EbayListingPackagePage() {
                       key={slot.slotId}
                       className="rounded-2xl border border-white/10 bg-black/20 p-4"
                     >
-                      <p className="text-xs uppercase tracking-[0.2em] text-white/40">
+                      <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-white/40 [overflow-wrap:anywhere]">
                         {slot.slotId}
                       </p>
                       <h5 className="mt-2 text-sm font-black text-white">
@@ -2421,13 +2628,13 @@ export default function EbayListingPackagePage() {
               </h3>
               <div className="mt-3 grid gap-4 lg:grid-cols-2">
                 <div>
-                  <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-white/40">
+                  <p className="mb-3 break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-white/40 [overflow-wrap:anywhere]">
                     Allowed enhancements
                   </p>
                   <ListBlock items={listingPackage.mainImageEnhancementPolicy.allowedEnhancements} />
                 </div>
                 <div>
-                  <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-white/40">
+                  <p className="mb-3 break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-white/40 [overflow-wrap:anywhere]">
                     Prohibited enhancements
                   </p>
                   <ListBlock items={listingPackage.mainImageEnhancementPolicy.prohibitedEnhancements} />
@@ -2445,7 +2652,7 @@ export default function EbayListingPackagePage() {
                     key={image.role}
                     className="rounded-2xl border border-white/10 bg-black/20 p-5"
                   >
-                    <p className="text-xs uppercase tracking-[0.22em] text-white/40">
+                    <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-white/40 [overflow-wrap:anywhere]">
                       Image {image.imageNumber}
                     </p>
                     <h4 className="mt-2 text-base font-black text-white">
@@ -2579,7 +2786,7 @@ export default function EbayListingPackagePage() {
             {Object.entries(trustSignals).map(([key, signal]) => (
               <div
                 key={key}
-                className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.045] p-5"
+                className="min-w-0 break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.045] p-5 [overflow-wrap:anywhere]"
               >
                 <h3 className="text-sm font-black text-white">
                   {
@@ -2681,7 +2888,7 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section title="QA Details">
+        <Section id="qa-details" title="QA Details">
           <div className="grid gap-5">
             <div>
               <h3 className="text-sm font-black text-white">
@@ -2814,7 +3021,7 @@ export default function EbayListingPackagePage() {
                     key={action.label}
                     type="button"
                     disabled
-                    className="cursor-not-allowed rounded-2xl border border-red-200/10 bg-black/20 px-4 py-3 text-left text-sm text-red-50/70"
+                    className="min-w-0 cursor-not-allowed break-words rounded-2xl border border-red-200/10 bg-black/20 px-4 py-3 text-left text-sm leading-6 text-red-50/70 [overflow-wrap:anywhere]"
                   >
                     <span className="block font-black">
                       {action.label}
