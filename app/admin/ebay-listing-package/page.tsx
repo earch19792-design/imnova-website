@@ -421,41 +421,41 @@ const sellerWorkflowOrder = [
     step:
       "1",
     title:
-      "Confirm source product",
+      "Confirmar producto fuente",
     detail:
-      "Select the Luna Portex catalog product and validate the product snapshot before using it in the listing package.",
+      "Seleccionar el producto del catalogo Luna Portex y validar el snapshot antes de usarlo en el listing package.",
   },
   {
     step:
       "2",
     title:
-      "Validate listing facts",
+      "Validar datos del listing",
     detail:
-      "Confirm title, brand, category, condition, dimensions, weight, contents, quantity, compatibility, and claims.",
+      "Confirmar titulo, marca, categoria, condicion, dimensiones, peso, contenido, cantidad, compatibilidad y claims.",
   },
   {
     step:
       "3",
     title:
-      "Validate commercial readiness",
+      "Validar rentabilidad",
     detail:
-      "Confirm cost, fees, shipping, return risk, margin, Terapeak, sold listings, stock, and operating policies.",
+      "Confirmar costo, fees, shipping, riesgo de devolucion, margen, Terapeak, ventas comparables, stock y politicas operativas.",
   },
   {
     step:
       "4",
     title:
-      "Approve image source and QA",
+      "Aprobar fuente e imagenes",
     detail:
-      "Approve authorized image evidence before enhancement, image QA, secondary images, or any eBay draft mapping.",
+      "Aprobar evidencia autorizada de imagen antes de enhancement, image QA, imagenes secundarias o eBay draft mapping.",
   },
   {
     step:
       "5",
     title:
-      "Refresh package, then map draft",
+      "Actualizar paquete y mapear draft",
     detail:
-      "Only refresh the listing package and map an eBay draft after source, facts, commercial, image, and human gates pass.",
+      "Actualizar el listing package y mapear un eBay draft solo despues de aprobar fuente, datos, rentabilidad, imagenes y revision humana.",
   },
 ]
 
@@ -464,49 +464,49 @@ const sellerCommandMenu = [
     href:
       "#source-product",
     label:
-      "Source product",
+      "Producto fuente",
     detail:
-      "Start here. Confirm what Luna Portex product the listing would use.",
+      "Empezar aqui. Confirmar que producto Luna Portex usaria este listing.",
   },
   {
     href:
       "#facts-gate",
     label:
-      "Facts gate",
+      "Datos del listing",
     detail:
-      "Validate the product facts that buyers and eBay require.",
+      "Validar los datos del producto que eBay y el comprador necesitan.",
   },
   {
     href:
       "#commercial-gate",
     label:
-      "Commercial gate",
+      "Rentabilidad",
     detail:
-      "Check cost, fees, margin, shipping, returns, stock, and market proof.",
+      "Revisar costo, fees, margen, shipping, devoluciones, stock y prueba de mercado.",
   },
   {
     href:
       "#image-plan",
     label:
-      "Image gate",
+      "Imagenes",
     detail:
-      "Review source evidence, enhancement readiness, and image QA.",
+      "Revisar evidencia de fuente, readiness de enhancement e image QA.",
   },
   {
     href:
       "#source-aware-refresh",
     label:
-      "Package refresh",
+      "Refresh del paquete",
     detail:
-      "See why the listing package cannot refresh or map to eBay yet.",
+      "Ver por que el listing package aun no puede actualizarse ni mapearse a eBay.",
   },
   {
     href:
       "#qa-details",
     label:
-      "Final QA",
+      "QA final",
     detail:
-      "Review remaining blockers before any draft or publication decision.",
+      "Revisar bloqueos pendientes antes de cualquier draft o decision de publicacion.",
   },
 ]
 
@@ -515,41 +515,41 @@ const imageWorkflowOrder = [
     step:
       "1",
     title:
-      "Source intake",
+      "Capturar fuente",
     detail:
-      "Collect Luna Portex source evidence without using real images, URLs, uploads, or external calls.",
+      "Registrar evidencia Luna Portex sin usar imagenes reales, URLs, uploads ni llamadas externas.",
   },
   {
     step:
       "2",
     title:
-      "Source review gate",
+      "Revisar fuente",
     detail:
-      "Human review must approve authorized use before any enhancement or QA can proceed.",
+      "La revision humana debe aprobar el uso autorizado antes de cualquier enhancement o QA.",
   },
   {
     step:
       "3",
     title:
-      "Main image enhancement brief",
+      "Brief de imagen principal",
     detail:
-      "The brief can describe requirements, but execution stays blocked until source review approval.",
+      "El brief puede describir requisitos, pero la ejecucion sigue bloqueada hasta aprobar la fuente.",
   },
   {
     step:
       "4",
     title:
-      "Image QA review gate",
+      "QA de imagenes",
     detail:
-      "QA remains blocked until a final main image candidate, secondary package, image policy review, and human image review exist.",
+      "QA sigue bloqueado hasta tener candidato final, paquete secundario, policy review y revision humana.",
   },
   {
     step:
       "5",
     title:
-      "Draft image mapping",
+      "Mapeo de imagenes al draft",
     detail:
-      "Do not map images to an eBay draft until image QA is approved.",
+      "No mapear imagenes a un eBay draft hasta que image QA este aprobado.",
   },
 ]
 
@@ -739,7 +739,7 @@ export default function EbayListingPackagePage() {
                 Listing Package QA
               </h1>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-white/60">
-                Seller View for the first listing package and QA review. Read-only preview. No eBay connection. No draft created. Do not publish yet. Human review required.
+                Vista vendedor del primer listing package y QA review. Preview read-only. Sin conexion eBay. No se creo draft. No publicar todavia. Requiere revision humana.
               </p>
             </div>
 
@@ -756,7 +756,7 @@ export default function EbayListingPackagePage() {
           </div>
         </section>
 
-        <Section title="Seller Command Menu" eyebrow="Seller View">
+        <Section title="Menu del vendedor" eyebrow="Vista vendedor">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {sellerCommandMenu.map((item) => (
               <a
@@ -778,7 +778,7 @@ export default function EbayListingPackagePage() {
         <Section
           id="executive-status"
           title="Executive Status"
-          eyebrow="Seller View"
+          eyebrow="Vista vendedor"
         >
           <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
             <div className="rounded-3xl border border-rose-300/25 bg-rose-300/[0.06] p-5">
@@ -850,7 +850,7 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section title="Seller Workflow Order" eyebrow="Seller View">
+        <Section title="Ruta de trabajo del vendedor" eyebrow="Vista vendedor">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             {sellerWorkflowOrder.map((item) => (
               <article
@@ -858,7 +858,7 @@ export default function EbayListingPackagePage() {
                 className="rounded-3xl border border-cyan-300/15 bg-cyan-300/[0.04] p-5"
               >
                 <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-100/60">
-                  Step {item.step}
+                  Paso {item.step}
                 </p>
                 <h3 className="mt-3 text-sm font-black text-white">
                   {item.title}
@@ -1004,7 +1004,7 @@ export default function EbayListingPackagePage() {
           <ListBlock items={qaReview.requiredHumanActions} />
         </Section>
 
-        <Section id="source-product" title="Linked Source Product" eyebrow="Seller View">
+        <Section id="source-product" title="Linked Source Product" eyebrow="Vista vendedor">
           <div className="grid gap-5">
             <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1124,7 +1124,7 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section id="facts-gate" title="Product Facts Readiness Gate" eyebrow="Seller View">
+        <Section id="facts-gate" title="Product Facts Readiness Gate" eyebrow="Vista vendedor">
           <div className="grid gap-5">
             <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1295,7 +1295,7 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section id="commercial-gate" title="Commercial Readiness Gate" eyebrow="Seller View">
+        <Section id="commercial-gate" title="Commercial Readiness Gate" eyebrow="Vista vendedor">
           <div className="grid gap-5">
             <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1466,7 +1466,7 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section id="source-aware-refresh" title="Listing Package Source-Aware Refresh" eyebrow="Seller View">
+        <Section id="source-aware-refresh" title="Listing Package Source-Aware Refresh" eyebrow="Vista vendedor">
           <div className="grid gap-5">
             <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1809,7 +1809,7 @@ export default function EbayListingPackagePage() {
           <div className="grid gap-5">
             <div className="rounded-3xl border border-cyan-300/15 bg-cyan-300/[0.04] p-5">
               <h3 className="text-sm font-black text-white">
-                Image Workflow Order
+                Orden de trabajo de imagenes
               </h3>
               <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                 {imageWorkflowOrder.map((item) => (
@@ -1818,7 +1818,7 @@ export default function EbayListingPackagePage() {
                     className="rounded-2xl border border-white/10 bg-black/20 p-4"
                   >
                     <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/60">
-                      Step {item.step}
+                      Paso {item.step}
                     </p>
                     <h4 className="mt-3 text-sm font-black text-white">
                       {item.title}

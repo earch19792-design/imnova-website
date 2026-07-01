@@ -9174,12 +9174,12 @@ test("ebay listing package admin MVP: muestra copy, estados y estrategia princip
   for (const expectedText of [
     "Listing Package QA",
     "Professional Listing MVP",
-    "Seller View",
-    "Read-only preview",
-    "No eBay connection",
-    "No draft created",
-    "Do not publish yet",
-    "Human review required",
+    "Vista vendedor",
+    "Preview read-only",
+    "Sin conexion eBay",
+    "No se creo draft",
+    "No publicar todavia",
+    "Requiere revision humana",
     "Status: Not ready",
     "Main risk: Do not publish yet",
     "Next step: Complete critical data before creating an eBay draft",
@@ -9233,9 +9233,9 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
 
   for (const expectedSection of [
     "Executive Status",
-    "Seller View",
-    "Seller Command Menu",
-    "Seller Workflow Order",
+    "Vista vendedor",
+    "Menu del vendedor",
+    "Ruta de trabajo del vendedor",
     "Listing Preview",
     "What Blocks Publishing",
     "Action Plan",
@@ -9266,7 +9266,7 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "Compact Safety Flags",
     "Product / Pricing / Shipping",
     "Image Plan",
-    "Image Workflow Order",
+    "Orden de trabajo de imagenes",
     "Main Image Enhancement Brief",
     "Image QA Review Gate",
     "Image QA Checks",
@@ -9334,7 +9334,7 @@ test("ebay listing package admin MVP: muestra preview vendedor y plan de accion"
   }
 })
 
-test("ebay listing package admin MVP: muestra menu vendedor navegable", () => {
+test("ebay listing package admin MVP: muestra menu vendedor navegable en espanol", () => {
   const source =
     fs.readFileSync(
       ebayListingPackageAdminPagePath,
@@ -9342,13 +9342,16 @@ test("ebay listing package admin MVP: muestra menu vendedor navegable", () => {
     )
 
   for (const expectedText of [
-    "Seller Command Menu",
-    "Source product",
-    "Facts gate",
-    "Commercial gate",
-    "Image gate",
-    "Package refresh",
-    "Final QA",
+    "Menu del vendedor",
+    "Producto fuente",
+    "Datos del listing",
+    "Rentabilidad",
+    "Imagenes",
+    "Refresh del paquete",
+    "QA final",
+    "Empezar aqui. Confirmar que producto Luna Portex usaria este listing.",
+    "Validar los datos del producto que eBay y el comprador necesitan.",
+    "Revisar costo, fees, margen, shipping, devoluciones, stock y prueba de mercado.",
     "#source-product",
     "#facts-gate",
     "#commercial-gate",
@@ -9363,12 +9366,12 @@ test("ebay listing package admin MVP: muestra menu vendedor navegable", () => {
   }
 
   assert.ok(
-    source.indexOf("Seller Command Menu") <
+    source.indexOf("Menu del vendedor") <
       source.indexOf("Executive Status")
   )
 })
 
-test("ebay listing package admin MVP: muestra orden profesional de vendedor", () => {
+test("ebay listing package admin MVP: muestra orden profesional de vendedor en espanol", () => {
   const source =
     fs.readFileSync(
       ebayListingPackageAdminPagePath,
@@ -9376,13 +9379,13 @@ test("ebay listing package admin MVP: muestra orden profesional de vendedor", ()
     )
 
   for (const expectedText of [
-    "Seller Workflow Order",
-    "Confirm source product",
-    "Validate listing facts",
-    "Validate commercial readiness",
-    "Approve image source and QA",
-    "Refresh package, then map draft",
-    "Only refresh the listing package and map an eBay draft after source, facts, commercial, image, and human gates pass.",
+    "Ruta de trabajo del vendedor",
+    "Confirmar producto fuente",
+    "Validar datos del listing",
+    "Validar rentabilidad",
+    "Aprobar fuente e imagenes",
+    "Actualizar paquete y mapear draft",
+    "Actualizar el listing package y mapear un eBay draft solo despues de aprobar fuente, datos, rentabilidad, imagenes y revision humana.",
   ]) {
     assert.ok(
       source.includes(expectedText),
@@ -9391,16 +9394,16 @@ test("ebay listing package admin MVP: muestra orden profesional de vendedor", ()
   }
 
   assert.ok(
-    source.indexOf("Seller Workflow Order") <
+    source.indexOf("Ruta de trabajo del vendedor") <
       source.indexOf("Listing Preview")
   )
   assert.ok(
-    source.indexOf("Confirm source product") <
-      source.indexOf("Refresh package, then map draft")
+    source.indexOf("Confirmar producto fuente") <
+      source.indexOf("Actualizar paquete y mapear draft")
   )
 })
 
-test("ebay listing package admin MVP: muestra orden correcto del workflow de imagenes", () => {
+test("ebay listing package admin MVP: muestra orden correcto de imagenes en espanol", () => {
   const source =
     fs.readFileSync(
       ebayListingPackageAdminPagePath,
@@ -9408,13 +9411,13 @@ test("ebay listing package admin MVP: muestra orden correcto del workflow de ima
     )
 
   for (const expectedText of [
-    "Image Workflow Order",
-    "Source intake",
-    "Source review gate",
-    "Main image enhancement brief",
-    "Image QA review gate",
-    "Draft image mapping",
-    "Do not map images to an eBay draft until image QA is approved.",
+    "Orden de trabajo de imagenes",
+    "Capturar fuente",
+    "Revisar fuente",
+    "Brief de imagen principal",
+    "QA de imagenes",
+    "Mapeo de imagenes al draft",
+    "No mapear imagenes a un eBay draft hasta que image QA este aprobado.",
   ]) {
     assert.ok(
       source.includes(expectedText),
@@ -9428,8 +9431,8 @@ test("ebay listing package admin MVP: muestra orden correcto del workflow de ima
     imageWorkflowStart > -1
   )
   assert.ok(
-    source.indexOf("Source intake", imageWorkflowStart) <
-      source.indexOf("Image QA review gate", imageWorkflowStart)
+    source.indexOf("Capturar fuente", imageWorkflowStart) <
+      source.indexOf("QA de imagenes", imageWorkflowStart)
   )
 })
 
@@ -9896,32 +9899,27 @@ test("ebay listing package admin MVP: sidebar incluye ruta segura", () => {
   )
 })
 
-test("ebay listing package admin MVP: no contiene espanol operativo visible", () => {
+test("ebay listing package admin MVP: conserva guia vendedor en espanol y estados tecnicos", () => {
   const source =
     fs.readFileSync(
       ebayListingPackageAdminPagePath,
       "utf8"
     )
 
-  for (const forbiddenText of [
-    "Acciones",
-    "Qué estás viendo",
-    "Pendiente",
-    "Publicación",
-    "Borrador",
-    "mínimo",
-    "minimo",
-    "Faltan",
-    "Imagen principal",
-    "Precio pendiente",
-    "Categoría pendiente",
-    "Requiere",
-    "Revisión",
-    "Verificación",
+  for (const expectedText of [
+    "Menu del vendedor",
+    "Ruta de trabajo del vendedor",
+    "Orden de trabajo de imagenes",
+    "Producto fuente",
+    "Datos del listing",
+    "Rentabilidad",
+    "Imagenes",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
   ]) {
     assert.ok(
-      !source.includes(forbiddenText),
-      `listing package admin source should not include Spanish operational text: ${forbiddenText}`
+      source.includes(expectedText),
+      `listing package admin should preserve seller Spanish guidance and technical states: ${expectedText}`
     )
   }
 })
@@ -9977,7 +9975,7 @@ test("ebay admin sidebar: normaliza labels eBay en ingles", () => {
   }
 })
 
-test("ebay listing package admin MVP: mantiene resumen ejecutivo en ingles", () => {
+test("ebay listing package admin MVP: mantiene resumen ejecutivo y navegacion vendedor", () => {
   const source =
     fs.readFileSync(
       ebayListingPackageAdminPagePath,
@@ -9986,7 +9984,9 @@ test("ebay listing package admin MVP: mantiene resumen ejecutivo en ingles", () 
 
   for (const expectedText of [
     "Executive Status",
-    "Seller View",
+    "Vista vendedor",
+    "Menu del vendedor",
+    "Ruta de trabajo del vendedor",
     "Listing Preview",
     "What Blocks Publishing",
     "Action Plan",
