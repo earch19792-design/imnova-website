@@ -1,0 +1,182 @@
+{
+  "refreshVersion": "EBAY_LISTING_PACKAGE_SOURCE_AWARE_REFRESH_V1",
+  "caseId": "LISTING-GEN-001",
+  "sourceListingPackageVersion": "EBAY_FIRST_LISTING_PACKAGE_V1",
+  "listingQaReviewVersion": "EBAY_FIRST_LISTING_QA_REVIEW_V1",
+  "productSnapshotVersion": "EBAY_LUNA_PORTEX_PRODUCT_SNAPSHOT_V1",
+  "productFactsGateVersion": "EBAY_LUNA_PORTEX_PRODUCT_FACTS_READINESS_GATE_V1",
+  "commercialGateVersion": "EBAY_LUNA_PORTEX_COMMERCIAL_READINESS_GATE_V1",
+  "imageAssetManifestVersion": "EBAY_LUNA_PORTEX_IMAGE_ASSET_MANIFEST_V1",
+  "imageSourceIntakeVersion": "EBAY_LUNA_PORTEX_IMAGE_SOURCE_INTAKE_V1",
+  "imageSourceReviewGateVersion": "EBAY_LUNA_PORTEX_IMAGE_SOURCE_REVIEW_GATE_V1",
+  "mainImageEnhancementBriefVersion": "EBAY_LUNA_PORTEX_MAIN_IMAGE_ENHANCEMENT_BRIEF_V1",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "refreshStatus": "SOURCE_AWARE_REFRESH_BLOCKED",
+  "refreshDecision": "DO_NOT_REFRESH_LISTING_PACKAGE_YET",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "refreshSummary": "The listing package is now linked to the Luna Portex source model. Source-aware refresh is blocked because product facts, commercial readiness, image source approval and image QA are not approved. Do not create eBay draft. Do not publish. Human review is required before moving forward.",
+  "sourceAwareness": {
+    "sourceProvider": "luna_portex",
+    "sourceType": "supplier_catalog_product",
+    "productSnapshotStatus": "PRODUCT_SNAPSHOT_NEEDS_VALIDATION",
+    "listingPackageStatus": "LISTING_PACKAGE_NEEDS_DATA",
+    "listingQaStatus": "LISTING_QA_NEEDS_DATA",
+    "sourceProductLinked": true,
+    "sourceProductValidated": false,
+    "listingPackageCanUseSourceProductData": false,
+    "sourceAwareRefreshAllowed": false,
+    "reason": "The source product is linked conceptually, but the source product facts, commercial inputs and image approvals are not validated yet."
+  },
+  "blockingGates": [
+    {
+      "gateId": "product_snapshot",
+      "label": "Luna Portex Product Snapshot",
+      "status": "PRODUCT_SNAPSHOT_NEEDS_VALIDATION",
+      "decision": "REQUEST_PRODUCT_SNAPSHOT_DATA",
+      "blocking": true
+    },
+    {
+      "gateId": "product_facts",
+      "label": "Product Facts Readiness Gate",
+      "status": "PRODUCT_FACTS_NOT_READY",
+      "decision": "REQUEST_MORE_PRODUCT_FACTS",
+      "blocking": true
+    },
+    {
+      "gateId": "commercial_readiness",
+      "label": "Commercial Readiness Gate",
+      "status": "COMMERCIAL_READINESS_NOT_APPROVED",
+      "decision": "REQUEST_MORE_COMMERCIAL_INPUTS",
+      "blocking": true
+    },
+    {
+      "gateId": "image_source_review",
+      "label": "Image Source Review Gate",
+      "status": "SOURCE_REVIEW_NOT_APPROVED",
+      "decision": "REQUEST_MORE_SOURCE_EVIDENCE",
+      "blocking": true
+    },
+    {
+      "gateId": "main_image_enhancement",
+      "label": "Main Image Enhancement Brief",
+      "status": "ENHANCEMENT_BRIEF_READY_BUT_SOURCE_BLOCKED",
+      "decision": "DO_NOT_ENHANCE_YET",
+      "blocking": true
+    },
+    {
+      "gateId": "listing_qa",
+      "label": "Listing QA Review",
+      "status": "LISTING_QA_NEEDS_DATA",
+      "decision": "DO_NOT_CREATE_DRAFT",
+      "blocking": true
+    }
+  ],
+  "readinessMatrix": {
+    "sourceProductLinked": true,
+    "productSnapshotApproved": false,
+    "productFactsApproved": false,
+    "commercialReadinessApproved": false,
+    "imageSourceApproved": false,
+    "mainImageEnhanced": false,
+    "imageQaApproved": false,
+    "listingQaApproved": false,
+    "terapeakValidated": false,
+    "soldListingsBenchmarkValidated": false,
+    "shippingReturnsConfirmed": false,
+    "marginValidated": false,
+    "readyForSourceAwareListingRefresh": false,
+    "readyForEbayDraftMapping": false,
+    "readyForEbayDraftCreation": false,
+    "readyForPublication": false
+  },
+  "blockedWorkflows": [
+    {
+      "workflow": "source_aware_listing_package_refresh",
+      "status": "BLOCKED",
+      "reason": "Source product, product facts, commercial readiness and image gates are not approved."
+    },
+    {
+      "workflow": "price_strategy_finalization",
+      "status": "BLOCKED",
+      "reason": "Commercial readiness and margin validation are not approved."
+    },
+    {
+      "workflow": "secondary_image_brief_generation",
+      "status": "BLOCKED",
+      "reason": "Product facts and source image approvals are not complete."
+    },
+    {
+      "workflow": "main_image_enhancement_execution",
+      "status": "BLOCKED",
+      "reason": "Image source review is not approved."
+    },
+    {
+      "workflow": "image_qa_review",
+      "status": "BLOCKED",
+      "reason": "No approved/enhanced image candidate exists yet."
+    },
+    {
+      "workflow": "ebay_draft_mapping",
+      "status": "BLOCKED",
+      "reason": "Listing package is not source-aware ready and gates are not approved."
+    },
+    {
+      "workflow": "ebay_draft_creation",
+      "status": "BLOCKED",
+      "reason": "No eBay draft can be created before source-aware refresh, QA, commercial and image approval."
+    },
+    {
+      "workflow": "ebay_publication",
+      "status": "BLOCKED",
+      "reason": "No eBay publication is allowed before final human approval."
+    }
+  ],
+  "requiredHumanActions": [
+    "Confirm Luna Portex catalog product reference.",
+    "Validate product facts: title, brand, category, condition, dimensions, weight, material, package contents, quantity, compatibility and claims.",
+    "Validate commercial inputs: cost, fees, shipping, return risk, margin, Terapeak and sold listings benchmark.",
+    "Approve authorized Luna Portex catalog image source evidence.",
+    "Complete image source review.",
+    "Prepare and approve main image enhancement candidate.",
+    "Run manual image QA.",
+    "Run listing QA review after source-aware refresh.",
+    "Approve human review before any eBay draft mapping."
+  ],
+  "nextRecommendedLoop": {
+    "loop": "LOOP 107 \u2014 Image QA Review Gate V1",
+    "reason": "Image QA gate should remain blocked until source approval and enhanced image candidate exist, but it must be represented before eBay draft mapping.",
+    "afterThat": "LOOP 108 \u2014 eBay Only Connection Design V1"
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "humanReviewRequired": true,
+    "sourceAwareRefreshExecuted": false,
+    "listingPackageMutated": false,
+    "productSnapshotApproved": false,
+    "productFactsApproved": false,
+    "commercialReadinessApproved": false,
+    "imageSourceApproved": false,
+    "imageQaApproved": false,
+    "ebayDraftMappingUnlocked": false,
+    "ebayDraftCreationUnlocked": false,
+    "publicationUnlocked": false,
+    "realSupplierProductDataIncluded": false,
+    "supplierPrivateDataIncluded": false,
+    "supplierUrlIncluded": false,
+    "externalUrlsIncluded": false,
+    "realImagesIncluded": false,
+    "image\u0055rlsIncluded": false,
+    "base\u0036\u0034ImagesIncluded": false,
+    "customerDataIncluded": false,
+    "apiCallsMade": false,
+    "lunaPortexApiUsed": false,
+    "ebayApiUsed": false,
+    "openAiApiUsed": false,
+    "imageGenerated": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}

@@ -587,6 +587,19 @@ const ebayFirstListingPackageFixture =
     )
   )
 
+const ebayListingPackageSourceAwareRefreshFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-listing-package-source-aware-refresh-v1.json"
+  )
+
+const ebayListingPackageSourceAwareRefreshFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayListingPackageSourceAwareRefreshFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayFirstListingQaReviewFixturePath =
   path.resolve(
     "tools/fixtures/ebay-first-listing-qa-review-v1.json"
@@ -5423,6 +5436,285 @@ test("luna portex product snapshot fixture: no contiene URLs payloads ni datos r
   }
 })
 
+test("listing package source-aware refresh fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayListingPackageSourceAwareRefreshFixturePath
+    )
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.refreshVersion,
+    "EBAY_LISTING_PACKAGE_SOURCE_AWARE_REFRESH_V1"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.sourceListingPackageVersion,
+    "EBAY_FIRST_LISTING_PACKAGE_V1"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.listingQaReviewVersion,
+    "EBAY_FIRST_LISTING_QA_REVIEW_V1"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.productSnapshotVersion,
+    "EBAY_LUNA_PORTEX_PRODUCT_SNAPSHOT_V1"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.productFactsGateVersion,
+    "EBAY_LUNA_PORTEX_PRODUCT_FACTS_READINESS_GATE_V1"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.commercialGateVersion,
+    "EBAY_LUNA_PORTEX_COMMERCIAL_READINESS_GATE_V1"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.imageAssetManifestVersion,
+    "EBAY_LUNA_PORTEX_IMAGE_ASSET_MANIFEST_V1"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.imageSourceIntakeVersion,
+    "EBAY_LUNA_PORTEX_IMAGE_SOURCE_INTAKE_V1"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.imageSourceReviewGateVersion,
+    "EBAY_LUNA_PORTEX_IMAGE_SOURCE_REVIEW_GATE_V1"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.mainImageEnhancementBriefVersion,
+    "EBAY_LUNA_PORTEX_MAIN_IMAGE_ENHANCEMENT_BRIEF_V1"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.marketplace,
+    "ebay_us"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.refreshStatus,
+    "SOURCE_AWARE_REFRESH_BLOCKED"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.refreshDecision,
+    "DO_NOT_REFRESH_LISTING_PACKAGE_YET"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayListingPackageSourceAwareRefreshFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("listing package source-aware refresh fixture: source awareness bloquea refresh", () => {
+  const sourceAwareness =
+    ebayListingPackageSourceAwareRefreshFixture.sourceAwareness
+
+  assert.equal(
+    sourceAwareness.sourceProvider,
+    "luna_portex"
+  )
+  assert.equal(
+    sourceAwareness.sourceType,
+    "supplier_catalog_product"
+  )
+  assert.equal(
+    sourceAwareness.productSnapshotStatus,
+    "PRODUCT_SNAPSHOT_NEEDS_VALIDATION"
+  )
+  assert.equal(
+    sourceAwareness.listingPackageStatus,
+    "LISTING_PACKAGE_NEEDS_DATA"
+  )
+  assert.equal(
+    sourceAwareness.listingQaStatus,
+    "LISTING_QA_NEEDS_DATA"
+  )
+  assert.equal(
+    sourceAwareness.sourceProductLinked,
+    true
+  )
+  assert.equal(
+    sourceAwareness.sourceProductValidated,
+    false
+  )
+  assert.equal(
+    sourceAwareness.listingPackageCanUseSourceProductData,
+    false
+  )
+  assert.equal(
+    sourceAwareness.sourceAwareRefreshAllowed,
+    false
+  )
+})
+
+test("listing package source-aware refresh fixture: blocking gates cubren dependencias", () => {
+  const blockingGates =
+    ebayListingPackageSourceAwareRefreshFixture.blockingGates
+
+  assert.equal(
+    blockingGates.length,
+    6
+  )
+
+  const expectedGateIds =
+    new Set([
+      "product_snapshot",
+      "product_facts",
+      "commercial_readiness",
+      "image_source_review",
+      "main_image_enhancement",
+      "listing_qa",
+    ])
+
+  for (const gate of blockingGates) {
+    assert.equal(
+      gate.blocking,
+      true
+    )
+    assert.ok(
+      expectedGateIds.has(gate.gateId),
+      `unexpected blocking gate: ${gate.gateId}`
+    )
+  }
+})
+
+test("listing package source-aware refresh fixture: readiness matrix bloquea ebay", () => {
+  const readinessMatrix =
+    ebayListingPackageSourceAwareRefreshFixture.readinessMatrix
+
+  assert.equal(
+    readinessMatrix.sourceProductLinked,
+    true
+  )
+
+  for (const flagName of [
+    "productSnapshotApproved",
+    "productFactsApproved",
+    "commercialReadinessApproved",
+    "imageSourceApproved",
+    "mainImageEnhanced",
+    "imageQaApproved",
+    "listingQaApproved",
+    "terapeakValidated",
+    "soldListingsBenchmarkValidated",
+    "shippingReturnsConfirmed",
+    "marginValidated",
+    "readyForSourceAwareListingRefresh",
+    "readyForEbayDraftMapping",
+    "readyForEbayDraftCreation",
+    "readyForPublication",
+  ]) {
+    assert.equal(
+      readinessMatrix[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("listing package source-aware refresh fixture: workflows source-aware permanecen bloqueados", () => {
+  const blockedWorkflows =
+    ebayListingPackageSourceAwareRefreshFixture.blockedWorkflows
+
+  assert.equal(
+    blockedWorkflows.length,
+    8
+  )
+
+  const expectedWorkflows =
+    new Set([
+      "source_aware_listing_package_refresh",
+      "price_strategy_finalization",
+      "secondary_image_brief_generation",
+      "main_image_enhancement_execution",
+      "image_qa_review",
+      "ebay_draft_mapping",
+      "ebay_draft_creation",
+      "ebay_publication",
+    ])
+
+  for (const workflow of blockedWorkflows) {
+    assert.equal(
+      workflow.status,
+      "BLOCKED"
+    )
+    assert.ok(
+      expectedWorkflows.has(workflow.workflow),
+      `unexpected blocked workflow: ${workflow.workflow}`
+    )
+  }
+})
+
+test("listing package source-aware refresh fixture: safety flags mantienen refresh bloqueado", () => {
+  const safetyFlags =
+    ebayListingPackageSourceAwareRefreshFixture.safetyFlags
+
+  for (const flagName of [
+    "sourceAwareRefreshExecuted",
+    "listingPackageMutated",
+    "productSnapshotApproved",
+    "productFactsApproved",
+    "commercialReadinessApproved",
+    "imageSourceApproved",
+    "imageQaApproved",
+    "ebayDraftMappingUnlocked",
+    "ebayDraftCreationUnlocked",
+    "publicationUnlocked",
+    "realSupplierProductDataIncluded",
+    "externalUrlsIncluded",
+    "realImagesIncluded",
+    "base64ImagesIncluded",
+    "apiCallsMade",
+    "lunaPortexApiUsed",
+    "ebayApiUsed",
+    "openAiApiUsed",
+    "realDraftCreated",
+    "publishedToEbay",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("listing package source-aware refresh fixture: no contiene URLs payloads ni datos reales", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayListingPackageSourceAwareRefreshFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /imageUrl/,
+    /assetUrl/,
+    /uploadedUrl/,
+    /<img/i,
+    /next\/image/i,
+    /supplierEmail/,
+    /customerEmail/,
+    /customerPhone/,
+    /realSupplierProductIdValue/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("luna portex product facts readiness gate fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -8503,6 +8795,10 @@ test("ebay listing package admin MVP: existe y usa fixtures seguros", () => {
   )
   assert.match(
     source,
+    /ebay-listing-package-source-aware-refresh-v1\.json/
+  )
+  assert.match(
+    source,
     /ebay-luna-portex-product-snapshot-v1\.json/
   )
   assert.match(
@@ -8617,9 +8913,13 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "Luna Portex Product Snapshot",
     "Product Facts Readiness Gate",
     "Commercial Readiness Gate",
+    "Listing Package Source-Aware Refresh",
     "Review Inputs",
     "Fact Checks",
     "Commercial Checks",
+    "Source Awareness",
+    "Readiness Matrix",
+    "Blocking Gates",
     "Blocked Workflows",
     "Unlock Requirements",
     "Human Decision",
@@ -8867,6 +9167,39 @@ test("ebay listing package admin MVP: muestra commercial readiness gate", () => 
     assert.ok(
       source.includes(expectedText),
       `missing commercial readiness gate admin text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: muestra source-aware refresh", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Listing Package Source-Aware Refresh",
+    "SOURCE_AWARE_REFRESH_BLOCKED",
+    "DO_NOT_REFRESH_LISTING_PACKAGE_YET",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "Source product linked",
+    "Source-aware refresh blocked",
+    "Luna Portex Product Snapshot",
+    "Product Facts Readiness Gate",
+    "Commercial Readiness Gate",
+    "Image Source Review Gate",
+    "Main Image Enhancement Brief",
+    "Listing QA Review",
+    "Readiness Matrix",
+    "Blocked Workflows",
+    "Required Human Actions",
+    "Next recommended loop: LOOP 107 \u2014 Image QA Review Gate V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing source-aware refresh admin text: ${expectedText}`
     )
   }
 })

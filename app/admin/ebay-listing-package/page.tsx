@@ -2,6 +2,7 @@ import type {
   ReactNode,
 } from "react"
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
+import listingPackageSourceAwareRefresh from "../../../tools/fixtures/ebay-listing-package-source-aware-refresh-v1.json"
 import productSnapshot from "../../../tools/fixtures/ebay-luna-portex-product-snapshot-v1.json"
 import productFactsReadinessGate from "../../../tools/fixtures/ebay-luna-portex-product-facts-readiness-gate-v1.json"
 import commercialReadinessGate from "../../../tools/fixtures/ebay-luna-portex-commercial-readiness-gate-v1.json"
@@ -199,6 +200,34 @@ const commercialReadinessGateCopy = {
     "Shipping policy confirmed",
     "Return policy confirmed",
   ],
+}
+
+const listingPackageSourceAwareRefreshCopy = {
+  title:
+    "Listing Package Source-Aware Refresh",
+  refreshStatus:
+    "SOURCE_AWARE_REFRESH_BLOCKED",
+  refreshDecision:
+    "DO_NOT_REFRESH_LISTING_PACKAGE_YET",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  sourceProductLinked:
+    "Source product linked",
+  sourceAwareRefreshBlocked:
+    "Source-aware refresh blocked",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 107 — Image QA Review Gate V1",
+}
+
+const listingPackageSourceAwareGateLabels = {
+  product_snapshot: "Luna Portex Product Snapshot",
+  product_facts: "Product Facts Readiness Gate",
+  commercial_readiness: "Commercial Readiness Gate",
+  image_source_review: "Image Source Review Gate",
+  main_image_enhancement: "Main Image Enhancement Brief",
+  listing_qa: "Listing QA Review",
 }
 
 const imageSourceIntakeCopy = {
@@ -1219,6 +1248,185 @@ export default function EbayListingPackagePage() {
                 <FieldGrid fields={Object.entries(commercialReadinessGate.safetyFlags)} />
               </div>
             </article>
+          </div>
+        </Section>
+
+        <Section title="Listing Package Source-Aware Refresh" eyebrow="Seller View">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-cyan-100/60">
+                    {listingPackageSourceAwareRefreshCopy.title}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {listingPackageSourceAwareRefreshCopy.refreshStatus}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {listingPackageSourceAwareRefresh.refreshSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3">
+                    {listingPackageSourceAwareRefreshCopy.refreshDecision}
+                  </span>
+                  <span className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3">
+                    {listingPackageSourceAwareRefreshCopy.draftImpact}
+                  </span>
+                  <span className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3">
+                    {listingPackageSourceAwareRefreshCopy.publicationImpact}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Refresh status",
+                      listingPackageSourceAwareRefresh.refreshStatus,
+                    ],
+                    [
+                      "Refresh decision",
+                      listingPackageSourceAwareRefresh.refreshDecision,
+                    ],
+                    [
+                      "Draft impact",
+                      listingPackageSourceAwareRefresh.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      listingPackageSourceAwareRefresh.publicationImpact,
+                    ],
+                    [
+                      listingPackageSourceAwareRefreshCopy.sourceProductLinked,
+                      listingPackageSourceAwareRefresh.sourceAwareness.sourceProductLinked,
+                    ],
+                    [
+                      listingPackageSourceAwareRefreshCopy.sourceAwareRefreshBlocked,
+                      listingPackageSourceAwareRefresh.sourceAwareness.sourceAwareRefreshAllowed,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Source Awareness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid fields={Object.entries(listingPackageSourceAwareRefresh.sourceAwareness)} />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Readiness Matrix
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid fields={Object.entries(listingPackageSourceAwareRefresh.readinessMatrix)} />
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Blocking Gates
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {listingPackageSourceAwareRefresh.blockingGates.map((gate) => (
+                  <article
+                    key={gate.gateId}
+                    className="rounded-xl border border-rose-300/15 bg-rose-300/[0.045] p-4"
+                  >
+                    <p className="text-sm font-black text-white">
+                      {listingPackageSourceAwareGateLabels[
+                        gate.gateId as keyof typeof listingPackageSourceAwareGateLabels
+                      ] ?? gate.label}
+                    </p>
+                    <p className="mt-2 text-xs font-bold uppercase tracking-[0.18em] text-rose-100/70">
+                      {gate.status}
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-white/60">
+                      {gate.decision}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Workflows
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {listingPackageSourceAwareRefresh.blockedWorkflows.map((workflow) => (
+                    <div
+                      key={workflow.workflow}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="text-sm font-bold text-white">
+                        {workflow.workflow}
+                      </p>
+                      <p className="mt-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-100/70">
+                        {workflow.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {workflow.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Required Human Actions
+                </h4>
+                <div className="mt-4">
+                  <ListBlock items={listingPackageSourceAwareRefresh.requiredHumanActions} />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        listingPackageSourceAwareRefreshCopy.nextRecommendedLoop,
+                        listingPackageSourceAwareRefresh.nextRecommendedLoop.loop,
+                      ],
+                      [
+                        "Reason",
+                        listingPackageSourceAwareRefresh.nextRecommendedLoop.reason,
+                      ],
+                      [
+                        "After that",
+                        listingPackageSourceAwareRefresh.nextRecommendedLoop.afterThat,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Compact Safety Flags
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid fields={Object.entries(listingPackageSourceAwareRefresh.safetyFlags)} />
+                </div>
+              </article>
+            </div>
           </div>
         </Section>
 
