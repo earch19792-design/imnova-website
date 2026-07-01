@@ -96,6 +96,7 @@ export type MarketRadarProductRow = {
     | "collection_changed_after_review"
     | "price_up_after_review"
     | "pipeline_candidate_not_evaluated"
+    | "out_of_stock_not_listable"
     | "reviewed_no_new_signal"
   stock_validation_status?:
     | "stock_confirmed"

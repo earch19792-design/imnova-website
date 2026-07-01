@@ -9982,6 +9982,41 @@ test("market radar actionable ranking: producto nunca analizado aparece como acc
   )
 })
 
+test("market radar actionable ranking: producto sin stock confirmado no reaparece como oportunidad nueva", () => {
+  const result =
+    getMarketRadarActionability({
+      product: {
+        ...baseActionableRadarProduct,
+        available:
+          false,
+        inventory_quantity:
+          0,
+        inventory_status:
+          "out_of_stock",
+        inventory_source:
+          "manual_admin_confirmation",
+        inventory_scope:
+          "variant_level",
+        inventory_confidence:
+          "high",
+      },
+      candidate:
+        null,
+      events:
+        [],
+    })
+
+  assert.equal(result.radar_action_status, "reviewed")
+  assert.equal(
+    result.actionable_reason,
+    "out_of_stock_not_listable"
+  )
+  assert.equal(
+    result.stock_validation_status,
+    "out_of_stock"
+  )
+})
+
 test("active listing risk read service: lee riesgos abiertos con limite seguro", async () => {
   const {
     supabase,
