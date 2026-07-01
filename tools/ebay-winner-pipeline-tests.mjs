@@ -12040,6 +12040,52 @@ test("market radar dashboard: busqueda evita conteos globales exactos", () => {
   )
 })
 
+test("market radar dashboard: incluye out of stock aunque salga del top score", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "app/api/admin/market-radar/route.ts"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /DASHBOARD_OUT_OF_STOCK_LIMIT/
+  )
+  assert.match(
+    source,
+    /\.from\("market_radar_snapshots"\)[\s\S]*\.eq\(\s*"available",\s*false\s*\)[\s\S]*DASHBOARD_OUT_OF_STOCK_LIMIT/
+  )
+  assert.match(
+    source,
+    /productIds =[\s\S]*new Set\(\[[\s\S]*\.\.\.productIds[\s\S]*outOfStockSnapshotData/
+  )
+})
+
+test("market radar dashboard: snapshot manual 0 no se reemplaza por stock anterior", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "app/api/admin/market-radar/route.ts"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /function isManualStockConfirmationSnapshot[\s\S]*manual_stock_confirmation[\s\S]*manual_admin_confirmation/
+  )
+  assert.match(
+    source,
+    /function shouldPreferSnapshotForDashboard[\s\S]*isManualStockConfirmationSnapshot\([\s\S]*currentSnapshot[\s\S]*return false/
+  )
+  assert.match(
+    source,
+    /shouldPreferSnapshotForDashboard\(\{[\s\S]*currentSnapshot,[\s\S]*nextSnapshot:[\s\S]*snapshot/
+  )
+})
+
 test("radar advisor: low_stock -> prepare_pause_or_reduce_quantity", () => {
   const alert =
     getRadarAdvisorEvent(
