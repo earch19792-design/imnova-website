@@ -10379,6 +10379,14 @@ test("producto válido se evalúa completo y genera WhatsApp dryRun", () => {
   assert.equal(result.whatsappDryRunPayload.dryRun, true)
   assert.equal(result.whatsappDryRunPayload.enableRealSend, false)
   assert.equal(result.whatsappDryRunPayload.interactive.action.buttons.length, 4)
+  assert.equal(
+    result.whatsappDryRunPayload.interactive.action.buttons[0].reply.title,
+    "Preparar draft"
+  )
+  assert.notEqual(
+    result.whatsappDryRunPayload.interactive.action.buttons[0].reply.title,
+    "Crear borrador"
+  )
 })
 
 test("winner pipeline normaliza stock confirmado desde inventory_context", () => {
