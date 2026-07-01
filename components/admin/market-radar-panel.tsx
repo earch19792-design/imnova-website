@@ -20,6 +20,7 @@ import {
   ExternalLink,
   FileSearch,
   PackageCheck,
+  PackageX,
   Radar,
   RefreshCw,
   TriangleAlert,
@@ -147,6 +148,7 @@ const sellerCommandCenterCopy = {
     "Proteger revisados o listados",
     "Revisar cambios de precio o margen",
     "Riesgo de stock",
+    "Out of Stock",
     "Cambios de margen",
     "Bloqueados o por revisar",
   ],
@@ -392,6 +394,7 @@ type RadarRankingFilter =
   | "price_margin_changes"
   | "stock_confirmed"
   | "stock_needs_validation"
+  | "out_of_stock"
   | "blocked_or_review"
   | "reviewed"
 
@@ -1338,13 +1341,22 @@ function isExistingStockRiskSignal(
     isExistingRadarProduct(product) &&
     (
       status === "stock_needs_validation" ||
-      status === "out_of_stock" ||
       (
         status === "stock_confirmed" &&
         confirmedQuantity !== null &&
         confirmedQuantity <= 3
       )
     )
+  )
+}
+
+function isConfirmedOutOfStockProduct(
+  product: MarketRadarProductRow
+) {
+  return Boolean(
+    isExistingRadarProduct(product) &&
+    getRadarStockValidationStatus(product) ===
+      "out_of_stock"
   )
 }
 
@@ -1405,12 +1417,19 @@ function matchesRadarRankingFilter(
     return isExistingStockRiskSignal(product)
   }
 
+  if (filter === "out_of_stock") {
+    return isConfirmedOutOfStockProduct(product)
+  }
+
   if (filter === "blocked_or_review") {
     return isBlockedOrNeedsReviewSignal(product)
   }
 
   if (filter === "reviewed") {
-    return !isRadarProductActionable(product)
+    return (
+      !isRadarProductActionable(product) &&
+      !isConfirmedOutOfStockProduct(product)
+    )
   }
 
   return true
@@ -1437,6 +1456,10 @@ function getRadarRankingFilterTitle(
 
   if (filter === "stock_needs_validation") {
     return "Productos existentes con riesgo de stock"
+  }
+
+  if (filter === "out_of_stock") {
+    return "Productos sin stock confirmado"
   }
 
   if (filter === "blocked_or_review") {
@@ -6304,6 +6327,11 @@ export function MarketRadarPanel({
             isExistingStockRiskSignal
           ).length
 
+        const outOfStock =
+          products.filter(
+            isConfirmedOutOfStockProduct
+          ).length
+
         const blockedOrReview =
           products.filter(
             isBlockedOrNeedsReviewSignal
@@ -6321,6 +6349,7 @@ export function MarketRadarPanel({
           priceMarginChanges,
           stockConfirmed,
           stockNeedsValidation,
+          outOfStock,
           blockedOrReview,
           reviewed,
         }
@@ -6587,7 +6616,19 @@ export function MarketRadarPanel({
       count:
         rankingCounts.stockNeedsValidation,
       note:
-        "Agotado, bajo o validar",
+        "Bajo o validar",
+    },
+    {
+      id:
+        "out-of-stock",
+      label:
+        "Out of Stock",
+      filter:
+        "out_of_stock",
+      count:
+        rankingCounts.outOfStock,
+      note:
+        "Monitorear restock",
     },
     {
       id:
@@ -7002,9 +7043,10 @@ export function MarketRadarPanel({
               <span>{sellerCommandCenterCopy.queueLabels[2]}</span>
               <span>{sellerCommandCenterCopy.queueLabels[3]}</span>
               <span>{sellerCommandCenterCopy.queueLabels[4]}</span>
+              <span>{sellerCommandCenterCopy.queueLabels[5]}</span>
             </div>
           </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-3 xl:grid-cols-5">
+          <div className="mt-3 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
             {sellerCommandMenuItems.map(item => {
               const isActive =
                 rankingFilter === item.filter
@@ -7211,8 +7253,14 @@ export function MarketRadarPanel({
         <MetricCard
           title="Riesgo de stock"
           value={rankingCounts.stockNeedsValidation}
-          detail="Agotado, bajo o sin cantidad confiable"
+          detail="Bajo o sin cantidad confiable"
           icon={TriangleAlert}
+        />
+        <MetricCard
+          title="Out of Stock"
+          value={rankingCounts.outOfStock}
+          detail="Sin stock confirmado"
+          icon={PackageX}
         />
         <MetricCard
           title="Oportunidad"
@@ -7263,6 +7311,9 @@ export function MarketRadarPanel({
                 <p>
                   {rankingCounts.stockNeedsValidation} tienen riesgo de stock y requieren validacion antes de vender.
                 </p>
+                <p>
+                  {rankingCounts.outOfStock} estan sin stock confirmado y quedan fuera de Revisar ahora hasta restock.
+                </p>
               </div>
             </div>
             <div className="flex flex-col gap-3 md:items-end">
@@ -7297,6 +7348,12 @@ export function MarketRadarPanel({
                       "stock_needs_validation" as const,
                     label:
                       "Riesgo de stock",
+                  },
+                  {
+                    value:
+                      "out_of_stock" as const,
+                    label:
+                      "Out of Stock",
                   },
                   {
                     value:
