@@ -626,6 +626,19 @@ const ebayLunaPortexProductSnapshotFixture =
     )
   )
 
+const ebayLunaPortexProductFactsReadinessGateFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-luna-portex-product-facts-readiness-gate-v1.json"
+  )
+
+const ebayLunaPortexProductFactsReadinessGateFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayLunaPortexProductFactsReadinessGateFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayLunaPortexImageSourceIntakeFixturePath =
   path.resolve(
     "tools/fixtures/ebay-luna-portex-image-source-intake-v1.json"
@@ -5397,6 +5410,263 @@ test("luna portex product snapshot fixture: no contiene URLs payloads ni datos r
   }
 })
 
+test("luna portex product facts readiness gate fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayLunaPortexProductFactsReadinessGateFixturePath
+    )
+  )
+  assert.equal(
+    ebayLunaPortexProductFactsReadinessGateFixture.gateVersion,
+    "EBAY_LUNA_PORTEX_PRODUCT_FACTS_READINESS_GATE_V1"
+  )
+  assert.equal(
+    ebayLunaPortexProductFactsReadinessGateFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebayLunaPortexProductFactsReadinessGateFixture.productSnapshotVersion,
+    "EBAY_LUNA_PORTEX_PRODUCT_SNAPSHOT_V1"
+  )
+  assert.equal(
+    ebayLunaPortexProductFactsReadinessGateFixture.sourceListingPackageVersion,
+    "EBAY_FIRST_LISTING_PACKAGE_V1"
+  )
+  assert.equal(
+    ebayLunaPortexProductFactsReadinessGateFixture.marketplace,
+    "ebay_us"
+  )
+  assert.equal(
+    ebayLunaPortexProductFactsReadinessGateFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebayLunaPortexProductFactsReadinessGateFixture.gateStatus,
+    "PRODUCT_FACTS_NOT_READY"
+  )
+  assert.equal(
+    ebayLunaPortexProductFactsReadinessGateFixture.gateDecision,
+    "BLOCK_LISTING_PIPELINE"
+  )
+  assert.equal(
+    ebayLunaPortexProductFactsReadinessGateFixture.listingImpact,
+    "LISTING_BLOCKED_UNTIL_PRODUCT_FACTS_VALIDATED"
+  )
+  assert.equal(
+    ebayLunaPortexProductFactsReadinessGateFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+})
+
+test("luna portex product facts readiness gate fixture: review inputs bloquean facts", () => {
+  const reviewInputs =
+    ebayLunaPortexProductFactsReadinessGateFixture.reviewInputs
+
+  assert.equal(
+    reviewInputs.sourceProvider,
+    "luna_portex"
+  )
+  assert.equal(
+    reviewInputs.sourceType,
+    "supplier_catalog_product"
+  )
+  assert.equal(
+    reviewInputs.productSnapshotStatus,
+    "PRODUCT_SNAPSHOT_NEEDS_VALIDATION"
+  )
+  assert.equal(
+    reviewInputs.factsStatus,
+    "PRODUCT_FACTS_NEED_VALIDATION"
+  )
+
+  for (const flagName of [
+    "productTitleIncluded",
+    "brandIncluded",
+    "categoryIncluded",
+    "conditionIncluded",
+    "dimensionsIncluded",
+    "weightIncluded",
+    "materialIncluded",
+    "packageContentsIncluded",
+    "quantityIncluded",
+    "compatibilityIncluded",
+    "verifiedClaimsIncluded",
+  ]) {
+    assert.equal(
+      reviewInputs[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("luna portex product facts readiness gate fixture: fact checks fallan y bloquean unlock", () => {
+  const factChecks =
+    ebayLunaPortexProductFactsReadinessGateFixture.factChecks
+
+  assert.equal(
+    factChecks.length,
+    12
+  )
+
+  const expectedCheckIds =
+    new Set([
+      "catalog_reference_confirmed",
+      "product_title_confirmed",
+      "brand_confirmed",
+      "category_confirmed",
+      "condition_confirmed",
+      "dimensions_confirmed",
+      "weight_confirmed",
+      "material_confirmed",
+      "package_contents_confirmed",
+      "quantity_confirmed",
+      "compatibility_review_completed",
+      "claims_review_completed",
+    ])
+
+  for (const check of factChecks) {
+    assert.equal(
+      check.status,
+      "FAILED"
+    )
+    assert.equal(
+      check.requiredToUnlock,
+      true
+    )
+    assert.ok(
+      expectedCheckIds.has(check.checkId),
+      `unexpected check id: ${check.checkId}`
+    )
+  }
+})
+
+test("luna portex product facts readiness gate fixture: workflows criticos permanecen bloqueados", () => {
+  const blockedWorkflows =
+    ebayLunaPortexProductFactsReadinessGateFixture.blockedWorkflows
+
+  assert.equal(
+    blockedWorkflows.length,
+    5
+  )
+
+  const expectedWorkflows =
+    new Set([
+      "listing_package_source_aware_refresh",
+      "commercial_readiness_gate",
+      "secondary_image_brief_generation",
+      "ebay_draft_mapping",
+      "ebay_draft_creation",
+    ])
+
+  for (const workflow of blockedWorkflows) {
+    assert.equal(
+      workflow.status,
+      "BLOCKED"
+    )
+    assert.ok(
+      expectedWorkflows.has(workflow.workflow),
+      `unexpected blocked workflow: ${workflow.workflow}`
+    )
+  }
+})
+
+test("luna portex product facts readiness gate fixture: human decision pide mas facts", () => {
+  const humanDecision =
+    ebayLunaPortexProductFactsReadinessGateFixture.humanDecision
+
+  assert.equal(
+    humanDecision.required,
+    true
+  )
+  assert.equal(
+    humanDecision.decisionStatus,
+    "NOT_REVIEWED"
+  )
+  assert.equal(
+    humanDecision.approvalStatus,
+    "NOT_APPROVED"
+  )
+  assert.equal(
+    humanDecision.currentDecision,
+    "REQUEST_MORE_PRODUCT_FACTS"
+  )
+
+  for (const expectedValue of [
+    "APPROVE_PRODUCT_FACTS",
+    "REQUEST_MORE_PRODUCT_FACTS",
+    "REJECT_PRODUCT_FACTS",
+  ]) {
+    assert.ok(
+      humanDecision.allowedDecisionValues.includes(
+        expectedValue
+      ),
+      `missing allowed decision value: ${expectedValue}`
+    )
+  }
+})
+
+test("luna portex product facts readiness gate fixture: safety flags mantienen pipeline bloqueado", () => {
+  const safetyFlags =
+    ebayLunaPortexProductFactsReadinessGateFixture.safetyFlags
+
+  for (const flagName of [
+    "productFactsApproved",
+    "listingPipelineUnlocked",
+    "commercialReadinessUnlocked",
+    "secondaryImageBriefsUnlocked",
+    "draftMappingUnlocked",
+    "draftCreationUnlocked",
+    "realSupplierProductDataIncluded",
+    "supplierPrivateDataIncluded",
+    "externalUrlsIncluded",
+    "realImagesIncluded",
+    "base64ImagesIncluded",
+    "customerDataIncluded",
+    "apiCallsMade",
+    "lunaPortexApiUsed",
+    "ebayApiUsed",
+    "openAiApiUsed",
+    "realDraftCreated",
+    "publishedToEbay",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("luna portex product facts readiness gate fixture: no contiene URLs payloads ni datos reales", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayLunaPortexProductFactsReadinessGateFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /imageUrl/,
+    /assetUrl/,
+    /uploadedUrl/,
+    /<img/i,
+    /next\/image/i,
+    /supplierEmail/,
+    /customerEmail/,
+    /customerPhone/,
+    /realSupplierProductIdValue/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("luna portex image source review gate fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -7955,6 +8225,10 @@ test("ebay listing package admin MVP: existe y usa fixtures seguros", () => {
   )
   assert.match(
     source,
+    /ebay-luna-portex-product-facts-readiness-gate-v1\.json/
+  )
+  assert.match(
+    source,
     /ebay-first-listing-qa-review-v1\.json/
   )
   assert.match(
@@ -8055,6 +8329,12 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "Approval",
     "Linked Source Product",
     "Luna Portex Product Snapshot",
+    "Product Facts Readiness Gate",
+    "Review Inputs",
+    "Fact Checks",
+    "Blocked Workflows",
+    "Unlock Requirements",
+    "Human Decision",
     "Catalog reference",
     "Product identity",
     "Image inputs",
@@ -8223,6 +8503,44 @@ test("ebay listing package admin MVP: muestra linked source product snapshot", (
     assert.ok(
       source.includes(expectedText),
       `missing product snapshot admin text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: muestra product facts readiness gate", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Product Facts Readiness Gate",
+    "PRODUCT_FACTS_NOT_READY",
+    "BLOCK_LISTING_PIPELINE",
+    "LISTING_BLOCKED_UNTIL_PRODUCT_FACTS_VALIDATED",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "Product facts are not validated yet",
+    "Human product facts review required",
+    "Catalog reference confirmed",
+    "Product title confirmed",
+    "Brand confirmed",
+    "Category confirmed",
+    "Condition confirmed",
+    "Dimensions confirmed",
+    "Weight confirmed",
+    "Material confirmed",
+    "Package contents confirmed",
+    "Quantity confirmed",
+    "Compatibility review completed",
+    "Claims review completed",
+    "Blocked Workflows",
+    "Unlock Requirements",
+    "Current decision: request more product facts",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing product facts readiness gate admin text: ${expectedText}`
     )
   }
 })
