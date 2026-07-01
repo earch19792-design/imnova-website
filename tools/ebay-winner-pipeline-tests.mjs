@@ -11583,19 +11583,39 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
+    /Out of Stock/
+  )
+  assert.match(
+    source,
     /isExistingStockRiskSignal/
   )
   assert.match(
     source,
-    /status === "stock_needs_validation"[\s\S]*status === "out_of_stock"[\s\S]*confirmedQuantity <= 3/
+    /isConfirmedOutOfStockProduct/
   )
   assert.match(
     source,
-    /Agotado, bajo o validar/
+    /filter === "out_of_stock"[\s\S]*isConfirmedOutOfStockProduct/
   )
   assert.match(
     source,
-    /Agotado, bajo o sin cantidad confiable/
+    /filter === "reviewed"[\s\S]*!isRadarProductActionable\(product\)[\s\S]*!isConfirmedOutOfStockProduct\(product\)/
+  )
+  assert.match(
+    source,
+    /Bajo o validar/
+  )
+  assert.match(
+    source,
+    /Bajo o sin cantidad confiable/
+  )
+  assert.match(
+    source,
+    /Sin stock confirmado/
+  )
+  assert.match(
+    source,
+    /quedan fuera de Revisar ahora hasta restock/
   )
   assert.match(
     source,
