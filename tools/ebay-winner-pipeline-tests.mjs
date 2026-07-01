@@ -10569,7 +10569,11 @@ test("market radar manual stock confirmation: valida cantidades antes de guardar
   )
   assert.equal(
     getManualStockQuantity(0),
-    null
+    0
+  )
+  assert.equal(
+    getManualStockQuantity("0"),
+    0
   )
   assert.equal(
     getManualStockQuantity(-1),
@@ -10582,6 +10586,27 @@ test("market radar manual stock confirmation: valida cantidades antes de guardar
   assert.equal(
     getManualStockQuantity(50000),
     null
+  )
+})
+
+test("market radar manual stock confirmation: cantidad cero guarda out of stock", () => {
+  const source =
+    fs.readFileSync(
+      "app/api/admin/market-radar/route.ts",
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /available:\s*quantity > 0/
+  )
+  assert.match(
+    source,
+    /inventory_status:[\s\S]*quantity > 0[\s\S]*"in_stock"[\s\S]*"out_of_stock"/
+  )
+  assert.match(
+    source,
+    /Producto confirmado manualmente sin stock\./
   )
 })
 
