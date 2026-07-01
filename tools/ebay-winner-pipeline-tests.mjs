@@ -9234,6 +9234,8 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
   for (const expectedSection of [
     "Executive Status",
     "Seller View",
+    "Seller Command Menu",
+    "Seller Workflow Order",
     "Listing Preview",
     "What Blocks Publishing",
     "Action Plan",
@@ -9264,6 +9266,7 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "Compact Safety Flags",
     "Product / Pricing / Shipping",
     "Image Plan",
+    "Image Workflow Order",
     "Main Image Enhancement Brief",
     "Image QA Review Gate",
     "Image QA Checks",
@@ -9329,6 +9332,105 @@ test("ebay listing package admin MVP: muestra preview vendedor y plan de accion"
       `missing seller preview/action text: ${expectedText}`
     )
   }
+})
+
+test("ebay listing package admin MVP: muestra menu vendedor navegable", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Seller Command Menu",
+    "Source product",
+    "Facts gate",
+    "Commercial gate",
+    "Image gate",
+    "Package refresh",
+    "Final QA",
+    "#source-product",
+    "#facts-gate",
+    "#commercial-gate",
+    "#image-plan",
+    "#source-aware-refresh",
+    "#qa-details",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing seller command menu text: ${expectedText}`
+    )
+  }
+
+  assert.ok(
+    source.indexOf("Seller Command Menu") <
+      source.indexOf("Executive Status")
+  )
+})
+
+test("ebay listing package admin MVP: muestra orden profesional de vendedor", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Seller Workflow Order",
+    "Confirm source product",
+    "Validate listing facts",
+    "Validate commercial readiness",
+    "Approve image source and QA",
+    "Refresh package, then map draft",
+    "Only refresh the listing package and map an eBay draft after source, facts, commercial, image, and human gates pass.",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing seller workflow order text: ${expectedText}`
+    )
+  }
+
+  assert.ok(
+    source.indexOf("Seller Workflow Order") <
+      source.indexOf("Listing Preview")
+  )
+  assert.ok(
+    source.indexOf("Confirm source product") <
+      source.indexOf("Refresh package, then map draft")
+  )
+})
+
+test("ebay listing package admin MVP: muestra orden correcto del workflow de imagenes", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Image Workflow Order",
+    "Source intake",
+    "Source review gate",
+    "Main image enhancement brief",
+    "Image QA review gate",
+    "Draft image mapping",
+    "Do not map images to an eBay draft until image QA is approved.",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing image workflow order text: ${expectedText}`
+    )
+  }
+
+  const imageWorkflowStart =
+    source.indexOf("const imageWorkflowOrder")
+  assert.ok(
+    imageWorkflowStart > -1
+  )
+  assert.ok(
+    source.indexOf("Source intake", imageWorkflowStart) <
+      source.indexOf("Image QA review gate", imageWorkflowStart)
+  )
 })
 
 test("ebay listing package admin MVP: muestra image asset manifest", () => {
