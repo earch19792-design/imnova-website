@@ -11201,6 +11201,18 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
       ),
       "utf8"
     )
+  const advisorStart =
+    source.indexOf("Advisor del Vendedor")
+  const advisorEnd =
+    source.indexOf(
+      "Centro de Venta eBay",
+      advisorStart
+    )
+  const advisorBlock =
+    source.slice(
+      advisorStart,
+      advisorEnd
+    )
 
   assert.match(
     source,
@@ -11330,8 +11342,16 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
     source,
     /{option\.label}{" "}[\s\S]*{advisorFilterCounts\[option\.value\] \|\| 0}/
   )
+  assert.ok(
+    advisorStart >= 0,
+    "Advisor del Vendedor section must exist"
+  )
+  assert.ok(
+    advisorEnd > advisorStart,
+    "Advisor del Vendedor section must end before Centro de Venta eBay"
+  )
   assert.doesNotMatch(
-    source,
+    advisorBlock,
     /Filtro activo/
   )
   assert.match(
@@ -11431,7 +11451,19 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
+    /Productos del filtro activo/
+  )
+  assert.match(
+    source,
     /activeSellerCommandProducts/
+  )
+  assert.match(
+    source,
+    /activeSellerCommandMenuItem/
+  )
+  assert.match(
+    source,
+    /getRadarRankingFilterCount/
   )
   assert.match(
     source,
@@ -11439,7 +11471,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Ver lista completa/
+    /Ver en ranking/
+  )
+  assert.match(
+    source,
+    /xl:grid-cols-4 2xl:grid-cols-7/
   )
   assert.match(
     source,
@@ -11619,7 +11655,15 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /filter === "reviewed"[\s\S]*!isRadarProductActionable\(product\)[\s\S]*!isConfirmedOutOfStockProduct\(product\)/
+    /function isQuietReviewedRadarProduct/
+  )
+  assert.match(
+    source,
+    /isQuietReviewedRadarProduct[\s\S]*!hasListingProtectionRiskSignal\(product\)[\s\S]*!isExistingStockRiskSignal\(product\)[\s\S]*!isConfirmedOutOfStockProduct\(product\)[\s\S]*!hasPriceOrMarginChangeSignal\(product\)[\s\S]*!isBlockedOrNeedsReviewSignal\(product\)/
+  )
+  assert.match(
+    source,
+    /filter === "reviewed"[\s\S]*isQuietReviewedRadarProduct\(product\)/
   )
   assert.match(
     source,
@@ -11924,6 +11968,72 @@ test("market radar panel: seller command menu solo filtra UI local", () => {
       forbiddenPattern
     )
   }
+})
+
+test("market radar panel: filtro activo no cae en cola equivocada", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/market-radar-panel.tsx"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /function getRadarRankingFilterCount/
+  )
+  assert.match(
+    source,
+    /if \(filter === "all"\)[\s\S]*return true/
+  )
+  assert.match(
+    source,
+    /return totalProducts/
+  )
+  assert.match(
+    source,
+    /const activeSellerCommandMenuItem[\s\S]*sellerCommandMenuItems\.find/
+  )
+  assert.match(
+    source,
+    /const activeSellerCommandItem[\s\S]*activeSellerCommandMenuItem \|\| \{/
+  )
+  assert.match(
+    source,
+    /id:[\s\S]*`active-filter-\$\{rankingFilter\}`/
+  )
+  assert.match(
+    source,
+    /note:[\s\S]*"Filtro activo"/
+  )
+  assert.doesNotMatch(
+    source,
+    /sellerCommandMenuItems\[\s*sellerCommandMenuItems\.length - 1\s*\]/
+  )
+})
+
+test("market radar panel: orden operativo prioriza riesgos antes de monitoreo", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/market-radar-panel.tsx"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /queueLabels:[\s\S]*"Listings en riesgo"[\s\S]*"Out of Stock"[\s\S]*"Riesgo de stock"[\s\S]*"Cambios precio\/margen"[\s\S]*"Bloqueados o por revisar"[\s\S]*"Revisados sin cambios"[\s\S]*"Todo monitoreado"/
+  )
+  assert.match(
+    source,
+    /const sellerCommandMenuItems[\s\S]*id:[\s\S]*"listing-risk"[\s\S]*id:[\s\S]*"out-of-stock"[\s\S]*id:[\s\S]*"stock-risk"[\s\S]*id:[\s\S]*"price-margin-changes"[\s\S]*id:[\s\S]*"blocked-or-review"[\s\S]*id:[\s\S]*"reviewed"[\s\S]*id:[\s\S]*"all-monitored"/
+  )
+  assert.match(
+    source,
+    /value:[\s\S]*"listing_risk" as const[\s\S]*value:[\s\S]*"out_of_stock" as const[\s\S]*value:[\s\S]*"stock_needs_validation" as const[\s\S]*value:[\s\S]*"actionable" as const[\s\S]*value:[\s\S]*"price_margin_changes" as const[\s\S]*value:[\s\S]*"stock_confirmed" as const/
+  )
 })
 
 test("market radar panel: seleccionar producto del centro de venta no activa busqueda global", () => {
