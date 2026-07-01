@@ -23,6 +23,7 @@ import {
   PackageX,
   Radar,
   RefreshCw,
+  ShieldAlert,
   TriangleAlert,
   X,
 } from "lucide-react"
@@ -146,6 +147,7 @@ const sellerCommandCenterCopy = {
   ],
   queueLabels: [
     "Proteger revisados o listados",
+    "Listings en riesgo",
     "Revisar cambios de precio o margen",
     "Riesgo de stock",
     "Out of Stock",
@@ -391,6 +393,7 @@ type RadarRankingFilter =
   | "all"
   | "actionable"
   | "existing"
+  | "listing_risk"
   | "price_margin_changes"
   | "stock_confirmed"
   | "stock_needs_validation"
@@ -1329,6 +1332,43 @@ function hasPriceOrMarginChangeSignal(
   )
 }
 
+function isListedOrPublishedRadarProduct(
+  product: MarketRadarProductRow
+) {
+  const candidateState =
+    String(
+      product.pipeline_candidate_state || ""
+    ).toUpperCase()
+
+  return (
+    candidateState === "LISTED" ||
+    candidateState === "PUBLISHED"
+  )
+}
+
+function hasListingProtectionRiskSignal(
+  product: MarketRadarProductRow
+) {
+  const stockStatus =
+    getRadarStockValidationStatus(product)
+  const confirmedQuantity =
+    toNumber(product.inventory_quantity)
+
+  return Boolean(
+    isListedOrPublishedRadarProduct(product) &&
+    (
+      stockStatus === "out_of_stock" ||
+      stockStatus === "stock_needs_validation" ||
+      (
+        stockStatus === "stock_confirmed" &&
+        confirmedQuantity !== null &&
+        confirmedQuantity <= 3
+      ) ||
+      hasPriceOrMarginChangeSignal(product)
+    )
+  )
+}
+
 function isExistingStockRiskSignal(
   product: MarketRadarProductRow
 ) {
@@ -1402,6 +1442,10 @@ function matchesRadarRankingFilter(
     return isExistingRadarProduct(product)
   }
 
+  if (filter === "listing_risk") {
+    return hasListingProtectionRiskSignal(product)
+  }
+
   if (filter === "price_margin_changes") {
     return hasPriceOrMarginChangeSignal(product)
   }
@@ -1444,6 +1488,10 @@ function getRadarRankingFilterTitle(
 
   if (filter === "existing") {
     return "Productos ya evaluados o vinculados"
+  }
+
+  if (filter === "listing_risk") {
+    return "Listings en riesgo"
   }
 
   if (filter === "price_margin_changes") {
@@ -6313,6 +6361,11 @@ export function MarketRadarPanel({
             hasPriceOrMarginChangeSignal
           ).length
 
+        const listingRisk =
+          products.filter(
+            hasListingProtectionRiskSignal
+          ).length
+
         const stockConfirmed =
           products.filter(
             product =>
@@ -6347,6 +6400,7 @@ export function MarketRadarPanel({
           actionable,
           existing,
           priceMarginChanges,
+          listingRisk,
           stockConfirmed,
           stockNeedsValidation,
           outOfStock,
@@ -6605,6 +6659,18 @@ export function MarketRadarPanel({
         rankingCounts.reviewed,
       note:
         "Sin nueva señal",
+    },
+    {
+      id:
+        "listing-risk",
+      label:
+        "Listings en riesgo",
+      filter:
+        "listing_risk",
+      count:
+        rankingCounts.listingRisk,
+      note:
+        "Evitar orden riesgosa",
     },
     {
       id:
@@ -7038,15 +7104,12 @@ export function MarketRadarPanel({
               {sellerCommandCenterCopy.commandMenu}
             </p>
             <div className="flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-50/55">
-              <span>{sellerCommandCenterCopy.queueLabels[0]}</span>
-              <span>{sellerCommandCenterCopy.queueLabels[1]}</span>
-              <span>{sellerCommandCenterCopy.queueLabels[2]}</span>
-              <span>{sellerCommandCenterCopy.queueLabels[3]}</span>
-              <span>{sellerCommandCenterCopy.queueLabels[4]}</span>
-              <span>{sellerCommandCenterCopy.queueLabels[5]}</span>
+              {sellerCommandCenterCopy.queueLabels.map(label => (
+                <span key={label}>{label}</span>
+              ))}
             </div>
           </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+          <div className="mt-3 grid gap-2 md:grid-cols-3 xl:grid-cols-7">
             {sellerCommandMenuItems.map(item => {
               const isActive =
                 rankingFilter === item.filter
@@ -7251,6 +7314,12 @@ export function MarketRadarPanel({
           icon={CheckCircle2}
         />
         <MetricCard
+          title="Listings en riesgo"
+          value={rankingCounts.listingRisk}
+          detail="Stock o margen cambio"
+          icon={ShieldAlert}
+        />
+        <MetricCard
           title="Riesgo de stock"
           value={rankingCounts.stockNeedsValidation}
           detail="Bajo o sin cantidad confiable"
@@ -7309,6 +7378,9 @@ export function MarketRadarPanel({
                   {rankingCounts.reviewed} ya fueron revisados sin cambios nuevos.
                 </p>
                 <p>
+                  {rankingCounts.listingRisk} listings requieren proteccion por stock, precio o margen antes de vender.
+                </p>
+                <p>
                   {rankingCounts.stockNeedsValidation} tienen riesgo de stock y requieren validacion antes de vender.
                 </p>
                 <p>
@@ -7336,6 +7408,12 @@ export function MarketRadarPanel({
                       "actionable" as const,
                     label:
                       "Revisar ahora",
+                  },
+                  {
+                    value:
+                      "listing_risk" as const,
+                    label:
+                      "Listings en riesgo",
                   },
                   {
                     value:
