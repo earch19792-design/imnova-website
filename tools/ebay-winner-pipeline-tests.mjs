@@ -9637,6 +9637,45 @@ test("product selection visibility: UI muestra bloque read-only y empty state se
   )
 })
 
+test("pipeline reactivation visibility: UI muestra ruta de desbloqueo operativa", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/ebay-winner-pipeline-panel.tsx"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /Ruta de reactivacion del producto bloqueado/
+  )
+  assert.match(
+    source,
+    /Producto bloqueado reactivable/
+  )
+  assert.match(
+    source,
+    /Condiciones para desbloquear/
+  )
+  assert.match(
+    source,
+    /puede sacar este producto de bloqueado y continuar hacia paquete, listing, draft y publicacion/
+  )
+  assert.match(
+    source,
+    /getPipelineSignalLabel/
+  )
+  assert.match(
+    source,
+    /getRecoverySignalTypeLabel/
+  )
+  assert.match(
+    source,
+    /blocked_reactivation_review/
+  )
+})
+
 test("product selection visibility: UI no agrega acciones reales nuevas", () => {
   const diffSource =
     fs.readFileSync(
@@ -10526,7 +10565,7 @@ test("radar advisor: VALIDATED + out_of_stock sube prioridad por producto avanza
   )
 })
 
-test("radar advisor: restocked + BLOCKED -> resurface_for_reanalysis", () => {
+test("radar advisor: restocked + BLOCKED -> reanalizar candidato", () => {
   const alert =
     getRadarAdvisorEvent(
       {
@@ -10555,7 +10594,14 @@ test("radar advisor: restocked + BLOCKED -> resurface_for_reanalysis", () => {
   assert.equal(alert.severity, "medium")
   assert.equal(alert.seller_action_label, "Reanalizar candidato")
   assert.equal(alert.seller_priority, "Alta")
-  assert.equal(alert.seller_reason, "Producto volvio a stock")
+  assert.equal(
+    alert.seller_reason,
+    "Producto bloqueado con condicion comercial nueva"
+  )
+  assert.match(
+    alert.seller_next_step,
+    /puede salir de bloqueado/
+  )
 })
 
 test("radar advisor: price_down -> reprocess_with_updated_cost", () => {
@@ -13379,7 +13425,7 @@ test("pipeline reanalysis: DRAFT_CREATED + price_down revisa draft sin degradar"
   )
 })
 
-test("pipeline reanalysis: BLOCKED + restocked resurface_blocked", () => {
+test("pipeline reanalysis: BLOCKED + restocked crea ruta de reactivacion", () => {
   const advisor =
     getPipelineReanalysisAdvisor({
       existingCandidate: {
@@ -13404,8 +13450,27 @@ test("pipeline reanalysis: BLOCKED + restocked resurface_blocked", () => {
       },
     })
 
-  assert.equal(advisor.action, "resurface_blocked")
+  assert.equal(advisor.action, "blocked_reactivation_review")
   assert.equal(advisor.priority, "high")
+  assert.equal(advisor.unlock_policy, "paused_until_blocker_changes")
+  assert.equal(advisor.recovery_signal_type, "stock")
+  assert.ok(
+    advisor.unlock_conditions.some(condition =>
+      /Stock confirmado/.test(condition)
+    )
+  )
+  assert.match(
+    advisor.reason,
+    /No se desbloquea automaticamente/
+  )
+  assert.match(
+    advisor.proposed_next_step,
+    /puede salir de BLOCKED/
+  )
+  assert.match(
+    advisor.success_path,
+    /listing package, draft y publicacion/
+  )
 })
 
 test("pipeline reanalysis: product_or_category_signal requiere validar inventario", () => {
