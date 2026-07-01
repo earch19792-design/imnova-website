@@ -639,6 +639,19 @@ const ebayLunaPortexProductFactsReadinessGateFixture =
     )
   )
 
+const ebayLunaPortexCommercialReadinessGateFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-luna-portex-commercial-readiness-gate-v1.json"
+  )
+
+const ebayLunaPortexCommercialReadinessGateFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayLunaPortexCommercialReadinessGateFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayLunaPortexImageSourceIntakeFixturePath =
   path.resolve(
     "tools/fixtures/ebay-luna-portex-image-source-intake-v1.json"
@@ -5667,6 +5680,275 @@ test("luna portex product facts readiness gate fixture: no contiene URLs payload
   }
 })
 
+test("luna portex commercial readiness gate fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayLunaPortexCommercialReadinessGateFixturePath
+    )
+  )
+  assert.equal(
+    ebayLunaPortexCommercialReadinessGateFixture.gateVersion,
+    "EBAY_LUNA_PORTEX_COMMERCIAL_READINESS_GATE_V1"
+  )
+  assert.equal(
+    ebayLunaPortexCommercialReadinessGateFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebayLunaPortexCommercialReadinessGateFixture.productSnapshotVersion,
+    "EBAY_LUNA_PORTEX_PRODUCT_SNAPSHOT_V1"
+  )
+  assert.equal(
+    ebayLunaPortexCommercialReadinessGateFixture.productFactsGateVersion,
+    "EBAY_LUNA_PORTEX_PRODUCT_FACTS_READINESS_GATE_V1"
+  )
+  assert.equal(
+    ebayLunaPortexCommercialReadinessGateFixture.sourceListingPackageVersion,
+    "EBAY_FIRST_LISTING_PACKAGE_V1"
+  )
+  assert.equal(
+    ebayLunaPortexCommercialReadinessGateFixture.marketplace,
+    "ebay_us"
+  )
+  assert.equal(
+    ebayLunaPortexCommercialReadinessGateFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebayLunaPortexCommercialReadinessGateFixture.gateStatus,
+    "COMMERCIAL_READINESS_NOT_APPROVED"
+  )
+  assert.equal(
+    ebayLunaPortexCommercialReadinessGateFixture.gateDecision,
+    "BLOCK_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayLunaPortexCommercialReadinessGateFixture.listingImpact,
+    "LISTING_BLOCKED_UNTIL_COMMERCIAL_INPUTS_VALIDATED"
+  )
+  assert.equal(
+    ebayLunaPortexCommercialReadinessGateFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+})
+
+test("luna portex commercial readiness gate fixture: review inputs bloquean comercio", () => {
+  const reviewInputs =
+    ebayLunaPortexCommercialReadinessGateFixture.reviewInputs
+
+  assert.equal(
+    reviewInputs.sourceProvider,
+    "luna_portex"
+  )
+  assert.equal(
+    reviewInputs.sourceType,
+    "supplier_catalog_product"
+  )
+  assert.equal(
+    reviewInputs.productSnapshotStatus,
+    "PRODUCT_SNAPSHOT_NEEDS_VALIDATION"
+  )
+  assert.equal(
+    reviewInputs.productFactsGateStatus,
+    "PRODUCT_FACTS_NOT_READY"
+  )
+
+  for (const flagName of [
+    "costIncluded",
+    "supplierFeesIncluded",
+    "ebayFeeEstimateIncluded",
+    "shippingCostIncluded",
+    "returnRiskIncluded",
+    "targetMarginIncluded",
+    "marginValidated",
+    "terapeakValidated",
+    "soldListingsBenchmarkValidated",
+    "availabilityConfirmed",
+    "stockLocationConfirmed",
+    "shippingPolicyConfirmed",
+    "returnPolicyConfirmed",
+    "handlingTimeConfirmed",
+    "fulfillmentFeesConfirmed",
+  ]) {
+    assert.equal(
+      reviewInputs[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("luna portex commercial readiness gate fixture: commercial checks fallan y bloquean unlock", () => {
+  const commercialChecks =
+    ebayLunaPortexCommercialReadinessGateFixture.commercialChecks
+
+  assert.equal(
+    commercialChecks.length,
+    12
+  )
+
+  const expectedCheckIds =
+    new Set([
+      "product_cost_confirmed",
+      "supplier_fees_confirmed",
+      "ebay_fee_estimate_confirmed",
+      "shipping_cost_confirmed",
+      "return_risk_reviewed",
+      "target_margin_confirmed",
+      "margin_validated",
+      "terapeak_validation_completed",
+      "sold_listings_benchmark_completed",
+      "availability_confirmed",
+      "shipping_policy_confirmed",
+      "return_policy_confirmed",
+    ])
+
+  for (const check of commercialChecks) {
+    assert.equal(
+      check.status,
+      "FAILED"
+    )
+    assert.equal(
+      check.requiredToUnlock,
+      true
+    )
+    assert.ok(
+      expectedCheckIds.has(check.checkId),
+      `unexpected check id: ${check.checkId}`
+    )
+  }
+})
+
+test("luna portex commercial readiness gate fixture: workflows ebay permanecen bloqueados", () => {
+  const blockedWorkflows =
+    ebayLunaPortexCommercialReadinessGateFixture.blockedWorkflows
+
+  assert.equal(
+    blockedWorkflows.length,
+    6
+  )
+
+  const expectedWorkflows =
+    new Set([
+      "listing_package_source_aware_refresh",
+      "price_strategy_finalization",
+      "pack_strategy_activation",
+      "ebay_draft_mapping",
+      "ebay_draft_creation",
+      "ebay_publication",
+    ])
+
+  for (const workflow of blockedWorkflows) {
+    assert.equal(
+      workflow.status,
+      "BLOCKED"
+    )
+    assert.ok(
+      expectedWorkflows.has(workflow.workflow),
+      `unexpected blocked workflow: ${workflow.workflow}`
+    )
+  }
+})
+
+test("luna portex commercial readiness gate fixture: human decision pide mas inputs", () => {
+  const humanDecision =
+    ebayLunaPortexCommercialReadinessGateFixture.humanDecision
+
+  assert.equal(
+    humanDecision.required,
+    true
+  )
+  assert.equal(
+    humanDecision.decisionStatus,
+    "NOT_REVIEWED"
+  )
+  assert.equal(
+    humanDecision.approvalStatus,
+    "NOT_APPROVED"
+  )
+  assert.equal(
+    humanDecision.currentDecision,
+    "REQUEST_MORE_COMMERCIAL_INPUTS"
+  )
+
+  for (const expectedValue of [
+    "APPROVE_COMMERCIAL_READINESS",
+    "REQUEST_MORE_COMMERCIAL_INPUTS",
+    "REJECT_COMMERCIAL_READINESS",
+  ]) {
+    assert.ok(
+      humanDecision.allowedDecisionValues.includes(
+        expectedValue
+      ),
+      `missing allowed decision value: ${expectedValue}`
+    )
+  }
+})
+
+test("luna portex commercial readiness gate fixture: safety flags mantienen comercio bloqueado", () => {
+  const safetyFlags =
+    ebayLunaPortexCommercialReadinessGateFixture.safetyFlags
+
+  for (const flagName of [
+    "commercialReadinessApproved",
+    "priceStrategyFinalized",
+    "marginValidated",
+    "terapeakValidated",
+    "soldListingsBenchmarkValidated",
+    "stockAvailabilityConfirmed",
+    "shippingPolicyConfirmed",
+    "returnPolicyConfirmed",
+    "draftMappingUnlocked",
+    "draftCreationUnlocked",
+    "publicationUnlocked",
+    "realSupplierProductDataIncluded",
+    "supplierPrivateDataIncluded",
+    "externalUrlsIncluded",
+    "customerDataIncluded",
+    "apiCallsMade",
+    "lunaPortexApiUsed",
+    "ebayApiUsed",
+    "openAiApiUsed",
+    "realDraftCreated",
+    "publishedToEbay",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("luna portex commercial readiness gate fixture: no contiene URLs payloads ni datos reales", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayLunaPortexCommercialReadinessGateFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /imageUrl/,
+    /assetUrl/,
+    /uploadedUrl/,
+    /<img/i,
+    /next\/image/i,
+    /supplierEmail/,
+    /customerEmail/,
+    /customerPhone/,
+    /realSupplierProductIdValue/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("luna portex image source review gate fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -8229,6 +8511,10 @@ test("ebay listing package admin MVP: existe y usa fixtures seguros", () => {
   )
   assert.match(
     source,
+    /ebay-luna-portex-commercial-readiness-gate-v1\.json/
+  )
+  assert.match(
+    source,
     /ebay-first-listing-qa-review-v1\.json/
   )
   assert.match(
@@ -8330,8 +8616,10 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "Linked Source Product",
     "Luna Portex Product Snapshot",
     "Product Facts Readiness Gate",
+    "Commercial Readiness Gate",
     "Review Inputs",
     "Fact Checks",
+    "Commercial Checks",
     "Blocked Workflows",
     "Unlock Requirements",
     "Human Decision",
@@ -8541,6 +8829,44 @@ test("ebay listing package admin MVP: muestra product facts readiness gate", () 
     assert.ok(
       source.includes(expectedText),
       `missing product facts readiness gate admin text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: muestra commercial readiness gate", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Commercial Readiness Gate",
+    "COMMERCIAL_READINESS_NOT_APPROVED",
+    "BLOCK_EBAY_DRAFT",
+    "LISTING_BLOCKED_UNTIL_COMMERCIAL_INPUTS_VALIDATED",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "Commercial readiness is not approved yet",
+    "Human commercial review required",
+    "Product cost confirmed",
+    "Supplier fees confirmed",
+    "eBay fee estimate confirmed",
+    "Shipping cost confirmed",
+    "Return risk reviewed",
+    "Target margin confirmed",
+    "Margin validated",
+    "Terapeak validation completed",
+    "Sold listings benchmark completed",
+    "Availability confirmed",
+    "Shipping policy confirmed",
+    "Return policy confirmed",
+    "Blocked Workflows",
+    "Unlock Requirements",
+    "Current decision: request more commercial inputs",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing commercial readiness gate admin text: ${expectedText}`
     )
   }
 })
