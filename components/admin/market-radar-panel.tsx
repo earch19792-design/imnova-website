@@ -1497,6 +1497,8 @@ function getActionableReasonLabel(
       return "Subio precio y puede afectar margen"
     case "pipeline_candidate_not_evaluated":
       return "Existe en Pipeline, pero todavia no fue analizado"
+    case "out_of_stock_not_listable":
+      return "Sin stock confirmado, no listar"
     case "reviewed_no_new_signal":
       return "Ya revisado, sin cambios nuevos"
     default:
