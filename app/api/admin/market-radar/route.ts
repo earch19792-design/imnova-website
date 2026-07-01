@@ -32,6 +32,7 @@ const LUNAPORTEX_SOURCE_KEY =
 const DASHBOARD_PRODUCT_LIMIT = 50
 const DASHBOARD_SEARCH_LIMIT = 80
 const DASHBOARD_SEARCH_SCAN_LIMIT = 500
+const DASHBOARD_OUT_OF_STOCK_LIMIT = 50
 const DASHBOARD_LIGHTWEIGHT_EVENT_LIMIT = 40
 const DASHBOARD_PRODUCT_EVENT_LIMIT = 160
 const DASHBOARD_CANDIDATE_LOOKUP_LIMIT = 160
@@ -667,6 +668,84 @@ function getInventoryContext(
   } as const
 }
 
+function isManualStockConfirmationSnapshot(
+  snapshot: {
+    raw?: {
+      inventory_context?: {
+        inventory_source?: string | null
+      } | null
+      manual_stock_confirmation?: unknown
+    } | null
+  } | null | undefined
+) {
+  return Boolean(
+    snapshot?.raw?.manual_stock_confirmation ||
+    snapshot?.raw?.inventory_context?.inventory_source ===
+      "manual_admin_confirmation"
+  )
+}
+
+function shouldPreferSnapshotForDashboard({
+  currentSnapshot,
+  nextSnapshot,
+}: {
+  currentSnapshot?: {
+    available?: boolean | null
+    inventory_quantity?: number | string | null
+    raw?: {
+      inventory_context?: {
+        inventory_source?: string | null
+      } | null
+      manual_stock_confirmation?: unknown
+    } | null
+  } | null
+  nextSnapshot: {
+    available?: boolean | null
+    inventory_quantity?: number | string | null
+    raw?: {
+      inventory_context?: {
+        inventory_source?: string | null
+      } | null
+      manual_stock_confirmation?: unknown
+    } | null
+  }
+}) {
+  if (!currentSnapshot) {
+    return true
+  }
+
+  if (
+    isManualStockConfirmationSnapshot(
+      currentSnapshot
+    )
+  ) {
+    return false
+  }
+
+  if (
+    isManualStockConfirmationSnapshot(
+      nextSnapshot
+    )
+  ) {
+    return true
+  }
+
+  const hasConfirmedQuantity =
+    nextSnapshot.available === true &&
+    nextSnapshot.inventory_quantity !== null &&
+    nextSnapshot.inventory_quantity !== undefined
+
+  const currentHasConfirmedQuantity =
+    currentSnapshot.available === true &&
+    currentSnapshot.inventory_quantity !== null &&
+    currentSnapshot.inventory_quantity !== undefined
+
+  return Boolean(
+    hasConfirmedQuantity &&
+    !currentHasConfirmedQuantity
+  )
+}
+
 function isMissingLatestSnapshotViewError(
   error: unknown
 ) {
@@ -1131,6 +1210,59 @@ async function getLatestMarketRadarProducts(
       scores.map(
         score => score.product_id
       )
+
+    const {
+      data: outOfStockSnapshotData,
+      error: outOfStockSnapshotError,
+    } =
+      await supabase
+        .from("market_radar_snapshots")
+        .select("product_id")
+        .eq(
+          "source_id",
+          source.id
+        )
+        .eq(
+          "available",
+          false
+        )
+        .order(
+          "captured_at",
+          {
+            ascending: false,
+            nullsFirst: false,
+          }
+        )
+        .limit(
+          DASHBOARD_OUT_OF_STOCK_LIMIT
+        )
+
+    if (outOfStockSnapshotError) {
+      if (
+        isStatementTimeoutError(
+          outOfStockSnapshotError
+        )
+      ) {
+        console.warn(
+          "MARKET RADAR OUT OF STOCK SNAPSHOT QUERY TIMEOUT; CONTINUING WITH SCORE PRODUCTS:",
+          outOfStockSnapshotError.message
+        )
+      } else {
+        throw new Error(
+          outOfStockSnapshotError.message
+        )
+      }
+    }
+
+    productIds =
+      Array.from(
+        new Set([
+          ...productIds,
+          ...(
+            outOfStockSnapshotData || []
+          ).map(snapshot => snapshot.product_id),
+        ].filter(Boolean))
+      )
   }
 
   if (productIds.length === 0) {
@@ -1231,22 +1363,12 @@ async function getLatestMarketRadarProducts(
         snapshot.product_id
       )
 
-    const hasConfirmedQuantity =
-      snapshot.available === true &&
-      snapshot.inventory_quantity !== null &&
-      snapshot.inventory_quantity !== undefined
-
-    const currentHasConfirmedQuantity =
-      currentSnapshot?.available === true &&
-      currentSnapshot.inventory_quantity !== null &&
-      currentSnapshot.inventory_quantity !== undefined
-
     if (
-      !currentSnapshot ||
-      (
-        hasConfirmedQuantity &&
-        !currentHasConfirmedQuantity
-      )
+      shouldPreferSnapshotForDashboard({
+        currentSnapshot,
+        nextSnapshot:
+          snapshot,
+      })
     ) {
       snapshotByProductId.set(
         snapshot.product_id,
