@@ -1,0 +1,196 @@
+{
+  "snapshotVersion": "EBAY_LUNA_PORTEX_PRODUCT_SNAPSHOT_V1",
+  "caseId": "LISTING-GEN-001",
+  "sourceListingPackageVersion": "EBAY_FIRST_LISTING_PACKAGE_V1",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "sourceProvider": "luna_portex",
+  "sourceType": "supplier_catalog_product",
+  "snapshotStatus": "PRODUCT_SNAPSHOT_NEEDS_VALIDATION",
+  "listingImpact": "LISTING_BLOCKED_UNTIL_PRODUCT_SNAPSHOT_VALIDATED",
+  "catalogReference": {
+    "catalogReferenceStatus": "CATALOG_REFERENCE_REQUIRED",
+    "provider": "luna_portex",
+    "catalogProductReferenceIncluded": false,
+    "realSupplierProductIdIncluded": false,
+    "supplierUrlIncluded": false,
+    "externalUrlIncluded": false,
+    "privateSupplierDataIncluded": false,
+    "requiredHumanAction": "Select and confirm the Luna Portex catalog product reference before listing validation."
+  },
+  "productIdentity": {
+    "productTitleStatus": "PRODUCT_TITLE_REQUIRED",
+    "brandStatus": "BRAND_CONFIRMATION_REQUIRED",
+    "categoryStatus": "CATEGORY_CONFIRMATION_REQUIRED",
+    "conditionStatus": "CONDITION_CONFIRMATION_REQUIRED",
+    "variationStatus": "VARIATION_REVIEW_REQUIRED",
+    "productTitleIncluded": false,
+    "brandIncluded": false,
+    "categoryIncluded": false,
+    "conditionIncluded": false,
+    "variationsIncluded": false
+  },
+  "productFacts": {
+    "factsStatus": "PRODUCT_FACTS_NEED_VALIDATION",
+    "dimensionsStatus": "DIMENSIONS_REQUIRED",
+    "weightStatus": "WEIGHT_REQUIRED",
+    "materialStatus": "MATERIAL_REQUIRED",
+    "packageContentsStatus": "PACKAGE_CONTENTS_REQUIRED",
+    "quantityStatus": "QUANTITY_CONFIRMATION_REQUIRED",
+    "compatibilityStatus": "COMPATIBILITY_REVIEW_REQUIRED",
+    "claimsStatus": "CLAIMS_REVIEW_REQUIRED",
+    "dimensionsIncluded": false,
+    "weightIncluded": false,
+    "materialIncluded": false,
+    "packageContentsIncluded": false,
+    "quantityIncluded": false,
+    "compatibilityIncluded": false,
+    "verifiedClaimsIncluded": false
+  },
+  "commercialInputs": {
+    "commercialStatus": "COMMERCIAL_INPUTS_REQUIRED",
+    "costStatus": "PRODUCT_COST_REQUIRED",
+    "supplierFeeStatus": "SUPPLIER_FEES_REQUIRED",
+    "platformFeeStatus": "EBAY_FEE_ESTIMATE_REQUIRED",
+    "shippingCostStatus": "SHIPPING_COST_REQUIRED",
+    "targetMarginStatus": "MARGIN_VALIDATION_REQUIRED",
+    "priceBenchmarkStatus": "TERAPEAK_AND_SOLD_LISTINGS_REQUIRED",
+    "costIncluded": false,
+    "supplierFeesIncluded": false,
+    "shippingCostIncluded": false,
+    "marginValidated": false,
+    "terapeakValidated": false,
+    "soldListingsBenchmarkValidated": false
+  },
+  "operationsInputs": {
+    "operationsStatus": "OPERATIONS_INPUTS_REQUIRED",
+    "availabilityStatus": "STOCK_AVAILABILITY_REQUIRED",
+    "stockLocationStatus": "STOCK_LOCATION_REQUIRED",
+    "shippingPolicyStatus": "SHIPPING_POLICY_REQUIRED",
+    "returnPolicyStatus": "RETURN_POLICY_REQUIRED",
+    "handlingTimeStatus": "HANDLING_TIME_REQUIRED",
+    "lunaPortexFulfillmentStatus": "LUNA_PORTEX_FULFILLMENT_REVIEW_REQUIRED",
+    "availabilityConfirmed": false,
+    "stockLocationConfirmed": false,
+    "shippingPolicyConfirmed": false,
+    "returnPolicyConfirmed": false,
+    "handlingTimeConfirmed": false,
+    "fulfillmentFeesConfirmed": false
+  },
+  "imageInputs": {
+    "imageStatus": "IMAGE_SOURCE_AND_QA_REQUIRED",
+    "catalogImageSourceStatus": "AUTHORIZED_LUNA_PORTEX_CATALOG_IMAGE_REQUIRED",
+    "sourceIntakeStatus": "SOURCE_EVIDENCE_REQUIRED",
+    "sourceReviewGateStatus": "SOURCE_REVIEW_NOT_APPROVED",
+    "mainImageEnhancementStatus": "DO_NOT_ENHANCE_YET",
+    "imageQaStatus": "IMAGE_QA_NOT_STARTED",
+    "catalogImageIncluded": false,
+    "sourceEvidenceApproved": false,
+    "enhancementApproved": false,
+    "imageQaApproved": false
+  },
+  "complianceAndRisk": {
+    "riskStatus": "COMPLIANCE_REVIEW_REQUIRED",
+    "restrictedProductReviewRequired": true,
+    "brandRestrictionReviewRequired": true,
+    "claimsReviewRequired": true,
+    "warrantyLanguageReviewRequired": true,
+    "regulatedProductReviewRequired": true,
+    "competitorContentRisk": "DO_NOT_USE_COMPETITOR_CONTENT",
+    "medicalClaimsAllowed": false,
+    "unverifiedPerformanceClaimsAllowed": false,
+    "madeInUsaClaimAllowed": false,
+    "restrictedProductCleared": false,
+    "brandRestrictionCleared": false,
+    "claimsCleared": false
+  },
+  "missingData": [
+    {
+      "group": "Catalog reference",
+      "items": [
+        "Luna Portex catalog product reference",
+        "source product confirmation"
+      ]
+    },
+    {
+      "group": "Product facts",
+      "items": [
+        "title",
+        "brand",
+        "category",
+        "condition",
+        "dimensions",
+        "weight",
+        "material",
+        "package contents",
+        "quantity"
+      ]
+    },
+    {
+      "group": "Commercial validation",
+      "items": [
+        "product cost",
+        "supplier fees",
+        "eBay fee estimate",
+        "shipping cost",
+        "margin validation",
+        "Terapeak validation",
+        "sold listings benchmark"
+      ]
+    },
+    {
+      "group": "Operations",
+      "items": [
+        "availability",
+        "stock location",
+        "shipping policy",
+        "return policy",
+        "handling time",
+        "Luna Portex fulfillment fees"
+      ]
+    },
+    {
+      "group": "Images",
+      "items": [
+        "authorized catalog image",
+        "source evidence approval",
+        "main image enhancement",
+        "manual image QA"
+      ]
+    }
+  ],
+  "validationGates": {
+    "productSnapshotApproved": false,
+    "productFactsValidated": false,
+    "commercialInputsValidated": false,
+    "operationsValidated": false,
+    "imageSourceApproved": false,
+    "imageQaApproved": false,
+    "listingPackageCanProceed": false,
+    "ebayDraftMappingAllowed": false,
+    "ebayDraftCreationAllowed": false,
+    "publicationAllowed": false,
+    "currentDecision": "REQUEST_PRODUCT_SNAPSHOT_DATA"
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "humanReviewRequired": true,
+    "realSupplierProductDataIncluded": false,
+    "supplierPrivateDataIncluded": false,
+    "supplierUrlIncluded": false,
+    "externalUrlsIncluded": false,
+    "realImagesIncluded": false,
+    "image\u0055rlsIncluded": false,
+    "base\u0036\u0034ImagesIncluded": false,
+    "fileUploadsIncluded": false,
+    "customerDataIncluded": false,
+    "apiCallsMade": false,
+    "lunaPortexApiUsed": false,
+    "ebayApiUsed": false,
+    "openAiApiUsed": false,
+    "imageGenerated": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}

@@ -2,6 +2,7 @@ import type {
   ReactNode,
 } from "react"
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
+import productSnapshot from "../../../tools/fixtures/ebay-luna-portex-product-snapshot-v1.json"
 import imageAssetManifest from "../../../tools/fixtures/ebay-luna-portex-image-asset-manifest-v1.json"
 import mainImageEnhancementBrief from "../../../tools/fixtures/ebay-luna-portex-main-image-enhancement-brief-v1.json"
 import imageSourceIntake from "../../../tools/fixtures/ebay-luna-portex-image-source-intake-v1.json"
@@ -50,6 +51,87 @@ const imageAssetManifestCopy = {
     "hands_real_use",
   ],
 }
+
+const productSnapshotCopy = {
+  title:
+    "Luna Portex Product Snapshot",
+  snapshotStatus:
+    "PRODUCT_SNAPSHOT_NEEDS_VALIDATION",
+  listingImpact:
+    "LISTING_BLOCKED_UNTIL_PRODUCT_SNAPSHOT_VALIDATED",
+  sourceProvider:
+    "Source provider: Luna Portex",
+  sourceType:
+    "Source type: supplier catalog product",
+  catalogReference:
+    "Catalog reference required",
+  productFacts:
+    "Product facts need validation",
+  commercialInputs:
+    "Commercial inputs required",
+  operationsInputs:
+    "Operations inputs required",
+  imageInputs:
+    "Image source and QA required",
+  complianceAndRisk:
+    "Compliance review required",
+  currentDecision:
+    "Current decision: request product snapshot data",
+}
+
+const productSnapshotFieldGroups: Array<{
+  title: string
+  fields: Record<string, unknown>
+}> = [
+  {
+    title:
+      "Catalog reference",
+    fields:
+      productSnapshot.catalogReference,
+  },
+  {
+    title:
+      "Product identity",
+    fields:
+      productSnapshot.productIdentity,
+  },
+  {
+    title:
+      "Product facts",
+    fields:
+      productSnapshot.productFacts,
+  },
+  {
+    title:
+      "Commercial inputs",
+    fields:
+      productSnapshot.commercialInputs,
+  },
+  {
+    title:
+      "Operations inputs",
+    fields:
+      productSnapshot.operationsInputs,
+  },
+  {
+    title:
+      "Image inputs",
+    fields:
+      productSnapshot.imageInputs,
+  },
+  {
+    title:
+      "Compliance and risk",
+    fields:
+      productSnapshot.complianceAndRisk,
+  },
+  {
+    title:
+      "Validation gates",
+    fields:
+      productSnapshot.validationGates,
+  },
+]
 
 const imageSourceIntakeCopy = {
   intakeStatus:
@@ -608,6 +690,126 @@ export default function EbayListingPackagePage() {
 
         <Section title="Required Human Actions">
           <ListBlock items={qaReview.requiredHumanActions} />
+        </Section>
+
+        <Section title="Linked Source Product" eyebrow="Seller View">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-cyan-100/60">
+                    {productSnapshotCopy.title}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    Linked Source Product
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {productSnapshotCopy.currentDecision}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3">
+                    {productSnapshotCopy.snapshotStatus}
+                  </span>
+                  <span className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3">
+                    {productSnapshotCopy.listingImpact}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      productSnapshotCopy.sourceProvider,
+                      productSnapshot.sourceProvider,
+                    ],
+                    [
+                      productSnapshotCopy.sourceType,
+                      productSnapshot.sourceType,
+                    ],
+                    [
+                      productSnapshotCopy.catalogReference,
+                      productSnapshot.catalogReference.catalogReferenceStatus,
+                    ],
+                    [
+                      productSnapshotCopy.productFacts,
+                      productSnapshot.productFacts.factsStatus,
+                    ],
+                    [
+                      productSnapshotCopy.commercialInputs,
+                      productSnapshot.commercialInputs.commercialStatus,
+                    ],
+                    [
+                      productSnapshotCopy.operationsInputs,
+                      productSnapshot.operationsInputs.operationsStatus,
+                    ],
+                    [
+                      productSnapshotCopy.imageInputs,
+                      productSnapshot.imageInputs.imageStatus,
+                    ],
+                    [
+                      productSnapshotCopy.complianceAndRisk,
+                      productSnapshot.complianceAndRisk.riskStatus,
+                    ],
+                    [
+                      productSnapshotCopy.currentDecision,
+                      productSnapshot.validationGates.currentDecision,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              {productSnapshotFieldGroups.map((group) => (
+                <article
+                  key={group.title}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-5"
+                >
+                  <h4 className="text-sm font-black text-white">
+                    {group.title}
+                  </h4>
+                  <div className="mt-3">
+                    <FieldGrid fields={Object.entries(group.fields)} />
+                  </div>
+                </article>
+              ))}
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Missing data
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {productSnapshot.missingData.map((group) => (
+                    <div
+                      key={group.group}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="text-sm font-bold text-white">
+                        {group.group}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {group.items.join(", ")}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Compact Safety Flags
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid fields={Object.entries(productSnapshot.safetyFlags)} />
+                </div>
+              </article>
+            </div>
+          </div>
         </Section>
 
         <Section title="Product / Pricing / Shipping">
