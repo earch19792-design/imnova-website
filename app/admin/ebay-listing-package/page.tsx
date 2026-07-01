@@ -7,6 +7,7 @@ import productSnapshot from "../../../tools/fixtures/ebay-luna-portex-product-sn
 import productFactsReadinessGate from "../../../tools/fixtures/ebay-luna-portex-product-facts-readiness-gate-v1.json"
 import commercialReadinessGate from "../../../tools/fixtures/ebay-luna-portex-commercial-readiness-gate-v1.json"
 import imageAssetManifest from "../../../tools/fixtures/ebay-luna-portex-image-asset-manifest-v1.json"
+import imageQaReviewGate from "../../../tools/fixtures/ebay-luna-portex-image-qa-review-gate-v1.json"
 import mainImageEnhancementBrief from "../../../tools/fixtures/ebay-luna-portex-main-image-enhancement-brief-v1.json"
 import imageSourceIntake from "../../../tools/fixtures/ebay-luna-portex-image-source-intake-v1.json"
 import imageSourceReviewGate from "../../../tools/fixtures/ebay-luna-portex-image-source-review-gate-v1.json"
@@ -307,6 +308,37 @@ const mainImageEnhancementBriefCopy = {
     "Not an OpenAI payload",
   blocked:
     "Enhancement blocked until source review approval",
+}
+
+const imageQaReviewGateCopy = {
+  title:
+    "Image QA Review Gate",
+  gateStatus:
+    "IMAGE_QA_NOT_READY",
+  gateDecision:
+    "BLOCK_IMAGE_QA_APPROVAL",
+  listingImpact:
+    "LISTING_BLOCKED_UNTIL_IMAGE_QA_APPROVED",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  summary:
+    "Image QA is not ready",
+  currentDecision:
+    "Current decision: request more image work",
+  imageQaCheckLabels: [
+    "Authorized source evidence approved",
+    "Main image candidate exists",
+    "Main image enhancement executed",
+    "Main image background compliant",
+    "Main image has no text, badges or watermarks",
+    "Main image product not altered",
+    "Secondary image package ready",
+    "Secondary images QA approved",
+    "Image policy review completed",
+    "Human image review completed",
+  ],
 }
 
 const decisionCards = [
@@ -1805,6 +1837,133 @@ export default function EbayListingPackagePage() {
                     items={mainImageEnhancementBrief.enhancementInstruction.steps}
                   />
                 </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-black text-white">
+                Image QA Review Gate
+              </h3>
+              <div className="mt-3 grid gap-4 lg:grid-cols-2">
+                <FieldGrid
+                  fields={[
+                    [
+                      "gateVersion",
+                      imageQaReviewGate.gateVersion,
+                    ],
+                    [
+                      "gateStatus",
+                      imageQaReviewGateCopy.gateStatus,
+                    ],
+                    [
+                      "gateDecision",
+                      imageQaReviewGateCopy.gateDecision,
+                    ],
+                    [
+                      "listingImpact",
+                      imageQaReviewGateCopy.listingImpact,
+                    ],
+                    [
+                      "draftImpact",
+                      imageQaReviewGateCopy.draftImpact,
+                    ],
+                    [
+                      "publicationImpact",
+                      imageQaReviewGateCopy.publicationImpact,
+                    ],
+                    [
+                      imageQaReviewGateCopy.summary,
+                      imageQaReviewGate.imageQaSummary,
+                    ],
+                    [
+                      imageQaReviewGateCopy.currentDecision,
+                      imageQaReviewGate.humanDecision.currentDecision,
+                    ],
+                  ]}
+                />
+
+                <FieldGrid
+                  fields={Object.entries(imageQaReviewGate.reviewInputs)}
+                />
+              </div>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <h4 className="text-sm font-black text-white">
+                    Image QA Checks
+                  </h4>
+                  <div className="mt-4 grid gap-3">
+                    {imageQaReviewGate.imageQaChecks.map((check) => (
+                      <div
+                        key={check.checkId}
+                        className="rounded-xl border border-rose-300/15 bg-rose-300/[0.045] p-3"
+                      >
+                        <p className="text-sm font-bold text-white">
+                          {check.label}
+                        </p>
+                        <p className="mt-2 text-xs font-bold uppercase tracking-[0.16em] text-rose-100/70">
+                          {check.status}
+                        </p>
+                        <p className="mt-2 text-sm leading-6 text-white/60">
+                          {check.reason}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <h4 className="text-sm font-black text-white">
+                    Blocked Workflows
+                  </h4>
+                  <div className="mt-4 grid gap-3">
+                    {imageQaReviewGate.blockedWorkflows.map((workflow) => (
+                      <div
+                        key={workflow.workflow}
+                        className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                      >
+                        <p className="text-sm font-bold text-white">
+                          {workflow.workflow}
+                        </p>
+                        <p className="mt-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-100/70">
+                          {workflow.status}
+                        </p>
+                        <p className="mt-2 text-sm leading-6 text-white/60">
+                          {workflow.reason}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </div>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-3">
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <h4 className="text-sm font-black text-white">
+                    Unlock Requirements
+                  </h4>
+                  <div className="mt-4">
+                    <ListBlock items={imageQaReviewGate.unlockRequirements} />
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <h4 className="text-sm font-black text-white">
+                    Human Decision
+                  </h4>
+                  <div className="mt-3">
+                    <FieldGrid fields={Object.entries(imageQaReviewGate.humanDecision)} />
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <h4 className="text-sm font-black text-white">
+                    Compact Safety Flags
+                  </h4>
+                  <div className="mt-3">
+                    <FieldGrid fields={Object.entries(imageQaReviewGate.safetyFlags)} />
+                  </div>
+                </article>
               </div>
             </div>
 
