@@ -1,0 +1,208 @@
+{
+  "gateVersion": "EBAY_LUNA_PORTEX_COMMERCIAL_READINESS_GATE_V1",
+  "caseId": "LISTING-GEN-001",
+  "productSnapshotVersion": "EBAY_LUNA_PORTEX_PRODUCT_SNAPSHOT_V1",
+  "productFactsGateVersion": "EBAY_LUNA_PORTEX_PRODUCT_FACTS_READINESS_GATE_V1",
+  "sourceListingPackageVersion": "EBAY_FIRST_LISTING_PACKAGE_V1",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "gateStatus": "COMMERCIAL_READINESS_NOT_APPROVED",
+  "gateDecision": "BLOCK_EBAY_DRAFT",
+  "listingImpact": "LISTING_BLOCKED_UNTIL_COMMERCIAL_INPUTS_VALIDATED",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "commercialReadinessSummary": "Commercial readiness is not approved yet. Product cost, supplier fees, shipping cost, eBay fee estimate, margin, Terapeak, sold listings, availability and returns are missing. Do not create eBay draft. Human commercial review is required. The gate is read-only and advisory.",
+  "reviewInputs": {
+    "sourceProvider": "luna_portex",
+    "sourceType": "supplier_catalog_product",
+    "productSnapshotStatus": "PRODUCT_SNAPSHOT_NEEDS_VALIDATION",
+    "productFactsGateStatus": "PRODUCT_FACTS_NOT_READY",
+    "commercialStatus": "COMMERCIAL_INPUTS_REQUIRED",
+    "costIncluded": false,
+    "supplierFeesIncluded": false,
+    "ebayFeeEstimateIncluded": false,
+    "shippingCostIncluded": false,
+    "returnRiskIncluded": false,
+    "targetMarginIncluded": false,
+    "marginValidated": false,
+    "terapeakValidated": false,
+    "soldListingsBenchmarkValidated": false,
+    "availabilityConfirmed": false,
+    "stockLocationConfirmed": false,
+    "shippingPolicyConfirmed": false,
+    "returnPolicyConfirmed": false,
+    "handlingTimeConfirmed": false,
+    "fulfillmentFeesConfirmed": false
+  },
+  "commercialChecks": [
+    {
+      "checkId": "product_cost_confirmed",
+      "label": "Product cost confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Product cost from Luna Portex has not been confirmed."
+    },
+    {
+      "checkId": "supplier_fees_confirmed",
+      "label": "Supplier fees confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Supplier, handling, packing, or fulfillment fees have not been confirmed."
+    },
+    {
+      "checkId": "ebay_fee_estimate_confirmed",
+      "label": "eBay fee estimate confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "eBay fee estimate is required before margin validation."
+    },
+    {
+      "checkId": "shipping_cost_confirmed",
+      "label": "Shipping cost confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Shipping cost is required before price and margin validation."
+    },
+    {
+      "checkId": "return_risk_reviewed",
+      "label": "Return risk reviewed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Return risk and possible return costs have not been reviewed."
+    },
+    {
+      "checkId": "target_margin_confirmed",
+      "label": "Target margin confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Target profit and margin thresholds have not been confirmed."
+    },
+    {
+      "checkId": "margin_validated",
+      "label": "Margin validated",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Net margin has not been validated after cost, fees, shipping, packing and return risk."
+    },
+    {
+      "checkId": "terapeak_validation_completed",
+      "label": "Terapeak validation completed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Terapeak validation is required before eBay draft creation."
+    },
+    {
+      "checkId": "sold_listings_benchmark_completed",
+      "label": "Sold listings benchmark completed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Sold listings benchmark is required before final pricing and listing decision."
+    },
+    {
+      "checkId": "availability_confirmed",
+      "label": "Availability confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Stock availability has not been confirmed."
+    },
+    {
+      "checkId": "shipping_policy_confirmed",
+      "label": "Shipping policy confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Shipping policy and handling time have not been confirmed."
+    },
+    {
+      "checkId": "return_policy_confirmed",
+      "label": "Return policy confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Return policy has not been confirmed."
+    }
+  ],
+  "blockedWorkflows": [
+    {
+      "workflow": "listing_package_source_aware_refresh",
+      "status": "BLOCKED",
+      "reason": "Listing package cannot be commercially refreshed until cost, margin and market validation are complete."
+    },
+    {
+      "workflow": "price_strategy_finalization",
+      "status": "BLOCKED",
+      "reason": "Price strategy cannot be finalized without cost, fees, shipping, margin, Terapeak and sold listings benchmark."
+    },
+    {
+      "workflow": "pack_strategy_activation",
+      "status": "BLOCKED",
+      "reason": "Pack strategy cannot activate until conversion data, margins and Luna Portex packing/fulfillment fees are validated."
+    },
+    {
+      "workflow": "ebay_draft_mapping",
+      "status": "BLOCKED",
+      "reason": "eBay draft mapping cannot start until commercial readiness is approved."
+    },
+    {
+      "workflow": "ebay_draft_creation",
+      "status": "BLOCKED",
+      "reason": "No eBay draft can be created before commercial readiness is approved."
+    },
+    {
+      "workflow": "ebay_publication",
+      "status": "BLOCKED",
+      "reason": "No eBay publication is allowed before final commercial and human approval."
+    }
+  ],
+  "unlockRequirements": [
+    "confirm_product_cost",
+    "confirm_supplier_fees",
+    "estimate_ebay_fees",
+    "confirm_shipping_cost",
+    "review_return_risk",
+    "confirm_target_margin",
+    "validate_net_margin",
+    "complete_terapeak_validation",
+    "complete_sold_listings_benchmark",
+    "confirm_stock_availability",
+    "confirm_shipping_policy",
+    "confirm_return_policy",
+    "approve_human_commercial_review"
+  ],
+  "humanDecision": {
+    "required": true,
+    "decisionStatus": "NOT_REVIEWED",
+    "approvalStatus": "NOT_APPROVED",
+    "allowedDecisionValues": [
+      "APPROVE_COMMERCIAL_READINESS",
+      "REQUEST_MORE_COMMERCIAL_INPUTS",
+      "REJECT_COMMERCIAL_READINESS"
+    ],
+    "currentDecision": "REQUEST_MORE_COMMERCIAL_INPUTS",
+    "decisionReason": "Commercial inputs have not been provided or validated yet."
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "humanReviewRequired": true,
+    "commercialReadinessApproved": false,
+    "priceStrategyFinalized": false,
+    "marginValidated": false,
+    "terapeakValidated": false,
+    "soldListingsBenchmarkValidated": false,
+    "stockAvailabilityConfirmed": false,
+    "shippingPolicyConfirmed": false,
+    "returnPolicyConfirmed": false,
+    "draftMappingUnlocked": false,
+    "draftCreationUnlocked": false,
+    "publicationUnlocked": false,
+    "realSupplierProductDataIncluded": false,
+    "supplierPrivateDataIncluded": false,
+    "supplierUrlIncluded": false,
+    "externalUrlsIncluded": false,
+    "customerDataIncluded": false,
+    "apiCallsMade": false,
+    "lunaPortexApiUsed": false,
+    "ebayApiUsed": false,
+    "openAiApiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}

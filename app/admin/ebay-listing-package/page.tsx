@@ -4,6 +4,7 @@ import type {
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
 import productSnapshot from "../../../tools/fixtures/ebay-luna-portex-product-snapshot-v1.json"
 import productFactsReadinessGate from "../../../tools/fixtures/ebay-luna-portex-product-facts-readiness-gate-v1.json"
+import commercialReadinessGate from "../../../tools/fixtures/ebay-luna-portex-commercial-readiness-gate-v1.json"
 import imageAssetManifest from "../../../tools/fixtures/ebay-luna-portex-image-asset-manifest-v1.json"
 import mainImageEnhancementBrief from "../../../tools/fixtures/ebay-luna-portex-main-image-enhancement-brief-v1.json"
 import imageSourceIntake from "../../../tools/fixtures/ebay-luna-portex-image-source-intake-v1.json"
@@ -164,6 +165,39 @@ const productFactsReadinessGateCopy = {
     "Quantity confirmed",
     "Compatibility review completed",
     "Claims review completed",
+  ],
+}
+
+const commercialReadinessGateCopy = {
+  title:
+    "Commercial Readiness Gate",
+  gateStatus:
+    "COMMERCIAL_READINESS_NOT_APPROVED",
+  gateDecision:
+    "BLOCK_EBAY_DRAFT",
+  listingImpact:
+    "LISTING_BLOCKED_UNTIL_COMMERCIAL_INPUTS_VALIDATED",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  summary:
+    "Commercial readiness is not approved yet",
+  humanReviewRequired:
+    "Human commercial review required",
+  currentDecision:
+    "Current decision: request more commercial inputs",
+  commercialCheckLabels: [
+    "Product cost confirmed",
+    "Supplier fees confirmed",
+    "eBay fee estimate confirmed",
+    "Shipping cost confirmed",
+    "Return risk reviewed",
+    "Target margin confirmed",
+    "Margin validated",
+    "Terapeak validation completed",
+    "Sold listings benchmark completed",
+    "Availability confirmed",
+    "Shipping policy confirmed",
+    "Return policy confirmed",
   ],
 }
 
@@ -1012,6 +1046,177 @@ export default function EbayListingPackagePage() {
               </h4>
               <div className="mt-3">
                 <FieldGrid fields={Object.entries(productFactsReadinessGate.safetyFlags)} />
+              </div>
+            </article>
+          </div>
+        </Section>
+
+        <Section title="Commercial Readiness Gate" eyebrow="Seller View">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-cyan-100/60">
+                    {commercialReadinessGateCopy.title}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {commercialReadinessGateCopy.gateStatus}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {commercialReadinessGateCopy.summary}.{" "}
+                    {commercialReadinessGateCopy.humanReviewRequired}.
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3">
+                    {commercialReadinessGateCopy.gateDecision}
+                  </span>
+                  <span className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3">
+                    {commercialReadinessGateCopy.listingImpact}
+                  </span>
+                  <span className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3">
+                    {commercialReadinessGateCopy.draftImpact}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Gate status",
+                      commercialReadinessGate.gateStatus,
+                    ],
+                    [
+                      "Gate decision",
+                      commercialReadinessGate.gateDecision,
+                    ],
+                    [
+                      "Listing impact",
+                      commercialReadinessGate.listingImpact,
+                    ],
+                    [
+                      "Draft impact",
+                      commercialReadinessGate.draftImpact,
+                    ],
+                    [
+                      commercialReadinessGateCopy.currentDecision,
+                      commercialReadinessGate.humanDecision.currentDecision,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Review Inputs
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid fields={Object.entries(commercialReadinessGate.reviewInputs)} />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Human Decision
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Required",
+                        commercialReadinessGate.humanDecision.required,
+                      ],
+                      [
+                        "Decision status",
+                        commercialReadinessGate.humanDecision.decisionStatus,
+                      ],
+                      [
+                        "Approval status",
+                        commercialReadinessGate.humanDecision.approvalStatus,
+                      ],
+                      [
+                        commercialReadinessGateCopy.currentDecision,
+                        commercialReadinessGate.humanDecision.currentDecision,
+                      ],
+                      [
+                        "Allowed decision values",
+                        commercialReadinessGate.humanDecision.allowedDecisionValues.join(", "),
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Commercial Checks
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {commercialReadinessGate.commercialChecks.map((check) => (
+                  <article
+                    key={check.checkId}
+                    className="rounded-xl border border-rose-300/15 bg-rose-300/[0.045] p-4"
+                  >
+                    <p className="text-sm font-black text-white">
+                      {check.label}
+                    </p>
+                    <p className="mt-2 text-xs font-bold uppercase tracking-[0.18em] text-rose-100/70">
+                      {check.status}
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-white/60">
+                      {check.reason}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Workflows
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {commercialReadinessGate.blockedWorkflows.map((workflow) => (
+                    <div
+                      key={workflow.workflow}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="text-sm font-bold text-white">
+                        {workflow.workflow}
+                      </p>
+                      <p className="mt-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-100/70">
+                        {workflow.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {workflow.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Unlock Requirements
+                </h4>
+                <div className="mt-4">
+                  <ListBlock items={commercialReadinessGate.unlockRequirements} />
+                </div>
+              </article>
+            </div>
+
+            <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Compact Safety Flags
+              </h4>
+              <div className="mt-3">
+                <FieldGrid fields={Object.entries(commercialReadinessGate.safetyFlags)} />
               </div>
             </article>
           </div>
