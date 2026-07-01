@@ -9177,22 +9177,24 @@ test("ebay listing package admin MVP: muestra copy, estados y estrategia princip
     "Vista vendedor",
     "Preview read-only",
     "Sin conexion eBay",
+    "Sin draft creado",
     "No se creo draft",
     "No publicar todavia",
+    "No publicar",
     "Requiere revision humana",
-    "Status: Not ready",
-    "Main risk: Do not publish yet",
-    "Next step: Complete critical data before creating an eBay draft",
-    "Ready for: Internal preparation only",
-    "Terapeak validation missing",
-    "Sold listings benchmark missing",
-    "Authorized Luna Portex catalog image missing",
-    "White-background main image enhancement pending",
-    "Main image QA pending",
+    "Estado: no listo",
+    "Riesgo principal: no publicar",
+    "Siguiente paso: completar datos criticos",
+    "Uso permitido: preparacion interna",
+    "Falta validar Terapeak",
+    "Falta benchmark de ventas comparables",
+    "Falta imagen autorizada de Luna Portex",
+    "Pendiente imagen principal con fondo blanco",
+    "Pendiente QA de imagen principal",
     "AUTHORIZED_CATALOG_IMAGE_REQUIRED_FOR_MAIN_IMAGE",
     "CATALOG_IMAGE_ENHANCEMENT_REQUIRED",
-    "Shipping/returns not confirmed",
-    "Price and margin not validated",
+    "Shipping y devoluciones sin confirmar",
+    "Precio y margen sin validar",
     "LISTING_PACKAGE_NEEDS_DATA",
     "NOT_READY_TO_PUBLISH",
     "LISTING_QA_NEEDS_DATA",
@@ -9232,18 +9234,18 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     )
 
   for (const expectedSection of [
-    "Executive Status",
+    "Estado ejecutivo",
     "Vista vendedor",
     "Menu del vendedor",
     "Ruta de trabajo del vendedor",
-    "Listing Preview",
-    "What Blocks Publishing",
-    "Action Plan",
-    "Product facts",
-    "Market validation",
-    "Operations",
-    "Assets",
-    "Approval",
+    "Vista previa del listing",
+    "Bloqueos para publicar",
+    "Plan de accion",
+    "Datos del producto",
+    "Validacion de mercado",
+    "Operacion",
+    "Imagenes",
+    "Aprobacion",
     "Linked Source Product",
     "Luna Portex Product Snapshot",
     "Product Facts Readiness Gate",
@@ -9294,7 +9296,7 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "QA Review",
     "Blocking Reasons",
     "Missing Data",
-    "Required Human Actions",
+    "Acciones humanas requeridas",
     "Pre-Draft Checklist",
     "Pre-Publish Checklist",
     "Safety Flags",
@@ -9314,18 +9316,18 @@ test("ebay listing package admin MVP: muestra preview vendedor y plan de accion"
     )
 
   for (const expectedText of [
-    "Authorized Luna Portex catalog image required",
-    "White-background enhancement required",
-    "No AI-generated product",
-    "No product alteration",
-    "No badges or flags",
-    "Source authorization required",
+    "Falta imagen autorizada de Luna Portex",
+    "Requiere fondo blanco",
+    "No generar producto con AI",
+    "No alterar el producto",
+    "Sin badges ni banderas",
+    "Requiere autorizacion de fuente",
     "Price: Pending",
     "Shipping: Pending",
     "Returns: Pending",
-    "Do not create draft",
-    "Do not publish",
-    "Ready for internal preparation only",
+    "No crear draft",
+    "No publicar",
+    "Solo preparacion interna",
   ]) {
     assert.ok(
       source.includes(expectedText),
@@ -9367,7 +9369,7 @@ test("ebay listing package admin MVP: muestra menu vendedor navegable en espanol
 
   assert.ok(
     source.indexOf("Menu del vendedor") <
-      source.indexOf("Executive Status")
+      source.indexOf("Estado ejecutivo")
   )
 })
 
@@ -9395,7 +9397,7 @@ test("ebay listing package admin MVP: muestra orden profesional de vendedor en e
 
   assert.ok(
     source.indexOf("Ruta de trabajo del vendedor") <
-      source.indexOf("Listing Preview")
+      source.indexOf("Vista previa del listing")
   )
   assert.ok(
     source.indexOf("Confirmar producto fuente") <
@@ -9799,15 +9801,15 @@ test("ebay listing package admin MVP: mantiene orden ejecutivo antes de auditori
     )
 
   assert.ok(
-    source.indexOf("Executive Status") <
+    source.indexOf("Estado ejecutivo") <
       source.indexOf("System Safety / Audit")
   )
   assert.ok(
-    source.indexOf("Listing Preview") <
+    source.indexOf("Vista previa del listing") <
       source.indexOf("QA Details")
   )
   assert.ok(
-    source.indexOf("What Blocks Publishing") <
+    source.indexOf("Bloqueos para publicar") <
       source.indexOf("System Safety / Audit")
   )
 })
@@ -9983,28 +9985,28 @@ test("ebay listing package admin MVP: mantiene resumen ejecutivo y navegacion ve
     )
 
   for (const expectedText of [
-    "Executive Status",
+    "Estado ejecutivo",
     "Vista vendedor",
     "Menu del vendedor",
     "Ruta de trabajo del vendedor",
-    "Listing Preview",
-    "What Blocks Publishing",
-    "Action Plan",
+    "Vista previa del listing",
+    "Bloqueos para publicar",
+    "Plan de accion",
     "System Safety / Audit",
-    "Status: Not ready",
-    "Main risk: Do not publish yet",
-    "Next step: Complete critical data before creating an eBay draft",
-    "Ready for: Internal preparation only",
+    "Estado: no listo",
+    "Riesgo principal: no publicar",
+    "Siguiente paso: completar datos criticos",
+    "Uso permitido: preparacion interna",
     "Price: Pending",
     "Shipping: Pending",
     "Returns: Pending",
-    "Authorized Luna Portex catalog image required",
-    "White-background enhancement required",
+    "Falta imagen autorizada de Luna Portex",
+    "Requiere fondo blanco",
     "White-background main image required",
-    "No AI-generated product",
-    "No product alteration",
-    "No badges or flags",
-    "Source authorization required",
+    "No generar producto con AI",
+    "No alterar el producto",
+    "Sin badges ni banderas",
+    "Requiere autorizacion de fuente",
   ]) {
     assert.ok(
       source.includes(expectedText),
