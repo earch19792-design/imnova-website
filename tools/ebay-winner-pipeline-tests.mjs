@@ -11912,6 +11912,14 @@ test("market radar panel: seleccionar producto del centro de venta no activa bus
     selectionBlock,
     /setFocusedRadarProductKey/
   )
+  assert.match(
+    selectionBlock,
+    /setStockConfirmationForms/
+  )
+  assert.match(
+    selectionBlock,
+    /getStockConfirmationInitialQuantity/
+  )
   assert.doesNotMatch(
     selectionBlock,
     /setActiveRadarSearch/
@@ -11923,6 +11931,29 @@ test("market radar panel: seleccionar producto del centro de venta no activa bus
   assert.doesNotMatch(
     selectionBlock,
     /setRankingFilter\("all"\)/
+  )
+})
+
+test("market radar panel: seleccion de centro de venta prepara confirmacion de stock sin busqueda", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/market-radar-panel.tsx"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /function getStockConfirmationInitialQuantity[\s\S]*toNumber\(product\.inventory_quantity\)[\s\S]*return String\(variantQuantity\)/
+  )
+  assert.match(
+    source,
+    /product\.available === false[\s\S]*product\.inventory_status === "out_of_stock"[\s\S]*product\.stock_validation_status === "out_of_stock"[\s\S]*return "0"/
+  )
+  assert.match(
+    source,
+    /setStockConfirmationForms\(current => \(\{[\s\S]*\[productKey\]: \{[\s\S]*quantity:[\s\S]*current\[productKey\]\?\.quantity \|\|[\s\S]*getStockConfirmationInitialQuantity\([\s\S]*product[\s\S]*\)/
   )
 })
 
