@@ -1466,7 +1466,7 @@ async function confirmMarketRadarStockQuantity({
         compare_at_price:
           latestSnapshot?.compare_at_price ?? null,
         available:
-          true,
+          quantity > 0,
         inventory_quantity:
           quantity,
         collections:
@@ -1483,8 +1483,14 @@ async function confirmMarketRadarStockQuantity({
               "variant_level",
             inventory_confidence:
               "high",
+            inventory_status:
+              quantity > 0
+                ? "in_stock"
+                : "out_of_stock",
             stock_message:
-              `Cantidad confirmada manualmente: ${quantity} unidades.`,
+              quantity > 0
+                ? `Cantidad confirmada manualmente: ${quantity} unidades.`
+                : "Producto confirmado manualmente sin stock.",
           },
           manual_stock_confirmation: {
             confirmed_quantity:

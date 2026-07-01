@@ -4275,7 +4275,7 @@ function ProductRow({
           <div className="mt-2 grid gap-2">
             <input
               type="number"
-              min="1"
+              min="0"
               max="9999"
               step="1"
               value={stockConfirmationForm?.quantity || ""}
@@ -4286,7 +4286,7 @@ function ProductRow({
                   event.target.value
                 )
               }
-              placeholder="Cantidad real"
+              placeholder="0 si no hay stock"
               className="w-full rounded-md border border-white/10 bg-black/35 px-3 py-2 text-xs text-white outline-none placeholder:text-white/25 focus:border-cyan-300/35"
             />
             <input
@@ -5632,7 +5632,7 @@ export function MarketRadarPanel({
             status:
               "error",
             message:
-              "Escribe cantidad real y confirma variante/SKU antes de guardar.",
+              "Escribe cantidad real por variante/SKU. Usa 0 si el producto ya no tiene stock.",
           },
         }))
         return
@@ -5703,7 +5703,9 @@ export function MarketRadarPanel({
             status:
               "success",
             message:
-              "Cantidad confirmada en IMNOVA OS.",
+              form.quantity === "0"
+                ? "Producto marcado sin stock en IMNOVA OS."
+                : "Cantidad confirmada en IMNOVA OS.",
           },
         }))
         setStockConfirmationForms(current => ({
