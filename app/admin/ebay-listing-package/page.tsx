@@ -3,6 +3,7 @@ import type {
 } from "react"
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
 import productSnapshot from "../../../tools/fixtures/ebay-luna-portex-product-snapshot-v1.json"
+import productFactsReadinessGate from "../../../tools/fixtures/ebay-luna-portex-product-facts-readiness-gate-v1.json"
 import imageAssetManifest from "../../../tools/fixtures/ebay-luna-portex-image-asset-manifest-v1.json"
 import mainImageEnhancementBrief from "../../../tools/fixtures/ebay-luna-portex-main-image-enhancement-brief-v1.json"
 import imageSourceIntake from "../../../tools/fixtures/ebay-luna-portex-image-source-intake-v1.json"
@@ -132,6 +133,39 @@ const productSnapshotFieldGroups: Array<{
       productSnapshot.validationGates,
   },
 ]
+
+const productFactsReadinessGateCopy = {
+  title:
+    "Product Facts Readiness Gate",
+  gateStatus:
+    "PRODUCT_FACTS_NOT_READY",
+  gateDecision:
+    "BLOCK_LISTING_PIPELINE",
+  listingImpact:
+    "LISTING_BLOCKED_UNTIL_PRODUCT_FACTS_VALIDATED",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  summary:
+    "Product facts are not validated yet",
+  humanReviewRequired:
+    "Human product facts review required",
+  currentDecision:
+    "Current decision: request more product facts",
+  factCheckLabels: [
+    "Catalog reference confirmed",
+    "Product title confirmed",
+    "Brand confirmed",
+    "Category confirmed",
+    "Condition confirmed",
+    "Dimensions confirmed",
+    "Weight confirmed",
+    "Material confirmed",
+    "Package contents confirmed",
+    "Quantity confirmed",
+    "Compatibility review completed",
+    "Claims review completed",
+  ],
+}
 
 const imageSourceIntakeCopy = {
   intakeStatus:
@@ -809,6 +843,177 @@ export default function EbayListingPackagePage() {
                 </div>
               </article>
             </div>
+          </div>
+        </Section>
+
+        <Section title="Product Facts Readiness Gate" eyebrow="Seller View">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-cyan-100/60">
+                    {productFactsReadinessGateCopy.title}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {productFactsReadinessGateCopy.gateStatus}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {productFactsReadinessGateCopy.summary}.{" "}
+                    {productFactsReadinessGateCopy.humanReviewRequired}.
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3">
+                    {productFactsReadinessGateCopy.gateDecision}
+                  </span>
+                  <span className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3">
+                    {productFactsReadinessGateCopy.listingImpact}
+                  </span>
+                  <span className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3">
+                    {productFactsReadinessGateCopy.draftImpact}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Gate status",
+                      productFactsReadinessGate.gateStatus,
+                    ],
+                    [
+                      "Gate decision",
+                      productFactsReadinessGate.gateDecision,
+                    ],
+                    [
+                      "Listing impact",
+                      productFactsReadinessGate.listingImpact,
+                    ],
+                    [
+                      "Draft impact",
+                      productFactsReadinessGate.draftImpact,
+                    ],
+                    [
+                      productFactsReadinessGateCopy.currentDecision,
+                      productFactsReadinessGate.humanDecision.currentDecision,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Review Inputs
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid fields={Object.entries(productFactsReadinessGate.reviewInputs)} />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Human Decision
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Required",
+                        productFactsReadinessGate.humanDecision.required,
+                      ],
+                      [
+                        "Decision status",
+                        productFactsReadinessGate.humanDecision.decisionStatus,
+                      ],
+                      [
+                        "Approval status",
+                        productFactsReadinessGate.humanDecision.approvalStatus,
+                      ],
+                      [
+                        productFactsReadinessGateCopy.currentDecision,
+                        productFactsReadinessGate.humanDecision.currentDecision,
+                      ],
+                      [
+                        "Allowed decision values",
+                        productFactsReadinessGate.humanDecision.allowedDecisionValues.join(", "),
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Fact Checks
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {productFactsReadinessGate.factChecks.map((check) => (
+                  <article
+                    key={check.checkId}
+                    className="rounded-xl border border-rose-300/15 bg-rose-300/[0.045] p-4"
+                  >
+                    <p className="text-sm font-black text-white">
+                      {check.label}
+                    </p>
+                    <p className="mt-2 text-xs font-bold uppercase tracking-[0.18em] text-rose-100/70">
+                      {check.status}
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-white/60">
+                      {check.reason}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Workflows
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {productFactsReadinessGate.blockedWorkflows.map((workflow) => (
+                    <div
+                      key={workflow.workflow}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="text-sm font-bold text-white">
+                        {workflow.workflow}
+                      </p>
+                      <p className="mt-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-100/70">
+                        {workflow.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {workflow.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Unlock Requirements
+                </h4>
+                <div className="mt-4">
+                  <ListBlock items={productFactsReadinessGate.unlockRequirements} />
+                </div>
+              </article>
+            </div>
+
+            <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Compact Safety Flags
+              </h4>
+              <div className="mt-3">
+                <FieldGrid fields={Object.entries(productFactsReadinessGate.safetyFlags)} />
+              </div>
+            </article>
           </div>
         </Section>
 

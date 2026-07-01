@@ -1,0 +1,197 @@
+{
+  "gateVersion": "EBAY_LUNA_PORTEX_PRODUCT_FACTS_READINESS_GATE_V1",
+  "caseId": "LISTING-GEN-001",
+  "productSnapshotVersion": "EBAY_LUNA_PORTEX_PRODUCT_SNAPSHOT_V1",
+  "sourceListingPackageVersion": "EBAY_FIRST_LISTING_PACKAGE_V1",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "gateStatus": "PRODUCT_FACTS_NOT_READY",
+  "gateDecision": "BLOCK_LISTING_PIPELINE",
+  "listingImpact": "LISTING_BLOCKED_UNTIL_PRODUCT_FACTS_VALIDATED",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "factsReadinessSummary": "Product facts are not validated yet. Listing cannot proceed until required facts are confirmed. Do not create eBay draft. Human product facts review is required. The gate is read-only and advisory.",
+  "reviewInputs": {
+    "sourceProvider": "luna_portex",
+    "sourceType": "supplier_catalog_product",
+    "productSnapshotStatus": "PRODUCT_SNAPSHOT_NEEDS_VALIDATION",
+    "catalogReferenceStatus": "CATALOG_REFERENCE_REQUIRED",
+    "factsStatus": "PRODUCT_FACTS_NEED_VALIDATION",
+    "productTitleIncluded": false,
+    "brandIncluded": false,
+    "categoryIncluded": false,
+    "conditionIncluded": false,
+    "dimensionsIncluded": false,
+    "weightIncluded": false,
+    "materialIncluded": false,
+    "packageContentsIncluded": false,
+    "quantityIncluded": false,
+    "compatibilityIncluded": false,
+    "verifiedClaimsIncluded": false
+  },
+  "factChecks": [
+    {
+      "checkId": "catalog_reference_confirmed",
+      "label": "Catalog reference confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Luna Portex catalog product reference has not been confirmed."
+    },
+    {
+      "checkId": "product_title_confirmed",
+      "label": "Product title confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Product title has not been confirmed from the supplier catalog."
+    },
+    {
+      "checkId": "brand_confirmed",
+      "label": "Brand confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Brand has not been confirmed."
+    },
+    {
+      "checkId": "category_confirmed",
+      "label": "Category confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "eBay category suggestion cannot be finalized before product category validation."
+    },
+    {
+      "checkId": "condition_confirmed",
+      "label": "Condition confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Item condition has not been confirmed."
+    },
+    {
+      "checkId": "dimensions_confirmed",
+      "label": "Dimensions confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Dimensions are required before image dimensions, shipping estimates, and listing facts."
+    },
+    {
+      "checkId": "weight_confirmed",
+      "label": "Weight confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Weight is required for shipping and margin validation."
+    },
+    {
+      "checkId": "material_confirmed",
+      "label": "Material confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Material is required for item specifics and secondary image planning."
+    },
+    {
+      "checkId": "package_contents_confirmed",
+      "label": "Package contents confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Package contents must be confirmed before listing and image planning."
+    },
+    {
+      "checkId": "quantity_confirmed",
+      "label": "Quantity confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Quantity and unit count must be confirmed before listing."
+    },
+    {
+      "checkId": "compatibility_review_completed",
+      "label": "Compatibility review completed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Compatibility must be reviewed before making buyer-facing claims."
+    },
+    {
+      "checkId": "claims_review_completed",
+      "label": "Claims review completed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Claims must be verified before appearing in listing copy."
+    }
+  ],
+  "blockedWorkflows": [
+    {
+      "workflow": "listing_package_source_aware_refresh",
+      "status": "BLOCKED",
+      "reason": "Listing package cannot be refreshed with source product data until product facts are validated."
+    },
+    {
+      "workflow": "commercial_readiness_gate",
+      "status": "BLOCKED",
+      "reason": "Commercial readiness depends on product facts such as weight, dimensions, quantity, and package contents."
+    },
+    {
+      "workflow": "secondary_image_brief_generation",
+      "status": "BLOCKED",
+      "reason": "Secondary image briefs require verified dimensions, material, package contents, and use case facts."
+    },
+    {
+      "workflow": "ebay_draft_mapping",
+      "status": "BLOCKED",
+      "reason": "eBay draft mapping cannot start until product facts are validated."
+    },
+    {
+      "workflow": "ebay_draft_creation",
+      "status": "BLOCKED",
+      "reason": "No eBay draft can be created before product facts and commercial readiness are approved."
+    }
+  ],
+  "unlockRequirements": [
+    "confirm_luna_portex_catalog_reference",
+    "confirm_product_title",
+    "confirm_brand",
+    "confirm_category",
+    "confirm_condition",
+    "confirm_dimensions",
+    "confirm_weight",
+    "confirm_material",
+    "confirm_package_contents",
+    "confirm_quantity",
+    "complete_compatibility_review",
+    "complete_claims_review",
+    "approve_human_product_facts_review"
+  ],
+  "humanDecision": {
+    "required": true,
+    "decisionStatus": "NOT_REVIEWED",
+    "approvalStatus": "NOT_APPROVED",
+    "allowedDecisionValues": [
+      "APPROVE_PRODUCT_FACTS",
+      "REQUEST_MORE_PRODUCT_FACTS",
+      "REJECT_PRODUCT_FACTS"
+    ],
+    "currentDecision": "REQUEST_MORE_PRODUCT_FACTS",
+    "decisionReason": "Required product facts have not been provided or validated yet."
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "humanReviewRequired": true,
+    "productFactsApproved": false,
+    "listingPipelineUnlocked": false,
+    "commercialReadinessUnlocked": false,
+    "secondaryImageBriefsUnlocked": false,
+    "draftMappingUnlocked": false,
+    "draftCreationUnlocked": false,
+    "realSupplierProductDataIncluded": false,
+    "supplierPrivateDataIncluded": false,
+    "supplierUrlIncluded": false,
+    "externalUrlsIncluded": false,
+    "realImagesIncluded": false,
+    "image\u0055rlsIncluded": false,
+    "base\u0036\u0034ImagesIncluded": false,
+    "customerDataIncluded": false,
+    "apiCallsMade": false,
+    "lunaPortexApiUsed": false,
+    "ebayApiUsed": false,
+    "openAiApiUsed": false,
+    "imageGenerated": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}
