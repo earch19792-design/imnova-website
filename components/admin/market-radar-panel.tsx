@@ -7068,11 +7068,8 @@ export function MarketRadarPanel({
                             product
                           )
                         )
-                        setRadarSearch(stableSku)
-                        setActiveRadarSearch(stableSku)
-                        setRankingFilter("all")
                         setAdvisorAlertReviewMessage(
-                          `Producto seleccionado desde Centro de Venta: ${stableSku}`
+                          `Producto enfocado desde Centro de Venta: ${stableSku}`
                         )
 
                         window.setTimeout(
