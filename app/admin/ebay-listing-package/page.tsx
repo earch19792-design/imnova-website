@@ -3,6 +3,7 @@ import type {
 } from "react"
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
 import draftMappingDryRun from "../../../tools/fixtures/ebay-draft-mapping-dry-run-v1.json"
+import firstListingContentFinalization from "../../../tools/fixtures/ebay-first-listing-content-finalization-v1.json"
 import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -530,6 +531,39 @@ const ebayDraftMappingDryRunCopy = {
     "Planned eBay Draft Fields",
   blockedBecause:
     "Blocked Because",
+}
+
+const ebayFirstListingContentFinalizationCopy = {
+  title:
+    "eBay First Listing Content Finalization",
+  contentStatus:
+    "CONTENT_NOT_READY_FOR_FINAL_DRAFT",
+  contentDecision:
+    "COMPLETE_AND_VALIDATE_CONTENT_BEFORE_DRAFT",
+  keywordPolicyStatus:
+    "KEYWORD_INTELLIGENCE_ALLOWED_CONTENT_COPYING_BLOCKED",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  marketIntelligenceRule:
+    "Use market intelligence, do not copy competitor content",
+  trafficKeywordsRule:
+    "Traffic keywords may be used when generic, relevant and true",
+  portexFactsRule:
+    "Portex facts are required for technical claims",
+  contentSections:
+    "Content Sections",
+  keywordPolicy:
+    "Keyword Intelligence Policy",
+  plannedListingContent:
+    "Planned Listing Content",
+  blockedBecause:
+    "Blocked Because",
+  requiredHumanActions:
+    "Required Human Actions",
+  nextRecommendedAction:
+    "Next Recommended Action",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -4037,6 +4071,227 @@ export default function EbayListingPackagePage() {
                   <FieldGrid
                     fields={Object.entries(
                       draftMappingDryRun.dryRunDecision
+                    )}
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="eBay First Listing Content Finalization">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {firstListingContentFinalization.contentVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {ebayFirstListingContentFinalizationCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {firstListingContentFinalization.contentSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayFirstListingContentFinalizationCopy.contentStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayFirstListingContentFinalizationCopy.contentDecision}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayFirstListingContentFinalizationCopy.keywordPolicyStatus}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Content status",
+                      firstListingContentFinalization.contentStatus,
+                    ],
+                    [
+                      "Content decision",
+                      firstListingContentFinalization.contentDecision,
+                    ],
+                    [
+                      "Keyword policy status",
+                      firstListingContentFinalization.keywordPolicyStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      firstListingContentFinalization.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      firstListingContentFinalization.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+
+              <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                <p className="rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.045] p-4 text-sm font-semibold leading-6 text-cyan-50/80">
+                  {ebayFirstListingContentFinalizationCopy.marketIntelligenceRule}.
+                </p>
+                <p className="rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.045] p-4 text-sm font-semibold leading-6 text-cyan-50/80">
+                  {ebayFirstListingContentFinalizationCopy.trafficKeywordsRule}.
+                </p>
+                <p className="rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.045] p-4 text-sm font-semibold leading-6 text-cyan-50/80">
+                  {ebayFirstListingContentFinalizationCopy.portexFactsRule}.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Content Sections
+              </h4>
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                {firstListingContentFinalization.contentSections.map((section) => (
+                  <article
+                    key={section.sectionId}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <h5 className="break-words text-sm font-black text-white [overflow-wrap:anywhere]">
+                      {section.label}
+                    </h5>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {section.status}
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-white/60">
+                      {section.requiredToUnlock}
+                    </p>
+                    <div className="mt-4">
+                      <ListBlock items={section.missingInputs} />
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Keyword Intelligence Policy
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Policy status",
+                        firstListingContentFinalization.keywordIntelligencePolicy
+                          .policyStatus,
+                      ],
+                      [
+                        "Core rule",
+                        firstListingContentFinalization.keywordIntelligencePolicy
+                          .coreRule,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <div>
+                    <p className="mb-3 break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-white/40 [overflow-wrap:anywhere]">
+                      Allowed
+                    </p>
+                    <ListBlock
+                      items={
+                        firstListingContentFinalization.keywordIntelligencePolicy
+                          .allowed
+                      }
+                    />
+                  </div>
+                  <div>
+                    <p className="mb-3 break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-white/40 [overflow-wrap:anywhere]">
+                      Blocked
+                    </p>
+                    <ListBlock
+                      items={
+                        firstListingContentFinalization.keywordIntelligencePolicy
+                          .blocked
+                      }
+                    />
+                  </div>
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Planned Listing Content
+                </h4>
+                <div className="mt-3 grid gap-3">
+                  {Object.entries(
+                    firstListingContentFinalization.plannedListingContent
+                  ).map(([key, value]) => (
+                    <div
+                      key={key}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {key}
+                      </p>
+                      <div className="mt-3">
+                        <FieldGrid
+                          fields={Object.entries(value)}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Because
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={firstListingContentFinalization.blockedBecause}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Required Human Actions
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      firstListingContentFinalization.requiredHumanActions
+                    }
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Action
+                </h4>
+                <p className="mt-3 rounded-xl border border-amber-300/20 bg-amber-300/[0.06] p-4 text-sm font-semibold leading-6 text-amber-50/80">
+                  {firstListingContentFinalization.nextRecommendedAction}
+                </p>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Compact Safety Flags
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      firstListingContentFinalization.safetyFlags
                     )}
                   />
                 </div>

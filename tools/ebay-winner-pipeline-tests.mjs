@@ -652,6 +652,19 @@ const ebayDraftMappingDryRunFixture =
     )
   )
 
+const ebayFirstListingContentFinalizationFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-first-listing-content-finalization-v1.json"
+  )
+
+const ebayFirstListingContentFinalizationFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayFirstListingContentFinalizationFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -7985,6 +7998,173 @@ test("ebay listing completion workspace fixtures: no contienen URLs tokens endpo
   }
 })
 
+test("ebay first listing content finalization fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayFirstListingContentFinalizationFixturePath
+    )
+  )
+  assert.equal(
+    ebayFirstListingContentFinalizationFixture.contentVersion,
+    "EBAY_FIRST_LISTING_CONTENT_FINALIZATION_V1"
+  )
+  assert.equal(
+    ebayFirstListingContentFinalizationFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebayFirstListingContentFinalizationFixture.contentStatus,
+    "CONTENT_NOT_READY_FOR_FINAL_DRAFT"
+  )
+  assert.equal(
+    ebayFirstListingContentFinalizationFixture.contentDecision,
+    "COMPLETE_AND_VALIDATE_CONTENT_BEFORE_DRAFT"
+  )
+  assert.equal(
+    ebayFirstListingContentFinalizationFixture.keywordPolicyStatus,
+    "KEYWORD_INTELLIGENCE_ALLOWED_CONTENT_COPYING_BLOCKED"
+  )
+  assert.equal(
+    ebayFirstListingContentFinalizationFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayFirstListingContentFinalizationFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay first listing content finalization fixture: keyword policy bloquea copia de competidores", () => {
+  assert.equal(
+    ebayFirstListingContentFinalizationFixture.contentSections.length,
+    10
+  )
+  assert.equal(
+    ebayFirstListingContentFinalizationFixture.safetyFlags
+      .competitorContentCopied,
+    false
+  )
+  assert.equal(
+    ebayFirstListingContentFinalizationFixture.safetyFlags
+      .competitorImagesCopied,
+    false
+  )
+  assert.equal(
+    ebayFirstListingContentFinalizationFixture.safetyFlags
+      .trafficKeywordsAllowedWhenGenericRelevantAndTrue,
+    true
+  )
+  assert.equal(
+    ebayFirstListingContentFinalizationFixture.safetyFlags
+      .portexFactsRequiredForTechnicalClaims,
+    true
+  )
+  assert.equal(
+    ebayFirstListingContentFinalizationFixture.keywordIntelligencePolicy
+      .coreRule,
+    "Use market intelligence, do not copy competitor content."
+  )
+  assert.ok(
+    ebayFirstListingContentFinalizationFixture.keywordIntelligencePolicy
+      .blocked
+      .includes("Do not copy full competitor titles.")
+  )
+  assert.ok(
+    ebayFirstListingContentFinalizationFixture.keywordIntelligencePolicy
+      .allowed
+      .includes("Use generic, relevant and truthful traffic keywords.")
+  )
+})
+
+test("ebay first listing content finalization module: modulo puro sin integraciones reales", () => {
+  const modulePath =
+    path.resolve(
+      "lib/ebay/listing-content-finalization.ts"
+    )
+
+  assert.ok(
+    fs.existsSync(modulePath)
+  )
+
+  const source =
+    fs.readFileSync(
+      modulePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "getFirstListingContentFinalizationSummary",
+    "getKeywordIntelligencePolicySummary",
+    "getBlockedContentFinalizationResponse",
+    "USE_MARKET_INTELLIGENCE_DO_NOT_COPY_CONTENT",
+    "contentReady",
+    "draftReady",
+    "blocked",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing content finalization module text: ${expectedText}`
+    )
+  }
+
+  for (const forbiddenPattern of [
+    /process\.env/,
+    /fetch\(/,
+    /createClient/,
+    /new OpenAI/,
+    /openai/i,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /console\.log/,
+    /console\.error/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern
+    )
+  }
+})
+
+test("ebay first listing content finalization fixture: no contiene URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebayFirstListingContentFinalizationFixturePath,
+      "lib/ebay/listing-content-finalization.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -12961,6 +13141,43 @@ test("ebay listing package admin MVP: muestra listing completion workspace y dra
   assert.doesNotMatch(
     source,
     /eBay Draft Mapping Dry Run[\s\S]{0,4000}onClick=/
+  )
+})
+
+test("ebay listing package admin MVP: muestra first listing content finalization", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "ebay-first-listing-content-finalization-v1.json",
+    "eBay First Listing Content Finalization",
+    "CONTENT_NOT_READY_FOR_FINAL_DRAFT",
+    "COMPLETE_AND_VALIDATE_CONTENT_BEFORE_DRAFT",
+    "KEYWORD_INTELLIGENCE_ALLOWED_CONTENT_COPYING_BLOCKED",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "Use market intelligence, do not copy competitor content",
+    "Traffic keywords may be used when generic, relevant and true",
+    "Portex facts are required for technical claims",
+    "Content Sections",
+    "Keyword Intelligence Policy",
+    "Planned Listing Content",
+    "Blocked Because",
+    "Required Human Actions",
+    "Next Recommended Action",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing first listing content finalization admin text: ${expectedText}`
+    )
+  }
+
+  assert.doesNotMatch(
+    source,
+    /eBay First Listing Content Finalization[\s\S]{0,5000}onClick=/
   )
 })
 
