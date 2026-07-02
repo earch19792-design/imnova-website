@@ -2,6 +2,8 @@ import type {
   ReactNode,
 } from "react"
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
+import draftMappingDryRun from "../../../tools/fixtures/ebay-draft-mapping-dry-run-v1.json"
+import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
 import ebayOnlyConnectionDesign from "../../../tools/fixtures/ebay-only-connection-design-v1.json"
@@ -478,6 +480,56 @@ const ebaySandboxCredentialsEnvConfigurationCopy = {
     "Never return values",
   nextRecommendedLoop:
     "Next recommended loop: LOOP 116 — eBay Sandbox OAuth Authorization V1",
+}
+
+const ebayListingCompletionWorkspaceCopy = {
+  title:
+    "eBay Listing Completion Workspace",
+  workspaceStatus:
+    "LISTING_NOT_READY_FOR_DRAFT",
+  workspaceDecision:
+    "COMPLETE_MISSING_INPUTS_BEFORE_DRAFT",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  productFacts:
+    "Product Facts",
+  commercialReadiness:
+    "Commercial Readiness",
+  marketValidation:
+    "Market Validation",
+  listingContent:
+    "Listing Content",
+  imageReadiness:
+    "Image Readiness",
+  shippingAndReturns:
+    "Shipping and Returns",
+  riskAndCompliance:
+    "Risk and Compliance",
+  draftReadiness:
+    "Draft Readiness",
+  missingCriticalInputs:
+    "Missing Critical Inputs",
+  nextRecommendedAction:
+    "Next Recommended Action",
+}
+
+const ebayDraftMappingDryRunCopy = {
+  title:
+    "eBay Draft Mapping Dry Run",
+  mappingStatus:
+    "DRAFT_MAPPING_DRY_RUN_BLOCKED",
+  mappingDecision:
+    "DO_NOT_MAP_TO_EBAY_DRAFT_YET",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  plannedFields:
+    "Planned eBay Draft Fields",
+  blockedBecause:
+    "Blocked Because",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -3745,6 +3797,251 @@ export default function EbayListingPackagePage() {
                 />
               </div>
             </article>
+          </div>
+        </Section>
+
+        <Section title="eBay Listing Completion Workspace">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {listingCompletionWorkspace.workspaceVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {ebayListingCompletionWorkspaceCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {listingCompletionWorkspace.workspaceSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayListingCompletionWorkspaceCopy.workspaceStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayListingCompletionWorkspaceCopy.workspaceDecision}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Workspace status",
+                      listingCompletionWorkspace.workspaceStatus,
+                    ],
+                    [
+                      "Workspace decision",
+                      listingCompletionWorkspace.workspaceDecision,
+                    ],
+                    [
+                      "Draft readiness",
+                      listingCompletionWorkspace.draftReadiness,
+                    ],
+                    [
+                      "Publication readiness",
+                      listingCompletionWorkspace.publicationReadiness,
+                    ],
+                    [
+                      "Draft impact",
+                      listingCompletionWorkspace.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      listingCompletionWorkspace.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Listing Completion Sections
+              </h4>
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                {listingCompletionWorkspace.readinessSections.map((section) => (
+                  <article
+                    key={section.sectionId}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <h5 className="break-words text-sm font-black text-white [overflow-wrap:anywhere]">
+                      {section.label}
+                    </h5>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {section.status}
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-white/60">
+                      {section.requiredToUnlock}
+                    </p>
+                    <div className="mt-4">
+                      <ListBlock items={section.missingInputs} />
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Missing Critical Inputs
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      listingCompletionWorkspace.missingCriticalInputs
+                    }
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Action
+                </h4>
+                <p className="mt-3 rounded-xl border border-amber-300/20 bg-amber-300/[0.06] p-4 text-sm font-semibold leading-6 text-amber-50/80">
+                  {listingCompletionWorkspace.nextRecommendedAction}
+                </p>
+                <div className="mt-4">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "readyForSandboxDraftWhenConnected",
+                        listingCompletionWorkspace.completionSummary
+                          .readyForSandboxDraftWhenConnected,
+                      ],
+                      [
+                        "draftImpact",
+                        listingCompletionWorkspace.draftImpact,
+                      ],
+                      [
+                        "publicationImpact",
+                        listingCompletionWorkspace.publicationImpact,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="eBay Draft Mapping Dry Run">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {draftMappingDryRun.mappingVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {ebayDraftMappingDryRunCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {draftMappingDryRun.mappingSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayDraftMappingDryRunCopy.mappingStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayDraftMappingDryRunCopy.mappingDecision}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Mapping status",
+                      draftMappingDryRun.mappingStatus,
+                    ],
+                    [
+                      "Mapping decision",
+                      draftMappingDryRun.mappingDecision,
+                    ],
+                    [
+                      "Draft impact",
+                      draftMappingDryRun.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      draftMappingDryRun.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Planned eBay Draft Fields
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {draftMappingDryRun.plannedEbayDraftFields.map((field) => (
+                  <article
+                    key={field.fieldId}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <h5 className="break-words text-sm font-black text-white [overflow-wrap:anywhere]">
+                      {field.label}
+                    </h5>
+                    <div className="mt-3">
+                      <FieldGrid
+                        fields={[
+                          [
+                            "mapped",
+                            field.mapped,
+                          ],
+                          [
+                            "sourceReady",
+                            field.sourceReady,
+                          ],
+                          [
+                            "required",
+                            field.required,
+                          ],
+                        ]}
+                      />
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-white/60">
+                      {field.reason}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Because
+                </h4>
+                <div className="mt-4">
+                  <ListBlock items={draftMappingDryRun.blockedBecause} />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Dry Run Decision
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      draftMappingDryRun.dryRunDecision
+                    )}
+                  />
+                </div>
+              </article>
+            </div>
           </div>
         </Section>
 

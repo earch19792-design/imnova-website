@@ -1,0 +1,151 @@
+{
+  "mappingVersion": "EBAY_DRAFT_MAPPING_DRY_RUN_V1",
+  "caseId": "LISTING-GEN-001",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "mappingStatus": "DRAFT_MAPPING_DRY_RUN_BLOCKED",
+  "mappingDecision": "DO_NOT_MAP_TO_EBAY_DRAFT_YET",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "mappingSummary": "Draft mapping dry run is blocked. Planned eBay draft fields are documented for internal readiness only and no field is mapped to a real draft.",
+  "plannedEbayDraftFields": [
+    {
+      "fieldId": "title",
+      "label": "title",
+      "mapped": false,
+      "sourceReady": false,
+      "required": true,
+      "reason": "Product title is not validated."
+    },
+    {
+      "fieldId": "subtitle",
+      "label": "subtitle",
+      "mapped": false,
+      "sourceReady": false,
+      "required": true,
+      "reason": "Subtitle strategy is not approved."
+    },
+    {
+      "fieldId": "category",
+      "label": "category",
+      "mapped": false,
+      "sourceReady": false,
+      "required": true,
+      "reason": "Category is not validated."
+    },
+    {
+      "fieldId": "condition",
+      "label": "condition",
+      "mapped": false,
+      "sourceReady": false,
+      "required": true,
+      "reason": "Condition is not confirmed."
+    },
+    {
+      "fieldId": "brand",
+      "label": "brand",
+      "mapped": false,
+      "sourceReady": false,
+      "required": true,
+      "reason": "Brand is not validated."
+    },
+    {
+      "fieldId": "item_specifics",
+      "label": "item specifics",
+      "mapped": false,
+      "sourceReady": false,
+      "required": true,
+      "reason": "Item specifics are not validated."
+    },
+    {
+      "fieldId": "description",
+      "label": "description",
+      "mapped": false,
+      "sourceReady": false,
+      "required": true,
+      "reason": "Listing content needs review after product facts are approved."
+    },
+    {
+      "fieldId": "price",
+      "label": "price",
+      "mapped": false,
+      "sourceReady": false,
+      "required": true,
+      "reason": "Cost, fees, shipping and target margin are not approved."
+    },
+    {
+      "fieldId": "quantity",
+      "label": "quantity",
+      "mapped": false,
+      "sourceReady": false,
+      "required": true,
+      "reason": "Inventory quantity and sellable unit strategy are not confirmed."
+    },
+    {
+      "fieldId": "shipping_policy",
+      "label": "shipping policy",
+      "mapped": false,
+      "sourceReady": false,
+      "required": true,
+      "reason": "Shipping cost and policy are not confirmed."
+    },
+    {
+      "fieldId": "return_policy",
+      "label": "return policy",
+      "mapped": false,
+      "sourceReady": false,
+      "required": true,
+      "reason": "Return policy is not confirmed."
+    },
+    {
+      "fieldId": "payment_policy",
+      "label": "payment policy",
+      "mapped": false,
+      "sourceReady": false,
+      "required": true,
+      "reason": "Payment policy selection is not approved for draft mapping."
+    },
+    {
+      "fieldId": "images",
+      "label": "images",
+      "mapped": false,
+      "sourceReady": false,
+      "required": true,
+      "reason": "Authorized image source and image QA are not approved."
+    },
+    {
+      "fieldId": "compliance_notes",
+      "label": "compliance notes",
+      "mapped": false,
+      "sourceReady": false,
+      "required": true,
+      "reason": "Compliance and VeRO risk review is not complete."
+    }
+  ],
+  "blockedBecause": [
+    "product facts not approved",
+    "commercial readiness not approved",
+    "image QA not approved",
+    "shipping/returns not confirmed",
+    "eBay connection not authorized",
+    "no sandbox draft allowed yet"
+  ],
+  "dryRunDecision": {
+    "readyForDraft": false,
+    "readyForPublication": false,
+    "blocked": true,
+    "nextAction": "Complete missing listing inputs before eBay draft mapping can be unlocked."
+  },
+  "safetyFlags": {
+    "dryRunOnly": true,
+    "readOnly": true,
+    "mappedAnyRealField": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokenExchangeImplemented": false,
+    "tokenStorageImplemented": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}
