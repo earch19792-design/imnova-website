@@ -1,0 +1,219 @@
+{
+  "adapterVersion": "EBAY_PRODUCT_SOURCE_ADAPTER_SELECTOR_V1",
+  "caseId": "LISTING-GEN-001",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "sourceAdapterStatus": "PRODUCT_SOURCE_ADAPTER_READY_READ_ONLY",
+  "selectorStatus": "PRODUCT_SELECTOR_READY_NO_LIVE_SELECTION_YET",
+  "sourceOfTruthStatus": "PRODUCTS_MODULE_IS_SOURCE_OF_TRUTH",
+  "listingUsageDecision": "USE_PRODUCT_FACTS_BY_REFERENCE_DO_NOT_DUPLICATE_AS_TRUTH",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "adapterSummary": "Product Source Adapter is ready in read-only mode. Products module remains the source of truth. Listing may reference confirmed product facts but must not duplicate or invent them. Product selector is prepared but live product selection is not yet active unless a safe read-only source exists. No data is written. No eBay draft is created. No external calls are made.",
+  "architecturePolicy": {
+    "productsRule": "Products decide what the product is.",
+    "listingRule": "Listing decides how the product sells on eBay.",
+    "benchmarkRule": "Benchmark decides what is working in the market.",
+    "gatesRule": "Gates decide whether the listing can advance.",
+    "operatingPrinciple": "Benchmark can suggest. Listing can adapt. Products must confirm. Gates must approve.",
+    "sourceOfTruthRule": "The Products module is the source of truth for product facts.",
+    "listingReferenceRule": "The Listing module may reference product facts but must not duplicate them as independent truth.",
+    "bridgeRole": "The adapter prepares a stable product source contract for the listing generator."
+  },
+  "productSourceAudit": {
+    "auditStatus": "REPO_PRODUCT_SOURCE_AUDIT_COMPLETED_CONTRACT_ONLY",
+    "productsModuleExpected": true,
+    "liveProductReadEnabledInThisLoop": false,
+    "supabaseWriteAllowed": false,
+    "migrationAllowed": false,
+    "safeReadOnlyIntegrationAllowedIfExisting": true,
+    "fallbackMode": "FIXTURE_CONTRACT_IF_LIVE_SOURCE_NOT_CONFIRMED",
+    "auditNotes": [
+      "Existing lib/products-service.ts contains Products read services including getProducts, getAdminProductPage and getProductBySlug.",
+      "Existing Admin product detail page uses getProductBySlug but also includes product update flows, so live selection is not wired in this loop.",
+      "Do not create new product tables or migrations in this loop.",
+      "Do not write to Supabase.",
+      "Do not duplicate product facts inside the listing module."
+    ]
+  },
+  "productSelectorContract": {
+    "selectorMode": "READ_ONLY_SELECTOR_CONTRACT",
+    "selectionStatus": "NO_LIVE_PRODUCT_SELECTED",
+    "selectedProductId": "PRODUCT-SOURCE-DRYRUN-001",
+    "selectedProductSource": "SAFE_DRY_RUN_PRODUCT_REFERENCE",
+    "requiredProductFields": [
+      "product_id",
+      "product_name",
+      "product_type",
+      "condition",
+      "package_quantity",
+      "supplier",
+      "supplier_sku",
+      "stock_status",
+      "cost",
+      "dimensions",
+      "weight",
+      "material",
+      "image_source_status",
+      "commercial_readiness_status",
+      "compliance_status"
+    ],
+    "fieldPolicy": "Only confirmed product fields can be passed to the listing generator.",
+    "missingFieldsBlockFinalListing": true
+  },
+  "selectedProductPreview": {
+    "previewMode": "SAFE_DRY_RUN_PRODUCT_REFERENCE",
+    "productId": "PRODUCT-SOURCE-DRYRUN-001",
+    "productName": {
+      "status": "CONFIRMED_FOR_DRY_RUN_ONLY",
+      "value": "Storage Organizer"
+    },
+    "productType": {
+      "status": "CONFIRMED_FOR_DRY_RUN_ONLY",
+      "value": "storage organizer"
+    },
+    "condition": {
+      "status": "CONFIRMED_FOR_DRY_RUN_ONLY",
+      "value": "New"
+    },
+    "packageQuantity": {
+      "status": "CONFIRMED_FOR_DRY_RUN_ONLY",
+      "value": "1 Pack"
+    },
+    "supplier": {
+      "status": "REFERENCE_ONLY",
+      "value": "Portex"
+    },
+    "dimensions": {
+      "status": "MISSING_BLOCKED",
+      "valueIncluded": false
+    },
+    "weight": {
+      "status": "MISSING_BLOCKED",
+      "valueIncluded": false
+    },
+    "material": {
+      "status": "MISSING_BLOCKED",
+      "valueIncluded": false
+    },
+    "stockStatus": {
+      "status": "MISSING_BLOCKED",
+      "valueIncluded": false
+    },
+    "cost": {
+      "status": "MISSING_BLOCKED",
+      "valueIncluded": false
+    },
+    "imageSourceStatus": {
+      "status": "IMAGE_QA_NOT_APPROVED",
+      "valueIncluded": false
+    },
+    "commercialReadinessStatus": {
+      "status": "COMMERCIAL_READINESS_NOT_APPROVED",
+      "valueIncluded": false
+    },
+    "complianceStatus": {
+      "status": "NEEDS_REVIEW",
+      "valueIncluded": false
+    }
+  },
+  "listingBridgeInputContract": {
+    "inputMode": "PRODUCT_FACTS_BY_REFERENCE",
+    "allowedConfirmedFacts": [
+      "product_name",
+      "product_type",
+      "condition",
+      "package_quantity"
+    ],
+    "blockedUnconfirmedFacts": [
+      "dimensions",
+      "weight",
+      "material",
+      "stock_status",
+      "cost",
+      "brand",
+      "model",
+      "mpn",
+      "color",
+      "compatibility",
+      "warranty",
+      "certifications",
+      "performance_claims",
+      "image_package",
+      "price",
+      "shipping_policy",
+      "return_policy"
+    ],
+    "generatorCanUseSelectedProduct": true,
+    "generatorCanGeneratePreview": true,
+    "generatorCanGenerateFinalContent": false,
+    "generatorCanBuildDraftPayload": false,
+    "generatorCanCreateDraft": false,
+    "generatorCanPublish": false
+  },
+  "blockedBecause": [
+    "live_product_source_not_connected",
+    "real_product_selection_not_enabled",
+    "dimensions_missing",
+    "weight_missing",
+    "material_missing",
+    "stock_status_missing",
+    "cost_missing",
+    "commercial_readiness_not_approved",
+    "image_qa_not_approved",
+    "compliance_not_approved",
+    "ebay_connection_not_authorized"
+  ],
+  "requiredHumanActions": [
+    "Confirm the real Products service to use as source of truth.",
+    "Confirm whether selected product should come from Supabase Products.",
+    "Confirm product id/slug selection behavior.",
+    "Confirm required product fields for eBay listing generation.",
+    "Confirm Portex facts for selected product.",
+    "Complete missing dimensions, weight, material, stock and cost.",
+    "Approve image QA.",
+    "Approve commercial readiness.",
+    "Approve compliance review.",
+    "Keep eBay draft creation blocked until all gates approve."
+  ],
+  "nextRecommendedLoop": {
+    "loop": "LOOP 122 — Live Product Selector Read-Only V1",
+    "reason": "After the product source adapter contract exists, connect the selector to a safe read-only product source if available, so the Admin can select a real product and feed confirmed facts into the listing preview.",
+    "expectedOutcome": "Admin can select or reference a real product source and the listing preview updates based on confirmed facts.",
+    "constraints": [
+      "No eBay API.",
+      "No draft creation.",
+      "No publication.",
+      "No Supabase write.",
+      "No migrations.",
+      "Products remain source of truth.",
+      "Do not duplicate product facts as listing truth."
+    ]
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "readOnly": true,
+    "sourceAdapterOnly": true,
+    "productSelectorContractCreated": true,
+    "liveProductReadEnabled": false,
+    "supabaseWriteUsed": false,
+    "migrationCreated": false,
+    "productFactsDuplicatedAsTruth": false,
+    "productSourceOfTruthRequired": true,
+    "usesProductFactsByReference": true,
+    "unconfirmedFactsBlocked": true,
+    "previewGenerated": true,
+    "publishable": false,
+    "finalContentGenerated": false,
+    "draftPayloadBuilt": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "supabaseUsedForWrite": false,
+    "openAiUsed": false,
+    "externalCallsMade": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}
