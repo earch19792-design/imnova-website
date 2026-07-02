@@ -2,6 +2,7 @@ import type {
   ReactNode,
 } from "react"
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
+import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
 import ebayOnlyConnectionDesign from "../../../tools/fixtures/ebay-only-connection-design-v1.json"
 import ebaySandboxReadOnlyConnectionStatus from "../../../tools/fixtures/ebay-sandbox-read-only-connection-status-v1.json"
 import listingPackageSourceAwareRefresh from "../../../tools/fixtures/ebay-listing-package-source-aware-refresh-v1.json"
@@ -293,6 +294,39 @@ const ebaySandboxReadOnlyConnectionStatusCopy = {
     "Official eBay documentation validation required",
   nextRecommendedLoop:
     "Next recommended loop: LOOP 110 — Image Generation Service Design V1",
+}
+
+const ebayImageGenerationServiceDesignCopy = {
+  title:
+    "Image Generation Service Design",
+  serviceStatus:
+    "IMAGE_GENERATION_SERVICE_NOT_IMPLEMENTED",
+  serviceDecision:
+    "DESIGN_ONLY_DO_NOT_GENERATE_IMAGES",
+  generationMode:
+    "DRY_RUN_DESIGN_ONLY",
+  openAiStatus:
+    "OPENAI_NOT_CONFIGURED",
+  sourceStatus:
+    "SOURCE_EVIDENCE_NOT_APPROVED",
+  imageGenerationImpact:
+    "DO_NOT_GENERATE_IMAGES",
+  imageUploadImpact:
+    "DO_NOT_UPLOAD_IMAGES",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  serviceSummary:
+    "Image generation service is not implemented",
+  noOpenAi:
+    "No OpenAI API call is allowed",
+  noGeneration:
+    "No image generation is allowed",
+  noUploadStorage:
+    "No image upload or storage is allowed",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 111 — Image Generation Dry Run Contract V1",
 }
 
 const imageSourceIntakeCopy = {
@@ -2163,6 +2197,312 @@ export default function EbayListingPackagePage() {
                   <FieldGrid
                     fields={Object.entries(
                       ebaySandboxReadOnlyConnectionStatus.safetyFlags
+                    )}
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Image Generation Service Design">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {ebayImageGenerationServiceDesign.designVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {ebayImageGenerationServiceDesignCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {ebayImageGenerationServiceDesign.serviceSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayImageGenerationServiceDesignCopy.serviceStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayImageGenerationServiceDesignCopy.serviceDecision}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayImageGenerationServiceDesignCopy.generationMode}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Service status",
+                      ebayImageGenerationServiceDesign.serviceStatus,
+                    ],
+                    [
+                      "Service decision",
+                      ebayImageGenerationServiceDesign.serviceDecision,
+                    ],
+                    [
+                      "Generation mode",
+                      ebayImageGenerationServiceDesign.generationMode,
+                    ],
+                    [
+                      "OpenAI status",
+                      ebayImageGenerationServiceDesign.openAiStatus,
+                    ],
+                    [
+                      "Source status",
+                      ebayImageGenerationServiceDesign.sourceStatus,
+                    ],
+                    [
+                      "Image generation impact",
+                      ebayImageGenerationServiceDesign.imageGenerationImpact,
+                    ],
+                    [
+                      "Image upload impact",
+                      ebayImageGenerationServiceDesign.imageUploadImpact,
+                    ],
+                    [
+                      "Draft impact",
+                      ebayImageGenerationServiceDesign.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      ebayImageGenerationServiceDesign.publicationImpact,
+                    ],
+                    [
+                      ebayImageGenerationServiceDesignCopy.noOpenAi,
+                      ebayImageGenerationServiceDesign.generationReadiness
+                        .openAiApiCallAllowed,
+                    ],
+                    [
+                      ebayImageGenerationServiceDesignCopy.noGeneration,
+                      ebayImageGenerationServiceDesign.safetyFlags
+                        .imageGenerated,
+                    ],
+                    [
+                      ebayImageGenerationServiceDesignCopy.noUploadStorage,
+                      ebayImageGenerationServiceDesign.safetyFlags
+                        .imageUploaded,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Generation Readiness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebayImageGenerationServiceDesign.generationReadiness
+                    )}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Service Boundaries
+                </h4>
+                <div className="mt-4 grid gap-4">
+                  <div>
+                    <h5 className="text-sm font-black text-white">
+                      Allowed in this loop
+                    </h5>
+                    <div className="mt-3">
+                      <ListBlock
+                        items={
+                          ebayImageGenerationServiceDesign.serviceBoundaries
+                            .allowedInThisLoop
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <h5 className="text-sm font-black text-white">
+                      Forbidden in this loop
+                    </h5>
+                    <div className="mt-3">
+                      <ListBlock
+                        items={
+                          ebayImageGenerationServiceDesign.serviceBoundaries
+                            .forbiddenInThisLoop
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <p className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.045] p-4 text-sm leading-6 text-amber-50/80">
+                    {
+                      ebayImageGenerationServiceDesign.serviceBoundaries
+                        .imagePolicy
+                    }
+                  </p>
+                  <p className="rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.045] p-4 text-sm leading-6 text-cyan-50/80">
+                    {
+                      ebayImageGenerationServiceDesign.serviceBoundaries
+                        .dryRunPolicy
+                    }
+                  </p>
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Generation Phases
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {ebayImageGenerationServiceDesign.generationPhases.map((phase) => (
+                  <article
+                    key={phase.phaseId}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <p className="break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+                      {phase.label}
+                    </p>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {phase.status}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-white/60">
+                      {phase.reason}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Image Types
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {ebayImageGenerationServiceDesign.imageTypes.map((imageType) => (
+                    <div
+                      key={imageType.imageType}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {imageType.label}
+                      </p>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {imageType.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {imageType.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Input Requirements
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {ebayImageGenerationServiceDesign.inputRequirements.map((requirement) => (
+                    <div
+                      key={requirement.requirementId}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {requirement.label}
+                      </p>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {requirement.status}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Workflows
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {ebayImageGenerationServiceDesign.blockedWorkflows.map((workflow) => (
+                    <div
+                      key={workflow.workflow}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {workflow.workflow}
+                      </p>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {workflow.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {workflow.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Required Human Actions
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebayImageGenerationServiceDesign.requiredHumanActions
+                    }
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        ebayImageGenerationServiceDesignCopy.nextRecommendedLoop,
+                        ebayImageGenerationServiceDesign.nextRecommendedLoop.loop,
+                      ],
+                      [
+                        "Reason",
+                        ebayImageGenerationServiceDesign.nextRecommendedLoop.reason,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebayImageGenerationServiceDesign.nextRecommendedLoop
+                        .constraints
+                    }
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Compact Safety Flags
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebayImageGenerationServiceDesign.safetyFlags
                     )}
                   />
                 </div>

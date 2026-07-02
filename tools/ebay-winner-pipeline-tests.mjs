@@ -587,6 +587,19 @@ const ebayFirstListingPackageFixture =
     )
   )
 
+const ebayImageGenerationServiceDesignFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-image-generation-service-design-v1.json"
+  )
+
+const ebayImageGenerationServiceDesignFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayImageGenerationServiceDesignFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayListingPackageSourceAwareRefreshFixturePath =
   path.resolve(
     "tools/fixtures/ebay-listing-package-source-aware-refresh-v1.json"
@@ -6337,6 +6350,407 @@ test("ebay sandbox read-only connection status fixture: no contiene URLs tokens 
   }
 })
 
+test("ebay image generation service design fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayImageGenerationServiceDesignFixturePath
+    )
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.designVersion,
+    "EBAY_IMAGE_GENERATION_SERVICE_DESIGN_V1"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.imageAssetManifestVersion,
+    "EBAY_LUNA_PORTEX_IMAGE_ASSET_MANIFEST_V1"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.imageSourceIntakeVersion,
+    "EBAY_LUNA_PORTEX_IMAGE_SOURCE_INTAKE_V1"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.imageSourceReviewGateVersion,
+    "EBAY_LUNA_PORTEX_IMAGE_SOURCE_REVIEW_GATE_V1"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.mainImageEnhancementBriefVersion,
+    "EBAY_LUNA_PORTEX_MAIN_IMAGE_ENHANCEMENT_BRIEF_V1"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.imageQaGateVersion,
+    "EBAY_LUNA_PORTEX_IMAGE_QA_REVIEW_GATE_V1"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.productFactsGateVersion,
+    "EBAY_LUNA_PORTEX_PRODUCT_FACTS_READINESS_GATE_V1"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.commercialGateVersion,
+    "EBAY_LUNA_PORTEX_COMMERCIAL_READINESS_GATE_V1"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.sourceAwareRefreshVersion,
+    "EBAY_LISTING_PACKAGE_SOURCE_AWARE_REFRESH_V1"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.ebaySandboxStatusVersion,
+    "EBAY_SANDBOX_READ_ONLY_CONNECTION_STATUS_V1"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.marketplace,
+    "ebay_us"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.serviceStatus,
+    "IMAGE_GENERATION_SERVICE_NOT_IMPLEMENTED"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.serviceDecision,
+    "DESIGN_ONLY_DO_NOT_GENERATE_IMAGES"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.generationMode,
+    "DRY_RUN_DESIGN_ONLY"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.openAiStatus,
+    "OPENAI_NOT_CONFIGURED"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.sourceStatus,
+    "SOURCE_EVIDENCE_NOT_APPROVED"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.imageGenerationImpact,
+    "DO_NOT_GENERATE_IMAGES"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.imageUploadImpact,
+    "DO_NOT_UPLOAD_IMAGES"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayImageGenerationServiceDesignFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay image generation service design fixture: readiness bloquea generacion real", () => {
+  const readiness =
+    ebayImageGenerationServiceDesignFixture.generationReadiness
+
+  for (const flagName of [
+    "imageGenerationServiceDesigned",
+    "dryRunContractDesigned",
+    "mainImageEnhancementBriefExists",
+  ]) {
+    assert.equal(
+      readiness[flagName],
+      true,
+      `${flagName} must be true`
+    )
+  }
+
+  for (const flagName of [
+    "imageGenerationServiceImplemented",
+    "dryRunImplemented",
+    "openAiConfigured",
+    "openAiApiCallAllowed",
+    "authorizedSourceEvidenceApproved",
+    "sourceReviewApproved",
+    "productFactsApproved",
+    "commercialReadinessApproved",
+    "mainImageEnhancementAllowed",
+    "mainImageCandidateExists",
+    "secondaryImagePackageReady",
+    "imageQaApproved",
+    "imageStorageImplemented",
+    "imageUploadImplemented",
+    "promptPolicyApproved",
+    "humanGenerationApprovalCompleted",
+    "readyForMainImageGeneration",
+    "readyForSecondaryImageGeneration",
+    "readyForEbayImagePackage",
+    "readyForEbayDraftMapping",
+  ]) {
+    assert.equal(
+      readiness[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("ebay image generation service design fixture: boundaries son design-only", () => {
+  const boundaries =
+    ebayImageGenerationServiceDesignFixture.serviceBoundaries
+
+  assert.equal(
+    boundaries.allowedInThisLoop.length,
+    3
+  )
+  assert.ok(
+    boundaries.forbiddenInThisLoop.length >= 12
+  )
+  assert.match(
+    boundaries.imagePolicy,
+    /approved authorized source evidence/
+  )
+  assert.match(
+    boundaries.dryRunPolicy,
+    /structured plans and prompts/
+  )
+})
+
+test("ebay image generation service design fixture: fases bloquean ejecucion", () => {
+  const phases =
+    ebayImageGenerationServiceDesignFixture.generationPhases
+
+  assert.equal(
+    phases.length,
+    9
+  )
+
+  const expectedPhaseIds =
+    new Set([
+      "design_only",
+      "source_evidence_approval",
+      "prompt_policy_approval",
+      "main_image_dry_run_contract",
+      "secondary_image_brief_contract",
+      "openai_image_generation_dry_run",
+      "image_candidate_storage",
+      "image_qa_workflow",
+      "ebay_image_package_mapping",
+    ])
+
+  for (const phase of phases) {
+    assert.ok(
+      expectedPhaseIds.has(phase.phaseId),
+      `unexpected generation phase: ${phase.phaseId}`
+    )
+    if (phase.phaseId === "design_only") {
+      assert.equal(
+        phase.status,
+        "CURRENT"
+      )
+      assert.equal(
+        phase.allowed,
+        true
+      )
+    } else {
+      assert.equal(
+        phase.allowed,
+        false,
+        `${phase.phaseId} must not be allowed`
+      )
+    }
+  }
+})
+
+test("ebay image generation service design fixture: tipos de imagen permanecen bloqueados", () => {
+  const imageTypes =
+    ebayImageGenerationServiceDesignFixture.imageTypes
+
+  assert.equal(
+    imageTypes.length,
+    7
+  )
+
+  const expectedImageTypes =
+    new Set([
+      "main_image",
+      "secondary_material_zoom",
+      "secondary_package_contents",
+      "secondary_dimensions",
+      "secondary_main_benefit",
+      "secondary_lifestyle",
+      "secondary_hands_real_use",
+    ])
+
+  for (const imageType of imageTypes) {
+    assert.equal(
+      imageType.status,
+      "BLOCKED"
+    )
+    assert.equal(
+      imageType.generationAllowed,
+      false
+    )
+    assert.equal(
+      imageType.sourceRequired,
+      true
+    )
+    assert.ok(
+      expectedImageTypes.has(imageType.imageType),
+      `unexpected image type: ${imageType.imageType}`
+    )
+  }
+})
+
+test("ebay image generation service design fixture: input requirements siguen requeridos", () => {
+  const inputRequirements =
+    ebayImageGenerationServiceDesignFixture.inputRequirements
+
+  assert.equal(
+    inputRequirements.length,
+    9
+  )
+
+  const expectedRequirementIds =
+    new Set([
+      "authorized_source_evidence",
+      "approved_image_source_review",
+      "validated_product_facts",
+      "commercial_context",
+      "prompt_policy",
+      "human_generation_approval",
+      "dry_run_contract",
+      "image_storage_strategy",
+      "image_qa_gate",
+    ])
+
+  for (const requirement of inputRequirements) {
+    assert.equal(
+      requirement.requiredToGenerate,
+      true
+    )
+    assert.ok(
+      expectedRequirementIds.has(requirement.requirementId),
+      `unexpected input requirement: ${requirement.requirementId}`
+    )
+  }
+})
+
+test("ebay image generation service design fixture: workflows permanecen bloqueados", () => {
+  const blockedWorkflows =
+    ebayImageGenerationServiceDesignFixture.blockedWorkflows
+
+  assert.equal(
+    blockedWorkflows.length,
+    10
+  )
+
+  const expectedWorkflows =
+    new Set([
+      "openai_image_generation",
+      "main_image_generation",
+      "secondary_image_generation",
+      "image_upload",
+      "image_storage",
+      "image_qa_approval",
+      "ebay_image_package_mapping",
+      "ebay_draft_mapping",
+      "ebay_draft_creation",
+      "ebay_publication",
+    ])
+
+  for (const workflow of blockedWorkflows) {
+    assert.equal(
+      workflow.status,
+      "BLOCKED"
+    )
+    assert.ok(
+      expectedWorkflows.has(workflow.workflow),
+      `unexpected blocked workflow: ${workflow.workflow}`
+    )
+  }
+})
+
+test("ebay image generation service design fixture: safety flags no permiten side effects", () => {
+  const safetyFlags =
+    ebayImageGenerationServiceDesignFixture.safetyFlags
+
+  for (const flagName of [
+    "advisoryOnly",
+    "designOnly",
+    "dryRunOnly",
+    "humanReviewRequired",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      true,
+      `${flagName} must be true`
+    )
+  }
+
+  for (const flagName of [
+    "imageGenerationServiceImplemented",
+    "openAiConfigured",
+    "openAiApiUsed",
+    "promptExecuted",
+    "imageGenerated",
+    "imageUploaded",
+    "imageStored",
+    "base64ImagesIncluded",
+    "realImagesIncluded",
+    "externalUrlsIncluded",
+    "realSupplierProductDataIncluded",
+    "supplierPrivateDataIncluded",
+    "customerDataIncluded",
+    "authorizedSourceEvidenceApproved",
+    "sourceReviewApproved",
+    "productFactsApproved",
+    "commercialReadinessApproved",
+    "imageQaApproved",
+    "ebayApiUsed",
+    "lunaPortexApiUsed",
+    "supabaseUsed",
+    "apiCallsMade",
+    "realDraftCreated",
+    "publishedToEbay",
+    "listingMutated",
+    "draftMappingUnlocked",
+    "draftCreationUnlocked",
+    "publicationUnlocked",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("ebay image generation service design fixture: no contiene URLs imagenes reales ni datos privados", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayImageGenerationServiceDesignFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /imageUrl/,
+    /assetUrl/,
+    /uploadedUrl/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+    /supplierProductUrl/,
+    /realImage/,
+    /realEndpoint/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("luna portex product facts readiness gate fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -9733,6 +10147,10 @@ test("ebay listing package admin MVP: existe y usa fixtures seguros", () => {
   )
   assert.match(
     source,
+    /ebay-image-generation-service-design-v1\.json/
+  )
+  assert.match(
+    source,
     /ebay-only-connection-design-v1\.json/
   )
   assert.match(
@@ -9870,9 +10288,15 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "Listing Package Source-Aware Refresh",
     "eBay Only Connection Design",
     "eBay Sandbox Read-Only Connection Status",
+    "Image Generation Service Design",
     "Connection Readiness",
     "Integration Boundaries",
     "Connection Phases",
+    "Generation Readiness",
+    "Service Boundaries",
+    "Generation Phases",
+    "Image Types",
+    "Input Requirements",
     "Status Checks",
     "Review Inputs",
     "Fact Checks",
@@ -10334,6 +10758,44 @@ test("ebay listing package admin MVP: muestra sandbox read-only connection statu
     assert.ok(
       source.includes(expectedText),
       `missing eBay sandbox read-only status admin text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: muestra image generation service design", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Image Generation Service Design",
+    "IMAGE_GENERATION_SERVICE_NOT_IMPLEMENTED",
+    "DESIGN_ONLY_DO_NOT_GENERATE_IMAGES",
+    "DRY_RUN_DESIGN_ONLY",
+    "OPENAI_NOT_CONFIGURED",
+    "SOURCE_EVIDENCE_NOT_APPROVED",
+    "DO_NOT_GENERATE_IMAGES",
+    "DO_NOT_UPLOAD_IMAGES",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "Image generation service is not implemented",
+    "No OpenAI API call is allowed",
+    "No image generation is allowed",
+    "No image upload or storage is allowed",
+    "Generation Readiness",
+    "Service Boundaries",
+    "Generation Phases",
+    "Image Types",
+    "Input Requirements",
+    "Blocked Workflows",
+    "Required Human Actions",
+    "Next recommended loop: LOOP 111 \u2014 Image Generation Dry Run Contract V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing image generation service design admin text: ${expectedText}`
     )
   }
 })

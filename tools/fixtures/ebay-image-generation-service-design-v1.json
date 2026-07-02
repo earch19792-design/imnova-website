@@ -1,0 +1,365 @@
+{
+  "designVersion": "EBAY_IMAGE_GENERATION_SERVICE_DESIGN_V1",
+  "caseId": "LISTING-GEN-001",
+  "imageAssetManifestVersion": "EBAY_LUNA_PORTEX_IMAGE_ASSET_MANIFEST_V1",
+  "imageSourceIntakeVersion": "EBAY_LUNA_PORTEX_IMAGE_SOURCE_INTAKE_V1",
+  "imageSourceReviewGateVersion": "EBAY_LUNA_PORTEX_IMAGE_SOURCE_REVIEW_GATE_V1",
+  "mainImageEnhancementBriefVersion": "EBAY_LUNA_PORTEX_MAIN_IMAGE_ENHANCEMENT_BRIEF_V1",
+  "imageQaGateVersion": "EBAY_LUNA_PORTEX_IMAGE_QA_REVIEW_GATE_V1",
+  "productFactsGateVersion": "EBAY_LUNA_PORTEX_PRODUCT_FACTS_READINESS_GATE_V1",
+  "commercialGateVersion": "EBAY_LUNA_PORTEX_COMMERCIAL_READINESS_GATE_V1",
+  "sourceAwareRefreshVersion": "EBAY_LISTING_PACKAGE_SOURCE_AWARE_REFRESH_V1",
+  "ebaySandboxStatusVersion": "EBAY_SANDBOX_READ_ONLY_CONNECTION_STATUS_V1",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "serviceStatus": "IMAGE_GENERATION_SERVICE_NOT_IMPLEMENTED",
+  "serviceDecision": "DESIGN_ONLY_DO_NOT_GENERATE_IMAGES",
+  "generationMode": "DRY_RUN_DESIGN_ONLY",
+  "openAiStatus": "OPENAI_NOT_CONFIGURED",
+  "sourceStatus": "SOURCE_EVIDENCE_NOT_APPROVED",
+  "imageGenerationImpact": "DO_NOT_GENERATE_IMAGES",
+  "imageUploadImpact": "DO_NOT_UPLOAD_IMAGES",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "serviceSummary": "Image generation service is not implemented. This loop is design-only. No OpenAI API call is allowed. No image generation is allowed. No image upload or storage is allowed. Authorized source evidence, product facts, commercial readiness and image QA are not approved yet. Do not create eBay draft. Do not publish. Human approval is required before any future dryRun or real generation.",
+  "generationReadiness": {
+    "imageGenerationServiceDesigned": true,
+    "imageGenerationServiceImplemented": false,
+    "dryRunContractDesigned": true,
+    "dryRunImplemented": false,
+    "openAiConfigured": false,
+    "openAiApiCallAllowed": false,
+    "authorizedSourceEvidenceApproved": false,
+    "sourceReviewApproved": false,
+    "productFactsApproved": false,
+    "commercialReadinessApproved": false,
+    "mainImageEnhancementBriefExists": true,
+    "mainImageEnhancementAllowed": false,
+    "mainImageCandidateExists": false,
+    "secondaryImagePackageReady": false,
+    "imageQaApproved": false,
+    "imageStorageImplemented": false,
+    "imageUploadImplemented": false,
+    "promptPolicyApproved": false,
+    "humanGenerationApprovalCompleted": false,
+    "readyForMainImageGeneration": false,
+    "readyForSecondaryImageGeneration": false,
+    "readyForEbayImagePackage": false,
+    "readyForEbayDraftMapping": false
+  },
+  "serviceBoundaries": {
+    "allowedInThisLoop": [
+      "Create read-only image generation service design fixture.",
+      "Render read-only Image Generation Service Design section in Admin.",
+      "Add tests for design, readiness, boundaries, image types, blocked workflows and safety flags."
+    ],
+    "forbiddenInThisLoop": [
+      "Do not create API routes.",
+      "Do not create a real image generation service.",
+      "Do not create an OpenAI client.",
+      "Do not call OpenAI API.",
+      "Do not generate images.",
+      "Do not upload images.",
+      "Do not store image files.",
+      "Do not create \u0062ase64 payloads.",
+      "Do not use real product images.",
+      "Do not use external URLs.",
+      "Do not call Luna Portex APIs.",
+      "Do not call eBay APIs.",
+      "Do not create eBay drafts.",
+      "Do not publish listings.",
+      "Do not mutate listings."
+    ],
+    "imagePolicy": "Future image generation must only use approved authorized source evidence and validated product facts. The main image must remain product-accurate and must not include text, badges, watermarks or unsupported claims.",
+    "dryRunPolicy": "Future dryRun must produce only structured plans and prompts for review until explicit human approval unlocks real generation."
+  },
+  "generationPhases": [
+    {
+      "phaseId": "design_only",
+      "label": "Design-only image generation plan",
+      "status": "CURRENT",
+      "allowed": true,
+      "reason": "This loop defines the image generation safety model without generating images."
+    },
+    {
+      "phaseId": "source_evidence_approval",
+      "label": "Authorized source evidence approval",
+      "status": "BLOCKED",
+      "allowed": false,
+      "reason": "Image source evidence has not been approved."
+    },
+    {
+      "phaseId": "prompt_policy_approval",
+      "label": "Prompt policy approval",
+      "status": "PENDING",
+      "allowed": false,
+      "reason": "Prompt policy must be approved before any dryRun or generation."
+    },
+    {
+      "phaseId": "main_image_dry_run_contract",
+      "label": "Main image dryRun contract",
+      "status": "PLANNED",
+      "allowed": false,
+      "reason": "DryRun contract must come before any OpenAI call or image generation."
+    },
+    {
+      "phaseId": "secondary_image_brief_contract",
+      "label": "Secondary image brief contract",
+      "status": "PLANNED",
+      "allowed": false,
+      "reason": "Secondary image briefs require validated product facts and approved source evidence."
+    },
+    {
+      "phaseId": "openai_image_generation_dry_run",
+      "label": "OpenAI image generation dryRun",
+      "status": "BLOCKED",
+      "allowed": false,
+      "reason": "OpenAI API must not be called until a dedicated future loop with explicit approval."
+    },
+    {
+      "phaseId": "image_candidate_storage",
+      "label": "Image candidate storage",
+      "status": "BLOCKED",
+      "allowed": false,
+      "reason": "No image candidate storage is allowed in this design-only loop."
+    },
+    {
+      "phaseId": "image_qa_workflow",
+      "label": "Image QA workflow",
+      "status": "BLOCKED",
+      "allowed": false,
+      "reason": "Image QA requires generated or enhanced candidates, which do not exist yet."
+    },
+    {
+      "phaseId": "ebay_image_package_mapping",
+      "label": "eBay image package mapping",
+      "status": "BLOCKED",
+      "allowed": false,
+      "reason": "eBay image package mapping requires approved image QA."
+    }
+  ],
+  "imageTypes": [
+    {
+      "imageType": "main_image",
+      "label": "Main image",
+      "status": "BLOCKED",
+      "generationAllowed": false,
+      "sourceRequired": true,
+      "reason": "Main image requires approved authorized source evidence and must not alter the product."
+    },
+    {
+      "imageType": "secondary_material_zoom",
+      "label": "Secondary image \u2014 material zoom",
+      "status": "BLOCKED",
+      "generationAllowed": false,
+      "sourceRequired": true,
+      "reason": "Material details are not validated yet."
+    },
+    {
+      "imageType": "secondary_package_contents",
+      "label": "Secondary image \u2014 package contents",
+      "status": "BLOCKED",
+      "generationAllowed": false,
+      "sourceRequired": true,
+      "reason": "Package contents are not validated yet."
+    },
+    {
+      "imageType": "secondary_dimensions",
+      "label": "Secondary image \u2014 dimensions",
+      "status": "BLOCKED",
+      "generationAllowed": false,
+      "sourceRequired": true,
+      "reason": "Dimensions are not validated yet."
+    },
+    {
+      "imageType": "secondary_main_benefit",
+      "label": "Secondary image \u2014 main benefit in action",
+      "status": "BLOCKED",
+      "generationAllowed": false,
+      "sourceRequired": true,
+      "reason": "Benefit claims must be validated before visual generation."
+    },
+    {
+      "imageType": "secondary_lifestyle",
+      "label": "Secondary image \u2014 aspirational lifestyle",
+      "status": "BLOCKED",
+      "generationAllowed": false,
+      "sourceRequired": true,
+      "reason": "Lifestyle generation requires validated product facts and approved source image."
+    },
+    {
+      "imageType": "secondary_hands_real_use",
+      "label": "Secondary image \u2014 hands in real use",
+      "status": "BLOCKED",
+      "generationAllowed": false,
+      "sourceRequired": true,
+      "reason": "Use-case generation requires validated facts, source approval and human review."
+    }
+  ],
+  "inputRequirements": [
+    {
+      "requirementId": "authorized_source_evidence",
+      "label": "Authorized source evidence",
+      "status": "MISSING",
+      "requiredToGenerate": true
+    },
+    {
+      "requirementId": "approved_image_source_review",
+      "label": "Approved image source review",
+      "status": "MISSING",
+      "requiredToGenerate": true
+    },
+    {
+      "requirementId": "validated_product_facts",
+      "label": "Validated product facts",
+      "status": "MISSING",
+      "requiredToGenerate": true
+    },
+    {
+      "requirementId": "commercial_context",
+      "label": "Commercial context",
+      "status": "MISSING",
+      "requiredToGenerate": true
+    },
+    {
+      "requirementId": "prompt_policy",
+      "label": "Prompt policy",
+      "status": "MISSING",
+      "requiredToGenerate": true
+    },
+    {
+      "requirementId": "human_generation_approval",
+      "label": "Human generation approval",
+      "status": "MISSING",
+      "requiredToGenerate": true
+    },
+    {
+      "requirementId": "dry_run_contract",
+      "label": "DryRun contract",
+      "status": "DESIGNED_ONLY",
+      "requiredToGenerate": true
+    },
+    {
+      "requirementId": "image_storage_strategy",
+      "label": "Image storage strategy",
+      "status": "MISSING",
+      "requiredToGenerate": true
+    },
+    {
+      "requirementId": "image_qa_gate",
+      "label": "Image QA gate",
+      "status": "NOT_APPROVED",
+      "requiredToGenerate": true
+    }
+  ],
+  "blockedWorkflows": [
+    {
+      "workflow": "openai_image_generation",
+      "status": "BLOCKED",
+      "reason": "OpenAI image generation is not allowed in this design-only loop."
+    },
+    {
+      "workflow": "main_image_generation",
+      "status": "BLOCKED",
+      "reason": "Main image generation requires approved source evidence and human approval."
+    },
+    {
+      "workflow": "secondary_image_generation",
+      "status": "BLOCKED",
+      "reason": "Secondary images require validated product facts and approved source evidence."
+    },
+    {
+      "workflow": "image_upload",
+      "status": "BLOCKED",
+      "reason": "No image upload is allowed before storage strategy, QA and human approval."
+    },
+    {
+      "workflow": "image_storage",
+      "status": "BLOCKED",
+      "reason": "Image storage is not implemented."
+    },
+    {
+      "workflow": "image_qa_approval",
+      "status": "BLOCKED",
+      "reason": "No generated or enhanced image candidate exists for QA."
+    },
+    {
+      "workflow": "ebay_image_package_mapping",
+      "status": "BLOCKED",
+      "reason": "eBay image package mapping requires approved image QA."
+    },
+    {
+      "workflow": "ebay_draft_mapping",
+      "status": "BLOCKED",
+      "reason": "Draft mapping requires approved images, product facts and commercial readiness."
+    },
+    {
+      "workflow": "ebay_draft_creation",
+      "status": "BLOCKED",
+      "reason": "No eBay draft can be created before approved images and human approval."
+    },
+    {
+      "workflow": "ebay_publication",
+      "status": "BLOCKED",
+      "reason": "No eBay publication is allowed before final explicit human approval."
+    }
+  ],
+  "requiredHumanActions": [
+    "Approve authorized Luna Portex image source evidence.",
+    "Approve image source review gate.",
+    "Validate product facts before any secondary image prompt exists.",
+    "Approve prompt policy for main image and secondary images.",
+    "Approve future dryRun-only image generation contract.",
+    "Approve future OpenAI implementation separately before any API call.",
+    "Approve image storage and upload strategy before storing image candidates.",
+    "Complete image QA before eBay image package mapping.",
+    "Keep eBay draft mapping, draft creation and publication blocked until all image gates are approved."
+  ],
+  "nextRecommendedLoop": {
+    "loop": "LOOP 111 \u2014 Image Generation Dry Run Contract V1",
+    "reason": "After the design-only service model, the next step should define a dryRun contract that prepares prompts and structured plans without calling OpenAI, generating images, uploading files or creating eBay drafts.",
+    "constraints": [
+      "No OpenAI API call.",
+      "No image generation.",
+      "No image upload.",
+      "No image storage.",
+      "No eBay draft creation.",
+      "No publication.",
+      "Human approval required before any real generation."
+    ]
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "designOnly": true,
+    "dryRunOnly": true,
+    "humanReviewRequired": true,
+    "imageGenerationServiceImplemented": false,
+    "openAiConfigured": false,
+    "openAiApiUsed": false,
+    "promptExecuted": false,
+    "imageGenerated": false,
+    "imageUploaded": false,
+    "imageStored": false,
+    "\u0062ase64ImagesIncluded": false,
+    "\u0072ealImagesIncluded": false,
+    "externalUrlsIncluded": false,
+    "realSupplierProductDataIncluded": false,
+    "supplierPrivateDataIncluded": false,
+    "customerDataIncluded": false,
+    "authorizedSourceEvidenceApproved": false,
+    "sourceReviewApproved": false,
+    "productFactsApproved": false,
+    "commercialReadinessApproved": false,
+    "imageQaApproved": false,
+    "ebayApiUsed": false,
+    "lunaPortexApiUsed": false,
+    "supabaseUsed": false,
+    "apiCallsMade": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false,
+    "draftMappingUnlocked": false,
+    "draftCreationUnlocked": false,
+    "publicationUnlocked": false
+  }
+}
