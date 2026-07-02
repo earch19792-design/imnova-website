@@ -4,6 +4,7 @@ import type {
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
 import draftMappingDryRun from "../../../tools/fixtures/ebay-draft-mapping-dry-run-v1.json"
 import firstListingContentFinalization from "../../../tools/fixtures/ebay-first-listing-content-finalization-v1.json"
+import listingGeneratorDryRun from "../../../tools/fixtures/ebay-listing-generator-service-dry-run-v1.json"
 import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -564,6 +565,47 @@ const ebayFirstListingContentFinalizationCopy = {
     "Required Human Actions",
   nextRecommendedAction:
     "Next Recommended Action",
+}
+
+const ebayListingGeneratorDryRunCopy = {
+  title:
+    "eBay Listing Generator Service Dry Run",
+  generatorStatus:
+    "LISTING_GENERATOR_DRY_RUN_READY_BUT_BLOCKED",
+  generatorDecision:
+    "GENERATE_STRUCTURE_ONLY_DO_NOT_FINALIZE_CONTENT",
+  dryRunMode:
+    "STRUCTURED_DRY_RUN_NO_EXTERNAL_CALLS",
+  outputStatus:
+    "FINAL_LISTING_CONTENT_NOT_GENERATED",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  productsRule:
+    "Products decide what the product is",
+  listingRule:
+    "Listing decides how the product sells on eBay",
+  benchmarkRule:
+    "Benchmark decides what is working in the market",
+  gatesRule:
+    "Gates decide whether the listing can advance",
+  marketIntelligenceRule:
+    "Use market intelligence, do not copy competitor content",
+  trafficKeywordsRule:
+    "Traffic keywords may be used when generic, relevant and true",
+  portexFactsRule:
+    "Portex facts are required for technical claims",
+  plannedGenerationOutputs:
+    "Planned Generation Outputs",
+  dryRunOutput:
+    "Dry Run Output",
+  blockedBecause:
+    "Blocked Because",
+  requiredHumanActions:
+    "Required Human Actions",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 119 — Product to eBay Listing Bridge V1",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -4293,6 +4335,289 @@ export default function EbayListingPackagePage() {
                     fields={Object.entries(
                       firstListingContentFinalization.safetyFlags
                     )}
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="eBay Listing Generator Service Dry Run">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {listingGeneratorDryRun.generatorVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {ebayListingGeneratorDryRunCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {listingGeneratorDryRun.generatorSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayListingGeneratorDryRunCopy.generatorStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayListingGeneratorDryRunCopy.generatorDecision}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayListingGeneratorDryRunCopy.dryRunMode}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Generator status",
+                      listingGeneratorDryRun.generatorStatus,
+                    ],
+                    [
+                      "Generator decision",
+                      listingGeneratorDryRun.generatorDecision,
+                    ],
+                    [
+                      "Dry run mode",
+                      listingGeneratorDryRun.dryRunMode,
+                    ],
+                    [
+                      "Output status",
+                      listingGeneratorDryRun.outputStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      listingGeneratorDryRun.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      listingGeneratorDryRun.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Architecture Policy
+              </h4>
+              <div className="mt-3">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Products",
+                      ebayListingGeneratorDryRunCopy.productsRule,
+                    ],
+                    [
+                      "Listing",
+                      ebayListingGeneratorDryRunCopy.listingRule,
+                    ],
+                    [
+                      "Benchmark",
+                      ebayListingGeneratorDryRunCopy.benchmarkRule,
+                    ],
+                    [
+                      "Gates",
+                      ebayListingGeneratorDryRunCopy.gatesRule,
+                    ],
+                    [
+                      "Operating principle",
+                      listingGeneratorDryRun.architecturePolicy
+                        .operatingPrinciple,
+                    ],
+                    [
+                      "Product source of truth",
+                      listingGeneratorDryRun.architecturePolicy
+                        .productSourceOfTruth,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Benchmark Keyword Policy
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Policy status",
+                        listingGeneratorDryRun.benchmarkKeywordPolicy
+                          .policyStatus,
+                      ],
+                      [
+                        "Core rule",
+                        listingGeneratorDryRun.benchmarkKeywordPolicy
+                          .coreRule,
+                      ],
+                      [
+                        "Keyword use allowed",
+                        listingGeneratorDryRun.benchmarkKeywordPolicy
+                          .keywordUseAllowed,
+                      ],
+                      [
+                        "Competitor content copying allowed",
+                        listingGeneratorDryRun.benchmarkKeywordPolicy
+                          .competitorContentCopyingAllowed,
+                      ],
+                      [
+                        "Competitor images copying allowed",
+                        listingGeneratorDryRun.benchmarkKeywordPolicy
+                          .competitorImagesCopyingAllowed,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4 grid gap-3">
+                  {listingGeneratorDryRun.benchmarkKeywordPolicy.keywordClasses.map((keywordClass) => (
+                    <article
+                      key={keywordClass.classId}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <h5 className="text-sm font-bold text-white">
+                        {keywordClass.label}
+                      </h5>
+                      <p className="mt-1 text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70">
+                        allowed: {formatValue(keywordClass.allowed)}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {keywordClass.rule}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Input Readiness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      listingGeneratorDryRun.inputReadiness
+                    )}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Planned Generation Outputs
+              </h4>
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                {listingGeneratorDryRun.plannedGenerationOutputs.map((output) => (
+                  <article
+                    key={output.outputId}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <h5 className="break-words text-sm font-black text-white [overflow-wrap:anywhere]">
+                      {output.label}
+                    </h5>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {output.status}
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-white/60">
+                      {output.reason}
+                    </p>
+                    <p className="mt-3 text-sm font-semibold text-cyan-50/80">
+                      finalValueIncluded: {formatValue(output.finalValueIncluded)}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Dry Run Output
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "structuredPlanGenerated",
+                        listingGeneratorDryRun.dryRunOutput
+                          .structuredPlanGenerated,
+                      ],
+                      [
+                        "finalListingContentGenerated",
+                        listingGeneratorDryRun.dryRunOutput
+                          .finalListingContentGenerated,
+                      ],
+                      [
+                        "ebayDraftMapped",
+                        listingGeneratorDryRun.dryRunOutput.ebayDraftMapped,
+                      ],
+                      [
+                        "ebayDraftCreated",
+                        listingGeneratorDryRun.dryRunOutput.ebayDraftCreated,
+                      ],
+                      [
+                        "publishedToEbay",
+                        listingGeneratorDryRun.dryRunOutput.publishedToEbay,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Because
+                </h4>
+                <div className="mt-4">
+                  <ListBlock items={listingGeneratorDryRun.blockedBecause} />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Required Human Actions
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={listingGeneratorDryRun.requiredHumanActions}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        ebayListingGeneratorDryRunCopy.nextRecommendedLoop,
+                        listingGeneratorDryRun.nextRecommendedLoop.loop,
+                      ],
+                      [
+                        "Reason",
+                        listingGeneratorDryRun.nextRecommendedLoop.reason,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      listingGeneratorDryRun.nextRecommendedLoop.constraints
+                    }
                   />
                 </div>
               </article>

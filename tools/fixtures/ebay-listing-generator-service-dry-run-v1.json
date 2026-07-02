@@ -1,0 +1,262 @@
+{
+  "generatorVersion": "EBAY_LISTING_GENERATOR_SERVICE_DRY_RUN_V1",
+  "caseId": "LISTING-GEN-001",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "listingCompletionWorkspaceVersion": "EBAY_LISTING_COMPLETION_WORKSPACE_V1",
+  "draftMappingDryRunVersion": "EBAY_DRAFT_MAPPING_DRY_RUN_V1",
+  "contentFinalizationVersion": "EBAY_FIRST_LISTING_CONTENT_FINALIZATION_V1",
+  "generatorStatus": "LISTING_GENERATOR_DRY_RUN_READY_BUT_BLOCKED",
+  "generatorDecision": "GENERATE_STRUCTURE_ONLY_DO_NOT_FINALIZE_CONTENT",
+  "dryRunMode": "STRUCTURED_DRY_RUN_NO_EXTERNAL_CALLS",
+  "outputStatus": "FINAL_LISTING_CONTENT_NOT_GENERATED",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "generatorSummary": "Listing generator dry run is ready but blocked by missing validated inputs. The service may generate structure and readiness output only. It must not generate final listing content until Portex product facts, commercial readiness, image QA, shipping/returns and risk/compliance are approved. It must use market intelligence without copying competitor content. It must not call eBay, OpenAI, Supabase or external APIs. It must not create drafts or publish.",
+  "architecturePolicy": {
+    "productsRule": "Products decide what the product is.",
+    "listingRule": "Listing decides how the product sells on eBay.",
+    "benchmarkRule": "Benchmark decides what is working in the market.",
+    "gatesRule": "Gates decide whether the listing can advance.",
+    "operatingPrinciple": "Benchmark can suggest, Listing can adapt, Products must confirm, Gates must approve.",
+    "productSourceOfTruth": "Portex product facts and IMNOVA Products module are the source of truth for technical claims.",
+    "listingRole": "The listing generator creates original eBay selling content only from confirmed facts and allowed market intelligence."
+  },
+  "inputReadiness": {
+    "productFactsApproved": false,
+    "commercialReadinessApproved": false,
+    "marketValidationCompleted": false,
+    "imageQaApproved": false,
+    "shippingReturnsConfirmed": false,
+    "riskComplianceApproved": false,
+    "benchmarkDataAvailable": false,
+    "keywordPolicyApproved": true,
+    "contentFinalizationWorkspaceExists": true,
+    "draftMappingDryRunExists": true,
+    "readyToGenerateFinalTitle": false,
+    "readyToGenerateFinalDescription": false,
+    "readyToGenerateItemSpecifics": false,
+    "readyToGeneratePrice": false,
+    "readyToGenerateImagePackage": false,
+    "readyToMapEbayDraft": false,
+    "readyToCreateEbayDraft": false,
+    "readyToPublish": false
+  },
+  "benchmarkKeywordPolicy": {
+    "policyStatus": "ACTIVE",
+    "coreRule": "Use market intelligence, do not copy competitor content.",
+    "keywordUseAllowed": true,
+    "trafficKeywordsAllowedWhenGenericRelevantAndTrue": true,
+    "competitorContentCopyingAllowed": false,
+    "competitorImagesCopyingAllowed": false,
+    "portexFactsRequiredForTechnicalClaims": true,
+    "keywordClasses": [
+      {
+        "classId": "core",
+        "label": "Core keywords",
+        "allowed": true,
+        "rule": "Use when generic, relevant, truthful and supported by confirmed product facts."
+      },
+      {
+        "classId": "secondary",
+        "label": "Secondary keywords",
+        "allowed": true,
+        "rule": "Use when relevant and not misleading."
+      },
+      {
+        "classId": "risk",
+        "label": "Risk keywords",
+        "allowed": false,
+        "rule": "Require human risk review before use."
+      },
+      {
+        "classId": "blocked",
+        "label": "Blocked keywords",
+        "allowed": false,
+        "rule": "Do not use competitor brands, unsupported claims or exact copied text."
+      }
+    ],
+    "decisionRules": [
+      {
+        "rule": "winning_keyword_plus_confirmed_portex_fact",
+        "decision": "ALLOW"
+      },
+      {
+        "rule": "winning_keyword_plus_unconfirmed_fact",
+        "decision": "BLOCK_UNTIL_VALIDATED"
+      },
+      {
+        "rule": "competitor_brand_keyword",
+        "decision": "RISK_REVIEW_REQUIRED"
+      },
+      {
+        "rule": "exact_competitor_text",
+        "decision": "BLOCK"
+      }
+    ]
+  },
+  "plannedGenerationOutputs": [
+    {
+      "outputId": "title_generation",
+      "label": "eBay title generation",
+      "status": "BLOCKED_BY_PRODUCT_FACTS",
+      "finalValueIncluded": false,
+      "reason": "Final title requires confirmed Portex facts and approved keyword strategy."
+    },
+    {
+      "outputId": "keyword_strategy",
+      "label": "Keyword strategy",
+      "status": "STRUCTURE_ONLY",
+      "finalValueIncluded": false,
+      "reason": "Keyword classes and policy can be prepared, but final keywords require benchmark data and product fact validation."
+    },
+    {
+      "outputId": "category_recommendation",
+      "label": "Category recommendation",
+      "status": "BLOCKED_BY_MARKET_VALIDATION",
+      "finalValueIncluded": false,
+      "reason": "Category recommendation requires marketplace validation."
+    },
+    {
+      "outputId": "item_specifics_generation",
+      "label": "Item specifics generation",
+      "status": "BLOCKED_BY_PRODUCT_FACTS",
+      "finalValueIncluded": false,
+      "reason": "Item specifics require confirmed dimensions, material, condition, quantity and compatibility."
+    },
+    {
+      "outputId": "description_generation",
+      "label": "Original description generation",
+      "status": "BLOCKED_BY_PRODUCT_FACTS",
+      "finalValueIncluded": false,
+      "reason": "Original description requires validated facts and approved claims."
+    },
+    {
+      "outputId": "pricing_guidance",
+      "label": "Pricing guidance",
+      "status": "BLOCKED_BY_COMMERCIAL_READINESS",
+      "finalValueIncluded": false,
+      "reason": "Pricing requires cost, fees, margin, shipping cost and sold listings benchmark."
+    },
+    {
+      "outputId": "shipping_returns_guidance",
+      "label": "Shipping and returns guidance",
+      "status": "BLOCKED_BY_POLICY_CONFIRMATION",
+      "finalValueIncluded": false,
+      "reason": "Shipping and return policies are not confirmed."
+    },
+    {
+      "outputId": "compliance_risk_notes",
+      "label": "Compliance and risk notes",
+      "status": "NEEDS_REVIEW",
+      "finalValueIncluded": false,
+      "reason": "VeRO, claims and risk review are not complete."
+    },
+    {
+      "outputId": "draft_mapping_plan",
+      "label": "Draft mapping plan",
+      "status": "BLOCKED_BY_GATES",
+      "finalValueIncluded": false,
+      "reason": "Draft mapping requires approved product, commercial, image and connection gates."
+    }
+  ],
+  "dryRunOutput": {
+    "structuredPlanGenerated": true,
+    "finalListingContentGenerated": false,
+    "finalTitleGenerated": false,
+    "finalDescriptionGenerated": false,
+    "finalItemSpecificsGenerated": false,
+    "finalPriceGenerated": false,
+    "finalImagePackageGenerated": false,
+    "ebayDraftMapped": false,
+    "ebayDraftCreated": false,
+    "publishedToEbay": false,
+    "titleCandidate": {
+      "status": "NOT_GENERATED",
+      "valueIncluded": false,
+      "reason": "Product facts and keyword benchmark are not approved."
+    },
+    "descriptionDraft": {
+      "status": "NOT_GENERATED",
+      "valueIncluded": false,
+      "reason": "Original copy requires validated product facts and approved claims."
+    },
+    "itemSpecifics": {
+      "status": "NOT_GENERATED",
+      "valueIncluded": false,
+      "reason": "Item specifics require confirmed product facts."
+    },
+    "keywordPlan": {
+      "status": "POLICY_ONLY",
+      "valueIncluded": false,
+      "reason": "Keyword policy is defined but final keywords require benchmark data and Portex validation."
+    },
+    "draftMapping": {
+      "status": "BLOCKED",
+      "valueIncluded": false,
+      "reason": "Draft mapping remains blocked by gates."
+    }
+  },
+  "blockedBecause": [
+    "product_facts_not_approved",
+    "commercial_readiness_not_approved",
+    "market_validation_not_completed",
+    "benchmark_data_not_loaded",
+    "image_qa_not_approved",
+    "shipping_returns_not_confirmed",
+    "risk_compliance_not_approved",
+    "ebay_connection_not_authorized",
+    "draft_mapping_blocked"
+  ],
+  "requiredHumanActions": [
+    "Confirm Portex product facts.",
+    "Approve benchmark keyword strategy.",
+    "Validate traffic keywords as generic, relevant and true.",
+    "Confirm category and item specifics.",
+    "Approve original title and description.",
+    "Confirm pricing, fees, margin and shipping.",
+    "Confirm shipping and return policies.",
+    "Complete compliance and VeRO review.",
+    "Approve image QA.",
+    "Keep eBay draft creation blocked until all gates are approved."
+  ],
+  "nextRecommendedLoop": {
+    "loop": "LOOP 119 \u2014 Product to eBay Listing Bridge V1",
+    "reason": "After the generator dry run exists, connect it to the product source-of-truth model so Products provide confirmed facts while Listing generates the eBay selling representation.",
+    "constraints": [
+      "No eBay API.",
+      "No draft creation.",
+      "No publication.",
+      "No Supabase write unless explicitly approved.",
+      "Do not duplicate product facts inside listing.",
+      "Products remain source of truth."
+    ]
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "dryRunOnly": true,
+    "pureGeneratorOnly": true,
+    "finalContentGenerated": false,
+    "structuredPlanGenerated": true,
+    "competitorContentCopied": false,
+    "competitorImagesCopied": false,
+    "trafficKeywordsAllowedWhenGenericRelevantAndTrue": true,
+    "portexFactsRequiredForTechnicalClaims": true,
+    "productFactsApproved": false,
+    "commercialReadinessApproved": false,
+    "marketValidationCompleted": false,
+    "imageQaApproved": false,
+    "shippingReturnsConfirmed": false,
+    "riskComplianceApproved": false,
+    "benchmarkDataLoaded": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "supabaseUsed": false,
+    "openAiUsed": false,
+    "externalCallsMade": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}

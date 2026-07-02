@@ -665,6 +665,19 @@ const ebayFirstListingContentFinalizationFixture =
     )
   )
 
+const ebayListingGeneratorDryRunFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-listing-generator-service-dry-run-v1.json"
+  )
+
+const ebayListingGeneratorDryRunFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayListingGeneratorDryRunFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -8165,6 +8178,198 @@ test("ebay first listing content finalization fixture: no contiene URLs tokens e
   }
 })
 
+test("ebay listing generator service dry run fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayListingGeneratorDryRunFixturePath
+    )
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.generatorVersion,
+    "EBAY_LISTING_GENERATOR_SERVICE_DRY_RUN_V1"
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.generatorStatus,
+    "LISTING_GENERATOR_DRY_RUN_READY_BUT_BLOCKED"
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.generatorDecision,
+    "GENERATE_STRUCTURE_ONLY_DO_NOT_FINALIZE_CONTENT"
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.dryRunMode,
+    "STRUCTURED_DRY_RUN_NO_EXTERNAL_CALLS"
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.outputStatus,
+    "FINAL_LISTING_CONTENT_NOT_GENERATED"
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay listing generator service dry run fixture: architecture y outputs permanecen bloqueados", () => {
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.architecturePolicy.productsRule,
+    "Products decide what the product is."
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.architecturePolicy.listingRule,
+    "Listing decides how the product sells on eBay."
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.architecturePolicy.benchmarkRule,
+    "Benchmark decides what is working in the market."
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.architecturePolicy.gatesRule,
+    "Gates decide whether the listing can advance."
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.plannedGenerationOutputs.length,
+    9
+  )
+  assert.ok(
+    ebayListingGeneratorDryRunFixture.plannedGenerationOutputs.every(
+      (output) => output.finalValueIncluded === false
+    )
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.dryRunOutput
+      .structuredPlanGenerated,
+    true
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.dryRunOutput
+      .finalListingContentGenerated,
+    false
+  )
+})
+
+test("ebay listing generator service dry run fixture: benchmark policy no copia competidores", () => {
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.safetyFlags
+      .competitorContentCopied,
+    false
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.safetyFlags
+      .competitorImagesCopied,
+    false
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.safetyFlags
+      .trafficKeywordsAllowedWhenGenericRelevantAndTrue,
+    true
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.safetyFlags
+      .portexFactsRequiredForTechnicalClaims,
+    true
+  )
+  assert.equal(
+    ebayListingGeneratorDryRunFixture.benchmarkKeywordPolicy.coreRule,
+    "Use market intelligence, do not copy competitor content."
+  )
+})
+
+test("ebay listing generator service module: modulo puro sin integraciones reales", () => {
+  const modulePath =
+    path.resolve(
+      "lib/ebay/listing-generator.ts"
+    )
+
+  assert.ok(
+    fs.existsSync(modulePath)
+  )
+
+  const source =
+    fs.readFileSync(
+      modulePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "getEbayListingGeneratorDryRunSummary",
+    "getEbayListingGeneratorArchitecturePolicy",
+    "getBlockedEbayListingGeneratorResponse",
+    "USE_MARKET_INTELLIGENCE_DO_NOT_COPY_CONTENT",
+    "dryRunOnly",
+    "structuredPlanGenerated",
+    "finalContentGenerated",
+    "readyForDraft",
+    "readyForPublication",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing listing generator module text: ${expectedText}`
+    )
+  }
+
+  for (const forbiddenPattern of [
+    /process\.env/,
+    /fetch\(/,
+    /createClient/,
+    /new OpenAI/,
+    /openai/i,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /console\.log/,
+    /console\.error/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern
+    )
+  }
+})
+
+test("ebay listing generator service dry run fixture: no contiene URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebayListingGeneratorDryRunFixturePath,
+      "lib/ebay/listing-generator.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -13178,6 +13383,47 @@ test("ebay listing package admin MVP: muestra first listing content finalization
   assert.doesNotMatch(
     source,
     /eBay First Listing Content Finalization[\s\S]{0,5000}onClick=/
+  )
+})
+
+test("ebay listing package admin MVP: muestra listing generator service dry run", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "ebay-listing-generator-service-dry-run-v1.json",
+    "eBay Listing Generator Service Dry Run",
+    "LISTING_GENERATOR_DRY_RUN_READY_BUT_BLOCKED",
+    "GENERATE_STRUCTURE_ONLY_DO_NOT_FINALIZE_CONTENT",
+    "STRUCTURED_DRY_RUN_NO_EXTERNAL_CALLS",
+    "FINAL_LISTING_CONTENT_NOT_GENERATED",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "Products decide what the product is",
+    "Listing decides how the product sells on eBay",
+    "Benchmark decides what is working in the market",
+    "Gates decide whether the listing can advance",
+    "Use market intelligence, do not copy competitor content",
+    "Traffic keywords may be used when generic, relevant and true",
+    "Portex facts are required for technical claims",
+    "Planned Generation Outputs",
+    "Dry Run Output",
+    "Blocked Because",
+    "Required Human Actions",
+    "Next recommended loop: LOOP 119 \u2014 Product to eBay Listing Bridge V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing listing generator dry run admin text: ${expectedText}`
+    )
+  }
+
+  assert.doesNotMatch(
+    source,
+    /eBay Listing Generator Service Dry Run[\s\S]{0,5000}onClick=/
   )
 })
 
