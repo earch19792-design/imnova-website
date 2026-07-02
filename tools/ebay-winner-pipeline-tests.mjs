@@ -691,6 +691,19 @@ const ebayProductListingBridgeFixture =
     )
   )
 
+const ebayFirstListingDraftPreviewFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-first-listing-draft-preview-v1.json"
+  )
+
+const ebayFirstListingDraftPreviewFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayFirstListingDraftPreviewFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -8636,6 +8649,240 @@ test("ebay product to listing bridge fixture: no contiene URLs tokens endpoints 
   }
 })
 
+test("ebay first listing draft preview fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayFirstListingDraftPreviewFixturePath
+    )
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.draftPreviewVersion,
+    "EBAY_FIRST_LISTING_DRAFT_PREVIEW_V1"
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.draftPreviewStatus,
+    "FIRST_LISTING_DRAFT_PREVIEW_GENERATED"
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.draftPreviewDecision,
+    "SHOW_PREVIEW_DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.previewMode,
+    "SAFE_DRY_RUN_CONFIRMED_FACTS_ONLY"
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.publishabilityStatus,
+    "NOT_PUBLISHABLE_BLOCKED_BY_GATES"
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay first listing draft preview fixture: preview generado no publicable", () => {
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.generatedListingPreview
+      .previewGenerated,
+    true
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.generatedListingPreview.publishable,
+    false
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.generatedListingPreview.finalContent,
+    false
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.generatedListingPreview
+      .titleCandidate.value,
+    "Storage Organizer, New, 1 Pack"
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.generatedListingPreview
+      .keywordPlan.benchmarkKeywordsUsed,
+    false
+  )
+})
+
+test("ebay first listing draft preview fixture: title no contiene claims bloqueados", () => {
+  const titleCandidate =
+    ebayFirstListingDraftPreviewFixture.generatedListingPreview
+      .titleCandidate.value.toLowerCase()
+
+  for (const blockedTerm of [
+    "waterproof",
+    "heavy duty",
+    "certified",
+    "warranty",
+  ]) {
+    assert.equal(
+      titleCandidate.includes(blockedTerm),
+      false,
+      `blocked term leaked into first draft preview title: ${blockedTerm}`
+    )
+  }
+})
+
+test("ebay first listing draft preview fixture: gates bloquean payload draft y publicacion", () => {
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.gateResult.canShowDraftPreview,
+    true
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.gateResult.canGenerateFinalListing,
+    false
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.gateResult.canBuildDraftPayload,
+    false
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.gateResult.canCreateEbayDraft,
+    false
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.gateResult.canPublishToEbay,
+    false
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.gateResult.readinessScore,
+    35
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.safetyFlags.previewGenerated,
+    true
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.safetyFlags.usesConfirmedFactsOnly,
+    true
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.safetyFlags.unconfirmedFactsBlocked,
+    true
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.safetyFlags
+      .productFactsDuplicatedAsTruth,
+    false
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.safetyFlags.draftPayloadBuilt,
+    false
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.safetyFlags.realDraftCreated,
+    false
+  )
+  assert.equal(
+    ebayFirstListingDraftPreviewFixture.safetyFlags.publishedToEbay,
+    false
+  )
+})
+
+test("ebay first listing draft preview module: modulo puro sin integraciones reales", () => {
+  const modulePath =
+    path.resolve(
+      "lib/ebay/listing-draft-preview.ts"
+    )
+
+  assert.ok(
+    fs.existsSync(modulePath)
+  )
+
+  const source =
+    fs.readFileSync(
+      modulePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "getFirstEbayListingDraftPreviewSummary",
+    "getFirstEbayListingDraftPreview",
+    "getBlockedFirstEbayListingDraftPreviewResponse",
+    "dryRunOnly",
+    "previewGenerated",
+    "titleCandidate",
+    "Storage Organizer, New, 1 Pack",
+    "publishable",
+    "finalContentGenerated",
+    "usesConfirmedFactsOnly",
+    "unconfirmedFactsBlocked",
+    "readyForDraftPayload",
+    "readyForDraft",
+    "readyForPublication",
+    "readinessScore",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing first listing draft preview module text: ${expectedText}`
+    )
+  }
+
+  for (const forbiddenPattern of [
+    /process\.env/,
+    /fetch\(/,
+    /createClient/,
+    /new OpenAI/,
+    /openai/i,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /console\.log/,
+    /console\.error/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern
+    )
+  }
+})
+
+test("ebay first listing draft preview fixture: no contiene URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebayFirstListingDraftPreviewFixturePath,
+      "lib/ebay/listing-draft-preview.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -13733,6 +13980,46 @@ test("ebay listing package admin MVP: muestra product to listing bridge draft pr
   assert.doesNotMatch(
     source,
     /Product to eBay Listing Bridge[\s\S]{0,5000}onClick=/
+  )
+})
+
+test("ebay listing package admin MVP: muestra first ebay listing draft preview", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "ebay-first-listing-draft-preview-v1.json",
+    "First eBay Listing Draft Preview",
+    "FIRST_LISTING_DRAFT_PREVIEW_GENERATED",
+    "SHOW_PREVIEW_DO_NOT_CREATE_EBAY_DRAFT",
+    "SAFE_DRY_RUN_CONFIRMED_FACTS_ONLY",
+    "NOT_PUBLISHABLE_BLOCKED_BY_GATES",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "Generated Listing Preview",
+    "Storage Organizer, New, 1 Pack",
+    "Keyword plan",
+    "Description preview",
+    "Item specifics preview",
+    "Blocked fields",
+    "Missing inputs",
+    "Gate result",
+    "Readiness score",
+    "Required human actions",
+    "Next recommended loop: LOOP 121 \u2014 Real Product Source Adapter / Product Selector V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing first ebay listing draft preview admin text: ${expectedText}`
+    )
+  }
+
+  assert.doesNotMatch(
+    source,
+    /First eBay Listing Draft Preview[\s\S]{0,5000}onClick=/
   )
 })
 

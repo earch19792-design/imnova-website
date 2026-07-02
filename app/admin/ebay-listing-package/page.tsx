@@ -6,6 +6,7 @@ import draftMappingDryRun from "../../../tools/fixtures/ebay-draft-mapping-dry-r
 import firstListingContentFinalization from "../../../tools/fixtures/ebay-first-listing-content-finalization-v1.json"
 import listingGeneratorDryRun from "../../../tools/fixtures/ebay-listing-generator-service-dry-run-v1.json"
 import productListingBridge from "../../../tools/fixtures/ebay-product-to-listing-bridge-draft-preview-v1.json"
+import firstListingDraftPreview from "../../../tools/fixtures/ebay-first-listing-draft-preview-v1.json"
 import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -648,6 +649,45 @@ const productListingBridgeCopy = {
     "Required human actions",
   nextRecommendedLoop:
     "Next recommended loop: LOOP 120 — First eBay Listing Draft Preview V1",
+}
+
+const firstListingDraftPreviewCopy = {
+  title:
+    "First eBay Listing Draft Preview",
+  draftPreviewStatus:
+    "FIRST_LISTING_DRAFT_PREVIEW_GENERATED",
+  draftPreviewDecision:
+    "SHOW_PREVIEW_DO_NOT_CREATE_EBAY_DRAFT",
+  previewMode:
+    "SAFE_DRY_RUN_CONFIRMED_FACTS_ONLY",
+  publishabilityStatus:
+    "NOT_PUBLISHABLE_BLOCKED_BY_GATES",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  generatedListingPreview:
+    "Generated Listing Preview",
+  titleCandidate:
+    "Storage Organizer, New, 1 Pack",
+  keywordPlan:
+    "Keyword plan",
+  descriptionPreview:
+    "Description preview",
+  itemSpecificsPreview:
+    "Item specifics preview",
+  blockedFields:
+    "Blocked fields",
+  missingInputs:
+    "Missing inputs",
+  gateResult:
+    "Gate result",
+  readinessScore:
+    "Readiness score",
+  requiredHumanActions:
+    "Required human actions",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 121 — Real Product Source Adapter / Product Selector V1",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -4981,6 +5021,425 @@ export default function EbayListingPackagePage() {
                           .expectedOutcome,
                       ],
                     ]}
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="First eBay Listing Draft Preview">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {firstListingDraftPreview.draftPreviewVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {firstListingDraftPreviewCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {firstListingDraftPreview.draftPreviewSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {firstListingDraftPreviewCopy.draftPreviewStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {firstListingDraftPreviewCopy.previewMode}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {firstListingDraftPreviewCopy.publishabilityStatus}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Draft preview status",
+                      firstListingDraftPreview.draftPreviewStatus,
+                    ],
+                    [
+                      "Draft preview decision",
+                      firstListingDraftPreview.draftPreviewDecision,
+                    ],
+                    [
+                      "Preview mode",
+                      firstListingDraftPreview.previewMode,
+                    ],
+                    [
+                      "Publishability status",
+                      firstListingDraftPreview.publishabilityStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      firstListingDraftPreview.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      firstListingDraftPreview.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Architecture Policy
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Products",
+                        firstListingDraftPreview.architecturePolicy
+                          .productsRule,
+                      ],
+                      [
+                        "Listing",
+                        firstListingDraftPreview.architecturePolicy
+                          .listingRule,
+                      ],
+                      [
+                        "Benchmark",
+                        firstListingDraftPreview.architecturePolicy
+                          .benchmarkRule,
+                      ],
+                      [
+                        "Gates",
+                        firstListingDraftPreview.architecturePolicy.gatesRule,
+                      ],
+                      [
+                        "Operating principle",
+                        firstListingDraftPreview.architecturePolicy
+                          .operatingPrinciple,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Source Facts
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Source mode",
+                        firstListingDraftPreview.sourceFacts.sourceMode,
+                      ],
+                      [
+                        "Product ID",
+                        firstListingDraftPreview.sourceFacts.productId,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4 grid gap-3">
+                  {firstListingDraftPreview.sourceFacts.confirmedFacts.map((fact) => (
+                    <article
+                      key={fact.factId}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <h5 className="text-sm font-bold text-white">
+                        {fact.factId}: {fact.value}
+                      </h5>
+                      <p className="mt-1 text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-cyan-100/70">
+                        usedInPreview: {formatValue(fact.usedInPreview)}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-3xl border border-cyan-300/20 bg-cyan-300/[0.04] p-5">
+              <h4 className="text-sm font-black text-white">
+                {firstListingDraftPreviewCopy.generatedListingPreview}
+              </h4>
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <h5 className="text-sm font-black text-white">
+                    Title candidate
+                  </h5>
+                  <p className="mt-3 break-words rounded-xl border border-white/10 bg-white/[0.04] p-4 text-lg font-black text-cyan-50 [overflow-wrap:anywhere]">
+                    {
+                      firstListingDraftPreview.generatedListingPreview
+                        .titleCandidate.value
+                    }
+                  </p>
+                  <div className="mt-4">
+                    <FieldGrid
+                      fields={[
+                        [
+                          "Status",
+                          firstListingDraftPreview.generatedListingPreview
+                            .titleCandidate.status,
+                        ],
+                        [
+                          "Character count",
+                          firstListingDraftPreview.generatedListingPreview
+                            .titleCandidate.characterCount,
+                        ],
+                        [
+                          "Publishable",
+                          firstListingDraftPreview.generatedListingPreview
+                            .publishable,
+                        ],
+                        [
+                          "Final content",
+                          firstListingDraftPreview.generatedListingPreview
+                            .finalContent,
+                        ],
+                      ]}
+                    />
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <h5 className="text-sm font-black text-white">
+                    {firstListingDraftPreviewCopy.keywordPlan}
+                  </h5>
+                  <div className="mt-3">
+                    <FieldGrid
+                      fields={[
+                        [
+                          "Status",
+                          firstListingDraftPreview.generatedListingPreview
+                            .keywordPlan.status,
+                        ],
+                        [
+                          "Benchmark keywords used",
+                          firstListingDraftPreview.generatedListingPreview
+                            .keywordPlan.benchmarkKeywordsUsed,
+                        ],
+                        [
+                          "Core keywords",
+                          firstListingDraftPreview.generatedListingPreview
+                            .keywordPlan.coreKeywords.join(", "),
+                        ],
+                        [
+                          "Secondary keywords",
+                          firstListingDraftPreview.generatedListingPreview
+                            .keywordPlan.secondaryKeywords.join(", "),
+                        ],
+                      ]}
+                    />
+                  </div>
+                  <div className="mt-4">
+                    <ListBlock
+                      items={
+                        firstListingDraftPreview.generatedListingPreview
+                          .keywordPlan.blockedKeywords
+                      }
+                    />
+                  </div>
+                </article>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+                <h5 className="text-sm font-black text-white">
+                  {firstListingDraftPreviewCopy.descriptionPreview}
+                </h5>
+                <div className="mt-3 grid gap-3">
+                  {firstListingDraftPreview.generatedListingPreview.descriptionPreview.sections.map((section) => (
+                    <article
+                      key={section.sectionId}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <h6 className="text-sm font-bold text-white">
+                        {section.heading}
+                      </h6>
+                      <p className="mt-2 text-sm leading-6 text-white/65">
+                        {section.text}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+                <h5 className="text-sm font-black text-white">
+                  {firstListingDraftPreviewCopy.itemSpecificsPreview}
+                </h5>
+                <div className="mt-3 grid gap-3 lg:grid-cols-3">
+                  {firstListingDraftPreview.generatedListingPreview.itemSpecificsPreview.specifics.map((specific) => (
+                    <article
+                      key={specific.name}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <h6 className="text-sm font-bold text-white">
+                        {specific.name}
+                      </h6>
+                      <p className="mt-1 text-sm font-semibold text-cyan-50/80">
+                        {specific.value}
+                      </p>
+                      <p className="mt-1 text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70">
+                        final: {formatValue(specific.final)}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Preview Placeholders
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Price",
+                        firstListingDraftPreview.generatedListingPreview
+                          .pricePreview.status,
+                      ],
+                      [
+                        "Shipping and returns",
+                        firstListingDraftPreview.generatedListingPreview
+                          .shippingReturnsPreview.status,
+                      ],
+                      [
+                        "Image package",
+                        firstListingDraftPreview.generatedListingPreview
+                          .imagePackagePreview.status,
+                      ],
+                      [
+                        "Draft payload",
+                        firstListingDraftPreview.generatedListingPreview
+                          .draftPayloadPreview.status,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {firstListingDraftPreviewCopy.gateResult}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        firstListingDraftPreviewCopy.readinessScore,
+                        firstListingDraftPreview.gateResult.readinessScore,
+                      ],
+                      [
+                        "Readiness label",
+                        firstListingDraftPreview.gateResult.readinessLabel,
+                      ],
+                      [
+                        "Can show draft preview",
+                        firstListingDraftPreview.gateResult
+                          .canShowDraftPreview,
+                      ],
+                      [
+                        "Can build draft payload",
+                        firstListingDraftPreview.gateResult
+                          .canBuildDraftPayload,
+                      ],
+                      [
+                        "Can create eBay draft",
+                        firstListingDraftPreview.gateResult
+                          .canCreateEbayDraft,
+                      ],
+                      [
+                        "Can publish to eBay",
+                        firstListingDraftPreview.gateResult.canPublishToEbay,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {firstListingDraftPreviewCopy.blockedFields}
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {firstListingDraftPreview.blockedFields.map((field) => (
+                    <article
+                      key={field.fieldId}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <h5 className="break-words text-sm font-black text-white [overflow-wrap:anywhere]">
+                        {field.fieldId}
+                      </h5>
+                      <p className="mt-1 text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70">
+                        {field.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {field.reason}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {firstListingDraftPreviewCopy.missingInputs}
+                </h4>
+                <div className="mt-4">
+                  <ListBlock items={firstListingDraftPreview.missingInputs} />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {firstListingDraftPreviewCopy.requiredHumanActions}
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={firstListingDraftPreview.requiredHumanActions}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        firstListingDraftPreviewCopy.nextRecommendedLoop,
+                        firstListingDraftPreview.nextRecommendedLoop.loop,
+                      ],
+                      [
+                        "Reason",
+                        firstListingDraftPreview.nextRecommendedLoop.reason,
+                      ],
+                      [
+                        "Expected outcome",
+                        firstListingDraftPreview.nextRecommendedLoop
+                          .expectedOutcome,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      firstListingDraftPreview.nextRecommendedLoop.constraints
+                    }
                   />
                 </div>
               </article>

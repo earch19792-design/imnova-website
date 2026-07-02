@@ -1,0 +1,412 @@
+{
+  "draftPreviewVersion": "EBAY_FIRST_LISTING_DRAFT_PREVIEW_V1",
+  "caseId": "LISTING-GEN-001",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "sourceBridgeVersion": "EBAY_PRODUCT_TO_LISTING_BRIDGE_DRAFT_PREVIEW_V1",
+  "generatorVersion": "EBAY_LISTING_GENERATOR_SERVICE_DRY_RUN_V1",
+  "draftPreviewStatus": "FIRST_LISTING_DRAFT_PREVIEW_GENERATED",
+  "draftPreviewDecision": "SHOW_PREVIEW_DO_NOT_CREATE_EBAY_DRAFT",
+  "previewMode": "SAFE_DRY_RUN_CONFIRMED_FACTS_ONLY",
+  "publishabilityStatus": "NOT_PUBLISHABLE_BLOCKED_BY_GATES",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "draftPreviewSummary": "First eBay listing draft preview is generated in safe dry run mode. The preview is built only from confirmed dry run facts from the Product to Listing Bridge. The preview is visible for review but is not publishable. Title, limited description, basic item specifics and keyword plan may be shown. Price, shipping, returns, dimensions, material, brand, warranty, certifications, image package and performance claims remain blocked. No eBay draft is created. No external calls are made.",
+  "architecturePolicy": {
+    "productsRule": "Products decide what the product is.",
+    "listingRule": "Listing decides how the product sells on eBay.",
+    "benchmarkRule": "Benchmark decides what is working in the market.",
+    "gatesRule": "Gates decide whether the listing can advance.",
+    "operatingPrinciple": "Benchmark can suggest. Listing can adapt. Products must confirm. Gates must approve.",
+    "previewRule": "The draft preview can show generated selling structure, but cannot become final content until all source facts and gates are approved.",
+    "sourceOfTruthRule": "The listing preview must not duplicate or invent product facts."
+  },
+  "sourceFacts": {
+    "sourceMode": "CONFIRMED_DRY_RUN_FACTS_FROM_PRODUCT_LISTING_BRIDGE",
+    "productId": "PRODUCT-SOURCE-DRYRUN-001",
+    "confirmedFacts": [
+      {
+        "factId": "product_name",
+        "value": "Storage Organizer",
+        "source": "Product to Listing Bridge",
+        "usedInPreview": true
+      },
+      {
+        "factId": "product_type",
+        "value": "storage organizer",
+        "source": "Product to Listing Bridge",
+        "usedInPreview": true
+      },
+      {
+        "factId": "condition",
+        "value": "New",
+        "source": "Product to Listing Bridge",
+        "usedInPreview": true
+      },
+      {
+        "factId": "package_quantity",
+        "value": "1 Pack",
+        "source": "Product to Listing Bridge",
+        "usedInPreview": true
+      }
+    ],
+    "unconfirmedFactsBlocked": [
+      "dimensions",
+      "weight",
+      "material",
+      "brand",
+      "model",
+      "mpn",
+      "color",
+      "compatibility",
+      "warranty",
+      "certifications",
+      "waterproof_claim",
+      "heavy_duty_claim",
+      "performance_claims",
+      "image_package",
+      "price",
+      "shipping_policy",
+      "return_policy"
+    ]
+  },
+  "generatedListingPreview": {
+    "previewGenerated": true,
+    "previewType": "FIRST_VISIBLE_LISTING_DRAFT_PREVIEW",
+    "publishable": false,
+    "finalContent": false,
+    "titleCandidate": {
+      "status": "GENERATED_PREVIEW_NOT_FINAL",
+      "value": "Storage Organizer, New, 1 Pack",
+      "characterCount": 30,
+      "maxRecommendedCharacters": 80,
+      "factsUsed": [
+        "product_name",
+        "condition",
+        "package_quantity"
+      ],
+      "blockedTermsNotUsed": [
+        "waterproof",
+        "heavy duty",
+        "exact dimensions",
+        "material",
+        "brand names",
+        "warranty",
+        "certified"
+      ]
+    },
+    "keywordPlan": {
+      "status": "BASIC_CONFIRMED_FACT_KEYWORDS_ONLY",
+      "coreKeywords": [
+        "storage organizer"
+      ],
+      "secondaryKeywords": [
+        "new storage organizer",
+        "1 pack storage organizer"
+      ],
+      "riskKeywords": [],
+      "blockedKeywords": [
+        "waterproof",
+        "heavy duty",
+        "brand names",
+        "exact dimensions",
+        "certified",
+        "warranty"
+      ],
+      "benchmarkKeywordsUsed": false,
+      "reasonBenchmarkKeywordsBlocked": "Benchmark data has not been loaded or approved."
+    },
+    "descriptionPreview": {
+      "status": "GENERATED_LIMITED_PREVIEW_NOT_FINAL",
+      "sections": [
+        {
+          "sectionId": "overview",
+          "heading": "Product Overview",
+          "text": "This listing preview is generated from confirmed dry run facts only: Storage Organizer, New condition and 1 Pack quantity."
+        },
+        {
+          "sectionId": "what_is_included",
+          "heading": "What Is Included",
+          "text": "Includes 1 Storage Organizer. Package contents must be confirmed by Products or Portex before final listing approval."
+        },
+        {
+          "sectionId": "important_notes",
+          "heading": "Important Notes",
+          "text": "Dimensions, weight, material, brand, model, color, compatibility, warranty, certifications, images, price, shipping and returns remain blocked until confirmed."
+        }
+      ]
+    },
+    "itemSpecificsPreview": {
+      "status": "PARTIAL_PREVIEW_NOT_FINAL",
+      "specifics": [
+        {
+          "name": "Type",
+          "value": "Storage Organizer",
+          "source": "confirmed_product_fact",
+          "final": false
+        },
+        {
+          "name": "Condition",
+          "value": "New",
+          "source": "confirmed_product_fact",
+          "final": false
+        },
+        {
+          "name": "Quantity",
+          "value": "1 Pack",
+          "source": "confirmed_product_fact",
+          "final": false
+        }
+      ],
+      "blockedSpecifics": [
+        "Brand",
+        "Material",
+        "Dimensions",
+        "Weight",
+        "Color",
+        "Model",
+        "MPN",
+        "Compatibility",
+        "Warranty",
+        "Certifications"
+      ]
+    },
+    "pricePreview": {
+      "status": "BLOCKED_BY_COMMERCIAL_READINESS",
+      "valueIncluded": false,
+      "reason": "Cost, marketplace fees, margin, shipping cost and sold listings benchmark are not approved."
+    },
+    "shippingReturnsPreview": {
+      "status": "BLOCKED_BY_POLICY_CONFIRMATION",
+      "valueIncluded": false,
+      "reason": "Shipping and return policies are not confirmed."
+    },
+    "imagePackagePreview": {
+      "status": "BLOCKED_BY_IMAGE_QA",
+      "valueIncluded": false,
+      "reason": "Image source and image QA are not approved."
+    },
+    "draftPayloadPreview": {
+      "status": "BLOCKED_BY_GATES",
+      "valueIncluded": false,
+      "reason": "Draft payload requires approved product facts, commercial readiness, image QA, shipping/returns and eBay connection."
+    }
+  },
+  "blockedFields": [
+    {
+      "fieldId": "brand",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Brand policy or unbranded decision is not confirmed."
+    },
+    {
+      "fieldId": "model",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Model is not confirmed by Products or Portex."
+    },
+    {
+      "fieldId": "mpn",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "MPN is not confirmed by Products or Portex."
+    },
+    {
+      "fieldId": "dimensions",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Dimensions are not confirmed."
+    },
+    {
+      "fieldId": "weight",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Weight is not confirmed."
+    },
+    {
+      "fieldId": "material",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Material is not confirmed."
+    },
+    {
+      "fieldId": "color",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Color is not confirmed."
+    },
+    {
+      "fieldId": "compatibility",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Compatibility is not confirmed."
+    },
+    {
+      "fieldId": "warranty",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Warranty claims are not confirmed or approved."
+    },
+    {
+      "fieldId": "certifications",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Certifications are not confirmed."
+    },
+    {
+      "fieldId": "waterproof_claim",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Waterproof claim is not confirmed."
+    },
+    {
+      "fieldId": "heavy_duty_claim",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Heavy duty claim is not confirmed."
+    },
+    {
+      "fieldId": "performance_claims",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Performance claims require confirmed facts and risk review."
+    },
+    {
+      "fieldId": "price",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Price requires commercial readiness."
+    },
+    {
+      "fieldId": "shipping_policy",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Shipping policy is not confirmed."
+    },
+    {
+      "fieldId": "return_policy",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Return policy is not confirmed."
+    },
+    {
+      "fieldId": "image_package",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Image package requires approved source and QA."
+    },
+    {
+      "fieldId": "ebay_category",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "eBay category has not been validated."
+    },
+    {
+      "fieldId": "draft_payload",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "Draft payload is blocked until all gates approve."
+    },
+    {
+      "fieldId": "ebay_draft_creation",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "eBay draft creation is not allowed."
+    },
+    {
+      "fieldId": "ebay_publication",
+      "status": "BLOCKED",
+      "usedInPreview": false,
+      "reason": "eBay publication is not allowed."
+    }
+  ],
+  "missingInputs": [
+    "Real product ID from Products module.",
+    "Confirmed Portex product facts.",
+    "Confirmed dimensions.",
+    "Confirmed weight.",
+    "Confirmed material.",
+    "Confirmed brand policy or unbranded decision.",
+    "Confirmed category.",
+    "Confirmed item specifics.",
+    "Approved benchmark keyword data.",
+    "Approved price, margin, fees and shipping costs.",
+    "Approved shipping and return policies.",
+    "Approved image package.",
+    "Completed compliance and VeRO review.",
+    "eBay Sandbox connection approval before any real draft."
+  ],
+  "gateResult": {
+    "canShowDraftPreview": true,
+    "canGenerateFinalListing": false,
+    "canBuildDraftPayload": false,
+    "canCreateEbayDraft": false,
+    "canPublishToEbay": false,
+    "readinessScore": 35,
+    "readinessLabel": "Preview generated, not ready for draft",
+    "blockingGates": [
+      "product_facts_not_fully_approved",
+      "commercial_readiness_not_approved",
+      "benchmark_data_not_loaded",
+      "image_qa_not_approved",
+      "shipping_returns_not_confirmed",
+      "risk_compliance_not_approved",
+      "ebay_connection_not_authorized"
+    ]
+  },
+  "requiredHumanActions": [
+    "Select or confirm the real product from Products module.",
+    "Confirm Portex product facts.",
+    "Confirm dimensions, weight, material, color and package contents.",
+    "Decide brand/unbranded policy.",
+    "Validate eBay category and item specifics.",
+    "Load and approve benchmark keyword data.",
+    "Approve title and description copy.",
+    "Confirm price, margin, fees and shipping costs.",
+    "Approve shipping and return policies.",
+    "Approve image QA.",
+    "Complete compliance and VeRO review.",
+    "Keep eBay draft creation blocked until all gates approve."
+  ],
+  "nextRecommendedLoop": {
+    "loop": "LOOP 121 \u2014 Real Product Source Adapter / Product Selector V1",
+    "reason": "After the first draft preview is visible, connect the preview flow to an actual product selection source so the generator can receive real product facts instead of only the safe dry run contract.",
+    "expectedOutcome": "Admin can select or reference a product source and the listing preview can show which product facts are confirmed, missing or blocked.",
+    "constraints": [
+      "No eBay API.",
+      "No draft creation.",
+      "No publication.",
+      "No external calls.",
+      "No Supabase write unless explicitly approved.",
+      "Products remain source of truth.",
+      "Do not duplicate product facts as listing truth."
+    ]
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "dryRunOnly": true,
+    "firstDraftPreviewOnly": true,
+    "previewGenerated": true,
+    "publishable": false,
+    "finalContentGenerated": false,
+    "usesConfirmedFactsOnly": true,
+    "unconfirmedFactsBlocked": true,
+    "productFactsDuplicatedAsTruth": false,
+    "productSourceOfTruthRequired": true,
+    "benchmarkDataLoaded": false,
+    "benchmarkKeywordsUsed": false,
+    "competitorContentCopied": false,
+    "competitorImagesCopied": false,
+    "portexFactsRequiredForTechnicalClaims": true,
+    "draftPayloadBuilt": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "supabaseUsed": false,
+    "openAiUsed": false,
+    "externalCallsMade": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}
