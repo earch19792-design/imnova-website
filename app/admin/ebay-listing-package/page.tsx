@@ -8,6 +8,7 @@ import listingGeneratorDryRun from "../../../tools/fixtures/ebay-listing-generat
 import productListingBridge from "../../../tools/fixtures/ebay-product-to-listing-bridge-draft-preview-v1.json"
 import firstListingDraftPreview from "../../../tools/fixtures/ebay-first-listing-draft-preview-v1.json"
 import productSourceAdapterSelector from "../../../tools/fixtures/ebay-product-source-adapter-selector-v1.json"
+import liveProductSelectorReadOnly from "../../../tools/fixtures/ebay-live-product-selector-read-only-v1.json"
 import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -726,6 +727,41 @@ const productSourceAdapterSelectorCopy = {
     "Required Human Actions",
   nextRecommendedLoop:
     "Next recommended loop: LOOP 122 — Live Product Selector Read-Only V1",
+}
+
+const liveProductSelectorReadOnlyCopy = {
+  title:
+    "Live Product Selector Read-Only",
+  selectorVersion:
+    "LIVE_PRODUCT_SELECTOR_READ_ONLY_V1",
+  selectorStatus:
+    "LIVE_PRODUCT_SELECTOR_READ_ONLY_READY",
+  selectorDecision:
+    "READ_PRODUCTS_ONLY_DO_NOT_MUTATE",
+  sourceOfTruthStatus:
+    "PRODUCTS_MODULE_REMAINS_SOURCE_OF_TRUTH",
+  productListContract:
+    "Product List Contract",
+  selectedProductReadOnlyPreview:
+    "Selected Product Read-Only Preview",
+  listingGeneratorBridgeContract:
+    "Listing Generator Bridge Contract",
+  productsRule:
+    "Products decide what the product is",
+  listingRule:
+    "Listing decides how the product sells on eBay",
+  benchmarkRule:
+    "Benchmark decides what is working in the market",
+  gatesRule:
+    "Gates decide whether the listing can advance",
+  productName:
+    "Storage Organizer",
+  supplier:
+    "Portex",
+  mutationRule:
+    "No product mutation is allowed from the listing selector",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 123 — Real Product Facts Mapping to Listing Generator V1",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -5842,6 +5878,360 @@ export default function EbayListingPackagePage() {
               <div className="mt-4">
                 <ListBlock
                   items={productSourceAdapterSelector.nextRecommendedLoop.constraints}
+                />
+              </div>
+            </article>
+          </div>
+        </Section>
+
+        <Section title="Live Product Selector Read-Only">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {liveProductSelectorReadOnlyCopy.selectorVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {liveProductSelectorReadOnlyCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {liveProductSelectorReadOnly.selectorSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {liveProductSelectorReadOnlyCopy.selectorStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {liveProductSelectorReadOnlyCopy.selectorDecision}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {liveProductSelectorReadOnlyCopy.sourceOfTruthStatus}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Selector version",
+                      liveProductSelectorReadOnly.selectorVersion,
+                    ],
+                    [
+                      "Selector status",
+                      liveProductSelectorReadOnly.selectorStatus,
+                    ],
+                    [
+                      "Selector decision",
+                      liveProductSelectorReadOnly.selectorDecision,
+                    ],
+                    [
+                      "Source of truth status",
+                      liveProductSelectorReadOnly.sourceOfTruthStatus,
+                    ],
+                    [
+                      "Live read status",
+                      liveProductSelectorReadOnly.liveReadStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      liveProductSelectorReadOnly.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      liveProductSelectorReadOnly.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Architecture Policy
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Products",
+                        liveProductSelectorReadOnly.architecturePolicy
+                          .productsRule,
+                      ],
+                      [
+                        "Listing",
+                        liveProductSelectorReadOnly.architecturePolicy
+                          .listingRule,
+                      ],
+                      [
+                        "Benchmark",
+                        liveProductSelectorReadOnly.architecturePolicy
+                          .benchmarkRule,
+                      ],
+                      [
+                        "Gates",
+                        liveProductSelectorReadOnly.architecturePolicy
+                          .gatesRule,
+                      ],
+                      [
+                        "Operating principle",
+                        liveProductSelectorReadOnly.architecturePolicy
+                          .operatingPrinciple,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Read-Only Source Audit
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Audit status",
+                        liveProductSelectorReadOnly.readOnlySourceAudit
+                          .auditStatus,
+                      ],
+                      [
+                        "Central service",
+                        liveProductSelectorReadOnly.readOnlySourceAudit
+                          .centralProductsService,
+                      ],
+                      [
+                        "Recommended read function",
+                        liveProductSelectorReadOnly.readOnlySourceAudit
+                          .recommendedReadFunction,
+                      ],
+                      [
+                        "Live read enabled",
+                        liveProductSelectorReadOnly.readOnlySourceAudit
+                          .liveReadEnabledInThisLoop,
+                      ],
+                      [
+                        "Admin product page",
+                        liveProductSelectorReadOnly.readOnlySourceAudit
+                          .adminProductPagePath,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      liveProductSelectorReadOnly.readOnlySourceAudit
+                        .readFunctionsFound
+                    }
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {liveProductSelectorReadOnlyCopy.productListContract}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Mode",
+                        liveProductSelectorReadOnly.productListContract.mode,
+                      ],
+                      [
+                        "Selection behavior",
+                        liveProductSelectorReadOnly.productListContract
+                          .selectionBehavior,
+                      ],
+                      [
+                        "Mutation behavior",
+                        liveProductSelectorReadOnly.productListContract
+                          .mutationBehavior,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <div>
+                    <h5 className="text-sm font-bold text-white">
+                      Allowed fields
+                    </h5>
+                    <div className="mt-3">
+                      <ListBlock
+                        items={
+                          liveProductSelectorReadOnly.productListContract
+                            .allowedFields
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <h5 className="text-sm font-bold text-white">
+                      Forbidden fields
+                    </h5>
+                    <div className="mt-3">
+                      <ListBlock
+                        items={
+                          liveProductSelectorReadOnly.productListContract
+                            .forbiddenFields
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {liveProductSelectorReadOnlyCopy.selectedProductReadOnlyPreview}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Preview mode",
+                        liveProductSelectorReadOnly.selectedProductReadOnlyPreview
+                          .previewMode,
+                      ],
+                      [
+                        "Product ID",
+                        liveProductSelectorReadOnly.selectedProductReadOnlyPreview
+                          .productId,
+                      ],
+                      [
+                        "Source",
+                        liveProductSelectorReadOnly.selectedProductReadOnlyPreview
+                          .source,
+                      ],
+                      [
+                        "Product name",
+                        liveProductSelectorReadOnlyCopy.productName,
+                      ],
+                      [
+                        "Supplier",
+                        liveProductSelectorReadOnlyCopy.supplier,
+                      ],
+                      [
+                        "Ready for final listing",
+                        liveProductSelectorReadOnly.selectedProductReadOnlyPreview
+                          .readyForFinalListing,
+                      ],
+                      [
+                        "Ready for draft",
+                        liveProductSelectorReadOnly.selectedProductReadOnlyPreview
+                          .readyForDraft,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-3xl border border-cyan-300/20 bg-cyan-300/[0.04] p-5">
+              <h4 className="text-sm font-black text-white">
+                {liveProductSelectorReadOnlyCopy.listingGeneratorBridgeContract}
+              </h4>
+              <div className="mt-4">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Input mode",
+                      liveProductSelectorReadOnly.listingGeneratorBridgeContract
+                        .inputMode,
+                    ],
+                    [
+                      "Can read selected product",
+                      liveProductSelectorReadOnly.listingGeneratorBridgeContract
+                        .generatorCanReadSelectedProduct,
+                    ],
+                    [
+                      "Can generate preview",
+                      liveProductSelectorReadOnly.listingGeneratorBridgeContract
+                        .generatorCanGeneratePreview,
+                    ],
+                    [
+                      "Can generate final content",
+                      liveProductSelectorReadOnly.listingGeneratorBridgeContract
+                        .generatorCanGenerateFinalContent,
+                    ],
+                    [
+                      "Can build draft payload",
+                      liveProductSelectorReadOnly.listingGeneratorBridgeContract
+                        .generatorCanBuildDraftPayload,
+                    ],
+                    [
+                      "Can publish",
+                      liveProductSelectorReadOnly.listingGeneratorBridgeContract
+                        .generatorCanPublish,
+                    ],
+                    [
+                      "Facts remain referenced to Products",
+                      liveProductSelectorReadOnly.listingGeneratorBridgeContract
+                        .factsMustRemainReferencedToProducts,
+                    ],
+                  ]}
+                />
+              </div>
+              <p className="mt-4 text-sm font-bold text-amber-100/80">
+                {liveProductSelectorReadOnlyCopy.mutationRule}
+              </p>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Because
+                </h4>
+                <div className="mt-4">
+                  <ListBlock items={liveProductSelectorReadOnly.blockedBecause} />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Required Human Actions
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={liveProductSelectorReadOnly.requiredHumanActions}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Next Recommended Loop
+              </h4>
+              <div className="mt-3">
+                <FieldGrid
+                  fields={[
+                    [
+                      liveProductSelectorReadOnlyCopy.nextRecommendedLoop,
+                      liveProductSelectorReadOnly.nextRecommendedLoop.loop,
+                    ],
+                    [
+                      "Reason",
+                      liveProductSelectorReadOnly.nextRecommendedLoop.reason,
+                    ],
+                    [
+                      "Expected outcome",
+                      liveProductSelectorReadOnly.nextRecommendedLoop
+                        .expectedOutcome,
+                    ],
+                  ]}
+                />
+              </div>
+              <div className="mt-4">
+                <ListBlock
+                  items={liveProductSelectorReadOnly.nextRecommendedLoop.constraints}
                 />
               </div>
             </article>
