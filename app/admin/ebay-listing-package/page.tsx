@@ -5,6 +5,7 @@ import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
 import ebayOnlyConnectionDesign from "../../../tools/fixtures/ebay-only-connection-design-v1.json"
 import ebaySandboxIntegrationReadiness from "../../../tools/fixtures/ebay-sandbox-integration-readiness-v1.json"
+import ebaySandboxOauthFlowDesign from "../../../tools/fixtures/ebay-sandbox-oauth-flow-design-v1.json"
 import ebaySandboxReadOnlyConnectionStatus from "../../../tools/fixtures/ebay-sandbox-read-only-connection-status-v1.json"
 import listingPackageSourceAwareRefresh from "../../../tools/fixtures/ebay-listing-package-source-aware-refresh-v1.json"
 import productSnapshot from "../../../tools/fixtures/ebay-luna-portex-product-snapshot-v1.json"
@@ -332,6 +333,43 @@ const ebaySandboxIntegrationReadinessCopy = {
     "Official eBay documentation validation required",
   nextRecommendedLoop:
     "Next recommended loop: LOOP 112 — eBay Sandbox OAuth Flow Design V1",
+}
+
+const ebaySandboxOauthFlowDesignCopy = {
+  title:
+    "eBay Sandbox OAuth Flow Design",
+  oauthStatus:
+    "OAUTH_FLOW_NOT_IMPLEMENTED",
+  oauthDecision:
+    "DESIGN_ONLY_DO_NOT_START_OAUTH",
+  sellerAuthorizationStatus:
+    "SELLER_AUTHORIZATION_NOT_STARTED",
+  credentialStatus:
+    "NO_CREDENTIALS_CONFIGURED",
+  redirectStatus:
+    "REDIRECT_CONFIGURATION_NOT_VALIDATED",
+  scopeStatus:
+    "SCOPES_NOT_VALIDATED",
+  tokenStatus:
+    "NO_TOKENS_CONFIGURED",
+  apiStatus:
+    "NO_EBAY_API_CALLS_MADE",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  oauthSummary:
+    "Sandbox OAuth flow is not implemented",
+  sellerConsent:
+    "Seller authorization has not started",
+  developerCredentials:
+    "Developer credentials identify the IMNOVA eBay app",
+  sellerAuthorizes:
+    "The seller account authorizes the app later through OAuth",
+  neverStoreSellerPasswords:
+    "IMNOVA must never store seller passwords",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 113 — eBay Secret and Environment Strategy V1",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -2520,6 +2558,253 @@ export default function EbayListingPackagePage() {
                   <FieldGrid
                     fields={Object.entries(
                       ebaySandboxIntegrationReadiness.safetyFlags
+                    )}
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="eBay Sandbox OAuth Flow Design">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {ebaySandboxOauthFlowDesign.oauthDesignVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {ebaySandboxOauthFlowDesignCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {ebaySandboxOauthFlowDesign.oauthSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxOauthFlowDesignCopy.oauthStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxOauthFlowDesignCopy.oauthDecision}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxOauthFlowDesignCopy.sellerAuthorizationStatus}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "OAuth status",
+                      ebaySandboxOauthFlowDesign.oauthStatus,
+                    ],
+                    [
+                      "OAuth decision",
+                      ebaySandboxOauthFlowDesign.oauthDecision,
+                    ],
+                    [
+                      "Seller authorization status",
+                      ebaySandboxOauthFlowDesign.sellerAuthorizationStatus,
+                    ],
+                    [
+                      "Credential status",
+                      ebaySandboxOauthFlowDesign.credentialStatus,
+                    ],
+                    [
+                      "Redirect status",
+                      ebaySandboxOauthFlowDesign.redirectStatus,
+                    ],
+                    [
+                      "Scope status",
+                      ebaySandboxOauthFlowDesign.scopeStatus,
+                    ],
+                    [
+                      "Token status",
+                      ebaySandboxOauthFlowDesign.tokenStatus,
+                    ],
+                    [
+                      "API status",
+                      ebaySandboxOauthFlowDesign.apiStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      ebaySandboxOauthFlowDesign.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      ebaySandboxOauthFlowDesign.publicationImpact,
+                    ],
+                    [
+                      ebaySandboxOauthFlowDesignCopy.sellerConsent,
+                      ebaySandboxOauthFlowDesign.oauthReadiness
+                        .sellerConsentStarted,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  OAuth Readiness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxOauthFlowDesign.oauthReadiness
+                    )}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Seller Authorization Model
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxOauthFlowDesign.sellerAuthorizationModel
+                    )}
+                  />
+                </div>
+                <p className="mt-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.045] p-4 text-sm leading-6 text-cyan-50/80">
+                  {ebaySandboxOauthFlowDesignCopy.developerCredentials}.{" "}
+                  {ebaySandboxOauthFlowDesignCopy.sellerAuthorizes}.{" "}
+                  {ebaySandboxOauthFlowDesignCopy.neverStoreSellerPasswords}.
+                </p>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                OAuth Flow Phases
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {ebaySandboxOauthFlowDesign.oauthFlowPhases.map((phase) => (
+                  <article
+                    key={phase.phaseId}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <p className="break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+                      {phase.label}
+                    </p>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {phase.status}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-white/60">
+                      {phase.reason}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Required OAuth Checks
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {ebaySandboxOauthFlowDesign.requiredOauthChecks.map((check) => (
+                  <article
+                    key={check.checkId}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <p className="break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+                      {check.label}
+                    </p>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {check.status}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-white/60">
+                      {check.reason}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Workflows
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {ebaySandboxOauthFlowDesign.blockedWorkflows.map((workflow) => (
+                    <div
+                      key={workflow.workflow}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {workflow.workflow}
+                      </p>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {workflow.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {workflow.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Required Human Actions
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebaySandboxOauthFlowDesign.requiredHumanActions
+                    }
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        ebaySandboxOauthFlowDesignCopy.nextRecommendedLoop,
+                        ebaySandboxOauthFlowDesign.nextRecommendedLoop.loop,
+                      ],
+                      [
+                        "Reason",
+                        ebaySandboxOauthFlowDesign.nextRecommendedLoop.reason,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebaySandboxOauthFlowDesign.nextRecommendedLoop
+                        .constraints
+                    }
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Compact Safety Flags
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxOauthFlowDesign.safetyFlags
                     )}
                   />
                 </div>
