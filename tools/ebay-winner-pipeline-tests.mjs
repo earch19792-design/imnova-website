@@ -756,6 +756,19 @@ const ebayLunaPortexCatalogImagePackageQaFixture =
     )
   )
 
+const ebayCompleteListingPackageBuilderFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-complete-listing-package-builder-v1.json"
+  )
+
+const ebayCompleteListingPackageBuilderFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayCompleteListingPackageBuilderFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -9804,6 +9817,202 @@ test("ebay luna portex catalog image package QA fixture: no contiene URLs tokens
   }
 })
 
+test("ebay complete listing package builder fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayCompleteListingPackageBuilderFixturePath
+    )
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.packageVersion,
+    "EBAY_COMPLETE_LISTING_PACKAGE_BUILDER_V1"
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.packageStatus,
+    "COMPLETE_LISTING_PACKAGE_BUILDER_READY"
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.productSourceStatus,
+    "READ_ONLY_PRODUCTS_SOURCE_WITH_SAFE_FALLBACK"
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.listingContentStatus,
+    "GENERATED_LISTING_PREVIEW_READY"
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.catalogImageStatus,
+    "LUNA_PORTEX_CATALOG_IMAGE_REFERENCE_READY_OR_BLOCKED"
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.secondaryImagePromptStatus,
+    "SECONDARY_IMAGE_PROMPTS_READY_IMAGES_NOT_GENERATED"
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.draftPayloadStatus,
+    "DRAFT_PAYLOAD_DRY_RUN_READY_NOT_SUBMITTED"
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.readinessStatus,
+    "READINESS_GATES_ACTIVE_DRAFT_AND_PUBLICATION_BLOCKED"
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay complete listing package builder fixture: prompts payload y gates quedan bloqueados", () => {
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.secondaryImagePrompts.length,
+    6
+  )
+
+  for (const prompt of ebayCompleteListingPackageBuilderFixture.secondaryImagePrompts) {
+    assert.equal(
+      prompt.sourceRequirement,
+      "Use Luna Portex catalog image as product reference"
+    )
+    assert.equal(
+      prompt.status,
+      "PROMPT_READY_IMAGE_NOT_GENERATED"
+    )
+  }
+
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.draftPayloadDryRun.payloadBuilt,
+    true
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.draftPayloadDryRun.submittedToEbay,
+    false
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.readinessGates
+      .canBuildLocalDryRunPayload,
+    true
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.readinessGates
+      .canSubmitPayloadToEbay,
+    false
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.readinessGates.canCreateEbayDraft,
+    false
+  )
+  assert.equal(
+    ebayCompleteListingPackageBuilderFixture.readinessGates.canPublishToEbay,
+    false
+  )
+})
+
+test("ebay complete listing package builder fixture: safety flags bloquean integraciones reales", () => {
+  const safetyFlags =
+    ebayCompleteListingPackageBuilderFixture.safetyFlags
+
+  assert.equal(safetyFlags.internalOnly, true)
+  assert.equal(safetyFlags.dryRunOnly, true)
+  assert.equal(safetyFlags.productsRemainSourceOfTruth, true)
+  assert.equal(
+    safetyFlags.lunaPortexCatalogImageIsVisualSourceOfTruth,
+    true
+  )
+  assert.equal(safetyFlags.productFactsDuplicatedAsTruth, false)
+  assert.equal(safetyFlags.imageGenerationUsed, false)
+  assert.equal(safetyFlags.imageUploadUsed, false)
+  assert.equal(safetyFlags.draftPayloadSubmitted, false)
+  assert.equal(safetyFlags.ebayApiUsed, false)
+  assert.equal(safetyFlags.oauthUsed, false)
+  assert.equal(safetyFlags.tokensUsed, false)
+  assert.equal(safetyFlags.realDraftCreated, false)
+  assert.equal(safetyFlags.publishedToEbay, false)
+  assert.equal(safetyFlags.supabaseWriteUsed, false)
+  assert.equal(safetyFlags.migrationCreated, false)
+})
+
+test("ebay complete listing package builder modules: existen y bloquean integraciones reales", () => {
+  for (const modulePath of [
+    "lib/ebay/draft-payload-dry-run-builder.ts",
+    "lib/ebay/complete-listing-package-builder.ts",
+  ]) {
+    assert.ok(
+      fs.existsSync(modulePath),
+      `missing module: ${modulePath}`
+    )
+
+    const source =
+      fs.readFileSync(
+        modulePath,
+        "utf8"
+      )
+
+    for (const forbiddenPattern of [
+      /process\.env/,
+      /fetch\(/,
+      /new OpenAI/,
+      /openai/i,
+      /\.insert\(/,
+      /\.update\(/,
+      /\.delete\(/,
+      /\.upsert\(/,
+      /\.rpc\(/,
+      /console\.log/,
+      /console\.error/,
+      /createDraft/,
+      /publishListing/,
+      /images\.generate/,
+      /writeFile/,
+      /download/i,
+      /sharp/i,
+      /canvas/i,
+    ]) {
+      assert.doesNotMatch(
+        source,
+        forbiddenPattern,
+        `forbidden pattern in ${modulePath}: ${forbiddenPattern}`
+      )
+    }
+  }
+})
+
+test("ebay complete listing package builder fixture: no contiene tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebayCompleteListingPackageBuilderFixturePath,
+      "lib/ebay/complete-listing-package-builder.ts",
+      "lib/ebay/draft-payload-dry-run-builder.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -15101,6 +15310,45 @@ test("ebay listing package admin MVP: muestra luna portex catalog image package 
   )
 })
 
+test("ebay listing package admin MVP: muestra complete listing package builder", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "ebay-complete-listing-package-builder-v1.json",
+    "Complete Listing Package Builder",
+    "EBAY_COMPLETE_LISTING_PACKAGE_BUILDER_V1",
+    "COMPLETE_LISTING_PACKAGE_BUILDER_READY",
+    "READ_ONLY_PRODUCTS_SOURCE_WITH_SAFE_FALLBACK",
+    "GENERATED_LISTING_PREVIEW_READY",
+    "LUNA_PORTEX_CATALOG_IMAGE_REFERENCE_READY_OR_BLOCKED",
+    "SECONDARY_IMAGE_PROMPTS_READY_IMAGES_NOT_GENERATED",
+    "DRAFT_PAYLOAD_DRY_RUN_READY_NOT_SUBMITTED",
+    "READINESS_GATES_ACTIVE_DRAFT_AND_PUBLICATION_BLOCKED",
+    "Selected Product",
+    "Generated Listing Content",
+    "Catalog Image Package",
+    "Secondary Image Prompts",
+    "Draft Payload Dry Run",
+    "Readiness Gates",
+    "Catalog image reference missing",
+    "LOOP 126 \u2014 Listing Review & Approval Workspace V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing complete listing package builder admin text: ${expectedText}`
+    )
+  }
+
+  assert.doesNotMatch(
+    source,
+    /Complete Listing Package Builder[\s\S]{0,5000}onClick=/
+  )
+})
+
 test("ebay listing package admin MVP: muestra image generation service design", () => {
   const source =
     fs.readFileSync(
@@ -15331,7 +15579,6 @@ test("ebay listing package admin MVP: no contiene integraciones reales", () => {
     /createDraft/,
     /publishListing/,
     /onClick=/,
-    /<img/i,
     /next\/image/i,
     /client_id/,
     /client_secret/,
@@ -15343,6 +15590,18 @@ test("ebay listing package admin MVP: no contiene integraciones reales", () => {
       forbiddenPattern
     )
   }
+
+  const imageTags =
+    source.match(/<img/gi) ?? []
+
+  assert.equal(
+    imageTags.length,
+    1
+  )
+  assert.match(
+    source,
+    /src=\{completeListingCatalogImageReference\}/
+  )
 })
 
 test("ebay listing package admin MVP: sidebar incluye ruta segura", () => {
@@ -15431,7 +15690,6 @@ test("ebay listing package admin MVP: no contiene patrones de seguridad prohibid
     )
 
   for (const forbiddenPattern of [
-    /<img/i,
     /next\/image/i,
     /fetch\(/,
     /createClient/,
@@ -15454,6 +15712,18 @@ test("ebay listing package admin MVP: no contiene patrones de seguridad prohibid
       forbiddenPattern
     )
   }
+
+  const imageTags =
+    source.match(/<img/gi) ?? []
+
+  assert.equal(
+    imageTags.length,
+    1
+  )
+  assert.match(
+    source,
+    /src=\{completeListingCatalogImageReference\}/
+  )
 })
 
 test("ebay admin sidebar: normaliza labels eBay en ingles", () => {
