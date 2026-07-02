@@ -626,6 +626,19 @@ const ebayOnlyConnectionDesignFixture =
     )
   )
 
+const ebaySandboxIntegrationReadinessFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-sandbox-integration-readiness-v1.json"
+  )
+
+const ebaySandboxIntegrationReadinessFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebaySandboxIntegrationReadinessFixturePath,
+      "utf8"
+    )
+  )
+
 const ebaySandboxReadOnlyConnectionStatusFixturePath =
   path.resolve(
     "tools/fixtures/ebay-sandbox-read-only-connection-status-v1.json"
@@ -6060,6 +6073,307 @@ test("ebay only connection design fixture: no contiene URLs tokens endpoints ni 
   }
 })
 
+test("ebay sandbox integration readiness fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebaySandboxIntegrationReadinessFixturePath
+    )
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.readinessVersion,
+    "EBAY_SANDBOX_INTEGRATION_READINESS_V1"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.connectionDesignVersion,
+    "EBAY_ONLY_CONNECTION_DESIGN_V1"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.sandboxReadOnlyStatusVersion,
+    "EBAY_SANDBOX_READ_ONLY_CONNECTION_STATUS_V1"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.sourceAwareRefreshVersion,
+    "EBAY_LISTING_PACKAGE_SOURCE_AWARE_REFRESH_V1"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.imageGenerationServiceDesignVersion,
+    "EBAY_IMAGE_GENERATION_SERVICE_DESIGN_V1"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.marketplace,
+    "ebay_us"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.integrationStatus,
+    "SANDBOX_INTEGRATION_NOT_READY"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.integrationDecision,
+    "COLLECT_REQUIREMENTS_DO_NOT_CONNECT"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.environmentStrategy,
+    "SANDBOX_FIRST_PRODUCTION_BLOCKED"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.credentialStatus,
+    "NO_CREDENTIALS_CONFIGURED"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.authStatus,
+    "OAUTH_NOT_IMPLEMENTED"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.secretStatus,
+    "SECRET_STRATEGY_NOT_APPROVED"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.scopeStatus,
+    "SCOPES_NOT_VALIDATED"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.redirectStatus,
+    "REDIRECT_CONFIGURATION_NOT_VALIDATED"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.apiStatus,
+    "NO_EBAY_API_CALLS_MADE"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebaySandboxIntegrationReadinessFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay sandbox integration readiness fixture: readiness conserva sandbox bloqueado", () => {
+  const readiness =
+    ebaySandboxIntegrationReadinessFixture.integrationReadiness
+
+  for (const flagName of [
+    "readinessModelExists",
+    "sandboxFirstRequired",
+    "productionBlocked",
+    "oauthFlowDesigned",
+  ]) {
+    assert.equal(
+      readiness[flagName],
+      true,
+      `${flagName} must be true`
+    )
+  }
+
+  for (const flagName of [
+    "developerAccountConfirmed",
+    "sandboxApplicationConfirmed",
+    "sandboxCredentialsConfigured",
+    "redirectConfigurationValidated",
+    "oauthFlowImplemented",
+    "oauthConsentCompleted",
+    "tokenExchangeImplemented",
+    "tokenStorageImplemented",
+    "secretStrategyApproved",
+    "scopesValidatedAgainstOfficialDocs",
+    "endpointsValidatedAgainstOfficialDocs",
+    "environmentVariablesConfigured",
+    "readOnlyConnectionImplemented",
+    "readOnlyConnectionVerified",
+    "draftMappingAllowed",
+    "draftCreationAllowed",
+    "publicationAllowed",
+  ]) {
+    assert.equal(
+      readiness[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("ebay sandbox integration readiness fixture: required checks reflejan pendientes y bloqueos", () => {
+  const requiredChecks =
+    ebaySandboxIntegrationReadinessFixture.requiredReadinessChecks
+
+  assert.equal(
+    requiredChecks.length,
+    10
+  )
+
+  const expectedCheckIds = [
+    "developer_account_confirmed",
+    "sandbox_application_confirmed",
+    "sandbox_credentials_configured_securely",
+    "redirect_configuration_validated",
+    "official_oauth_docs_validated",
+    "minimum_scopes_validated",
+    "secret_strategy_approved",
+    "oauth_implementation_approved",
+    "production_block_confirmed",
+    "draft_publication_block_confirmed",
+  ]
+
+  for (const expectedCheckId of expectedCheckIds) {
+    assert.ok(
+      requiredChecks.some(check => check.checkId === expectedCheckId),
+      `missing readiness check: ${expectedCheckId}`
+    )
+  }
+
+  for (const check of requiredChecks.slice(0, 8)) {
+    assert.equal(
+      check.status,
+      "FAILED"
+    )
+  }
+  for (const check of requiredChecks.slice(8)) {
+    assert.equal(
+      check.status,
+      "PASSED"
+    )
+  }
+  for (const check of requiredChecks) {
+    assert.equal(
+      check.requiredToUnlock,
+      true
+    )
+  }
+})
+
+test("ebay sandbox integration readiness fixture: workflows eBay permanecen bloqueados", () => {
+  const blockedWorkflows =
+    ebaySandboxIntegrationReadinessFixture.blockedWorkflows
+
+  assert.equal(
+    blockedWorkflows.length,
+    9
+  )
+
+  const expectedWorkflows =
+    new Set([
+      "sandbox_credential_configuration",
+      "oauth_implementation",
+      "token_exchange",
+      "token_storage",
+      "read_only_connection_check",
+      "ebay_draft_mapping",
+      "ebay_draft_creation",
+      "ebay_publication",
+      "production_connection",
+    ])
+
+  for (const workflow of blockedWorkflows) {
+    assert.equal(
+      workflow.status,
+      "BLOCKED"
+    )
+    assert.ok(
+      expectedWorkflows.has(workflow.workflow),
+      `unexpected blocked workflow: ${workflow.workflow}`
+    )
+  }
+})
+
+test("ebay sandbox integration readiness fixture: safety flags no exponen secretos ni conexion real", () => {
+  const safetyFlags =
+    ebaySandboxIntegrationReadinessFixture.safetyFlags
+
+  for (const flagName of [
+    "advisoryOnly",
+    "readinessOnly",
+    "readOnly",
+    "sandboxFirstRequired",
+    "productionBlocked",
+    "officialDocsValidationRequired",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      true,
+      `${flagName} must be true`
+    )
+  }
+
+  for (const flagName of [
+    "developerAccountConfirmed",
+    "sandboxApplicationConfirmed",
+    "sandboxCredentialsConfigured",
+    "oauthImplemented",
+    "oauthConsentCompleted",
+    "tokenExchangeImplemented",
+    "tokenStorageImplemented",
+    "environmentVariablesUsed",
+    "secretsIncluded",
+    "clientIdIncluded",
+    "clientSecretIncluded",
+    "accessTokenIncluded",
+    "refreshTokenIncluded",
+    "authUrlIncluded",
+    "tokenUrlIncluded",
+    "apiEndpointIncluded",
+    "scopesHardcoded",
+    "sellerPasswordStored",
+    "ebayApiUsed",
+    "lunaPortexApiUsed",
+    "openAiApiUsed",
+    "supabaseUsed",
+    "apiCallsMade",
+    "realDraftCreated",
+    "publishedToEbay",
+    "listingMutated",
+    "draftMappingUnlocked",
+    "draftCreationUnlocked",
+    "publicationUnlocked",
+    "customerDataIncluded",
+    "supplierPrivateDataIncluded",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("ebay sandbox integration readiness fixture: no contiene URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebaySandboxIntegrationReadinessFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /client_id/,
+    /client_secret/,
+    /access_token/,
+    /refresh_token/,
+    /Authorization/,
+    /Bearer/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+    /supplierProductUrl/,
+    /realEndpoint/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -10155,6 +10469,10 @@ test("ebay listing package admin MVP: existe y usa fixtures seguros", () => {
   )
   assert.match(
     source,
+    /ebay-sandbox-integration-readiness-v1\.json/
+  )
+  assert.match(
+    source,
     /ebay-sandbox-read-only-connection-status-v1\.json/
   )
   assert.match(
@@ -10287,6 +10605,7 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "Commercial Readiness Gate",
     "Listing Package Source-Aware Refresh",
     "eBay Only Connection Design",
+    "eBay Sandbox Integration Readiness",
     "eBay Sandbox Read-Only Connection Status",
     "Image Generation Service Design",
     "Connection Readiness",
@@ -10758,6 +11077,47 @@ test("ebay listing package admin MVP: muestra sandbox read-only connection statu
     assert.ok(
       source.includes(expectedText),
       `missing eBay sandbox read-only status admin text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: muestra sandbox integration readiness", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "eBay Sandbox Integration Readiness",
+    "SANDBOX_INTEGRATION_NOT_READY",
+    "COLLECT_REQUIREMENTS_DO_NOT_CONNECT",
+    "SANDBOX_FIRST_PRODUCTION_BLOCKED",
+    "NO_CREDENTIALS_CONFIGURED",
+    "OAUTH_NOT_IMPLEMENTED",
+    "SECRET_STRATEGY_NOT_APPROVED",
+    "SCOPES_NOT_VALIDATED",
+    "REDIRECT_CONFIGURATION_NOT_VALIDATED",
+    "NO_EBAY_API_CALLS_MADE",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "Sandbox integration is not ready",
+    "Developer credentials identify the IMNOVA eBay app",
+    "IMNOVA must never store seller passwords",
+    "Official eBay documentation validation required",
+    "Developer Account Readiness",
+    "Sandbox Application Readiness",
+    "OAuth Readiness",
+    "Scope Validation Readiness",
+    "Secret Handling Readiness",
+    "Required Readiness Checks",
+    "Blocked Workflows",
+    "Required Human Actions",
+    "Next recommended loop: LOOP 112 \u2014 eBay Sandbox OAuth Flow Design V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing eBay sandbox integration readiness admin text: ${expectedText}`
     )
   }
 })
