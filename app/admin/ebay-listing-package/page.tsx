@@ -6,6 +6,7 @@ import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-e
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
 import ebayOnlyConnectionDesign from "../../../tools/fixtures/ebay-only-connection-design-v1.json"
 import ebaySandboxIntegrationReadiness from "../../../tools/fixtures/ebay-sandbox-integration-readiness-v1.json"
+import ebaySandboxCredentialsEnvConfiguration from "../../../tools/fixtures/ebay-sandbox-credentials-env-configuration-v1.json"
 import ebaySandboxOauthScaffold from "../../../tools/fixtures/ebay-sandbox-oauth-scaffold-v1.json"
 import ebaySandboxOauthFlowDesign from "../../../tools/fixtures/ebay-sandbox-oauth-flow-design-v1.json"
 import ebaySandboxReadOnlyConnectionStatus from "../../../tools/fixtures/ebay-sandbox-read-only-connection-status-v1.json"
@@ -444,6 +445,39 @@ const ebaySandboxOauthScaffoldCopy = {
     "No environment variables are read",
   nextRecommendedLoop:
     "Next recommended loop: LOOP 115 — eBay Sandbox Credentials / Env Configuration V1",
+}
+
+const ebaySandboxCredentialsEnvConfigurationCopy = {
+  title:
+    "eBay Sandbox Credentials / Env Configuration",
+  configurationStatus:
+    "SANDBOX_ENV_CONFIGURATION_NOT_READY",
+  configurationDecision:
+    "CHECK_ENV_PRESENCE_ONLY_DO_NOT_CONNECT",
+  serverOnlyStatus:
+    "SERVER_ONLY_ENV_CHECK_REQUIRED",
+  credentialStatus:
+    "NO_CREDENTIAL_VALUES_CONFIGURED",
+  secretStatus:
+    "NO_SECRET_VALUES_EXPOSED",
+  tokenStatus:
+    "NO_TOKENS_CONFIGURED",
+  oauthStatus:
+    "OAUTH_STILL_DISABLED",
+  apiStatus:
+    "NO_EBAY_API_CALLS_MADE",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  configurationSummary:
+    "Sandbox credential/env configuration is not ready",
+  presenceOnly:
+    "Env status may expose presence/absence only",
+  neverReturnValues:
+    "Never return values",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 116 — eBay Sandbox OAuth Authorization V1",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -3441,6 +3475,276 @@ export default function EbayListingPackagePage() {
                 </div>
               </article>
             </div>
+          </div>
+        </Section>
+
+        <Section title="eBay Sandbox Credentials / Env Configuration">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {ebaySandboxCredentialsEnvConfiguration.configurationVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {ebaySandboxCredentialsEnvConfigurationCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {ebaySandboxCredentialsEnvConfiguration.configurationSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxCredentialsEnvConfigurationCopy.configurationStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxCredentialsEnvConfigurationCopy.configurationDecision}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxCredentialsEnvConfigurationCopy.serverOnlyStatus}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Configuration status",
+                      ebaySandboxCredentialsEnvConfiguration.configurationStatus,
+                    ],
+                    [
+                      "Configuration decision",
+                      ebaySandboxCredentialsEnvConfiguration.configurationDecision,
+                    ],
+                    [
+                      "Server-only status",
+                      ebaySandboxCredentialsEnvConfiguration.serverOnlyStatus,
+                    ],
+                    [
+                      "Credential status",
+                      ebaySandboxCredentialsEnvConfiguration.credentialStatus,
+                    ],
+                    [
+                      "Secret status",
+                      ebaySandboxCredentialsEnvConfiguration.secretStatus,
+                    ],
+                    [
+                      "Token status",
+                      ebaySandboxCredentialsEnvConfiguration.tokenStatus,
+                    ],
+                    [
+                      "OAuth status",
+                      ebaySandboxCredentialsEnvConfiguration.oauthStatus,
+                    ],
+                    [
+                      "API status",
+                      ebaySandboxCredentialsEnvConfiguration.apiStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      ebaySandboxCredentialsEnvConfiguration.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      ebaySandboxCredentialsEnvConfiguration.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+
+              <p className="mt-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.045] p-4 text-sm leading-6 text-cyan-50/80">
+                {ebaySandboxCredentialsEnvConfigurationCopy.presenceOnly}.{" "}
+                {ebaySandboxCredentialsEnvConfigurationCopy.neverReturnValues}.
+              </p>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Environment Readiness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxCredentialsEnvConfiguration.environmentReadiness
+                    )}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Env Status Contract
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Route path",
+                        ebaySandboxCredentialsEnvConfiguration.envStatusContract
+                          .routePath,
+                      ],
+                      [
+                        "Method",
+                        ebaySandboxCredentialsEnvConfiguration.envStatusContract
+                          .method,
+                      ],
+                      [
+                        "Blocked response code",
+                        ebaySandboxCredentialsEnvConfiguration.envStatusContract
+                          .blockedResponseCode,
+                      ],
+                      [
+                        "Value exposure policy",
+                        ebaySandboxCredentialsEnvConfiguration.envStatusContract
+                          .valueExposurePolicy,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebaySandboxCredentialsEnvConfiguration.envStatusContract
+                        .allowedBehavior
+                    }
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Required Environment Keys
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {ebaySandboxCredentialsEnvConfiguration.requiredEnvironmentKeys.map((envKey) => (
+                  <article
+                    key={envKey.key}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <p className="break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+                      {envKey.key}
+                    </p>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {envKey.status} · {envKey.category}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-white/60">
+                      {envKey.label}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Server-Only Rules
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {ebaySandboxCredentialsEnvConfiguration.serverOnlyRules.map((rule) => (
+                    <div
+                      key={rule.ruleId}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {rule.label}
+                      </p>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {rule.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {rule.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Workflows
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {ebaySandboxCredentialsEnvConfiguration.blockedWorkflows.map((workflow) => (
+                    <div
+                      key={workflow.workflow}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {workflow.workflow}
+                      </p>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {workflow.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {workflow.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Required Human Actions
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebaySandboxCredentialsEnvConfiguration.requiredHumanActions
+                    }
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        ebaySandboxCredentialsEnvConfigurationCopy.nextRecommendedLoop,
+                        ebaySandboxCredentialsEnvConfiguration.nextRecommendedLoop.loop,
+                      ],
+                      [
+                        "Reason",
+                        ebaySandboxCredentialsEnvConfiguration.nextRecommendedLoop
+                          .reason,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebaySandboxCredentialsEnvConfiguration.nextRecommendedLoop
+                        .constraints
+                    }
+                  />
+                </div>
+              </article>
+            </div>
+
+            <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Compact Safety Flags
+              </h4>
+              <div className="mt-3">
+                <FieldGrid
+                  fields={Object.entries(
+                    ebaySandboxCredentialsEnvConfiguration.safetyFlags
+                  )}
+                />
+              </div>
+            </article>
           </div>
         </Section>
 

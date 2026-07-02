@@ -613,6 +613,19 @@ const ebaySandboxOauthScaffoldFixture =
     )
   )
 
+const ebaySandboxCredentialsEnvConfigurationFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-sandbox-credentials-env-configuration-v1.json"
+  )
+
+const ebaySandboxCredentialsEnvConfigurationFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebaySandboxCredentialsEnvConfigurationFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -7403,6 +7416,311 @@ test("ebay sandbox oauth scaffold fixture: no contiene URLs tokens endpoints ni 
   }
 })
 
+test("ebay sandbox credentials env configuration fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebaySandboxCredentialsEnvConfigurationFixturePath
+    )
+  )
+  assert.equal(
+    ebaySandboxCredentialsEnvConfigurationFixture.configurationVersion,
+    "EBAY_SANDBOX_CREDENTIALS_ENV_CONFIGURATION_V1"
+  )
+  assert.equal(
+    ebaySandboxCredentialsEnvConfigurationFixture.configurationStatus,
+    "SANDBOX_ENV_CONFIGURATION_NOT_READY"
+  )
+  assert.equal(
+    ebaySandboxCredentialsEnvConfigurationFixture.configurationDecision,
+    "CHECK_ENV_PRESENCE_ONLY_DO_NOT_CONNECT"
+  )
+  assert.equal(
+    ebaySandboxCredentialsEnvConfigurationFixture.serverOnlyStatus,
+    "SERVER_ONLY_ENV_CHECK_REQUIRED"
+  )
+  assert.equal(
+    ebaySandboxCredentialsEnvConfigurationFixture.credentialStatus,
+    "NO_CREDENTIAL_VALUES_CONFIGURED"
+  )
+  assert.equal(
+    ebaySandboxCredentialsEnvConfigurationFixture.secretStatus,
+    "NO_SECRET_VALUES_EXPOSED"
+  )
+  assert.equal(
+    ebaySandboxCredentialsEnvConfigurationFixture.tokenStatus,
+    "NO_TOKENS_CONFIGURED"
+  )
+  assert.equal(
+    ebaySandboxCredentialsEnvConfigurationFixture.oauthStatus,
+    "OAUTH_STILL_DISABLED"
+  )
+  assert.equal(
+    ebaySandboxCredentialsEnvConfigurationFixture.apiStatus,
+    "NO_EBAY_API_CALLS_MADE"
+  )
+  assert.equal(
+    ebaySandboxCredentialsEnvConfigurationFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebaySandboxCredentialsEnvConfigurationFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay sandbox credentials env configuration fixture: required keys no exponen valores", () => {
+  const requiredKeys =
+    ebaySandboxCredentialsEnvConfigurationFixture.requiredEnvironmentKeys
+
+  assert.equal(
+    requiredKeys.length,
+    5
+  )
+
+  const keyNames =
+    requiredKeys.map((entry) => entry.key)
+
+  for (const expectedKey of [
+    "EBAY_SANDBOX_CLIENT_ID",
+    "EBAY_SANDBOX_CLIENT_SECRET",
+    "EBAY_SANDBOX_REDIRECT_URI",
+    "EBAY_SANDBOX_RU_NAME",
+    "EBAY_SANDBOX_OAUTH_STATE_SECRET",
+  ]) {
+    assert.ok(
+      keyNames.includes(expectedKey),
+      `missing required env key: ${expectedKey}`
+    )
+  }
+
+  for (const entry of requiredKeys) {
+    assert.equal(
+      entry.valueIncluded,
+      false
+    )
+    assert.equal(
+      entry.valueExposed,
+      false
+    )
+    assert.equal(
+      entry.serverOnly,
+      true
+    )
+  }
+})
+
+test("ebay sandbox credentials env module: revisa presencia sin devolver valores", async () => {
+  const sourcePath =
+    path.resolve(
+      "lib/ebay/sandbox-env.ts"
+    )
+
+  assert.ok(
+    fs.existsSync(sourcePath)
+  )
+
+  const source =
+    fs.readFileSync(
+      sourcePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "EBAY_SANDBOX_REQUIRED_ENV_KEYS",
+    "getEbaySandboxEnvConfigurationStatus",
+    "getBlockedEbaySandboxEnvConfigurationResponse",
+    "process.env",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing sandbox env module text: ${expectedText}`
+    )
+  }
+
+  for (const forbiddenPattern of [
+    /fetch\(/,
+    /http:\/\//,
+    /https:\/\//,
+    /NextResponse\.redirect/,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /console\.log/,
+    /console\.error/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern
+    )
+  }
+
+  const transpiled =
+    ts.transpileModule(
+      source,
+      {
+        compilerOptions: {
+          module:
+            ts.ModuleKind.ES2022,
+          target:
+            ts.ScriptTarget.ES2022,
+        },
+      }
+    ).outputText
+
+  const outputPath =
+    path.join(
+      os.tmpdir(),
+      `ebay-sandbox-env-test-${process.pid}-${Date.now()}.mjs`
+    )
+
+  fs.writeFileSync(
+    outputPath,
+    transpiled
+  )
+
+  const module =
+    await import(
+      `file://${outputPath}`
+    )
+
+  const mockEnv = {
+    EBAY_SANDBOX_CLIENT_ID:
+      "client-id-value",
+    EBAY_SANDBOX_CLIENT_SECRET:
+      "",
+    EBAY_SANDBOX_REDIRECT_URI:
+      "redirect-value",
+    EBAY_SANDBOX_RU_NAME:
+      undefined,
+    EBAY_SANDBOX_OAUTH_STATE_SECRET:
+      "state-secret-value",
+  }
+
+  const response =
+    module.getBlockedEbaySandboxEnvConfigurationResponse(
+      mockEnv
+    )
+
+  assert.equal(
+    response.ok,
+    false
+  )
+  assert.equal(
+    response.blocked,
+    true
+  )
+  assert.equal(
+    response.code,
+    "EBAY_SANDBOX_ENV_NOT_CONFIGURED"
+  )
+  assert.equal(
+    response.allRequiredConfigured,
+    false
+  )
+  assert.deepEqual(
+    response.missingKeys,
+    [
+      "EBAY_SANDBOX_CLIENT_SECRET",
+      "EBAY_SANDBOX_RU_NAME",
+    ]
+  )
+
+  const serialized =
+    JSON.stringify(response)
+
+  for (const forbiddenValue of [
+    "client-id-value",
+    "redirect-value",
+    "state-secret-value",
+  ]) {
+    assert.equal(
+      serialized.includes(forbiddenValue),
+      false,
+      `response exposed value: ${forbiddenValue}`
+    )
+  }
+
+  for (const configuredKey of response.configuredKeys) {
+    assert.equal(
+      configuredKey.valueExposed,
+      false
+    )
+    assert.equal(
+      typeof configuredKey.configured,
+      "boolean"
+    )
+  }
+})
+
+test("ebay sandbox credentials env status route: status-only y sin integraciones reales", () => {
+  const routePath =
+    path.resolve(
+      "app/api/admin/ebay/oauth/env-status/route.ts"
+    )
+
+  assert.ok(
+    fs.existsSync(routePath)
+  )
+
+  const source =
+    fs.readFileSync(
+      routePath,
+      "utf8"
+    )
+
+  assert.ok(
+    source.includes("getBlockedEbaySandboxEnvConfigurationResponse")
+  )
+
+  for (const forbiddenPattern of [
+    /fetch\(/,
+    /NextResponse\.redirect/,
+    /http:\/\//,
+    /https:\/\//,
+    /tokenExchange/,
+    /tokenStorage/,
+    /console\.log/,
+    /console\.error/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern
+    )
+  }
+})
+
+test("ebay sandbox credentials env configuration fixture: no contiene URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebaySandboxCredentialsEnvConfigurationFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /client_id[=:]/,
+    /client_secret[=:]/,
+    /access_token[=:]/,
+    /refresh_token[=:]/,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -11498,6 +11816,10 @@ test("ebay listing package admin MVP: existe y usa fixtures seguros", () => {
   )
   assert.match(
     source,
+    /ebay-sandbox-credentials-env-configuration-v1\.json/
+  )
+  assert.match(
+    source,
     /ebay-image-generation-service-design-v1\.json/
   )
   assert.match(
@@ -11650,6 +11972,7 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "eBay Sandbox OAuth Flow Design",
     "eBay Secret and Environment Strategy",
     "eBay Sandbox OAuth Scaffold",
+    "eBay Sandbox Credentials / Env Configuration",
     "eBay Sandbox Read-Only Connection Status",
     "Image Generation Service Design",
     "Connection Readiness",
@@ -12160,6 +12483,9 @@ test("ebay listing package admin MVP: muestra sandbox integration readiness", ()
     "Required Scaffold Checks",
     "Route Scaffold",
     "Blocked Responses",
+    "Required Environment Keys",
+    "Server-Only Rules",
+    "Env Status Contract",
     "Secret Categories",
     "Storage Rules",
     "Log Redaction Rules",
@@ -12288,6 +12614,41 @@ test("ebay listing package admin MVP: muestra sandbox oauth scaffold", () => {
     assert.ok(
       source.includes(expectedText),
       `missing eBay sandbox OAuth scaffold admin text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: muestra sandbox credentials env configuration", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "eBay Sandbox Credentials / Env Configuration",
+    "SANDBOX_ENV_CONFIGURATION_NOT_READY",
+    "CHECK_ENV_PRESENCE_ONLY_DO_NOT_CONNECT",
+    "SERVER_ONLY_ENV_CHECK_REQUIRED",
+    "NO_CREDENTIAL_VALUES_CONFIGURED",
+    "NO_SECRET_VALUES_EXPOSED",
+    "NO_TOKENS_CONFIGURED",
+    "OAUTH_STILL_DISABLED",
+    "NO_EBAY_API_CALLS_MADE",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "Sandbox credential/env configuration is not ready",
+    "Env status may expose presence/absence only",
+    "Never return values",
+    "Required Environment Keys",
+    "Server-Only Rules",
+    "Blocked Workflows",
+    "Required Human Actions",
+    "Next recommended loop: LOOP 116 \u2014 eBay Sandbox OAuth Authorization V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing eBay sandbox credentials env admin text: ${expectedText}`
     )
   }
 })
