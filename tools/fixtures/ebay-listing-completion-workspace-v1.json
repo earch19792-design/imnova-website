@@ -1,0 +1,176 @@
+{
+  "workspaceVersion": "EBAY_LISTING_COMPLETION_WORKSPACE_V1",
+  "caseId": "LISTING-GEN-001",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "workspaceStatus": "LISTING_NOT_READY_FOR_DRAFT",
+  "workspaceDecision": "COMPLETE_MISSING_INPUTS_BEFORE_DRAFT",
+  "draftReadiness": "NOT_READY",
+  "publicationReadiness": "NOT_READY",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "workspaceSummary": "Listing completion workspace consolidates what is complete, what is missing, what blocks draft readiness and what must be completed before any eBay sandbox draft can be considered. This workspace is read-only and does not call eBay or create drafts.",
+  "readinessSections": [
+    {
+      "sectionId": "product_facts",
+      "label": "Product Facts",
+      "status": "BLOCKED",
+      "blocking": true,
+      "missingInputs": [
+        "product title validated",
+        "brand validated",
+        "category validated",
+        "item specifics validated",
+        "condition confirmed",
+        "dimensions confirmed",
+        "weight confirmed",
+        "material confirmed",
+        "package contents confirmed"
+      ],
+      "requiredToUnlock": "Validate product identity, physical facts, condition and item specifics before draft mapping."
+    },
+    {
+      "sectionId": "commercial_readiness",
+      "label": "Commercial Readiness",
+      "status": "BLOCKED",
+      "blocking": true,
+      "missingInputs": [
+        "cost confirmed",
+        "fees confirmed",
+        "shipping cost confirmed",
+        "target margin confirmed"
+      ],
+      "requiredToUnlock": "Approve cost, fee, shipping and margin assumptions before listing economics can be mapped."
+    },
+    {
+      "sectionId": "market_validation",
+      "label": "Market Validation",
+      "status": "BLOCKED",
+      "blocking": true,
+      "missingInputs": [
+        "Terapeak validation completed",
+        "sold listings benchmark completed"
+      ],
+      "requiredToUnlock": "Complete market validation and comparable sales benchmark before draft readiness."
+    },
+    {
+      "sectionId": "listing_content",
+      "label": "Listing Content",
+      "status": "NEEDS_INPUT",
+      "blocking": true,
+      "missingInputs": [
+        "title approved",
+        "description approved",
+        "item specifics approved"
+      ],
+      "requiredToUnlock": "Approve buyer-facing listing copy after product facts and compliance review."
+    },
+    {
+      "sectionId": "image_readiness",
+      "label": "Image Readiness",
+      "status": "BLOCKED",
+      "blocking": true,
+      "missingInputs": [
+        "authorized image source approved",
+        "image QA approved"
+      ],
+      "requiredToUnlock": "Approve authorized source image and image QA before any draft can include images."
+    },
+    {
+      "sectionId": "shipping_and_returns",
+      "label": "Shipping and Returns",
+      "status": "NEEDS_INPUT",
+      "blocking": true,
+      "missingInputs": [
+        "shipping cost confirmed",
+        "return policy confirmed"
+      ],
+      "requiredToUnlock": "Confirm shipping and return policy assumptions before draft mapping."
+    },
+    {
+      "sectionId": "risk_and_compliance",
+      "label": "Risk and Compliance",
+      "status": "NEEDS_REVIEW",
+      "blocking": true,
+      "missingInputs": [
+        "compliance/VeRO risk reviewed",
+        "claims reviewed"
+      ],
+      "requiredToUnlock": "Complete compliance and VeRO risk review before draft readiness."
+    },
+    {
+      "sectionId": "draft_readiness",
+      "label": "Draft Readiness",
+      "status": "BLOCKED",
+      "blocking": true,
+      "missingInputs": [
+        "all upstream gates approved",
+        "eBay sandbox connection authorized",
+        "human approval for sandbox draft"
+      ],
+      "requiredToUnlock": "Unlock only after product, commercial, market, image, shipping, compliance and connection gates are complete."
+    }
+  ],
+  "missingCriticalInputs": [
+    "product title validated",
+    "brand validated",
+    "category validated",
+    "item specifics validated",
+    "condition confirmed",
+    "dimensions confirmed",
+    "weight confirmed",
+    "material confirmed",
+    "package contents confirmed",
+    "cost confirmed",
+    "fees confirmed",
+    "shipping cost confirmed",
+    "return policy confirmed",
+    "Terapeak validation completed",
+    "sold listings benchmark completed",
+    "authorized image source approved",
+    "image QA approved",
+    "compliance/VeRO risk reviewed"
+  ],
+  "completionSummary": {
+    "complete": [
+      "workspace model exists",
+      "read-only admin visibility exists",
+      "draft mapping dry run structure exists"
+    ],
+    "missing": [
+      "approved product facts",
+      "approved commercial inputs",
+      "approved market validation",
+      "approved listing content",
+      "approved images",
+      "approved shipping and returns",
+      "approved compliance review",
+      "authorized eBay sandbox connection"
+    ],
+    "draftBlockers": [
+      "product facts not approved",
+      "commercial readiness not approved",
+      "market validation not approved",
+      "image QA not approved",
+      "shipping/returns not confirmed",
+      "compliance/VeRO risk not reviewed",
+      "eBay sandbox connection not authorized"
+    ],
+    "readyForSandboxDraftWhenConnected": false
+  },
+  "nextRecommendedAction": "Complete missing listing inputs before eBay draft mapping can be unlocked.",
+  "safetyFlags": {
+    "readOnly": true,
+    "workspaceOnly": true,
+    "draftMappingDryRunOnly": true,
+    "ebayApiUsed": false,
+    "oauthImplemented": false,
+    "tokenExchangeImplemented": false,
+    "tokenStorageImplemented": false,
+    "credentialsIncluded": false,
+    "secretsIncluded": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}

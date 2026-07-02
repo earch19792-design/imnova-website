@@ -626,6 +626,32 @@ const ebaySandboxCredentialsEnvConfigurationFixture =
     )
   )
 
+const ebayListingCompletionWorkspaceFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-listing-completion-workspace-v1.json"
+  )
+
+const ebayListingCompletionWorkspaceFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayListingCompletionWorkspaceFixturePath,
+      "utf8"
+    )
+  )
+
+const ebayDraftMappingDryRunFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-draft-mapping-dry-run-v1.json"
+  )
+
+const ebayDraftMappingDryRunFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayDraftMappingDryRunFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -7721,6 +7747,244 @@ test("ebay sandbox credentials env configuration fixture: no contiene URLs token
   }
 })
 
+test("ebay listing completion workspace fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayListingCompletionWorkspaceFixturePath
+    )
+  )
+  assert.equal(
+    ebayListingCompletionWorkspaceFixture.workspaceVersion,
+    "EBAY_LISTING_COMPLETION_WORKSPACE_V1"
+  )
+  assert.equal(
+    ebayListingCompletionWorkspaceFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebayListingCompletionWorkspaceFixture.workspaceStatus,
+    "LISTING_NOT_READY_FOR_DRAFT"
+  )
+  assert.equal(
+    ebayListingCompletionWorkspaceFixture.workspaceDecision,
+    "COMPLETE_MISSING_INPUTS_BEFORE_DRAFT"
+  )
+  assert.equal(
+    ebayListingCompletionWorkspaceFixture.draftReadiness,
+    "NOT_READY"
+  )
+  assert.equal(
+    ebayListingCompletionWorkspaceFixture.publicationReadiness,
+    "NOT_READY"
+  )
+  assert.equal(
+    ebayListingCompletionWorkspaceFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayListingCompletionWorkspaceFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay listing completion workspace fixture: readiness sections bloquean draft", () => {
+  const sections =
+    ebayListingCompletionWorkspaceFixture.readinessSections
+
+  assert.equal(
+    sections.length,
+    8
+  )
+
+  const sectionById =
+    Object.fromEntries(
+      sections.map((section) => [
+        section.sectionId,
+        section,
+      ])
+    )
+
+  assert.equal(
+    sectionById.product_facts.status,
+    "BLOCKED"
+  )
+  assert.equal(
+    sectionById.commercial_readiness.status,
+    "BLOCKED"
+  )
+  assert.equal(
+    sectionById.market_validation.status,
+    "BLOCKED"
+  )
+  assert.equal(
+    sectionById.listing_content.status,
+    "NEEDS_INPUT"
+  )
+  assert.equal(
+    sectionById.image_readiness.status,
+    "BLOCKED"
+  )
+  assert.equal(
+    sectionById.shipping_and_returns.status,
+    "NEEDS_INPUT"
+  )
+  assert.equal(
+    sectionById.risk_and_compliance.status,
+    "NEEDS_REVIEW"
+  )
+  assert.equal(
+    sectionById.draft_readiness.status,
+    "BLOCKED"
+  )
+  assert.equal(
+    sectionById.draft_readiness.blocking,
+    true
+  )
+  assert.ok(
+    sections.every((section) => section.blocking === true)
+  )
+})
+
+test("ebay draft mapping dry run fixture: existe y no mapea campos reales", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayDraftMappingDryRunFixturePath
+    )
+  )
+  assert.equal(
+    ebayDraftMappingDryRunFixture.mappingVersion,
+    "EBAY_DRAFT_MAPPING_DRY_RUN_V1"
+  )
+  assert.equal(
+    ebayDraftMappingDryRunFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebayDraftMappingDryRunFixture.mappingStatus,
+    "DRAFT_MAPPING_DRY_RUN_BLOCKED"
+  )
+  assert.equal(
+    ebayDraftMappingDryRunFixture.mappingDecision,
+    "DO_NOT_MAP_TO_EBAY_DRAFT_YET"
+  )
+  assert.equal(
+    ebayDraftMappingDryRunFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayDraftMappingDryRunFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+
+  const plannedFields =
+    ebayDraftMappingDryRunFixture.plannedEbayDraftFields
+
+  assert.equal(
+    plannedFields.length,
+    14
+  )
+  assert.ok(
+    plannedFields.every((field) => field.mapped === false)
+  )
+  assert.ok(
+    plannedFields.every((field) => field.sourceReady === false)
+  )
+  assert.ok(
+    plannedFields.every((field) => field.required === true)
+  )
+})
+
+test("ebay listing completion module: modulo puro sin integraciones reales", () => {
+  const modulePath =
+    path.resolve(
+      "lib/ebay/listing-completion.ts"
+    )
+
+  assert.ok(
+    fs.existsSync(modulePath)
+  )
+
+  const source =
+    fs.readFileSync(
+      modulePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "getListingCompletionSummary",
+    "getDraftMappingDryRunSummary",
+    "getBlockedDraftReadinessResponse",
+    "readyForDraft",
+    "readyForPublication",
+    "blocked",
+    "missingCriticalInputs",
+    "nextAction",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing listing completion module text: ${expectedText}`
+    )
+  }
+
+  for (const forbiddenPattern of [
+    /process\.env/,
+    /fetch\(/,
+    /createClient/,
+    /new OpenAI/,
+    /openai/i,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /console\.log/,
+    /console\.error/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern
+    )
+  }
+})
+
+test("ebay listing completion workspace fixtures: no contienen URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebayListingCompletionWorkspaceFixturePath,
+      ebayDraftMappingDryRunFixturePath,
+      "lib/ebay/listing-completion.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -12651,6 +12915,53 @@ test("ebay listing package admin MVP: muestra sandbox credentials env configurat
       `missing eBay sandbox credentials env admin text: ${expectedText}`
     )
   }
+})
+
+test("ebay listing package admin MVP: muestra listing completion workspace y draft mapping dry run", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "ebay-listing-completion-workspace-v1.json",
+    "ebay-draft-mapping-dry-run-v1.json",
+    "eBay Listing Completion Workspace",
+    "eBay Draft Mapping Dry Run",
+    "LISTING_NOT_READY_FOR_DRAFT",
+    "COMPLETE_MISSING_INPUTS_BEFORE_DRAFT",
+    "DRAFT_MAPPING_DRY_RUN_BLOCKED",
+    "DO_NOT_MAP_TO_EBAY_DRAFT_YET",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "Product Facts",
+    "Commercial Readiness",
+    "Market Validation",
+    "Listing Content",
+    "Image Readiness",
+    "Shipping and Returns",
+    "Risk and Compliance",
+    "Draft Readiness",
+    "Missing Critical Inputs",
+    "Planned eBay Draft Fields",
+    "Blocked Because",
+    "Next Recommended Action",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing listing completion workspace admin text: ${expectedText}`
+    )
+  }
+
+  assert.doesNotMatch(
+    source,
+    /eBay Listing Completion Workspace[\s\S]{0,4000}onClick=/
+  )
+  assert.doesNotMatch(
+    source,
+    /eBay Draft Mapping Dry Run[\s\S]{0,4000}onClick=/
+  )
 })
 
 test("ebay listing package admin MVP: muestra image generation service design", () => {
