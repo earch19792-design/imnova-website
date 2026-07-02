@@ -1,0 +1,292 @@
+{
+  "readinessVersion": "EBAY_SANDBOX_INTEGRATION_READINESS_V1",
+  "caseId": "LISTING-GEN-001",
+  "connectionDesignVersion": "EBAY_ONLY_CONNECTION_DESIGN_V1",
+  "sandboxReadOnlyStatusVersion": "EBAY_SANDBOX_READ_ONLY_CONNECTION_STATUS_V1",
+  "sourceAwareRefreshVersion": "EBAY_LISTING_PACKAGE_SOURCE_AWARE_REFRESH_V1",
+  "imageGenerationServiceDesignVersion": "EBAY_IMAGE_GENERATION_SERVICE_DESIGN_V1",
+  "productFactsGateVersion": "EBAY_LUNA_PORTEX_PRODUCT_FACTS_READINESS_GATE_V1",
+  "commercialGateVersion": "EBAY_LUNA_PORTEX_COMMERCIAL_READINESS_GATE_V1",
+  "imageQaGateVersion": "EBAY_LUNA_PORTEX_IMAGE_QA_REVIEW_GATE_V1",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "integrationStatus": "SANDBOX_INTEGRATION_NOT_READY",
+  "integrationDecision": "COLLECT_REQUIREMENTS_DO_NOT_CONNECT",
+  "environmentStrategy": "SANDBOX_FIRST_PRODUCTION_BLOCKED",
+  "credentialStatus": "NO_CREDENTIALS_CONFIGURED",
+  "authStatus": "OAUTH_NOT_IMPLEMENTED",
+  "secretStatus": "SECRET_STRATEGY_NOT_APPROVED",
+  "scopeStatus": "SCOPES_NOT_VALIDATED",
+  "redirectStatus": "REDIRECT_CONFIGURATION_NOT_VALIDATED",
+  "apiStatus": "NO_EBAY_API_CALLS_MADE",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "readinessSummary": "Sandbox integration is not ready. This loop is readiness-only and read-only. eBay Developer Account readiness is not confirmed. Sandbox application readiness is not confirmed. OAuth is not implemented. No credentials, tokens, endpoints, URLs, scopes or secrets are included. Official eBay documentation validation is required before implementation. Production remains blocked. Draft mapping, draft creation and publication remain blocked.",
+  "integrationReadiness": {
+    "readinessModelExists": true,
+    "sandboxFirstRequired": true,
+    "productionBlocked": true,
+    "developerAccountConfirmed": false,
+    "sandboxApplicationConfirmed": false,
+    "sandboxCredentialsConfigured": false,
+    "redirectConfigurationValidated": false,
+    "oauthFlowDesigned": true,
+    "oauthFlowImplemented": false,
+    "oauthConsentCompleted": false,
+    "tokenExchangeImplemented": false,
+    "tokenStorageImplemented": false,
+    "secretStrategyApproved": false,
+    "scopesValidatedAgainstOfficialDocs": false,
+    "endpointsValidatedAgainstOfficialDocs": false,
+    "environmentVariablesConfigured": false,
+    "readOnlyConnectionImplemented": false,
+    "readOnlyConnectionVerified": false,
+    "draftMappingAllowed": false,
+    "draftCreationAllowed": false,
+    "publicationAllowed": false
+  },
+  "developerAccountReadiness": {
+    "developerAccountRequired": true,
+    "developerAccountConfirmed": false,
+    "developerProgramAccessConfirmed": false,
+    "sandboxUserStrategyConfirmed": false,
+    "productionSellerAccountSeparated": true,
+    "sellerPasswordRequired": false,
+    "sellerPasswordStorageAllowed": false,
+    "notes": "Developer credentials identify the IMNOVA eBay app. The seller account must authorize the app later through OAuth; IMNOVA must never store seller passwords."
+  },
+  "sandboxApplicationReadiness": {
+    "sandboxApplicationRequired": true,
+    "sandboxApplicationConfigured": false,
+    "productionApplicationConfigured": false,
+    "sandboxCredentialsConfigured": false,
+    "productionCredentialsConfigured": false,
+    "appIdentifierIncluded": false,
+    "appSecretIncluded": false,
+    "redirectConfigurationRequired": true,
+    "redirectConfigurationValidated": false,
+    "environmentSeparationRequired": true,
+    "productionUseBlocked": true
+  },
+  "oauthReadiness": {
+    "oauthRequired": true,
+    "oauthFlowDesigned": true,
+    "oauthFlowImplemented": false,
+    "oauthConsentCompleted": false,
+    "tokenExchangeImplemented": false,
+    "tokenRefreshImplemented": false,
+    "tokenStorageImplemented": false,
+    "sellerPasswordRequired": false,
+    "sellerPasswordStorageAllowed": false,
+    "officialDocsValidationRequired": true,
+    "implementationAllowedInThisLoop": false
+  },
+  "scopeValidationReadiness": {
+    "scopesRequired": true,
+    "scopesHardcoded": false,
+    "scopesValidatedAgainstOfficialDocs": false,
+    "readOnlyScopeSetValidated": false,
+    "listingDraftScopeSetValidated": false,
+    "publicationScopeSetValidated": false,
+    "minimumPrivilegePolicyRequired": true,
+    "officialDocsValidationRequired": true,
+    "notes": "Scopes must be validated against official eBay documentation in a future loop before any OAuth implementation."
+  },
+  "secretHandlingReadiness": {
+    "secretStrategyRequired": true,
+    "secretStrategyApproved": false,
+    "environmentVariablesRequired": true,
+    "environmentVariablesConfigured": false,
+    "secretsIncludedInCode": false,
+    "secretsIncludedInFixtures": false,
+    "secretsIncludedInFrontend": false,
+    "tokenStorageStrategyApproved": false,
+    "logRedactionRequired": true,
+    "serverOnlyAccessRequired": true,
+    "humanApprovalRequiredBeforeSecrets": true
+  },
+  "requiredReadinessChecks": [
+    {
+      "checkId": "developer_account_confirmed",
+      "label": "Developer account confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "eBay Developer Account readiness has not been confirmed."
+    },
+    {
+      "checkId": "sandbox_application_confirmed",
+      "label": "Sandbox application confirmed",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Sandbox application readiness has not been confirmed."
+    },
+    {
+      "checkId": "sandbox_credentials_configured_securely",
+      "label": "Sandbox credentials configured securely",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "No sandbox credentials are configured and no credentials may be included in code or fixtures."
+    },
+    {
+      "checkId": "redirect_configuration_validated",
+      "label": "Redirect configuration validated",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Redirect/RuName configuration has not been validated."
+    },
+    {
+      "checkId": "official_oauth_docs_validated",
+      "label": "Official OAuth documentation validated",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Official eBay OAuth documentation must be validated before implementation."
+    },
+    {
+      "checkId": "minimum_scopes_validated",
+      "label": "Minimum scopes validated",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Minimum required scopes have not been validated against official eBay documentation."
+    },
+    {
+      "checkId": "secret_strategy_approved",
+      "label": "Secret strategy approved",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Secure secret and token handling strategy has not been approved."
+    },
+    {
+      "checkId": "oauth_implementation_approved",
+      "label": "OAuth implementation approved",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "A future OAuth implementation loop has not been approved."
+    },
+    {
+      "checkId": "production_block_confirmed",
+      "label": "Production block confirmed",
+      "status": "PASSED",
+      "requiredToUnlock": true,
+      "reason": "Production must remain blocked until sandbox validation and human approval."
+    },
+    {
+      "checkId": "draft_publication_block_confirmed",
+      "label": "Draft and publication block confirmed",
+      "status": "PASSED",
+      "requiredToUnlock": true,
+      "reason": "Draft creation and publication remain blocked."
+    }
+  ],
+  "blockedWorkflows": [
+    {
+      "workflow": "sandbox_credential_configuration",
+      "status": "BLOCKED",
+      "reason": "Credentials must not be added until secure environment and secret strategy are approved."
+    },
+    {
+      "workflow": "oauth_implementation",
+      "status": "BLOCKED",
+      "reason": "OAuth implementation requires official documentation validation and a dedicated future loop."
+    },
+    {
+      "workflow": "token_exchange",
+      "status": "BLOCKED",
+      "reason": "Token exchange is not allowed in this readiness-only loop."
+    },
+    {
+      "workflow": "token_storage",
+      "status": "BLOCKED",
+      "reason": "Token storage is not allowed in code, fixtures or frontend."
+    },
+    {
+      "workflow": "read_only_connection_check",
+      "status": "BLOCKED",
+      "reason": "Read-only connection check requires OAuth, secure credentials and a future API/service loop."
+    },
+    {
+      "workflow": "ebay_draft_mapping",
+      "status": "BLOCKED",
+      "reason": "Draft mapping remains blocked until product, commercial, image and connection gates are approved."
+    },
+    {
+      "workflow": "ebay_draft_creation",
+      "status": "BLOCKED",
+      "reason": "No eBay draft can be created before sandbox validation and explicit human approval."
+    },
+    {
+      "workflow": "ebay_publication",
+      "status": "BLOCKED",
+      "reason": "No eBay publication is allowed before final explicit human approval."
+    },
+    {
+      "workflow": "production_connection",
+      "status": "BLOCKED",
+      "reason": "Production connection is blocked until sandbox is validated and human approval is complete."
+    }
+  ],
+  "requiredHumanActions": [
+    "Confirm eBay Developer Account readiness.",
+    "Confirm sandbox application readiness.",
+    "Validate redirect/RuName configuration requirements against official eBay documentation.",
+    "Validate minimum required OAuth scopes against official eBay documentation.",
+    "Approve secure environment variable and secret handling strategy.",
+    "Approve server-only token handling strategy.",
+    "Confirm that IMNOVA must never store seller passwords.",
+    "Approve a future OAuth implementation loop.",
+    "Keep production connection blocked.",
+    "Keep draft mapping, draft creation and publication blocked."
+  ],
+  "nextRecommendedLoop": {
+    "loop": "LOOP 112 \u2014 eBay Sandbox OAuth Flow Design V1",
+    "reason": "After readiness is consolidated, the next step should design the OAuth flow without implementing real OAuth, token exchange, token storage, endpoints, credentials or API calls.",
+    "constraints": [
+      "No real OAuth.",
+      "No token exchange.",
+      "No token storage.",
+      "No credentials in code.",
+      "No endpoints or URLs.",
+      "No eBay API calls.",
+      "No draft creation.",
+      "No publication."
+    ]
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "readinessOnly": true,
+    "readOnly": true,
+    "sandboxFirstRequired": true,
+    "productionBlocked": true,
+    "developerAccountConfirmed": false,
+    "sandboxApplicationConfirmed": false,
+    "sandboxCredentialsConfigured": false,
+    "oauthImplemented": false,
+    "oauthConsentCompleted": false,
+    "tokenExchangeImplemented": false,
+    "tokenStorageImplemented": false,
+    "environmentVariablesUsed": false,
+    "secretsIncluded": false,
+    "clientIdIncluded": false,
+    "clientSecretIncluded": false,
+    "accessTokenIncluded": false,
+    "refreshTokenIncluded": false,
+    "authUrlIncluded": false,
+    "tokenUrlIncluded": false,
+    "apiEndpointIncluded": false,
+    "scopesHardcoded": false,
+    "sellerPasswordStored": false,
+    "officialDocsValidationRequired": true,
+    "ebayApiUsed": false,
+    "lunaPortexApiUsed": false,
+    "openAiApiUsed": false,
+    "supabaseUsed": false,
+    "apiCallsMade": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false,
+    "draftMappingUnlocked": false,
+    "draftCreationUnlocked": false,
+    "publicationUnlocked": false,
+    "customerDataIncluded": false,
+    "supplierPrivateDataIncluded": false
+  }
+}

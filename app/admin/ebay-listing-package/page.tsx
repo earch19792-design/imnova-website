@@ -4,6 +4,7 @@ import type {
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
 import ebayOnlyConnectionDesign from "../../../tools/fixtures/ebay-only-connection-design-v1.json"
+import ebaySandboxIntegrationReadiness from "../../../tools/fixtures/ebay-sandbox-integration-readiness-v1.json"
 import ebaySandboxReadOnlyConnectionStatus from "../../../tools/fixtures/ebay-sandbox-read-only-connection-status-v1.json"
 import listingPackageSourceAwareRefresh from "../../../tools/fixtures/ebay-listing-package-source-aware-refresh-v1.json"
 import productSnapshot from "../../../tools/fixtures/ebay-luna-portex-product-snapshot-v1.json"
@@ -294,6 +295,43 @@ const ebaySandboxReadOnlyConnectionStatusCopy = {
     "Official eBay documentation validation required",
   nextRecommendedLoop:
     "Next recommended loop: LOOP 110 — Image Generation Service Design V1",
+}
+
+const ebaySandboxIntegrationReadinessCopy = {
+  title:
+    "eBay Sandbox Integration Readiness",
+  integrationStatus:
+    "SANDBOX_INTEGRATION_NOT_READY",
+  integrationDecision:
+    "COLLECT_REQUIREMENTS_DO_NOT_CONNECT",
+  environmentStrategy:
+    "SANDBOX_FIRST_PRODUCTION_BLOCKED",
+  credentialStatus:
+    "NO_CREDENTIALS_CONFIGURED",
+  authStatus:
+    "OAUTH_NOT_IMPLEMENTED",
+  secretStatus:
+    "SECRET_STRATEGY_NOT_APPROVED",
+  scopeStatus:
+    "SCOPES_NOT_VALIDATED",
+  redirectStatus:
+    "REDIRECT_CONFIGURATION_NOT_VALIDATED",
+  apiStatus:
+    "NO_EBAY_API_CALLS_MADE",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  readinessSummary:
+    "Sandbox integration is not ready",
+  developerCredentials:
+    "Developer credentials identify the IMNOVA eBay app",
+  neverStoreSellerPasswords:
+    "IMNOVA must never store seller passwords",
+  officialValidation:
+    "Official eBay documentation validation required",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 112 — eBay Sandbox OAuth Flow Design V1",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -2197,6 +2235,291 @@ export default function EbayListingPackagePage() {
                   <FieldGrid
                     fields={Object.entries(
                       ebaySandboxReadOnlyConnectionStatus.safetyFlags
+                    )}
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="eBay Sandbox Integration Readiness">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {ebaySandboxIntegrationReadiness.readinessVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {ebaySandboxIntegrationReadinessCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {ebaySandboxIntegrationReadiness.readinessSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxIntegrationReadinessCopy.integrationStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxIntegrationReadinessCopy.integrationDecision}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxIntegrationReadinessCopy.environmentStrategy}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Integration status",
+                      ebaySandboxIntegrationReadiness.integrationStatus,
+                    ],
+                    [
+                      "Integration decision",
+                      ebaySandboxIntegrationReadiness.integrationDecision,
+                    ],
+                    [
+                      "Environment strategy",
+                      ebaySandboxIntegrationReadiness.environmentStrategy,
+                    ],
+                    [
+                      "Credential status",
+                      ebaySandboxIntegrationReadiness.credentialStatus,
+                    ],
+                    [
+                      "Auth status",
+                      ebaySandboxIntegrationReadiness.authStatus,
+                    ],
+                    [
+                      "Secret status",
+                      ebaySandboxIntegrationReadiness.secretStatus,
+                    ],
+                    [
+                      "Scope status",
+                      ebaySandboxIntegrationReadiness.scopeStatus,
+                    ],
+                    [
+                      "Redirect status",
+                      ebaySandboxIntegrationReadiness.redirectStatus,
+                    ],
+                    [
+                      "API status",
+                      ebaySandboxIntegrationReadiness.apiStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      ebaySandboxIntegrationReadiness.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      ebaySandboxIntegrationReadiness.publicationImpact,
+                    ],
+                    [
+                      ebaySandboxIntegrationReadinessCopy.officialValidation,
+                      ebaySandboxIntegrationReadiness.integrationReadiness
+                        .scopesValidatedAgainstOfficialDocs,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Integration Readiness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxIntegrationReadiness.integrationReadiness
+                    )}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Developer Account Readiness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxIntegrationReadiness.developerAccountReadiness
+                    )}
+                  />
+                </div>
+                <p className="mt-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.045] p-4 text-sm leading-6 text-cyan-50/80">
+                  {ebaySandboxIntegrationReadinessCopy.developerCredentials}.{" "}
+                  {ebaySandboxIntegrationReadinessCopy.neverStoreSellerPasswords}.
+                </p>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Sandbox Application Readiness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxIntegrationReadiness.sandboxApplicationReadiness
+                    )}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  OAuth Readiness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxIntegrationReadiness.oauthReadiness
+                    )}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Scope Validation Readiness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxIntegrationReadiness.scopeValidationReadiness
+                    )}
+                  />
+                </div>
+                <p className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-300/[0.045] p-4 text-sm leading-6 text-amber-50/80">
+                  {ebaySandboxIntegrationReadiness.scopeValidationReadiness.notes}
+                </p>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Secret Handling Readiness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxIntegrationReadiness.secretHandlingReadiness
+                    )}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Required Readiness Checks
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {ebaySandboxIntegrationReadiness.requiredReadinessChecks.map((check) => (
+                  <article
+                    key={check.checkId}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <p className="break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+                      {check.label}
+                    </p>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {check.status}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-white/60">
+                      {check.reason}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Workflows
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {ebaySandboxIntegrationReadiness.blockedWorkflows.map((workflow) => (
+                    <div
+                      key={workflow.workflow}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {workflow.workflow}
+                      </p>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {workflow.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {workflow.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Required Human Actions
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebaySandboxIntegrationReadiness.requiredHumanActions
+                    }
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        ebaySandboxIntegrationReadinessCopy.nextRecommendedLoop,
+                        ebaySandboxIntegrationReadiness.nextRecommendedLoop.loop,
+                      ],
+                      [
+                        "Reason",
+                        ebaySandboxIntegrationReadiness.nextRecommendedLoop.reason,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebaySandboxIntegrationReadiness.nextRecommendedLoop
+                        .constraints
+                    }
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Compact Safety Flags
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxIntegrationReadiness.safetyFlags
                     )}
                   />
                 </div>
