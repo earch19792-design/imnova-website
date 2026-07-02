@@ -1,0 +1,266 @@
+{
+  "packageVersion": "EBAY_COMPLETE_LISTING_PACKAGE_BUILDER_V1",
+  "caseId": "LISTING-GEN-001",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "packageStatus": "COMPLETE_LISTING_PACKAGE_BUILDER_READY",
+  "productSourceStatus": "READ_ONLY_PRODUCTS_SOURCE_WITH_SAFE_FALLBACK",
+  "listingContentStatus": "GENERATED_LISTING_PREVIEW_READY",
+  "catalogImageStatus": "LUNA_PORTEX_CATALOG_IMAGE_REFERENCE_READY_OR_BLOCKED",
+  "secondaryImagePromptStatus": "SECONDARY_IMAGE_PROMPTS_READY_IMAGES_NOT_GENERATED",
+  "draftPayloadStatus": "DRAFT_PAYLOAD_DRY_RUN_READY_NOT_SUBMITTED",
+  "readinessStatus": "READINESS_GATES_ACTIVE_DRAFT_AND_PUBLICATION_BLOCKED",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "packageSummary": "Complete Listing Package Builder is ready in internal dry-run mode. It combines selected product facts, listing preview, catalog image source, secondary image prompts, payload dry run and readiness gates. Products remains source of truth. Luna Portex catalog image remains visual source of truth. No eBay API, OAuth, tokens, image generation, image upload, real draft or publication occurs.",
+  "architecturePolicy": {
+    "productsRule": "Products decide what the product is.",
+    "listingRule": "Listing decides how the product sells on eBay.",
+    "benchmarkRule": "Benchmark decides what is working in the market.",
+    "gatesRule": "Gates decide whether the listing can advance.",
+    "operatingPrinciple": "Benchmark can suggest. Listing can adapt. Products must confirm. Gates must approve.",
+    "visualSourceOfTruthRule": "Luna Portex catalog image is visual source of truth.",
+    "factsReferenceRule": "Product facts must be referenced, not duplicated as independent truth.",
+    "payloadRule": "Draft payload is local dry run only."
+  },
+  "selectedProduct": {
+    "selectionMode": "READ_ONLY_PRODUCT_REFERENCE",
+    "source": "products_service_or_safe_fallback",
+    "fallbackProductId": "PRODUCT-SOURCE-DRYRUN-001",
+    "fallbackProductName": "Storage Organizer",
+    "fallbackSupplier": "Portex",
+    "productFactsByReference": true,
+    "productFactsDuplicatedAsTruth": false,
+    "productMutationAllowed": false
+  },
+  "generatedListingContent": {
+    "previewGenerated": true,
+    "titlePreview": "Storage Organizer",
+    "keywordPlan": {
+      "status": "BASIC_PRODUCT_FACT_KEYWORDS_ONLY",
+      "keywords": [
+        "Storage Organizer"
+      ],
+      "benchmarkKeywordsUsed": false,
+      "competitorContentCopied": false
+    },
+    "descriptionPreview": {
+      "status": "LIMITED_PREVIEW_NOT_FINAL",
+      "text": "Preview generated from confirmed product fact: Storage Organizer.",
+      "rule": "Only confirmed product facts can appear in preview copy."
+    },
+    "itemSpecificsPreview": {
+      "status": "PARTIAL_PREVIEW_NOT_FINAL",
+      "rule": "Only confirmed item specifics can appear."
+    },
+    "missingFacts": [
+      "condition",
+      "package_quantity",
+      "dimensions",
+      "weight",
+      "material",
+      "stock_status",
+      "cost",
+      "brand",
+      "model",
+      "mpn",
+      "color",
+      "image_status",
+      "commercial_readiness_status",
+      "compliance_status"
+    ],
+    "blockedFacts": [
+      "price",
+      "shipping_policy",
+      "return_policy",
+      "image_package",
+      "draft_payload",
+      "ebay_draft_creation",
+      "ebay_publication"
+    ],
+    "finalContentGenerated": false
+  },
+  "catalogImagePackage": {
+    "visualSource": "Luna Portex Catalog",
+    "catalogImageReferenceStatus": "CATALOG_IMAGE_REFERENCE_MISSING",
+    "primaryCatalogImageReference": null,
+    "catalogImageReferences": [],
+    "mainImageSourceBasedOptimizationAllowed": true,
+    "mainImageGeneratedFromScratch": false,
+    "mainImageMustLookPhotorealistic": true,
+    "mainImageMustNotLookAiGenerated": true,
+    "catalogImageReferenceRequired": true,
+    "exactProductFidelityRequired": true,
+    "catalogImageDisplayAllowedOnlyFromSelectedProductData": true,
+    "imageGenerationUsed": false,
+    "imageUploadUsed": false
+  },
+  "secondaryImagePrompts": [
+    {
+      "imageNumber": 1,
+      "name": "Material / Texture Zoom",
+      "purpose": "Show material texture, finish and quality.",
+      "promptTemplate": "Create a close material and texture zoom composition using the Luna Portex catalog image as product reference. Preserve the exact product shape, color, texture, logo, scale and proportions.",
+      "sourceRequirement": "Use Luna Portex catalog image as product reference",
+      "fidelityRule": "Do not invent material, finish, accessories, variants, logos, features or claims.",
+      "status": "PROMPT_READY_IMAGE_NOT_GENERATED"
+    },
+    {
+      "imageNumber": 2,
+      "name": "Package Contents",
+      "purpose": "Show what is included in the shipment without inventing contents.",
+      "promptTemplate": "Create a package contents composition using the Luna Portex catalog image as product reference. Show only confirmed included items and leave unconfirmed contents out.",
+      "sourceRequirement": "Use Luna Portex catalog image as product reference",
+      "fidelityRule": "Do not add pieces, accessories, packaging, variants or quantities that Products has not confirmed.",
+      "status": "PROMPT_READY_IMAGE_NOT_GENERATED"
+    },
+    {
+      "imageNumber": 3,
+      "name": "Dimensions / Measurements",
+      "purpose": "Show confirmed dimensions only.",
+      "promptTemplate": "Create a measurements image using the Luna Portex catalog image as product reference and add measurement text only after dimensions are confirmed in Products.",
+      "sourceRequirement": "Use Luna Portex catalog image as product reference",
+      "fidelityRule": "Do not estimate dimensions or scale. Text is allowed only for confirmed measurements.",
+      "status": "PROMPT_READY_IMAGE_NOT_GENERATED",
+      "blockedUntilDimensionsConfirmed": true
+    },
+    {
+      "imageNumber": 4,
+      "name": "Main Benefit In Action",
+      "purpose": "Show the problem solved visually without unsupported claims.",
+      "promptTemplate": "Create a realistic in-action product scene using the Luna Portex catalog image as product reference. Show only benefits supported by confirmed product facts.",
+      "sourceRequirement": "Use Luna Portex catalog image as product reference",
+      "fidelityRule": "Do not create unsupported performance claims or alter product shape, color, material or proportions.",
+      "status": "PROMPT_READY_IMAGE_NOT_GENERATED"
+    },
+    {
+      "imageNumber": 5,
+      "name": "Aspirational Lifestyle",
+      "purpose": "Show the product in a realistic aspirational usage context.",
+      "promptTemplate": "Create a clean aspirational lifestyle context using the Luna Portex catalog image as product reference. Keep product fidelity exact and use realistic ecommerce styling.",
+      "sourceRequirement": "Use Luna Portex catalog image as product reference",
+      "fidelityRule": "Do not make the product look artificial, rendered, altered or generated from scratch.",
+      "status": "PROMPT_READY_IMAGE_NOT_GENERATED"
+    },
+    {
+      "imageNumber": 6,
+      "name": "Real Use With Human Hands",
+      "purpose": "Show scale and ease of use in a realistic context.",
+      "promptTemplate": "Create a real-use composition with human hands using the Luna Portex catalog image as product reference. Preserve product scale, proportions, color and material exactly.",
+      "sourceRequirement": "Use Luna Portex catalog image as product reference",
+      "fidelityRule": "Do not invent usage claims, accessories, variants or unconfirmed dimensions.",
+      "status": "PROMPT_READY_IMAGE_NOT_GENERATED"
+    }
+  ],
+  "draftPayloadDryRun": {
+    "payloadMode": "LOCAL_DRY_RUN_NOT_EBAY_API_PAYLOAD",
+    "payloadBuilt": true,
+    "submittedToEbay": false,
+    "readyForEbayApi": false,
+    "readyForDraftCreation": false,
+    "readyForPublication": false,
+    "contains": {
+      "title": true,
+      "description": true,
+      "itemSpecifics": true,
+      "category": false,
+      "price": false,
+      "shipping": false,
+      "returns": false,
+      "images": false
+    },
+    "blockedUntilConfirmed": [
+      "category",
+      "price",
+      "shipping_policy",
+      "return_policy",
+      "image_package",
+      "compliance",
+      "ebay_connection"
+    ]
+  },
+  "readinessGates": {
+    "canReadProduct": true,
+    "canGenerateListingPreview": true,
+    "canPrepareImagePrompts": true,
+    "canBuildLocalDryRunPayload": true,
+    "canSubmitPayloadToEbay": false,
+    "canCreateEbayDraft": false,
+    "canPublishToEbay": false,
+    "readinessScore": 45,
+    "currentReadinessLabel": "Complete internal package ready. eBay submission, real draft and publication blocked.",
+    "blockers": [
+      "catalog_image_reference_missing_or_unapproved",
+      "category_missing",
+      "price_missing",
+      "shipping_policy_missing",
+      "return_policy_missing",
+      "image_package_not_generated",
+      "compliance_not_approved",
+      "ebay_connection_not_authorized"
+    ]
+  },
+  "blockedFields": [
+    "category",
+    "price",
+    "shipping_policy",
+    "return_policy",
+    "image_package",
+    "condition",
+    "package_quantity",
+    "dimensions",
+    "weight",
+    "material",
+    "stock_status",
+    "cost",
+    "compliance",
+    "draft_submission",
+    "ebay_draft_creation",
+    "ebay_publication"
+  ],
+  "requiredHumanActions": [
+    "Confirm selected real product in Products.",
+    "Confirm product facts in Products.",
+    "Confirm category, price, shipping policy and return policy.",
+    "Confirm Luna Portex catalog image source and authorization.",
+    "Approve main image optimization plan.",
+    "Approve six secondary image prompts before any image generation.",
+    "Confirm dimensions before measurement image.",
+    "Approve compliance review.",
+    "Keep eBay payload submission blocked.",
+    "Keep real draft creation and publication blocked."
+  ],
+  "nextRecommendedLoop": {
+    "loop": "LOOP 126 — Listing Review & Approval Workspace V1",
+    "reason": "After a complete internal listing package exists, route it to a human review workspace that approves or rejects content, product facts, image readiness, payload dry run and gate blockers.",
+    "expectedOutcome": "Admin can review a complete package and decide what must be fixed before any future eBay draft payload can be submitted.",
+    "constraints": [
+      "No eBay API.",
+      "No OAuth.",
+      "No tokens.",
+      "No real draft creation.",
+      "No publication.",
+      "No image generation.",
+      "No image upload.",
+      "Products remain source of truth.",
+      "Luna Portex catalog image remains visual source of truth."
+    ]
+  },
+  "safetyFlags": {
+    "internalOnly": true,
+    "dryRunOnly": true,
+    "productsRemainSourceOfTruth": true,
+    "lunaPortexCatalogImageIsVisualSourceOfTruth": true,
+    "productFactsDuplicatedAsTruth": false,
+    "imageGenerationUsed": false,
+    "imageUploadUsed": false,
+    "draftPayloadSubmitted": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "supabaseWriteUsed": false,
+    "migrationCreated": false
+  }
+}

@@ -11,6 +11,7 @@ import productSourceAdapterSelector from "../../../tools/fixtures/ebay-product-s
 import liveProductSelectorReadOnly from "../../../tools/fixtures/ebay-live-product-selector-read-only-v1.json"
 import realProductListingGeneratorIntegration from "../../../tools/fixtures/ebay-real-product-listing-generator-integration-v1.json"
 import lunaPortexCatalogImagePackageQa from "../../../tools/fixtures/ebay-luna-portex-catalog-image-package-qa-v1.json"
+import completeListingPackageBuilder from "../../../tools/fixtures/ebay-complete-listing-package-builder-v1.json"
 import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -838,6 +839,47 @@ const lunaPortexCatalogImagePackageQaCopy = {
     "Next recommended loop: LOOP 125 — eBay Draft Payload Dry Run Builder V1",
 }
 
+const completeListingPackageBuilderCopy = {
+  title:
+    "Complete Listing Package Builder",
+  packageVersion:
+    "EBAY_COMPLETE_LISTING_PACKAGE_BUILDER_V1",
+  packageStatus:
+    "COMPLETE_LISTING_PACKAGE_BUILDER_READY",
+  productSourceStatus:
+    "READ_ONLY_PRODUCTS_SOURCE_WITH_SAFE_FALLBACK",
+  listingContentStatus:
+    "GENERATED_LISTING_PREVIEW_READY",
+  catalogImageStatus:
+    "LUNA_PORTEX_CATALOG_IMAGE_REFERENCE_READY_OR_BLOCKED",
+  secondaryImagePromptStatus:
+    "SECONDARY_IMAGE_PROMPTS_READY_IMAGES_NOT_GENERATED",
+  draftPayloadStatus:
+    "DRAFT_PAYLOAD_DRY_RUN_READY_NOT_SUBMITTED",
+  readinessStatus:
+    "READINESS_GATES_ACTIVE_DRAFT_AND_PUBLICATION_BLOCKED",
+  selectedProduct:
+    "Selected Product",
+  generatedListingContent:
+    "Generated Listing Content",
+  catalogImagePackage:
+    "Catalog Image Package",
+  secondaryImagePrompts:
+    "Secondary Image Prompts",
+  draftPayloadDryRun:
+    "Draft Payload Dry Run",
+  readinessGates:
+    "Readiness Gates",
+  blockedFields:
+    "Blocked Fields",
+  requiredHumanActions:
+    "Required Human Actions",
+  catalogImageMissing:
+    "Catalog image reference missing",
+  nextRecommendedLoop:
+    "Next loop: LOOP 126 — Listing Review & Approval Workspace V1",
+}
+
 const ebayImageGenerationServiceDesignCopy = {
   title:
     "Image Generation Service Design",
@@ -1358,6 +1400,10 @@ export default function EbayListingPackagePage() {
     listingPackage.soldListingsBenchmarkStrategy
   const sellOneLikeThis =
     soldListingsBenchmark.sellOneLikeThisStrategy
+  const completeListingCatalogImageReference =
+    completeListingPackageBuilder.catalogImagePackage.primaryCatalogImageReference as
+      | string
+      | null
 
   return (
     <main className="min-h-screen bg-[#05070d] px-6 py-8 text-white md:px-10 lg:px-14">
@@ -7123,6 +7169,382 @@ export default function EbayListingPackagePage() {
                 <div className="mt-4">
                   <ListBlock
                     items={lunaPortexCatalogImagePackageQa.nextRecommendedLoop.constraints}
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Complete Listing Package Builder">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {completeListingPackageBuilderCopy.packageVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {completeListingPackageBuilderCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {completeListingPackageBuilder.packageSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {completeListingPackageBuilderCopy.packageStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {completeListingPackageBuilderCopy.draftPayloadStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {completeListingPackageBuilderCopy.readinessStatus}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Package version",
+                      completeListingPackageBuilder.packageVersion,
+                    ],
+                    [
+                      "Package status",
+                      completeListingPackageBuilder.packageStatus,
+                    ],
+                    [
+                      "Product source status",
+                      completeListingPackageBuilder.productSourceStatus,
+                    ],
+                    [
+                      "Listing content status",
+                      completeListingPackageBuilder.listingContentStatus,
+                    ],
+                    [
+                      "Catalog image status",
+                      completeListingPackageBuilder.catalogImageStatus,
+                    ],
+                    [
+                      "Secondary image prompt status",
+                      completeListingPackageBuilder.secondaryImagePromptStatus,
+                    ],
+                    [
+                      "Draft payload status",
+                      completeListingPackageBuilder.draftPayloadStatus,
+                    ],
+                    [
+                      "Readiness status",
+                      completeListingPackageBuilder.readinessStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      completeListingPackageBuilder.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      completeListingPackageBuilder.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Architecture Policy
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      completeListingPackageBuilder.architecturePolicy
+                    )}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {completeListingPackageBuilderCopy.selectedProduct}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      completeListingPackageBuilder.selectedProduct
+                    )}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {completeListingPackageBuilderCopy.generatedListingContent}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Title preview",
+                        completeListingPackageBuilder.generatedListingContent
+                          .titlePreview,
+                      ],
+                      [
+                        "Preview generated",
+                        completeListingPackageBuilder.generatedListingContent
+                          .previewGenerated,
+                      ],
+                      [
+                        "Final content generated",
+                        completeListingPackageBuilder.generatedListingContent
+                          .finalContentGenerated,
+                      ],
+                      [
+                        "Keyword plan",
+                        completeListingPackageBuilder.generatedListingContent
+                          .keywordPlan.status,
+                      ],
+                      [
+                        "Benchmark keywords used",
+                        completeListingPackageBuilder.generatedListingContent
+                          .keywordPlan.benchmarkKeywordsUsed,
+                      ],
+                      [
+                        "Competitor content copied",
+                        completeListingPackageBuilder.generatedListingContent
+                          .keywordPlan.competitorContentCopied,
+                      ],
+                    ]}
+                  />
+                </div>
+                <p className="mt-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.045] p-4 text-sm leading-6 text-cyan-50/80">
+                  {
+                    completeListingPackageBuilder.generatedListingContent
+                      .descriptionPreview.text
+                  }
+                </p>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {completeListingPackageBuilderCopy.catalogImagePackage}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Visual source",
+                        completeListingPackageBuilder.catalogImagePackage
+                          .visualSource,
+                      ],
+                      [
+                        "Catalog image reference status",
+                        completeListingPackageBuilder.catalogImagePackage
+                          .catalogImageReferenceStatus,
+                      ],
+                      [
+                        "Main image source-based optimization allowed",
+                        completeListingPackageBuilder.catalogImagePackage
+                          .mainImageSourceBasedOptimizationAllowed,
+                      ],
+                      [
+                        "Main image generated from scratch",
+                        completeListingPackageBuilder.catalogImagePackage
+                          .mainImageGeneratedFromScratch,
+                      ],
+                      [
+                        "Must look photorealistic",
+                        completeListingPackageBuilder.catalogImagePackage
+                          .mainImageMustLookPhotorealistic,
+                      ],
+                      [
+                        "Must not look AI-generated",
+                        completeListingPackageBuilder.catalogImagePackage
+                          .mainImageMustNotLookAiGenerated,
+                      ],
+                      [
+                        "Exact product fidelity required",
+                        completeListingPackageBuilder.catalogImagePackage
+                          .exactProductFidelityRequired,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                  {completeListingCatalogImageReference ? (
+                    <img
+                      alt="Selected product catalog source"
+                      className="aspect-square w-full rounded-xl border border-white/10 bg-white object-contain"
+                      src={completeListingCatalogImageReference}
+                    />
+                  ) : (
+                    <p className="text-sm font-bold text-amber-100/80">
+                      {completeListingPackageBuilderCopy.catalogImageMissing}
+                    </p>
+                  )}
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                {completeListingPackageBuilderCopy.secondaryImagePrompts}
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {completeListingPackageBuilder.secondaryImagePrompts.map((prompt) => (
+                  <article
+                    key={prompt.imageNumber}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <p className="text-sm font-black text-white">
+                      {prompt.imageNumber}. {prompt.name}
+                    </p>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {prompt.status}
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-white/60">
+                      {prompt.purpose}
+                    </p>
+                    <p className="mt-3 rounded-xl border border-cyan-300/10 bg-cyan-300/[0.035] p-3 text-xs leading-5 text-cyan-50/70">
+                      {prompt.promptTemplate}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {completeListingPackageBuilderCopy.draftPayloadDryRun}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Payload mode",
+                        completeListingPackageBuilder.draftPayloadDryRun
+                          .payloadMode,
+                      ],
+                      [
+                        "Payload built",
+                        completeListingPackageBuilder.draftPayloadDryRun
+                          .payloadBuilt,
+                      ],
+                      [
+                        "Submitted to eBay",
+                        completeListingPackageBuilder.draftPayloadDryRun
+                          .submittedToEbay,
+                      ],
+                      [
+                        "Ready for eBay API",
+                        completeListingPackageBuilder.draftPayloadDryRun
+                          .readyForEbayApi,
+                      ],
+                      [
+                        "Ready for draft creation",
+                        completeListingPackageBuilder.draftPayloadDryRun
+                          .readyForDraftCreation,
+                      ],
+                      [
+                        "Ready for publication",
+                        completeListingPackageBuilder.draftPayloadDryRun
+                          .readyForPublication,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      completeListingPackageBuilder.draftPayloadDryRun
+                        .blockedUntilConfirmed
+                    }
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {completeListingPackageBuilderCopy.readinessGates}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      completeListingPackageBuilder.readinessGates
+                    ).filter(([key]) => key !== "blockers")}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={completeListingPackageBuilder.readinessGates.blockers}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {completeListingPackageBuilderCopy.blockedFields}
+                </h4>
+                <div className="mt-4">
+                  <ListBlock items={completeListingPackageBuilder.blockedFields} />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {completeListingPackageBuilderCopy.requiredHumanActions}
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={completeListingPackageBuilder.requiredHumanActions}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        completeListingPackageBuilderCopy.nextRecommendedLoop,
+                        completeListingPackageBuilder.nextRecommendedLoop.loop,
+                      ],
+                      [
+                        "Reason",
+                        completeListingPackageBuilder.nextRecommendedLoop.reason,
+                      ],
+                      [
+                        "Expected outcome",
+                        completeListingPackageBuilder.nextRecommendedLoop
+                          .expectedOutcome,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Compact Safety Flags
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      completeListingPackageBuilder.safetyFlags
+                    )}
                   />
                 </div>
               </article>
