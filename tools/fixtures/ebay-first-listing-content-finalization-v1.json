@@ -1,0 +1,250 @@
+{
+  "contentVersion": "EBAY_FIRST_LISTING_CONTENT_FINALIZATION_V1",
+  "caseId": "LISTING-GEN-001",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "contentStatus": "CONTENT_NOT_READY_FOR_FINAL_DRAFT",
+  "contentDecision": "COMPLETE_AND_VALIDATE_CONTENT_BEFORE_DRAFT",
+  "keywordPolicyStatus": "KEYWORD_INTELLIGENCE_ALLOWED_CONTENT_COPYING_BLOCKED",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "contentSummary": "First listing content finalization is not ready. This workspace organizes the title, keyword strategy, description, item specifics, category, condition, pricing placeholder, shipping and returns readiness, compliance notes and image copy readiness without creating a draft or copying competitor content.",
+  "contentSections": [
+    {
+      "sectionId": "title",
+      "label": "Title",
+      "status": "NEEDS_KEYWORD_AND_FACT_VALIDATION",
+      "blocking": true,
+      "requiredToUnlock": "Validate a title using confirmed Portex facts and approved generic traffic keywords.",
+      "missingInputs": [
+        "confirmed product facts",
+        "approved keyword strategy",
+        "human title review"
+      ]
+    },
+    {
+      "sectionId": "subtitle",
+      "label": "Subtitle",
+      "status": "OPTIONAL_NOT_READY",
+      "blocking": false,
+      "requiredToUnlock": "Decide whether a subtitle is needed after title and category review.",
+      "missingInputs": [
+        "subtitle strategy",
+        "optional value review"
+      ]
+    },
+    {
+      "sectionId": "category",
+      "label": "Category",
+      "status": "NEEDS_VALIDATION",
+      "blocking": true,
+      "requiredToUnlock": "Confirm the eBay category against the product use case and Portex product facts.",
+      "missingInputs": [
+        "category validation",
+        "category fit review"
+      ]
+    },
+    {
+      "sectionId": "item_specifics",
+      "label": "Item Specifics",
+      "status": "BLOCKED_BY_PRODUCT_FACTS",
+      "blocking": true,
+      "requiredToUnlock": "Validate dimensions, materials, compatibility and technical facts against Portex.",
+      "missingInputs": [
+        "dimensions confirmed by Portex",
+        "materials confirmed by Portex",
+        "compatibility confirmed by Portex",
+        "technical facts confirmed by Portex"
+      ]
+    },
+    {
+      "sectionId": "condition",
+      "label": "Condition",
+      "status": "NEEDS_CONFIRMATION",
+      "blocking": true,
+      "requiredToUnlock": "Confirm item condition before final content or draft mapping.",
+      "missingInputs": [
+        "condition confirmation",
+        "condition notes review"
+      ]
+    },
+    {
+      "sectionId": "description",
+      "label": "Description",
+      "status": "NEEDS_ORIGINAL_COPY",
+      "blocking": true,
+      "requiredToUnlock": "Write original description copy based on Portex facts and approved buyer benefits.",
+      "missingInputs": [
+        "original description copy",
+        "approved product benefits",
+        "claims review"
+      ]
+    },
+    {
+      "sectionId": "pricing",
+      "label": "Pricing",
+      "status": "BLOCKED_BY_COMMERCIAL_READINESS",
+      "blocking": true,
+      "requiredToUnlock": "Approve cost, margin, fees and shipping cost before pricing copy is final.",
+      "missingInputs": [
+        "pricing placeholder review",
+        "margin approval",
+        "fees approval",
+        "shipping cost approval"
+      ]
+    },
+    {
+      "sectionId": "shipping_and_returns",
+      "label": "Shipping and Returns",
+      "status": "NEEDS_POLICY_CONFIRMATION",
+      "blocking": true,
+      "requiredToUnlock": "Confirm shipping and return policies before final content.",
+      "missingInputs": [
+        "shipping policy confirmed",
+        "return policy confirmed"
+      ]
+    },
+    {
+      "sectionId": "compliance_and_risk",
+      "label": "Compliance and Risk",
+      "status": "NEEDS_REVIEW",
+      "blocking": true,
+      "requiredToUnlock": "Review compliance, VeRO, claims and competitor keyword risk.",
+      "missingInputs": [
+        "compliance review",
+        "VeRO risk review",
+        "claims review",
+        "competitor keyword risk review"
+      ]
+    },
+    {
+      "sectionId": "image_copy_readiness",
+      "label": "Image Copy Readiness",
+      "status": "BLOCKED_BY_IMAGE_QA",
+      "blocking": true,
+      "requiredToUnlock": "Approve image source and QA before any image copy or captions are final.",
+      "missingInputs": [
+        "authorized image source approved",
+        "image QA approved",
+        "image copy review"
+      ]
+    }
+  ],
+  "keywordIntelligencePolicy": {
+    "policyStatus": "ACTIVE_FOR_FUTURE_BENCHMARK_MODULE",
+    "coreRule": "Use market intelligence, do not copy competitor content.",
+    "allowed": [
+      "Use generic, relevant and truthful traffic keywords.",
+      "Use competitor listings as benchmark signals.",
+      "Use category, price range and item-specific patterns as references.",
+      "Classify keywords as core, secondary, risk or blocked.",
+      "Use a winning keyword when the underlying product fact is confirmed by Portex."
+    ],
+    "blocked": [
+      "Do not copy full competitor titles.",
+      "Do not copy competitor descriptions.",
+      "Do not copy bullet points.",
+      "Do not copy photos.",
+      "Do not copy unsupported claims.",
+      "Do not use competitor brand names as keywords unless legally allowed and reviewed.",
+      "Do not treat competitor dimensions or facts as truth unless confirmed by Portex."
+    ],
+    "keywordDecisionRules": [
+      {
+        "rule": "winning_keyword_plus_confirmed_portex_fact",
+        "decision": "ALLOWED"
+      },
+      {
+        "rule": "winning_keyword_plus_unconfirmed_fact",
+        "decision": "BLOCK_UNTIL_VALIDATED"
+      },
+      {
+        "rule": "competitor_brand_keyword",
+        "decision": "RISK_REVIEW_REQUIRED"
+      },
+      {
+        "rule": "exact_competitor_text",
+        "decision": "BLOCKED"
+      }
+    ]
+  },
+  "plannedListingContent": {
+    "title": {
+      "status": "NOT_FINAL",
+      "source": "pending_keyword_and_product_fact_validation",
+      "valueIncluded": false
+    },
+    "subtitle": {
+      "status": "OPTIONAL_NOT_FINAL",
+      "valueIncluded": false
+    },
+    "description": {
+      "status": "ORIGINAL_COPY_REQUIRED",
+      "valueIncluded": false
+    },
+    "itemSpecifics": {
+      "status": "BLOCKED_BY_UNVALIDATED_PRODUCT_FACTS",
+      "valueIncluded": false
+    },
+    "price": {
+      "status": "BLOCKED_BY_COMMERCIAL_READINESS",
+      "valueIncluded": false
+    },
+    "shippingPolicy": {
+      "status": "NEEDS_CONFIRMATION",
+      "valueIncluded": false
+    },
+    "returnPolicy": {
+      "status": "NEEDS_CONFIRMATION",
+      "valueIncluded": false
+    },
+    "imageCopy": {
+      "status": "BLOCKED_BY_IMAGE_QA",
+      "valueIncluded": false
+    }
+  },
+  "blockedBecause": [
+    "product_facts_not_approved",
+    "commercial_readiness_not_approved",
+    "market_validation_not_completed",
+    "image_qa_not_approved",
+    "shipping_returns_not_confirmed",
+    "risk_compliance_not_reviewed",
+    "ebay_connection_not_authorized",
+    "draft_mapping_still_blocked"
+  ],
+  "requiredHumanActions": [
+    "Validate product title using confirmed Portex facts.",
+    "Approve keyword strategy before final title.",
+    "Confirm category and item specifics.",
+    "Confirm condition.",
+    "Confirm original description copy.",
+    "Confirm pricing, margin, fees and shipping cost.",
+    "Confirm shipping and return policies.",
+    "Complete compliance and VeRO risk review.",
+    "Approve image source and image QA.",
+    "Keep eBay draft creation blocked until all gates are approved."
+  ],
+  "nextRecommendedAction": "Finalize original listing content only after product facts, keyword strategy, commercial readiness, image QA, shipping, returns and compliance review are approved.",
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "readOnly": true,
+    "contentFinalized": false,
+    "originalCopyRequired": true,
+    "competitorContentCopied": false,
+    "competitorImagesCopied": false,
+    "trafficKeywordsAllowedWhenGenericRelevantAndTrue": true,
+    "portexFactsRequiredForTechnicalClaims": true,
+    "productFactsApproved": false,
+    "commercialReadinessApproved": false,
+    "imageQaApproved": false,
+    "shippingReturnsConfirmed": false,
+    "riskComplianceApproved": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}
