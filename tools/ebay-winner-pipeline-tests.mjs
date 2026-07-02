@@ -600,6 +600,19 @@ const ebayListingPackageSourceAwareRefreshFixture =
     )
   )
 
+const ebayOnlyConnectionDesignFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-only-connection-design-v1.json"
+  )
+
+const ebayOnlyConnectionDesignFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayOnlyConnectionDesignFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayFirstListingQaReviewFixturePath =
   path.resolve(
     "tools/fixtures/ebay-first-listing-qa-review-v1.json"
@@ -5728,6 +5741,299 @@ test("listing package source-aware refresh fixture: no contiene URLs payloads ni
   }
 })
 
+test("ebay only connection design fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayOnlyConnectionDesignFixturePath
+    )
+  )
+  assert.equal(
+    ebayOnlyConnectionDesignFixture.designVersion,
+    "EBAY_ONLY_CONNECTION_DESIGN_V1"
+  )
+  assert.equal(
+    ebayOnlyConnectionDesignFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebayOnlyConnectionDesignFixture.sourceAwareRefreshVersion,
+    "EBAY_LISTING_PACKAGE_SOURCE_AWARE_REFRESH_V1"
+  )
+  assert.equal(
+    ebayOnlyConnectionDesignFixture.imageQaGateVersion,
+    "EBAY_LUNA_PORTEX_IMAGE_QA_REVIEW_GATE_V1"
+  )
+  assert.equal(
+    ebayOnlyConnectionDesignFixture.commercialGateVersion,
+    "EBAY_LUNA_PORTEX_COMMERCIAL_READINESS_GATE_V1"
+  )
+  assert.equal(
+    ebayOnlyConnectionDesignFixture.productFactsGateVersion,
+    "EBAY_LUNA_PORTEX_PRODUCT_FACTS_READINESS_GATE_V1"
+  )
+  assert.equal(
+    ebayOnlyConnectionDesignFixture.marketplace,
+    "ebay_us"
+  )
+  assert.equal(
+    ebayOnlyConnectionDesignFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebayOnlyConnectionDesignFixture.connectionStatus,
+    "EBAY_CONNECTION_NOT_STARTED"
+  )
+  assert.equal(
+    ebayOnlyConnectionDesignFixture.connectionDecision,
+    "DESIGN_ONLY_DO_NOT_CONNECT"
+  )
+  assert.equal(
+    ebayOnlyConnectionDesignFixture.environmentStrategy,
+    "SANDBOX_FIRST"
+  )
+  assert.equal(
+    ebayOnlyConnectionDesignFixture.authStatus,
+    "OAUTH_NOT_CONFIGURED"
+  )
+  assert.equal(
+    ebayOnlyConnectionDesignFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayOnlyConnectionDesignFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay only connection design fixture: readiness bloquea conexion real", () => {
+  const readiness =
+    ebayOnlyConnectionDesignFixture.connectionReadiness
+
+  assert.equal(
+    readiness.oauthFlowDesigned,
+    true
+  )
+  assert.equal(
+    readiness.sandboxFirstRequired,
+    true
+  )
+  assert.equal(
+    readiness.productionBlocked,
+    true
+  )
+  assert.equal(
+    readiness.officialDocsValidationRequired,
+    true
+  )
+
+  for (const flagName of [
+    "ebayDeveloperAccountConfirmed",
+    "sandboxApplicationConfigured",
+    "productionApplicationConfigured",
+    "oauthFlowImplemented",
+    "oauthConsentCompleted",
+    "tokenExchangeImplemented",
+    "tokenStorageImplemented",
+    "readOnlyConnectionStatusImplemented",
+    "listingApiAccessImplemented",
+    "draftCreationImplemented",
+    "publicationImplemented",
+    "scopesValidatedAgainstOfficialDocs",
+    "endpointsValidatedAgainstOfficialDocs",
+    "environmentVariablesConfigured",
+    "secretsConfigured",
+  ]) {
+    assert.equal(
+      readiness[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("ebay only connection design fixture: integration boundaries son conservadores", () => {
+  const boundaries =
+    ebayOnlyConnectionDesignFixture.integrationBoundaries
+
+  assert.equal(
+    boundaries.allowedInThisLoop.length,
+    3
+  )
+  assert.ok(
+    boundaries.forbiddenInThisLoop.length >= 10
+  )
+  assert.match(
+    boundaries.officialValidationPolicy,
+    /official eBay documentation/
+  )
+})
+
+test("ebay only connection design fixture: phases mantienen sandbox bloqueado", () => {
+  const phases =
+    ebayOnlyConnectionDesignFixture.connectionPhases
+
+  assert.equal(
+    phases.length,
+    8
+  )
+
+  const expectedPhaseIds =
+    new Set([
+      "design_only",
+      "developer_account_confirmation",
+      "sandbox_application_configuration",
+      "oauth_read_only_consent_design",
+      "token_handling_design",
+      "read_only_connection_status",
+      "draft_mapping_dry_run",
+      "sandbox_draft_creation",
+    ])
+
+  for (const phase of phases) {
+    assert.ok(
+      expectedPhaseIds.has(phase.phaseId),
+      `unexpected connection phase: ${phase.phaseId}`
+    )
+    if (phase.phaseId === "design_only") {
+      assert.equal(
+        phase.status,
+        "CURRENT"
+      )
+      assert.equal(
+        phase.allowed,
+        true
+      )
+    } else {
+      assert.equal(
+        phase.allowed,
+        false,
+        `${phase.phaseId} must not be allowed`
+      )
+    }
+  }
+})
+
+test("ebay only connection design fixture: workflows eBay permanecen bloqueados", () => {
+  const blockedWorkflows =
+    ebayOnlyConnectionDesignFixture.blockedWorkflows
+
+  assert.equal(
+    blockedWorkflows.length,
+    7
+  )
+
+  const expectedWorkflows =
+    new Set([
+      "ebay_oauth_flow",
+      "ebay_token_exchange",
+      "ebay_token_storage",
+      "ebay_read_only_api_check",
+      "ebay_draft_mapping",
+      "ebay_draft_creation",
+      "ebay_publication",
+    ])
+
+  for (const workflow of blockedWorkflows) {
+    assert.equal(
+      workflow.status,
+      "BLOCKED"
+    )
+    assert.ok(
+      expectedWorkflows.has(workflow.workflow),
+      `unexpected blocked workflow: ${workflow.workflow}`
+    )
+  }
+})
+
+test("ebay only connection design fixture: safety flags no exponen secretos ni integracion real", () => {
+  const safetyFlags =
+    ebayOnlyConnectionDesignFixture.safetyFlags
+
+  for (const flagName of [
+    "advisoryOnly",
+    "designOnly",
+    "sandboxFirstRequired",
+    "productionBlocked",
+    "officialDocsValidationRequired",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      true,
+      `${flagName} must be true`
+    )
+  }
+
+  for (const flagName of [
+    "oauthImplemented",
+    "oauthConsentCompleted",
+    "tokenExchangeImplemented",
+    "tokenStorageImplemented",
+    "environmentVariablesUsed",
+    "secretsIncluded",
+    "clientIdIncluded",
+    "clientSecretIncluded",
+    "refreshTokenIncluded",
+    "accessTokenIncluded",
+    "authUrlIncluded",
+    "tokenUrlIncluded",
+    "apiEndpointIncluded",
+    "scopesHardcoded",
+    "ebayApiUsed",
+    "lunaPortexApiUsed",
+    "openAiApiUsed",
+    "supabaseUsed",
+    "apiCallsMade",
+    "realDraftCreated",
+    "publishedToEbay",
+    "listingMutated",
+    "draftMappingUnlocked",
+    "draftCreationUnlocked",
+    "publicationUnlocked",
+    "externalUrlsIncluded",
+    "customerDataIncluded",
+    "supplierPrivateDataIncluded",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("ebay only connection design fixture: no contiene URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebayOnlyConnectionDesignFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /imageUrl/,
+    /assetUrl/,
+    /uploadedUrl/,
+    /client_id/,
+    /client_secret/,
+    /access_token/,
+    /refresh_token/,
+    /Authorization/,
+    /Bearer/,
+    /supplierEmail/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierProductUrl/,
+    /realEndpoint/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("luna portex product facts readiness gate fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -9124,6 +9430,10 @@ test("ebay listing package admin MVP: existe y usa fixtures seguros", () => {
   )
   assert.match(
     source,
+    /ebay-only-connection-design-v1\.json/
+  )
+  assert.match(
+    source,
     /ebay-listing-package-source-aware-refresh-v1\.json/
   )
   assert.match(
@@ -9251,6 +9561,10 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "Product Facts Readiness Gate",
     "Commercial Readiness Gate",
     "Listing Package Source-Aware Refresh",
+    "eBay Only Connection Design",
+    "Connection Readiness",
+    "Integration Boundaries",
+    "Connection Phases",
     "Review Inputs",
     "Fact Checks",
     "Commercial Checks",
@@ -9646,6 +9960,41 @@ test("ebay listing package admin MVP: muestra source-aware refresh", () => {
   }
 })
 
+test("ebay listing package admin MVP: muestra ebay only connection design", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "eBay Only Connection Design",
+    "EBAY_CONNECTION_NOT_STARTED",
+    "DESIGN_ONLY_DO_NOT_CONNECT",
+    "SANDBOX_FIRST",
+    "OAUTH_NOT_CONFIGURED",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "eBay connection has not started",
+    "Sandbox-first connection plan",
+    "No OAuth flow has been implemented",
+    "No tokens are stored",
+    "No eBay API calls are allowed",
+    "Official eBay documentation validation required",
+    "Connection Readiness",
+    "Integration Boundaries",
+    "Connection Phases",
+    "Blocked Workflows",
+    "Required Human Actions",
+    "Next recommended loop: LOOP 109 \u2014 eBay Sandbox Read-Only Connection Status V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing eBay connection design admin text: ${expectedText}`
+    )
+  }
+})
+
 test("ebay listing package admin MVP: muestra main image enhancement brief", () => {
   const source =
     fs.readFileSync(
@@ -9840,6 +10189,10 @@ test("ebay listing package admin MVP: no contiene integraciones reales", () => {
     /onClick=/,
     /<img/i,
     /next\/image/i,
+    /client_id/,
+    /client_secret/,
+    /access_token/,
+    /refresh_token/,
   ]) {
     assert.doesNotMatch(
       source,
@@ -9947,6 +10300,10 @@ test("ebay listing package admin MVP: no contiene patrones de seguridad prohibid
     /onClick=/,
     /http:\/\//,
     /https:\/\//,
+    /client_id/,
+    /client_secret/,
+    /access_token/,
+    /refresh_token/,
   ]) {
     assert.doesNotMatch(
       source,
