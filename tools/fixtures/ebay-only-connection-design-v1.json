@@ -1,0 +1,213 @@
+{
+  "designVersion": "EBAY_ONLY_CONNECTION_DESIGN_V1",
+  "caseId": "LISTING-GEN-001",
+  "sourceAwareRefreshVersion": "EBAY_LISTING_PACKAGE_SOURCE_AWARE_REFRESH_V1",
+  "imageQaGateVersion": "EBAY_LUNA_PORTEX_IMAGE_QA_REVIEW_GATE_V1",
+  "commercialGateVersion": "EBAY_LUNA_PORTEX_COMMERCIAL_READINESS_GATE_V1",
+  "productFactsGateVersion": "EBAY_LUNA_PORTEX_PRODUCT_FACTS_READINESS_GATE_V1",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "connectionStatus": "EBAY_CONNECTION_NOT_STARTED",
+  "connectionDecision": "DESIGN_ONLY_DO_NOT_CONNECT",
+  "environmentStrategy": "SANDBOX_FIRST",
+  "authStatus": "OAUTH_NOT_CONFIGURED",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "connectionSummary": "eBay connection has not started. This loop is design-only. Sandbox-first is required. OAuth is not configured. No tokens are stored. No eBay API calls are allowed. No eBay draft can be created. No eBay publication is allowed. Official eBay documentation validation is required before implementing OAuth, scopes, endpoints or token handling.",
+  "connectionReadiness": {
+    "ebayDeveloperAccountConfirmed": false,
+    "sandboxApplicationConfigured": false,
+    "productionApplicationConfigured": false,
+    "oauthFlowDesigned": true,
+    "oauthFlowImplemented": false,
+    "oauthConsentCompleted": false,
+    "tokenExchangeImplemented": false,
+    "tokenStorageImplemented": false,
+    "readOnlyConnectionStatusImplemented": false,
+    "listingApiAccessImplemented": false,
+    "draftCreationImplemented": false,
+    "publicationImplemented": false,
+    "officialDocsValidationRequired": true,
+    "scopesValidatedAgainstOfficialDocs": false,
+    "endpointsValidatedAgainstOfficialDocs": false,
+    "environmentVariablesConfigured": false,
+    "secretsConfigured": false,
+    "sandboxFirstRequired": true,
+    "productionBlocked": true
+  },
+  "integrationBoundaries": {
+    "allowedInThisLoop": [
+      "Create read-only connection design fixture.",
+      "Render read-only eBay connection design section in Admin.",
+      "Add tests for connection design, readiness, safety and blocked workflows."
+    ],
+    "forbiddenInThisLoop": [
+      "Do not create API routes.",
+      "Do not create eBay client.",
+      "Do not implement OAuth.",
+      "Do not exchange tokens.",
+      "Do not store tokens.",
+      "Do not use environment variables.",
+      "Do not call eBay APIs.",
+      "Do not call Luna Portex APIs.",
+      "Do not create real drafts.",
+      "Do not publish listings.",
+      "Do not mutate listings.",
+      "Do not use external URLs.",
+      "Do not hardcode scopes, auth URLs, token URLs or API endpoints."
+    ],
+    "officialValidationPolicy": "Scopes, endpoints, consent behavior and token handling must be validated against official eBay documentation in a future implementation loop before any real integration code is written."
+  },
+  "connectionPhases": [
+    {
+      "phaseId": "design_only",
+      "label": "Design-only connection plan",
+      "status": "CURRENT",
+      "allowed": true,
+      "reason": "This loop defines the safety model without connecting to eBay."
+    },
+    {
+      "phaseId": "developer_account_confirmation",
+      "label": "Developer account confirmation",
+      "status": "PENDING",
+      "allowed": false,
+      "reason": "eBay developer account readiness has not been confirmed in this system."
+    },
+    {
+      "phaseId": "sandbox_application_configuration",
+      "label": "Sandbox application configuration",
+      "status": "PENDING",
+      "allowed": false,
+      "reason": "Sandbox application credentials are not configured and must not be added in this loop."
+    },
+    {
+      "phaseId": "oauth_read_only_consent_design",
+      "label": "OAuth read-only consent design",
+      "status": "PLANNED",
+      "allowed": false,
+      "reason": "OAuth design is allowed conceptually, but no OAuth implementation is allowed in this loop."
+    },
+    {
+      "phaseId": "token_handling_design",
+      "label": "Token handling design",
+      "status": "PLANNED",
+      "allowed": false,
+      "reason": "Token handling must be designed later without storing real secrets in code."
+    },
+    {
+      "phaseId": "read_only_connection_status",
+      "label": "Read-only connection status",
+      "status": "BLOCKED",
+      "allowed": false,
+      "reason": "Read-only status requires a future API/service loop after official eBay documentation validation."
+    },
+    {
+      "phaseId": "draft_mapping_dry_run",
+      "label": "Draft mapping dry run",
+      "status": "BLOCKED",
+      "allowed": false,
+      "reason": "Draft mapping dry run remains blocked until listing, commercial and image gates are approved."
+    },
+    {
+      "phaseId": "sandbox_draft_creation",
+      "label": "Sandbox draft creation",
+      "status": "BLOCKED",
+      "allowed": false,
+      "reason": "Sandbox draft creation must wait for approved gates, OAuth implementation and explicit human approval."
+    }
+  ],
+  "blockedWorkflows": [
+    {
+      "workflow": "ebay_oauth_flow",
+      "status": "BLOCKED",
+      "reason": "OAuth must not be implemented in this design-only loop."
+    },
+    {
+      "workflow": "ebay_token_exchange",
+      "status": "BLOCKED",
+      "reason": "Token exchange is not allowed before official documentation validation and a dedicated implementation loop."
+    },
+    {
+      "workflow": "ebay_token_storage",
+      "status": "BLOCKED",
+      "reason": "Token storage is not allowed in code or fixtures."
+    },
+    {
+      "workflow": "ebay_read_only_api_check",
+      "status": "BLOCKED",
+      "reason": "Read-only API checks require a future service/API loop."
+    },
+    {
+      "workflow": "ebay_draft_mapping",
+      "status": "BLOCKED",
+      "reason": "Draft mapping remains blocked until listing, commercial, product facts and image QA gates are approved."
+    },
+    {
+      "workflow": "ebay_draft_creation",
+      "status": "BLOCKED",
+      "reason": "No eBay draft can be created before sandbox connection, approved gates and human approval."
+    },
+    {
+      "workflow": "ebay_publication",
+      "status": "BLOCKED",
+      "reason": "No eBay publication is allowed before final explicit human approval."
+    }
+  ],
+  "requiredHumanActions": [
+    "Confirm eBay developer account readiness.",
+    "Validate official eBay OAuth documentation before implementation.",
+    "Validate required scopes against official eBay documentation before implementation.",
+    "Validate sandbox and production environment strategy before implementation.",
+    "Approve secure token handling design before any token storage exists.",
+    "Approve read-only connection status implementation plan.",
+    "Confirm that all product, commercial and image gates remain blocking before draft mapping.",
+    "Approve a future sandbox-only implementation loop before any eBay API code is created."
+  ],
+  "nextRecommendedLoop": {
+    "loop": "LOOP 109 \u2014 eBay Sandbox Read-Only Connection Status V1",
+    "reason": "After the design-only gate, the next step should be a sandbox/read-only connection status plan. It must still avoid draft creation and publication.",
+    "constraints": [
+      "No production connection.",
+      "No listing mutation.",
+      "No real draft creation.",
+      "No publication.",
+      "Validate official eBay documentation before implementation."
+    ]
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "designOnly": true,
+    "humanReviewRequired": true,
+    "sandboxFirstRequired": true,
+    "productionBlocked": true,
+    "oauthImplemented": false,
+    "oauthConsentCompleted": false,
+    "tokenExchangeImplemented": false,
+    "tokenStorageImplemented": false,
+    "environmentVariablesUsed": false,
+    "secretsIncluded": false,
+    "clientIdIncluded": false,
+    "clientSecretIncluded": false,
+    "refreshTokenIncluded": false,
+    "accessTokenIncluded": false,
+    "authUrlIncluded": false,
+    "tokenUrlIncluded": false,
+    "apiEndpointIncluded": false,
+    "scopesHardcoded": false,
+    "officialDocsValidationRequired": true,
+    "ebayApiUsed": false,
+    "lunaPortexApiUsed": false,
+    "openAiApiUsed": false,
+    "supabaseUsed": false,
+    "apiCallsMade": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false,
+    "draftMappingUnlocked": false,
+    "draftCreationUnlocked": false,
+    "publicationUnlocked": false,
+    "externalUrlsIncluded": false,
+    "customerDataIncluded": false,
+    "supplierPrivateDataIncluded": false
+  }
+}

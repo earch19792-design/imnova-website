@@ -2,6 +2,7 @@ import type {
   ReactNode,
 } from "react"
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
+import ebayOnlyConnectionDesign from "../../../tools/fixtures/ebay-only-connection-design-v1.json"
 import listingPackageSourceAwareRefresh from "../../../tools/fixtures/ebay-listing-package-source-aware-refresh-v1.json"
 import productSnapshot from "../../../tools/fixtures/ebay-luna-portex-product-snapshot-v1.json"
 import productFactsReadinessGate from "../../../tools/fixtures/ebay-luna-portex-product-facts-readiness-gate-v1.json"
@@ -229,6 +230,37 @@ const listingPackageSourceAwareGateLabels = {
   image_source_review: "Image Source Review Gate",
   main_image_enhancement: "Main Image Enhancement Brief",
   listing_qa: "Listing QA Review",
+}
+
+const ebayOnlyConnectionDesignCopy = {
+  title:
+    "eBay Only Connection Design",
+  connectionStatus:
+    "EBAY_CONNECTION_NOT_STARTED",
+  connectionDecision:
+    "DESIGN_ONLY_DO_NOT_CONNECT",
+  environmentStrategy:
+    "SANDBOX_FIRST",
+  authStatus:
+    "OAUTH_NOT_CONFIGURED",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  connectionSummary:
+    "eBay connection has not started",
+  sandboxFirst:
+    "Sandbox-first connection plan",
+  noOauth:
+    "No OAuth flow has been implemented",
+  noTokens:
+    "No tokens are stored",
+  noApiCalls:
+    "No eBay API calls are allowed",
+  officialValidation:
+    "Official eBay documentation validation required",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 109 — eBay Sandbox Read-Only Connection Status V1",
 }
 
 const imageSourceIntakeCopy = {
@@ -1639,6 +1671,253 @@ export default function EbayListingPackagePage() {
                 </h4>
                 <div className="mt-3">
                   <FieldGrid fields={Object.entries(listingPackageSourceAwareRefresh.safetyFlags)} />
+                </div>
+              </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="eBay Only Connection Design">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {ebayOnlyConnectionDesign.designVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {ebayOnlyConnectionDesignCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {ebayOnlyConnectionDesign.connectionSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayOnlyConnectionDesignCopy.connectionStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayOnlyConnectionDesignCopy.connectionDecision}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebayOnlyConnectionDesignCopy.environmentStrategy}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Connection status",
+                      ebayOnlyConnectionDesign.connectionStatus,
+                    ],
+                    [
+                      "Connection decision",
+                      ebayOnlyConnectionDesign.connectionDecision,
+                    ],
+                    [
+                      "Environment strategy",
+                      ebayOnlyConnectionDesign.environmentStrategy,
+                    ],
+                    [
+                      "Auth status",
+                      ebayOnlyConnectionDesign.authStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      ebayOnlyConnectionDesign.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      ebayOnlyConnectionDesign.publicationImpact,
+                    ],
+                    [
+                      ebayOnlyConnectionDesignCopy.sandboxFirst,
+                      ebayOnlyConnectionDesign.connectionReadiness
+                        .sandboxFirstRequired,
+                    ],
+                    [
+                      ebayOnlyConnectionDesignCopy.noOauth,
+                      ebayOnlyConnectionDesign.connectionReadiness
+                        .oauthFlowImplemented,
+                    ],
+                    [
+                      ebayOnlyConnectionDesignCopy.noTokens,
+                      ebayOnlyConnectionDesign.connectionReadiness
+                        .tokenStorageImplemented,
+                    ],
+                    [
+                      ebayOnlyConnectionDesignCopy.noApiCalls,
+                      ebayOnlyConnectionDesign.safetyFlags.ebayApiUsed,
+                    ],
+                    [
+                      ebayOnlyConnectionDesignCopy.officialValidation,
+                      ebayOnlyConnectionDesign.connectionReadiness
+                        .officialDocsValidationRequired,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Connection Readiness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebayOnlyConnectionDesign.connectionReadiness
+                    )}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Integration Boundaries
+                </h4>
+                <div className="mt-4 grid gap-4">
+                  <div>
+                    <h5 className="text-sm font-black text-white">
+                      Allowed in this loop
+                    </h5>
+                    <div className="mt-3">
+                      <ListBlock
+                        items={
+                          ebayOnlyConnectionDesign.integrationBoundaries
+                            .allowedInThisLoop
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <h5 className="text-sm font-black text-white">
+                      Forbidden in this loop
+                    </h5>
+                    <div className="mt-3">
+                      <ListBlock
+                        items={
+                          ebayOnlyConnectionDesign.integrationBoundaries
+                            .forbiddenInThisLoop
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <p className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.045] p-4 text-sm leading-6 text-amber-50/80">
+                    {
+                      ebayOnlyConnectionDesign.integrationBoundaries
+                        .officialValidationPolicy
+                    }
+                  </p>
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Connection Phases
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {ebayOnlyConnectionDesign.connectionPhases.map((phase) => (
+                  <article
+                    key={phase.phaseId}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <p className="break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+                      {phase.label}
+                    </p>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {phase.status}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-white/60">
+                      {phase.reason}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Workflows
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {ebayOnlyConnectionDesign.blockedWorkflows.map((workflow) => (
+                    <div
+                      key={workflow.workflow}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {workflow.workflow}
+                      </p>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {workflow.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {workflow.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Required Human Actions
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={ebayOnlyConnectionDesign.requiredHumanActions}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        ebayOnlyConnectionDesignCopy.nextRecommendedLoop,
+                        ebayOnlyConnectionDesign.nextRecommendedLoop.loop,
+                      ],
+                      [
+                        "Reason",
+                        ebayOnlyConnectionDesign.nextRecommendedLoop.reason,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebayOnlyConnectionDesign.nextRecommendedLoop.constraints
+                    }
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Compact Safety Flags
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebayOnlyConnectionDesign.safetyFlags
+                    )}
+                  />
                 </div>
               </article>
             </div>
