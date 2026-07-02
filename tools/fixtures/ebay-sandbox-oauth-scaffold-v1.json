@@ -1,0 +1,272 @@
+{
+  "scaffoldVersion": "EBAY_SANDBOX_OAUTH_SCAFFOLD_V1",
+  "caseId": "LISTING-GEN-001",
+  "secretEnvironmentStrategyVersion": "EBAY_SECRET_ENVIRONMENT_STRATEGY_V1",
+  "oauthFlowDesignVersion": "EBAY_SANDBOX_OAUTH_FLOW_DESIGN_V1",
+  "sandboxIntegrationReadinessVersion": "EBAY_SANDBOX_INTEGRATION_READINESS_V1",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "environment": "sandbox",
+  "scaffoldStatus": "OAUTH_SCAFFOLD_READY_BUT_DISABLED",
+  "scaffoldDecision": "SCAFFOLD_ONLY_DO_NOT_START_OAUTH",
+  "implementationMode": "DISABLED_STUBS_ONLY",
+  "routeStatus": "STUB_ROUTES_BLOCKED",
+  "authUrlStatus": "NO_AUTH_URL_GENERATED",
+  "callbackStatus": "CALLBACK_STUB_DOES_NOT_PROCESS_CODES",
+  "tokenStatus": "NO_TOKENS_CONFIGURED",
+  "apiStatus": "NO_EBAY_API_CALLS_MADE",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "scaffoldSummary": "Sandbox OAuth scaffold exists but is disabled. This loop may create internal blocked stubs only. No auth URL is generated. Callback route must not process authorization codes. No environment variables are read. No credentials, secrets, tokens or scopes are included. No eBay API calls are made. Token exchange, token storage, read-only connection, draft creation and publication remain blocked.",
+  "scaffoldReadiness": {
+    "scaffoldModelExists": true,
+    "pureScaffoldModuleAllowed": true,
+    "disabledStubRoutesAllowed": true,
+    "sandboxFirstRequired": true,
+    "productionBlocked": true,
+    "secretStrategyDesigned": true,
+    "secretStrategyApproved": false,
+    "sandboxCredentialsConfigured": false,
+    "environmentVariablesConfigured": false,
+    "oauthImplementationEnabled": false,
+    "authUrlGenerationEnabled": false,
+    "callbackProcessingEnabled": false,
+    "tokenExchangeEnabled": false,
+    "tokenStorageEnabled": false,
+    "readOnlyConnectionEnabled": false,
+    "draftMappingAllowed": false,
+    "draftCreationAllowed": false,
+    "publicationAllowed": false
+  },
+  "routeScaffold": {
+    "statusRoute": {
+      "path": "/api/admin/ebay/oauth/status",
+      "method": "GET",
+      "status": "STUB_ALLOWED",
+      "allowedBehavior": "Return static blocked scaffold status only.",
+      "forbiddenBehavior": "Do not read secrets, call eBay, generate auth URLs, exchange tokens or mutate data."
+    },
+    "startRoute": {
+      "path": "/api/admin/ebay/oauth/start",
+      "method": "POST",
+      "status": "STUB_BLOCKED",
+      "allowedBehavior": "Return blocked/not implemented response only.",
+      "forbiddenBehavior": "Do not redirect, do not generate auth URLs, do not read env vars and do not call eBay."
+    },
+    "callbackRoute": {
+      "path": "/api/admin/ebay/oauth/callback",
+      "method": "GET",
+      "status": "STUB_BLOCKED",
+      "allowedBehavior": "Return blocked/not implemented response only.",
+      "forbiddenBehavior": "Do not process query params, do not process authorization codes, do not exchange tokens and do not store tokens."
+    }
+  },
+  "blockedResponses": {
+    "statusPayload": {
+      "ok": false,
+      "blocked": true,
+      "code": "EBAY_OAUTH_SCAFFOLD_DISABLED",
+      "message": "Sandbox OAuth scaffold exists but is disabled."
+    },
+    "startPayload": {
+      "ok": false,
+      "blocked": true,
+      "code": "EBAY_OAUTH_START_BLOCKED",
+      "message": "OAuth start is blocked because sandbox credentials, redirect validation and secret strategy are not approved."
+    },
+    "callbackPayload": {
+      "ok": false,
+      "blocked": true,
+      "code": "EBAY_OAUTH_CALLBACK_BLOCKED",
+      "message": "OAuth callback handling is blocked. Authorization codes are not processed in this scaffold."
+    }
+  },
+  "requiredScaffoldChecks": [
+    {
+      "checkId": "secret_strategy_approved",
+      "label": "Secret strategy approved",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Secret strategy is designed but not approved for real credentials."
+    },
+    {
+      "checkId": "sandbox_credentials_configured",
+      "label": "Sandbox credentials configured",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Sandbox credentials are not configured."
+    },
+    {
+      "checkId": "redirect_configuration_validated",
+      "label": "Redirect configuration validated",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Redirect/RuName configuration is not validated."
+    },
+    {
+      "checkId": "minimum_scopes_validated",
+      "label": "Minimum scopes validated",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Minimum OAuth scopes are not validated against official eBay documentation."
+    },
+    {
+      "checkId": "auth_url_generation_approved",
+      "label": "Auth URL generation approved",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Auth URL generation has not been approved."
+    },
+    {
+      "checkId": "callback_processing_approved",
+      "label": "Callback processing approved",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Callback processing has not been approved."
+    },
+    {
+      "checkId": "token_exchange_approved",
+      "label": "Token exchange approved",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Token exchange is not approved."
+    },
+    {
+      "checkId": "token_storage_approved",
+      "label": "Token storage approved",
+      "status": "FAILED",
+      "requiredToUnlock": true,
+      "reason": "Token storage is not approved."
+    },
+    {
+      "checkId": "stub_routes_blocked",
+      "label": "Stub routes blocked",
+      "status": "PASSED",
+      "requiredToUnlock": true,
+      "reason": "Stub routes must remain blocked and non-operational."
+    },
+    {
+      "checkId": "draft_publication_block_confirmed",
+      "label": "Draft and publication block confirmed",
+      "status": "PASSED",
+      "requiredToUnlock": true,
+      "reason": "Draft creation and publication remain blocked."
+    }
+  ],
+  "blockedWorkflows": [
+    {
+      "workflow": "real_oauth_start",
+      "status": "BLOCKED",
+      "reason": "OAuth start remains blocked because no credentials, redirect validation or approved secret strategy exist."
+    },
+    {
+      "workflow": "auth_url_generation",
+      "status": "BLOCKED",
+      "reason": "No real auth URL may be generated in this loop."
+    },
+    {
+      "workflow": "real_callback_processing",
+      "status": "BLOCKED",
+      "reason": "Callback route must not process authorization codes in this scaffold."
+    },
+    {
+      "workflow": "token_exchange",
+      "status": "BLOCKED",
+      "reason": "Token exchange is not allowed."
+    },
+    {
+      "workflow": "token_storage",
+      "status": "BLOCKED",
+      "reason": "Token storage is not allowed."
+    },
+    {
+      "workflow": "read_only_connection_check",
+      "status": "BLOCKED",
+      "reason": "Read-only connection requires future credentials, OAuth and tokens."
+    },
+    {
+      "workflow": "ebay_draft_mapping",
+      "status": "BLOCKED",
+      "reason": "Draft mapping remains blocked."
+    },
+    {
+      "workflow": "ebay_draft_creation",
+      "status": "BLOCKED",
+      "reason": "Draft creation remains blocked."
+    },
+    {
+      "workflow": "ebay_publication",
+      "status": "BLOCKED",
+      "reason": "Publication remains blocked."
+    },
+    {
+      "workflow": "production_connection",
+      "status": "BLOCKED",
+      "reason": "Production remains blocked."
+    }
+  ],
+  "requiredHumanActions": [
+    "Approve secret strategy before real credentials are configured.",
+    "Configure sandbox credentials only in a secure server-only environment in a future loop.",
+    "Validate redirect/RuName configuration before enabling OAuth start.",
+    "Validate minimum OAuth scopes before enabling OAuth start.",
+    "Approve auth URL generation before enabling OAuth start.",
+    "Approve callback processing before processing authorization codes.",
+    "Approve token exchange and storage strategy before exchanging tokens.",
+    "Confirm stub routes remain blocked until a future explicit implementation loop.",
+    "Keep draft mapping, draft creation and publication blocked."
+  ],
+  "nextRecommendedLoop": {
+    "loop": "LOOP 115 \u2014 eBay Sandbox Credentials / Env Configuration V1",
+    "reason": "After disabled OAuth scaffold exists, the next step should prepare sandbox credentials and environment configuration outside code and fixtures.",
+    "constraints": [
+      "No credentials in Git.",
+      "No credentials in fixtures.",
+      "No credentials in frontend.",
+      "Server-only environment only.",
+      "No token exchange.",
+      "No eBay API calls.",
+      "No draft creation.",
+      "No publication."
+    ]
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "scaffoldOnly": true,
+    "disabledStubsOnly": true,
+    "readOnly": true,
+    "sandboxFirstRequired": true,
+    "productionBlocked": true,
+    "realOauthEnabled": false,
+    "authUrlGenerated": false,
+    "authRedirectPerformed": false,
+    "callbackProcessingEnabled": false,
+    "authorizationCodeProcessed": false,
+    "tokenExchangeImplemented": false,
+    "tokenStorageImplemented": false,
+    "environmentVariablesRead": false,
+    "credentialsIncluded": false,
+    "clientIdIncluded": false,
+    "clientSecretIncluded": false,
+    "accessTokenIncluded": false,
+    "refreshTokenIncluded": false,
+    "authUrlIncluded": false,
+    "callbackUrlIncluded": false,
+    "tokenUrlIncluded": false,
+    "apiEndpointIncluded": false,
+    "scopesHardcoded": false,
+    "secretsIncluded": false,
+    "sellerPasswordStored": false,
+    "ebayApiUsed": false,
+    "lunaPortexApiUsed": false,
+    "openAiApiUsed": false,
+    "supabaseUsed": false,
+    "apiCallsMade": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false,
+    "draftMappingUnlocked": false,
+    "draftCreationUnlocked": false,
+    "publicationUnlocked": false
+  }
+}

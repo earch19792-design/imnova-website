@@ -6,6 +6,7 @@ import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-e
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
 import ebayOnlyConnectionDesign from "../../../tools/fixtures/ebay-only-connection-design-v1.json"
 import ebaySandboxIntegrationReadiness from "../../../tools/fixtures/ebay-sandbox-integration-readiness-v1.json"
+import ebaySandboxOauthScaffold from "../../../tools/fixtures/ebay-sandbox-oauth-scaffold-v1.json"
 import ebaySandboxOauthFlowDesign from "../../../tools/fixtures/ebay-sandbox-oauth-flow-design-v1.json"
 import ebaySandboxReadOnlyConnectionStatus from "../../../tools/fixtures/ebay-sandbox-read-only-connection-status-v1.json"
 import listingPackageSourceAwareRefresh from "../../../tools/fixtures/ebay-listing-package-source-aware-refresh-v1.json"
@@ -408,6 +409,41 @@ const ebaySecretEnvironmentStrategyCopy = {
     "IMNOVA must never request or store seller passwords",
   nextRecommendedLoop:
     "Next recommended loop: LOOP 114 — eBay Sandbox OAuth Scaffold V1",
+}
+
+const ebaySandboxOauthScaffoldCopy = {
+  title:
+    "eBay Sandbox OAuth Scaffold",
+  scaffoldStatus:
+    "OAUTH_SCAFFOLD_READY_BUT_DISABLED",
+  scaffoldDecision:
+    "SCAFFOLD_ONLY_DO_NOT_START_OAUTH",
+  implementationMode:
+    "DISABLED_STUBS_ONLY",
+  routeStatus:
+    "STUB_ROUTES_BLOCKED",
+  authUrlStatus:
+    "NO_AUTH_URL_GENERATED",
+  callbackStatus:
+    "CALLBACK_STUB_DOES_NOT_PROCESS_CODES",
+  tokenStatus:
+    "NO_TOKENS_CONFIGURED",
+  apiStatus:
+    "NO_EBAY_API_CALLS_MADE",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  scaffoldSummary:
+    "Sandbox OAuth scaffold exists but is disabled",
+  noAuthUrl:
+    "No auth URL is generated",
+  noCallbackProcessing:
+    "Callback route must not process authorization codes",
+  noEnvironmentReads:
+    "No environment variables are read",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 115 — eBay Sandbox Credentials / Env Configuration V1",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -3139,6 +3175,267 @@ export default function EbayListingPackagePage() {
                   <FieldGrid
                     fields={Object.entries(
                       ebaySecretEnvironmentStrategy.safetyFlags
+                    )}
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="eBay Sandbox OAuth Scaffold">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {ebaySandboxOauthScaffold.scaffoldVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {ebaySandboxOauthScaffoldCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {ebaySandboxOauthScaffold.scaffoldSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxOauthScaffoldCopy.scaffoldStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxOauthScaffoldCopy.scaffoldDecision}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxOauthScaffoldCopy.implementationMode}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Scaffold status",
+                      ebaySandboxOauthScaffold.scaffoldStatus,
+                    ],
+                    [
+                      "Scaffold decision",
+                      ebaySandboxOauthScaffold.scaffoldDecision,
+                    ],
+                    [
+                      "Implementation mode",
+                      ebaySandboxOauthScaffold.implementationMode,
+                    ],
+                    [
+                      "Route status",
+                      ebaySandboxOauthScaffold.routeStatus,
+                    ],
+                    [
+                      "Auth URL status",
+                      ebaySandboxOauthScaffold.authUrlStatus,
+                    ],
+                    [
+                      "Callback status",
+                      ebaySandboxOauthScaffold.callbackStatus,
+                    ],
+                    [
+                      "Token status",
+                      ebaySandboxOauthScaffold.tokenStatus,
+                    ],
+                    [
+                      "API status",
+                      ebaySandboxOauthScaffold.apiStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      ebaySandboxOauthScaffold.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      ebaySandboxOauthScaffold.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+
+              <p className="mt-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.045] p-4 text-sm leading-6 text-cyan-50/80">
+                {ebaySandboxOauthScaffoldCopy.noAuthUrl}.{" "}
+                {ebaySandboxOauthScaffoldCopy.noCallbackProcessing}.{" "}
+                {ebaySandboxOauthScaffoldCopy.noEnvironmentReads}.
+              </p>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Scaffold Readiness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxOauthScaffold.scaffoldReadiness
+                    )}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Route Scaffold
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {Object.entries(ebaySandboxOauthScaffold.routeScaffold).map(
+                    ([routeKey, route]) => (
+                      <div
+                        key={routeKey}
+                        className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                      >
+                        <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                          {route.path}
+                        </p>
+                        <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                          {route.method} · {route.status}
+                        </p>
+                        <p className="mt-2 text-sm leading-6 text-white/60">
+                          {route.allowedBehavior}
+                        </p>
+                        <p className="mt-2 text-sm leading-6 text-white/50">
+                          {route.forbiddenBehavior}
+                        </p>
+                      </div>
+                    )
+                  )}
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Blocked Responses
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                {Object.entries(ebaySandboxOauthScaffold.blockedResponses).map(
+                  ([responseKey, payload]) => (
+                    <article
+                      key={responseKey}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                    >
+                      <p className="break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+                        {responseKey}
+                      </p>
+                      <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {payload.code}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {payload.message}
+                      </p>
+                    </article>
+                  )
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Required Scaffold Checks
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {ebaySandboxOauthScaffold.requiredScaffoldChecks.map((check) => (
+                  <article
+                    key={check.checkId}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <p className="break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+                      {check.label}
+                    </p>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {check.status}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-white/60">
+                      {check.reason}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Workflows
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {ebaySandboxOauthScaffold.blockedWorkflows.map((workflow) => (
+                    <div
+                      key={workflow.workflow}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {workflow.workflow}
+                      </p>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {workflow.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {workflow.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Required Human Actions
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebaySandboxOauthScaffold.requiredHumanActions
+                    }
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        ebaySandboxOauthScaffoldCopy.nextRecommendedLoop,
+                        ebaySandboxOauthScaffold.nextRecommendedLoop.loop,
+                      ],
+                      [
+                        "Reason",
+                        ebaySandboxOauthScaffold.nextRecommendedLoop.reason,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebaySandboxOauthScaffold.nextRecommendedLoop
+                        .constraints
+                    }
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Compact Safety Flags
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxOauthScaffold.safetyFlags
                     )}
                   />
                 </div>

@@ -600,6 +600,19 @@ const ebaySecretEnvironmentStrategyFixture =
     )
   )
 
+const ebaySandboxOauthScaffoldFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-sandbox-oauth-scaffold-v1.json"
+  )
+
+const ebaySandboxOauthScaffoldFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebaySandboxOauthScaffoldFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -7068,6 +7081,328 @@ test("ebay secret environment strategy fixture: no contiene URLs tokens endpoint
   }
 })
 
+test("ebay sandbox oauth scaffold fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebaySandboxOauthScaffoldFixturePath
+    )
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.scaffoldVersion,
+    "EBAY_SANDBOX_OAUTH_SCAFFOLD_V1"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.secretEnvironmentStrategyVersion,
+    "EBAY_SECRET_ENVIRONMENT_STRATEGY_V1"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.oauthFlowDesignVersion,
+    "EBAY_SANDBOX_OAUTH_FLOW_DESIGN_V1"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.sandboxIntegrationReadinessVersion,
+    "EBAY_SANDBOX_INTEGRATION_READINESS_V1"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.marketplace,
+    "ebay_us"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.environment,
+    "sandbox"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.scaffoldStatus,
+    "OAUTH_SCAFFOLD_READY_BUT_DISABLED"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.scaffoldDecision,
+    "SCAFFOLD_ONLY_DO_NOT_START_OAUTH"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.implementationMode,
+    "DISABLED_STUBS_ONLY"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.routeStatus,
+    "STUB_ROUTES_BLOCKED"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.authUrlStatus,
+    "NO_AUTH_URL_GENERATED"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.callbackStatus,
+    "CALLBACK_STUB_DOES_NOT_PROCESS_CODES"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.tokenStatus,
+    "NO_TOKENS_CONFIGURED"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.apiStatus,
+    "NO_EBAY_API_CALLS_MADE"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebaySandboxOauthScaffoldFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay sandbox oauth scaffold fixture: readiness mantiene OAuth deshabilitado", () => {
+  const readiness =
+    ebaySandboxOauthScaffoldFixture.scaffoldReadiness
+
+  for (const flagName of [
+    "scaffoldModelExists",
+    "pureScaffoldModuleAllowed",
+    "disabledStubRoutesAllowed",
+    "sandboxFirstRequired",
+    "productionBlocked",
+    "secretStrategyDesigned",
+  ]) {
+    assert.equal(
+      readiness[flagName],
+      true,
+      `${flagName} must be true`
+    )
+  }
+
+  for (const flagName of [
+    "secretStrategyApproved",
+    "sandboxCredentialsConfigured",
+    "environmentVariablesConfigured",
+    "oauthImplementationEnabled",
+    "authUrlGenerationEnabled",
+    "callbackProcessingEnabled",
+    "tokenExchangeEnabled",
+    "tokenStorageEnabled",
+    "readOnlyConnectionEnabled",
+    "draftMappingAllowed",
+    "draftCreationAllowed",
+    "publicationAllowed",
+  ]) {
+    assert.equal(
+      readiness[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("ebay sandbox oauth scaffold: modulo puro y rutas stub permanecen bloqueadas", () => {
+  const scaffoldFiles = [
+    "lib/ebay/oauth-scaffold.ts",
+    "app/api/admin/ebay/oauth/status/route.ts",
+    "app/api/admin/ebay/oauth/start/route.ts",
+    "app/api/admin/ebay/oauth/callback/route.ts",
+  ].map((filePath) => path.resolve(filePath))
+
+  for (const filePath of scaffoldFiles) {
+    assert.ok(
+      fs.existsSync(filePath),
+      `${filePath} must exist`
+    )
+
+    const source =
+      fs.readFileSync(
+        filePath,
+        "utf8"
+      )
+
+    for (const forbiddenPattern of [
+      /process\.env/,
+      /fetch\(/,
+      /NextResponse\.redirect/,
+      /redirect\(/,
+      /client_id/,
+      /client_secret/,
+      /access_token/,
+      /refresh_token/,
+      /Authorization:/,
+      /Bearer[ \t]+[A-Za-z0-9._-]+/,
+      /http:\/\//,
+      /https:\/\//,
+      /\.insert\(/,
+      /\.update\(/,
+      /\.delete\(/,
+      /\.upsert\(/,
+      /\.rpc\(/,
+    ]) {
+      assert.doesNotMatch(
+        source,
+        forbiddenPattern,
+        `${filePath} must not include ${forbiddenPattern}`
+      )
+    }
+  }
+
+  const allScaffoldSource =
+    scaffoldFiles
+      .map((filePath) =>
+        fs.readFileSync(
+          filePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const expectedCode of [
+    "EBAY_OAUTH_SCAFFOLD_DISABLED",
+    "EBAY_OAUTH_START_BLOCKED",
+    "EBAY_OAUTH_CALLBACK_BLOCKED",
+  ]) {
+    assert.ok(
+      allScaffoldSource.includes(expectedCode),
+      `missing scaffold code: ${expectedCode}`
+    )
+  }
+})
+
+test("ebay sandbox oauth scaffold fixture: checks y workflows siguen bloqueados", () => {
+  const requiredChecks =
+    ebaySandboxOauthScaffoldFixture.requiredScaffoldChecks
+
+  assert.equal(
+    requiredChecks.length,
+    10
+  )
+  for (const check of requiredChecks.slice(0, 8)) {
+    assert.equal(
+      check.status,
+      "FAILED"
+    )
+  }
+  for (const check of requiredChecks.slice(8)) {
+    assert.equal(
+      check.status,
+      "PASSED"
+    )
+  }
+  for (const check of requiredChecks) {
+    assert.equal(
+      check.requiredToUnlock,
+      true
+    )
+  }
+
+  const blockedWorkflows =
+    ebaySandboxOauthScaffoldFixture.blockedWorkflows
+
+  assert.equal(
+    blockedWorkflows.length,
+    10
+  )
+  for (const workflow of blockedWorkflows) {
+    assert.equal(
+      workflow.status,
+      "BLOCKED"
+    )
+  }
+})
+
+test("ebay sandbox oauth scaffold fixture: safety flags no habilitan OAuth real", () => {
+  const safetyFlags =
+    ebaySandboxOauthScaffoldFixture.safetyFlags
+
+  for (const flagName of [
+    "advisoryOnly",
+    "scaffoldOnly",
+    "disabledStubsOnly",
+    "readOnly",
+    "sandboxFirstRequired",
+    "productionBlocked",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      true,
+      `${flagName} must be true`
+    )
+  }
+
+  for (const flagName of [
+    "realOauthEnabled",
+    "authUrlGenerated",
+    "authRedirectPerformed",
+    "callbackProcessingEnabled",
+    "authorizationCodeProcessed",
+    "tokenExchangeImplemented",
+    "tokenStorageImplemented",
+    "environmentVariablesRead",
+    "credentialsIncluded",
+    "clientIdIncluded",
+    "clientSecretIncluded",
+    "accessTokenIncluded",
+    "refreshTokenIncluded",
+    "authUrlIncluded",
+    "callbackUrlIncluded",
+    "tokenUrlIncluded",
+    "apiEndpointIncluded",
+    "scopesHardcoded",
+    "secretsIncluded",
+    "sellerPasswordStored",
+    "ebayApiUsed",
+    "lunaPortexApiUsed",
+    "openAiApiUsed",
+    "supabaseUsed",
+    "apiCallsMade",
+    "realDraftCreated",
+    "publishedToEbay",
+    "listingMutated",
+    "draftMappingUnlocked",
+    "draftCreationUnlocked",
+    "publicationUnlocked",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("ebay sandbox oauth scaffold fixture: no contiene URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebaySandboxOauthScaffoldFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /client_id/,
+    /client_secret/,
+    /access_token/,
+    /refresh_token/,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -11159,6 +11494,10 @@ test("ebay listing package admin MVP: existe y usa fixtures seguros", () => {
   )
   assert.match(
     source,
+    /ebay-sandbox-oauth-scaffold-v1\.json/
+  )
+  assert.match(
+    source,
     /ebay-image-generation-service-design-v1\.json/
   )
   assert.match(
@@ -11310,6 +11649,7 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "eBay Sandbox Integration Readiness",
     "eBay Sandbox OAuth Flow Design",
     "eBay Secret and Environment Strategy",
+    "eBay Sandbox OAuth Scaffold",
     "eBay Sandbox Read-Only Connection Status",
     "Image Generation Service Design",
     "Connection Readiness",
@@ -11817,6 +12157,9 @@ test("ebay listing package admin MVP: muestra sandbox integration readiness", ()
     "Required Readiness Checks",
     "Required OAuth Checks",
     "Required Strategy Checks",
+    "Required Scaffold Checks",
+    "Route Scaffold",
+    "Blocked Responses",
     "Secret Categories",
     "Storage Rules",
     "Log Redaction Rules",
@@ -11907,6 +12250,44 @@ test("ebay listing package admin MVP: muestra secret environment strategy", () =
     assert.ok(
       source.includes(expectedText),
       `missing eBay secret environment strategy admin text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: muestra sandbox oauth scaffold", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "eBay Sandbox OAuth Scaffold",
+    "OAUTH_SCAFFOLD_READY_BUT_DISABLED",
+    "SCAFFOLD_ONLY_DO_NOT_START_OAUTH",
+    "DISABLED_STUBS_ONLY",
+    "STUB_ROUTES_BLOCKED",
+    "NO_AUTH_URL_GENERATED",
+    "CALLBACK_STUB_DOES_NOT_PROCESS_CODES",
+    "NO_TOKENS_CONFIGURED",
+    "NO_EBAY_API_CALLS_MADE",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "Sandbox OAuth scaffold exists but is disabled",
+    "No auth URL is generated",
+    "Callback route must not process authorization codes",
+    "No environment variables are read",
+    "Scaffold Readiness",
+    "Route Scaffold",
+    "Blocked Responses",
+    "Required Scaffold Checks",
+    "Blocked Workflows",
+    "Required Human Actions",
+    "Next recommended loop: LOOP 115 \u2014 eBay Sandbox Credentials / Env Configuration V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing eBay sandbox OAuth scaffold admin text: ${expectedText}`
     )
   }
 })
