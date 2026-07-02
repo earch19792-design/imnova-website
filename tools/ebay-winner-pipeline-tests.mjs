@@ -704,6 +704,19 @@ const ebayFirstListingDraftPreviewFixture =
     )
   )
 
+const ebayProductSourceAdapterSelectorFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-product-source-adapter-selector-v1.json"
+  )
+
+const ebayProductSourceAdapterSelectorFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayProductSourceAdapterSelectorFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -8883,6 +8896,207 @@ test("ebay first listing draft preview fixture: no contiene URLs tokens endpoint
   }
 })
 
+test("ebay product source adapter selector fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayProductSourceAdapterSelectorFixturePath
+    )
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.adapterVersion,
+    "EBAY_PRODUCT_SOURCE_ADAPTER_SELECTOR_V1"
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.sourceAdapterStatus,
+    "PRODUCT_SOURCE_ADAPTER_READY_READ_ONLY"
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.selectorStatus,
+    "PRODUCT_SELECTOR_READY_NO_LIVE_SELECTION_YET"
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.sourceOfTruthStatus,
+    "PRODUCTS_MODULE_IS_SOURCE_OF_TRUTH"
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.listingUsageDecision,
+    "USE_PRODUCT_FACTS_BY_REFERENCE_DO_NOT_DUPLICATE_AS_TRUTH"
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay product source adapter selector fixture: arquitectura y selector read-only", () => {
+  for (const expectedRule of [
+    "Products decide what the product is.",
+    "Listing decides how the product sells on eBay.",
+    "Benchmark decides what is working in the market.",
+    "Gates decide whether the listing can advance.",
+  ]) {
+    assert.ok(
+      Object.values(
+        ebayProductSourceAdapterSelectorFixture.architecturePolicy
+      ).includes(expectedRule)
+    )
+  }
+
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.productSelectorContract
+      .selectorMode,
+    "READ_ONLY_SELECTOR_CONTRACT"
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.selectedProductPreview
+      .productName.value,
+    "Storage Organizer"
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.selectedProductPreview
+      .supplier.value,
+    "Portex"
+  )
+})
+
+test("ebay product source adapter selector fixture: bridge contract mantiene gates bloqueados", () => {
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.listingBridgeInputContract
+      .generatorCanUseSelectedProduct,
+    true
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.listingBridgeInputContract
+      .generatorCanGeneratePreview,
+    true
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.listingBridgeInputContract
+      .generatorCanGenerateFinalContent,
+    false
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.safetyFlags
+      .productSelectorContractCreated,
+    true
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.safetyFlags
+      .liveProductReadEnabled,
+    false
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.safetyFlags
+      .productFactsDuplicatedAsTruth,
+    false
+  )
+  assert.equal(
+    ebayProductSourceAdapterSelectorFixture.safetyFlags
+      .usesProductFactsByReference,
+    true
+  )
+})
+
+test("ebay product source adapter selector module: modulo puro sin integraciones reales", () => {
+  const modulePath =
+    path.resolve(
+      "lib/ebay/product-source-adapter.ts"
+    )
+
+  assert.ok(
+    fs.existsSync(modulePath)
+  )
+
+  const source =
+    fs.readFileSync(
+      modulePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "getProductSourceAdapterSummary",
+    "getProductSelectorContract",
+    "getSelectedProductPreviewContract",
+    "getBlockedProductSourceAdapterResponse",
+    "readOnly",
+    "sourceAdapterOnly",
+    "productSelectorContractCreated",
+    "liveProductReadEnabled",
+    "usesProductFactsByReference",
+    "productFactsDuplicatedAsTruth",
+    "generatorCanGeneratePreview",
+    "generatorCanGenerateFinalContent",
+    "readyForDraft",
+    "readyForPublication",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing product source adapter module text: ${expectedText}`
+    )
+  }
+
+  for (const forbiddenPattern of [
+    /process\.env/,
+    /fetch\(/,
+    /createClient/,
+    /new OpenAI/,
+    /openai/i,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /console\.log/,
+    /console\.error/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern
+    )
+  }
+})
+
+test("ebay product source adapter selector fixture: no contiene URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebayProductSourceAdapterSelectorFixturePath,
+      "lib/ebay/product-source-adapter.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -14020,6 +14234,45 @@ test("ebay listing package admin MVP: muestra first ebay listing draft preview",
   assert.doesNotMatch(
     source,
     /First eBay Listing Draft Preview[\s\S]{0,5000}onClick=/
+  )
+})
+
+test("ebay listing package admin MVP: muestra product source adapter selector", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "ebay-product-source-adapter-selector-v1.json",
+    "Product Source Adapter / Selector",
+    "PRODUCT_SOURCE_ADAPTER_READY_READ_ONLY",
+    "PRODUCT_SELECTOR_READY_NO_LIVE_SELECTION_YET",
+    "PRODUCTS_MODULE_IS_SOURCE_OF_TRUTH",
+    "USE_PRODUCT_FACTS_BY_REFERENCE_DO_NOT_DUPLICATE_AS_TRUTH",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "Products decide what the product is",
+    "Listing decides how the product sells on eBay",
+    "Benchmark decides what is working in the market",
+    "Gates decide whether the listing can advance",
+    "Product Selector Contract",
+    "Selected Product Preview",
+    "Listing Bridge Input Contract",
+    "Blocked Because",
+    "Required Human Actions",
+    "Next recommended loop: LOOP 122 \u2014 Live Product Selector Read-Only V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing product source adapter selector admin text: ${expectedText}`
+    )
+  }
+
+  assert.doesNotMatch(
+    source,
+    /Product Source Adapter \/ Selector[\s\S]{0,5000}onClick=/
   )
 })
 

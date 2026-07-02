@@ -7,6 +7,7 @@ import firstListingContentFinalization from "../../../tools/fixtures/ebay-first-
 import listingGeneratorDryRun from "../../../tools/fixtures/ebay-listing-generator-service-dry-run-v1.json"
 import productListingBridge from "../../../tools/fixtures/ebay-product-to-listing-bridge-draft-preview-v1.json"
 import firstListingDraftPreview from "../../../tools/fixtures/ebay-first-listing-draft-preview-v1.json"
+import productSourceAdapterSelector from "../../../tools/fixtures/ebay-product-source-adapter-selector-v1.json"
 import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -688,6 +689,43 @@ const firstListingDraftPreviewCopy = {
     "Required human actions",
   nextRecommendedLoop:
     "Next recommended loop: LOOP 121 — Real Product Source Adapter / Product Selector V1",
+}
+
+const productSourceAdapterSelectorCopy = {
+  title:
+    "Product Source Adapter / Selector",
+  sourceAdapterStatus:
+    "PRODUCT_SOURCE_ADAPTER_READY_READ_ONLY",
+  selectorStatus:
+    "PRODUCT_SELECTOR_READY_NO_LIVE_SELECTION_YET",
+  sourceOfTruthStatus:
+    "PRODUCTS_MODULE_IS_SOURCE_OF_TRUTH",
+  listingUsageDecision:
+    "USE_PRODUCT_FACTS_BY_REFERENCE_DO_NOT_DUPLICATE_AS_TRUTH",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  productsRule:
+    "Products decide what the product is",
+  listingRule:
+    "Listing decides how the product sells on eBay",
+  benchmarkRule:
+    "Benchmark decides what is working in the market",
+  gatesRule:
+    "Gates decide whether the listing can advance",
+  productSelectorContract:
+    "Product Selector Contract",
+  selectedProductPreview:
+    "Selected Product Preview",
+  listingBridgeInputContract:
+    "Listing Bridge Input Contract",
+  blockedBecause:
+    "Blocked Because",
+  requiredHumanActions:
+    "Required Human Actions",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 122 — Live Product Selector Read-Only V1",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -5444,6 +5482,369 @@ export default function EbayListingPackagePage() {
                 </div>
               </article>
             </div>
+          </div>
+        </Section>
+
+        <Section title="Product Source Adapter / Selector">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {productSourceAdapterSelector.adapterVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {productSourceAdapterSelectorCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {productSourceAdapterSelector.adapterSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {productSourceAdapterSelectorCopy.sourceAdapterStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {productSourceAdapterSelectorCopy.selectorStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {productSourceAdapterSelectorCopy.listingUsageDecision}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Source adapter status",
+                      productSourceAdapterSelector.sourceAdapterStatus,
+                    ],
+                    [
+                      "Selector status",
+                      productSourceAdapterSelector.selectorStatus,
+                    ],
+                    [
+                      "Source of truth status",
+                      productSourceAdapterSelector.sourceOfTruthStatus,
+                    ],
+                    [
+                      "Listing usage decision",
+                      productSourceAdapterSelector.listingUsageDecision,
+                    ],
+                    [
+                      "Draft impact",
+                      productSourceAdapterSelector.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      productSourceAdapterSelector.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Architecture Policy
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Products",
+                        productSourceAdapterSelector.architecturePolicy
+                          .productsRule,
+                      ],
+                      [
+                        "Listing",
+                        productSourceAdapterSelector.architecturePolicy
+                          .listingRule,
+                      ],
+                      [
+                        "Benchmark",
+                        productSourceAdapterSelector.architecturePolicy
+                          .benchmarkRule,
+                      ],
+                      [
+                        "Gates",
+                        productSourceAdapterSelector.architecturePolicy
+                          .gatesRule,
+                      ],
+                      [
+                        "Operating principle",
+                        productSourceAdapterSelector.architecturePolicy
+                          .operatingPrinciple,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Product Source Audit
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Audit status",
+                        productSourceAdapterSelector.productSourceAudit
+                          .auditStatus,
+                      ],
+                      [
+                        "Live product read enabled",
+                        productSourceAdapterSelector.productSourceAudit
+                          .liveProductReadEnabledInThisLoop,
+                      ],
+                      [
+                        "Supabase write allowed",
+                        productSourceAdapterSelector.productSourceAudit
+                          .supabaseWriteAllowed,
+                      ],
+                      [
+                        "Fallback mode",
+                        productSourceAdapterSelector.productSourceAudit
+                          .fallbackMode,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      productSourceAdapterSelector.productSourceAudit.auditNotes
+                    }
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {productSourceAdapterSelectorCopy.productSelectorContract}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Selector mode",
+                        productSourceAdapterSelector.productSelectorContract
+                          .selectorMode,
+                      ],
+                      [
+                        "Selection status",
+                        productSourceAdapterSelector.productSelectorContract
+                          .selectionStatus,
+                      ],
+                      [
+                        "Selected product ID",
+                        productSourceAdapterSelector.productSelectorContract
+                          .selectedProductId,
+                      ],
+                      [
+                        "Selected product source",
+                        productSourceAdapterSelector.productSelectorContract
+                          .selectedProductSource,
+                      ],
+                      [
+                        "Field policy",
+                        productSourceAdapterSelector.productSelectorContract
+                          .fieldPolicy,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      productSourceAdapterSelector.productSelectorContract
+                        .requiredProductFields
+                    }
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {productSourceAdapterSelectorCopy.selectedProductPreview}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Preview mode",
+                        productSourceAdapterSelector.selectedProductPreview
+                          .previewMode,
+                      ],
+                      [
+                        "Product ID",
+                        productSourceAdapterSelector.selectedProductPreview
+                          .productId,
+                      ],
+                      [
+                        "Product name",
+                        productSourceAdapterSelector.selectedProductPreview
+                          .productName.value,
+                      ],
+                      [
+                        "Product type",
+                        productSourceAdapterSelector.selectedProductPreview
+                          .productType.value,
+                      ],
+                      [
+                        "Condition",
+                        productSourceAdapterSelector.selectedProductPreview
+                          .condition.value,
+                      ],
+                      [
+                        "Package quantity",
+                        productSourceAdapterSelector.selectedProductPreview
+                          .packageQuantity.value,
+                      ],
+                      [
+                        "Supplier",
+                        productSourceAdapterSelector.selectedProductPreview
+                          .supplier.value,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-3xl border border-cyan-300/20 bg-cyan-300/[0.04] p-5">
+              <h4 className="text-sm font-black text-white">
+                {productSourceAdapterSelectorCopy.listingBridgeInputContract}
+              </h4>
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <h5 className="text-sm font-black text-white">
+                    Allowed confirmed facts
+                  </h5>
+                  <div className="mt-3">
+                    <ListBlock
+                      items={
+                        productSourceAdapterSelector.listingBridgeInputContract
+                          .allowedConfirmedFacts
+                      }
+                    />
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <h5 className="text-sm font-black text-white">
+                    Blocked unconfirmed facts
+                  </h5>
+                  <div className="mt-3">
+                    <ListBlock
+                      items={
+                        productSourceAdapterSelector.listingBridgeInputContract
+                          .blockedUnconfirmedFacts
+                      }
+                    />
+                  </div>
+                </article>
+              </div>
+
+              <div className="mt-4">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Input mode",
+                      productSourceAdapterSelector.listingBridgeInputContract
+                        .inputMode,
+                    ],
+                    [
+                      "Can use selected product",
+                      productSourceAdapterSelector.listingBridgeInputContract
+                        .generatorCanUseSelectedProduct,
+                    ],
+                    [
+                      "Can generate preview",
+                      productSourceAdapterSelector.listingBridgeInputContract
+                        .generatorCanGeneratePreview,
+                    ],
+                    [
+                      "Can generate final content",
+                      productSourceAdapterSelector.listingBridgeInputContract
+                        .generatorCanGenerateFinalContent,
+                    ],
+                    [
+                      "Can build draft payload",
+                      productSourceAdapterSelector.listingBridgeInputContract
+                        .generatorCanBuildDraftPayload,
+                    ],
+                    [
+                      "Can create draft",
+                      false,
+                    ],
+                    [
+                      "Can publish",
+                      productSourceAdapterSelector.listingBridgeInputContract
+                        .generatorCanPublish,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {productSourceAdapterSelectorCopy.blockedBecause}
+                </h4>
+                <div className="mt-4">
+                  <ListBlock items={productSourceAdapterSelector.blockedBecause} />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {productSourceAdapterSelectorCopy.requiredHumanActions}
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={productSourceAdapterSelector.requiredHumanActions}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Next Recommended Loop
+              </h4>
+              <div className="mt-3">
+                <FieldGrid
+                  fields={[
+                    [
+                      productSourceAdapterSelectorCopy.nextRecommendedLoop,
+                      productSourceAdapterSelector.nextRecommendedLoop.loop,
+                    ],
+                    [
+                      "Reason",
+                      productSourceAdapterSelector.nextRecommendedLoop.reason,
+                    ],
+                    [
+                      "Expected outcome",
+                      productSourceAdapterSelector.nextRecommendedLoop
+                        .expectedOutcome,
+                    ],
+                  ]}
+                />
+              </div>
+              <div className="mt-4">
+                <ListBlock
+                  items={productSourceAdapterSelector.nextRecommendedLoop.constraints}
+                />
+              </div>
+            </article>
           </div>
         </Section>
 
