@@ -1,0 +1,381 @@
+{
+  "bridgeVersion": "EBAY_PRODUCT_TO_LISTING_BRIDGE_DRAFT_PREVIEW_V1",
+  "caseId": "LISTING-GEN-001",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "bridgeStatus": "PRODUCT_TO_LISTING_BRIDGE_DRY_RUN_READY",
+  "bridgeDecision": "CONNECT_PRODUCT_SOURCE_TO_LISTING_GENERATOR_DO_NOT_CREATE_DRAFT",
+  "previewStatus": "GENERATED_DRY_RUN_PREVIEW_NOT_PUBLISHABLE",
+  "sourceOfTruthStatus": "PRODUCTS_SOURCE_OF_TRUTH_REQUIRED",
+  "dryRunMode": "PRODUCT_SOURCE_CONTRACT_NO_EXTERNAL_CALLS",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "bridgeSummary": "Product to Listing bridge is ready in dry run. The bridge connects a product source-of-truth contract to the listing generator. A limited listing draft preview may be generated only from confirmed product facts. Unconfirmed dimensions, materials, compatibility, warranty, certifications and performance claims must remain blocked. The preview is not publishable. No eBay draft is created. No external calls are made.",
+  "architecturePolicy": {
+    "productsRule": "Products decide what the product is.",
+    "listingRule": "Listing decides how the product sells on eBay.",
+    "benchmarkRule": "Benchmark decides what is working in the market.",
+    "gatesRule": "Gates decide whether the listing can advance.",
+    "operatingPrinciple": "Benchmark can suggest. Listing can adapt. Products must confirm. Gates must approve.",
+    "sourceOfTruthRule": "The listing module must reference product facts instead of duplicating or inventing them.",
+    "bridgeRole": "The bridge passes confirmed product facts into the listing generator and blocks unconfirmed facts."
+  },
+  "productSourceContract": {
+    "sourceMode": "SAFE_INTERNAL_DRY_RUN_PRODUCT_CONTRACT",
+    "sourceModule": "IMNOVA_PRODUCTS_MODULE",
+    "supplierSource": "PORTEX_FACTS_REQUIRED",
+    "productId": "PRODUCT-SOURCE-DRYRUN-001",
+    "supplierSkuStatus": "PLACEHOLDER_NOT_READY_FOR_PUBLICATION",
+    "productFactAuthority": "Products module and Portex facts",
+    "productName": {
+      "status": "CONFIRMED_FOR_DRY_RUN_ONLY",
+      "value": "Storage Organizer"
+    },
+    "productType": {
+      "status": "CONFIRMED_FOR_DRY_RUN_ONLY",
+      "value": "storage organizer"
+    },
+    "condition": {
+      "status": "CONFIRMED_FOR_DRY_RUN_ONLY",
+      "value": "New"
+    },
+    "packageQuantity": {
+      "status": "CONFIRMED_FOR_DRY_RUN_ONLY",
+      "value": "1 Pack"
+    },
+    "dimensions": {
+      "status": "UNCONFIRMED_BLOCKED",
+      "valueIncluded": false
+    },
+    "weight": {
+      "status": "UNCONFIRMED_BLOCKED",
+      "valueIncluded": false
+    },
+    "material": {
+      "status": "UNCONFIRMED_BLOCKED",
+      "valueIncluded": false
+    },
+    "compatibility": {
+      "status": "UNCONFIRMED_BLOCKED",
+      "valueIncluded": false
+    },
+    "warranty": {
+      "status": "UNCONFIRMED_BLOCKED",
+      "valueIncluded": false
+    },
+    "certifications": {
+      "status": "UNCONFIRMED_BLOCKED",
+      "valueIncluded": false
+    },
+    "performanceClaims": {
+      "status": "UNCONFIRMED_BLOCKED",
+      "valueIncluded": false
+    },
+    "imageSource": {
+      "status": "IMAGE_QA_NOT_APPROVED",
+      "valueIncluded": false
+    },
+    "commercialInputs": {
+      "status": "COMMERCIAL_READINESS_NOT_APPROVED",
+      "valueIncluded": false
+    }
+  },
+  "confirmedFactsUsed": [
+    {
+      "factId": "product_name",
+      "source": "productSourceContract.productName",
+      "value": "Storage Organizer",
+      "usedInPreview": true
+    },
+    {
+      "factId": "product_type",
+      "source": "productSourceContract.productType",
+      "value": "storage organizer",
+      "usedInPreview": true
+    },
+    {
+      "factId": "condition",
+      "source": "productSourceContract.condition",
+      "value": "New",
+      "usedInPreview": true
+    },
+    {
+      "factId": "package_quantity",
+      "source": "productSourceContract.packageQuantity",
+      "value": "1 Pack",
+      "usedInPreview": true
+    }
+  ],
+  "blockedUnconfirmedFacts": [
+    {
+      "factId": "dimensions",
+      "status": "BLOCKED_UNTIL_CONFIRMED_BY_PRODUCTS_OR_PORTEX",
+      "usedInPreview": false,
+      "reason": "Dimensions must be confirmed by Products or Portex before listing use."
+    },
+    {
+      "factId": "weight",
+      "status": "BLOCKED_UNTIL_CONFIRMED_BY_PRODUCTS_OR_PORTEX",
+      "usedInPreview": false,
+      "reason": "Weight must be confirmed before shipping or item specifics use."
+    },
+    {
+      "factId": "material",
+      "status": "BLOCKED_UNTIL_CONFIRMED_BY_PRODUCTS_OR_PORTEX",
+      "usedInPreview": false,
+      "reason": "Material must be confirmed before item specifics or claims use."
+    },
+    {
+      "factId": "compatibility",
+      "status": "BLOCKED_UNTIL_CONFIRMED_BY_PRODUCTS_OR_PORTEX",
+      "usedInPreview": false,
+      "reason": "Compatibility must be confirmed before listing use."
+    },
+    {
+      "factId": "warranty",
+      "status": "BLOCKED_UNTIL_CONFIRMED_BY_PRODUCTS_OR_PORTEX",
+      "usedInPreview": false,
+      "reason": "Warranty claims require confirmed source facts and approval."
+    },
+    {
+      "factId": "certifications",
+      "status": "BLOCKED_UNTIL_CONFIRMED_BY_PRODUCTS_OR_PORTEX",
+      "usedInPreview": false,
+      "reason": "Certifications must be confirmed before listing use."
+    },
+    {
+      "factId": "waterproof_claim",
+      "status": "BLOCKED_UNTIL_CONFIRMED_BY_PRODUCTS_OR_PORTEX",
+      "usedInPreview": false,
+      "reason": "Waterproof claims are blocked until confirmed by product facts."
+    },
+    {
+      "factId": "heavy_duty_claim",
+      "status": "BLOCKED_UNTIL_CONFIRMED_BY_PRODUCTS_OR_PORTEX",
+      "usedInPreview": false,
+      "reason": "Heavy duty claims are blocked until confirmed by product facts."
+    },
+    {
+      "factId": "brand_claim",
+      "status": "BLOCKED_UNTIL_CONFIRMED_BY_PRODUCTS_OR_PORTEX",
+      "usedInPreview": false,
+      "reason": "Brand claims are blocked until legally allowed and confirmed."
+    },
+    {
+      "factId": "performance_claims",
+      "status": "BLOCKED_UNTIL_CONFIRMED_BY_PRODUCTS_OR_PORTEX",
+      "usedInPreview": false,
+      "reason": "Performance claims require confirmed facts and risk review."
+    },
+    {
+      "factId": "image_package",
+      "status": "BLOCKED_UNTIL_CONFIRMED_BY_PRODUCTS_OR_PORTEX",
+      "usedInPreview": false,
+      "reason": "Image package remains blocked until image QA is approved."
+    },
+    {
+      "factId": "price",
+      "status": "BLOCKED_UNTIL_CONFIRMED_BY_PRODUCTS_OR_PORTEX",
+      "usedInPreview": false,
+      "reason": "Price requires commercial readiness approval."
+    },
+    {
+      "factId": "shipping_policy",
+      "status": "BLOCKED_UNTIL_CONFIRMED_BY_PRODUCTS_OR_PORTEX",
+      "usedInPreview": false,
+      "reason": "Shipping policy must be confirmed before draft readiness."
+    },
+    {
+      "factId": "return_policy",
+      "status": "BLOCKED_UNTIL_CONFIRMED_BY_PRODUCTS_OR_PORTEX",
+      "usedInPreview": false,
+      "reason": "Return policy must be confirmed before draft readiness."
+    }
+  ],
+  "listingGeneratorInput": {
+    "inputMode": "CONFIRMED_FACTS_ONLY",
+    "generatorVersion": "EBAY_LISTING_GENERATOR_SERVICE_DRY_RUN_V1",
+    "productId": "PRODUCT-SOURCE-DRYRUN-001",
+    "allowedFacts": [
+      "product_name",
+      "product_type",
+      "condition",
+      "package_quantity"
+    ],
+    "blockedFacts": [
+      "dimensions",
+      "weight",
+      "material",
+      "compatibility",
+      "warranty",
+      "certifications",
+      "performance_claims",
+      "image_package",
+      "price",
+      "shipping_policy",
+      "return_policy"
+    ],
+    "allowBenchmarkKeywords": false,
+    "reasonBenchmarkKeywordsBlocked": "Benchmark data is not loaded in this loop.",
+    "allowFinalContent": false,
+    "allowDraftMapping": false,
+    "allowDraftCreation": false,
+    "allowPublication": false
+  },
+  "generatedListingDraftPreview": {
+    "previewGenerated": true,
+    "previewType": "LIMITED_DRY_RUN_PREVIEW_FROM_CONFIRMED_FACTS_ONLY",
+    "publishable": false,
+    "finalContent": false,
+    "titleCandidate": {
+      "status": "GENERATED_PREVIEW_NOT_FINAL",
+      "value": "Storage Organizer, New, 1 Pack",
+      "factsUsed": [
+        "product_name",
+        "condition",
+        "package_quantity"
+      ],
+      "blockedTermsNotUsed": [
+        "waterproof",
+        "heavy duty",
+        "exact dimensions",
+        "material",
+        "brand names",
+        "warranty",
+        "certified"
+      ]
+    },
+    "keywordPlan": {
+      "status": "POLICY_ONLY_BENCHMARK_NOT_LOADED",
+      "coreKeywords": [
+        "storage organizer"
+      ],
+      "secondaryKeywords": [],
+      "riskKeywords": [],
+      "blockedKeywords": [
+        "waterproof",
+        "heavy duty",
+        "brand names",
+        "exact dimensions"
+      ]
+    },
+    "descriptionDraft": {
+      "status": "GENERATED_LIMITED_PREVIEW_NOT_FINAL",
+      "sections": [
+        {
+          "section": "Product overview",
+          "text": "This dry run preview is based only on confirmed product facts: Storage Organizer, New condition and 1 Pack quantity."
+        },
+        {
+          "section": "Blocked details",
+          "text": "Dimensions, weight, material, compatibility, warranty, certifications, images, price, shipping and returns remain blocked until confirmed."
+        }
+      ]
+    },
+    "itemSpecificsDraft": {
+      "status": "PARTIAL_PREVIEW_ONLY",
+      "specifics": [
+        {
+          "name": "Type",
+          "value": "Storage Organizer",
+          "source": "product_source_contract",
+          "final": false
+        },
+        {
+          "name": "Condition",
+          "value": "New",
+          "source": "product_source_contract",
+          "final": false
+        },
+        {
+          "name": "Quantity",
+          "value": "1 Pack",
+          "source": "product_source_contract",
+          "final": false
+        }
+      ],
+      "blockedSpecifics": [
+        "Brand",
+        "Material",
+        "Dimensions",
+        "Weight",
+        "Color",
+        "Model",
+        "MPN",
+        "Compatibility"
+      ]
+    },
+    "pricePreview": {
+      "status": "BLOCKED_BY_COMMERCIAL_READINESS",
+      "valueIncluded": false
+    },
+    "shippingReturnsPreview": {
+      "status": "BLOCKED_BY_POLICY_CONFIRMATION",
+      "valueIncluded": false
+    },
+    "imagePackagePreview": {
+      "status": "BLOCKED_BY_IMAGE_QA",
+      "valueIncluded": false
+    }
+  },
+  "gateResult": {
+    "canGeneratePreview": true,
+    "canGenerateFinalListing": false,
+    "canCreateEbayDraft": false,
+    "canPublishToEbay": false,
+    "readinessScore": 25,
+    "blockingGates": [
+      "product_facts_not_fully_approved",
+      "commercial_readiness_not_approved",
+      "benchmark_data_not_loaded",
+      "image_qa_not_approved",
+      "shipping_returns_not_confirmed",
+      "risk_compliance_not_approved",
+      "ebay_connection_not_authorized"
+    ]
+  },
+  "requiredHumanActions": [
+    "Confirm real product ID from Products module.",
+    "Confirm Portex product facts.",
+    "Confirm dimensions, weight and material.",
+    "Confirm condition and quantity.",
+    "Load benchmark data before final keyword strategy.",
+    "Approve category and item specifics.",
+    "Confirm price, margin, fees and shipping costs.",
+    "Approve shipping and return policies.",
+    "Complete compliance and VeRO review.",
+    "Approve image QA.",
+    "Keep eBay draft creation blocked until all gates approve."
+  ],
+  "nextRecommendedLoop": {
+    "loop": "LOOP 120 \u2014 First eBay Listing Draft Preview V1",
+    "reason": "After the bridge exists, expand the generated preview into a richer listing draft preview using confirmed product facts, approved keyword policy and explicit blocked fields.",
+    "expectedOutcome": "A visible draft preview with title, keyword plan, description, item specifics, blocked fields and readiness score, still without eBay API or draft creation."
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "dryRunOnly": true,
+    "bridgeOnly": true,
+    "previewGenerated": true,
+    "publishable": false,
+    "finalContentGenerated": false,
+    "usesConfirmedFactsOnly": true,
+    "unconfirmedFactsBlocked": true,
+    "productFactsDuplicatedAsTruth": false,
+    "productSourceOfTruthRequired": true,
+    "benchmarkDataLoaded": false,
+    "benchmarkKeywordsUsed": false,
+    "competitorContentCopied": false,
+    "competitorImagesCopied": false,
+    "portexFactsRequiredForTechnicalClaims": true,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "supabaseUsed": false,
+    "openAiUsed": false,
+    "externalCallsMade": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}
