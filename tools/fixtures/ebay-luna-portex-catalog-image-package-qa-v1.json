@@ -1,0 +1,247 @@
+{
+  "imagePackageVersion": "EBAY_LUNA_PORTEX_CATALOG_IMAGE_PACKAGE_QA_V1",
+  "caseId": "LISTING-GEN-001",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "sourceListingGeneratorVersion": "EBAY_REAL_PRODUCT_LISTING_GENERATOR_INTEGRATION_V1",
+  "imagePackageStatus": "LUNA_PORTEX_CATALOG_IMAGE_PACKAGE_QA_READY",
+  "visualSourceDecision": "USE_LUNA_PORTEX_CATALOG_IMAGE_AS_VISUAL_SOURCE_OF_TRUTH",
+  "mainImagePolicyStatus": "SOURCE_BASED_MAIN_IMAGE_OPTIMIZATION_ALLOWED",
+  "secondaryImagePolicyStatus": "AI_ASSISTED_SECONDARY_IMAGES_ALLOWED_FROM_CATALOG_SOURCE_ONLY",
+  "imageQaStatus": "IMAGE_QA_GATES_ACTIVE_IMAGES_NOT_GENERATED",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "imagePackageSummary": "Luna Portex catalog image package policy is ready. Luna Portex catalog image is the visual source of truth. Main image optimization is allowed only as source-based enhancement from catalog image. Main image must look like a real ecommerce product photo, not AI-generated. Secondary images may be AI-assisted only from the catalog source image and must preserve exact product fidelity. No image generation, image upload, eBay API, draft creation or publication occurs in this loop. Image QA gates block advancement if source image, realism, fidelity or rights/authorization are not approved.",
+  "architecturePolicy": {
+    "productsRule": "Products decide what the product is.",
+    "listingRule": "Listing decides how the product sells on eBay.",
+    "benchmarkRule": "Benchmark decides what is working in the market.",
+    "gatesRule": "Gates decide whether the listing can advance.",
+    "operatingPrinciple": "Benchmark can suggest. Listing can adapt. Products must confirm. Gates must approve.",
+    "visualSourceOfTruthRule": "Luna Portex catalog image is the visual source of truth for listing images.",
+    "mainImageRule": "The main image can be optimized only from the Luna Portex catalog source image and must look like a real ecommerce product photo.",
+    "secondaryImageRule": "Secondary images can be AI-assisted only from the catalog source image and must preserve exact product fidelity.",
+    "qaGateRule": "Image QA blocks draft payload, eBay draft creation and publication until approved."
+  },
+  "lunaPortexCatalogSourcePolicy": {
+    "sourceName": "Luna Portex Catalog",
+    "sourceType": "supplier_catalog_image_reference",
+    "visualSourceOfTruth": true,
+    "catalogImageRequired": true,
+    "catalogImageUrlStoredInFixture": false,
+    "catalogImageDownloadAllowedInThisLoop": false,
+    "externalImageFetchAllowedInThisLoop": false,
+    "imageRightsStatus": "REQUIRES_CONFIRMATION_OR_AUTHORIZATION",
+    "sourceReferenceStatus": "CATALOG_SOURCE_REFERENCE_REQUIRED",
+    "allowedUse": [
+      "main_image_source_based_optimization",
+      "secondary_image_generation_reference",
+      "image_qa_review"
+    ],
+    "forbiddenUse": [
+      "invent_product_from_scratch",
+      "change_product_shape",
+      "change_product_color",
+      "change_product_material",
+      "change_product_texture",
+      "change_product_logo",
+      "invent_accessories",
+      "invent_variants",
+      "make_product_look_ai_generated"
+    ]
+  },
+  "mainImageOptimizationPolicy": {
+    "mainImageSource": "LUNA_PORTEX_CATALOG_IMAGE",
+    "optimizationAllowed": true,
+    "optimizationType": "SOURCE_BASED_ENHANCEMENT_ONLY",
+    "mustLookPhotorealistic": true,
+    "mustNotLookAiGenerated": true,
+    "mustNotBeGeneratedFromScratch": true,
+    "requirements": [
+      "pure_or_clean_white_background",
+      "centered_product",
+      "high_sharpness",
+      "improved_lighting",
+      "faithful_color",
+      "real_proportions",
+      "no_promotional_text",
+      "no_extra_graphics",
+      "no_third_party_logos_added",
+      "no_watermarks",
+      "realistic_ecommerce_photo_style"
+    ],
+    "blockedIf": [
+      "no_catalog_source_image",
+      "looks_ai_generated",
+      "looks_like_render",
+      "changes_product_shape",
+      "changes_product_color",
+      "changes_material_or_texture",
+      "adds_accessories",
+      "adds_unconfirmed_features",
+      "uses_text_or_badges",
+      "low_resolution",
+      "unclear_product_edges",
+      "rights_or_authorization_not_confirmed"
+    ],
+    "imageGeneratedInThisLoop": false,
+    "imageUploadedInThisLoop": false
+  },
+  "secondaryImagePackagePlan": {
+    "packageType": "SIX_SECONDARY_CONVERSION_IMAGES",
+    "source": "LUNA_PORTEX_CATALOG_IMAGE",
+    "aiAssistedAllowed": true,
+    "mustPreserveExactProductFidelity": true,
+    "mustNotInventAccessories": true,
+    "mustNotInventVariants": true,
+    "targetFormat": {
+      "aspectRatio": "1:1",
+      "recommendedResolution": "1600x1600",
+      "textAllowed": "dimensions_image_only"
+    },
+    "images": [
+      {
+        "imageNumber": 1,
+        "name": "Material / Texture Zoom",
+        "purpose": "Show material texture, finish and quality.",
+        "status": "PLANNED_NOT_GENERATED"
+      },
+      {
+        "imageNumber": 2,
+        "name": "Package Contents",
+        "purpose": "Show what is included in the shipment without inventing contents.",
+        "status": "PLANNED_NOT_GENERATED"
+      },
+      {
+        "imageNumber": 3,
+        "name": "Dimensions / Measurements",
+        "purpose": "Show confirmed dimensions only.",
+        "status": "PLANNED_NOT_GENERATED",
+        "textAllowed": true,
+        "blockedUntilDimensionsConfirmed": true
+      },
+      {
+        "imageNumber": 4,
+        "name": "Main Benefit In Action",
+        "purpose": "Show the problem solved visually without unsupported claims.",
+        "status": "PLANNED_NOT_GENERATED"
+      },
+      {
+        "imageNumber": 5,
+        "name": "Aspirational Lifestyle",
+        "purpose": "Show the product in a realistic aspirational usage context.",
+        "status": "PLANNED_NOT_GENERATED"
+      },
+      {
+        "imageNumber": 6,
+        "name": "Real Use With Human Hands",
+        "purpose": "Show scale and ease of use in a realistic context.",
+        "status": "PLANNED_NOT_GENERATED"
+      }
+    ],
+    "generationImpact": "DO_NOT_GENERATE_IMAGES_IN_THIS_LOOP",
+    "uploadImpact": "DO_NOT_UPLOAD_IMAGES"
+  },
+  "imageQaGates": {
+    "catalogSourceAvailable": false,
+    "catalogSourceAuthorized": false,
+    "mainImageOptimized": false,
+    "mainImagePhotorealistic": false,
+    "mainImageNotAiLooking": false,
+    "productFidelityApproved": false,
+    "secondaryImagePlanReady": true,
+    "secondaryImagesGenerated": false,
+    "dimensionsConfirmedForMeasurementImage": false,
+    "imagePackageReadyForDraftPayload": false,
+    "imagePackageReadyForEbayUpload": false,
+    "canGenerateImagePrompts": true,
+    "canGenerateActualImages": false,
+    "canUploadImages": false,
+    "canBuildDraftPayloadWithImages": false,
+    "canCreateEbayDraft": false,
+    "canPublishToEbay": false,
+    "blockingGates": [
+      "catalog_image_source_not_confirmed",
+      "image_rights_or_authorization_not_confirmed",
+      "main_image_not_optimized",
+      "photorealism_qa_not_approved",
+      "product_fidelity_qa_not_approved",
+      "secondary_images_not_generated",
+      "dimensions_not_confirmed",
+      "image_upload_not_allowed"
+    ]
+  },
+  "blockedBecause": [
+    "catalog_image_source_not_confirmed",
+    "luna_portex_image_reference_required",
+    "image_rights_or_authorization_not_confirmed",
+    "main_image_optimization_not_completed",
+    "main_image_photorealism_not_approved",
+    "main_image_ai_looking_risk_not_checked",
+    "product_fidelity_not_approved",
+    "secondary_images_not_generated",
+    "dimensions_not_confirmed_for_measurement_image",
+    "image_upload_not_allowed",
+    "ebay_connection_not_authorized",
+    "draft_payload_blocked"
+  ],
+  "requiredHumanActions": [
+    "Confirm Luna Portex catalog image source for selected product.",
+    "Confirm rights/authorization to use Luna Portex catalog images for resale listing.",
+    "Confirm main catalog image selected for optimization.",
+    "Approve source-based main image enhancement rules.",
+    "Confirm the main image looks like a real ecommerce photo, not AI-generated.",
+    "Confirm product fidelity: shape, color, material, texture, logo, scale and proportions.",
+    "Confirm dimensions before creating measurement image.",
+    "Approve secondary image package plan.",
+    "Keep image generation blocked until catalog source is available.",
+    "Keep image upload blocked until image QA approves.",
+    "Keep eBay draft and publication blocked."
+  ],
+  "nextRecommendedLoop": {
+    "loop": "LOOP 125 — eBay Draft Payload Dry Run Builder V1",
+    "reason": "After listing content, product facts and image package QA policy exist, the next step is to build a local non-submitted eBay draft payload preview.",
+    "expectedOutcome": "The system can show a complete draft payload preview including content fields, product facts, image package readiness, blocked fields and gates without calling eBay.",
+    "constraints": [
+      "No eBay API.",
+      "No OAuth.",
+      "No tokens.",
+      "No real draft creation.",
+      "No publication.",
+      "No image upload.",
+      "No Supabase write.",
+      "No migrations.",
+      "Products remain source of truth.",
+      "Luna Portex catalog image remains visual source of truth."
+    ]
+  },
+  "safetyFlags": {
+    "advisoryOnly": true,
+    "imagePolicyOnly": true,
+    "catalogImageSourceRequired": true,
+    "lunaPortexCatalogImageIsVisualSourceOfTruth": true,
+    "mainImageSourceBasedOptimizationAllowed": true,
+    "mainImageGeneratedFromScratch": false,
+    "mainImageMustNotLookAiGenerated": true,
+    "secondaryImagesAiAssistedAllowedFromCatalogSourceOnly": true,
+    "exactProductFidelityRequired": true,
+    "productShapeChangedAllowed": false,
+    "productColorChangedAllowed": false,
+    "productMaterialChangedAllowed": false,
+    "inventAccessoriesAllowed": false,
+    "inventVariantsAllowed": false,
+    "imageGenerationUsed": false,
+    "imageUploadUsed": false,
+    "externalImageFetchUsed": false,
+    "scraperUsed": false,
+    "supabaseWriteUsed": false,
+    "migrationCreated": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "openAiUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "listingMutated": false
+  }
+}

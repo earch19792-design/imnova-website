@@ -10,6 +10,7 @@ import firstListingDraftPreview from "../../../tools/fixtures/ebay-first-listing
 import productSourceAdapterSelector from "../../../tools/fixtures/ebay-product-source-adapter-selector-v1.json"
 import liveProductSelectorReadOnly from "../../../tools/fixtures/ebay-live-product-selector-read-only-v1.json"
 import realProductListingGeneratorIntegration from "../../../tools/fixtures/ebay-real-product-listing-generator-integration-v1.json"
+import lunaPortexCatalogImagePackageQa from "../../../tools/fixtures/ebay-luna-portex-catalog-image-package-qa-v1.json"
 import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -800,6 +801,41 @@ const realProductListingGeneratorIntegrationCopy = {
     "Readiness score",
   nextRecommendedLoop:
     "Next recommended loop: LOOP 124 — eBay Draft Payload Dry Run Builder V1",
+}
+
+const lunaPortexCatalogImagePackageQaCopy = {
+  title:
+    "Luna Portex Catalog Image Package + eBay Image QA",
+  imagePackageVersion:
+    "EBAY_LUNA_PORTEX_CATALOG_IMAGE_PACKAGE_QA_V1",
+  imagePackageStatus:
+    "LUNA_PORTEX_CATALOG_IMAGE_PACKAGE_QA_READY",
+  visualSourceDecision:
+    "USE_LUNA_PORTEX_CATALOG_IMAGE_AS_VISUAL_SOURCE_OF_TRUTH",
+  mainImagePolicyStatus:
+    "SOURCE_BASED_MAIN_IMAGE_OPTIMIZATION_ALLOWED",
+  secondaryImagePolicyStatus:
+    "AI_ASSISTED_SECONDARY_IMAGES_ALLOWED_FROM_CATALOG_SOURCE_ONLY",
+  imageQaStatus:
+    "IMAGE_QA_GATES_ACTIVE_IMAGES_NOT_GENERATED",
+  visualSourceTruth:
+    "Luna Portex Catalog Image = visual source of truth",
+  mainImagePolicy:
+    "Main image policy",
+  secondaryImagePackagePlan:
+    "Secondary image package plan",
+  imageQaGates:
+    "Image QA gates",
+  blockedReasons:
+    "Blocked reasons",
+  requiredHumanActions:
+    "Required human actions",
+  photorealismRule:
+    "must look photorealistic",
+  aiLookRule:
+    "must not look AI-generated",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 125 — eBay Draft Payload Dry Run Builder V1",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -6692,6 +6728,401 @@ export default function EbayListingPackagePage() {
                           .expectedOutcome,
                       ],
                     ]}
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Luna Portex Catalog Image Package + eBay Image QA">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {lunaPortexCatalogImagePackageQaCopy.imagePackageVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {lunaPortexCatalogImagePackageQaCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {lunaPortexCatalogImagePackageQa.imagePackageSummary}
+                  </p>
+                  <p className="mt-4 text-sm font-bold text-cyan-100/80">
+                    {lunaPortexCatalogImagePackageQaCopy.visualSourceTruth}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {lunaPortexCatalogImagePackageQaCopy.imagePackageStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {lunaPortexCatalogImagePackageQaCopy.mainImagePolicyStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {lunaPortexCatalogImagePackageQaCopy.imageQaStatus}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Image package version",
+                      lunaPortexCatalogImagePackageQa.imagePackageVersion,
+                    ],
+                    [
+                      "Image package status",
+                      lunaPortexCatalogImagePackageQa.imagePackageStatus,
+                    ],
+                    [
+                      "Visual source decision",
+                      lunaPortexCatalogImagePackageQa.visualSourceDecision,
+                    ],
+                    [
+                      "Main image policy status",
+                      lunaPortexCatalogImagePackageQa.mainImagePolicyStatus,
+                    ],
+                    [
+                      "Secondary image policy status",
+                      lunaPortexCatalogImagePackageQa.secondaryImagePolicyStatus,
+                    ],
+                    [
+                      "Image QA status",
+                      lunaPortexCatalogImagePackageQa.imageQaStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      lunaPortexCatalogImagePackageQa.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      lunaPortexCatalogImagePackageQa.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Architecture Policy
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Products",
+                        lunaPortexCatalogImagePackageQa.architecturePolicy
+                          .productsRule,
+                      ],
+                      [
+                        "Listing",
+                        lunaPortexCatalogImagePackageQa.architecturePolicy
+                          .listingRule,
+                      ],
+                      [
+                        "Benchmark",
+                        lunaPortexCatalogImagePackageQa.architecturePolicy
+                          .benchmarkRule,
+                      ],
+                      [
+                        "Gates",
+                        lunaPortexCatalogImagePackageQa.architecturePolicy
+                          .gatesRule,
+                      ],
+                      [
+                        "Visual source rule",
+                        lunaPortexCatalogImagePackageQa.architecturePolicy
+                          .visualSourceOfTruthRule,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Luna Portex Catalog Source Policy
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Source name",
+                        lunaPortexCatalogImagePackageQa
+                          .lunaPortexCatalogSourcePolicy.sourceName,
+                      ],
+                      [
+                        "Source type",
+                        lunaPortexCatalogImagePackageQa
+                          .lunaPortexCatalogSourcePolicy.sourceType,
+                      ],
+                      [
+                        "Visual source of truth",
+                        lunaPortexCatalogImagePackageQa
+                          .lunaPortexCatalogSourcePolicy.visualSourceOfTruth,
+                      ],
+                      [
+                        "Catalog image required",
+                        lunaPortexCatalogImagePackageQa
+                          .lunaPortexCatalogSourcePolicy.catalogImageRequired,
+                      ],
+                      [
+                        "Catalog image URL stored in fixture",
+                        lunaPortexCatalogImagePackageQa
+                          .lunaPortexCatalogSourcePolicy.catalogImageUrlStoredInFixture,
+                      ],
+                      [
+                        "External image fetch allowed",
+                        lunaPortexCatalogImagePackageQa
+                          .lunaPortexCatalogSourcePolicy.externalImageFetchAllowedInThisLoop,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {lunaPortexCatalogImagePackageQaCopy.mainImagePolicy}
+                </h4>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  Main image comes from Luna Portex catalog source. It may be enhanced or optimized but not generated from scratch. It {lunaPortexCatalogImagePackageQaCopy.photorealismRule} and {lunaPortexCatalogImagePackageQaCopy.aiLookRule}.
+                </p>
+                <div className="mt-4">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Main image source",
+                        lunaPortexCatalogImagePackageQa
+                          .mainImageOptimizationPolicy.mainImageSource,
+                      ],
+                      [
+                        "Optimization allowed",
+                        lunaPortexCatalogImagePackageQa
+                          .mainImageOptimizationPolicy.optimizationAllowed,
+                      ],
+                      [
+                        "Optimization type",
+                        lunaPortexCatalogImagePackageQa
+                          .mainImageOptimizationPolicy.optimizationType,
+                      ],
+                      [
+                        "Must look photorealistic",
+                        lunaPortexCatalogImagePackageQa
+                          .mainImageOptimizationPolicy.mustLookPhotorealistic,
+                      ],
+                      [
+                        "Must not look AI-generated",
+                        lunaPortexCatalogImagePackageQa
+                          .mainImageOptimizationPolicy.mustNotLookAiGenerated,
+                      ],
+                      [
+                        "Must not be generated from scratch",
+                        lunaPortexCatalogImagePackageQa
+                          .mainImageOptimizationPolicy.mustNotBeGeneratedFromScratch,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      lunaPortexCatalogImagePackageQa.mainImageOptimizationPolicy
+                        .requirements
+                    }
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {lunaPortexCatalogImagePackageQaCopy.secondaryImagePackagePlan}
+                </h4>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  Secondary images may be AI-assisted only from catalog source. Exact product fidelity is required.
+                </p>
+                <div className="mt-4">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Package type",
+                        lunaPortexCatalogImagePackageQa.secondaryImagePackagePlan
+                          .packageType,
+                      ],
+                      [
+                        "Source",
+                        lunaPortexCatalogImagePackageQa.secondaryImagePackagePlan
+                          .source,
+                      ],
+                      [
+                        "AI-assisted allowed",
+                        lunaPortexCatalogImagePackageQa.secondaryImagePackagePlan
+                          .aiAssistedAllowed,
+                      ],
+                      [
+                        "Exact product fidelity required",
+                        lunaPortexCatalogImagePackageQa.secondaryImagePackagePlan
+                          .mustPreserveExactProductFidelity,
+                      ],
+                      [
+                        "Generation impact",
+                        lunaPortexCatalogImagePackageQa.secondaryImagePackagePlan
+                          .generationImpact,
+                      ],
+                      [
+                        "Upload impact",
+                        lunaPortexCatalogImagePackageQa.secondaryImagePackagePlan
+                          .uploadImpact,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Planned Secondary Images
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {lunaPortexCatalogImagePackageQa.secondaryImagePackagePlan.images.map((image) => (
+                  <article
+                    key={image.imageNumber}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <p className="text-sm font-black text-white">
+                      {image.imageNumber}. {image.name}
+                    </p>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {image.status}
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-white/60">
+                      {image.purpose}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {lunaPortexCatalogImagePackageQaCopy.imageQaGates}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Catalog source available",
+                        lunaPortexCatalogImagePackageQa.imageQaGates
+                          .catalogSourceAvailable,
+                      ],
+                      [
+                        "Catalog source authorized",
+                        lunaPortexCatalogImagePackageQa.imageQaGates
+                          .catalogSourceAuthorized,
+                      ],
+                      [
+                        "Main image optimized",
+                        lunaPortexCatalogImagePackageQa.imageQaGates
+                          .mainImageOptimized,
+                      ],
+                      [
+                        "Main image photorealistic",
+                        lunaPortexCatalogImagePackageQa.imageQaGates
+                          .mainImagePhotorealistic,
+                      ],
+                      [
+                        "Product fidelity approved",
+                        lunaPortexCatalogImagePackageQa.imageQaGates
+                          .productFidelityApproved,
+                      ],
+                      [
+                        "Can generate actual images",
+                        lunaPortexCatalogImagePackageQa.imageQaGates
+                          .canGenerateActualImages,
+                      ],
+                      [
+                        "Can upload images",
+                        lunaPortexCatalogImagePackageQa.imageQaGates
+                          .canUploadImages,
+                      ],
+                      [
+                        "Can build draft payload with images",
+                        lunaPortexCatalogImagePackageQa.imageQaGates
+                          .canBuildDraftPayloadWithImages,
+                      ],
+                      [
+                        "Can create eBay draft",
+                        lunaPortexCatalogImagePackageQa.imageQaGates
+                          .canCreateEbayDraft,
+                      ],
+                      [
+                        "Can publish to eBay",
+                        lunaPortexCatalogImagePackageQa.imageQaGates
+                          .canPublishToEbay,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {lunaPortexCatalogImagePackageQaCopy.blockedReasons}
+                </h4>
+                <div className="mt-4">
+                  <ListBlock items={lunaPortexCatalogImagePackageQa.blockedBecause} />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {lunaPortexCatalogImagePackageQaCopy.requiredHumanActions}
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={lunaPortexCatalogImagePackageQa.requiredHumanActions}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        lunaPortexCatalogImagePackageQaCopy.nextRecommendedLoop,
+                        lunaPortexCatalogImagePackageQa.nextRecommendedLoop.loop,
+                      ],
+                      [
+                        "Reason",
+                        lunaPortexCatalogImagePackageQa.nextRecommendedLoop.reason,
+                      ],
+                      [
+                        "Expected outcome",
+                        lunaPortexCatalogImagePackageQa.nextRecommendedLoop
+                          .expectedOutcome,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={lunaPortexCatalogImagePackageQa.nextRecommendedLoop.constraints}
                   />
                 </div>
               </article>
