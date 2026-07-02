@@ -9,6 +9,7 @@ import productListingBridge from "../../../tools/fixtures/ebay-product-to-listin
 import firstListingDraftPreview from "../../../tools/fixtures/ebay-first-listing-draft-preview-v1.json"
 import productSourceAdapterSelector from "../../../tools/fixtures/ebay-product-source-adapter-selector-v1.json"
 import liveProductSelectorReadOnly from "../../../tools/fixtures/ebay-live-product-selector-read-only-v1.json"
+import realProductListingGeneratorIntegration from "../../../tools/fixtures/ebay-real-product-listing-generator-integration-v1.json"
 import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -762,6 +763,43 @@ const liveProductSelectorReadOnlyCopy = {
     "No product mutation is allowed from the listing selector",
   nextRecommendedLoop:
     "Next recommended loop: LOOP 123 — Real Product Facts Mapping to Listing Generator V1",
+}
+
+const realProductListingGeneratorIntegrationCopy = {
+  title:
+    "Real Product Listing Generator Integration",
+  integrationVersion:
+    "EBAY_REAL_PRODUCT_LISTING_GENERATOR_INTEGRATION_V1",
+  integrationStatus:
+    "REAL_PRODUCT_LISTING_GENERATOR_INTEGRATION_READY",
+  productReadDecision:
+    "READ_PRODUCTS_ONLY_SAFE_FALLBACK_IF_UNAVAILABLE",
+  factsMappingStatus:
+    "PRODUCT_FACTS_MAPPING_READY_WITH_MISSING_FIELD_BLOCKERS",
+  generatorStatus:
+    "LISTING_PREVIEW_FROM_SELECTED_PRODUCT_READY",
+  gatesStatus:
+    "READINESS_GATES_ACTIVE_DRAFT_BLOCKED",
+  generatedListingPreview:
+    "Generated Listing Preview",
+  titlePreview:
+    "Title preview",
+  basicKeywordPlan:
+    "Basic keyword plan",
+  descriptionPreview:
+    "Description preview",
+  itemSpecificsPreview:
+    "Item specifics preview",
+  missingProductFacts:
+    "Missing Product Facts",
+  blockedListingFields:
+    "Blocked Listing Fields",
+  readinessGates:
+    "Readiness Gates",
+  readinessScore:
+    "Readiness score",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 124 — eBay Draft Payload Dry Run Builder V1",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -6235,6 +6273,429 @@ export default function EbayListingPackagePage() {
                 />
               </div>
             </article>
+          </div>
+        </Section>
+
+        <Section title="Real Product Listing Generator Integration">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {realProductListingGeneratorIntegrationCopy.integrationVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {realProductListingGeneratorIntegrationCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {realProductListingGeneratorIntegration.integrationSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {realProductListingGeneratorIntegrationCopy.integrationStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {realProductListingGeneratorIntegrationCopy.productReadDecision}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {realProductListingGeneratorIntegrationCopy.gatesStatus}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Integration version",
+                      realProductListingGeneratorIntegration.integrationVersion,
+                    ],
+                    [
+                      "Integration status",
+                      realProductListingGeneratorIntegration.integrationStatus,
+                    ],
+                    [
+                      "Product read decision",
+                      realProductListingGeneratorIntegration.productReadDecision,
+                    ],
+                    [
+                      "Facts mapping status",
+                      realProductListingGeneratorIntegration.factsMappingStatus,
+                    ],
+                    [
+                      "Generator status",
+                      realProductListingGeneratorIntegration.generatorStatus,
+                    ],
+                    [
+                      "Gates status",
+                      realProductListingGeneratorIntegration.gatesStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      realProductListingGeneratorIntegration.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      realProductListingGeneratorIntegration.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Products Source Of Truth Policy
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Products",
+                        realProductListingGeneratorIntegration.architecturePolicy
+                          .productsRule,
+                      ],
+                      [
+                        "Listing",
+                        realProductListingGeneratorIntegration.architecturePolicy
+                          .listingRule,
+                      ],
+                      [
+                        "Benchmark",
+                        realProductListingGeneratorIntegration.architecturePolicy
+                          .benchmarkRule,
+                      ],
+                      [
+                        "Gates",
+                        realProductListingGeneratorIntegration.architecturePolicy
+                          .gatesRule,
+                      ],
+                      [
+                        "Facts reference rule",
+                        realProductListingGeneratorIntegration.architecturePolicy
+                          .factsReferenceRule,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Product List / Read Status
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Products service",
+                        realProductListingGeneratorIntegration.readOnlyProductSource
+                          .productsService,
+                      ],
+                      [
+                        "Recommended read function",
+                        realProductListingGeneratorIntegration.readOnlyProductSource
+                          .recommendedReadFunction,
+                      ],
+                      [
+                        "Read mode",
+                        realProductListingGeneratorIntegration.readOnlyProductSource
+                          .readMode,
+                      ],
+                      [
+                        "Live read attempt allowed",
+                        realProductListingGeneratorIntegration.readOnlyProductSource
+                          .liveReadAttemptAllowed,
+                      ],
+                      [
+                        "Safe fallback required",
+                        realProductListingGeneratorIntegration.readOnlyProductSource
+                          .safeFallbackRequired,
+                      ],
+                      [
+                        "Writes allowed",
+                        realProductListingGeneratorIntegration.readOnlyProductSource
+                          .writesAllowed,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Selected Product Reference
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Selection mode",
+                        realProductListingGeneratorIntegration.selectedProductReference
+                          .selectionMode,
+                      ],
+                      [
+                        "Source",
+                        realProductListingGeneratorIntegration.selectedProductReference
+                          .source,
+                      ],
+                      [
+                        "Fallback product ID",
+                        realProductListingGeneratorIntegration.selectedProductReference
+                          .fallbackProductId,
+                      ],
+                      [
+                        "Fallback product name",
+                        realProductListingGeneratorIntegration.selectedProductReference
+                          .fallbackProductName,
+                      ],
+                      [
+                        "Fallback supplier",
+                        realProductListingGeneratorIntegration.selectedProductReference
+                          .fallbackSupplier,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <h5 className="text-sm font-bold text-white">
+                    {realProductListingGeneratorIntegrationCopy.missingProductFacts}
+                  </h5>
+                  <div className="mt-3">
+                    <ListBlock
+                      items={
+                        realProductListingGeneratorIntegration
+                          .selectedProductReference.factsMissingOrBlocked
+                      }
+                    />
+                  </div>
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {realProductListingGeneratorIntegrationCopy.generatedListingPreview}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Preview mode",
+                        realProductListingGeneratorIntegration.generatedListingPreview
+                          .previewMode,
+                      ],
+                      [
+                        "Preview generated",
+                        realProductListingGeneratorIntegration.generatedListingPreview
+                          .previewGenerated,
+                      ],
+                      [
+                        "Publishable",
+                        realProductListingGeneratorIntegration.generatedListingPreview
+                          .publishable,
+                      ],
+                      [
+                        "Final content generated",
+                        realProductListingGeneratorIntegration.generatedListingPreview
+                          .finalContentGenerated,
+                      ],
+                      [
+                        realProductListingGeneratorIntegrationCopy.titlePreview,
+                        realProductListingGeneratorIntegration.generatedListingPreview
+                          .titleGeneration.exampleFallbackTitle,
+                      ],
+                      [
+                        "Title status",
+                        realProductListingGeneratorIntegration.generatedListingPreview
+                          .titleGeneration.status,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-3">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {realProductListingGeneratorIntegrationCopy.basicKeywordPlan}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Status",
+                        realProductListingGeneratorIntegration.generatedListingPreview
+                          .keywordPlan.status,
+                      ],
+                      [
+                        "Benchmark keywords used",
+                        realProductListingGeneratorIntegration.generatedListingPreview
+                          .keywordPlan.benchmarkKeywordsUsed,
+                      ],
+                      [
+                        "Competitor content copied",
+                        realProductListingGeneratorIntegration.generatedListingPreview
+                          .keywordPlan.competitorContentCopied,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {realProductListingGeneratorIntegrationCopy.descriptionPreview}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Status",
+                        realProductListingGeneratorIntegration.generatedListingPreview
+                          .descriptionPreview.status,
+                      ],
+                      [
+                        "Rule",
+                        realProductListingGeneratorIntegration.generatedListingPreview
+                          .descriptionPreview.rule,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {realProductListingGeneratorIntegrationCopy.itemSpecificsPreview}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Status",
+                        realProductListingGeneratorIntegration.generatedListingPreview
+                          .itemSpecificsPreview.status,
+                      ],
+                      [
+                        "Rule",
+                        realProductListingGeneratorIntegration.generatedListingPreview
+                          .itemSpecificsPreview.rule,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {realProductListingGeneratorIntegrationCopy.blockedListingFields}
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={realProductListingGeneratorIntegration.blockedFields.map(
+                      (field) => `${field.fieldId}: ${field.status}`
+                    )}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {realProductListingGeneratorIntegrationCopy.readinessGates}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Can read selected product",
+                        realProductListingGeneratorIntegration.readinessGates
+                          .canReadSelectedProduct,
+                      ],
+                      [
+                        "Can map product facts",
+                        realProductListingGeneratorIntegration.readinessGates
+                          .canMapProductFacts,
+                      ],
+                      [
+                        "Can generate listing preview",
+                        realProductListingGeneratorIntegration.readinessGates
+                          .canGenerateListingPreview,
+                      ],
+                      [
+                        "Can build draft payload",
+                        realProductListingGeneratorIntegration.readinessGates
+                          .canBuildDraftPayload,
+                      ],
+                      [
+                        "Can publish to eBay",
+                        realProductListingGeneratorIntegration.readinessGates
+                          .canPublishToEbay,
+                      ],
+                      [
+                        realProductListingGeneratorIntegrationCopy.readinessScore,
+                        realProductListingGeneratorIntegration.readinessGates
+                          .minimumRequiredForDraftPayload,
+                      ],
+                      [
+                        "Current readiness label",
+                        realProductListingGeneratorIntegration.readinessGates
+                          .currentReadinessLabel,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Required Human Actions
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      realProductListingGeneratorIntegration.requiredHumanActions
+                    }
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        realProductListingGeneratorIntegrationCopy.nextRecommendedLoop,
+                        realProductListingGeneratorIntegration.nextRecommendedLoop
+                          .loop,
+                      ],
+                      [
+                        "Reason",
+                        realProductListingGeneratorIntegration.nextRecommendedLoop
+                          .reason,
+                      ],
+                      [
+                        "Expected outcome",
+                        realProductListingGeneratorIntegration.nextRecommendedLoop
+                          .expectedOutcome,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
           </div>
         </Section>
 

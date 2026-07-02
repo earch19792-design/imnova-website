@@ -730,6 +730,19 @@ const ebayLiveProductSelectorReadOnlyFixture =
     )
   )
 
+const ebayRealProductListingGeneratorIntegrationFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-real-product-listing-generator-integration-v1.json"
+  )
+
+const ebayRealProductListingGeneratorIntegrationFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayRealProductListingGeneratorIntegrationFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -9317,6 +9330,240 @@ test("ebay live product selector read-only fixture: no contiene URLs tokens endp
   }
 })
 
+test("ebay real product listing generator integration fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayRealProductListingGeneratorIntegrationFixturePath
+    )
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.integrationVersion,
+    "EBAY_REAL_PRODUCT_LISTING_GENERATOR_INTEGRATION_V1"
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.integrationStatus,
+    "REAL_PRODUCT_LISTING_GENERATOR_INTEGRATION_READY"
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.productReadDecision,
+    "READ_PRODUCTS_ONLY_SAFE_FALLBACK_IF_UNAVAILABLE"
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.factsMappingStatus,
+    "PRODUCT_FACTS_MAPPING_READY_WITH_MISSING_FIELD_BLOCKERS"
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.generatorStatus,
+    "LISTING_PREVIEW_FROM_SELECTED_PRODUCT_READY"
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.gatesStatus,
+    "READINESS_GATES_ACTIVE_DRAFT_BLOCKED"
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay real product listing generator integration fixture: lectura y preview quedan seguros", () => {
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.readOnlyProductSource
+      .recommendedReadFunction,
+    "getProducts"
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.readOnlyProductSource
+      .writesAllowed,
+    false
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.readOnlyProductSource
+      .productMutationAllowed,
+    false
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.generatedListingPreview
+      .previewGenerated,
+    true
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.generatedListingPreview
+      .publishable,
+    false
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.generatedListingPreview
+      .finalContentGenerated,
+    false
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.generatedListingPreview
+      .titleGeneration.exampleFallbackTitle,
+    "Storage Organizer"
+  )
+})
+
+test("ebay real product listing generator integration fixture: gates bloquean avance", () => {
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.readinessGates
+      .canReadSelectedProduct,
+    true
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.readinessGates
+      .canMapProductFacts,
+    true
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.readinessGates
+      .canGenerateListingPreview,
+    true
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.readinessGates
+      .canBuildDraftPayload,
+    false
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.readinessGates
+      .canCreateEbayDraft,
+    false
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.readinessGates
+      .canPublishToEbay,
+    false
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.safetyFlags
+      .productFactsDuplicatedAsTruth,
+    false
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.safetyFlags
+      .productMutationAllowed,
+    false
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.safetyFlags
+      .supabaseWriteUsed,
+    false
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.safetyFlags
+      .draftPayloadBuilt,
+    false
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.safetyFlags
+      .realDraftCreated,
+    false
+  )
+  assert.equal(
+    ebayRealProductListingGeneratorIntegrationFixture.safetyFlags
+      .publishedToEbay,
+    false
+  )
+})
+
+test("ebay real product listing generator modules: existen y bloquean integraciones reales", () => {
+  for (const modulePath of [
+    "lib/ebay/product-facts-mapper.ts",
+    "lib/ebay/real-product-listing-generator.ts",
+  ]) {
+    assert.ok(
+      fs.existsSync(modulePath),
+      `missing module: ${modulePath}`
+    )
+
+    const source =
+      fs.readFileSync(
+        modulePath,
+        "utf8"
+      )
+
+    for (const forbiddenPattern of [
+      /process\.env/,
+      /fetch\(/,
+      /new OpenAI/,
+      /openai/i,
+      /\.insert\(/,
+      /\.update\(/,
+      /\.delete\(/,
+      /\.upsert\(/,
+      /\.rpc\(/,
+      /console\.log/,
+      /console\.error/,
+      /createDraft/,
+      /publishListing/,
+      /ebayApi/i,
+      /oauth/i,
+      /access_token/i,
+      /refresh_token/i,
+    ]) {
+      assert.doesNotMatch(
+        source,
+        forbiddenPattern,
+        `forbidden pattern in ${modulePath}: ${forbiddenPattern}`
+      )
+    }
+  }
+
+  const generatorSource =
+    fs.readFileSync(
+      "lib/ebay/real-product-listing-generator.ts",
+      "utf8"
+    )
+
+  assert.match(
+    generatorSource,
+    /getProducts/
+  )
+})
+
+test("ebay real product listing generator fixture: no contiene URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebayRealProductListingGeneratorIntegrationFixturePath,
+      "lib/ebay/product-facts-mapper.ts",
+      "lib/ebay/real-product-listing-generator.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -14531,6 +14778,50 @@ test("ebay listing package admin MVP: muestra live product selector read-only", 
   assert.doesNotMatch(
     source,
     /Live Product Selector Read-Only[\s\S]{0,5000}onClick=/
+  )
+})
+
+test("ebay listing package admin MVP: muestra real product listing generator integration", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "ebay-real-product-listing-generator-integration-v1.json",
+    "Real Product Listing Generator Integration",
+    "EBAY_REAL_PRODUCT_LISTING_GENERATOR_INTEGRATION_V1",
+    "REAL_PRODUCT_LISTING_GENERATOR_INTEGRATION_READY",
+    "READ_PRODUCTS_ONLY_SAFE_FALLBACK_IF_UNAVAILABLE",
+    "PRODUCT_FACTS_MAPPING_READY_WITH_MISSING_FIELD_BLOCKERS",
+    "LISTING_PREVIEW_FROM_SELECTED_PRODUCT_READY",
+    "READINESS_GATES_ACTIVE_DRAFT_BLOCKED",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "Products Source Of Truth Policy",
+    "Product List / Read Status",
+    "Selected Product Reference",
+    "Generated Listing Preview",
+    "Title preview",
+    "Basic keyword plan",
+    "Description preview",
+    "Item specifics preview",
+    "Missing Product Facts",
+    "Blocked Listing Fields",
+    "Readiness Gates",
+    "Readiness score",
+    "LOOP 124 \u2014 eBay Draft Payload Dry Run Builder V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing real product listing generator admin text: ${expectedText}`
+    )
+  }
+
+  assert.doesNotMatch(
+    source,
+    /Real Product Listing Generator Integration[\s\S]{0,5000}onClick=/
   )
 })
 
