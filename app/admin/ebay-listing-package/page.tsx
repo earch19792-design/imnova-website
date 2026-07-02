@@ -5,6 +5,7 @@ import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v
 import draftMappingDryRun from "../../../tools/fixtures/ebay-draft-mapping-dry-run-v1.json"
 import firstListingContentFinalization from "../../../tools/fixtures/ebay-first-listing-content-finalization-v1.json"
 import listingGeneratorDryRun from "../../../tools/fixtures/ebay-listing-generator-service-dry-run-v1.json"
+import productListingBridge from "../../../tools/fixtures/ebay-product-to-listing-bridge-draft-preview-v1.json"
 import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -606,6 +607,47 @@ const ebayListingGeneratorDryRunCopy = {
     "Required Human Actions",
   nextRecommendedLoop:
     "Next recommended loop: LOOP 119 — Product to eBay Listing Bridge V1",
+}
+
+const productListingBridgeCopy = {
+  title:
+    "Product to eBay Listing Bridge",
+  bridgeStatus:
+    "PRODUCT_TO_LISTING_BRIDGE_DRY_RUN_READY",
+  bridgeDecision:
+    "CONNECT_PRODUCT_SOURCE_TO_LISTING_GENERATOR_DO_NOT_CREATE_DRAFT",
+  previewStatus:
+    "GENERATED_DRY_RUN_PREVIEW_NOT_PUBLISHABLE",
+  sourceOfTruthStatus:
+    "PRODUCTS_SOURCE_OF_TRUTH_REQUIRED",
+  dryRunMode:
+    "PRODUCT_SOURCE_CONTRACT_NO_EXTERNAL_CALLS",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  productsRule:
+    "Products decide what the product is",
+  listingRule:
+    "Listing decides how the product sells on eBay",
+  benchmarkRule:
+    "Benchmark decides what is working in the market",
+  gatesRule:
+    "Gates decide whether the listing can advance",
+  previewTitle:
+    "Generated Listing Draft Preview",
+  titleCandidate:
+    "Storage Organizer, New, 1 Pack",
+  blockedFacts:
+    "Blocked unconfirmed facts",
+  gateResult:
+    "Gate result",
+  readinessScore:
+    "Readiness score",
+  requiredHumanActions:
+    "Required human actions",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 120 — First eBay Listing Draft Preview V1",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -4618,6 +4660,327 @@ export default function EbayListingPackagePage() {
                     items={
                       listingGeneratorDryRun.nextRecommendedLoop.constraints
                     }
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Product to eBay Listing Bridge">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {productListingBridge.bridgeVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {productListingBridgeCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {productListingBridge.bridgeSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {productListingBridgeCopy.bridgeStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {productListingBridgeCopy.previewStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {productListingBridgeCopy.draftImpact}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Bridge status",
+                      productListingBridge.bridgeStatus,
+                    ],
+                    [
+                      "Bridge decision",
+                      productListingBridge.bridgeDecision,
+                    ],
+                    [
+                      "Preview status",
+                      productListingBridge.previewStatus,
+                    ],
+                    [
+                      "Source-of-truth status",
+                      productListingBridge.sourceOfTruthStatus,
+                    ],
+                    [
+                      "Dry run mode",
+                      productListingBridge.dryRunMode,
+                    ],
+                    [
+                      "Draft impact",
+                      productListingBridge.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      productListingBridge.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Architecture Policy
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Products",
+                        productListingBridgeCopy.productsRule,
+                      ],
+                      [
+                        "Listing",
+                        productListingBridgeCopy.listingRule,
+                      ],
+                      [
+                        "Benchmark",
+                        productListingBridgeCopy.benchmarkRule,
+                      ],
+                      [
+                        "Gates",
+                        productListingBridgeCopy.gatesRule,
+                      ],
+                      [
+                        "Operating principle",
+                        productListingBridge.architecturePolicy
+                          .operatingPrinciple,
+                      ],
+                      [
+                        "Bridge role",
+                        productListingBridge.architecturePolicy.bridgeRole,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Product Source Contract
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Source mode",
+                        productListingBridge.productSourceContract.sourceMode,
+                      ],
+                      [
+                        "Source module",
+                        productListingBridge.productSourceContract.sourceModule,
+                      ],
+                      [
+                        "Supplier source",
+                        productListingBridge.productSourceContract.supplierSource,
+                      ],
+                      [
+                        "Product ID",
+                        productListingBridge.productSourceContract.productId,
+                      ],
+                      [
+                        "Product fact authority",
+                        productListingBridge.productSourceContract
+                          .productFactAuthority,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-3xl border border-cyan-300/20 bg-cyan-300/[0.04] p-5">
+              <h4 className="text-sm font-black text-white">
+                {productListingBridgeCopy.previewTitle}
+              </h4>
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <h5 className="text-sm font-black text-white">
+                    Title candidate
+                  </h5>
+                  <p className="mt-3 break-words rounded-xl border border-white/10 bg-white/[0.04] p-4 text-lg font-black text-cyan-50 [overflow-wrap:anywhere]">
+                    {
+                      productListingBridge.generatedListingDraftPreview
+                        .titleCandidate.value
+                    }
+                  </p>
+                  <div className="mt-4">
+                    <FieldGrid
+                      fields={[
+                        [
+                          "Status",
+                          productListingBridge.generatedListingDraftPreview
+                            .titleCandidate.status,
+                        ],
+                        [
+                          "Publishable",
+                          productListingBridge.generatedListingDraftPreview
+                            .publishable,
+                        ],
+                        [
+                          "Final content",
+                          productListingBridge.generatedListingDraftPreview
+                            .finalContent,
+                        ],
+                      ]}
+                    />
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <h5 className="text-sm font-black text-white">
+                    Item specifics preview
+                  </h5>
+                  <div className="mt-3 grid gap-3">
+                    {productListingBridge.generatedListingDraftPreview.itemSpecificsDraft.specifics.map((specific) => (
+                      <div
+                        key={specific.name}
+                        className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                      >
+                        <p className="text-sm font-bold text-white">
+                          {specific.name}: {specific.value}
+                        </p>
+                        <p className="mt-1 text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70">
+                          final: {formatValue(specific.final)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+                <h5 className="text-sm font-black text-white">
+                  Description preview
+                </h5>
+                <div className="mt-3 grid gap-3">
+                  {productListingBridge.generatedListingDraftPreview.descriptionDraft.sections.map((section) => (
+                    <article
+                      key={section.section}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <h6 className="text-sm font-bold text-white">
+                        {section.section}
+                      </h6>
+                      <p className="mt-2 text-sm leading-6 text-white/65">
+                        {section.text}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {productListingBridgeCopy.blockedFacts}
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {productListingBridge.blockedUnconfirmedFacts.map((fact) => (
+                    <article
+                      key={fact.factId}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <h5 className="break-words text-sm font-black text-white [overflow-wrap:anywhere]">
+                        {fact.factId}
+                      </h5>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {fact.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {fact.reason}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {productListingBridgeCopy.gateResult}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        productListingBridgeCopy.readinessScore,
+                        productListingBridge.gateResult.readinessScore,
+                      ],
+                      [
+                        "Can generate preview",
+                        productListingBridge.gateResult.canGeneratePreview,
+                      ],
+                      [
+                        "Can generate final listing",
+                        productListingBridge.gateResult
+                          .canGenerateFinalListing,
+                      ],
+                      [
+                        "Can create eBay draft",
+                        productListingBridge.gateResult.canCreateEbayDraft,
+                      ],
+                      [
+                        "Can publish to eBay",
+                        productListingBridge.gateResult.canPublishToEbay,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={productListingBridge.gateResult.blockingGates}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {productListingBridgeCopy.requiredHumanActions}
+                </h4>
+                <div className="mt-4">
+                  <ListBlock items={productListingBridge.requiredHumanActions} />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        productListingBridgeCopy.nextRecommendedLoop,
+                        productListingBridge.nextRecommendedLoop.loop,
+                      ],
+                      [
+                        "Reason",
+                        productListingBridge.nextRecommendedLoop.reason,
+                      ],
+                      [
+                        "Expected outcome",
+                        productListingBridge.nextRecommendedLoop
+                          .expectedOutcome,
+                      ],
+                    ]}
                   />
                 </div>
               </article>

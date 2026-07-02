@@ -678,6 +678,19 @@ const ebayListingGeneratorDryRunFixture =
     )
   )
 
+const ebayProductListingBridgeFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-product-to-listing-bridge-draft-preview-v1.json"
+  )
+
+const ebayProductListingBridgeFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayProductListingBridgeFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -8370,6 +8383,259 @@ test("ebay listing generator service dry run fixture: no contiene URLs tokens en
   }
 })
 
+test("ebay product to listing bridge fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayProductListingBridgeFixturePath
+    )
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.bridgeVersion,
+    "EBAY_PRODUCT_TO_LISTING_BRIDGE_DRAFT_PREVIEW_V1"
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.bridgeStatus,
+    "PRODUCT_TO_LISTING_BRIDGE_DRY_RUN_READY"
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.bridgeDecision,
+    "CONNECT_PRODUCT_SOURCE_TO_LISTING_GENERATOR_DO_NOT_CREATE_DRAFT"
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.previewStatus,
+    "GENERATED_DRY_RUN_PREVIEW_NOT_PUBLISHABLE"
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.sourceOfTruthStatus,
+    "PRODUCTS_SOURCE_OF_TRUTH_REQUIRED"
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.dryRunMode,
+    "PRODUCT_SOURCE_CONTRACT_NO_EXTERNAL_CALLS"
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay product to listing bridge fixture: architecture y preview usan facts confirmados", () => {
+  assert.equal(
+    ebayProductListingBridgeFixture.architecturePolicy.productsRule,
+    "Products decide what the product is."
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.architecturePolicy.listingRule,
+    "Listing decides how the product sells on eBay."
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.architecturePolicy.benchmarkRule,
+    "Benchmark decides what is working in the market."
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.architecturePolicy.gatesRule,
+    "Gates decide whether the listing can advance."
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.generatedListingDraftPreview
+      .previewGenerated,
+    true
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.generatedListingDraftPreview
+      .publishable,
+    false
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.generatedListingDraftPreview
+      .finalContent,
+    false
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.generatedListingDraftPreview
+      .titleCandidate.value,
+    "Storage Organizer, New, 1 Pack"
+  )
+  assert.ok(
+    ebayProductListingBridgeFixture.confirmedFactsUsed.every(
+      (fact) => fact.usedInPreview === true
+    )
+  )
+  assert.ok(
+    ebayProductListingBridgeFixture.blockedUnconfirmedFacts.every(
+      (fact) => fact.usedInPreview === false
+    )
+  )
+})
+
+test("ebay product to listing bridge fixture: title preview bloquea claims no confirmados", () => {
+  const titleCandidate =
+    ebayProductListingBridgeFixture.generatedListingDraftPreview
+      .titleCandidate.value.toLowerCase()
+
+  for (const blockedTerm of [
+    "waterproof",
+    "heavy duty",
+    "dimensions",
+    "material",
+    "brand names",
+    "warranty",
+    "certified",
+  ]) {
+    assert.equal(
+      titleCandidate.includes(blockedTerm),
+      false,
+      `blocked term leaked into title candidate: ${blockedTerm}`
+    )
+  }
+})
+
+test("ebay product to listing bridge fixture: gates bloquean draft y publicacion", () => {
+  assert.equal(
+    ebayProductListingBridgeFixture.gateResult.canGeneratePreview,
+    true
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.gateResult.canGenerateFinalListing,
+    false
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.gateResult.canCreateEbayDraft,
+    false
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.gateResult.canPublishToEbay,
+    false
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.gateResult.readinessScore,
+    25
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.safetyFlags.previewGenerated,
+    true
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.safetyFlags.usesConfirmedFactsOnly,
+    true
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.safetyFlags.unconfirmedFactsBlocked,
+    true
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.safetyFlags
+      .productFactsDuplicatedAsTruth,
+    false
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.safetyFlags.realDraftCreated,
+    false
+  )
+  assert.equal(
+    ebayProductListingBridgeFixture.safetyFlags.publishedToEbay,
+    false
+  )
+})
+
+test("ebay product to listing bridge module: modulo puro sin integraciones reales", () => {
+  const modulePath =
+    path.resolve(
+      "lib/ebay/product-listing-bridge.ts"
+    )
+
+  assert.ok(
+    fs.existsSync(modulePath)
+  )
+
+  const source =
+    fs.readFileSync(
+      modulePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "getProductToEbayListingBridgeSummary",
+    "getGeneratedListingDraftPreviewDryRun",
+    "getBlockedProductToListingBridgeResponse",
+    "dryRunOnly",
+    "bridgeReady",
+    "previewGenerated",
+    "publishable",
+    "finalContentGenerated",
+    "usesConfirmedFactsOnly",
+    "unconfirmedFactsBlocked",
+    "readyForDraft",
+    "readyForPublication",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing product listing bridge module text: ${expectedText}`
+    )
+  }
+
+  for (const forbiddenPattern of [
+    /process\.env/,
+    /fetch\(/,
+    /createClient/,
+    /new OpenAI/,
+    /openai/i,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /console\.log/,
+    /console\.error/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern
+    )
+  }
+})
+
+test("ebay product to listing bridge fixture: no contiene URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebayProductListingBridgeFixturePath,
+      "lib/ebay/product-listing-bridge.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -13424,6 +13690,49 @@ test("ebay listing package admin MVP: muestra listing generator service dry run"
   assert.doesNotMatch(
     source,
     /eBay Listing Generator Service Dry Run[\s\S]{0,5000}onClick=/
+  )
+})
+
+test("ebay listing package admin MVP: muestra product to listing bridge draft preview", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "ebay-product-to-listing-bridge-draft-preview-v1.json",
+    "Product to eBay Listing Bridge",
+    "PRODUCT_TO_LISTING_BRIDGE_DRY_RUN_READY",
+    "CONNECT_PRODUCT_SOURCE_TO_LISTING_GENERATOR_DO_NOT_CREATE_DRAFT",
+    "GENERATED_DRY_RUN_PREVIEW_NOT_PUBLISHABLE",
+    "PRODUCTS_SOURCE_OF_TRUTH_REQUIRED",
+    "PRODUCT_SOURCE_CONTRACT_NO_EXTERNAL_CALLS",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "Products decide what the product is",
+    "Listing decides how the product sells on eBay",
+    "Benchmark decides what is working in the market",
+    "Gates decide whether the listing can advance",
+    "Generated Listing Draft Preview",
+    "Storage Organizer, New, 1 Pack",
+    "Description preview",
+    "Item specifics preview",
+    "Blocked unconfirmed facts",
+    "Gate result",
+    "Readiness score",
+    "Required human actions",
+    "Next recommended loop: LOOP 120 \u2014 First eBay Listing Draft Preview V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing product listing bridge admin text: ${expectedText}`
+    )
+  }
+
+  assert.doesNotMatch(
+    source,
+    /Product to eBay Listing Bridge[\s\S]{0,5000}onClick=/
   )
 })
 
