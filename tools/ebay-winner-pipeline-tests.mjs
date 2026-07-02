@@ -717,6 +717,19 @@ const ebayProductSourceAdapterSelectorFixture =
     )
   )
 
+const ebayLiveProductSelectorReadOnlyFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-live-product-selector-read-only-v1.json"
+  )
+
+const ebayLiveProductSelectorReadOnlyFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayLiveProductSelectorReadOnlyFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -9097,6 +9110,213 @@ test("ebay product source adapter selector fixture: no contiene URLs tokens endp
   }
 })
 
+test("ebay live product selector read-only fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayLiveProductSelectorReadOnlyFixturePath
+    )
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.selectorVersion,
+    "EBAY_LIVE_PRODUCT_SELECTOR_READ_ONLY_V1"
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.selectorStatus,
+    "LIVE_PRODUCT_SELECTOR_READ_ONLY_READY"
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.selectorDecision,
+    "READ_PRODUCTS_ONLY_DO_NOT_MUTATE"
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.sourceOfTruthStatus,
+    "PRODUCTS_MODULE_REMAINS_SOURCE_OF_TRUTH"
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay live product selector read-only fixture: audita Products y selector", () => {
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.readOnlySourceAudit
+      .centralProductsService,
+    "lib/products-service.ts"
+  )
+
+  for (const expectedFunction of [
+    "getProducts",
+    "getAdminProductPage",
+    "getProductBySlug",
+    "getPublicProducts",
+  ]) {
+    assert.ok(
+      ebayLiveProductSelectorReadOnlyFixture.readOnlySourceAudit
+        .readFunctionsFound.includes(expectedFunction),
+      `missing read function in audit: ${expectedFunction}`
+    )
+  }
+
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.selectorReadiness
+      .productsServiceFound,
+    true
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.selectorReadiness
+      .adminProductsPageFound,
+    true
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.selectorReadiness
+      .productsRemainSourceOfTruth,
+    true
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.selectorReadiness
+      .listingUsesFactsByReference,
+    true
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.selectorReadiness
+      .listingMutatesProduct,
+    false
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.selectorReadiness
+      .supabaseWriteUsed,
+    false
+  )
+})
+
+test("ebay live product selector read-only fixture: safety bloquea mutaciones", () => {
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.safetyFlags
+      .productFactsDuplicatedAsTruth,
+    false
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.safetyFlags.productMutationAllowed,
+    false
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.safetyFlags.liveProductReadEnabled,
+    false
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.safetyFlags
+      .productsRemainSourceOfTruth,
+    true
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.selectedProductReadOnlyPreview
+      .productName,
+    "Storage Organizer"
+  )
+  assert.equal(
+    ebayLiveProductSelectorReadOnlyFixture.selectedProductReadOnlyPreview
+      .supplier,
+    "Portex"
+  )
+})
+
+test("ebay live product selector read-only module: modulo puro sin integraciones reales", () => {
+  const modulePath =
+    path.resolve(
+      "lib/ebay/live-product-selector.ts"
+    )
+
+  assert.ok(
+    fs.existsSync(modulePath)
+  )
+
+  const source =
+    fs.readFileSync(
+      modulePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "getLiveProductSelectorSummary",
+    "getProductListSelectorContract",
+    "getSelectedProductReadOnlyPreview",
+    "getBlockedLiveProductSelectorResponse",
+    "readOnly",
+    "productsRemainSourceOfTruth",
+    "listingUsesFactsByReference",
+    "productFactsDuplicatedAsTruth",
+    "liveProductReadEnabled",
+    "readyForDraft",
+    "readyForPublication",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing live product selector module text: ${expectedText}`
+    )
+  }
+
+  for (const forbiddenPattern of [
+    /process\.env/,
+    /fetch\(/,
+    /new OpenAI/,
+    /openai/i,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /console\.log/,
+    /console\.error/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern
+    )
+  }
+})
+
+test("ebay live product selector read-only fixture: no contiene URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebayLiveProductSelectorReadOnlyFixturePath,
+      "lib/ebay/live-product-selector.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -14273,6 +14493,44 @@ test("ebay listing package admin MVP: muestra product source adapter selector", 
   assert.doesNotMatch(
     source,
     /Product Source Adapter \/ Selector[\s\S]{0,5000}onClick=/
+  )
+})
+
+test("ebay listing package admin MVP: muestra live product selector read-only", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "ebay-live-product-selector-read-only-v1.json",
+    "Live Product Selector Read-Only",
+    "LIVE_PRODUCT_SELECTOR_READ_ONLY_V1",
+    "LIVE_PRODUCT_SELECTOR_READ_ONLY_READY",
+    "READ_PRODUCTS_ONLY_DO_NOT_MUTATE",
+    "PRODUCTS_MODULE_REMAINS_SOURCE_OF_TRUTH",
+    "Product List Contract",
+    "Selected Product Read-Only Preview",
+    "Listing Generator Bridge Contract",
+    "Products decide what the product is",
+    "Listing decides how the product sells on eBay",
+    "Benchmark decides what is working in the market",
+    "Gates decide whether the listing can advance",
+    "Storage Organizer",
+    "Portex",
+    "No product mutation is allowed from the listing selector",
+    "Next recommended loop: LOOP 123 \u2014 Real Product Facts Mapping to Listing Generator V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing live product selector read-only admin text: ${expectedText}`
+    )
+  }
+
+  assert.doesNotMatch(
+    source,
+    /Live Product Selector Read-Only[\s\S]{0,5000}onClick=/
   )
 })
 
