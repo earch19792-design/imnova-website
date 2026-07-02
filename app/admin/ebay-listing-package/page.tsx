@@ -3,6 +3,7 @@ import type {
 } from "react"
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
 import ebayOnlyConnectionDesign from "../../../tools/fixtures/ebay-only-connection-design-v1.json"
+import ebaySandboxReadOnlyConnectionStatus from "../../../tools/fixtures/ebay-sandbox-read-only-connection-status-v1.json"
 import listingPackageSourceAwareRefresh from "../../../tools/fixtures/ebay-listing-package-source-aware-refresh-v1.json"
 import productSnapshot from "../../../tools/fixtures/ebay-luna-portex-product-snapshot-v1.json"
 import productFactsReadinessGate from "../../../tools/fixtures/ebay-luna-portex-product-facts-readiness-gate-v1.json"
@@ -261,6 +262,37 @@ const ebayOnlyConnectionDesignCopy = {
     "Official eBay documentation validation required",
   nextRecommendedLoop:
     "Next recommended loop: LOOP 109 — eBay Sandbox Read-Only Connection Status V1",
+}
+
+const ebaySandboxReadOnlyConnectionStatusCopy = {
+  title:
+    "eBay Sandbox Read-Only Connection Status",
+  connectionStatus:
+    "SANDBOX_CONNECTION_NOT_CONFIGURED",
+  readOnlyStatus:
+    "READ_ONLY_CHECK_NOT_EXECUTED",
+  authStatus:
+    "OAUTH_NOT_CONFIGURED",
+  tokenStatus:
+    "NO_TOKENS_CONFIGURED",
+  apiStatus:
+    "NO_API_CALLS_MADE",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  statusSummary:
+    "Sandbox read-only connection status is not configured",
+  noOauth:
+    "No OAuth has been implemented",
+  noCredentials:
+    "No credentials or tokens exist",
+  noApiCalls:
+    "No eBay API calls have been made",
+  officialValidation:
+    "Official eBay documentation validation required",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 110 — Image Generation Service Design V1",
 }
 
 const imageSourceIntakeCopy = {
@@ -1916,6 +1948,221 @@ export default function EbayListingPackagePage() {
                   <FieldGrid
                     fields={Object.entries(
                       ebayOnlyConnectionDesign.safetyFlags
+                    )}
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="eBay Sandbox Read-Only Connection Status">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {ebaySandboxReadOnlyConnectionStatus.statusVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {ebaySandboxReadOnlyConnectionStatusCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {ebaySandboxReadOnlyConnectionStatus.statusSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxReadOnlyConnectionStatusCopy.connectionStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxReadOnlyConnectionStatusCopy.readOnlyStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySandboxReadOnlyConnectionStatusCopy.tokenStatus}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Environment",
+                      ebaySandboxReadOnlyConnectionStatus.environment,
+                    ],
+                    [
+                      "Connection mode",
+                      ebaySandboxReadOnlyConnectionStatus.connectionMode,
+                    ],
+                    [
+                      "Connection status",
+                      ebaySandboxReadOnlyConnectionStatus.connectionStatus,
+                    ],
+                    [
+                      "Read-only status",
+                      ebaySandboxReadOnlyConnectionStatus.readOnlyStatus,
+                    ],
+                    [
+                      "Auth status",
+                      ebaySandboxReadOnlyConnectionStatus.authStatus,
+                    ],
+                    [
+                      "Token status",
+                      ebaySandboxReadOnlyConnectionStatus.tokenStatus,
+                    ],
+                    [
+                      "API status",
+                      ebaySandboxReadOnlyConnectionStatus.apiStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      ebaySandboxReadOnlyConnectionStatus.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      ebaySandboxReadOnlyConnectionStatus.publicationImpact,
+                    ],
+                    [
+                      ebaySandboxReadOnlyConnectionStatusCopy.noOauth,
+                      ebaySandboxReadOnlyConnectionStatus.readiness
+                        .oauthFlowImplemented,
+                    ],
+                    [
+                      ebaySandboxReadOnlyConnectionStatusCopy.noCredentials,
+                      ebaySandboxReadOnlyConnectionStatus.safetyFlags
+                        .secretsIncluded,
+                    ],
+                    [
+                      ebaySandboxReadOnlyConnectionStatusCopy.noApiCalls,
+                      ebaySandboxReadOnlyConnectionStatus.apiStatus,
+                    ],
+                    [
+                      ebaySandboxReadOnlyConnectionStatusCopy.officialValidation,
+                      ebaySandboxReadOnlyConnectionStatus.readiness
+                        .officialDocsValidationRequired,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Connection Readiness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxReadOnlyConnectionStatus.readiness
+                    )}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Status Checks
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {ebaySandboxReadOnlyConnectionStatus.statusChecks.map((check) => (
+                    <div
+                      key={check.checkId}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {check.label}
+                      </p>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {check.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {check.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Workflows
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {ebaySandboxReadOnlyConnectionStatus.blockedWorkflows.map((workflow) => (
+                    <div
+                      key={workflow.workflow}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {workflow.workflow}
+                      </p>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {workflow.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {workflow.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Required Human Actions
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebaySandboxReadOnlyConnectionStatus.requiredHumanActions
+                    }
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        ebaySandboxReadOnlyConnectionStatusCopy.nextRecommendedLoop,
+                        ebaySandboxReadOnlyConnectionStatus.nextRecommendedLoop.loop,
+                      ],
+                      [
+                        "Reason",
+                        ebaySandboxReadOnlyConnectionStatus.nextRecommendedLoop.reason,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebaySandboxReadOnlyConnectionStatus.nextRecommendedLoop
+                        .constraints
+                    }
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Compact Safety Flags
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySandboxReadOnlyConnectionStatus.safetyFlags
                     )}
                   />
                 </div>

@@ -613,6 +613,19 @@ const ebayOnlyConnectionDesignFixture =
     )
   )
 
+const ebaySandboxReadOnlyConnectionStatusFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-sandbox-read-only-connection-status-v1.json"
+  )
+
+const ebaySandboxReadOnlyConnectionStatusFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebaySandboxReadOnlyConnectionStatusFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayFirstListingQaReviewFixturePath =
   path.resolve(
     "tools/fixtures/ebay-first-listing-qa-review-v1.json"
@@ -6034,6 +6047,296 @@ test("ebay only connection design fixture: no contiene URLs tokens endpoints ni 
   }
 })
 
+test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebaySandboxReadOnlyConnectionStatusFixturePath
+    )
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.statusVersion,
+    "EBAY_SANDBOX_READ_ONLY_CONNECTION_STATUS_V1"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.connectionDesignVersion,
+    "EBAY_ONLY_CONNECTION_DESIGN_V1"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.sourceAwareRefreshVersion,
+    "EBAY_LISTING_PACKAGE_SOURCE_AWARE_REFRESH_V1"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.imageQaGateVersion,
+    "EBAY_LUNA_PORTEX_IMAGE_QA_REVIEW_GATE_V1"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.commercialGateVersion,
+    "EBAY_LUNA_PORTEX_COMMERCIAL_READINESS_GATE_V1"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.productFactsGateVersion,
+    "EBAY_LUNA_PORTEX_PRODUCT_FACTS_READINESS_GATE_V1"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.marketplace,
+    "ebay_us"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.environment,
+    "sandbox"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.connectionMode,
+    "READ_ONLY_STATUS_ONLY"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.connectionStatus,
+    "SANDBOX_CONNECTION_NOT_CONFIGURED"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.readOnlyStatus,
+    "READ_ONLY_CHECK_NOT_EXECUTED"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.authStatus,
+    "OAUTH_NOT_CONFIGURED"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.tokenStatus,
+    "NO_TOKENS_CONFIGURED"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.apiStatus,
+    "NO_API_CALLS_MADE"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebaySandboxReadOnlyConnectionStatusFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay sandbox read-only connection status fixture: readiness mantiene conexion real bloqueada", () => {
+  const readiness =
+    ebaySandboxReadOnlyConnectionStatusFixture.readiness
+
+  for (const flagName of [
+    "connectionDesignExists",
+    "sandboxStatusModelExists",
+    "sandboxFirstRequired",
+    "productionBlocked",
+    "officialDocsValidationRequired",
+  ]) {
+    assert.equal(
+      readiness[flagName],
+      true,
+      `${flagName} must be true`
+    )
+  }
+
+  for (const flagName of [
+    "ebayDeveloperAccountConfirmed",
+    "sandboxApplicationConfigured",
+    "productionApplicationConfigured",
+    "oauthFlowImplemented",
+    "oauthConsentCompleted",
+    "tokenExchangeImplemented",
+    "tokenStorageImplemented",
+    "readOnlyConnectionStatusImplemented",
+    "readOnlyConnectionVerified",
+    "listingApiAccessImplemented",
+    "draftCreationImplemented",
+    "publicationImplemented",
+    "scopesValidatedAgainstOfficialDocs",
+    "endpointsValidatedAgainstOfficialDocs",
+    "environmentVariablesConfigured",
+    "secretsConfigured",
+    "allProductListingGatesApproved",
+    "allCommercialGatesApproved",
+    "allImageGatesApproved",
+  ]) {
+    assert.equal(
+      readiness[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("ebay sandbox read-only connection status fixture: checks fallan hasta implementar sandbox seguro", () => {
+  const statusChecks =
+    ebaySandboxReadOnlyConnectionStatusFixture.statusChecks
+
+  assert.equal(
+    statusChecks.length,
+    10
+  )
+
+  const expectedCheckIds =
+    new Set([
+      "official_docs_validation_completed",
+      "ebay_developer_account_confirmed",
+      "sandbox_application_configured",
+      "secure_secret_strategy_approved",
+      "oauth_flow_implemented",
+      "oauth_consent_completed",
+      "token_exchange_implemented",
+      "token_storage_implemented",
+      "read_only_connection_check_implemented",
+      "read_only_connection_verified",
+    ])
+
+  for (const check of statusChecks) {
+    assert.equal(
+      check.status,
+      "FAILED"
+    )
+    assert.equal(
+      check.requiredToUnlock,
+      true
+    )
+    assert.ok(
+      expectedCheckIds.has(check.checkId),
+      `unexpected status check: ${check.checkId}`
+    )
+  }
+})
+
+test("ebay sandbox read-only connection status fixture: workflows eBay permanecen bloqueados", () => {
+  const blockedWorkflows =
+    ebaySandboxReadOnlyConnectionStatusFixture.blockedWorkflows
+
+  assert.equal(
+    blockedWorkflows.length,
+    8
+  )
+
+  const expectedWorkflows =
+    new Set([
+      "ebay_oauth_implementation",
+      "ebay_token_exchange",
+      "ebay_token_storage",
+      "ebay_read_only_connection_check",
+      "ebay_listing_read",
+      "ebay_draft_mapping",
+      "ebay_draft_creation",
+      "ebay_publication",
+    ])
+
+  for (const workflow of blockedWorkflows) {
+    assert.equal(
+      workflow.status,
+      "BLOCKED"
+    )
+    assert.ok(
+      expectedWorkflows.has(workflow.workflow),
+      `unexpected blocked workflow: ${workflow.workflow}`
+    )
+  }
+})
+
+test("ebay sandbox read-only connection status fixture: safety flags no exponen secretos ni conexion real", () => {
+  const safetyFlags =
+    ebaySandboxReadOnlyConnectionStatusFixture.safetyFlags
+
+  for (const flagName of [
+    "advisoryOnly",
+    "statusOnly",
+    "readOnly",
+    "sandboxFirstRequired",
+    "productionBlocked",
+    "officialDocsValidationRequired",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      true,
+      `${flagName} must be true`
+    )
+  }
+
+  for (const flagName of [
+    "oauthImplemented",
+    "oauthConsentCompleted",
+    "tokenExchangeImplemented",
+    "tokenStorageImplemented",
+    "environmentVariablesUsed",
+    "secretsIncluded",
+    "clientIdIncluded",
+    "clientSecretIncluded",
+    "refreshTokenIncluded",
+    "accessTokenIncluded",
+    "authUrlIncluded",
+    "tokenUrlIncluded",
+    "apiEndpointIncluded",
+    "scopesHardcoded",
+    "ebayApiUsed",
+    "lunaPortexApiUsed",
+    "openAiApiUsed",
+    "supabaseUsed",
+    "apiCallsMade",
+    "readOnlyApiCheckExecuted",
+    "realDraftCreated",
+    "publishedToEbay",
+    "listingMutated",
+    "draftMappingUnlocked",
+    "draftCreationUnlocked",
+    "publicationUnlocked",
+    "externalUrlsIncluded",
+    "customerDataIncluded",
+    "supplierPrivateDataIncluded",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("ebay sandbox read-only connection status fixture: no contiene URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebaySandboxReadOnlyConnectionStatusFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /imageUrl/,
+    /assetUrl/,
+    /uploadedUrl/,
+    /client_id/,
+    /client_secret/,
+    /access_token/,
+    /refresh_token/,
+    /Authorization/,
+    /Bearer/,
+    /supplierEmail/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierProductUrl/,
+    /realEndpoint/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("luna portex product facts readiness gate fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -9434,6 +9737,10 @@ test("ebay listing package admin MVP: existe y usa fixtures seguros", () => {
   )
   assert.match(
     source,
+    /ebay-sandbox-read-only-connection-status-v1\.json/
+  )
+  assert.match(
+    source,
     /ebay-listing-package-source-aware-refresh-v1\.json/
   )
   assert.match(
@@ -9562,9 +9869,11 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "Commercial Readiness Gate",
     "Listing Package Source-Aware Refresh",
     "eBay Only Connection Design",
+    "eBay Sandbox Read-Only Connection Status",
     "Connection Readiness",
     "Integration Boundaries",
     "Connection Phases",
+    "Status Checks",
     "Review Inputs",
     "Fact Checks",
     "Commercial Checks",
@@ -9991,6 +10300,40 @@ test("ebay listing package admin MVP: muestra ebay only connection design", () =
     assert.ok(
       source.includes(expectedText),
       `missing eBay connection design admin text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: muestra sandbox read-only connection status", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "eBay Sandbox Read-Only Connection Status",
+    "SANDBOX_CONNECTION_NOT_CONFIGURED",
+    "READ_ONLY_CHECK_NOT_EXECUTED",
+    "OAUTH_NOT_CONFIGURED",
+    "NO_TOKENS_CONFIGURED",
+    "NO_API_CALLS_MADE",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "Sandbox read-only connection status is not configured",
+    "No OAuth has been implemented",
+    "No credentials or tokens exist",
+    "No eBay API calls have been made",
+    "Official eBay documentation validation required",
+    "Connection Readiness",
+    "Status Checks",
+    "Blocked Workflows",
+    "Required Human Actions",
+    "Next recommended loop: LOOP 110 \u2014 Image Generation Service Design V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing eBay sandbox read-only status admin text: ${expectedText}`
     )
   }
 })
