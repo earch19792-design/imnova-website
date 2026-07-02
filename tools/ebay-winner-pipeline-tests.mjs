@@ -587,6 +587,19 @@ const ebayFirstListingPackageFixture =
     )
   )
 
+const ebaySecretEnvironmentStrategyFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-secret-environment-strategy-v1.json"
+  )
+
+const ebaySecretEnvironmentStrategyFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebaySecretEnvironmentStrategyFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -6779,6 +6792,282 @@ test("ebay sandbox oauth flow design fixture: no contiene URLs tokens endpoints 
   }
 })
 
+test("ebay secret environment strategy fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebaySecretEnvironmentStrategyFixturePath
+    )
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.strategyVersion,
+    "EBAY_SECRET_ENVIRONMENT_STRATEGY_V1"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.caseId,
+    "LISTING-GEN-001"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.oauthFlowDesignVersion,
+    "EBAY_SANDBOX_OAUTH_FLOW_DESIGN_V1"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.sandboxIntegrationReadinessVersion,
+    "EBAY_SANDBOX_INTEGRATION_READINESS_V1"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.connectionDesignVersion,
+    "EBAY_ONLY_CONNECTION_DESIGN_V1"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.marketplace,
+    "ebay_us"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.language,
+    "en"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.environmentStrategy,
+    "SANDBOX_FIRST_SERVER_ONLY"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.strategyStatus,
+    "SECRET_ENVIRONMENT_STRATEGY_DESIGN_ONLY"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.strategyDecision,
+    "DO_NOT_CONFIGURE_SECRETS_YET"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.credentialStatus,
+    "NO_CREDENTIALS_CONFIGURED"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.secretStatus,
+    "NO_SECRETS_CONFIGURED"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.tokenStatus,
+    "NO_TOKENS_CONFIGURED"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.storageStatus,
+    "TOKEN_STORAGE_NOT_IMPLEMENTED"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.logStatus,
+    "LOG_REDACTION_NOT_IMPLEMENTED"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.productionStatus,
+    "PRODUCTION_BLOCKED"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay secret environment strategy fixture: readiness mantiene secretos fuera del sistema", () => {
+  const readiness =
+    ebaySecretEnvironmentStrategyFixture.environmentReadiness
+
+  for (const flagName of [
+    "strategyModelExists",
+    "sandboxFirstRequired",
+    "serverOnlyRequired",
+    "productionBlocked",
+    "frontendExposureBlocked",
+    "fixturesSecretFree",
+    "gitSecretFreeRequired",
+    "logRedactionRequired",
+  ]) {
+    assert.equal(
+      readiness[flagName],
+      true,
+      `${flagName} must be true`
+    )
+  }
+
+  for (const flagName of [
+    "sandboxCredentialsConfigured",
+    "productionCredentialsConfigured",
+    "environmentVariablesConfigured",
+    "secretsConfigured",
+    "logRedactionImplemented",
+    "tokenStorageStrategyApproved",
+    "oauthImplementationAllowed",
+    "tokenExchangeAllowed",
+    "tokenStorageAllowed",
+    "readOnlyConnectionAllowed",
+    "draftCreationAllowed",
+    "publicationAllowed",
+  ]) {
+    assert.equal(
+      readiness[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("ebay secret environment strategy fixture: categorias y reglas no incluyen valores reales", () => {
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.secretCategories.length,
+    7
+  )
+  for (const category of ebaySecretEnvironmentStrategyFixture.secretCategories) {
+    assert.equal(
+      category.valueIncluded,
+      false
+    )
+    assert.equal(
+      category.serverOnlyRequired,
+      true
+    )
+  }
+
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.storageRules.length,
+    6
+  )
+  assert.equal(
+    ebaySecretEnvironmentStrategyFixture.logRedactionRules.length,
+    4
+  )
+})
+
+test("ebay secret environment strategy fixture: checks y workflows bloquean configuracion real", () => {
+  const requiredChecks =
+    ebaySecretEnvironmentStrategyFixture.requiredStrategyChecks
+
+  assert.equal(
+    requiredChecks.length,
+    9
+  )
+  for (const check of requiredChecks.slice(0, 5)) {
+    assert.equal(
+      check.status,
+      "FAILED"
+    )
+  }
+  for (const check of requiredChecks.slice(5)) {
+    assert.equal(
+      check.status,
+      "PASSED"
+    )
+  }
+
+  const blockedWorkflows =
+    ebaySecretEnvironmentStrategyFixture.blockedWorkflows
+
+  assert.equal(
+    blockedWorkflows.length,
+    12
+  )
+  for (const workflow of blockedWorkflows) {
+    assert.equal(
+      workflow.status,
+      "BLOCKED"
+    )
+  }
+})
+
+test("ebay secret environment strategy fixture: safety flags no exponen secrets ni tokens", () => {
+  const safetyFlags =
+    ebaySecretEnvironmentStrategyFixture.safetyFlags
+
+  for (const flagName of [
+    "advisoryOnly",
+    "designOnly",
+    "readOnly",
+    "sandboxFirstRequired",
+    "serverOnlyRequired",
+    "productionBlocked",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      true,
+      `${flagName} must be true`
+    )
+  }
+
+  for (const flagName of [
+    "realSecretsConfigured",
+    "environmentVariablesConfigured",
+    "environmentVariablesUsed",
+    "credentialsIncluded",
+    "clientIdIncluded",
+    "clientSecretIncluded",
+    "accessTokenIncluded",
+    "refreshTokenIncluded",
+    "authUrlIncluded",
+    "callbackUrlIncluded",
+    "tokenUrlIncluded",
+    "apiEndpointIncluded",
+    "scopesHardcoded",
+    "tokensStored",
+    "sellerPasswordStored",
+    "secretsIncludedInCode",
+    "secretsIncludedInFixtures",
+    "secretsIncludedInFrontend",
+    "secretsPrintedInLogs",
+    "oauthImplemented",
+    "callbackRouteImplemented",
+    "tokenExchangeImplemented",
+    "tokenStorageImplemented",
+    "ebayApiUsed",
+    "supabaseUsed",
+    "apiCallsMade",
+    "realDraftCreated",
+    "publishedToEbay",
+    "listingMutated",
+    "draftMappingUnlocked",
+    "draftCreationUnlocked",
+    "publicationUnlocked",
+  ]) {
+    assert.equal(
+      safetyFlags[flagName],
+      false,
+      `${flagName} must be false`
+    )
+  }
+})
+
+test("ebay secret environment strategy fixture: no contiene URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    fs.readFileSync(
+      ebaySecretEnvironmentStrategyFixturePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /client_id/,
+    /client_secret/,
+    /access_token/,
+    /refresh_token/,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -10866,6 +11155,10 @@ test("ebay listing package admin MVP: existe y usa fixtures seguros", () => {
   )
   assert.match(
     source,
+    /ebay-secret-environment-strategy-v1\.json/
+  )
+  assert.match(
+    source,
     /ebay-image-generation-service-design-v1\.json/
   )
   assert.match(
@@ -11016,6 +11309,7 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
     "eBay Only Connection Design",
     "eBay Sandbox Integration Readiness",
     "eBay Sandbox OAuth Flow Design",
+    "eBay Secret and Environment Strategy",
     "eBay Sandbox Read-Only Connection Status",
     "Image Generation Service Design",
     "Connection Readiness",
@@ -11522,6 +11816,10 @@ test("ebay listing package admin MVP: muestra sandbox integration readiness", ()
     "Secret Handling Readiness",
     "Required Readiness Checks",
     "Required OAuth Checks",
+    "Required Strategy Checks",
+    "Secret Categories",
+    "Storage Rules",
+    "Log Redaction Rules",
     "Blocked Workflows",
     "Required Human Actions",
     "Next recommended loop: LOOP 112 \u2014 eBay Sandbox OAuth Flow Design V1",
@@ -11568,6 +11866,47 @@ test("ebay listing package admin MVP: muestra sandbox oauth flow design", () => 
     assert.ok(
       source.includes(expectedText),
       `missing eBay sandbox OAuth flow design admin text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay listing package admin MVP: muestra secret environment strategy", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "eBay Secret and Environment Strategy",
+    "SANDBOX_FIRST_SERVER_ONLY",
+    "SECRET_ENVIRONMENT_STRATEGY_DESIGN_ONLY",
+    "DO_NOT_CONFIGURE_SECRETS_YET",
+    "NO_CREDENTIALS_CONFIGURED",
+    "NO_SECRETS_CONFIGURED",
+    "NO_TOKENS_CONFIGURED",
+    "TOKEN_STORAGE_NOT_IMPLEMENTED",
+    "LOG_REDACTION_NOT_IMPLEMENTED",
+    "PRODUCTION_BLOCKED",
+    "DO_NOT_CREATE_EBAY_DRAFT",
+    "DO_NOT_PUBLISH",
+    "Secret and environment strategy is design-only",
+    "Secrets must never be committed",
+    "Secrets must never be exposed to frontend",
+    "IMNOVA must never request or store seller passwords",
+    "Environment Readiness",
+    "Server-Only Policy",
+    "Secret Categories",
+    "Storage Rules",
+    "Log Redaction Rules",
+    "Required Strategy Checks",
+    "Blocked Workflows",
+    "Required Human Actions",
+    "Next recommended loop: LOOP 114 \u2014 eBay Sandbox OAuth Scaffold V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing eBay secret environment strategy admin text: ${expectedText}`
     )
   }
 })

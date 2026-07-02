@@ -2,6 +2,7 @@ import type {
   ReactNode,
 } from "react"
 import listingPackage from "../../../tools/fixtures/ebay-first-listing-package-v1.json"
+import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
 import ebayOnlyConnectionDesign from "../../../tools/fixtures/ebay-only-connection-design-v1.json"
 import ebaySandboxIntegrationReadiness from "../../../tools/fixtures/ebay-sandbox-integration-readiness-v1.json"
@@ -370,6 +371,43 @@ const ebaySandboxOauthFlowDesignCopy = {
     "IMNOVA must never store seller passwords",
   nextRecommendedLoop:
     "Next recommended loop: LOOP 113 — eBay Secret and Environment Strategy V1",
+}
+
+const ebaySecretEnvironmentStrategyCopy = {
+  title:
+    "eBay Secret and Environment Strategy",
+  environmentStrategy:
+    "SANDBOX_FIRST_SERVER_ONLY",
+  strategyStatus:
+    "SECRET_ENVIRONMENT_STRATEGY_DESIGN_ONLY",
+  strategyDecision:
+    "DO_NOT_CONFIGURE_SECRETS_YET",
+  credentialStatus:
+    "NO_CREDENTIALS_CONFIGURED",
+  secretStatus:
+    "NO_SECRETS_CONFIGURED",
+  tokenStatus:
+    "NO_TOKENS_CONFIGURED",
+  storageStatus:
+    "TOKEN_STORAGE_NOT_IMPLEMENTED",
+  logStatus:
+    "LOG_REDACTION_NOT_IMPLEMENTED",
+  productionStatus:
+    "PRODUCTION_BLOCKED",
+  draftImpact:
+    "DO_NOT_CREATE_EBAY_DRAFT",
+  publicationImpact:
+    "DO_NOT_PUBLISH",
+  strategySummary:
+    "Secret and environment strategy is design-only",
+  secretsNeverCommitted:
+    "Secrets must never be committed",
+  secretsNeverFrontend:
+    "Secrets must never be exposed to frontend",
+  neverStoreSellerPasswords:
+    "IMNOVA must never request or store seller passwords",
+  nextRecommendedLoop:
+    "Next recommended loop: LOOP 114 — eBay Sandbox OAuth Scaffold V1",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -2805,6 +2843,302 @@ export default function EbayListingPackagePage() {
                   <FieldGrid
                     fields={Object.entries(
                       ebaySandboxOauthFlowDesign.safetyFlags
+                    )}
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="eBay Secret and Environment Strategy">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {ebaySecretEnvironmentStrategy.strategyVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {ebaySecretEnvironmentStrategyCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {ebaySecretEnvironmentStrategy.strategySummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySecretEnvironmentStrategyCopy.strategyStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySecretEnvironmentStrategyCopy.strategyDecision}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {ebaySecretEnvironmentStrategyCopy.environmentStrategy}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Environment strategy",
+                      ebaySecretEnvironmentStrategy.environmentStrategy,
+                    ],
+                    [
+                      "Strategy status",
+                      ebaySecretEnvironmentStrategy.strategyStatus,
+                    ],
+                    [
+                      "Strategy decision",
+                      ebaySecretEnvironmentStrategy.strategyDecision,
+                    ],
+                    [
+                      "Credential status",
+                      ebaySecretEnvironmentStrategy.credentialStatus,
+                    ],
+                    [
+                      "Secret status",
+                      ebaySecretEnvironmentStrategy.secretStatus,
+                    ],
+                    [
+                      "Token status",
+                      ebaySecretEnvironmentStrategy.tokenStatus,
+                    ],
+                    [
+                      "Storage status",
+                      ebaySecretEnvironmentStrategy.storageStatus,
+                    ],
+                    [
+                      "Log status",
+                      ebaySecretEnvironmentStrategy.logStatus,
+                    ],
+                    [
+                      "Production status",
+                      ebaySecretEnvironmentStrategy.productionStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      ebaySecretEnvironmentStrategy.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      ebaySecretEnvironmentStrategy.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Environment Readiness
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySecretEnvironmentStrategy.environmentReadiness
+                    )}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Server-Only Policy
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySecretEnvironmentStrategy.serverOnlyPolicy
+                    )}
+                  />
+                </div>
+                <p className="mt-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.045] p-4 text-sm leading-6 text-cyan-50/80">
+                  {ebaySecretEnvironmentStrategyCopy.secretsNeverCommitted}.{" "}
+                  {ebaySecretEnvironmentStrategyCopy.secretsNeverFrontend}.{" "}
+                  {ebaySecretEnvironmentStrategyCopy.neverStoreSellerPasswords}.
+                </p>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Secret Categories
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {ebaySecretEnvironmentStrategy.secretCategories.map((category) => (
+                  <article
+                    key={category.categoryId}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <p className="break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+                      {category.label}
+                    </p>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {category.status}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-white/60">
+                      {category.reason}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Storage Rules
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {ebaySecretEnvironmentStrategy.storageRules.map((rule) => (
+                    <div
+                      key={rule.ruleId}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {rule.label}
+                      </p>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {rule.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {rule.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Log Redaction Rules
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {ebaySecretEnvironmentStrategy.logRedactionRules.map((rule) => (
+                    <div
+                      key={rule.ruleId}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {rule.label}
+                      </p>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {rule.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {rule.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Required Strategy Checks
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {ebaySecretEnvironmentStrategy.requiredStrategyChecks.map((check) => (
+                  <article
+                    key={check.checkId}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <p className="break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+                      {check.label}
+                    </p>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {check.status}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-white/60">
+                      {check.reason}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocked Workflows
+                </h4>
+                <div className="mt-4 grid gap-3">
+                  {ebaySecretEnvironmentStrategy.blockedWorkflows.map((workflow) => (
+                    <div
+                      key={workflow.workflow}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                    >
+                      <p className="break-words text-sm font-bold text-white [overflow-wrap:anywhere]">
+                        {workflow.workflow}
+                      </p>
+                      <p className="mt-1 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                        {workflow.status}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        {workflow.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Required Human Actions
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebaySecretEnvironmentStrategy.requiredHumanActions
+                    }
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Next Recommended Loop
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        ebaySecretEnvironmentStrategyCopy.nextRecommendedLoop,
+                        ebaySecretEnvironmentStrategy.nextRecommendedLoop.loop,
+                      ],
+                      [
+                        "Reason",
+                        ebaySecretEnvironmentStrategy.nextRecommendedLoop.reason,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      ebaySecretEnvironmentStrategy.nextRecommendedLoop
+                        .constraints
+                    }
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Compact Safety Flags
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      ebaySecretEnvironmentStrategy.safetyFlags
                     )}
                   />
                 </div>
