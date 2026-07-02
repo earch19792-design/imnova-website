@@ -743,6 +743,19 @@ const ebayRealProductListingGeneratorIntegrationFixture =
     )
   )
 
+const ebayLunaPortexCatalogImagePackageQaFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-luna-portex-catalog-image-package-qa-v1.json"
+  )
+
+const ebayLunaPortexCatalogImagePackageQaFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayLunaPortexCatalogImagePackageQaFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -9564,6 +9577,233 @@ test("ebay real product listing generator fixture: no contiene URLs tokens endpo
   }
 })
 
+test("ebay luna portex catalog image package QA fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayLunaPortexCatalogImagePackageQaFixturePath
+    )
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.imagePackageVersion,
+    "EBAY_LUNA_PORTEX_CATALOG_IMAGE_PACKAGE_QA_V1"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.imagePackageStatus,
+    "LUNA_PORTEX_CATALOG_IMAGE_PACKAGE_QA_READY"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.visualSourceDecision,
+    "USE_LUNA_PORTEX_CATALOG_IMAGE_AS_VISUAL_SOURCE_OF_TRUTH"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.mainImagePolicyStatus,
+    "SOURCE_BASED_MAIN_IMAGE_OPTIMIZATION_ALLOWED"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.secondaryImagePolicyStatus,
+    "AI_ASSISTED_SECONDARY_IMAGES_ALLOWED_FROM_CATALOG_SOURCE_ONLY"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.imageQaStatus,
+    "IMAGE_QA_GATES_ACTIVE_IMAGES_NOT_GENERATED"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay luna portex catalog image package QA fixture: politicas visuales conservadoras", () => {
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.lunaPortexCatalogSourcePolicy
+      .visualSourceOfTruth,
+    true
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.lunaPortexCatalogSourcePolicy
+      .catalogImageRequired,
+    true
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.mainImageOptimizationPolicy
+      .optimizationAllowed,
+    true
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.mainImageOptimizationPolicy
+      .mustLookPhotorealistic,
+    true
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.mainImageOptimizationPolicy
+      .mustNotLookAiGenerated,
+    true
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.mainImageOptimizationPolicy
+      .mustNotBeGeneratedFromScratch,
+    true
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.secondaryImagePackagePlan
+      .aiAssistedAllowed,
+    true
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.secondaryImagePackagePlan
+      .mustPreserveExactProductFidelity,
+    true
+  )
+  assert.equal(
+    ebayLunaPortexCatalogImagePackageQaFixture.secondaryImagePackagePlan
+      .images.length,
+    6
+  )
+
+  const measurementImage =
+    ebayLunaPortexCatalogImagePackageQaFixture.secondaryImagePackagePlan
+      .images.find((image) => image.imageNumber === 3)
+
+  assert.equal(
+    measurementImage.blockedUntilDimensionsConfirmed,
+    true
+  )
+})
+
+test("ebay luna portex catalog image package QA fixture: gates bloquean imagenes y draft", () => {
+  const gates =
+    ebayLunaPortexCatalogImagePackageQaFixture.imageQaGates
+
+  assert.equal(gates.canGenerateActualImages, false)
+  assert.equal(gates.canUploadImages, false)
+  assert.equal(gates.canBuildDraftPayloadWithImages, false)
+  assert.equal(gates.canCreateEbayDraft, false)
+  assert.equal(gates.canPublishToEbay, false)
+
+  const safetyFlags =
+    ebayLunaPortexCatalogImagePackageQaFixture.safetyFlags
+
+  assert.equal(
+    safetyFlags.lunaPortexCatalogImageIsVisualSourceOfTruth,
+    true
+  )
+  assert.equal(
+    safetyFlags.mainImageGeneratedFromScratch,
+    false
+  )
+  assert.equal(
+    safetyFlags.mainImageMustNotLookAiGenerated,
+    true
+  )
+  assert.equal(
+    safetyFlags.secondaryImagesAiAssistedAllowedFromCatalogSourceOnly,
+    true
+  )
+  assert.equal(
+    safetyFlags.exactProductFidelityRequired,
+    true
+  )
+  assert.equal(
+    safetyFlags.imageGenerationUsed,
+    false
+  )
+  assert.equal(
+    safetyFlags.imageUploadUsed,
+    false
+  )
+  assert.equal(
+    safetyFlags.externalImageFetchUsed,
+    false
+  )
+})
+
+test("ebay luna portex catalog image package QA modules: puros sin archivos ni integraciones reales", () => {
+  for (const modulePath of [
+    "lib/ebay/catalog-image-policy.ts",
+    "lib/ebay/image-package-qa.ts",
+  ]) {
+    assert.ok(
+      fs.existsSync(modulePath),
+      `missing module: ${modulePath}`
+    )
+
+    const source =
+      fs.readFileSync(
+        modulePath,
+        "utf8"
+      )
+
+    for (const forbiddenPattern of [
+      /process\.env/,
+      /fetch\(/,
+      /new OpenAI/,
+      /openai/i,
+      /\.insert\(/,
+      /\.update\(/,
+      /\.delete\(/,
+      /\.upsert\(/,
+      /\.rpc\(/,
+      /console\.log/,
+      /console\.error/,
+      /writeFile/,
+      /readFile/,
+      /download/i,
+      /sharp/i,
+      /canvas/i,
+      /createDraft/,
+      /publishListing/,
+    ]) {
+      assert.doesNotMatch(
+        source,
+        forbiddenPattern,
+        `forbidden pattern in ${modulePath}: ${forbiddenPattern}`
+      )
+    }
+  }
+})
+
+test("ebay luna portex catalog image package QA fixture: no contiene URLs tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebayLunaPortexCatalogImagePackageQaFixturePath,
+      "lib/ebay/catalog-image-policy.ts",
+      "lib/ebay/image-package-qa.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /http:\/\//i,
+    /https:\/\//i,
+    /base64/i,
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+    /supplierProductUrl/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -14822,6 +15062,42 @@ test("ebay listing package admin MVP: muestra real product listing generator int
   assert.doesNotMatch(
     source,
     /Real Product Listing Generator Integration[\s\S]{0,5000}onClick=/
+  )
+})
+
+test("ebay listing package admin MVP: muestra luna portex catalog image package QA", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "ebay-luna-portex-catalog-image-package-qa-v1.json",
+    "Luna Portex Catalog Image Package + eBay Image QA",
+    "EBAY_LUNA_PORTEX_CATALOG_IMAGE_PACKAGE_QA_V1",
+    "LUNA_PORTEX_CATALOG_IMAGE_PACKAGE_QA_READY",
+    "USE_LUNA_PORTEX_CATALOG_IMAGE_AS_VISUAL_SOURCE_OF_TRUTH",
+    "SOURCE_BASED_MAIN_IMAGE_OPTIMIZATION_ALLOWED",
+    "AI_ASSISTED_SECONDARY_IMAGES_ALLOWED_FROM_CATALOG_SOURCE_ONLY",
+    "IMAGE_QA_GATES_ACTIVE_IMAGES_NOT_GENERATED",
+    "Luna Portex Catalog Image = visual source of truth",
+    "Main image policy",
+    "Secondary image package plan",
+    "Image QA gates",
+    "must look photorealistic",
+    "must not look AI-generated",
+    "LOOP 125 \u2014 eBay Draft Payload Dry Run Builder V1",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing luna portex catalog image package QA admin text: ${expectedText}`
+    )
+  }
+
+  assert.doesNotMatch(
+    source,
+    /Luna Portex Catalog Image Package \+ eBay Image QA[\s\S]{0,5000}onClick=/
   )
 })
 
