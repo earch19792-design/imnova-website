@@ -1,0 +1,113 @@
+{
+  "dbBoundaryVersion": "PRODUCTION_DB_EBAY_TABLE_AUDIT_CLEANUP_PLAN_V1",
+  "caseId": "PRODUCTION-DB-EBAY-TABLE-AUDIT-001",
+  "status": "DB_TABLE_BOUNDARIES_AUDITED_CLEANUP_PLAN_READY",
+  "mode": "STATIC_AUDIT_NO_DB_CHANGES",
+  "productionCoreProtectedOperationally": true,
+  "physicalDbCleanupApplied": false,
+  "liveDbQueried": false,
+  "categories": {
+    "imnovaCoreProduction": [
+      "products",
+      "product_states",
+      "public_products",
+      "product_images",
+      "distribution_locations",
+      "notification_logs",
+      "subscribers",
+      "communication_preferences",
+      "community_interest_areas",
+      "subscriber_area_interests",
+      "subscriber_interests",
+      "community_levels",
+      "community_referral_codes",
+      "community_referrals",
+      "community_points_ledger",
+      "community_member_status",
+      "community_vip_rewards",
+      "community_reward_redemptions",
+      "community_idea_votes",
+      "idea_lab_items",
+      "transparency_wall_items"
+    ],
+    "ebayProStaging": [
+      "market_radar_sources",
+      "market_radar_products",
+      "market_radar_snapshots",
+      "market_radar_events",
+      "market_radar_scores",
+      "market_radar_latest_snapshots",
+      "market_radar_latest_products",
+      "ebay_product_candidates",
+      "ebay_candidate_validations",
+      "ebay_profit_scenarios",
+      "ebay_compliance_checks",
+      "ebay_candidate_scores",
+      "ebay_candidate_decisions",
+      "ebay_listing_drafts",
+      "ebay_pipeline_audit_log",
+      "ebay_price_intelligence_snapshots",
+      "ebay_active_listing_risk_events"
+    ],
+    "localVmLabHeavy": [
+      "benchmark_raw_snapshots",
+      "benchmark_raw_batches",
+      "scanner_raw_outputs",
+      "price_intelligence_raw_batches",
+      "worker_run_logs",
+      "heavy_fixture_imports",
+      "image_experiment_outputs",
+      "historical_radar_raw_snapshots"
+    ],
+    "sharedMinimum": [
+      "product_id",
+      "slug",
+      "confirmed_product_facts",
+      "product_status_summary",
+      "stock_summary",
+      "safe_cost_summary"
+    ],
+    "unknownManualReview": [
+      "trend_radar_signals",
+      "social_signals",
+      "community_surveys",
+      "survey_responses",
+      "notification_logs_when_mixed_with_ebay_alerts"
+    ]
+  },
+  "cleanupSafetyChecklist": [
+    "confirm production gate merged",
+    "inventory production tables read-only",
+    "export/backup candidate tables",
+    "verify no production runtime depends on candidate tables",
+    "classify unknown tables manually",
+    "prepare rollback script",
+    "require user approval before drop/archive",
+    "apply only after production maintenance window if needed"
+  ],
+  "nextPhases": [
+    "132F-FAST Read-only production DB inventory",
+    "132G-FAST Cleanup migration draft, not applied",
+    "132H-FAST Approved cleanup/archival execution",
+    "132I-FAST VM Lab DB migration/seed plan"
+  ],
+  "safetyFlags": {
+    "staticAuditOnly": true,
+    "physicalDbCleanupApplied": false,
+    "liveSupabaseQueried": false,
+    "supabaseWriteUsed": false,
+    "sqlMigrationCreated": false,
+    "destructiveSqlCreated": false,
+    "dbPushUsed": false,
+    "dbPullUsed": false,
+    "vmConnected": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "openAiUsed": false,
+    "imageGenerationUsed": false,
+    "imageUploadUsed": false
+  }
+}
