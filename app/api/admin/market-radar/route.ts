@@ -33,6 +33,7 @@ const DASHBOARD_PRODUCT_LIMIT = 50
 const DASHBOARD_SEARCH_LIMIT = 80
 const DASHBOARD_SEARCH_SCAN_LIMIT = 500
 const DASHBOARD_OUT_OF_STOCK_LIMIT = 50
+const DASHBOARD_MANUAL_STOCK_CONFIRMATION_LIMIT = 100
 const DASHBOARD_LIGHTWEIGHT_EVENT_LIMIT = 40
 const DASHBOARD_PRODUCT_EVENT_LIMIT = 160
 const DASHBOARD_CANDIDATE_LOOKUP_LIMIT = 160
@@ -673,6 +674,8 @@ function isManualStockConfirmationSnapshot(
     raw?: {
       inventory_context?: {
         inventory_source?: string | null
+        inventory_scope?: string | null
+        inventory_confidence?: string | null
       } | null
       manual_stock_confirmation?: unknown
     } | null
@@ -682,6 +685,43 @@ function isManualStockConfirmationSnapshot(
     snapshot?.raw?.manual_stock_confirmation ||
     snapshot?.raw?.inventory_context?.inventory_source ===
       "manual_admin_confirmation"
+  )
+}
+
+function isTrustedPositiveStockSnapshot(
+  snapshot: {
+    available?: boolean | null
+    inventory_quantity?: number | string | null
+    raw?: {
+      inventory_context?: {
+        inventory_source?: string | null
+        inventory_scope?: string | null
+        inventory_confidence?: string | null
+      } | null
+    } | null
+  } | null | undefined
+) {
+  const quantity =
+    toNumber(snapshot?.inventory_quantity)
+  const inventoryContext =
+    snapshot?.raw?.inventory_context
+
+  return Boolean(
+    snapshot?.available === true &&
+    quantity !== null &&
+    quantity > 0 &&
+    inventoryContext?.inventory_scope ===
+      "variant_level" &&
+    inventoryContext?.inventory_confidence ===
+      "high" &&
+    (
+      inventoryContext?.inventory_source ===
+        "luna_numeric" ||
+      inventoryContext?.inventory_source ===
+        "luna_authenticated_html" ||
+      inventoryContext?.inventory_source ===
+        "manual_admin_confirmation"
+    )
   )
 }
 
@@ -695,6 +735,8 @@ function shouldPreferSnapshotForDashboard({
     raw?: {
       inventory_context?: {
         inventory_source?: string | null
+        inventory_scope?: string | null
+        inventory_confidence?: string | null
       } | null
       manual_stock_confirmation?: unknown
     } | null
@@ -705,6 +747,8 @@ function shouldPreferSnapshotForDashboard({
     raw?: {
       inventory_context?: {
         inventory_source?: string | null
+        inventory_scope?: string | null
+        inventory_confidence?: string | null
       } | null
       manual_stock_confirmation?: unknown
     } | null
@@ -727,18 +771,20 @@ function shouldPreferSnapshotForDashboard({
       nextSnapshot
     )
   ) {
-    return true
+    return !isTrustedPositiveStockSnapshot(
+      currentSnapshot
+    )
   }
 
   const hasConfirmedQuantity =
-    nextSnapshot.available === true &&
-    nextSnapshot.inventory_quantity !== null &&
-    nextSnapshot.inventory_quantity !== undefined
+    isTrustedPositiveStockSnapshot(
+      nextSnapshot
+    )
 
   const currentHasConfirmedQuantity =
-    currentSnapshot.available === true &&
-    currentSnapshot.inventory_quantity !== null &&
-    currentSnapshot.inventory_quantity !== undefined
+    isTrustedPositiveStockSnapshot(
+      currentSnapshot
+    )
 
   return Boolean(
     hasConfirmedQuantity &&
@@ -1237,6 +1283,33 @@ async function getLatestMarketRadarProducts(
           DASHBOARD_OUT_OF_STOCK_LIMIT
         )
 
+    const {
+      data: manualStockSnapshotData,
+      error: manualStockSnapshotError,
+    } =
+      await supabase
+        .from("market_radar_snapshots")
+        .select("product_id")
+        .eq(
+          "source_id",
+          source.id
+        )
+        .not(
+          "raw->manual_stock_confirmation",
+          "is",
+          null
+        )
+        .order(
+          "captured_at",
+          {
+            ascending: false,
+            nullsFirst: false,
+          }
+        )
+        .limit(
+          DASHBOARD_MANUAL_STOCK_CONFIRMATION_LIMIT
+        )
+
     if (outOfStockSnapshotError) {
       if (
         isStatementTimeoutError(
@@ -1254,12 +1327,32 @@ async function getLatestMarketRadarProducts(
       }
     }
 
+    if (manualStockSnapshotError) {
+      if (
+        isStatementTimeoutError(
+          manualStockSnapshotError
+        )
+      ) {
+        console.warn(
+          "MARKET RADAR MANUAL STOCK SNAPSHOT QUERY TIMEOUT; CONTINUING WITH SCORE PRODUCTS:",
+          manualStockSnapshotError.message
+        )
+      } else {
+        throw new Error(
+          manualStockSnapshotError.message
+        )
+      }
+    }
+
     productIds =
       Array.from(
         new Set([
           ...productIds,
           ...(
             outOfStockSnapshotData || []
+          ).map(snapshot => snapshot.product_id),
+          ...(
+            manualStockSnapshotData || []
           ).map(snapshot => snapshot.product_id),
         ].filter(Boolean))
       )

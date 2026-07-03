@@ -20740,11 +20740,19 @@ test("market radar dashboard: incluye out of stock aunque salga del top score", 
   )
   assert.match(
     source,
+    /DASHBOARD_MANUAL_STOCK_CONFIRMATION_LIMIT/
+  )
+  assert.match(
+    source,
     /\.from\("market_radar_snapshots"\)[\s\S]*\.eq\(\s*"available",\s*false\s*\)[\s\S]*DASHBOARD_OUT_OF_STOCK_LIMIT/
   )
   assert.match(
     source,
-    /productIds =[\s\S]*new Set\(\[[\s\S]*\.\.\.productIds[\s\S]*outOfStockSnapshotData/
+    /\.not\(\s*"raw->manual_stock_confirmation",\s*"is",\s*null\s*\)[\s\S]*DASHBOARD_MANUAL_STOCK_CONFIRMATION_LIMIT/
+  )
+  assert.match(
+    source,
+    /productIds =[\s\S]*new Set\(\[[\s\S]*\.\.\.productIds[\s\S]*outOfStockSnapshotData[\s\S]*manualStockSnapshotData/
   )
 })
 
@@ -20763,7 +20771,23 @@ test("market radar dashboard: snapshot manual 0 no se reemplaza por stock anteri
   )
   assert.match(
     source,
+    /function isTrustedPositiveStockSnapshot[\s\S]*variant_level[\s\S]*high[\s\S]*luna_numeric[\s\S]*luna_authenticated_html[\s\S]*manual_admin_confirmation/
+  )
+  assert.match(
+    source,
+    /manualStockSnapshotData[\s\S]*product_id/
+  )
+  assert.match(
+    source,
     /function shouldPreferSnapshotForDashboard[\s\S]*isManualStockConfirmationSnapshot\([\s\S]*currentSnapshot[\s\S]*return false/
+  )
+  assert.match(
+    source,
+    /isManualStockConfirmationSnapshot\([\s\S]*nextSnapshot[\s\S]*return !isTrustedPositiveStockSnapshot\([\s\S]*currentSnapshot/
+  )
+  assert.match(
+    source,
+    /const hasConfirmedQuantity =[\s\S]*isTrustedPositiveStockSnapshot\([\s\S]*nextSnapshot/
   )
   assert.match(
     source,
