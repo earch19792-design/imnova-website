@@ -1857,6 +1857,10 @@ function getPipelineBlockedReasonLabel(
     lowestVisiblePrice !== undefined &&
     lowestVisiblePrice <= 2
   ) {
+    if (getRadarStockValidationStatus(product) === "stock_confirmed") {
+      return `Precio bajo por unidad (${formatCurrency(lowestVisiblePrice)}). Evaluar pack x3, x6 o x12 antes de vender; confirmar fees, shipping y margen por paquete.`
+    }
+
     return `Precio bajo (${formatCurrency(lowestVisiblePrice)}). Revisar fees, shipping y margen minimo antes de vender.`
   }
 
