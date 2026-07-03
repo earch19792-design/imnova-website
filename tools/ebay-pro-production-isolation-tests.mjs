@@ -257,4 +257,11 @@ test("production blocks eBay Pro paths while core paths remain allowed", () => {
     }),
     true,
   );
+  assert.equal(
+    isEbayProAllowed({
+      vercelEnv: "production",
+      pathname: "/api/whatsapp",
+    }),
+    true,
+  );
 });

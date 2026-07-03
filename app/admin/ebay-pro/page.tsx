@@ -38,6 +38,11 @@ const cards = [
 
 const disabledCards = [
   {
+    title: "WhatsApp Seller Alerts",
+    detail:
+      "Canal compartido futuro, dry-run por defecto para alertas internas.",
+  },
+  {
     title: "Sandbox futuro",
     detail:
       "No OAuth, no tokens, no draft real.",

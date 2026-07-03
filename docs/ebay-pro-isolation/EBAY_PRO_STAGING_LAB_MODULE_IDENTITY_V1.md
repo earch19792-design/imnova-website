@@ -53,12 +53,32 @@ eBay Pro owns radar, Seller OS, listing, candidates, snapshots and future benchm
 
 Shared data must stay minimal: `product_id`, `slug`, product facts and status summary.
 
+## Shared WhatsApp Communication Channel
+
+WhatsApp remains a shared controlled communication channel. IMNOVA Core can continue using WhatsApp for community, launches and its own operational communications in production.
+
+eBay Pro can declare future WhatsApp seller alerts only in staging/lab. Those alerts are dry-run by default and are not connected to real sending in this loop.
+
+Future eBay Pro alert cases:
+
+- Candidate winner detected.
+- Product out of stock.
+- Review margin.
+- Evaluate pack.
+- Pack candidate ready.
+- Listing ready for review.
+- Active risk.
+- Seller action required.
+
+This loop does not duplicate WhatsApp secrets, does not create environment files, does not add credentials, does not call the WhatsApp API, does not send messages and does not change Meta templates.
+
 ## What Is Independent Now
 
 - eBay Pro has a named hub.
 - eBay Pro has a manifest.
 - eBay Pro has staging/lab-only policy.
 - Production gate blocks eBay Pro routes.
+- WhatsApp seller alerts are declared as a future controlled eBay Pro capability without real sending.
 - Tests define the module identity and production boundary.
 
 ## What Is Not Independent Yet
@@ -68,6 +88,7 @@ Shared data must stay minimal: `product_id`, `slug`, product facts and status su
 - Local VM is not connected.
 - Heavy workers are not moved yet.
 - UI panels are not split into a separate app yet.
+- WhatsApp is not connected to eBay Pro real delivery yet.
 
 ## Next Steps
 

@@ -23,9 +23,21 @@ const modules = [
   "eBay Seller OS",
   "eBay Listing",
   "eBay Listing Package",
+  "WhatsApp Seller Alerts future",
   "eBay Image Workflow future",
   "eBay Benchmark Intelligence future",
   "eBay Sandbox future",
+]
+
+const whatsappSellerAlertEvents = [
+  "candidate_winner_detected",
+  "product_out_of_stock",
+  "review_margin",
+  "evaluate_pack",
+  "pack_candidate_ready",
+  "listing_ready_for_review",
+  "active_risk",
+  "seller_action_required",
 ]
 
 export function getEbayProSuiteRoutes() {
@@ -78,6 +90,34 @@ export function getEbayProSuiteRuntimePolicy() {
   }
 }
 
+export function getEbayProSuiteCommunicationPolicy() {
+  return {
+    whatsapp:
+      {
+        channelType:
+          "shared_controlled_communication_channel",
+        coreAllowedInProduction:
+          true,
+        ebayProAllowedInProduction:
+          false,
+        ebayProAllowedInStagingLab:
+          true,
+        dryRunDefault:
+          true,
+        realSendAllowedInThisLoop:
+          false,
+        metaTemplateChangesAllowed:
+          false,
+        secretsDuplicated:
+          false,
+        realApiCallUsed:
+          false,
+        futureSellerAlertEvents:
+          whatsappSellerAlertEvents,
+      },
+  }
+}
+
 export function getEbayProSuiteManifest() {
   return {
     moduleVersion:
@@ -97,6 +137,8 @@ export function getEbayProSuiteManifest() {
       getEbayProSuiteRoutes(),
     runtimePolicy:
       getEbayProSuiteRuntimePolicy(),
+    communicationPolicy:
+      getEbayProSuiteCommunicationPolicy(),
     dataBoundaries:
       getEbayProSuiteDataBoundaries(),
     rules: [
@@ -107,6 +149,8 @@ export function getEbayProSuiteManifest() {
       "eBay Pro must not load community or PII.",
       "eBay Pro must not publish.",
       "eBay Pro must not create real drafts.",
+      "WhatsApp stays a shared controlled channel for IMNOVA Core and future eBay Pro seller alerts.",
+      "eBay Pro WhatsApp seller alerts are staging/lab-only and dry-run by default.",
     ],
   }
 }

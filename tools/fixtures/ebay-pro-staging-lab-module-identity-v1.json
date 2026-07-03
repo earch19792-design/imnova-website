@@ -51,11 +51,38 @@
       "status summary"
     ]
   },
+  "whatsappAlerts": {
+    "channelType": "shared_controlled_communication_channel",
+    "coreWhatsAppAllowedInProduction": true,
+    "ebayProWhatsAppAllowedInProduction": false,
+    "ebayProWhatsAppAllowedInStagingLab": true,
+    "dryRunDefault": true,
+    "realSendAllowedInThisLoop": false,
+    "whatsappApiCalledInThisLoop": false,
+    "metaTemplatesChanged": false,
+    "secretsDuplicated": false,
+    "futureSellerAlertEvents": [
+      "candidate_winner_detected",
+      "product_out_of_stock",
+      "review_margin",
+      "evaluate_pack",
+      "pack_candidate_ready",
+      "listing_ready_for_review",
+      "active_risk",
+      "seller_action_required"
+    ]
+  },
   "safetyFlags": {
     "productionCoreProtected": true,
     "ebayProProductionDisabled": true,
     "ebayProStagingLabOnly": true,
     "moduleHubCreated": true,
+    "coreWhatsAppProductionPreserved": true,
+    "ebayProWhatsappDryRunDefault": true,
+    "whatsappApiCalled": false,
+    "whatsappRealSendUsed": false,
+    "whatsappSecretsDuplicated": false,
+    "metaTemplatesChanged": false,
     "localVmConnected": false,
     "liveSupabaseQueried": false,
     "supabaseWriteUsed": false,

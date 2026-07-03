@@ -57,6 +57,19 @@ const forbiddenRuntimePatterns = [
   "ebay-listing-package/page",
 ];
 
+const forbiddenWhatsAppRuntimePatterns = [
+  ["access", "token"].join("_"),
+  ["refresh", "token"].join("_"),
+  ["Authorization", ":"].join(""),
+  ["graph", "facebook", "com"].join("."),
+  ["whatsapp", "messages"].join("/"),
+  ["fetch", "("].join(""),
+  ["send", "Message"].join(""),
+  ["send", "WhatsApp"].join(""),
+  ["messages", "send"].join("."),
+  ["meta", "Api", "Call"].join(""),
+];
+
 function isEbayProPath(pathname) {
   const blockedPaths = [
     "/admin/ebay-pro",
@@ -141,6 +154,50 @@ test("module identity fixture declares eBay Pro as staging/lab-only", () => {
     fixture.safetyFlags.ebayProStagingLabOnly,
     true,
   );
+  assert.equal(
+    fixture.whatsappAlerts.coreWhatsAppAllowedInProduction,
+    true,
+  );
+  assert.equal(
+    fixture.whatsappAlerts.ebayProWhatsAppAllowedInProduction,
+    false,
+  );
+  assert.equal(
+    fixture.whatsappAlerts.ebayProWhatsAppAllowedInStagingLab,
+    true,
+  );
+  assert.equal(
+    fixture.whatsappAlerts.dryRunDefault,
+    true,
+  );
+  assert.equal(
+    fixture.whatsappAlerts.realSendAllowedInThisLoop,
+    false,
+  );
+  assert.equal(
+    fixture.whatsappAlerts.whatsappApiCalledInThisLoop,
+    false,
+  );
+  assert.equal(
+    fixture.whatsappAlerts.metaTemplatesChanged,
+    false,
+  );
+  assert.equal(
+    fixture.whatsappAlerts.secretsDuplicated,
+    false,
+  );
+  assert.equal(
+    fixture.safetyFlags.coreWhatsAppProductionPreserved,
+    true,
+  );
+  assert.equal(
+    fixture.safetyFlags.ebayProWhatsappDryRunDefault,
+    true,
+  );
+  assert.equal(
+    fixture.safetyFlags.whatsappRealSendUsed,
+    false,
+  );
 });
 
 test("professional suite manifest is pure and declares routes", () => {
@@ -158,6 +215,14 @@ test("professional suite manifest is pure and declares routes", () => {
   );
   assert.equal(
     content.includes("eBay Professional Seller Suite"),
+    true,
+  );
+  assert.equal(
+    content.includes("WhatsApp Seller Alerts future"),
+    true,
+  );
+  assert.equal(
+    content.includes("shared_controlled_communication_channel"),
     true,
   );
   assert.equal(
@@ -211,6 +276,10 @@ test("eBay Pro hub is lightweight and does not read data", () => {
     content.includes("eBay Listing"),
     true,
   );
+  assert.equal(
+    content.includes("WhatsApp Seller Alerts"),
+    true,
+  );
 
   for (const pattern of forbiddenRuntimePatterns) {
     assert.equal(
@@ -257,6 +326,13 @@ test("environment boundary blocks eBay Pro hub in production", () => {
     }),
     true,
   );
+  assert.equal(
+    isAllowed({
+      runtime: "production",
+      pathname: "/api/whatsapp",
+    }),
+    true,
+  );
 });
 
 test("sidebar links to eBay Pro Suite", () => {
@@ -271,4 +347,50 @@ test("sidebar links to eBay Pro Suite", () => {
     content.includes("/admin/ebay-pro"),
     true,
   );
+});
+
+test("WhatsApp remains shared and eBay Pro alerts stay dry-run", () => {
+  const manifestContent =
+    readText(manifestPath);
+  const boundaryContent =
+    readText(boundaryPath);
+  const hubContent =
+    readText(hubPath);
+
+  assert.equal(
+    fixture.whatsappAlerts.futureSellerAlertEvents.includes(
+      "candidate_winner_detected",
+    ),
+    true,
+  );
+  assert.equal(
+    fixture.whatsappAlerts.futureSellerAlertEvents.includes(
+      "seller_action_required",
+    ),
+    true,
+  );
+  assert.equal(
+    boundaryContent.includes("/api/whatsapp"),
+    false,
+  );
+  assert.equal(
+    isAllowed({
+      runtime: "production",
+      pathname: "/api/whatsapp",
+    }),
+    true,
+  );
+
+  for (const content of [
+    manifestContent,
+    hubContent,
+  ]) {
+    for (const pattern of forbiddenWhatsAppRuntimePatterns) {
+      assert.equal(
+        content.includes(pattern),
+        false,
+        `WhatsApp runtime pattern found: ${pattern}`,
+      );
+    }
+  }
 });
