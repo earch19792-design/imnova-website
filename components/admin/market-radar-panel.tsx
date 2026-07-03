@@ -392,6 +392,12 @@ type StockConfirmationFormState = {
   note: string
 }
 
+function hasStockConfirmationQuantity(
+  value: string | null | undefined
+) {
+  return value?.trim() !== ""
+}
+
 type StockConfirmationSaveState = {
   status: "success" | "error"
   message: string
@@ -1358,7 +1364,8 @@ function isStrictStockConfirmed(
       product.inventory_confidence === "high" &&
       (
         product.inventory_source === "luna_numeric" ||
-        product.inventory_source === "luna_authenticated_html"
+        product.inventory_source === "luna_authenticated_html" ||
+        product.inventory_source === "manual_admin_confirmation"
       )
     )
   )
@@ -1901,7 +1908,7 @@ function getSellerOperationalReason(
     getSellerOperationalRoute(product)
 
   if (route === "out_of_stock") {
-    return "Sin stock confirmado. No listar hasta restock."
+    return "Sin stock confirmado. Cola principal: Sin stock. Bloqueado para listing hasta restock."
   }
 
   if (route === "listing_risk") {
@@ -4684,7 +4691,7 @@ function ProductRow({
         <p className="mt-1 text-[11px] text-white/35">
           {getRadarStockValidationStatus(product) ===
           "out_of_stock"
-            ? "Bloqueado para listing hasta restock"
+            ? "Cola principal: Sin stock. Bloqueado para listing hasta restock."
             : product.inventory_scope === "variant_level"
             ? "Cantidad confirmada por variante/SKU"
             : product.inventory_scope === "product_or_category_signal"
@@ -4733,8 +4740,9 @@ function ProductRow({
               type="button"
               disabled={
                 isConfirmingStock ||
-                !stockConfirmationForm?.quantity ||
-                !product.supplier_variant_id
+                !hasStockConfirmationQuantity(
+                  stockConfirmationForm?.quantity
+                )
               }
               onClick={() =>
                 onConfirmStock(product)
@@ -6053,8 +6061,7 @@ export function MarketRadarPanel({
         stockConfirmationForms[productKey]
 
       if (
-        !form?.quantity ||
-        !product.supplier_variant_id
+        !hasStockConfirmationQuantity(form?.quantity)
       ) {
         setStockConfirmationResults(current => ({
           ...current,
@@ -6098,7 +6105,7 @@ export function MarketRadarPanel({
                   product_id:
                     product.product_id,
                   supplier_variant_id:
-                    product.supplier_variant_id,
+                    product.supplier_variant_id || null,
                   quantity:
                     form.quantity,
                   note:
@@ -7848,7 +7855,7 @@ export function MarketRadarPanel({
         <MetricCard
           title="Out of Stock"
           value={rankingCounts.outOfStock}
-          detail="Sin stock confirmado por Radar"
+          detail="Cola principal: Sin stock"
           icon={PackageX}
         />
         <MetricCard

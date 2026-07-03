@@ -19577,6 +19577,18 @@ test("market radar manual stock confirmation: cantidad cero guarda out of stock"
     source,
     /Producto confirmado manualmente sin stock\./
   )
+  assert.match(
+    source,
+    /supplierVariantId:\s*string \| null/
+  )
+  assert.match(
+    source,
+    /typeof body\.supplier_variant_id === "string"[\s\S]*body\.supplier_variant_id\.trim\(\)[\s\S]*: null/
+  )
+  assert.doesNotMatch(
+    source,
+    /!supplierVariantId \|\|/
+  )
 })
 
 test("market radar actionable ranking: ya revisados muestra candidato sin cambios materiales", () => {
@@ -20587,7 +20599,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Sin stock confirmado por Radar/
+    /Cola principal: Sin stock/
   )
   assert.match(
     source,
@@ -20806,7 +20818,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Sin stock confirmado por Radar/
+    /Cola principal: Sin stock/
   )
   assert.match(
     source,
@@ -21298,7 +21310,7 @@ test("market radar panel: seleccion de centro de venta prepara confirmacion de s
   )
   assert.match(
     source,
-    /Sin stock confirmado\. No listar hasta restock\./
+    /Sin stock confirmado\. Cola principal: Sin stock\. Bloqueado para listing hasta restock\./
   )
   assert.match(
     source,
@@ -21416,6 +21428,79 @@ test("market radar dashboard: snapshot manual 0 no se reemplaza por stock anteri
   assert.match(
     source,
     /shouldPreferSnapshotForDashboard\(\{[\s\S]*currentSnapshot,[\s\S]*nextSnapshot:[\s\S]*snapshot/
+  )
+})
+
+test("market radar panel: confirmacion manual permite guardar cantidad 0", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/market-radar-panel.tsx"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /function hasStockConfirmationQuantity\([\s\S]*value\?\.trim\(\) !== ""/
+  )
+  assert.match(
+    source,
+    /disabled=\{[\s\S]*!hasStockConfirmationQuantity\([\s\S]*stockConfirmationForm\?\.quantity/
+  )
+  assert.match(
+    source,
+    /if \([\s\S]*!hasStockConfirmationQuantity\(form\?\.quantity\)[\s\S]*setStockConfirmationResults/
+  )
+  assert.match(
+    source,
+    /supplier_variant_id:[\s\S]*product\.supplier_variant_id \|\| null/
+  )
+  assert.doesNotMatch(
+    source,
+    /!product\.supplier_variant_id/
+  )
+  assert.doesNotMatch(
+    source,
+    /!stockConfirmationForm\?\.quantity/
+  )
+  assert.doesNotMatch(
+    source,
+    /!form\?\.quantity/
+  )
+})
+
+test("market radar panel: confirmacion manual positiva cuenta como stock confirmado", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/market-radar-panel.tsx"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /function isStrictStockConfirmed[\s\S]*manual_admin_confirmation/
+  )
+})
+
+test("market radar panel: sin stock muestra cola principal y bloqueo secundario", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "components/admin/market-radar-panel.tsx"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /Cola principal: Sin stock\. Bloqueado para listing hasta restock\./
+  )
+  assert.match(
+    source,
+    /detail="Cola principal: Sin stock"/
   )
 })
 

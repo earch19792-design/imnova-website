@@ -1616,17 +1616,14 @@ async function confirmMarketRadarStockQuantity({
   supabase: ReturnType<typeof getSupabaseAdminClient>
   sourceId: string
   productId: string
-  supplierVariantId: string
+  supplierVariantId: string | null
   quantity: number
   note?: string | null
 }) {
-  const {
-    data: latestSnapshot,
-    error: latestSnapshotError,
-  } =
-    await supabase
-      .from("market_radar_snapshots")
-      .select(`
+  let latestSnapshotQuery =
+    supabase
+    .from("market_radar_snapshots")
+    .select(`
         id,
         variant_title,
         sku,
@@ -1635,14 +1632,26 @@ async function confirmMarketRadarStockQuantity({
         collections,
         discount_percent
       `)
-      .eq(
-        "product_id",
-        productId
-      )
+
+    .eq(
+      "product_id",
+      productId
+    )
+
+  if (supplierVariantId) {
+    latestSnapshotQuery =
+      latestSnapshotQuery
       .eq(
         "supplier_variant_id",
         supplierVariantId
       )
+  }
+
+  const {
+    data: latestSnapshot,
+    error: latestSnapshotError,
+  } =
+    await latestSnapshotQuery
       .order(
         "captured_at",
         {
@@ -2709,9 +2718,10 @@ export async function POST(
           : ""
 
       const supplierVariantId =
-        typeof body.supplier_variant_id === "string"
-          ? body.supplier_variant_id
-          : ""
+        typeof body.supplier_variant_id === "string" &&
+        body.supplier_variant_id.trim()
+          ? body.supplier_variant_id.trim()
+          : null
 
       const quantity =
         getManualStockQuantity(
@@ -2726,7 +2736,6 @@ export async function POST(
       if (
         !sourceId ||
         !productId ||
-        !supplierVariantId ||
         quantity === null
       ) {
         return NextResponse.json(
