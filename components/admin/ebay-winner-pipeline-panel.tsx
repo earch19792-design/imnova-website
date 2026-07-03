@@ -27,6 +27,9 @@ import {
 import {
   supabase,
 } from "@/lib/supabase"
+import {
+  buildListingIntakeUrl,
+} from "@/lib/ebay/winner-to-listing-intake-bridge"
 
 export type EbayPipelineFocusCandidate = {
   candidateId?: string | null
@@ -1122,6 +1125,57 @@ function formatDate(
   } catch {
     return "Fecha no disponible"
   }
+}
+
+function slugifyListingContext(
+  value?: string | null
+) {
+  if (!value) {
+    return null
+  }
+
+  const slug =
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+
+  return slug || null
+}
+
+function getCandidateListingIntakeUrl(
+  candidate: EbayCandidate
+) {
+  const marginSignal =
+    getCandidateMarginSignal(candidate)
+
+  return buildListingIntakeUrl({
+    pipelineId:
+      candidate.id,
+    productId:
+      candidate.supplier_sku ||
+      candidate.candidate_key,
+    productSlug:
+      slugifyListingContext(
+        candidate.supplier_sku ||
+        candidate.candidate_key ||
+        candidate.title
+      ),
+    winnerScore:
+      candidate.score?.winner_score === null ||
+      candidate.score?.winner_score === undefined
+        ? null
+        : formatNumber(candidate.score.winner_score),
+    pipelineDecision:
+      candidate.productSelectionAdvisor?.decision ||
+      candidate.productSelectionAdvisor?.state ||
+      candidate.state,
+    profitStatus:
+      marginSignal.label,
+    riskStatus:
+      getCandidateReviewSignal(candidate),
+  })
 }
 
 function isSafeHttpUrl(
@@ -4523,6 +4577,28 @@ function CandidateDetailDrawer({
                   <p className="mt-3 rounded-md border border-white/10 bg-black/25 p-3 text-xs leading-5 text-white/50">
                     Mostrar imagen no significa autorizacion para publicar. Si la imagen no esta confirmada, no debe usarse como imagen final de listing.
                   </p>
+
+                  <div className="mt-4 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.06] p-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-50/55">
+                          eBay Seller OS
+                        </p>
+                        <h5 className="mt-2 text-sm font-black text-white">
+                          Preparar listing
+                        </h5>
+                        <p className="mt-2 max-w-xl text-xs leading-5 text-cyan-50/65">
+                          Este producto parece una oportunidad. El siguiente paso es preparar un listing interno para revisión. La señal de rentabilidad viene heredada del Pipeline; Listing no la recalcula. Envía este contexto al Listing Package en modo read-only. No cambia el candidato, no modifica Products y no crea drafts.
+                        </p>
+                      </div>
+                      <a
+                        href={getCandidateListingIntakeUrl(detail.candidate)}
+                        className="inline-flex min-h-11 items-center justify-center rounded-lg border border-cyan-300/25 bg-cyan-300/[0.12] px-4 py-2 text-xs font-black text-cyan-50 transition hover:border-cyan-300/45 hover:bg-cyan-300/[0.18]"
+                      >
+                        Preparar listing
+                      </a>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

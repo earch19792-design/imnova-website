@@ -71,9 +71,9 @@ export function Sidebar({
       value: "market-radar",
     },
     {
-      label: "eBay Pipeline",
+      label: "eBay Seller OS",
       description:
-        "Candidatos, scores, compliance y drafts locales.",
+        "Buscar ganadores, preparar listing y revisar blockers.",
       step: "07",
       icon: Trophy,
       value: "ebay-winner-pipeline",
@@ -319,13 +319,22 @@ export function Sidebar({
           "
         >
           <span className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/50">
-            Seller QA
+            eBay Seller OS
           </span>
           <span className="mt-2 block text-sm font-black text-white">
-            Listing Package QA
+            Preparar listing
           </span>
           <span className="mt-1 block text-xs leading-5 text-white/45">
-            Package + QA review | Do not publish
+            Radar → Pipeline → Listing → Review | No publicar
+          </span>
+          <span className="mt-3 grid gap-1 text-[11px] font-semibold leading-5 text-cyan-50/55">
+            <span>Detectar oportunidad</span>
+            <span>Buscar productos ganadores</span>
+            <span>Confirmar producto</span>
+            <span>Preparar listing</span>
+            <span>Revisar y aprobar</span>
+            <span>Preparar imágenes</span>
+            <span>Conectar eBay</span>
           </span>
         </a>
 

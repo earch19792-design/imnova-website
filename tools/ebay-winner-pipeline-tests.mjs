@@ -782,6 +782,19 @@ const ebayListingReviewApprovalWorkspaceFixture =
     )
   )
 
+const ebayWinnerToListingIntakeBridgeFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-winner-to-listing-intake-bridge-v1.json"
+  )
+
+const ebayWinnerToListingIntakeBridgeFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayWinnerToListingIntakeBridgeFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -1034,6 +1047,11 @@ const ebayListingPackageAdminPagePath =
 const adminSidebarPath =
   path.resolve(
     "app/admin/sidebar.tsx"
+  )
+
+const ebayWinnerPipelinePanelPath =
+  path.resolve(
+    "components/admin/ebay-winner-pipeline-panel.tsx"
   )
 
 test("product selection decision service: producto bueno aprueba para preparacion interna", () => {
@@ -10211,6 +10229,192 @@ test("ebay listing review approval workspace fixture: no contiene tokens endpoin
   }
 })
 
+test("ebay winner to listing intake bridge fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayWinnerToListingIntakeBridgeFixturePath
+    )
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.bridgeVersion,
+    "EBAY_WINNER_TO_LISTING_INTAKE_BRIDGE_V1"
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.flowStatus,
+    "WINNER_TO_LISTING_INTAKE_FLOW_READY"
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.sourceStage,
+    "EBAY_WINNER_PIPELINE"
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.targetStage,
+    "LISTING_PACKAGE"
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.intakeAction,
+    "PREPARE_LISTING_PACKAGE"
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.intakeMode,
+    "READ_ONLY_CONTEXT_PASS_THROUGH"
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.mutationImpact,
+    "DO_NOT_MUTATE_PIPELINE_OR_PRODUCT"
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.pipelineCommercialSignal.listingUsesPipelineDecisionByReference,
+    true
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.pipelineCommercialSignal.listingDuplicatesProfitabilityTruth,
+    false
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.pipelineCommercialSignal.listingRecalculatesProfitability,
+    false
+  )
+  assert.match(
+    ebayWinnerToListingIntakeBridgeFixture.businessRules.profitabilityTruthRule,
+    /Listing uses Pipeline decision by reference/
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.safetyFlags.listingUsesPipelineDecisionByReference,
+    true
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.safetyFlags.listingDuplicatesProfitabilityTruth,
+    false
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.safetyFlags.listingRecalculatesProfitability,
+    false
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.safetyFlags.ebayApiUsed,
+    false
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.safetyFlags.realDraftCreated,
+    false
+  )
+  assert.equal(
+    ebayWinnerToListingIntakeBridgeFixture.safetyFlags.publishedToEbay,
+    false
+  )
+})
+
+test("ebay winner to listing intake bridge module: existe y usa solo rutas internas", () => {
+  const modulePath =
+    "lib/ebay/winner-to-listing-intake-bridge.ts"
+
+  assert.ok(
+    fs.existsSync(modulePath),
+    `missing module: ${modulePath}`
+  )
+
+  const source =
+    fs.readFileSync(
+      modulePath,
+      "utf8"
+    )
+
+  assert.ok(
+    source.includes("/admin/ebay-listing-package?")
+  )
+  assert.ok(
+    source.includes("source=pipeline")
+  )
+  assert.ok(
+    source.includes("encodeURIComponent")
+  )
+  assert.ok(
+    source.includes("winnerScore")
+  )
+  assert.ok(
+    source.includes("pipelineDecision")
+  )
+  assert.ok(
+    source.includes("profitStatus")
+  )
+  assert.ok(
+    source.includes("riskStatus")
+  )
+  assert.ok(
+    source.includes("getPipelineCommercialSignalByReference")
+  )
+  assert.ok(
+    source.includes("buildHumanFriendlyListingIntakeSummary")
+  )
+
+  for (const forbiddenPattern of [
+    /process\.env/,
+    /fetch\(/,
+    /http:\/\//,
+    /https:\/\//,
+    /new OpenAI/,
+    /openai/i,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /console\.log/,
+    /console\.error/,
+    /createDraft/,
+    /publishListing/,
+    /images\.generate/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern,
+      `forbidden pattern in ${modulePath}: ${forbiddenPattern}`
+    )
+  }
+})
+
+test("ebay winner to listing intake bridge fixture: no contiene tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebayWinnerToListingIntakeBridgeFixturePath,
+      "lib/ebay/winner-to-listing-intake-bridge.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -14378,16 +14582,15 @@ test("ebay listing package admin MVP: muestra copy, estados y estrategia princip
     )
 
   for (const expectedText of [
-    "Listing Package QA",
+    "Preparar listing",
     "Professional Listing MVP",
     "Vista vendedor",
     "Preview read-only",
     "Sin conexion eBay",
     "Sin draft creado",
-    "No se creo draft",
-    "No publicar todavia",
+    "Todavía no crea drafts ni publica en eBay.",
     "No publicar",
-    "Requiere revision humana",
+    "Revision humana requerida",
     "Estado: no listo",
     "Riesgo principal: no publicar",
     "Siguiente paso: completar datos criticos",
@@ -15859,7 +16062,11 @@ test("ebay listing package admin MVP: sidebar incluye ruta segura", () => {
   )
   assert.match(
     source,
-    /Listing Package QA/
+    /Preparar listing/
+  )
+  assert.match(
+    source,
+    /eBay Seller OS/
   )
   assert.match(
     source,
@@ -15883,11 +16090,11 @@ test("ebay listing package admin MVP: sidebar incluye ruta segura", () => {
   )
   assert.match(
     source,
-    /Package \+ QA review/
+    /Radar → Pipeline → Listing → Review/
   )
   assert.match(
     source,
-    /Do not publish/
+    /No publicar/
   )
   assert.match(
     source,
@@ -15896,6 +16103,105 @@ test("ebay listing package admin MVP: sidebar incluye ruta segura", () => {
   assert.match(
     source,
     /No image generated/
+  )
+})
+
+test("ebay admin flow: muestra Seller OS humano y puente winner to listing", () => {
+  const listingSource =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+  const sidebarSource =
+    fs.readFileSync(
+      adminSidebarPath,
+      "utf8"
+    )
+  const pipelineSource =
+    fs.readFileSync(
+      ebayWinnerPipelinePanelPath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "ebay-winner-to-listing-intake-bridge-v1.json",
+    "eBay Seller OS",
+    "Ejemplo de flujo vendedor",
+    "Market Radar",
+    "eBay Pipeline",
+    "De oportunidad rentable a listing listo para revisión",
+    "Paquete visual vendedor",
+    "7 imágenes para un listing que convierta",
+    "Imagen principal: fotografía ecommerce desde catálogo Luna Portex",
+    "Imagen 7: uso real con manos",
+    "Buscar productos ganadores",
+    "Confirmar producto",
+    "Preparar listing",
+    "Revisar y aprobar",
+    "Preparar imágenes",
+    "Conectar eBay",
+    "Pipeline decide si vale la pena vender.",
+    "Products confirma qué es el producto.",
+    "Listing prepara cómo se vende.",
+    "Review aprueba si puede avanzar.",
+    "acciones eBay bloqueadas por seguridad",
+    "Preparar listing desde producto ganador",
+    "/admin/ebay-listing-package?source=pipeline",
+    "WINNER_TO_LISTING_INTAKE_FLOW_READY",
+    "READ_ONLY_CONTEXT_PASS_THROUGH",
+    "Qué producto estoy preparando",
+    "Cómo quedará el listing",
+    "Qué falta para avanzar",
+    "Señal comercial heredada",
+    "Listing usa esa decisión por referencia",
+    "Listing uses Pipeline decision by reference. Listing does not duplicate profitability truth.",
+    "Detalles técnicos",
+    "Conectar eBay más adelante",
+  ]) {
+    assert.ok(
+      listingSource.includes(expectedText),
+      `missing Seller OS listing text: ${expectedText}`
+    )
+  }
+
+  for (const expectedText of [
+    "eBay Seller OS",
+    "Buscar ganadores, preparar listing y revisar blockers.",
+    "Detectar oportunidad",
+    "Buscar productos ganadores",
+    "Confirmar producto",
+    "Preparar listing",
+    "Revisar y aprobar",
+    "Preparar imágenes",
+    "Conectar eBay",
+  ]) {
+    assert.ok(
+      sidebarSource.includes(expectedText),
+      `missing Seller OS sidebar text: ${expectedText}`
+    )
+  }
+
+  for (const expectedText of [
+    "buildListingIntakeUrl",
+    "getCandidateListingIntakeUrl",
+    "Preparar listing",
+    "modo read-only",
+    "Este producto parece una oportunidad",
+    "La señal de rentabilidad viene heredada del Pipeline",
+    "winnerScore",
+    "pipelineDecision",
+    "profitStatus",
+    "riskStatus",
+  ]) {
+    assert.ok(
+      pipelineSource.includes(expectedText),
+      `missing Seller OS pipeline text: ${expectedText}`
+    )
+  }
+
+  assert.doesNotMatch(
+    listingSource,
+    /eBay Seller OS[\s\S]{0,7000}onClick=/
   )
 })
 
@@ -15977,7 +16283,8 @@ test("ebay admin sidebar: normaliza labels eBay en ingles", () => {
 
   for (const expectedText of [
     "eBay Proposals",
-    "Listing Package QA",
+    "eBay Seller OS",
+    "Preparar listing",
     "Image Dry Run",
     "/admin/ebay-listings",
     "/admin/ebay-listing-package",
