@@ -13,6 +13,7 @@ import realProductListingGeneratorIntegration from "../../../tools/fixtures/ebay
 import lunaPortexCatalogImagePackageQa from "../../../tools/fixtures/ebay-luna-portex-catalog-image-package-qa-v1.json"
 import completeListingPackageBuilder from "../../../tools/fixtures/ebay-complete-listing-package-builder-v1.json"
 import listingReviewApprovalWorkspace from "../../../tools/fixtures/ebay-listing-review-approval-workspace-v1.json"
+import winnerToListingIntakeBridge from "../../../tools/fixtures/ebay-winner-to-listing-intake-bridge-v1.json"
 import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -41,6 +42,273 @@ const safetyBadges = [
   "Revision humana requerida",
 ]
 
+const ebaySellerOsSteps = [
+  {
+    step:
+      "Step 1",
+    title:
+      "Buscar productos ganadores",
+    description:
+      "Encuentra oportunidades rentables antes de crear un listing.",
+    route:
+      "eBay Winner Pipeline",
+    status:
+      "Pipeline decide si vale la pena vender.",
+  },
+  {
+    step:
+      "Step 2",
+    title:
+      "Confirmar producto",
+    description:
+      "Products confirma qué es el producto.",
+    route:
+      "IMNOVA Products",
+    status:
+      "Products must confirm.",
+  },
+  {
+    step:
+      "Step 3",
+    title:
+      "Preparar listing",
+    description:
+      "Convierte un producto ganador en un listing interno listo para revisión.",
+    route:
+      "Admin → eBay Listing Package",
+    status:
+      "Listing prepara cómo se vende.",
+  },
+  {
+    step:
+      "Step 4",
+    title:
+      "Revisar y aprobar",
+    description:
+      "Revisa contenido, imágenes, payload dry run y blockers antes de avanzar.",
+    route:
+      "Listing Review & Approval Workspace",
+    status:
+      "Review aprueba si puede avanzar.",
+  },
+  {
+    step:
+      "Step 5",
+    title:
+      "Preparar imágenes",
+    description:
+      "Usa imagen catálogo Luna Portex como fuente visual de verdad.",
+    route:
+      "Siguiente fase",
+    status:
+      "Imágenes reales bloqueadas.",
+  },
+  {
+    step:
+      "Step 6",
+    title:
+      "Conectar eBay",
+    description:
+      "OAuth, Sandbox, draft real y publicación.",
+    route:
+      "Futuro",
+    status:
+      "acciones eBay bloqueadas por seguridad",
+  },
+]
+
+const ebaySellerOsCards = [
+  {
+    title:
+      "Producto fuente",
+    description:
+      "El producto ganador llega desde Pipeline y debe confirmarse en Products.",
+    status:
+      "Products decide what the product is.",
+  },
+  {
+    title:
+      "Listing generado",
+    description:
+      "Arma título, descripción, specifics y preview interno sin publicar.",
+    status:
+      "EBAY_COMPLETE_LISTING_PACKAGE_BUILDER_V1",
+  },
+  {
+    title:
+      "Imágenes del listing",
+    description:
+      "Planifica imagen catálogo Luna Portex y prompts secundarios sin generar archivos.",
+    status:
+      "Luna Portex Catalog Image = visual source of truth.",
+  },
+  {
+    title:
+      "Payload dry run",
+    description:
+      "Muestra qué faltaría para un payload local sin enviarlo a eBay.",
+    status:
+      "DRAFT_PAYLOAD_DRY_RUN_READY_NOT_SUBMITTED",
+  },
+  {
+    title:
+      "Revisión y aprobación",
+    description:
+      "Verifica el listing antes de permitir cualquier acción externa.",
+    status:
+      "EBAY_LISTING_REVIEW_APPROVAL_WORKSPACE_V1",
+  },
+  {
+    title:
+      "Bloqueos antes de eBay real",
+    description:
+      "Draft real, publicación, OAuth e imágenes reales siguen bloqueados.",
+    status:
+      "EBAY_EXTERNAL_ACTIONS_BLOCKED",
+  },
+]
+
+const winnerToListingIntakeBridgeCopy = {
+  bridgeVersion:
+    "EBAY_WINNER_TO_LISTING_INTAKE_BRIDGE_V1",
+  flowStatus:
+    "WINNER_TO_LISTING_INTAKE_FLOW_READY",
+  intakeAction:
+    "PREPARE_LISTING_PACKAGE",
+  intakeMode:
+    "READ_ONLY_CONTEXT_PASS_THROUGH",
+  mutationImpact:
+    "DO_NOT_MUTATE_PIPELINE_OR_PRODUCT",
+}
+
+const sellerListingPrimaryCards = [
+  {
+    title:
+      "Qué producto estoy preparando",
+    status:
+      "Producto candidato",
+    tone:
+      "ready",
+    items: [
+      "Producto: Storage Organizer",
+      "Proveedor: Portex / Luna Portex",
+      "Señal comercial heredada: eBay Winner Pipeline",
+      "Rentabilidad: viene heredada del Pipeline, no se recalcula aquí.",
+      "Listing usa esa decisión por referencia, no la recalcula.",
+    ],
+    links: [
+      {
+        label:
+          "Ir a productos ganadores",
+        href:
+          "/admin/ebay-winner-pipeline",
+      },
+      {
+        label:
+          "Cambiar producto",
+        href:
+          "/admin/ebay-listing-package?source=pipeline",
+      },
+    ],
+  },
+  {
+    title:
+      "Cómo quedará el listing",
+    status:
+      "Preview interno",
+    tone:
+      "ready",
+    items: [
+      "Título preview: Storage Organizer",
+      "Descripción: preview con datos confirmados",
+      "7 imágenes planeadas: 1 principal desde catálogo Luna Portex + 6 secundarias.",
+      "Payload dry run: listo, no enviado",
+      "Este es el listing preparado internamente. Todavía no se envía a eBay.",
+    ],
+    links: [
+      {
+        label:
+          "Revisar y aprobar",
+        href:
+          "#listing-review-approval-workspace",
+      },
+    ],
+  },
+  {
+    title:
+      "Qué falta para avanzar",
+    status:
+      "Faltan aprobaciones",
+    tone:
+      "required",
+    items: [
+      "Obligatorio: precio confirmado.",
+      "Obligatorio: shipping confirmado.",
+      "Obligatorio: return policy confirmada.",
+      "Obligatorio: aprobar imágenes.",
+      "Obligatorio: aprobación humana.",
+      "Obligatorio: autorización eBay.",
+    ],
+    links: [
+      {
+        label:
+          "Preparar imágenes",
+        href:
+          "#luna-portex-catalog-image-package-qa",
+      },
+      {
+        label:
+          "Conectar eBay más adelante",
+        href:
+          "#listing-review-approval-workspace",
+      },
+    ],
+  },
+]
+
+const sellerFlowIconGuide = [
+  {
+    step:
+      "1",
+    label:
+      "Market Radar",
+    status:
+      "Detecta oportunidad",
+  },
+  {
+    step:
+      "2",
+    label:
+      "eBay Pipeline",
+    status:
+      "Valida rentabilidad",
+  },
+  {
+    step:
+      "3",
+    label:
+      "Products",
+    status:
+      "Confirma producto",
+  },
+  {
+    step:
+      "4",
+    label:
+      "Listing",
+    status:
+      "Prepara venta",
+  },
+  {
+    step:
+      "5",
+    label:
+      "Review",
+    status:
+      "Aprueba o bloquea",
+  },
+]
+
 const executiveBlockers = [
   "Falta validar Terapeak",
   "Falta benchmark de ventas comparables",
@@ -49,6 +317,16 @@ const executiveBlockers = [
   "Pendiente QA de imagen principal",
   "Shipping y devoluciones sin confirmar",
   "Precio y margen sin validar",
+]
+
+const sevenImageSellerPackage = [
+  "Imagen principal: fotografía ecommerce desde catálogo Luna Portex, fondo blanco, producto centrado.",
+  "Imagen 2: zoom de material / textura.",
+  "Imagen 3: contenido del paquete.",
+  "Imagen 4: dimensiones / medidas solo si están confirmadas.",
+  "Imagen 5: beneficio principal en uso.",
+  "Imagen 6: lifestyle aspiracional realista.",
+  "Imagen 7: uso real con manos para escala y confianza.",
 ]
 
 const imageAssetManifestCopy = {
@@ -1472,10 +1750,10 @@ export default function EbayListingPackagePage() {
                 Professional Listing MVP
               </p>
               <h1 className="mt-4 text-4xl font-black text-white md:text-5xl">
-                Listing Package QA
+                Preparar listing
               </h1>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-white/60">
-                Vista vendedor del primer listing package y QA review. Preview read-only. Sin conexion eBay. No se creo draft. No publicar todavia. Requiere revision humana.
+                Este panel prepara un listing interno desde un producto ganador. Todavía no crea drafts ni publica en eBay.
               </p>
             </div>
 
@@ -1491,6 +1769,242 @@ export default function EbayListingPackagePage() {
             </div>
           </div>
         </section>
+
+        <Section title="Preparar listing" eyebrow="Vista simple para vendedor">
+          <div className="mb-5 rounded-3xl border border-white/10 bg-black/20 p-5">
+            <h3 className="text-lg font-black text-white">
+              Solo revisa tres cosas
+            </h3>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">
+              Producto correcto. Listing claro. Faltantes obligatorios.
+            </p>
+          </div>
+          <div className="mb-5 rounded-3xl border border-emerald-300/15 bg-emerald-300/[0.045] p-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <h3 className="text-lg font-black text-white">
+                Flujo simple
+              </h3>
+              <span className="w-fit rounded-full border border-emerald-300/20 bg-black/25 px-4 py-2 text-xs font-black text-emerald-50">
+                Read-only
+              </span>
+            </div>
+            <div className="mt-5 grid gap-3 md:grid-cols-5">
+              {sellerFlowIconGuide.map((step) => (
+                <article
+                  key={step.label}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4 text-center"
+                >
+                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-emerald-300/25 bg-emerald-300/[0.12] text-sm font-black text-emerald-50">
+                    {step.step}
+                  </div>
+                  <h4 className="mt-3 text-sm font-black text-white">
+                    {step.label}
+                  </h4>
+                  <p className="mt-2 text-xs leading-5 text-white/60">
+                    {step.status}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-3">
+            {sellerListingPrimaryCards.map((card) => (
+              <article
+                key={card.title}
+                className="flex min-w-0 flex-col rounded-3xl border border-cyan-300/15 bg-cyan-300/[0.045] p-5"
+              >
+                <p className="break-words rounded-full border border-white/10 bg-black/25 px-3 py-2 text-[11px] font-bold leading-5 text-cyan-50/70 [overflow-wrap:anywhere]">
+                  {card.status}
+                </p>
+                <h3 className="mt-4 break-words text-xl font-black leading-7 text-white [overflow-wrap:anywhere]">
+                  {card.title}
+                </h3>
+                <ul className="mt-4 grid gap-2 text-sm leading-6 text-white/68">
+                  {card.items.map((item) => (
+                    <li
+                      key={item}
+                      className={`break-words rounded-2xl border px-4 py-3 [overflow-wrap:anywhere] ${
+                        card.tone === "required"
+                          ? "border-red-300/25 bg-red-300/[0.10] text-red-50"
+                          : "border-white/10 bg-black/20"
+                      }`}
+                    >
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-auto flex flex-wrap gap-2 pt-5">
+                  {card.links.map((link) => (
+                    <a
+                      key={link.label}
+                      href={link.href}
+                      className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-cyan-300/25 bg-cyan-300/[0.10] px-4 py-2 text-xs font-black text-cyan-50 transition hover:border-cyan-300/45 hover:bg-cyan-300/[0.16]"
+                    >
+                      {link.label}
+                    </a>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+          <div className="mt-5 rounded-3xl border border-amber-300/15 bg-amber-300/[0.045] p-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-amber-100/60">
+                  Paquete visual vendedor
+                </p>
+                <h3 className="mt-2 text-lg font-black text-white">
+                  7 imágenes para un listing que convierta
+                </h3>
+                <p className="mt-2 max-w-4xl text-sm leading-7 text-white/65">
+                  El sistema deja preparado el plan de imágenes, pero no genera ni sube imágenes reales todavía. La imagen principal debe salir del catálogo Luna Portex y las 6 secundarias deben preservar fidelidad exacta del producto.
+                </p>
+              </div>
+              <span className="w-fit rounded-full border border-amber-300/20 bg-black/25 px-4 py-2 text-xs font-black text-amber-50">
+                Generación real bloqueada
+              </span>
+            </div>
+            <ul className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {sevenImageSellerPackage.map((imagePlan) => (
+                <li
+                  key={imagePlan}
+                  className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-xs font-semibold leading-5 text-white/65"
+                >
+                  {imagePlan}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Section>
+
+        <Section title="Detalles técnicos" eyebrow="Auditoría">
+          <details className="rounded-3xl border border-white/10 bg-black/20 p-5">
+            <summary className="cursor-pointer break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+              eBay Seller OS: ver flujo completo, contrato y estados técnicos
+            </summary>
+            <div className="mt-5 grid gap-5">
+            <div className="rounded-3xl border border-cyan-300/15 bg-cyan-300/[0.045] p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60">
+                    From winning product to prepared listing
+                  </p>
+                  <h3 className="mt-2 text-2xl font-black text-white">
+                    Del producto ganador al listing listo para revisión
+                  </h3>
+                  <p className="mt-3 max-w-4xl text-sm leading-7 text-white/65">
+                    Pipeline decide si vale la pena vender. Products confirma qué es el producto. Listing prepara cómo se vende. Review aprueba si puede avanzar. Gates bloquean acciones peligrosas.
+                  </p>
+                  <p className="mt-3 max-w-4xl text-xs font-bold leading-6 text-cyan-50/60">
+                    Listing uses Pipeline decision by reference. Listing does not duplicate profitability truth.
+                  </p>
+                </div>
+
+                <div className="grid gap-2 text-xs font-bold text-white lg:min-w-[320px]">
+                  <span className="break-words rounded-2xl border border-cyan-300/20 bg-black/25 px-4 py-3 [overflow-wrap:anywhere]">
+                    {winnerToListingIntakeBridgeCopy.flowStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-black/25 px-4 py-3 [overflow-wrap:anywhere]">
+                    {winnerToListingIntakeBridgeCopy.intakeMode}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-black/25 px-4 py-3 [overflow-wrap:anywhere]">
+                    {listingReviewApprovalWorkspace.externalEbayStatus}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+                {ebaySellerOsSteps.map((step) => (
+                  <article
+                    key={step.step}
+                    className="min-w-0 rounded-2xl border border-white/10 bg-black/20 p-4"
+                  >
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-100/55">
+                      {step.step}
+                    </p>
+                    <h4 className="mt-2 break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+                      {step.title}
+                    </h4>
+                    <p className="mt-2 text-xs leading-5 text-white/55">
+                      {step.description}
+                    </p>
+                    <p className="mt-3 break-words rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] font-bold leading-5 text-cyan-50/70 [overflow-wrap:anywhere]">
+                      {step.status}
+                    </p>
+                    <p className="mt-2 text-[11px] leading-5 text-white/35">
+                      {step.route}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {ebaySellerOsCards.map((card) => (
+                <article
+                  key={card.title}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-5"
+                >
+                  <h4 className="text-sm font-black text-white">
+                    {card.title}
+                  </h4>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {card.description}
+                  </p>
+                  <p className="mt-4 break-words rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] font-bold leading-5 text-cyan-50/70 [overflow-wrap:anywhere]">
+                    {card.status}
+                  </p>
+                </article>
+              ))}
+            </div>
+
+            <div className="rounded-3xl border border-amber-300/20 bg-amber-300/[0.055] p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h4 className="text-lg font-black text-white">
+                    Preparar listing desde producto ganador
+                  </h4>
+                  <p className="mt-2 max-w-3xl text-sm leading-6 text-amber-50/75">
+                    Selecciona primero un producto ganador desde eBay Winner Pipeline. Este enlace conserva el modo read-only y solo pasa contexto interno.
+                  </p>
+                </div>
+                <a
+                  href="/admin/ebay-listing-package?source=pipeline"
+                  className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-cyan-300/25 bg-cyan-300/[0.10] px-5 py-3 text-sm font-black text-cyan-50 transition hover:border-cyan-300/45 hover:bg-cyan-300/[0.16]"
+                >
+                  Preparar listing
+                </a>
+              </div>
+              <div className="mt-4">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Bridge version",
+                      winnerToListingIntakeBridgeCopy.bridgeVersion,
+                    ],
+                    [
+                      "Intake action",
+                      winnerToListingIntakeBridgeCopy.intakeAction,
+                    ],
+                    [
+                      "Mutation impact",
+                      winnerToListingIntakeBridgeCopy.mutationImpact,
+                    ],
+                    [
+                      "Draft impact",
+                      winnerToListingIntakeBridge.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      winnerToListingIntakeBridge.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+          </div>
+          </details>
+        </Section>
 
         <Section title="Menu del vendedor" eyebrow="Vista vendedor">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -6831,7 +7345,10 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section title="Luna Portex Catalog Image Package + eBay Image QA">
+        <Section
+          id="luna-portex-catalog-image-package-qa"
+          title="Luna Portex Catalog Image Package + eBay Image QA"
+        >
           <div className="grid gap-5">
             <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -7602,7 +8119,10 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section title="Listing Review & Approval Workspace">
+        <Section
+          id="listing-review-approval-workspace"
+          title="Listing Review & Approval Workspace"
+        >
           <div className="grid gap-5">
             <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">

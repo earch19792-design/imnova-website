@@ -1,0 +1,72 @@
+{
+  "bridgeVersion": "EBAY_WINNER_TO_LISTING_INTAKE_BRIDGE_V1",
+  "flowStatus": "WINNER_TO_LISTING_INTAKE_FLOW_READY",
+  "sourceStage": "EBAY_WINNER_PIPELINE",
+  "targetStage": "LISTING_PACKAGE",
+  "humanFlowLabel": "From winning product to prepared listing",
+  "pipelineDecisionRule": "Pipeline decides if the product is worth selling.",
+  "productsDecisionRule": "Products confirms what the product is.",
+  "listingDecisionRule": "Listing prepares how the product sells on eBay.",
+  "reviewDecisionRule": "Review approves whether the listing can advance.",
+  "intakeAction": "PREPARE_LISTING_PACKAGE",
+  "intakeMode": "READ_ONLY_CONTEXT_PASS_THROUGH",
+  "mutationImpact": "DO_NOT_MUTATE_PIPELINE_OR_PRODUCT",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "supportedContext": [
+    "pipelineId",
+    "productId",
+    "productSlug",
+    "winnerScore",
+    "pipelineDecision",
+    "profitStatus",
+    "estimatedMargin",
+    "estimatedProfit",
+    "riskStatus",
+    "missingPipelineData",
+    "pipelineRecommendation",
+    "source=pipeline"
+  ],
+  "pipelineCommercialSignal": {
+    "signalMode": "PIPELINE_DECISION_BY_REFERENCE",
+    "source": "eBay Winner Pipeline",
+    "listingUsesPipelineDecisionByReference": true,
+    "listingDuplicatesProfitabilityTruth": false,
+    "pipelineDecidesIfWorthSelling": true,
+    "listingRecalculatesProfitability": false,
+    "fieldsCarriedByReference": [
+      "pipelineId",
+      "productId",
+      "productSlug",
+      "winnerScore",
+      "pipelineDecision",
+      "profitStatus",
+      "estimatedMargin",
+      "estimatedProfit",
+      "riskStatus",
+      "missingPipelineData",
+      "pipelineRecommendation"
+    ]
+  },
+  "businessRules": {
+    "pipelineRule": "Pipeline decides if the product is worth selling.",
+    "productsRule": "Products confirms what the product is.",
+    "listingRule": "Listing prepares how the product sells on eBay.",
+    "reviewRule": "Review and Gates approve whether the listing can advance.",
+    "profitabilityTruthRule": "Listing uses Pipeline decision by reference. Listing does not duplicate profitability truth."
+  },
+  "safetyFlags": {
+    "readOnly": true,
+    "listingUsesPipelineDecisionByReference": true,
+    "listingDuplicatesProfitabilityTruth": false,
+    "listingRecalculatesProfitability": false,
+    "pipelineMutationUsed": false,
+    "productMutationUsed": false,
+    "listingMutationUsed": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false
+  }
+}
