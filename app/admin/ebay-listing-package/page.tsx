@@ -187,6 +187,8 @@ const sellerListingPrimaryCards = [
       "Qué producto estoy preparando",
     status:
       "Producto candidato",
+    tone:
+      "ready",
     items: [
       "Producto: Storage Organizer",
       "Proveedor: Portex / Luna Portex",
@@ -214,6 +216,8 @@ const sellerListingPrimaryCards = [
       "Cómo quedará el listing",
     status:
       "Preview interno",
+    tone:
+      "ready",
     items: [
       "Título preview: Storage Organizer",
       "Descripción: preview con datos confirmados",
@@ -235,11 +239,15 @@ const sellerListingPrimaryCards = [
       "Qué falta para avanzar",
     status:
       "Faltan aprobaciones",
+    tone:
+      "required",
     items: [
-      "Faltan precio, shipping y return policy.",
-      "Falta aprobar imágenes.",
-      "Falta aprobación humana.",
-      "Falta autorización eBay.",
+      "Obligatorio: precio confirmado.",
+      "Obligatorio: shipping confirmado.",
+      "Obligatorio: return policy confirmada.",
+      "Obligatorio: aprobar imágenes.",
+      "Obligatorio: aprobación humana.",
+      "Obligatorio: autorización eBay.",
     ],
     links: [
       {
@@ -258,6 +266,49 @@ const sellerListingPrimaryCards = [
   },
 ]
 
+const sellerFlowIconGuide = [
+  {
+    step:
+      "1",
+    label:
+      "Market Radar",
+    status:
+      "Detecta oportunidad",
+  },
+  {
+    step:
+      "2",
+    label:
+      "eBay Pipeline",
+    status:
+      "Valida rentabilidad",
+  },
+  {
+    step:
+      "3",
+    label:
+      "Products",
+    status:
+      "Confirma producto",
+  },
+  {
+    step:
+      "4",
+    label:
+      "Listing",
+    status:
+      "Prepara venta",
+  },
+  {
+    step:
+      "5",
+    label:
+      "Review",
+    status:
+      "Aprueba o bloquea",
+  },
+]
+
 const executiveBlockers = [
   "Falta validar Terapeak",
   "Falta benchmark de ventas comparables",
@@ -266,39 +317,6 @@ const executiveBlockers = [
   "Pendiente QA de imagen principal",
   "Shipping y devoluciones sin confirmar",
   "Precio y margen sin validar",
-]
-
-const sellerFriendlyFlowExample = [
-  {
-    label:
-      "Market Radar",
-    text:
-      "Detecta una oportunidad con señales de demanda.",
-  },
-  {
-    label:
-      "eBay Pipeline",
-    text:
-      "Valida si parece rentable y si vale la pena vender.",
-  },
-  {
-    label:
-      "Products",
-    text:
-      "Confirma qué es el producto y sus facts reales.",
-  },
-  {
-    label:
-      "Listing",
-    text:
-      "Prepara título, descripción, imágenes planeadas y payload dry run.",
-  },
-  {
-    label:
-      "Review",
-    text:
-      "Aprueba blockers antes de cualquier acción externa.",
-  },
 ]
 
 const sevenImageSellerPackage = [
@@ -1757,41 +1775,33 @@ export default function EbayListingPackagePage() {
             <h3 className="text-lg font-black text-white">
               Solo revisa tres cosas
             </h3>
-            <p className="mt-2 max-w-4xl text-sm leading-7 text-white/65">
-              Primero confirma que estás preparando el producto correcto. Luego revisa cómo se verá el listing. Al final mira qué falta antes de cualquier acción real.
-            </p>
-            <p className="mt-3 text-sm font-bold leading-6 text-cyan-50/75">
-              Pipeline decide si vale la pena vender. Products confirma qué es el producto. Listing prepara cómo se vende. Review y Gates aprueban si puede avanzar.
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">
+              Producto correcto. Listing claro. Faltantes obligatorios.
             </p>
           </div>
           <div className="mb-5 rounded-3xl border border-emerald-300/15 bg-emerald-300/[0.045] p-5">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <p className="text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-emerald-100/60">
-                  Ejemplo de flujo vendedor
-                </p>
-                <h3 className="mt-2 text-lg font-black text-white">
-                  De oportunidad rentable a listing listo para revisión
-                </h3>
-                <p className="mt-2 max-w-4xl text-sm leading-7 text-white/65">
-                  El objetivo es vender con evidencia: Market Radar encuentra la oportunidad, eBay Pipeline hereda la señal comercial, Products confirma el producto y Listing prepara una oferta clara para convertir.
-                </p>
-              </div>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <h3 className="text-lg font-black text-white">
+                Flujo simple
+              </h3>
               <span className="w-fit rounded-full border border-emerald-300/20 bg-black/25 px-4 py-2 text-xs font-black text-emerald-50">
-                Flujo seguro y read-only
+                Read-only
               </span>
             </div>
             <div className="mt-5 grid gap-3 md:grid-cols-5">
-              {sellerFriendlyFlowExample.map((step) => (
+              {sellerFlowIconGuide.map((step) => (
                 <article
                   key={step.label}
-                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4 text-center"
                 >
-                  <h4 className="text-sm font-black text-white">
+                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-emerald-300/25 bg-emerald-300/[0.12] text-sm font-black text-emerald-50">
+                    {step.step}
+                  </div>
+                  <h4 className="mt-3 text-sm font-black text-white">
                     {step.label}
                   </h4>
                   <p className="mt-2 text-xs leading-5 text-white/60">
-                    {step.text}
+                    {step.status}
                   </p>
                 </article>
               ))}
@@ -1813,7 +1823,11 @@ export default function EbayListingPackagePage() {
                   {card.items.map((item) => (
                     <li
                       key={item}
-                      className="break-words rounded-2xl border border-white/10 bg-black/20 px-4 py-3 [overflow-wrap:anywhere]"
+                      className={`break-words rounded-2xl border px-4 py-3 [overflow-wrap:anywhere] ${
+                        card.tone === "required"
+                          ? "border-red-300/25 bg-red-300/[0.10] text-red-50"
+                          : "border-white/10 bg-black/20"
+                      }`}
                     >
                       {item}
                     </li>
