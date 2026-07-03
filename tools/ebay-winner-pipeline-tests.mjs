@@ -20885,7 +20885,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /filter === "discounted"[\s\S]*hasActiveDiscountSignal\(product\)/
+    /filter === "discounted"[\s\S]*hasActiveDiscountSignal\(product\)[\s\S]*getSellerOperationalRoute\(product\) !==[\s\S]*"out_of_stock"/
+  )
+  assert.match(
+    source,
+    /filter === "out_of_stock"[\s\S]*getSellerOperationalRoute\(product\) ===[\s\S]*"out_of_stock"/
   )
   assert.match(
     source,

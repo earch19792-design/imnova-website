@@ -1638,7 +1638,11 @@ function matchesRadarRankingFilter(
   }
 
   if (filter === "discounted") {
-    return hasActiveDiscountSignal(product)
+    return (
+      hasActiveDiscountSignal(product) &&
+      getSellerOperationalRoute(product) !==
+        "out_of_stock"
+    )
   }
 
   if (filter === "stock_confirmed") {
