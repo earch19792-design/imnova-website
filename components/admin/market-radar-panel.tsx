@@ -443,6 +443,7 @@ type RadarRankingFilter =
   | "existing"
   | "listing_risk"
   | "price_margin_changes"
+  | "discounted"
   | "stock_confirmed"
   | "stock_needs_validation"
   | "out_of_stock"
@@ -454,11 +455,19 @@ type RadarRankingCounts = {
   existing: number
   listingRisk: number
   priceMarginChanges: number
+  discounted: number
   stockConfirmed: number
   stockNeedsValidation: number
   outOfStock: number
   blockedOrReview: number
   reviewed: number
+}
+
+type RadarScanMissionCounts = {
+  knownProductWatchlist: number
+  newOpportunityDiscovery: number
+  stockOrPriceChanges: number
+  highOpportunityProducts: number
 }
 
 type SellerOperationalRoute =
@@ -1565,6 +1574,12 @@ function getSellerOperationalRoute(
   return "reviewed"
 }
 
+function hasActiveDiscountSignal(
+  product: MarketRadarProductRow
+) {
+  return toNumber(product.compare_at_price) !== null
+}
+
 function matchesRadarRankingFilter(
   product: MarketRadarProductRow,
   filter: RadarRankingFilter
@@ -1596,6 +1611,10 @@ function matchesRadarRankingFilter(
       getSellerOperationalRoute(product) ===
       "price_margin_changes"
     )
+  }
+
+  if (filter === "discounted") {
+    return hasActiveDiscountSignal(product)
   }
 
   if (filter === "stock_confirmed") {
@@ -1655,6 +1674,10 @@ function getRadarRankingFilterTitle(
     return "Productos con cambios de precio o margen"
   }
 
+  if (filter === "discounted") {
+    return "Productos con descuento activo"
+  }
+
   if (filter === "stock_confirmed") {
     return "Productos existentes con stock confirmado"
   }
@@ -1697,6 +1720,10 @@ function getRadarRankingFilterCount(
 
   if (filter === "price_margin_changes") {
     return rankingCounts.priceMarginChanges
+  }
+
+  if (filter === "discounted") {
+    return rankingCounts.discounted
   }
 
   if (filter === "stock_confirmed") {
@@ -6681,6 +6708,11 @@ export function MarketRadarPanel({
               "listing_risk"
           ).length
 
+        const discounted =
+          products.filter(
+            hasActiveDiscountSignal
+          ).length
+
         const stockConfirmed =
           products.filter(
             product =>
@@ -6725,6 +6757,7 @@ export function MarketRadarPanel({
           existing,
           listingRisk,
           priceMarginChanges,
+          discounted,
           stockConfirmed,
           stockNeedsValidation,
           outOfStock,
@@ -6753,6 +6786,50 @@ export function MarketRadarPanel({
         )
       },
       []
+    )
+
+  const summary =
+    dashboard?.summary
+
+  const radarScanMissionCounts =
+    useMemo(
+      (): RadarScanMissionCounts => {
+        const products =
+          dashboard?.products || []
+        const knownProductWatchlist =
+          products.filter(product =>
+            isExistingRadarProduct(product) ||
+            getSellerOperationalRoute(product) ===
+              "listing_risk" ||
+            getSellerOperationalRoute(product) ===
+              "price_margin_changes" ||
+            getSellerOperationalRoute(product) ===
+              "out_of_stock"
+          ).length
+        const newOpportunityDiscovery =
+          products.filter(product =>
+            getSellerOperationalRoute(product) ===
+            "actionable"
+          ).length
+        const stockOrPriceChanges =
+          rankingCounts.listingRisk +
+          rankingCounts.priceMarginChanges +
+          rankingCounts.stockNeedsValidation +
+          rankingCounts.outOfStock
+
+        return {
+          knownProductWatchlist,
+          newOpportunityDiscovery,
+          stockOrPriceChanges,
+          highOpportunityProducts:
+            summary?.highOpportunityProducts || 0,
+        }
+      },
+      [
+        dashboard,
+        rankingCounts,
+        summary,
+      ]
     )
 
   const hotProducts =
@@ -6962,9 +7039,6 @@ export function MarketRadarPanel({
     isLoading,
   ])
 
-  const summary =
-    dashboard?.summary
-
   const sellerCommandMenuItems: Array<{
     id: string
     label: string
@@ -7064,6 +7138,24 @@ export function MarketRadarPanel({
         DollarSign,
       className:
         "border-amber-300/25 bg-amber-300/[0.08] text-amber-50",
+    },
+    {
+      id:
+        "discounted",
+      label:
+        "Con descuento",
+      filter:
+        "discounted",
+      count:
+        rankingCounts.discounted,
+      note:
+        "Analizar",
+      helper:
+        "Compare-at activo.",
+      icon:
+        DollarSign,
+      className:
+        "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-50",
     },
     {
       id:
@@ -7732,13 +7824,13 @@ export function MarketRadarPanel({
         <MetricCard
           title="Productos Radar"
           value={summary?.totalProducts || 0}
-          detail={`${summary?.availableProducts || 0} disponibles segun Luna`}
+          detail={`${summary?.availableProducts || 0} con disponibilidad general Luna`}
           icon={PackageCheck}
         />
         <MetricCard
           title="Stock confirmado"
           value={rankingCounts.stockConfirmed}
-          detail="Cantidad real por variante"
+          detail="Cantidad real confirmada por variante"
           icon={CheckCircle2}
         />
         <MetricCard
@@ -7750,13 +7842,13 @@ export function MarketRadarPanel({
         <MetricCard
           title="Riesgo de stock"
           value={rankingCounts.stockNeedsValidation}
-          detail="Bajo o sin cantidad confiable"
+          detail="Requiere validar cantidad/SKU"
           icon={TriangleAlert}
         />
         <MetricCard
           title="Out of Stock"
           value={rankingCounts.outOfStock}
-          detail="Sin stock confirmado"
+          detail="Sin stock confirmado por Radar"
           icon={PackageX}
         />
         <MetricCard
@@ -7766,9 +7858,9 @@ export function MarketRadarPanel({
           icon={Activity}
         />
         <MetricCard
-          title="Descuento"
-          value={summary?.discountedProducts || 0}
-          detail="Con compare-at price"
+          title="Con descuento"
+          value={rankingCounts.discounted}
+          detail="Click en filtro para ver productos"
           icon={DollarSign}
         />
         <MetricCard
@@ -7777,6 +7869,52 @@ export function MarketRadarPanel({
           detail="Cambios 24h"
           icon={Clock3}
         />
+      </section>
+
+      <p className="rounded-lg border border-amber-300/15 bg-amber-300/[0.05] px-4 py-3 text-xs font-semibold leading-5 text-amber-50/70">
+        Disponible según Luna no significa listo para vender: para pasar a Vender ahora debe existir cantidad real confirmada por variante/SKU.
+      </p>
+
+      <section className="grid gap-4 lg:grid-cols-2">
+        <article className="rounded-lg border border-red-300/15 bg-red-300/[0.045] p-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-red-50/50">
+            Misión 1 · vigilar productos conocidos
+          </p>
+          <h3 className="mt-2 text-lg font-black text-white">
+            Primero detectar cambios críticos.
+          </h3>
+          <p className="mt-2 text-sm font-semibold leading-6 text-white/60">
+            Precio, stock, out of stock, margen o riesgo en productos ya analizados tienen prioridad antes de buscar nuevos ganadores.
+          </p>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <span className="rounded-md border border-white/10 bg-black/25 px-3 py-2 text-xs font-black text-red-50">
+              {radarScanMissionCounts.stockOrPriceChanges} cambios/riesgos
+            </span>
+            <span className="rounded-md border border-white/10 bg-black/25 px-3 py-2 text-xs font-black text-red-50">
+              {radarScanMissionCounts.knownProductWatchlist} conocidos vigilados
+            </span>
+          </div>
+        </article>
+
+        <article className="rounded-lg border border-emerald-300/15 bg-emerald-300/[0.045] p-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-50/50">
+            Misión 2 · descubrir oportunidades nuevas
+          </p>
+          <h3 className="mt-2 text-lg font-black text-white">
+            Después encontrar Top 50 potenciales.
+          </h3>
+          <p className="mt-2 text-sm font-semibold leading-6 text-white/60">
+            El Radar busca productos con oportunidad grande dentro del alcance sincronizado, pero Listing solo avanza con stock confirmado y gates aprobados.
+          </p>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <span className="rounded-md border border-white/10 bg-black/25 px-3 py-2 text-xs font-black text-emerald-50">
+              {radarScanMissionCounts.highOpportunityProducts} score 70+
+            </span>
+            <span className="rounded-md border border-white/10 bg-black/25 px-3 py-2 text-xs font-black text-emerald-50">
+              {radarScanMissionCounts.newOpportunityDiscovery} vender ahora
+            </span>
+          </div>
+        </article>
       </section>
 
       <div className="grid gap-6 xl:grid-cols-[1.5fr_0.7fr]">
@@ -7834,6 +7972,12 @@ export function MarketRadarPanel({
                       "price_margin_changes" as const,
                     label:
                       "Margen",
+                  },
+                  {
+                    value:
+                      "discounted" as const,
+                    label:
+                      "Con descuento",
                   },
                   {
                     value:

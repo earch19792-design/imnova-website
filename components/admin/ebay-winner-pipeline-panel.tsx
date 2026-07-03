@@ -30,6 +30,10 @@ import {
 import {
   buildListingIntakeUrl,
 } from "@/lib/ebay/winner-to-listing-intake-bridge"
+import {
+  getDustOffRescueDemo,
+  getRescueActionsForCandidate,
+} from "@/lib/ebay/winner-candidate-rescue-actions"
 
 export type EbayPipelineFocusCandidate = {
   candidateId?: string | null
@@ -3912,6 +3916,17 @@ function CandidateDetailDrawer({
     showMultipackProfitAdvisor &&
     multipackHasFinanciallyViableScenario
 
+  const rescueActionState =
+    getRescueActionsForCandidate({
+      unitListingAllowed:
+        unitPassesMinimums,
+      state:
+        detail?.candidate.state,
+    })
+
+  const rescueDemo =
+    getDustOffRescueDemo()
+
   const hasMissingOperationalData =
     currentMissingFields.length > 0 ||
     detail?.candidate.state === "NEEDS_DATA"
@@ -3935,6 +3950,13 @@ function CandidateDetailDrawer({
         detail.candidate
       )
       : false
+
+  const shouldShowRescueActions =
+    Boolean(
+      detail &&
+        !unitPassesMinimums &&
+        !hasConfirmedNoStockSignal
+    )
 
   const hasVisibleStockQuantity =
     inventoryQuantity !== null
@@ -4697,6 +4719,117 @@ function CandidateDetailDrawer({
                 </div>
               </div>
             </div>
+
+            {shouldShowRescueActions ? (
+              <DetailSection title="Cómo rescatar este producto">
+                <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.07] p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-50/60">
+                        No rentable en su forma actual
+                      </p>
+                      <p className="mt-3 text-xl font-black leading-7 text-white">
+                        No competitivo por unidad
+                      </p>
+                      <p className="mt-2 max-w-3xl text-sm leading-6 text-amber-50/75">
+                        Un producto bloqueado por unidad no se descarta automaticamente. Primero puede evaluarse como pack, buscar mejor proveedor o recomendar no listar. Ninguna accion guarda cambios ni crea draft.
+                      </p>
+                    </div>
+                    <span className="w-fit rounded-md border border-red-300/25 bg-red-300/[0.10] px-3 py-2 text-xs font-black text-red-50">
+                      Unidad bloqueada para Listing
+                    </span>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    {rescueActionState.actions.map(action => (
+                      <div
+                        key={action.actionId}
+                        className="rounded-lg border border-white/10 bg-black/25 p-3"
+                      >
+                        <p className="text-sm font-black text-white">
+                          {action.label}
+                        </p>
+                        <p className="mt-2 text-xs font-semibold leading-5 text-white/50">
+                          {action.description}
+                        </p>
+                        <p className="mt-3 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-white/45">
+                          {action.status}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.055] p-4">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-50/55">
+                        Evaluar pack
+                      </p>
+                      <p className="mt-2 text-sm font-black text-white">
+                        {rescueDemo.productName}
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-cyan-50/65">
+                        Pack x3, Pack x6 y Pack x12 requieren packing fee Luna Portex, costo unitario, shipping, fees eBay y precio objetivo antes de calcular margen final.
+                      </p>
+                    </div>
+                    <span className="w-fit rounded-md border border-amber-300/25 bg-amber-300/[0.10] px-3 py-2 text-xs font-black text-amber-50">
+                      PACKING_FEE_REQUIRED
+                    </span>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    {rescueDemo.packScenarios.map(pack => (
+                      <div
+                        key={`pack-${pack.packSize}`}
+                        className="rounded-lg border border-white/10 bg-black/25 p-3"
+                      >
+                        <p className="text-sm font-black text-white">
+                          Pack x{pack.packSize}
+                        </p>
+                        <p className="mt-2 text-xs font-semibold leading-5 text-red-100/80">
+                          Falta confirmar packing fee Luna Portex para este pack.
+                        </p>
+                        <label className="mt-3 block text-[10px] font-black uppercase tracking-[0.14em] text-white/35">
+                          packing fee Luna Portex
+                          <input
+                            name={`packingFeePack${pack.packSize}Override`}
+                            inputMode="decimal"
+                            placeholder="Override no guardado"
+                            className="mt-2 w-full rounded-md border border-white/10 bg-black/30 px-3 py-2 text-xs font-semibold text-white outline-none placeholder:text-white/25 focus:border-cyan-300/35"
+                          />
+                        </label>
+                        <div className="mt-3 grid gap-2 text-[11px] text-white/45">
+                          <span>Costo unitario: requerido</span>
+                          <span>Shipping estimado: requerido</span>
+                          <span>Fees eBay: requerido</span>
+                          <span>Precio objetivo: requerido</span>
+                        </div>
+                        <p className="mt-3 rounded-md border border-red-300/20 bg-red-300/[0.08] px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-red-50">
+                          No puede pasar a Listing
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <p className="rounded-lg border border-white/10 bg-black/25 p-3 text-xs leading-5 text-white/50">
+                  Si un pack resulta rentable, puede convertirse en PACK_CANDIDATE_FOR_LISTING y Listing debe prepararlo como pack, no como unidad. Si el pack no compite, la ruta segura es Buscar mejor proveedor o No listar.
+                </p>
+
+                <div className="rounded-lg border border-emerald-300/15 bg-emerald-300/[0.06] p-4">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-50/55">
+                    Estrategia multi-pack
+                  </p>
+                  <p className="mt-2 text-sm font-black leading-6 text-white">
+                    El mismo producto puede tener candidatos separados PACK_X3, PACK_X6 y PACK_X12 si hay stock suficiente y cada pack pasa sus propios gates.
+                  </p>
+                  <p className="mt-2 text-xs font-semibold leading-5 text-emerald-50/65">
+                    No se publica automáticamente. Cada presentación requiere packing fee Luna Portex, shipping, fees eBay, precio objetivo, margen y aprobación.
+                  </p>
+                </div>
+              </DetailSection>
+            ) : null}
 
             <DetailSection title="Decision del vendedor">
               <div className="space-y-4">
