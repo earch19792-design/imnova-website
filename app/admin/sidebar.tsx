@@ -273,6 +273,61 @@ export function Sidebar({
           </button>
         ))}
 
+        <div className="grid gap-3">
+          {[
+            {
+              href: "/admin/market-radar",
+              eyebrow: "Hub ligero",
+              title: "Market Radar",
+              detail:
+                "Descubrir oportunidades, stock, descuentos y señales.",
+            },
+            {
+              href: "/admin/ebay-seller-os",
+              eyebrow: "Hub ligero",
+              title: "eBay Seller OS",
+              detail:
+                "Colas del vendedor, rescates, packs y decisiones.",
+            },
+            {
+              href: "/admin/ebay-listing",
+              eyebrow: "Hub ligero",
+              title: "eBay Listing",
+              detail:
+                "Preparar listing, imágenes, gates y payload dry run.",
+            },
+          ].map((hub) => (
+            <a
+              key={hub.href}
+              href={hub.href}
+              className="
+                block
+                rounded-2xl
+                border
+                border-white/10
+                bg-white/[0.035]
+                px-5
+                py-4
+                text-left
+                transition-all
+                duration-300
+                hover:border-cyan-300/25
+                hover:bg-cyan-300/[0.06]
+              "
+            >
+              <span className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/45">
+                {hub.eyebrow}
+              </span>
+              <span className="mt-2 block text-sm font-black text-white">
+                {hub.title}
+              </span>
+              <span className="mt-1 block text-xs leading-5 text-white/45">
+                {hub.detail}
+              </span>
+            </a>
+          ))}
+        </div>
+
         <a
           href="/admin/ebay-listings"
           className="

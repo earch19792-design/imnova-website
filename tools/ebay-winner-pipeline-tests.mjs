@@ -834,6 +834,19 @@ const ebayWinnerCandidateRescueActionsFixture =
     )
   )
 
+const ebayAdminDomainBoundariesFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-admin-domain-boundaries-v1.json"
+  )
+
+const ebayAdminDomainBoundariesFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayAdminDomainBoundariesFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -1091,6 +1104,26 @@ const adminSidebarPath =
 const ebayWinnerPipelinePanelPath =
   path.resolve(
     "components/admin/ebay-winner-pipeline-panel.tsx"
+  )
+
+const ebayAdminDomainBoundariesModulePath =
+  path.resolve(
+    "lib/ebay/admin-domain-boundaries.ts"
+  )
+
+const marketRadarHubPagePath =
+  path.resolve(
+    "app/admin/market-radar/page.tsx"
+  )
+
+const ebaySellerOsHubPagePath =
+  path.resolve(
+    "app/admin/ebay-seller-os/page.tsx"
+  )
+
+const ebayListingHubPagePath =
+  path.resolve(
+    "app/admin/ebay-listing/page.tsx"
   )
 
 test("product selection decision service: producto bueno aprueba para preparacion interna", () => {
@@ -17211,6 +17244,162 @@ test("ebay listing package admin MVP: sidebar incluye ruta segura", () => {
     source,
     /No image generated/
   )
+})
+
+test("ebay admin domain boundaries fixture: documenta dominios y hubs ligeros", () => {
+  assert.equal(
+    ebayAdminDomainBoundariesFixture.domainBoundaryVersion,
+    "EBAY_ADMIN_DOMAIN_BOUNDARIES_V1"
+  )
+  assert.equal(
+    ebayAdminDomainBoundariesFixture.status,
+    "DOMAIN_BOUNDARIES_DOCUMENTED_LIGHTWEIGHT_HUBS_READY"
+  )
+  assert.equal(
+    ebayAdminDomainBoundariesFixture.migrationMode,
+    "NO_HEAVY_LOGIC_MOVED_YET"
+  )
+
+  const domainNames =
+    ebayAdminDomainBoundariesFixture.domains.map(
+      (domain) => domain.name
+    )
+
+  for (const expectedDomain of [
+    "Market Radar",
+    "eBay Seller OS",
+    "eBay Listing",
+  ]) {
+    assert.ok(
+      domainNames.includes(expectedDomain),
+      `missing domain boundary: ${expectedDomain}`
+    )
+  }
+
+  assert.equal(
+    ebayAdminDomainBoundariesFixture.lightweightHubs[
+      "/admin/market-radar"
+    ].lightweight,
+    true
+  )
+  assert.equal(
+    ebayAdminDomainBoundariesFixture.lightweightHubs[
+      "/admin/ebay-seller-os"
+    ].loadsHeavyPanels,
+    false
+  )
+  assert.equal(
+    ebayAdminDomainBoundariesFixture.lightweightHubs[
+      "/admin/ebay-listing"
+    ].performsSupabaseRead,
+    false
+  )
+  assert.equal(
+    ebayAdminDomainBoundariesFixture.safetyFlags.heavyLogicMoved,
+    false
+  )
+  assert.equal(
+    ebayAdminDomainBoundariesFixture.safetyFlags.heavyPanelsImportedIntoHubs,
+    false
+  )
+  assert.equal(
+    ebayAdminDomainBoundariesFixture.safetyFlags.supabaseWriteUsed,
+    false
+  )
+})
+
+test("ebay admin domain boundaries module: permanece puro y sin integraciones", () => {
+  assert.ok(
+    fs.existsSync(ebayAdminDomainBoundariesModulePath)
+  )
+
+  const source =
+    fs.readFileSync(
+      ebayAdminDomainBoundariesModulePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "getEbayAdminDomainBoundaries",
+    "getMarketRadarBoundary",
+    "getEbaySellerOsBoundary",
+    "getEbayListingBoundary",
+    "getEbayDomainMigrationPlan",
+    "getBlockedDomainSeparationResponse",
+    "EBAY_ADMIN_DOMAIN_BOUNDARIES_V1",
+    "DOMAIN_BOUNDARIES_DOCUMENTED_LIGHTWEIGHT_HUBS_READY",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing domain boundaries module text: ${expectedText}`
+    )
+  }
+
+  assert.doesNotMatch(
+    source,
+    /process\.env|fetch\(|http:\/\/|https:\/\/|new OpenAI|openai|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(|console\.log|console\.error|createDraft|publishListing|images\.generate|writeFile|download|sharp|canvas/
+  )
+})
+
+test("ebay admin lightweight hubs: existen, son humanos y no cargan paneles pesados", () => {
+  const hubSources = [
+    fs.readFileSync(
+      marketRadarHubPagePath,
+      "utf8"
+    ),
+    fs.readFileSync(
+      ebaySellerOsHubPagePath,
+      "utf8"
+    ),
+    fs.readFileSync(
+      ebayListingHubPagePath,
+      "utf8"
+    ),
+  ]
+
+  assert.ok(
+    hubSources[0].includes("Este hub es ligero")
+  )
+  assert.ok(
+    hubSources[1].includes(
+      "Sin stock → Proteger → Revisar stock → Margen → Bloqueados → Vender ahora → Monitorear"
+    )
+  )
+  assert.ok(
+    hubSources[2].includes(
+      "Listing usa Pipeline por referencia"
+    )
+  )
+
+  for (const source of hubSources) {
+    assert.doesNotMatch(
+      source,
+      /market-radar-panel|ebay-winner-pipeline-panel|ebay-listing-package\/page|createClient|getProducts|getProductsService|fetch\(/
+    )
+  }
+})
+
+test("ebay admin sidebar: separa Market Radar Seller OS y eBay Listing", () => {
+  const source =
+    fs.readFileSync(
+      adminSidebarPath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "/admin/market-radar",
+    "/admin/ebay-seller-os",
+    "/admin/ebay-listing",
+    "Market Radar",
+    "eBay Seller OS",
+    "eBay Listing",
+    "Hub ligero",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing lightweight navigation text: ${expectedText}`
+    )
+  }
 })
 
 test("ebay admin flow: muestra Seller OS humano y puente winner to listing", () => {
