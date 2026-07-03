@@ -461,6 +461,15 @@ type RadarRankingCounts = {
   reviewed: number
 }
 
+type SellerOperationalRoute =
+  | "actionable"
+  | "listing_risk"
+  | "price_margin_changes"
+  | "stock_needs_validation"
+  | "out_of_stock"
+  | "blocked_or_review"
+  | "reviewed"
+
 type RadarAdvisorReviewFilter =
   | "all"
   | "urgent"
@@ -1380,6 +1389,13 @@ function getRadarStockValidationStatus(
 function isRadarProductActionable(
   product: MarketRadarProductRow
 ) {
+  const stockStatus =
+    getRadarStockValidationStatus(product)
+
+  if (stockStatus !== "stock_confirmed") {
+    return false
+  }
+
   if (product.radar_action_status) {
     return product.radar_action_status === "actionable"
   }
@@ -1458,8 +1474,8 @@ function isExistingStockRiskSignal(
     toNumber(product.inventory_quantity)
 
   return Boolean(
-    isExistingRadarProduct(product) &&
     (
+      status === "stock_unknown" ||
       status === "stock_needs_validation" ||
       (
         status === "stock_confirmed" &&
@@ -1474,7 +1490,6 @@ function isConfirmedOutOfStockProduct(
   product: MarketRadarProductRow
 ) {
   return Boolean(
-    isExistingRadarProduct(product) &&
     getRadarStockValidationStatus(product) ===
       "out_of_stock"
   )
@@ -1520,6 +1535,36 @@ function isQuietReviewedRadarProduct(
   )
 }
 
+function getSellerOperationalRoute(
+  product: MarketRadarProductRow
+): SellerOperationalRoute {
+  if (isConfirmedOutOfStockProduct(product)) {
+    return "out_of_stock"
+  }
+
+  if (hasListingProtectionRiskSignal(product)) {
+    return "listing_risk"
+  }
+
+  if (isExistingStockRiskSignal(product)) {
+    return "stock_needs_validation"
+  }
+
+  if (hasPriceOrMarginChangeSignal(product)) {
+    return "price_margin_changes"
+  }
+
+  if (isBlockedOrNeedsReviewSignal(product)) {
+    return "blocked_or_review"
+  }
+
+  if (isRadarProductActionable(product)) {
+    return "actionable"
+  }
+
+  return "reviewed"
+}
+
 function matchesRadarRankingFilter(
   product: MarketRadarProductRow,
   filter: RadarRankingFilter
@@ -1529,7 +1574,10 @@ function matchesRadarRankingFilter(
   }
 
   if (filter === "actionable") {
-    return isRadarProductActionable(product)
+    return (
+      getSellerOperationalRoute(product) ===
+      "actionable"
+    )
   }
 
   if (filter === "existing") {
@@ -1537,11 +1585,17 @@ function matchesRadarRankingFilter(
   }
 
   if (filter === "listing_risk") {
-    return hasListingProtectionRiskSignal(product)
+    return (
+      getSellerOperationalRoute(product) ===
+      "listing_risk"
+    )
   }
 
   if (filter === "price_margin_changes") {
-    return hasPriceOrMarginChangeSignal(product)
+    return (
+      getSellerOperationalRoute(product) ===
+      "price_margin_changes"
+    )
   }
 
   if (filter === "stock_confirmed") {
@@ -1552,19 +1606,31 @@ function matchesRadarRankingFilter(
   }
 
   if (filter === "stock_needs_validation") {
-    return isExistingStockRiskSignal(product)
+    return (
+      getSellerOperationalRoute(product) ===
+      "stock_needs_validation"
+    )
   }
 
   if (filter === "out_of_stock") {
-    return isConfirmedOutOfStockProduct(product)
+    return (
+      getSellerOperationalRoute(product) ===
+      "out_of_stock"
+    )
   }
 
   if (filter === "blocked_or_review") {
-    return isBlockedOrNeedsReviewSignal(product)
+    return (
+      getSellerOperationalRoute(product) ===
+      "blocked_or_review"
+    )
   }
 
   if (filter === "reviewed") {
-    return isQuietReviewedRadarProduct(product)
+    return (
+      getSellerOperationalRoute(product) ===
+      "reviewed"
+    )
   }
 
   return true
@@ -1659,39 +1725,57 @@ function getRadarRankingFilterCount(
 function getRadarActionStatusLabel(
   product: MarketRadarProductRow
 ) {
+  const stockStatus =
+    getRadarStockValidationStatus(product)
+
   if (product.is_active === false) {
     return "No listar"
+  }
+
+  if (stockStatus === "out_of_stock") {
+    return "No listar"
+  }
+
+  if (
+    stockStatus === "stock_needs_validation" ||
+    stockStatus === "stock_unknown"
+  ) {
+    return "Revisar stock"
   }
 
   if (!isRadarProductActionable(product)) {
     return "Ya revisado"
   }
 
-  if (
-    getRadarStockValidationStatus(product) ===
-    "stock_confirmed"
-  ) {
-    return "Accionable"
-  }
-
-  return "Revisar ahora"
+  return "Vender ahora"
 }
 
 function getRadarActionStatusClassName(
   product: MarketRadarProductRow
 ) {
+  const stockStatus =
+    getRadarStockValidationStatus(product)
+
   if (product.is_active === false) {
     return "border-red-300/30 bg-red-300/[0.12] text-red-100"
+  }
+
+  if (stockStatus === "out_of_stock") {
+    return "border-red-300/25 bg-red-300/[0.10] text-red-100"
+  }
+
+  if (
+    stockStatus === "stock_needs_validation" ||
+    stockStatus === "stock_unknown"
+  ) {
+    return "border-amber-300/25 bg-amber-300/[0.10] text-amber-100"
   }
 
   if (!isRadarProductActionable(product)) {
     return "border-white/10 bg-white/[0.04] text-white/55"
   }
 
-  if (
-    getRadarStockValidationStatus(product) ===
-    "stock_confirmed"
-  ) {
+  if (stockStatus === "stock_confirmed") {
     return "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100"
   }
 
@@ -6486,7 +6570,9 @@ export function MarketRadarPanel({
 
         const actionable =
           products.filter(
-            isRadarProductActionable
+            product =>
+              getSellerOperationalRoute(product) ===
+              "actionable"
           ).length
 
         const existing =
@@ -6496,12 +6582,16 @@ export function MarketRadarPanel({
 
         const priceMarginChanges =
           products.filter(
-            hasPriceOrMarginChangeSignal
+            product =>
+              getSellerOperationalRoute(product) ===
+              "price_margin_changes"
           ).length
 
         const listingRisk =
           products.filter(
-            hasListingProtectionRiskSignal
+            product =>
+              getSellerOperationalRoute(product) ===
+              "listing_risk"
           ).length
 
         const stockConfirmed =
@@ -6515,17 +6605,23 @@ export function MarketRadarPanel({
 
         const stockNeedsValidation =
           products.filter(
-            isExistingStockRiskSignal
+            product =>
+              getSellerOperationalRoute(product) ===
+              "stock_needs_validation"
           ).length
 
         const outOfStock =
           products.filter(
-            isConfirmedOutOfStockProduct
+            product =>
+              getSellerOperationalRoute(product) ===
+              "out_of_stock"
           ).length
 
         const blockedOrReview =
           products.filter(
-            isBlockedOrNeedsReviewSignal
+            product =>
+              getSellerOperationalRoute(product) ===
+              "blocked_or_review"
           ).length
 
         const reviewed =
@@ -6964,86 +7060,6 @@ export function MarketRadarPanel({
       className:
         "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-50",
     }
-
-  const operationalSummaryCards: Array<{
-    id: string
-    label: string
-    count: number
-    helper: string
-    icon: ElementType
-    className: string
-  }> = [
-    {
-      id:
-        "sell-now-summary",
-      label:
-        "Vender ahora",
-      count:
-        rankingCounts.actionable,
-      helper:
-        "Oportunidades para revisar listing.",
-      icon:
-        PackageCheck,
-      className:
-        "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-50",
-    },
-    {
-      id:
-        "stock-review-summary",
-      label:
-        "Revisar stock",
-      count:
-        rankingCounts.stockNeedsValidation,
-      helper:
-        "Validar cantidad antes de vender.",
-      icon:
-        TriangleAlert,
-      className:
-        "border-amber-300/20 bg-amber-300/[0.08] text-amber-50",
-    },
-    {
-      id:
-        "out-of-stock-summary",
-      label:
-        "Sin stock",
-      count:
-        rankingCounts.outOfStock,
-      helper:
-        "No listar hasta restock.",
-      icon:
-        PackageX,
-      className:
-        "border-red-300/20 bg-red-300/[0.08] text-red-50",
-    },
-    {
-      id:
-        "protect-summary",
-      label:
-        "Proteger",
-      count:
-        rankingCounts.listingRisk,
-      helper:
-        "Evitar ventas con riesgo.",
-      icon:
-        ShieldAlert,
-      className:
-        "border-red-300/20 bg-red-300/[0.08] text-red-50",
-    },
-    {
-      id:
-        "monitor-summary",
-      label:
-        "Monitorear",
-      count:
-        rankingCounts.reviewed,
-      helper:
-        "Revisado, sin urgencia.",
-      icon:
-        Radar,
-      className:
-        "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-50",
-    },
-  ]
 
   return (
     <div className="mt-16 space-y-6">
@@ -7690,34 +7706,6 @@ export function MarketRadarPanel({
               <p className="mt-2 max-w-2xl text-xs font-semibold leading-5 text-white/45">
                 Vender, revisar, pausar o monitorear.
               </p>
-              <div className="mt-4 grid gap-2">
-                {operationalSummaryCards.map(card => {
-                  const Icon =
-                    card.icon
-
-                  return (
-                    <div
-                      key={card.id}
-                      className={`grid min-w-0 grid-cols-[auto_3.5rem_1fr] items-center gap-3 rounded-lg border p-3 ${card.className}`}
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-white/10 bg-black/20">
-                          <Icon className="h-4 w-4 shrink-0" />
-                        </span>
-                        <span className="min-w-0 text-[11px] font-black uppercase leading-4 tracking-[0.12em]">
-                          {card.label}
-                        </span>
-                      </div>
-                      <p className="text-right text-3xl font-black leading-none tracking-normal">
-                        {card.count}
-                      </p>
-                      <p className="min-w-0 text-[11px] font-semibold leading-4 opacity-75">
-                        {card.helper}
-                      </p>
-                    </div>
-                  )
-                })}
-              </div>
             </div>
             <div className="flex flex-col gap-3 md:items-end">
               <div className="flex flex-wrap gap-2">

@@ -1892,129 +1892,6 @@ export default function EbayListingPackagePage() {
           </div>
         </section>
 
-        <Section title="Prueba de flujo completo" eyebrow="Demo interno">
-          <div className="grid gap-5">
-            <div className="rounded-3xl border border-emerald-300/15 bg-emerald-300/[0.045] p-5">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-emerald-100/60">
-                    {endToEndSellerFlowDemo.demoStatus}
-                  </p>
-                  <h3 className="mt-2 text-2xl font-black text-white">
-                    Market Radar → eBay Pipeline → Products → Listing → Review/Gates
-                  </h3>
-                  <p className="mt-3 max-w-4xl text-sm leading-7 text-white/65">
-                    Este demo prueba el flujo interno. No crea drafts, no publica y no genera imágenes reales.
-                  </p>
-                </div>
-                <span className="w-fit rounded-full border border-red-300/25 bg-red-300/[0.10] px-4 py-2 text-xs font-black text-red-50">
-                  eBay real: bloqueado
-                </span>
-              </div>
-
-              <div className="mt-5 grid gap-3 md:grid-cols-5">
-                {endToEndSellerFlowDemo.sellerFlowSteps.map((step) => (
-                  <article
-                    key={step.stage}
-                    className="rounded-2xl border border-white/10 bg-black/20 p-4 text-center"
-                  >
-                    <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-emerald-300/25 bg-emerald-300/[0.12] text-sm font-black text-emerald-50">
-                      {step.step}
-                    </div>
-                    <h4 className="mt-3 text-sm font-black text-white">
-                      {step.stage}
-                    </h4>
-                    <p className="mt-2 text-xs leading-5 text-white/60">
-                      {step.label}
-                    </p>
-                  </article>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {endToEndSellerFlowDemoCards.map((card) => (
-                <article
-                  key={card.label}
-                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
-                >
-                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/35">
-                    {card.label}
-                  </p>
-                  <p className="mt-2 break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
-                    {card.value}
-                  </p>
-                </article>
-              ))}
-            </div>
-
-            <div className="grid gap-3 lg:grid-cols-3">
-              {sellerReadinessSignals.map((signal) => (
-                <article
-                  key={signal.label}
-                  className={`rounded-2xl border p-4 ${signal.className}`}
-                >
-                  <p className="text-[10px] font-black uppercase tracking-[0.18em] opacity-60">
-                    Semáforo vendedor
-                  </p>
-                  <h4 className="mt-2 text-sm font-black">
-                    {signal.label}
-                  </h4>
-                  <p className="mt-2 text-xs font-bold leading-5 opacity-75">
-                    {signal.status}
-                  </p>
-                </article>
-              ))}
-            </div>
-
-            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
-              <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60">
-                    Guía de conversión
-                  </p>
-                  <h3 className="mt-2 text-lg font-black text-white">
-                    Cómo preparar un listing que pueda vender
-                  </h3>
-                </div>
-                <p className="max-w-md text-xs font-bold leading-5 text-white/50 md:text-right">
-                  Breve, visual y con campos obligatorios marcados antes de eBay real.
-                </p>
-              </div>
-              <div className="mt-5 grid gap-3 md:grid-cols-5">
-                {sellerConversionGuideCards.map((card) => (
-                  <article
-                    key={card.title}
-                    className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"
-                  >
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full border border-cyan-300/20 bg-cyan-300/[0.10] text-xs font-black text-cyan-50">
-                      {card.step}
-                    </div>
-                    <h4 className="mt-3 text-sm font-black text-white">
-                      {card.title}
-                    </h4>
-                    <p className="mt-2 text-xs leading-5 text-white/55">
-                      {card.helper}
-                    </p>
-                  </article>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-3xl border border-amber-300/15 bg-amber-300/[0.045] p-5">
-              <h3 className="text-lg font-black text-white">
-                Siguiente fase
-              </h3>
-              <p className="mt-2 text-sm font-bold leading-6 text-amber-50/75">
-                Generar imágenes reales desde catálogo Luna Portex antes de eBay Sandbox.
-              </p>
-              <p className="mt-3 text-xs leading-5 text-white/50">
-                {endToEndSellerFlowDemo.nextRecommendedPhase.phase}
-              </p>
-            </div>
-          </div>
-        </Section>
-
         <Section title="Preparar listing" eyebrow="Vista simple para vendedor">
           <div className="mb-5 rounded-3xl border border-white/10 bg-black/20 p-5">
             <h3 className="text-lg font-black text-white">
@@ -2023,34 +1900,6 @@ export default function EbayListingPackagePage() {
             <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">
               Producto correcto. Listing claro. Faltantes obligatorios.
             </p>
-          </div>
-          <div className="mb-5 rounded-3xl border border-emerald-300/15 bg-emerald-300/[0.045] p-5">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <h3 className="text-lg font-black text-white">
-                Flujo simple
-              </h3>
-              <span className="w-fit rounded-full border border-emerald-300/20 bg-black/25 px-4 py-2 text-xs font-black text-emerald-50">
-                Read-only
-              </span>
-            </div>
-            <div className="mt-5 grid gap-3 md:grid-cols-5">
-              {sellerFlowIconGuide.map((step) => (
-                <article
-                  key={step.label}
-                  className="rounded-2xl border border-white/10 bg-black/20 p-4 text-center"
-                >
-                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-emerald-300/25 bg-emerald-300/[0.12] text-sm font-black text-emerald-50">
-                    {step.step}
-                  </div>
-                  <h4 className="mt-3 text-sm font-black text-white">
-                    {step.label}
-                  </h4>
-                  <p className="mt-2 text-xs leading-5 text-white/60">
-                    {step.status}
-                  </p>
-                </article>
-              ))}
-            </div>
           </div>
           <div className="grid gap-4 lg:grid-cols-3">
             {sellerListingPrimaryCards.map((card) => (
@@ -2251,25 +2100,6 @@ export default function EbayListingPackagePage() {
           </details>
         </Section>
 
-        <Section title="Menu del vendedor" eyebrow="Vista vendedor">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {sellerCommandMenu.map((item) => (
-              <a
-                key={item.href}
-                href={item.href}
-                className="min-w-0 rounded-3xl border border-white/10 bg-black/20 p-5 transition hover:border-cyan-300/30 hover:bg-cyan-300/[0.055]"
-              >
-                <h3 className="break-words text-base font-black text-white [overflow-wrap:anywhere]">
-                  {item.label}
-                </h3>
-                <p className="mt-3 text-sm leading-6 text-white/65">
-                  {item.detail}
-                </p>
-              </a>
-            ))}
-          </div>
-        </Section>
-
         <Section
           id="executive-status"
           title="Estado ejecutivo"
@@ -2339,27 +2169,6 @@ export default function EbayListingPackagePage() {
                 </h3>
                 <p className="mt-3 text-sm leading-6 opacity-80">
                   {card.detail}
-                </p>
-              </article>
-            ))}
-          </div>
-        </Section>
-
-        <Section title="Ruta de trabajo del vendedor" eyebrow="Vista vendedor">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-            {sellerWorkflowOrder.map((item) => (
-              <article
-                key={item.step}
-                className="min-w-0 rounded-3xl border border-cyan-300/15 bg-cyan-300/[0.04] p-5"
-              >
-                <p className="text-[11px] font-black uppercase leading-5 tracking-[0.08em] text-cyan-100/60">
-                  Paso {item.step}
-                </p>
-                <h3 className="mt-3 break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
-                  {item.title}
-                </h3>
-                <p className="mt-3 text-sm leading-6 text-white/65">
-                  {item.detail}
                 </p>
               </article>
             ))}
