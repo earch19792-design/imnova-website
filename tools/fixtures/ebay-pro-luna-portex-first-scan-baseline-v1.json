@@ -1,0 +1,70 @@
+{
+  "baselineVersion": "EBAY_PRO_LUNA_PORTEX_FIRST_SCAN_BASELINE_V1",
+  "caseId": "EBAY-PRO-LUNA-PORTEX-FIRST-SCAN-001",
+  "status": "FIRST_SCAN_BASELINE_READY",
+  "mode": "STAGING_LAB_FIRST_SCAN_BASELINE_NO_DB_CHANGES",
+  "production": {
+    "role": "IMNOVA Core only",
+    "ebayProAllowed": false,
+    "firstScanAllowed": false
+  },
+  "staging": {
+    "role": "eBay Pro first real Luna Portex scan",
+    "ebayProAllowed": true,
+    "firstScanAllowed": true,
+    "existingDemoDataPolicy": "IGNORE_AS_PRE_BASELINE_DEMO"
+  },
+  "localVmLab": {
+    "role": "Heavy scan/lab processing",
+    "firstScanSimulationAllowed": true,
+    "connectedInThisLoop": false
+  },
+  "dataPolicy": {
+    "currentDemoProductsAreProduction": false,
+    "currentDemoProductsCanBeIgnoredForFirstScan": true,
+    "physicalDeleteApplied": false,
+    "physicalCleanupRequiresApproval": true
+  },
+  "scanPolicy": {
+    "nextLunaPortexScanType": "FIRST_REAL_LUNA_PORTEX_SCAN",
+    "previousDemoScanType": "PRE_BASELINE_DEMO",
+    "shouldMixDemoWithFirstRealScan": false,
+    "requiresFreshBaseline": true
+  },
+  "whatsappPolicy": {
+    "coreWhatsappProductionAllowed": true,
+    "ebayProWhatsappAllowedInProduction": false,
+    "ebayProWhatsappAllowedInStagingLab": true,
+    "ebayProWhatsappDryRunDefault": true,
+    "realSendInThisLoop": false
+  },
+  "cleanupPolicy": {
+    "noPhysicalCleanupInThisLoop": true,
+    "futureCleanupRequiresInventory": true,
+    "futureCleanupRequiresBackup": true,
+    "futureCleanupRequiresRollback": true,
+    "futureCleanupRequiresUserApproval": true
+  },
+  "safetyFlags": {
+    "productionCoreProtected": true,
+    "ebayProProductionDisabled": true,
+    "stagingLabOnly": true,
+    "liveSupabaseQueried": false,
+    "supabaseWriteUsed": false,
+    "physicalDbCleanupApplied": false,
+    "sqlMigrationCreated": false,
+    "destructiveSqlCreated": false,
+    "dbPushUsed": false,
+    "dbPullUsed": false,
+    "vmConnected": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "openAiUsed": false,
+    "imageGenerationUsed": false,
+    "imageUploadUsed": false,
+    "whatsappRealSendUsed": false
+  }
+}
