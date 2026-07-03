@@ -19788,6 +19788,14 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
+    /text-3xl font-black leading-none tracking-normal/
+  )
+  assert.match(
+    source,
+    /min-h-10 text-\[11px\] font-semibold leading-5/
+  )
+  assert.match(
+    source,
     /Oportunidades para revisar listing\./
   )
   assert.match(
