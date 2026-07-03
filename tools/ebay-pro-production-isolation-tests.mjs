@@ -136,6 +136,10 @@ test("environment boundary module exists and avoids external systems", () => {
     true,
   );
   assert.equal(
+    content.includes("/admin/ebay-pro"),
+    true,
+  );
+  assert.equal(
     content.includes("/api/admin/market-radar"),
     true,
   );
@@ -171,6 +175,10 @@ test("middleware contains eBay Pro gate without live system calls", () => {
     true,
   );
   assert.equal(
+    content.includes("/admin/ebay-pro"),
+    true,
+  );
+  assert.equal(
     content.includes("/api/admin/market-radar"),
     true,
   );
@@ -193,6 +201,20 @@ test("middleware contains eBay Pro gate without live system calls", () => {
 });
 
 test("production blocks eBay Pro paths while core paths remain allowed", () => {
+  assert.equal(
+    isEbayProAllowed({
+      vercelEnv: "production",
+      pathname: "/admin/ebay-pro",
+    }),
+    false,
+  );
+  assert.equal(
+    isEbayProAllowed({
+      ebayProRuntime: "staging",
+      pathname: "/admin/ebay-pro",
+    }),
+    true,
+  );
   assert.equal(
     isEbayProAllowed({
       vercelEnv: "production",
@@ -232,6 +254,13 @@ test("production blocks eBay Pro paths while core paths remain allowed", () => {
     isEbayProAllowed({
       vercelEnv: "production",
       pathname: "/api/products",
+    }),
+    true,
+  );
+  assert.equal(
+    isEbayProAllowed({
+      vercelEnv: "production",
+      pathname: "/api/whatsapp",
     }),
     true,
   );

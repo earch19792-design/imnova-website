@@ -48,6 +48,7 @@ export function middleware(
 
 export const config = {
   matcher: [
+    "/admin/ebay-pro/:path*",
     "/admin/market-radar/:path*",
     "/admin/ebay-seller-os/:path*",
     "/admin/ebay-listing/:path*",

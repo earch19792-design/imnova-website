@@ -2,6 +2,7 @@ export const EBAY_PRO_PRODUCTION_ISOLATION_VERSION =
   "EBAY_PRO_PRODUCTION_ISOLATION_FAST_V1"
 
 export const EBAY_PRO_BLOCKED_IN_PRODUCTION_PATHS = [
+  "/admin/ebay-pro",
   "/admin/market-radar",
   "/admin/ebay-seller-os",
   "/admin/ebay-listing",
