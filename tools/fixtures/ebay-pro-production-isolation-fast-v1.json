@@ -1,0 +1,60 @@
+{
+  "isolationVersion": "EBAY_PRO_PRODUCTION_ISOLATION_FAST_V1",
+  "caseId": "EBAY-PRO-PRODUCTION-ISOLATION-FAST-001",
+  "status": "PRODUCTION_CORE_PROTECTED_EBAY_PRO_STAGING_LAB_ONLY",
+  "mode": "FAST_RUNTIME_BOUNDARY",
+  "production": {
+    "role": "IMNOVA Core only",
+    "ebayProAllowed": false,
+    "heavyReadsAllowed": false
+  },
+  "staging": {
+    "role": "eBay Professional Seller Suite controlled testing",
+    "ebayProAllowed": true,
+    "heavyReadsAllowed": "limited"
+  },
+  "localNetworkVm": {
+    "role": "Heavy lab processing with separate test DB",
+    "ebayProAllowed": true,
+    "heavyReadsAllowed": true,
+    "connectedInThisLoop": false
+  },
+  "blockedProductionPaths": [
+    "/admin/market-radar",
+    "/admin/ebay-seller-os",
+    "/admin/ebay-listing",
+    "/admin/ebay-listing-package",
+    "/admin/ebay-listings",
+    "/admin/ebay-image-generator",
+    "/api/admin/market-radar",
+    "/api/admin/ebay-winner-pipeline",
+    "/api/admin/active-listing-risks",
+    "/api/admin/ebay/oauth"
+  ],
+  "allowedCorePaths": [
+    "/admin",
+    "/store",
+    "/api/community",
+    "/api/products"
+  ],
+  "safetyFlags": {
+    "productionCoreProtected": true,
+    "ebayProProductionDisabled": true,
+    "stagingOnlyEbayPro": true,
+    "localVmDocumentedOnly": true,
+    "localVmConnected": false,
+    "liveSupabaseQueried": false,
+    "supabaseWriteUsed": false,
+    "sqlMigrationCreated": false,
+    "dbPushUsed": false,
+    "dbPullUsed": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "openAiUsed": false,
+    "imageGenerationUsed": false,
+    "imageUploadUsed": false
+  }
+}
