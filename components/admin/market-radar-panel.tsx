@@ -123,19 +123,19 @@ const catalogCoverageAuditCopy = {
 const sellerCommandCenterCopy = {
   title: "Centro de Venta eBay",
   protectFirst:
-    "Protege primero lo que ya puede afectar ventas",
+    "Primero protege ventas activas",
   findWithinScope:
-    "Luego decide que vender, revisar o pausar",
+    "Luego vende, revisa o pausa",
   readOnlyRecommendations:
     "Recomendaciones de solo lectura",
   noAutomaticListingActions:
-    "Sin acciones automaticas",
+    "Solo lectura",
   currentRadarResults:
     "Resultados actuales del Radar",
   referenceScenarios:
     "Escenarios de referencia",
   commandMenu:
-    "Mapa de trabajo",
+    "Colas de trabajo",
   nextBestAction:
     "Siguiente accion",
   topCardLabels: [
@@ -938,6 +938,13 @@ function getProductInventoryMessage(
   product: MarketRadarProductRow
 ) {
   if (
+    getRadarStockValidationStatus(product) ===
+    "out_of_stock"
+  ) {
+    return "Sin stock confirmado. No listar hasta restock."
+  }
+
+  if (
     product.inventory_scope === "variant_level" &&
     product.inventory_quantity !== null &&
     product.inventory_quantity !== undefined
@@ -986,9 +993,8 @@ function getStockConfirmationInitialQuantity(
   }
 
   if (
-    product.available === false ||
-    product.inventory_status === "out_of_stock" ||
-    product.stock_validation_status === "out_of_stock"
+    getRadarStockValidationStatus(product) ===
+    "out_of_stock"
   ) {
     return "0"
   }
@@ -1187,6 +1193,13 @@ function getAdvisorSellerPriorityClassName(
 function getProductStatusLabel(
   product: MarketRadarProductRow
 ) {
+  if (
+    getRadarStockValidationStatus(product) ===
+    "out_of_stock"
+  ) {
+    return "Sin stock"
+  }
+
   if (product.is_active === false) {
     return "Fuera de catalogo"
   }
@@ -1252,6 +1265,13 @@ function getProductStatusLabel(
 function getProductStatusClassName(
   product: MarketRadarProductRow
 ) {
+  if (
+    getRadarStockValidationStatus(product) ===
+    "out_of_stock"
+  ) {
+    return "border-red-300/25 bg-red-300/[0.10] text-red-100"
+  }
+
   if (product.is_active === false) {
     return "border-red-300/30 bg-red-300/[0.12] text-red-100"
   }
@@ -4467,7 +4487,10 @@ function ProductRow({
           {getProductInventoryMessage(product)}
         </p>
         <p className="mt-1 text-[11px] text-white/35">
-          {product.inventory_scope === "variant_level"
+          {getRadarStockValidationStatus(product) ===
+          "out_of_stock"
+            ? "Bloqueado para listing hasta restock"
+            : product.inventory_scope === "variant_level"
             ? "Cantidad confirmada por variante/SKU"
             : product.inventory_scope === "product_or_category_signal"
               ? "Señal general de disponibilidad"
@@ -6771,21 +6794,39 @@ export function MarketRadarPanel({
   }> = [
     {
       id:
-        "listing-risk",
+        "sell-now",
       label:
-        "Proteger listings",
+        "Vender ahora",
       filter:
-        "listing_risk",
+        "actionable",
       count:
-        rankingCounts.listingRisk,
+        rankingCounts.actionable,
       note:
-        "No perder ventas",
+        "Oportunidad",
       helper:
-        "Stock, precio o margen cambiaron.",
+        "Preparar listing.",
       icon:
-        ShieldAlert,
+        PackageCheck,
       className:
-        "border-red-300/25 bg-red-300/[0.09] text-red-50",
+        "border-emerald-300/25 bg-emerald-300/[0.09] text-emerald-50",
+    },
+    {
+      id:
+        "stock-risk",
+      label:
+        "Revisar stock",
+      filter:
+        "stock_needs_validation",
+      count:
+        rankingCounts.stockNeedsValidation,
+      note:
+        "Validar",
+      helper:
+        "Cantidad pendiente.",
+      icon:
+        TriangleAlert,
+      className:
+        "border-amber-300/25 bg-amber-300/[0.08] text-amber-50",
     },
     {
       id:
@@ -6797,9 +6838,9 @@ export function MarketRadarPanel({
       count:
         rankingCounts.outOfStock,
       note:
-        "No listar",
+        "Pausar",
       helper:
-        "Esperar restock antes de avanzar.",
+        "Esperar restock.",
       icon:
         PackageX,
       className:
@@ -6807,35 +6848,35 @@ export function MarketRadarPanel({
     },
     {
       id:
-        "stock-risk",
+        "listing-risk",
       label:
-        "Riesgo de stock",
+        "Proteger",
       filter:
-        "stock_needs_validation",
+        "listing_risk",
       count:
-        rankingCounts.stockNeedsValidation,
+        rankingCounts.listingRisk,
       note:
-        "Validar antes",
+        "Urgente",
       helper:
-        "Cantidad baja o no confiable.",
+        "Evitar cancelaciones.",
       icon:
-        TriangleAlert,
+        ShieldAlert,
       className:
-        "border-amber-300/25 bg-amber-300/[0.08] text-amber-50",
+        "border-red-300/25 bg-red-300/[0.09] text-red-50",
     },
     {
       id:
         "price-margin-changes",
       label:
-        "Revisar margen",
+        "Margen",
       filter:
         "price_margin_changes",
       count:
         rankingCounts.priceMarginChanges,
       note:
-        "Actualizar precio",
+        "Revisar",
       helper:
-        "Costo o precio cambió.",
+        "Precio o costo cambió.",
       icon:
         DollarSign,
       className:
@@ -6853,29 +6894,11 @@ export function MarketRadarPanel({
       note:
         "No avanzar",
       helper:
-        "Requiere resolver blocker.",
+        "Resolver blocker.",
       icon:
         ShieldAlert,
       className:
         "border-red-300/25 bg-red-300/[0.09] text-red-50",
-    },
-    {
-      id:
-        "sell-now",
-      label:
-        "Vender ahora",
-      filter:
-        "actionable",
-      count:
-        rankingCounts.actionable,
-      note:
-        "Oportunidad",
-      helper:
-        "Revisar para preparar listing.",
-      icon:
-        PackageCheck,
-      className:
-        "border-emerald-300/25 bg-emerald-300/[0.09] text-emerald-50",
     },
     {
       id:
@@ -6889,29 +6912,11 @@ export function MarketRadarPanel({
       note:
         "Sin cambio",
       helper:
-        "Producto revisado, sin urgencia.",
+        "Sin urgencia.",
       icon:
         Radar,
       className:
         "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-50",
-    },
-    {
-      id:
-        "all-monitored",
-      label:
-        "Todo",
-      filter:
-        "existing",
-      count:
-        rankingCounts.existing,
-      note:
-        "Vista completa",
-      helper:
-        "Todos los productos monitoreados.",
-      icon:
-        Activity,
-      className:
-        "border-white/10 bg-white/[0.04] text-white/70",
     },
   ]
 
@@ -7413,7 +7418,7 @@ export function MarketRadarPanel({
               {sellerCommandCenterCopy.commandMenu}
             </p>
             <p className="text-[11px] font-semibold text-emerald-50/55">
-              Elige una cola. Ninguna publica ni modifica eBay.
+              Elige una cola. Solo lectura.
             </p>
           </div>
           <div className="mt-3 grid gap-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
@@ -7456,9 +7461,6 @@ export function MarketRadarPanel({
                   </span>
                   <span className="mt-1 block text-[11px] leading-5 opacity-60">
                     {item.helper}
-                  </span>
-                  <span className="mt-3 inline-flex rounded-md border border-emerald-200/15 bg-black/20 px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-emerald-50/65">
-                    Ver productos
                   </span>
                 </button>
               )
@@ -7686,9 +7688,9 @@ export function MarketRadarPanel({
                 Lista operativa del vendedor
               </h3>
               <p className="mt-2 max-w-2xl text-xs font-semibold leading-5 text-white/45">
-                Lee el mapa de izquierda a derecha: vender, revisar, pausar o monitorear.
+                Vender, revisar, pausar o monitorear.
               </p>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <div className="mt-4 grid gap-2">
                 {operationalSummaryCards.map(card => {
                   const Icon =
                     card.icon
@@ -7696,20 +7698,20 @@ export function MarketRadarPanel({
                   return (
                     <div
                       key={card.id}
-                      className={`min-w-0 rounded-lg border p-4 ${card.className}`}
+                      className={`grid min-w-0 grid-cols-[auto_3.5rem_1fr] items-center gap-3 rounded-lg border p-3 ${card.className}`}
                     >
                       <div className="flex min-w-0 items-center gap-2">
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/10 bg-black/20">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-white/10 bg-black/20">
                           <Icon className="h-4 w-4 shrink-0" />
                         </span>
-                        <span className="min-w-0 truncate text-[12px] font-black uppercase tracking-[0.12em]">
+                        <span className="min-w-0 text-[11px] font-black uppercase leading-4 tracking-[0.12em]">
                           {card.label}
                         </span>
                       </div>
-                      <p className="mt-4 text-3xl font-black leading-none tracking-normal">
+                      <p className="text-right text-3xl font-black leading-none tracking-normal">
                         {card.count}
                       </p>
-                      <p className="mt-3 min-h-10 text-[11px] font-semibold leading-5 opacity-75">
+                      <p className="min-w-0 text-[11px] font-semibold leading-4 opacity-75">
                         {card.helper}
                       </p>
                     </div>
@@ -7724,7 +7726,7 @@ export function MarketRadarPanel({
                     value:
                       "listing_risk" as const,
                     label:
-                      "Proteger listings",
+                      "Proteger",
                   },
                   {
                     value:
@@ -7736,7 +7738,7 @@ export function MarketRadarPanel({
                     value:
                       "stock_needs_validation" as const,
                     label:
-                      "Riesgo de stock",
+                      "Revisar stock",
                   },
                   {
                     value:
@@ -7748,13 +7750,7 @@ export function MarketRadarPanel({
                     value:
                       "price_margin_changes" as const,
                     label:
-                      "Revisar margen",
-                  },
-                  {
-                    value:
-                      "stock_confirmed" as const,
-                    label:
-                      "Stock confirmado",
+                      "Margen",
                   },
                   {
                     value:
@@ -7767,18 +7763,6 @@ export function MarketRadarPanel({
                       "reviewed" as const,
                     label:
                       "Monitorear",
-                  },
-                  {
-                    value:
-                      "existing" as const,
-                    label:
-                      "Todo monitoreado",
-                  },
-                  {
-                    value:
-                      "all" as const,
-                    label:
-                      "Todos",
                   },
                 ].map(option => (
                   <button
