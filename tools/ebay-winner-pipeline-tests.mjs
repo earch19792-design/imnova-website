@@ -821,6 +821,19 @@ const ebaySellerFlowOperationalSmokeTestFixture =
     )
   )
 
+const ebayWinnerCandidateRescueActionsFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-winner-candidate-rescue-actions-v1.json"
+  )
+
+const ebayWinnerCandidateRescueActionsFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayWinnerCandidateRescueActionsFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -10988,6 +11001,553 @@ test("ebay seller flow operational smoke test fixture: no contiene tokens endpoi
   }
 })
 
+test("ebay winner candidate rescue actions fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayWinnerCandidateRescueActionsFixturePath
+    )
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.rescueVersion,
+    "EBAY_WINNER_CANDIDATE_RESCUE_ACTIONS_V1"
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.rescueStatus,
+    "WINNER_CANDIDATE_RESCUE_ACTIONS_READY"
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.unitDecision,
+    "UNIT_NOT_PROFITABLE_DO_NOT_LIST_AS_UNIT"
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.packEvaluationStatus,
+    "PACK_REVIEW_AVAILABLE_PACKING_FEE_REQUIRED"
+  )
+
+  const actionIds =
+    ebayWinnerCandidateRescueActionsFixture.rescueActions.map(
+      (action) => action.actionId
+    )
+
+  for (const expectedAction of [
+    "evaluate_pack",
+    "find_better_supplier",
+    "do_not_list",
+  ]) {
+    assert.ok(
+      actionIds.includes(expectedAction),
+      `missing rescue action: ${expectedAction}`
+    )
+  }
+
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.packFeePolicy.editableOverrideAllowed,
+    true
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.packFeePolicy.overridePersistenceInThisLoop,
+    false
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.packFeePolicy.ifMissing,
+    "PACKING_FEE_REQUIRED"
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.multiPackListingPolicy.sameProductCanHaveMultiplePackListingCandidates,
+    true
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.multiPackListingPolicy.listingVariantsAreSeparateOffers,
+    true
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.multiPackListingPolicy.eachPackMustPassOwnGates,
+    true
+  )
+  assert.deepEqual(
+    ebayWinnerCandidateRescueActionsFixture.multiPackListingPolicy.supportedPackListings,
+    [
+      "PACK_X3",
+      "PACK_X6",
+      "PACK_X12",
+    ]
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.multiPackListingPolicy.doNotPublishAutomatically,
+    true
+  )
+
+  const packSizes =
+    ebayWinnerCandidateRescueActionsFixture.packScenarios.map(
+      (scenario) => scenario.packSize
+    )
+
+  assert.deepEqual(
+    packSizes,
+    [
+      3,
+      6,
+      12,
+    ]
+  )
+
+  assert.ok(
+    ebayWinnerCandidateRescueActionsFixture.packScenarios.every(
+      (scenario) => scenario.status === "PACKING_FEE_REQUIRED"
+    )
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.gateRules.packCanAdvanceToListingWithoutPackingFee,
+    false
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.gateRules.eBayActionsBlocked,
+    true
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.gateRules.multiplePackListingsRequireIndividualApproval,
+    true
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.safetyFlags.packSimulationOnly,
+    true
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.safetyFlags.packingFeeEditableButNotPersisted,
+    true
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.safetyFlags.realDraftCreated,
+    false
+  )
+  assert.equal(
+    ebayWinnerCandidateRescueActionsFixture.safetyFlags.publishedToEbay,
+    false
+  )
+})
+
+test("ebay pack profit simulator: calcula packs sin acciones externas", async () => {
+  const modulePath =
+    "lib/ebay/pack-profit-simulator.ts"
+
+  assert.ok(
+    fs.existsSync(modulePath),
+    `missing module: ${modulePath}`
+  )
+
+  const source =
+    fs.readFileSync(
+      modulePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "simulatePackProfit",
+    "simulatePackOptions",
+    "buildMultiPackListingStrategy",
+    "getRequiredPackFields",
+    "getPackSimulationStatus",
+    "getBlockedPackSimulationResponse",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing export in ${modulePath}: ${expectedText}`
+    )
+  }
+
+  for (const forbiddenPattern of [
+    /process\.env/,
+    /fetch\(/,
+    /http:\/\//,
+    /https:\/\//,
+    /new OpenAI/,
+    /openai/i,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /console\.log/,
+    /console\.error/,
+    /createDraft/,
+    /publishListing/,
+    /images\.generate/,
+    /writeFile/,
+    /download/,
+    /sharp/,
+    /canvas/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern,
+      `forbidden pattern in ${modulePath}: ${forbiddenPattern}`
+    )
+  }
+
+  const transpiled =
+    ts.transpileModule(
+      source,
+      {
+        compilerOptions: {
+          module:
+            ts.ModuleKind.ES2022,
+          target:
+            ts.ScriptTarget.ES2022,
+        },
+      }
+    ).outputText
+
+  const outputPath =
+    path.join(
+      os.tmpdir(),
+      `pack-profit-simulator-${process.pid}-${Date.now()}.mjs`
+    )
+
+  fs.writeFileSync(
+    outputPath,
+    transpiled
+  )
+
+  const module =
+    await import(
+      `file://${outputPath}`
+    )
+
+  const missingPackingFee =
+    module.simulatePackProfit({
+      packSize:
+        3,
+    })
+
+  assert.equal(
+    missingPackingFee.status,
+    "PACKING_FEE_REQUIRED"
+  )
+  assert.equal(
+    missingPackingFee.canAdvanceToListing,
+    false
+  )
+
+  assert.equal(
+    module.simulatePackProfit({
+      packSize:
+        3,
+      unitCost:
+        2,
+      packingFee:
+        1,
+      shippingEstimate:
+        4,
+      ebayFeeEstimate:
+        2,
+      targetSellPrice:
+        25,
+      minNetMarginPercent:
+        10,
+    }).status,
+    "PACK_CANDIDATE_FOR_LISTING"
+  )
+  assert.equal(
+    module.simulatePackProfit({
+      packSize:
+        3,
+      unitCost:
+        5,
+      packingFee:
+        5,
+      shippingEstimate:
+        6,
+      ebayFeeEstimate:
+        3,
+      targetSellPrice:
+        10,
+    }).status,
+    "PACK_NOT_PROFITABLE"
+  )
+  assert.deepEqual(
+    module.simulatePackOptions({}).map((option) => option.packSize),
+    [
+      3,
+      6,
+      12,
+    ]
+  )
+
+  const multiPackStrategy =
+    module.buildMultiPackListingStrategy({
+      unitCost:
+        2,
+      packingFeePack3:
+        1,
+      packingFeePack6:
+        1.5,
+      packingFeePack12:
+        2,
+      shippingEstimate:
+        4,
+      ebayFeeEstimate:
+        2,
+      targetSellPrice:
+        60,
+      stockQuantity:
+        84,
+      minNetMarginPercent:
+        10,
+    })
+
+  assert.equal(
+    multiPackStrategy.strategyStatus,
+    "MULTI_PACK_LISTING_STRATEGY_AVAILABLE"
+  )
+  assert.equal(
+    multiPackStrategy.canCreateMultiplePackListingCandidates,
+    true
+  )
+  assert.deepEqual(
+    multiPackStrategy.candidateListings.map(
+      (candidate) => candidate.listingFormat
+    ),
+    [
+      "PACK_X3",
+      "PACK_X6",
+      "PACK_X12",
+    ]
+  )
+  assert.ok(
+    multiPackStrategy.candidateListings.every(
+      (candidate) =>
+        candidate.mustPrepareAsPack &&
+        candidate.unitListing === false
+    )
+  )
+})
+
+test("ebay winner candidate rescue actions module: expone rutas read-only", async () => {
+  const simulatorModulePath =
+    "lib/ebay/pack-profit-simulator.ts"
+  const modulePath =
+    "lib/ebay/winner-candidate-rescue-actions.ts"
+
+  assert.ok(
+    fs.existsSync(modulePath),
+    `missing module: ${modulePath}`
+  )
+
+  const source =
+    fs.readFileSync(
+      modulePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "getWinnerCandidateRescueActions",
+    "getDustOffRescueDemo",
+    "getRescueActionsForCandidate",
+    "getBlockedWinnerCandidateRescueResponse",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing export in ${modulePath}: ${expectedText}`
+    )
+  }
+
+  for (const forbiddenPattern of [
+    /process\.env/,
+    /fetch\(/,
+    /http:\/\//,
+    /https:\/\//,
+    /new OpenAI/,
+    /openai/i,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /console\.log/,
+    /console\.error/,
+    /createDraft/,
+    /publishListing/,
+    /images\.generate/,
+    /writeFile/,
+    /download/,
+    /sharp/,
+    /canvas/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern,
+      `forbidden pattern in ${modulePath}: ${forbiddenPattern}`
+    )
+  }
+
+  const tmpSuffix =
+    `${process.pid}-${Date.now()}`
+  const simulatorOutputPath =
+    path.join(
+      os.tmpdir(),
+      `pack-profit-simulator-${tmpSuffix}.mjs`
+    )
+  const moduleOutputPath =
+    path.join(
+      os.tmpdir(),
+      `winner-candidate-rescue-actions-${tmpSuffix}.mjs`
+    )
+
+  fs.writeFileSync(
+    simulatorOutputPath,
+    ts.transpileModule(
+      fs.readFileSync(
+        simulatorModulePath,
+        "utf8"
+      ),
+      {
+        compilerOptions: {
+          module:
+            ts.ModuleKind.ES2022,
+          target:
+            ts.ScriptTarget.ES2022,
+        },
+      }
+    ).outputText
+  )
+
+  const transpiledRescueModule =
+    ts.transpileModule(
+      source,
+      {
+        compilerOptions: {
+          module:
+            ts.ModuleKind.ES2022,
+          target:
+            ts.ScriptTarget.ES2022,
+        },
+      }
+    ).outputText.replace(
+      "./pack-profit-simulator",
+      `./${path.basename(simulatorOutputPath)}`
+    )
+
+  fs.writeFileSync(
+    moduleOutputPath,
+    transpiledRescueModule
+  )
+
+  const module =
+    await import(
+      `file://${moduleOutputPath}`
+    )
+  const demo =
+    module.getDustOffRescueDemo()
+
+  assert.equal(
+    demo.unitListingAllowed,
+    false
+  )
+
+  for (const expectedAction of [
+    "evaluate_pack",
+    "find_better_supplier",
+    "do_not_list",
+  ]) {
+    assert.ok(
+      demo.recommendedActions.includes(expectedAction),
+      `Dust Off demo missing rescue action: ${expectedAction}`
+    )
+  }
+
+  assert.equal(
+    module.getWinnerCandidateRescueActions().rescueStatus,
+    "WINNER_CANDIDATE_RESCUE_ACTIONS_READY"
+  )
+  assert.equal(
+    module.getWinnerCandidateRescueActions().multiPackListingPolicy.sameProductCanHaveMultiplePackListingCandidates,
+    true
+  )
+})
+
+test("ebay winner candidate rescue actions admin: visible y seguro", () => {
+  const listingSource =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+  const winnerPanelSource =
+    fs.readFileSync(
+      ebayWinnerPipelinePanelPath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Winner Candidate Rescue Actions",
+    "PACK_REVIEW_AVAILABLE_PACKING_FEE_REQUIRED",
+    "PACK_CANDIDATE_FOR_LISTING",
+    "MULTI_PACK_LISTING_STRATEGY_AVAILABLE",
+    "PACK_X3",
+    "PACK_X6",
+    "PACK_X12",
+  ]) {
+    assert.ok(
+      listingSource.includes(expectedText),
+      `missing listing rescue text: ${expectedText}`
+    )
+  }
+
+  for (const expectedText of [
+    "Cómo rescatar este producto",
+    "Evaluar pack",
+    "Buscar mejor proveedor",
+    "No listar",
+    "Pack x3",
+    "Pack x6",
+    "Pack x12",
+    "packing fee Luna Portex",
+    "Falta confirmar packing fee Luna Portex",
+    "Estrategia multi-pack",
+    "PACK_X3",
+    "PACK_X6",
+    "PACK_X12",
+  ]) {
+    assert.ok(
+      winnerPanelSource.includes(expectedText),
+      `missing winner panel rescue text: ${expectedText}`
+    )
+  }
+})
+
+test("ebay winner candidate rescue actions fixture: no contiene tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebayWinnerCandidateRescueActionsFixturePath,
+      "lib/ebay/winner-candidate-rescue-actions.ts",
+      "lib/ebay/pack-profit-simulator.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -20013,6 +20573,54 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
     source,
     /Riesgo de stock/
   )
+  assert.match(
+    source,
+    /con disponibilidad general Luna/
+  )
+  assert.match(
+    source,
+    /Cantidad real confirmada por variante/
+  )
+  assert.match(
+    source,
+    /Requiere validar cantidad\/SKU/
+  )
+  assert.match(
+    source,
+    /Sin stock confirmado por Radar/
+  )
+  assert.match(
+    source,
+    /Disponible según Luna no significa listo para vender/
+  )
+  assert.match(
+    source,
+    /Misión 1 · vigilar productos conocidos/
+  )
+  assert.match(
+    source,
+    /Primero detectar cambios críticos/
+  )
+  assert.match(
+    source,
+    /Precio, stock, out of stock, margen o riesgo en productos ya analizados tienen prioridad/
+  )
+  assert.match(
+    source,
+    /Misión 2 · descubrir oportunidades nuevas/
+  )
+  assert.match(
+    source,
+    /Después encontrar Top 50 potenciales/
+  )
+  assert.match(
+    source,
+    /El Radar busca productos con oportunidad grande dentro del alcance sincronizado/
+  )
+  assert.match(
+    source,
+    /radarScanMissionCounts/
+  )
   assert.doesNotMatch(
     source,
     /Proteger listings/
@@ -20150,6 +20758,10 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
+    /function hasActiveDiscountSignal[\s\S]*toNumber\(product\.compare_at_price\) !== null/
+  )
+  assert.match(
+    source,
     /function isQuietReviewedRadarProduct/
   )
   assert.match(
@@ -20159,6 +20771,10 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   assert.match(
     source,
     /filter === "stock_needs_validation"[\s\S]*getSellerOperationalRoute\(product\) ===[\s\S]*"stock_needs_validation"/
+  )
+  assert.match(
+    source,
+    /filter === "discounted"[\s\S]*hasActiveDiscountSignal\(product\)/
   )
   assert.match(
     source,
@@ -20186,11 +20802,19 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Bajo o sin cantidad confiable/
+    /Requiere validar cantidad\/SKU/
   )
   assert.match(
     source,
-    /Sin stock confirmado/
+    /Sin stock confirmado por Radar/
+  )
+  assert.match(
+    source,
+    /Con descuento/
+  )
+  assert.match(
+    source,
+    /Click en filtro para ver productos/
   )
   assert.match(
     source,

@@ -16,6 +16,7 @@ import listingReviewApprovalWorkspace from "../../../tools/fixtures/ebay-listing
 import winnerToListingIntakeBridge from "../../../tools/fixtures/ebay-winner-to-listing-intake-bridge-v1.json"
 import endToEndSellerFlowDemo from "../../../tools/fixtures/ebay-end-to-end-seller-flow-demo-v1.json"
 import sellerFlowOperationalSmokeTest from "../../../tools/fixtures/ebay-seller-flow-operational-smoke-test-v1.json"
+import winnerCandidateRescueActions from "../../../tools/fixtures/ebay-winner-candidate-rescue-actions-v1.json"
 import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -467,6 +468,27 @@ const sellerOperationalSmokeTestRows =
         ? "Listing permitido"
         : "Listing bloqueado",
   }))
+
+const winnerCandidateRescueCards = [
+  {
+    title:
+      "Evaluar pack",
+    detail:
+      "Simula pack x3, x6 y x12 con packing fee Luna Portex antes de decidir.",
+  },
+  {
+    title:
+      "Buscar mejor proveedor",
+    detail:
+      "Si Luna Portex no compite, pasa a sourcing sin crear listing.",
+  },
+  {
+    title:
+      "No listar",
+    detail:
+      "Si unidad, pack y proveedor fallan, queda fuera del flujo activo.",
+  },
+]
 
 const imageAssetManifestCopy = {
   manifestStatus:
@@ -2066,6 +2088,72 @@ export default function EbayListingPackagePage() {
               <p className="mt-2 text-xs font-semibold leading-5 text-white/55">
                 {sellerFlowOperationalSmokeTest.nextRecommendedPhase.firstStep}
               </p>
+            </div>
+          </div>
+        </Section>
+
+        <Section
+          title="Winner Candidate Rescue Actions"
+          eyebrow="Rescate read-only"
+        >
+          <div className="rounded-3xl border border-amber-300/15 bg-amber-300/[0.045] p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-amber-100/60">
+                  {winnerCandidateRescueActions.rescueStatus}
+                </p>
+                <h3 className="mt-2 text-2xl font-black text-white">
+                  Unidad no rentable no significa producto descartado.
+                </h3>
+                <p className="mt-3 max-w-4xl text-sm leading-7 text-white/65">
+                  Si la unidad no compite, el vendedor puede evaluar pack, buscar mejor proveedor o recomendar no listar. Todo queda en simulación interna.
+                </p>
+              </div>
+              <span className="w-fit rounded-full border border-red-300/25 bg-red-300/[0.10] px-4 py-2 text-xs font-black text-red-50">
+                eBay real sigue bloqueado
+              </span>
+            </div>
+
+            <div className="mt-5 grid gap-3 lg:grid-cols-3">
+              {winnerCandidateRescueCards.map((card) => (
+                <article
+                  key={card.title}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
+                  <p className="text-sm font-black text-white">
+                    {card.title}
+                  </p>
+                  <p className="mt-2 text-xs font-semibold leading-5 text-white/50">
+                    {card.detail}
+                  </p>
+                </article>
+              ))}
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.045] p-4">
+              <p className="text-sm font-black text-white">
+                Pack x3 / Pack x6 / Pack x12
+              </p>
+              <p className="mt-2 text-xs font-semibold leading-5 text-white/55">
+                packing fee Luna Portex es obligatorio y editable sin persistir. Pack sin packing fee no puede pasar a Listing.
+              </p>
+              <p className="mt-2 text-xs font-semibold leading-5 text-emerald-50/70">
+                MULTI_PACK_LISTING_STRATEGY_AVAILABLE: un mismo producto puede generar candidatos separados PACK_X3, PACK_X6 y PACK_X12 si cada presentación pasa stock, packing fee, shipping, fees, margen y Review/Gates.
+              </p>
+              <div className="mt-4 grid gap-2 text-xs font-bold text-white/65 md:grid-cols-3">
+                <span className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  {winnerCandidateRescueActions.unitDecision}
+                </span>
+                <span className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  {winnerCandidateRescueActions.packEvaluationStatus}
+                </span>
+                <span className="sr-only">
+                  PACK_REVIEW_AVAILABLE_PACKING_FEE_REQUIRED
+                </span>
+                <span className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  PACK_CANDIDATE_FOR_LISTING solo si el pack es rentable
+                </span>
+              </div>
             </div>
           </div>
         </Section>

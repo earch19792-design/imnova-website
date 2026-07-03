@@ -1,0 +1,206 @@
+{
+  "rescueVersion": "EBAY_WINNER_CANDIDATE_RESCUE_ACTIONS_V1",
+  "caseId": "WINNER-RESCUE-001",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "rescueStatus": "WINNER_CANDIDATE_RESCUE_ACTIONS_READY",
+  "flowMode": "INTERNAL_READ_ONLY_RESCUE_SIMULATION",
+  "candidateStatus": "BLOCKED_CURRENT_FORM_CAN_BE_RESCUED",
+  "unitDecision": "UNIT_NOT_PROFITABLE_DO_NOT_LIST_AS_UNIT",
+  "packEvaluationStatus": "PACK_REVIEW_AVAILABLE_PACKING_FEE_REQUIRED",
+  "supplierRescueStatus": "ALTERNATIVE_SUPPLIER_REVIEW_AVAILABLE",
+  "doNotListStatus": "DO_NOT_LIST_AVAILABLE",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "rescueSummary": "This module gives blocked winner candidates safe rescue actions before discarding them. A product blocked as a unit can be evaluated as pack x3, x6 or x12. Pack simulation must include Luna Portex packing fees. If packing fee is missing, pack cannot advance to Listing. This module does not create drafts, publish listings, mutate products or call eBay.",
+  "rescueActions": [
+    {
+      "actionId": "evaluate_pack",
+      "label": "Evaluar pack",
+      "status": "AVAILABLE_INTERNAL_SIMULATION_ONLY",
+      "description": "Simulate pack x3, x6 and x12 before deciding if the product can become a listing.",
+      "mutationImpact": "DO_NOT_MUTATE",
+      "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT"
+    },
+    {
+      "actionId": "find_better_supplier",
+      "label": "Buscar mejor proveedor",
+      "status": "AVAILABLE_SOURCING_REVIEW_ONLY",
+      "description": "Route the candidate to sourcing if Luna Portex cost cannot compete.",
+      "resultingStatus": "SOURCING_REQUIRED",
+      "mutationImpact": "DO_NOT_MUTATE"
+    },
+    {
+      "actionId": "do_not_list",
+      "label": "No listar",
+      "status": "AVAILABLE_RECOMMENDATION_ONLY",
+      "description": "Keep the product out of active listing flow when unit and pack are not profitable.",
+      "resultingStatus": "DO_NOT_LIST_RECOMMENDED",
+      "mutationImpact": "DO_NOT_MUTATE"
+    }
+  ],
+  "packSimulatorPolicy": {
+    "packSizes": [
+      3,
+      6,
+      12
+    ],
+    "requiresUnitCostConfirmed": true,
+    "requiresPackingFeeConfirmed": true,
+    "requiresShippingEstimate": true,
+    "requiresEbayFeeEstimate": true,
+    "requiresTargetSellPrice": true,
+    "packCanAdvanceToListingOnlyIfProfitable": true,
+    "listingMustBePreparedAsPackNotUnit": true,
+    "unitNotProfitableDoesNotBlockPackReview": true
+  },
+  "packFeePolicy": {
+    "source": "Luna Portex packing service",
+    "packingFeeRequiredForPack3": true,
+    "packingFeeRequiredForPack6": true,
+    "packingFeeRequiredForPack12": true,
+    "editableOverrideAllowed": true,
+    "overridePersistenceInThisLoop": false,
+    "suggestedFeeCanComeFromLunaPortex": true,
+    "ifMissing": "PACKING_FEE_REQUIRED",
+    "fields": [
+      "packingFeePack3",
+      "packingFeePack6",
+      "packingFeePack12",
+      "packingFeePack3Override",
+      "packingFeePack6Override",
+      "packingFeePack12Override"
+    ]
+  },
+  "multiPackListingPolicy": {
+    "sameProductCanHaveMultiplePackListingCandidates": true,
+    "listingVariantsAreSeparateOffers": true,
+    "eachPackMustPassOwnGates": true,
+    "supportedPackListings": [
+      "PACK_X3",
+      "PACK_X6",
+      "PACK_X12"
+    ],
+    "unitNotProfitableCanStillEvaluatePacks": true,
+    "doNotPublishAutomatically": true,
+    "rule": "A single product can create multiple internal pack listing candidates only when each pack presentation passes stock, packing fee, shipping, eBay fees, target price, margin and review gates."
+  },
+  "demoCandidate": {
+    "productName": "Dust Off Electronics Duster",
+    "supplier": "Luna Portex",
+    "unitDecision": "UNIT_NOT_PROFITABLE",
+    "unitListingAllowed": false,
+    "blockedReason": "Unit form is not competitive enough to list now.",
+    "rescueAllowed": true,
+    "recommendedActions": [
+      "evaluate_pack",
+      "find_better_supplier",
+      "do_not_list"
+    ]
+  },
+  "packScenarios": [
+    {
+      "packSize": 3,
+      "status": "PACKING_FEE_REQUIRED",
+      "unitCostConfirmed": false,
+      "packingFeeConfirmed": false,
+      "shippingEstimateConfirmed": false,
+      "ebayFeeEstimateConfirmed": false,
+      "targetSellPriceConfirmed": false,
+      "canCalculateFinalMargin": false,
+      "canAdvanceToListing": false,
+      "reason": "Packing fee, unit cost, shipping, fees and target price must be confirmed before pack can be evaluated."
+    },
+    {
+      "packSize": 6,
+      "status": "PACKING_FEE_REQUIRED",
+      "unitCostConfirmed": false,
+      "packingFeeConfirmed": false,
+      "shippingEstimateConfirmed": false,
+      "ebayFeeEstimateConfirmed": false,
+      "targetSellPriceConfirmed": false,
+      "canCalculateFinalMargin": false,
+      "canAdvanceToListing": false,
+      "reason": "Packing fee, unit cost, shipping, fees and target price must be confirmed before pack can be evaluated."
+    },
+    {
+      "packSize": 12,
+      "status": "PACKING_FEE_REQUIRED",
+      "unitCostConfirmed": false,
+      "packingFeeConfirmed": false,
+      "shippingEstimateConfirmed": false,
+      "ebayFeeEstimateConfirmed": false,
+      "targetSellPriceConfirmed": false,
+      "canCalculateFinalMargin": false,
+      "canAdvanceToListing": false,
+      "reason": "Packing fee, unit cost, shipping, fees and target price must be confirmed before pack can be evaluated."
+    }
+  ],
+  "multiPackScenarios": [
+    {
+      "listingFormat": "PACK_X3",
+      "packSize": 3,
+      "status": "PACKING_FEE_REQUIRED",
+      "canPrepareListing": false,
+      "mustPrepareAsPack": true,
+      "unitListing": false,
+      "reason": "Pack x3 can become its own listing candidate only after packing fee and margin gates pass."
+    },
+    {
+      "listingFormat": "PACK_X6",
+      "packSize": 6,
+      "status": "PACKING_FEE_REQUIRED",
+      "canPrepareListing": false,
+      "mustPrepareAsPack": true,
+      "unitListing": false,
+      "reason": "Pack x6 can become its own listing candidate only after packing fee and margin gates pass."
+    },
+    {
+      "listingFormat": "PACK_X12",
+      "packSize": 12,
+      "status": "PACKING_FEE_REQUIRED",
+      "canPrepareListing": false,
+      "mustPrepareAsPack": true,
+      "unitListing": false,
+      "reason": "Pack x12 can become its own listing candidate only after packing fee and margin gates pass."
+    }
+  ],
+  "supplierRescue": {
+    "status": "SOURCING_REQUIRED",
+    "reason": "If Luna Portex unit or pack cost cannot compete, search for an alternative supplier.",
+    "listingAllowed": false,
+    "productsMustConfirmNewSupplier": true
+  },
+  "doNotListAction": {
+    "status": "DO_NOT_LIST_RECOMMENDED",
+    "reason": "If unit, pack and supplier routes fail, product should stay out of active listing flow.",
+    "listingAllowed": false
+  },
+  "gateRules": {
+    "unitCanAdvanceToListing": false,
+    "packCanAdvanceToListingWithoutPackingFee": false,
+    "packCanAdvanceToListingWithoutMargin": false,
+    "betterSupplierCanAdvanceWithoutProductsConfirmation": false,
+    "doNotListCanAdvanceToListing": false,
+    "multiplePackListingsRequireIndividualApproval": true,
+    "eBayActionsBlocked": true
+  },
+  "safetyFlags": {
+    "internalRescueOnly": true,
+    "readOnly": true,
+    "packSimulationOnly": true,
+    "packingFeeEditableButNotPersisted": true,
+    "pipelineMutationUsed": false,
+    "productMutationUsed": false,
+    "listingMutationUsed": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "supabaseWriteUsed": false,
+    "migrationCreated": false,
+    "imageGenerationUsed": false,
+    "imageUploadUsed": false
+  }
+}
