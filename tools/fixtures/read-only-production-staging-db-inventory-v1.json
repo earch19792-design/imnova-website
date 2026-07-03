@@ -1,0 +1,59 @@
+{
+  "inventoryVersion": "READ_ONLY_PRODUCTION_STAGING_DB_INVENTORY_V1",
+  "caseId": "READ-ONLY-PRODUCTION-STAGING-DB-INVENTORY-001",
+  "status": "READ_ONLY_DB_INVENTORY_READY",
+  "mode": "METADATA_ONLY_NO_DATA_ROWS",
+  "productionCoreProtectedOperationally": true,
+  "physicalDbCleanupApplied": false,
+  "liveInventoryExecuted": false,
+  "committedRawDbOutput": false,
+  "environments": {
+    "production": {
+      "expectedRole": "IMNOVA Core only",
+      "inventoryRequiredBeforeCleanup": true
+    },
+    "staging": {
+      "expectedRole": "eBay Pro controlled testing",
+      "inventoryRequiredBeforeCleanup": true
+    },
+    "localVmLab": {
+      "expectedRole": "Heavy DB lab later",
+      "connectedInThisLoop": false
+    }
+  },
+  "classificationCategories": [
+    "IMNOVA_CORE_PRODUCTION",
+    "EBAY_PRO_STAGING",
+    "LOCAL_VM_LAB_HEAVY",
+    "SHARED_MINIMUM",
+    "UNKNOWN_MANUAL_REVIEW"
+  ],
+  "readOnlySql": {
+    "metadataOnly": true,
+    "usesInformationSchema": true,
+    "usesPgStatUserTables": true,
+    "selectsBusinessRows": false,
+    "usesCountStarOnBusinessTables": false,
+    "destructiveSqlUsed": false
+  },
+  "safetyFlags": {
+    "readOnlyInventoryOnly": true,
+    "metadataOnly": true,
+    "businessRowsSelected": false,
+    "piiSelected": false,
+    "rawDbDumpCommitted": false,
+    "physicalDbCleanupApplied": false,
+    "supabaseWriteUsed": false,
+    "sqlMigrationCreated": false,
+    "destructiveSqlCreated": false,
+    "dbPushUsed": false,
+    "dbPullUsed": false,
+    "vmConnected": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "openAiUsed": false,
+    "imageGenerationUsed": false,
+    "imageUploadUsed": false
+  }
+}
