@@ -47,6 +47,7 @@ export type MarketRadarProductRow = {
   variant_title: string | null
   sku: string | null
   price: number | string | null
+  estimated_sale_price?: number | string | null
   compare_at_price: number | string | null
   available: boolean | null
   inventory_quantity: number | null
@@ -84,6 +85,7 @@ export type MarketRadarProductRow = {
   score_updated_at: string | null
   pipeline_candidate_id?: string | null
   pipeline_candidate_state?: string | null
+  pipeline_blocked_reason?: string | null
   pipeline_last_evaluated_at?: string | null
   has_material_change_since_pipeline_review?: boolean
   actionable_reason?:

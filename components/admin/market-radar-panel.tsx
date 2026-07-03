@@ -1819,6 +1819,86 @@ function getActionableReasonLabel(
   }
 }
 
+function getPipelineBlockedReasonLabel(
+  product: MarketRadarProductRow
+) {
+  const blockedReason =
+    product.pipeline_blocked_reason
+      ?.replace(/_/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+
+  if (blockedReason) {
+    return blockedReason
+  }
+
+  const candidateState =
+    String(
+      product.pipeline_candidate_state || ""
+    ).toUpperCase()
+
+  if (!candidateState.includes("BLOCK")) {
+    return null
+  }
+
+  const price =
+    toNumber(product.price)
+  const estimatedSalePrice =
+    toNumber(product.estimated_sale_price)
+  const lowestVisiblePrice =
+    [
+      price,
+      estimatedSalePrice,
+    ].filter((value): value is number =>
+      value !== null
+    ).sort((left, right) => left - right)[0]
+
+  if (
+    lowestVisiblePrice !== undefined &&
+    lowestVisiblePrice <= 2
+  ) {
+    return `Precio bajo (${formatCurrency(lowestVisiblePrice)}). Revisar fees, shipping y margen minimo antes de vender.`
+  }
+
+  return "Pipeline bloqueo este producto. Revisar margen, riesgo o datos faltantes antes de listar."
+}
+
+function getSellerOperationalReason(
+  product: MarketRadarProductRow
+) {
+  const route =
+    getSellerOperationalRoute(product)
+
+  if (route === "out_of_stock") {
+    return "Sin stock confirmado. No listar hasta restock."
+  }
+
+  if (route === "listing_risk") {
+    return "Listing activo con riesgo de stock, precio o margen. Proteger antes de vender."
+  }
+
+  if (route === "stock_needs_validation") {
+    return "Falta cantidad confiable. Validar stock antes de vender."
+  }
+
+  if (route === "price_margin_changes") {
+    return "Cambio precio o margen. Revisar rentabilidad antes de listar."
+  }
+
+  if (route === "blocked_or_review") {
+    return (
+      getPipelineBlockedReasonLabel(product) ||
+      getActionableReasonLabel(product)
+    )
+  }
+
+  if (route === "actionable") {
+    return "Stock confirmado y señal lista para preparar listing."
+  }
+
+  return "Revisado sin urgencia. Monitorear cambios de stock, precio o margen."
+}
+
 function getStockValidationLabel(
   product: MarketRadarProductRow
 ) {
@@ -4705,6 +4785,9 @@ function ProductRow({
         <p className="mt-2 text-xs font-semibold leading-5 text-white/70">
           {getActionableReasonLabel(product)}
         </p>
+        <p className="mt-1 text-[11px] font-semibold leading-5 text-white/55">
+          Razón: {getSellerOperationalReason(product)}
+        </p>
         <p className="mt-1 text-[11px] leading-5 text-white/35">
           {getStockValidationLabel(product)}
         </p>
@@ -7557,7 +7640,7 @@ export function MarketRadarPanel({
                           50
                         )
                       }}
-                      className="grid w-full gap-3 p-3 text-left transition hover:bg-emerald-300/[0.06] md:grid-cols-[minmax(0,1.4fr)_0.55fr_0.55fr_0.35fr]"
+                      className="grid w-full gap-3 p-3 text-left transition hover:bg-emerald-300/[0.06] md:grid-cols-[minmax(0,1.25fr)_0.9fr_0.48fr_0.48fr_0.32fr]"
                       title={`Ver ${stableSku} en el ranking`}
                     >
                       <div className="min-w-0">
@@ -7566,6 +7649,14 @@ export function MarketRadarPanel({
                         </p>
                         <p className="mt-1 break-words text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-100/45">
                           {stableSku}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
+                          Razón
+                        </p>
+                        <p className="mt-1 text-xs font-semibold leading-5 text-white/70">
+                          {getSellerOperationalReason(product)}
                         </p>
                       </div>
                       <div>

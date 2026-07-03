@@ -28,6 +28,7 @@ export type MarketRadarActionableReason =
 export type MarketRadarPipelineCandidateSummary = {
   id?: string | null
   state?: string | null
+  blocked_reason?: string | null
   last_evaluated_at?: string | null
   updated_at?: string | null
 }
@@ -64,6 +65,7 @@ export function getMarketRadarActionability(input: {
 }): {
   pipeline_candidate_id: string | null
   pipeline_candidate_state: string | null
+  pipeline_blocked_reason: string | null
   pipeline_last_evaluated_at: string | null
   has_material_change_since_pipeline_review: boolean
   actionable_reason: MarketRadarActionableReason
