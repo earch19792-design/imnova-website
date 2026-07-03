@@ -1,0 +1,191 @@
+{
+  "domainBoundaryVersion": "EBAY_ADMIN_DOMAIN_BOUNDARIES_V1",
+  "caseId": "ADMIN-DOMAIN-SEPARATION-001",
+  "reason": "Supabase Disk IO warning and oversized mixed admin modules",
+  "status": "DOMAIN_BOUNDARIES_DOCUMENTED_LIGHTWEIGHT_HUBS_READY",
+  "migrationMode": "NO_HEAVY_LOGIC_MOVED_YET",
+  "performanceRule": "Each module should read only what it needs.",
+  "domains": [
+    {
+      "name": "Market Radar",
+      "humanLabel": "Descubrir oportunidades",
+      "responsibility": [
+        "Discover market signals",
+        "Track stock",
+        "Detect out of stock",
+        "Detect discounts",
+        "Detect price changes",
+        "Surface alerts and possible candidates"
+      ],
+      "mustNotDo": [
+        "Prepare listings",
+        "Decide title or description",
+        "Publish",
+        "Create drafts",
+        "Recalculate listing readiness"
+      ],
+      "currentHeavyFiles": [
+        "app/api/admin/market-radar/route.ts",
+        "components/admin/market-radar-panel.tsx",
+        "app/admin/page.tsx"
+      ],
+      "recommendedFutureRoute": "/admin/market-radar",
+      "recommendedFutureComponentsPath": "components/admin/market-radar",
+      "recommendedFutureLibPath": "lib/market-radar"
+    },
+    {
+      "name": "eBay Seller OS",
+      "humanLabel": "Operar colas del vendedor",
+      "responsibility": [
+        "Run the seller operating flow",
+        "Organize operational queues",
+        "Route sell now, stock review, margin review, blocked, protect, monitor and rescue decisions",
+        "Evaluate pack or supplier rescue paths"
+      ],
+      "mustNotDo": [
+        "Generate full listing content",
+        "Recalculate product facts",
+        "Publish",
+        "Create drafts"
+      ],
+      "currentHeavyFiles": [
+        "components/admin/ebay-winner-pipeline-panel.tsx",
+        "lib/ebay-winner-pipeline",
+        "tools/ebay-winner-pipeline-tests.mjs"
+      ],
+      "recommendedFutureRoute": "/admin/ebay-seller-os",
+      "recommendedFutureComponentsPath": "components/admin/ebay-seller-os",
+      "recommendedFutureLibPath": "lib/ebay/seller-os"
+    },
+    {
+      "name": "eBay Listing",
+      "humanLabel": "Preparar listing",
+      "responsibility": [
+        "Prepare listing title",
+        "Prepare description",
+        "Prepare item specifics",
+        "Plan main image and six secondary images",
+        "Prepare image prompts",
+        "Build payload dry run",
+        "Show blockers and review gates"
+      ],
+      "mustNotDo": [
+        "Decide if the product is profitable",
+        "Duplicate profitability truth",
+        "Recalculate margin",
+        "Recalculate demand",
+        "Recalculate competition",
+        "Publish",
+        "Create a real draft"
+      ],
+      "currentHeavyFiles": [
+        "app/admin/ebay-listing-package/page.tsx",
+        "lib/ebay",
+        "lib/ebay-listing-prompts",
+        "tools/ebay-winner-pipeline-tests.mjs"
+      ],
+      "recommendedFutureRoute": "/admin/ebay-listing",
+      "recommendedFutureComponentsPath": "components/admin/ebay-listing",
+      "recommendedFutureLibPath": "lib/ebay/listing"
+    }
+  ],
+  "dataBoundaries": {
+    "marketRadar": {
+      "canRead": [
+        "signals",
+        "stock snapshots",
+        "out of stock snapshots",
+        "discounts",
+        "price changes",
+        "alerts"
+      ],
+      "readRule": "Use limits, pagination and summaries before full history."
+    },
+    "sellerOs": {
+      "canRead": [
+        "queue summaries",
+        "selected operational candidates",
+        "pipeline decision summaries",
+        "rescue summaries"
+      ],
+      "readRule": "Read summaries and selected queues, not all Radar history."
+    },
+    "listing": {
+      "canRead": [
+        "selected product facts",
+        "Products source of truth",
+        "Pipeline decision by reference",
+        "approved image readiness context"
+      ],
+      "readRule": "Read one selected product and minimal context, not full Radar or Pipeline datasets."
+    },
+    "shared": {
+      "canRead": [
+        "Products",
+        "bridges",
+        "gates",
+        "safety helpers"
+      ],
+      "readRule": "Shared helpers must stay pure or bounded unless a route explicitly owns the read."
+    }
+  },
+  "lightweightHubs": {
+    "/admin/market-radar": {
+      "lightweight": true,
+      "loadsHeavyPanels": false,
+      "performsSupabaseRead": false,
+      "purpose": "Explain Market Radar responsibilities and route the user to the right existing workspace.",
+      "linksToExistingPages": [
+        "/admin"
+      ]
+    },
+    "/admin/ebay-seller-os": {
+      "lightweight": true,
+      "loadsHeavyPanels": false,
+      "performsSupabaseRead": false,
+      "purpose": "Explain seller operating queues and route the user to the existing Pipeline workspace.",
+      "linksToExistingPages": [
+        "/admin"
+      ]
+    },
+    "/admin/ebay-listing": {
+      "lightweight": true,
+      "loadsHeavyPanels": false,
+      "performsSupabaseRead": false,
+      "purpose": "Explain listing preparation boundaries and route the user to the existing listing package workspace.",
+      "linksToExistingPages": [
+        "/admin/ebay-listing-package"
+      ]
+    }
+  },
+  "migrationPlan": [
+    "A. Documentation + lightweight hubs.",
+    "B. Navigation separation.",
+    "C. Extract UI subcomponents.",
+    "D. Move pure modules by domain.",
+    "E. Split tests by domain.",
+    "F. Disk IO optimization with summary endpoints/views."
+  ],
+  "futurePendingModules": [
+    "eBay Benchmark Intelligence",
+    "eBay Seller OS Module Hub",
+    "IMNOVA Advisor for eBay Seller OS",
+    "Real Image Execution from Luna Portex Catalog",
+    "eBay Sandbox Integration"
+  ],
+  "safetyFlags": {
+    "documentationOnlyPlusLightweightHubs": true,
+    "heavyLogicMoved": false,
+    "heavyPanelsImportedIntoHubs": false,
+    "supabaseWriteUsed": false,
+    "migrationCreated": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "openAiUsed": false,
+    "imageGenerationUsed": false,
+    "imageUploadUsed": false
+  }
+}
