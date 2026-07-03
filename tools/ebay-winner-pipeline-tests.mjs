@@ -20059,7 +20059,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Precio bajo \(\$\{formatCurrency\(lowestVisiblePrice\)\}\)\. Revisar fees, shipping y margen minimo antes de vender\./
+    /Precio bajo por unidad \(\$\{formatCurrency\(lowestVisiblePrice\)\}\)\. Evaluar pack x3, x6 o x12 antes de vender; confirmar fees, shipping y margen por paquete\./
+  )
+  assert.match(
+    source,
+    /getRadarStockValidationStatus\(product\) === "stock_confirmed"/
   )
   const sellerRouteBlock =
     source.slice(
