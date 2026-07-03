@@ -14,6 +14,7 @@ import lunaPortexCatalogImagePackageQa from "../../../tools/fixtures/ebay-luna-p
 import completeListingPackageBuilder from "../../../tools/fixtures/ebay-complete-listing-package-builder-v1.json"
 import listingReviewApprovalWorkspace from "../../../tools/fixtures/ebay-listing-review-approval-workspace-v1.json"
 import winnerToListingIntakeBridge from "../../../tools/fixtures/ebay-winner-to-listing-intake-bridge-v1.json"
+import endToEndSellerFlowDemo from "../../../tools/fixtures/ebay-end-to-end-seller-flow-demo-v1.json"
 import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -327,6 +328,127 @@ const sevenImageSellerPackage = [
   "Imagen 5: beneficio principal en uso.",
   "Imagen 6: lifestyle aspiracional realista.",
   "Imagen 7: uso real con manos para escala y confianza.",
+]
+
+const endToEndSellerFlowDemoCards = [
+  {
+    label:
+      "Producto demo",
+    value:
+      "Storage Organizer — Portex",
+  },
+  {
+    label:
+      "Decisión Pipeline",
+    value:
+      "candidate_for_listing",
+  },
+  {
+    label:
+      "Score",
+    value:
+      "82/100",
+  },
+  {
+    label:
+      "Listing package interno",
+    value:
+      "disponible",
+  },
+  {
+    label:
+      "6 prompts de imágenes",
+    value:
+      "disponibles",
+  },
+  {
+    label:
+      "Payload dry run",
+    value:
+      "disponible",
+  },
+  {
+    label:
+      "Review/Gates",
+    value:
+      "listo para revisión interna",
+  },
+  {
+    label:
+      "eBay real",
+    value:
+      "bloqueado",
+  },
+]
+
+const sellerConversionGuideCards = [
+  {
+    step:
+      "1",
+    title:
+      "Producto correcto",
+    helper:
+      "Products confirma facts reales antes de vender.",
+  },
+  {
+    step:
+      "2",
+    title:
+      "Rentabilidad heredada",
+    helper:
+      "Pipeline decide; Listing no recalcula rentabilidad.",
+  },
+  {
+    step:
+      "3",
+    title:
+      "Oferta clara",
+    helper:
+      "Título, descripción y payload dry run deben vender fácil.",
+  },
+  {
+    step:
+      "4",
+    title:
+      "7 imágenes",
+    helper:
+      "1 principal + 6 secundarias para confianza y conversión.",
+  },
+  {
+    step:
+      "5",
+    title:
+      "Blockers visibles",
+    helper:
+      "Rojo significa obligatorio antes de eBay real.",
+  },
+]
+
+const sellerReadinessSignals = [
+  {
+    label:
+      "Flujo interno probado",
+    status:
+      "Listo",
+    className:
+      "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-50",
+  },
+  {
+    label:
+      "Faltan imágenes, precio, shipping y returns",
+    status:
+      "Obligatorio",
+    className:
+      "border-amber-300/20 bg-amber-300/[0.08] text-amber-50",
+  },
+  {
+    label:
+      "eBay real bloqueado",
+    status:
+      "No publicar",
+    className:
+      "border-red-300/25 bg-red-300/[0.10] text-red-50",
+  },
 ]
 
 const imageAssetManifestCopy = {
@@ -1769,6 +1891,129 @@ export default function EbayListingPackagePage() {
             </div>
           </div>
         </section>
+
+        <Section title="Prueba de flujo completo" eyebrow="Demo interno">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-emerald-300/15 bg-emerald-300/[0.045] p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-emerald-100/60">
+                    {endToEndSellerFlowDemo.demoStatus}
+                  </p>
+                  <h3 className="mt-2 text-2xl font-black text-white">
+                    Market Radar → eBay Pipeline → Products → Listing → Review/Gates
+                  </h3>
+                  <p className="mt-3 max-w-4xl text-sm leading-7 text-white/65">
+                    Este demo prueba el flujo interno. No crea drafts, no publica y no genera imágenes reales.
+                  </p>
+                </div>
+                <span className="w-fit rounded-full border border-red-300/25 bg-red-300/[0.10] px-4 py-2 text-xs font-black text-red-50">
+                  eBay real: bloqueado
+                </span>
+              </div>
+
+              <div className="mt-5 grid gap-3 md:grid-cols-5">
+                {endToEndSellerFlowDemo.sellerFlowSteps.map((step) => (
+                  <article
+                    key={step.stage}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-4 text-center"
+                  >
+                    <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-emerald-300/25 bg-emerald-300/[0.12] text-sm font-black text-emerald-50">
+                      {step.step}
+                    </div>
+                    <h4 className="mt-3 text-sm font-black text-white">
+                      {step.stage}
+                    </h4>
+                    <p className="mt-2 text-xs leading-5 text-white/60">
+                      {step.label}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {endToEndSellerFlowDemoCards.map((card) => (
+                <article
+                  key={card.label}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/35">
+                    {card.label}
+                  </p>
+                  <p className="mt-2 break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+                    {card.value}
+                  </p>
+                </article>
+              ))}
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-3">
+              {sellerReadinessSignals.map((signal) => (
+                <article
+                  key={signal.label}
+                  className={`rounded-2xl border p-4 ${signal.className}`}
+                >
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] opacity-60">
+                    Semáforo vendedor
+                  </p>
+                  <h4 className="mt-2 text-sm font-black">
+                    {signal.label}
+                  </h4>
+                  <p className="mt-2 text-xs font-bold leading-5 opacity-75">
+                    {signal.status}
+                  </p>
+                </article>
+              ))}
+            </div>
+
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60">
+                    Guía de conversión
+                  </p>
+                  <h3 className="mt-2 text-lg font-black text-white">
+                    Cómo preparar un listing que pueda vender
+                  </h3>
+                </div>
+                <p className="max-w-md text-xs font-bold leading-5 text-white/50 md:text-right">
+                  Breve, visual y con campos obligatorios marcados antes de eBay real.
+                </p>
+              </div>
+              <div className="mt-5 grid gap-3 md:grid-cols-5">
+                {sellerConversionGuideCards.map((card) => (
+                  <article
+                    key={card.title}
+                    className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full border border-cyan-300/20 bg-cyan-300/[0.10] text-xs font-black text-cyan-50">
+                      {card.step}
+                    </div>
+                    <h4 className="mt-3 text-sm font-black text-white">
+                      {card.title}
+                    </h4>
+                    <p className="mt-2 text-xs leading-5 text-white/55">
+                      {card.helper}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-amber-300/15 bg-amber-300/[0.045] p-5">
+              <h3 className="text-lg font-black text-white">
+                Siguiente fase
+              </h3>
+              <p className="mt-2 text-sm font-bold leading-6 text-amber-50/75">
+                Generar imágenes reales desde catálogo Luna Portex antes de eBay Sandbox.
+              </p>
+              <p className="mt-3 text-xs leading-5 text-white/50">
+                {endToEndSellerFlowDemo.nextRecommendedPhase.phase}
+              </p>
+            </div>
+          </div>
+        </Section>
 
         <Section title="Preparar listing" eyebrow="Vista simple para vendedor">
           <div className="mb-5 rounded-3xl border border-white/10 bg-black/20 p-5">
