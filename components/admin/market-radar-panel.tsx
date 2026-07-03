@@ -1412,11 +1412,23 @@ function isRadarProductActionable(
     return false
   }
 
+  if (!hasMarketPriceEvaluation(product)) {
+    return false
+  }
+
   if (product.radar_action_status) {
     return product.radar_action_status === "actionable"
   }
 
   return !product.pipeline_candidate_id
+}
+
+function hasMarketPriceEvaluation(
+  product: MarketRadarProductRow
+) {
+  return toNumber(
+    product.estimated_sale_price
+  ) !== null
 }
 
 function isExistingRadarProduct(
@@ -1434,6 +1446,11 @@ function hasPriceOrMarginChangeSignal(
   return Boolean(
     isExistingRadarProduct(product) &&
     (
+      (
+        getRadarStockValidationStatus(product) ===
+          "stock_confirmed" &&
+        !hasMarketPriceEvaluation(product)
+      ) ||
       product.actionable_reason ===
         "price_down_after_review" ||
       product.actionable_reason ===
@@ -1847,6 +1864,14 @@ function getActionableReasonLabel(
     case "reviewed_no_new_signal":
       return "Ya revisado, sin cambios nuevos"
     default:
+      if (
+        getRadarStockValidationStatus(product) ===
+          "stock_confirmed" &&
+        !hasMarketPriceEvaluation(product)
+      ) {
+        return "Falta precio de mercado antes de vender"
+      }
+
       return isRadarProductActionable(product)
         ? "Revisar ahora"
         : "No repetir hasta que cambie algo relevante"
@@ -1920,6 +1945,10 @@ function getSellerOperationalReason(
   }
 
   if (route === "price_margin_changes") {
+    if (!hasMarketPriceEvaluation(product)) {
+      return "Stock confirmado, pero falta precio de mercado. Analizar competencia antes de vender."
+    }
+
     return "Cambio precio o margen. Revisar rentabilidad antes de listar."
   }
 

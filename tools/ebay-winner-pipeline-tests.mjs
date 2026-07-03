@@ -20797,6 +20797,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
     ["listed_stock_needs_validation", "listing_risk"],
     ["new_stock_needs_validation", "stock_needs_validation"],
     ["unknown_stock_candidate", "stock_needs_validation"],
+    ["stock_confirmed_missing_market_price", "price_margin_changes"],
     ["margin_changed_after_review", "price_margin_changes"],
     ["blocked_candidate", "blocked_or_review"],
     ["stock_confirmed_new_opportunity", "actionable"],
@@ -20804,7 +20805,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   ]
   assert.equal(
     sellerFlowScenarios.length,
-    10
+    11
   )
   assert.deepEqual(
     sellerFlowScenarios.map(([, expectedRoute]) => expectedRoute),
@@ -20815,6 +20816,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
       "listing_risk",
       "stock_needs_validation",
       "stock_needs_validation",
+      "price_margin_changes",
       "price_margin_changes",
       "blocked_or_review",
       "actionable",
@@ -20835,7 +20837,23 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /function isRadarProductActionable[\s\S]*stockStatus !== "stock_confirmed"[\s\S]*return false/
+    /function isRadarProductActionable[\s\S]*stockStatus !== "stock_confirmed"[\s\S]*return false[\s\S]*!hasMarketPriceEvaluation\(product\)[\s\S]*return false/
+  )
+  assert.match(
+    source,
+    /function hasMarketPriceEvaluation[\s\S]*product\.estimated_sale_price/
+  )
+  assert.match(
+    source,
+    /getRadarStockValidationStatus\(product\) ===[\s\S]*"stock_confirmed"[\s\S]*!hasMarketPriceEvaluation\(product\)/
+  )
+  assert.match(
+    source,
+    /Falta precio de mercado antes de vender/
+  )
+  assert.match(
+    source,
+    /Stock confirmado, pero falta precio de mercado\. Analizar competencia antes de vender\./
   )
   assert.match(
     source,
