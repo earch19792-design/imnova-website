@@ -1,0 +1,264 @@
+{
+  "workspaceVersion": "EBAY_LISTING_REVIEW_APPROVAL_WORKSPACE_V1",
+  "caseId": "LISTING-GEN-001",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "sourcePackageVersion": "EBAY_COMPLETE_LISTING_PACKAGE_BUILDER_V1",
+  "workspaceStatus": "LISTING_REVIEW_APPROVAL_WORKSPACE_READY",
+  "reviewStatus": "READY_FOR_HUMAN_REVIEW_INTERNAL_ONLY",
+  "approvalStatus": "HUMAN_APPROVAL_REQUIRED_NOT_GRANTED",
+  "internalModuleStatus": "LISTING_INTERNAL_MODULE_READY_FOR_REVIEW",
+  "externalEbayStatus": "EBAY_EXTERNAL_ACTIONS_BLOCKED",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "workspaceSummary": "Listing Review & Approval Workspace consolidates the complete listing package for human review. It does not create eBay drafts, publish listings, upload images or mutate data. It marks the internal Listing module as ready for review, not ready for external eBay execution.",
+  "architecturePolicy": {
+    "productsRule": "Products decide what the product is.",
+    "listingRule": "Listing decides how the product sells on eBay.",
+    "benchmarkRule": "Benchmark decides what is working in the market.",
+    "gatesRule": "Gates decide whether the listing can advance.",
+    "operatingPrinciple": "Benchmark can suggest. Listing can adapt. Products must confirm. Gates must approve.",
+    "visualSourceOfTruthRule": "Luna Portex catalog image is visual source of truth.",
+    "humanApprovalRule": "Human approval is required before any future external action.",
+    "externalActionRule": "eBay external actions remain blocked."
+  },
+  "reviewSections": {
+    "selectedProductReview": {
+      "status": "READY_FOR_REVIEW",
+      "source": "Complete Listing Package Builder selected product reference",
+      "summary": "Review selected product identity and confirm Products remains source of truth."
+    },
+    "generatedListingContentReview": {
+      "status": "READY_FOR_REVIEW",
+      "source": "Generated listing content preview",
+      "summary": "Review title, description, item specifics and keyword plan before any final content approval."
+    },
+    "catalogImagePackageReview": {
+      "status": "REQUIRES_REVIEW",
+      "source": "Luna Portex catalog image package policy",
+      "summary": "Confirm catalog source, rights, image QA and exact product fidelity before real image execution."
+    },
+    "secondaryImagePromptsReview": {
+      "status": "READY_FOR_REVIEW_IMAGES_NOT_GENERATED",
+      "source": "Complete Listing Package Builder secondary image prompts",
+      "summary": "Review the six planned prompts before any real image generation."
+    },
+    "draftPayloadDryRunReview": {
+      "status": "READY_FOR_REVIEW_NOT_SUBMITTED",
+      "source": "Local draft payload dry run",
+      "summary": "Review local payload preview while submission to eBay remains blocked."
+    },
+    "missingFactsReview": {
+      "status": "BLOCKERS_REQUIRE_PRODUCTS_CONFIRMATION",
+      "source": "Mapped product facts and package blockers",
+      "summary": "Missing or unconfirmed facts must be confirmed in Products before advancement."
+    },
+    "blockedFieldsReview": {
+      "status": "BLOCKED_FIELDS_REQUIRE_ACTION",
+      "source": "Package blocked fields",
+      "summary": "Category, price, shipping, returns, images, compliance and external connection remain blocked."
+    },
+    "readinessGatesReview": {
+      "status": "ACTIVE_DRAFT_AND_PUBLICATION_BLOCKED",
+      "source": "Complete Listing Package Builder readiness gates",
+      "summary": "Internal review is allowed while eBay submission, draft creation and publication stay blocked."
+    },
+    "complianceReview": {
+      "status": "REQUIRES_HUMAN_REVIEW",
+      "source": "Compliance and VeRO checklist",
+      "summary": "Compliance and VeRO review must be completed before any future external action."
+    },
+    "finalApprovalReview": {
+      "status": "HUMAN_APPROVAL_REQUIRED_NOT_GRANTED",
+      "source": "Read-only approval checklist",
+      "summary": "Approval is displayed as required but is not persisted in this loop."
+    }
+  },
+  "approvalChecklist": [
+    {
+      "id": "product_facts_reviewed",
+      "label": "Product facts reviewed in Products",
+      "status": "PENDING_REVIEW",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "title_reviewed",
+      "label": "Title reviewed",
+      "status": "PENDING_REVIEW",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "description_reviewed",
+      "label": "Description reviewed",
+      "status": "PENDING_REVIEW",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "item_specifics_reviewed",
+      "label": "Item specifics reviewed",
+      "status": "PENDING_REVIEW",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "category_confirmed",
+      "label": "Category confirmed",
+      "status": "BLOCKED_UNTIL_CONFIRMED",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "price_confirmed",
+      "label": "Price confirmed",
+      "status": "BLOCKED_UNTIL_CONFIRMED",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "shipping_policy_confirmed",
+      "label": "Shipping policy confirmed",
+      "status": "BLOCKED_UNTIL_CONFIRMED",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "return_policy_confirmed",
+      "label": "Return policy confirmed",
+      "status": "BLOCKED_UNTIL_CONFIRMED",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "catalog_image_source_confirmed",
+      "label": "Catalog image source confirmed",
+      "status": "BLOCKED_UNTIL_CONFIRMED",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "main_image_qa_approved",
+      "label": "Main image QA approved",
+      "status": "BLOCKED_UNTIL_APPROVED",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "secondary_image_plan_approved",
+      "label": "Secondary image plan approved",
+      "status": "PENDING_REVIEW",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "image_generation_completed",
+      "label": "Image generation completed",
+      "status": "BLOCKED_NOT_ALLOWED_IN_THIS_LOOP",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "image_upload_ready",
+      "label": "Image upload ready",
+      "status": "BLOCKED_NOT_ALLOWED_IN_THIS_LOOP",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "compliance_review_completed",
+      "label": "Compliance review completed",
+      "status": "BLOCKED_UNTIL_COMPLETED",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "vero_review_completed",
+      "label": "VeRO review completed",
+      "status": "BLOCKED_UNTIL_COMPLETED",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "draft_payload_reviewed",
+      "label": "Draft payload dry run reviewed",
+      "status": "PENDING_REVIEW",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "human_approval_granted",
+      "label": "Human approval granted",
+      "status": "NOT_GRANTED",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    },
+    {
+      "id": "ebay_connection_authorized",
+      "label": "eBay connection authorized",
+      "status": "BLOCKED_NOT_AUTHORIZED",
+      "requiredBeforeDraft": true,
+      "requiredBeforePublication": true
+    }
+  ],
+  "blockingIssues": [
+    "human_approval_not_granted",
+    "ebay_connection_not_authorized",
+    "image_generation_not_completed",
+    "image_upload_not_allowed",
+    "category_not_confirmed",
+    "price_not_confirmed",
+    "shipping_policy_not_confirmed",
+    "return_policy_not_confirmed",
+    "compliance_not_completed",
+    "vero_review_not_completed",
+    "draft_creation_blocked",
+    "publication_blocked"
+  ],
+  "readinessSummary": {
+    "canReviewInternalListing": true,
+    "canApproveInternally": false,
+    "canGenerateImagePrompts": true,
+    "canGenerateRealImages": false,
+    "canBuildLocalDraftPayload": true,
+    "canSubmitPayloadToEbay": false,
+    "canCreateEbayDraft": false,
+    "canPublishToEbay": false,
+    "listingInternalReadinessLabel": "Internal listing package ready for human review",
+    "externalReadinessLabel": "External eBay actions blocked"
+  },
+  "finalModuleDefinition": {
+    "listingInternalModuleComplete": true,
+    "readyForHumanReview": true,
+    "readyForExternalEbayIntegration": false,
+    "nextPhaseRequired": true,
+    "nextPhase": "eBay Sandbox / Real Image Execution / External Integration"
+  },
+  "nextRecommendedPhase": {
+    "phase": "PHASE 2 — Real Image Execution + eBay Sandbox Integration",
+    "firstRecommendedStep": "Generate actual listing images from Luna Portex catalog source for one selected product, then validate image QA before any eBay API work.",
+    "constraints": [
+      "Use Luna Portex catalog image as visual source of truth.",
+      "Do not invent product images.",
+      "Do not publish to eBay.",
+      "Do not create eBay draft until Sandbox authorization and gates are approved."
+    ]
+  },
+  "safetyFlags": {
+    "internalReviewOnly": true,
+    "listingInternalModuleComplete": true,
+    "humanApprovalRequired": true,
+    "humanApprovalGranted": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "imageGenerationUsed": false,
+    "imageUploadUsed": false,
+    "supabaseWriteUsed": false,
+    "migrationCreated": false,
+    "listingMutated": false
+  }
+}

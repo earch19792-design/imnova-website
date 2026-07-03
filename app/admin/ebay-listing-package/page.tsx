@@ -12,6 +12,7 @@ import liveProductSelectorReadOnly from "../../../tools/fixtures/ebay-live-produ
 import realProductListingGeneratorIntegration from "../../../tools/fixtures/ebay-real-product-listing-generator-integration-v1.json"
 import lunaPortexCatalogImagePackageQa from "../../../tools/fixtures/ebay-luna-portex-catalog-image-package-qa-v1.json"
 import completeListingPackageBuilder from "../../../tools/fixtures/ebay-complete-listing-package-builder-v1.json"
+import listingReviewApprovalWorkspace from "../../../tools/fixtures/ebay-listing-review-approval-workspace-v1.json"
 import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -878,6 +879,55 @@ const completeListingPackageBuilderCopy = {
     "Catalog image reference missing",
   nextRecommendedLoop:
     "Next loop: LOOP 126 — Listing Review & Approval Workspace V1",
+}
+
+const listingReviewApprovalWorkspaceCopy = {
+  title:
+    "Listing Review & Approval Workspace",
+  workspaceVersion:
+    "EBAY_LISTING_REVIEW_APPROVAL_WORKSPACE_V1",
+  workspaceStatus:
+    "LISTING_REVIEW_APPROVAL_WORKSPACE_READY",
+  reviewStatus:
+    "READY_FOR_HUMAN_REVIEW_INTERNAL_ONLY",
+  approvalStatus:
+    "HUMAN_APPROVAL_REQUIRED_NOT_GRANTED",
+  internalModuleStatus:
+    "LISTING_INTERNAL_MODULE_READY_FOR_REVIEW",
+  externalEbayStatus:
+    "EBAY_EXTERNAL_ACTIONS_BLOCKED",
+  selectedProductReview:
+    "Selected Product Review",
+  listingContentReview:
+    "Listing Content Review",
+  catalogImagePackageReview:
+    "Catalog Image Package Review",
+  secondaryImagePromptsReview:
+    "Secondary Image Prompts Review",
+  draftPayloadDryRunReview:
+    "Draft Payload Dry Run Review",
+  missingFactsReview:
+    "Missing Facts Review",
+  blockedFieldsReview:
+    "Blocked Fields Review",
+  readinessGatesReview:
+    "Readiness Gates Review",
+  approvalChecklist:
+    "Approval Checklist",
+  finalInternalModuleStatus:
+    "Final Internal Module Status",
+  nextRecommendedPhase:
+    "Next Recommended Phase",
+  phaseTwo:
+    "PHASE 2 — Real Image Execution + eBay Sandbox Integration",
+  internalReady:
+    "Internal Listing module is ready for human review.",
+  externalBlocked:
+    "External eBay actions remain blocked.",
+  noDraft:
+    "No draft will be created.",
+  noPublication:
+    "No listing will be published.",
 }
 
 const ebayImageGenerationServiceDesignCopy = {
@@ -7548,6 +7598,488 @@ export default function EbayListingPackagePage() {
                   />
                 </div>
               </article>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Listing Review & Approval Workspace">
+          <div className="grid gap-5">
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="break-words text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-cyan-100/60 [overflow-wrap:anywhere]">
+                    {listingReviewApprovalWorkspaceCopy.workspaceVersion}
+                  </p>
+                  <h3 className="mt-2 text-xl font-black text-white">
+                    {listingReviewApprovalWorkspaceCopy.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-white/65">
+                    {listingReviewApprovalWorkspace.workspaceSummary}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 text-sm font-bold text-white lg:min-w-[360px]">
+                  <span className="break-words rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {listingReviewApprovalWorkspaceCopy.workspaceStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {listingReviewApprovalWorkspaceCopy.approvalStatus}
+                  </span>
+                  <span className="break-words rounded-2xl border border-rose-300/20 bg-rose-300/[0.06] px-4 py-3 [overflow-wrap:anywhere]">
+                    {listingReviewApprovalWorkspaceCopy.externalEbayStatus}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <FieldGrid
+                  fields={[
+                    [
+                      "Workspace version",
+                      listingReviewApprovalWorkspace.workspaceVersion,
+                    ],
+                    [
+                      "Workspace status",
+                      listingReviewApprovalWorkspace.workspaceStatus,
+                    ],
+                    [
+                      "Review status",
+                      listingReviewApprovalWorkspace.reviewStatus,
+                    ],
+                    [
+                      "Approval status",
+                      listingReviewApprovalWorkspace.approvalStatus,
+                    ],
+                    [
+                      "Internal module status",
+                      listingReviewApprovalWorkspace.internalModuleStatus,
+                    ],
+                    [
+                      "External eBay status",
+                      listingReviewApprovalWorkspace.externalEbayStatus,
+                    ],
+                    [
+                      "Draft impact",
+                      listingReviewApprovalWorkspace.draftImpact,
+                    ],
+                    [
+                      "Publication impact",
+                      listingReviewApprovalWorkspace.publicationImpact,
+                    ],
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Architecture Policy
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      listingReviewApprovalWorkspace.architecturePolicy
+                    )}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Final Review Boundary
+                </h4>
+                <div className="mt-3 grid gap-3 text-sm font-bold leading-6 text-white/75">
+                  <p className="rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.05] p-4">
+                    {listingReviewApprovalWorkspaceCopy.internalReady}
+                  </p>
+                  <p className="rounded-2xl border border-rose-300/20 bg-rose-300/[0.05] p-4">
+                    {listingReviewApprovalWorkspaceCopy.externalBlocked}
+                  </p>
+                  <p className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.05] p-4">
+                    {listingReviewApprovalWorkspaceCopy.noDraft}
+                  </p>
+                  <p className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.05] p-4">
+                    {listingReviewApprovalWorkspaceCopy.noPublication}
+                  </p>
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {listingReviewApprovalWorkspaceCopy.selectedProductReview}
+                </h4>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  {
+                    listingReviewApprovalWorkspace.reviewSections
+                      .selectedProductReview.summary
+                  }
+                </p>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Status",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .selectedProductReview.status,
+                      ],
+                      [
+                        "Source",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .selectedProductReview.source,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {listingReviewApprovalWorkspaceCopy.listingContentReview}
+                </h4>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  {
+                    listingReviewApprovalWorkspace.reviewSections
+                      .generatedListingContentReview.summary
+                  }
+                </p>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Status",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .generatedListingContentReview.status,
+                      ],
+                      [
+                        "Source",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .generatedListingContentReview.source,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {listingReviewApprovalWorkspaceCopy.catalogImagePackageReview}
+                </h4>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  {
+                    listingReviewApprovalWorkspace.reviewSections
+                      .catalogImagePackageReview.summary
+                  }
+                </p>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Status",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .catalogImagePackageReview.status,
+                      ],
+                      [
+                        "Source",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .catalogImagePackageReview.source,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {listingReviewApprovalWorkspaceCopy.secondaryImagePromptsReview}
+                </h4>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  {
+                    listingReviewApprovalWorkspace.reviewSections
+                      .secondaryImagePromptsReview.summary
+                  }
+                </p>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Status",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .secondaryImagePromptsReview.status,
+                      ],
+                      [
+                        "Source",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .secondaryImagePromptsReview.source,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {listingReviewApprovalWorkspaceCopy.draftPayloadDryRunReview}
+                </h4>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  {
+                    listingReviewApprovalWorkspace.reviewSections
+                      .draftPayloadDryRunReview.summary
+                  }
+                </p>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Status",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .draftPayloadDryRunReview.status,
+                      ],
+                      [
+                        "Source",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .draftPayloadDryRunReview.source,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {listingReviewApprovalWorkspaceCopy.readinessGatesReview}
+                </h4>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  {
+                    listingReviewApprovalWorkspace.reviewSections
+                      .readinessGatesReview.summary
+                  }
+                </p>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Status",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .readinessGatesReview.status,
+                      ],
+                      [
+                        "Source",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .readinessGatesReview.source,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {listingReviewApprovalWorkspaceCopy.missingFactsReview}
+                </h4>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  {
+                    listingReviewApprovalWorkspace.reviewSections
+                      .missingFactsReview.summary
+                  }
+                </p>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {listingReviewApprovalWorkspaceCopy.blockedFieldsReview}
+                </h4>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  {
+                    listingReviewApprovalWorkspace.reviewSections
+                      .blockedFieldsReview.summary
+                  }
+                </p>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Compliance Review
+                </h4>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  {
+                    listingReviewApprovalWorkspace.reviewSections
+                      .complianceReview.summary
+                  }
+                </p>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Status",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .complianceReview.status,
+                      ],
+                      [
+                        "Source",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .complianceReview.source,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Final Approval Review
+                </h4>
+                <p className="mt-3 text-sm leading-6 text-white/65">
+                  {
+                    listingReviewApprovalWorkspace.reviewSections
+                      .finalApprovalReview.summary
+                  }
+                </p>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        "Status",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .finalApprovalReview.status,
+                      ],
+                      [
+                        "Source",
+                        listingReviewApprovalWorkspace.reviewSections
+                          .finalApprovalReview.source,
+                      ],
+                    ]}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                {listingReviewApprovalWorkspaceCopy.approvalChecklist}
+              </h4>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {listingReviewApprovalWorkspace.approvalChecklist.map((item) => (
+                  <article
+                    key={item.id}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <p className="text-sm font-black text-white">
+                      {item.label}
+                    </p>
+                    <p className="mt-2 break-words text-[11px] font-bold uppercase leading-5 tracking-[0.08em] text-amber-100/70 [overflow-wrap:anywhere]">
+                      {item.status}
+                    </p>
+                    <div className="mt-3">
+                      <FieldGrid
+                        fields={[
+                          [
+                            "Required before draft",
+                            item.requiredBeforeDraft,
+                          ],
+                          [
+                            "Required before publication",
+                            item.requiredBeforePublication,
+                          ],
+                        ]}
+                      />
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Blocking Issues
+                </h4>
+                <div className="mt-4">
+                  <ListBlock
+                    items={listingReviewApprovalWorkspace.blockingIssues}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  Readiness Summary
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      listingReviewApprovalWorkspace.readinessSummary
+                    )}
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {listingReviewApprovalWorkspaceCopy.finalInternalModuleStatus}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={Object.entries(
+                      listingReviewApprovalWorkspace.finalModuleDefinition
+                    )}
+                  />
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <h4 className="text-sm font-black text-white">
+                  {listingReviewApprovalWorkspaceCopy.nextRecommendedPhase}
+                </h4>
+                <div className="mt-3">
+                  <FieldGrid
+                    fields={[
+                      [
+                        listingReviewApprovalWorkspaceCopy.phaseTwo,
+                        listingReviewApprovalWorkspace.nextRecommendedPhase.phase,
+                      ],
+                      [
+                        "First recommended step",
+                        listingReviewApprovalWorkspace.nextRecommendedPhase
+                          .firstRecommendedStep,
+                      ],
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ListBlock
+                    items={
+                      listingReviewApprovalWorkspace.nextRecommendedPhase
+                        .constraints
+                    }
+                  />
+                </div>
+              </article>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <h4 className="text-sm font-black text-white">
+                Compact Safety Flags
+              </h4>
+              <div className="mt-3">
+                <FieldGrid
+                  fields={Object.entries(
+                    listingReviewApprovalWorkspace.safetyFlags
+                  )}
+                />
+              </div>
             </div>
           </div>
         </Section>
