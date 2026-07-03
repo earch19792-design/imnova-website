@@ -19278,6 +19278,20 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
       advisorStart,
       advisorEnd
     )
+  const advisorFilterOptionsStart =
+    source.indexOf(
+      "const radarAdvisorReviewFilterOptions"
+    )
+  const advisorFilterOptionsEnd =
+    source.indexOf(
+      "function matchesRadarAdvisorReviewFilter",
+      advisorFilterOptionsStart
+    )
+  const advisorFilterOptionsBlock =
+    source.slice(
+      advisorFilterOptionsStart,
+      advisorFilterOptionsEnd
+    )
 
   assert.match(
     source,
@@ -19440,12 +19454,12 @@ test("market radar panel: advisor alert action ubica producto sin analizarlo", (
     /\+{hiddenAlertCount} alertas en detalle/
   )
   assert.match(
-    source,
+    advisorFilterOptionsBlock,
     /radarAdvisorReviewFilterOptions[\s\S]*Todas[\s\S]*Urgente[\s\S]*Alta/
   )
   assert.doesNotMatch(
-    source,
-    /radarAdvisorReviewFilterOptions[\s\S]*Stock[\s\S]*Margen[\s\S]*Riesgo/
+    advisorFilterOptionsBlock,
+    /Stock[\s\S]*Margen[\s\S]*Riesgo/
   )
   assert.match(
     source,
@@ -19488,11 +19502,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Protege primero lo que ya puede afectar ventas/
+    /Primero protege ventas activas/
   )
   assert.match(
     source,
-    /Luego decide que vender, revisar o pausar/
+    /Luego vende, revisa o pausa/
   )
   assert.match(
     source,
@@ -19500,11 +19514,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Sin acciones automaticas/
+    /Solo lectura/
   )
   assert.match(
     source,
-    /Mapa de trabajo/
+    /Colas de trabajo/
   )
   assert.match(
     source,
@@ -19558,9 +19572,9 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
     source,
     /Cambios precio\/margen/
   )
-  assert.match(
+  assert.doesNotMatch(
     source,
-    /Todo monitoreado/
+    /id:\s*"all-monitored"/
   )
   assert.match(
     source,
@@ -19672,17 +19686,17 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Protege primero lo que ya puede afectar ventas/
+    /Primero protege ventas activas/
   )
   assert.match(
     source,
-    /Luego decide que vender, revisar o pausar/
+    /Luego vende, revisa o pausa/
   )
   assert.match(
     source,
     /Riesgo de stock/
   )
-  assert.match(
+  assert.doesNotMatch(
     source,
     /Proteger listings/
   )
@@ -19736,7 +19750,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Validar antes/
+    /Validar/
   )
   assert.match(
     source,
@@ -19764,7 +19778,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Revisar margen/
+    /Margen/
   )
   assert.match(
     source,
@@ -19780,7 +19794,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Lee el mapa de izquierda a derecha: vender, revisar, pausar o monitorear\./
+    /Vender, revisar, pausar o monitorear\./
   )
   assert.match(
     source,
@@ -19788,11 +19802,15 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /text-3xl font-black leading-none tracking-normal/
+    /grid min-w-0 grid-cols-\[auto_3\.5rem_1fr\] items-center gap-3/
   )
   assert.match(
     source,
-    /min-h-10 text-\[11px\] font-semibold leading-5/
+    /text-right text-3xl font-black leading-none tracking-normal/
+  )
+  assert.match(
+    source,
+    /min-w-0 text-\[11px\] font-semibold leading-4 opacity-75/
   )
   assert.match(
     source,
@@ -19808,7 +19826,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Mapa de trabajo/
+    /Colas de trabajo/
   )
   assert.match(
     source,
@@ -19828,7 +19846,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Elige una cola\. Ninguna publica ni modifica eBay\./
+    /Elige una cola\. Solo lectura\./
   )
   assert.match(
     source,
@@ -20130,7 +20148,7 @@ test("market radar panel: filtro activo no cae en cola equivocada", () => {
   )
 })
 
-test("market radar panel: orden operativo prioriza riesgos antes de monitoreo", () => {
+test("market radar panel: menu operativo prioriza colas claras de vendedor", () => {
   const source =
     fs.readFileSync(
       path.resolve(
@@ -20145,11 +20163,15 @@ test("market radar panel: orden operativo prioriza riesgos antes de monitoreo", 
   )
   assert.match(
     source,
-    /const sellerCommandMenuItems[\s\S]*id:[\s\S]*"listing-risk"[\s\S]*id:[\s\S]*"out-of-stock"[\s\S]*id:[\s\S]*"stock-risk"[\s\S]*id:[\s\S]*"price-margin-changes"[\s\S]*id:[\s\S]*"blocked-or-review"[\s\S]*id:[\s\S]*"sell-now"[\s\S]*id:[\s\S]*"reviewed"[\s\S]*id:[\s\S]*"all-monitored"/
+    /const sellerCommandMenuItems[\s\S]*id:[\s\S]*"sell-now"[\s\S]*id:[\s\S]*"stock-risk"[\s\S]*id:[\s\S]*"out-of-stock"[\s\S]*id:[\s\S]*"listing-risk"[\s\S]*id:[\s\S]*"price-margin-changes"[\s\S]*id:[\s\S]*"blocked-or-review"[\s\S]*id:[\s\S]*"reviewed"/
   )
   assert.match(
     source,
-    /filter:[\s\S]*"listing_risk"[\s\S]*filter:[\s\S]*"out_of_stock"[\s\S]*filter:[\s\S]*"stock_needs_validation"[\s\S]*filter:[\s\S]*"price_margin_changes"[\s\S]*filter:[\s\S]*"blocked_or_review"[\s\S]*filter:[\s\S]*"actionable"/
+    /filter:[\s\S]*"actionable"[\s\S]*filter:[\s\S]*"stock_needs_validation"[\s\S]*filter:[\s\S]*"out_of_stock"[\s\S]*filter:[\s\S]*"listing_risk"[\s\S]*filter:[\s\S]*"price_margin_changes"[\s\S]*filter:[\s\S]*"blocked_or_review"/
+  )
+  assert.doesNotMatch(
+    source,
+    /id:[\s\S]*"all-monitored"/
   )
 })
 
@@ -20232,7 +20254,19 @@ test("market radar panel: seleccion de centro de venta prepara confirmacion de s
   )
   assert.match(
     source,
-    /product\.available === false[\s\S]*product\.inventory_status === "out_of_stock"[\s\S]*product\.stock_validation_status === "out_of_stock"[\s\S]*return "0"/
+    /function getStockConfirmationInitialQuantity[\s\S]*getRadarStockValidationStatus\(product\) ===[\s\S]*"out_of_stock"[\s\S]*return "0"/
+  )
+  assert.match(
+    source,
+    /getRadarStockValidationStatus\(product\) ===[\s\S]*"out_of_stock"[\s\S]*return "Sin stock"/
+  )
+  assert.match(
+    source,
+    /Sin stock confirmado\. No listar hasta restock\./
+  )
+  assert.match(
+    source,
+    /Bloqueado para listing hasta restock/
   )
   assert.match(
     source,
