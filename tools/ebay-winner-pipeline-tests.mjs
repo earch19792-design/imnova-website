@@ -19583,7 +19583,19 @@ test("market radar manual stock confirmation: cantidad cero guarda out of stock"
   )
   assert.match(
     source,
+    /storedSupplierVariantId[\s\S]*manual_product_level:\$\{productId\}/
+  )
+  assert.match(
+    source,
     /typeof body\.supplier_variant_id === "string"[\s\S]*body\.supplier_variant_id\.trim\(\)[\s\S]*: null/
+  )
+  assert.match(
+    source,
+    /supplier_variant_id:[\s\S]*storedSupplierVariantId/
+  )
+  assert.match(
+    source,
+    /confirmation_scope:[\s\S]*product_level_manual_fallback/
   )
   assert.doesNotMatch(
     source,

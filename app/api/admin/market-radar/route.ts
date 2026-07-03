@@ -1620,6 +1620,10 @@ async function confirmMarketRadarStockQuantity({
   quantity: number
   note?: string | null
 }) {
+  const storedSupplierVariantId =
+    supplierVariantId ||
+    `manual_product_level:${productId}`
+
   let latestSnapshotQuery =
     supabase
     .from("market_radar_snapshots")
@@ -1680,7 +1684,7 @@ async function confirmMarketRadarStockQuantity({
         product_id:
           productId,
         supplier_variant_id:
-          supplierVariantId,
+          storedSupplierVariantId,
         variant_title:
           latestSnapshot?.variant_title || null,
         sku:
@@ -1719,6 +1723,14 @@ async function confirmMarketRadarStockQuantity({
           manual_stock_confirmation: {
             confirmed_quantity:
               quantity,
+            confirmation_scope:
+              supplierVariantId
+                ? "variant_level"
+                : "product_level_manual_fallback",
+            original_supplier_variant_id:
+              supplierVariantId,
+            stored_supplier_variant_id:
+              storedSupplierVariantId,
             note:
               note || null,
             previous_snapshot_id:
