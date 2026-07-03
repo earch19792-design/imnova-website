@@ -7696,20 +7696,20 @@ export function MarketRadarPanel({
                   return (
                     <div
                       key={card.id}
-                      className={`min-w-0 rounded-lg border p-3 ${card.className}`}
+                      className={`min-w-0 rounded-lg border p-4 ${card.className}`}
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="flex min-w-0 items-center gap-2 text-[11px] font-black uppercase tracking-[0.1em]">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/10 bg-black/20">
                           <Icon className="h-4 w-4 shrink-0" />
-                          <span className="truncate">
-                            {card.label}
-                          </span>
                         </span>
-                        <span className="rounded-md border border-white/10 bg-black/20 px-2 py-1 text-lg font-black leading-none">
-                          {card.count}
+                        <span className="min-w-0 truncate text-[12px] font-black uppercase tracking-[0.12em]">
+                          {card.label}
                         </span>
                       </div>
-                      <p className="mt-2 text-[11px] font-semibold leading-5 opacity-70">
+                      <p className="mt-4 text-3xl font-black leading-none tracking-normal">
+                        {card.count}
+                      </p>
+                      <p className="mt-3 min-h-10 text-[11px] font-semibold leading-5 opacity-75">
                         {card.helper}
                       </p>
                     </div>
