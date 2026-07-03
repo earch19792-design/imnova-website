@@ -1,0 +1,153 @@
+{
+  "smokeTestVersion": "EBAY_SELLER_FLOW_OPERATIONAL_SMOKE_TEST_V1",
+  "caseId": "SELLER-FLOW-SMOKE-001",
+  "marketplace": "ebay_us",
+  "language": "en",
+  "smokeTestStatus": "SELLER_FLOW_OPERATIONAL_SMOKE_TEST_READY",
+  "flowMode": "INTERNAL_READ_ONLY_SMOKE_TEST",
+  "testedFlow": "Market Radar → eBay Pipeline → Products → Listing → Review/Gates",
+  "queuePriorityRule": "Sin stock → Proteger → Revisar stock → Margen → Bloqueados → Vender ahora → Monitorear",
+  "externalEbayStatus": "EBAY_EXTERNAL_ACTIONS_BLOCKED",
+  "draftImpact": "DO_NOT_CREATE_EBAY_DRAFT",
+  "publicationImpact": "DO_NOT_PUBLISH",
+  "smokeTestSummary": "This smoke test validates the seller operating flow before real image execution or eBay Sandbox. It confirms that each product falls into one primary operational queue. It confirms out_of_stock wins over sell-now signals. It confirms Listing uses Pipeline decision by reference and does not recalculate profitability. It does not create drafts, publish listings, generate images, upload images or call eBay.",
+  "routingRules": {
+    "onePrimaryQueuePerProduct": true,
+    "queuePriority": [
+      "Sin stock",
+      "Proteger",
+      "Revisar stock",
+      "Margen",
+      "Bloqueados",
+      "Vender ahora",
+      "Monitorear"
+    ],
+    "outOfStockBeatsSellNow": true,
+    "sellNowRequiresStockConfirmed": true,
+    "listingUsesPipelineDecisionByReference": true,
+    "listingDoesNotDuplicateProfitabilityTruth": true,
+    "listingDoesNotRecalculateMargin": true,
+    "listingDoesNotRecalculateDemand": true,
+    "listingDoesNotRecalculateCompetition": true
+  },
+  "testScenarios": [
+    {
+      "scenarioId": "kerasys_out_of_stock_confirmed",
+      "productName": "Kerasys",
+      "radarSignal": "out_of_stock_confirmed",
+      "stockStatus": "out_of_stock",
+      "stockConfirmed": false,
+      "pipelineDecision": "do_not_sell_now",
+      "expectedPrimaryQueue": "Sin stock",
+      "mustNotAppearIn": [
+        "Vender ahora"
+      ],
+      "listingAllowed": false,
+      "reason": "Confirmed out_of_stock must route to Sin stock and cannot appear as sell-now."
+    },
+    {
+      "scenarioId": "stock_confirmed_profitable_sell_now",
+      "productName": "Storage Organizer",
+      "supplier": "Portex",
+      "radarSignal": "opportunity_detected",
+      "stockStatus": "in_stock",
+      "stockConfirmed": true,
+      "profitStatus": "margin_ok",
+      "pipelineDecision": "candidate_for_listing",
+      "expectedPrimaryQueue": "Vender ahora",
+      "listingAllowed": true,
+      "reason": "Sell-now requires confirmed stock and acceptable margin."
+    },
+    {
+      "scenarioId": "unknown_stock_needs_review",
+      "productName": "Catalog Product Unknown Stock",
+      "stockStatus": "unknown",
+      "stockConfirmed": false,
+      "pipelineDecision": "needs_stock_review",
+      "expectedPrimaryQueue": "Revisar stock",
+      "listingAllowed": false,
+      "reason": "Unknown stock must be reviewed before sell-now."
+    },
+    {
+      "scenarioId": "margin_missing_needs_margin_review",
+      "productName": "Margin Review Product",
+      "stockStatus": "in_stock",
+      "stockConfirmed": true,
+      "profitStatus": "missing_margin_data",
+      "pipelineDecision": "needs_margin_review",
+      "expectedPrimaryQueue": "Margen",
+      "listingAllowed": false,
+      "reason": "Missing margin data blocks sell-now."
+    },
+    {
+      "scenarioId": "risk_blocked_product",
+      "productName": "Risk Blocked Product",
+      "riskStatus": "blocked",
+      "pipelineDecision": "blocked",
+      "expectedPrimaryQueue": "Bloqueados",
+      "listingAllowed": false,
+      "reason": "Risk/compliance blocker must prevent advancement."
+    },
+    {
+      "scenarioId": "monitor_only_product",
+      "productName": "Monitor Only Product",
+      "stockStatus": "in_stock",
+      "stockConfirmed": true,
+      "profitStatus": "low_signal",
+      "pipelineDecision": "monitor",
+      "expectedPrimaryQueue": "Monitorear",
+      "listingAllowed": false,
+      "reason": "Low signal stays in monitor queue."
+    }
+  ],
+  "expectedResults": {
+    "allScenariosHaveOnePrimaryQueue": true,
+    "kerasysOutOfStockRoutesToSinStock": true,
+    "outOfStockNeverRoutesToSellNow": true,
+    "sellNowRequiresStockConfirmed": true,
+    "listingOnlyAdvancesWhenPipelineAllows": true,
+    "pipelineTruthIsReferencedNotDuplicated": true,
+    "realEbayActionsRemainBlocked": true
+  },
+  "whatThisProves": [
+    "The operational seller flow is testable before eBay Sandbox.",
+    "Products are not allowed to appear in multiple primary queues.",
+    "Confirmed out_of_stock is protected from accidental sell-now routing.",
+    "Listing intake respects Pipeline decisions.",
+    "Seller UI can show a clear next action without publishing."
+  ],
+  "whatStillBlocksEbay": [
+    "Real Luna Portex image execution.",
+    "Image QA.",
+    "Price/cost confirmation.",
+    "Shipping and return policy confirmation.",
+    "eBay Developer/Sandbox authorization.",
+    "OAuth and tokens.",
+    "Real draft creation.",
+    "Publication approval."
+  ],
+  "nextRecommendedPhase": {
+    "phase": "PHASE 2 — Real Image Execution from Luna Portex Catalog",
+    "goal": "Use one selected product with a Luna Portex catalog source image and generate the actual 7-image package before eBay Sandbox.",
+    "firstStep": "Select one product from Vender ahora with stock_confirmed and catalog image available.",
+    "then": "Generate/QA images outside eBay, then proceed to Sandbox only after gates approve."
+  },
+  "safetyFlags": {
+    "internalSmokeTestOnly": true,
+    "readOnly": true,
+    "pipelineDecisionByReference": true,
+    "listingDuplicatesProfitabilityTruth": false,
+    "productMutationUsed": false,
+    "pipelineMutationUsed": false,
+    "listingMutationUsed": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "imageGenerationUsed": false,
+    "imageUploadUsed": false,
+    "supabaseWriteUsed": false,
+    "migrationCreated": false
+  }
+}

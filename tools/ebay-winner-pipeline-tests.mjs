@@ -808,6 +808,19 @@ const ebayEndToEndSellerFlowDemoFixture =
     )
   )
 
+const ebaySellerFlowOperationalSmokeTestFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-seller-flow-operational-smoke-test-v1.json"
+  )
+
+const ebaySellerFlowOperationalSmokeTestFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebaySellerFlowOperationalSmokeTestFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -10642,6 +10655,339 @@ test("ebay end-to-end seller flow demo fixture: no contiene tokens endpoints ni 
   }
 })
 
+test("ebay seller flow operational smoke test fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebaySellerFlowOperationalSmokeTestFixturePath
+    )
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.smokeTestVersion,
+    "EBAY_SELLER_FLOW_OPERATIONAL_SMOKE_TEST_V1"
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.smokeTestStatus,
+    "SELLER_FLOW_OPERATIONAL_SMOKE_TEST_READY"
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.flowMode,
+    "INTERNAL_READ_ONLY_SMOKE_TEST"
+  )
+  assert.match(
+    ebaySellerFlowOperationalSmokeTestFixture.testedFlow,
+    /Market Radar/
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.externalEbayStatus,
+    "EBAY_EXTERNAL_ACTIONS_BLOCKED"
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.routingRules.onePrimaryQueuePerProduct,
+    true
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.routingRules.outOfStockBeatsSellNow,
+    true
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.routingRules.sellNowRequiresStockConfirmed,
+    true
+  )
+  assert.ok(
+    ebaySellerFlowOperationalSmokeTestFixture.testScenarios.length >=
+      6
+  )
+
+  const scenarioById =
+    new Map(
+      ebaySellerFlowOperationalSmokeTestFixture.testScenarios.map(
+        (scenario) => [
+          scenario.scenarioId,
+          scenario,
+        ]
+      )
+    )
+
+  assert.equal(
+    scenarioById.get("kerasys_out_of_stock_confirmed")
+      .expectedPrimaryQueue,
+    "Sin stock"
+  )
+  assert.ok(
+    scenarioById
+      .get("kerasys_out_of_stock_confirmed")
+      .mustNotAppearIn.includes("Vender ahora")
+  )
+  assert.equal(
+    scenarioById.get("stock_confirmed_profitable_sell_now")
+      .expectedPrimaryQueue,
+    "Vender ahora"
+  )
+  assert.equal(
+    scenarioById.get("unknown_stock_needs_review")
+      .expectedPrimaryQueue,
+    "Revisar stock"
+  )
+  assert.equal(
+    scenarioById.get("margin_missing_needs_margin_review")
+      .expectedPrimaryQueue,
+    "Margen"
+  )
+  assert.equal(
+    scenarioById.get("risk_blocked_product")
+      .expectedPrimaryQueue,
+    "Bloqueados"
+  )
+  assert.equal(
+    scenarioById.get("monitor_only_product")
+      .expectedPrimaryQueue,
+    "Monitorear"
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.expectedResults.kerasysOutOfStockRoutesToSinStock,
+    true
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.expectedResults.outOfStockNeverRoutesToSellNow,
+    true
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.safetyFlags.ebayApiUsed,
+    false
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.safetyFlags.realDraftCreated,
+    false
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.safetyFlags.publishedToEbay,
+    false
+  )
+  assert.equal(
+    ebaySellerFlowOperationalSmokeTestFixture.safetyFlags.imageGenerationUsed,
+    false
+  )
+})
+
+test("ebay seller flow operational smoke test module: evalua colas sin acciones externas", async () => {
+  const modulePath =
+    "lib/ebay/seller-flow-operational-smoke-test.ts"
+
+  assert.ok(
+    fs.existsSync(modulePath),
+    `missing module: ${modulePath}`
+  )
+
+  const source =
+    fs.readFileSync(
+      modulePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "getSellerFlowOperationalSmokeTest",
+    "getSellerFlowSmokeTestScenarios",
+    "evaluateSellerFlowScenario",
+    "getSellerFlowQueuePriority",
+    "getBlockedSellerFlowSmokeTestResponse",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing export in ${modulePath}: ${expectedText}`
+    )
+  }
+
+  for (const forbiddenPattern of [
+    /process\.env/,
+    /fetch\(/,
+    /http:\/\//,
+    /https:\/\//,
+    /new OpenAI/,
+    /openai/i,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /console\.log/,
+    /console\.error/,
+    /createDraft/,
+    /publishListing/,
+    /images\.generate/,
+    /writeFile/,
+    /download/,
+    /sharp/,
+    /canvas/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern,
+      `forbidden pattern in ${modulePath}: ${forbiddenPattern}`
+    )
+  }
+
+  const transpiled =
+    ts.transpileModule(
+      source,
+      {
+        compilerOptions: {
+          module:
+            ts.ModuleKind.ES2022,
+          target:
+            ts.ScriptTarget.ES2022,
+        },
+      }
+    ).outputText
+
+  const outputPath =
+    path.join(
+      os.tmpdir(),
+      `seller-flow-operational-smoke-test-${process.pid}-${Date.now()}.mjs`
+    )
+
+  fs.writeFileSync(
+    outputPath,
+    transpiled
+  )
+
+  const module =
+    await import(
+      `file://${outputPath}`
+    )
+
+  assert.equal(
+    module.evaluateSellerFlowScenario({
+      stockStatus:
+        "out_of_stock",
+    }).primaryQueue,
+    "Sin stock"
+  )
+  assert.notEqual(
+    module.evaluateSellerFlowScenario({
+      stockConfirmed:
+        false,
+      profitStatus:
+        "margin_ok",
+      pipelineDecision:
+        "candidate_for_listing",
+    }).primaryQueue,
+    "Vender ahora"
+  )
+  assert.equal(
+    module.evaluateSellerFlowScenario({
+      stockStatus:
+        "in_stock",
+      stockConfirmed:
+        true,
+      profitStatus:
+        "margin_ok",
+      pipelineDecision:
+        "candidate_for_listing",
+    }).primaryQueue,
+    "Vender ahora"
+  )
+  assert.equal(
+    module.evaluateSellerFlowScenario({
+      stockStatus:
+        "in_stock",
+      stockConfirmed:
+        true,
+      profitStatus:
+        "missing_margin_data",
+    }).primaryQueue,
+    "Margen"
+  )
+  assert.equal(
+    module.evaluateSellerFlowScenario({
+      stockConfirmed:
+        true,
+      riskStatus:
+        "blocked",
+    }).primaryQueue,
+    "Bloqueados"
+  )
+  assert.equal(
+    module.evaluateSellerFlowScenario({
+      stockConfirmed:
+        true,
+      pipelineDecision:
+        "monitor",
+    }).primaryQueue,
+    "Monitorear"
+  )
+})
+
+test("ebay seller flow operational smoke test admin: visible y seguro", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "Prueba operativa del flujo vendedor",
+    "Cola prioritaria",
+    "Kerasys",
+    "Sin stock",
+    "Vender ahora exige stock confirmado.",
+    "Un producto sin stock no puede venderse ahora.",
+    "Listing respeta la decisión del Pipeline.",
+    "eBay real: bloqueado",
+    "Siguiente fase: imágenes reales desde catálogo Luna Portex.",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing seller flow smoke test admin text: ${expectedText}`
+    )
+  }
+
+  assert.doesNotMatch(
+    source,
+    /Prueba operativa del flujo vendedor[\s\S]{0,7000}onClick=/
+  )
+})
+
+test("ebay seller flow operational smoke test fixture: no contiene tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebaySellerFlowOperationalSmokeTestFixturePath,
+      "lib/ebay/seller-flow-operational-smoke-test.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -16327,6 +16673,7 @@ test("ebay admin flow: muestra Seller OS humano y puente winner to listing", () 
   for (const expectedText of [
     "ebay-winner-to-listing-intake-bridge-v1.json",
     "ebay-end-to-end-seller-flow-demo-v1.json",
+    "ebay-seller-flow-operational-smoke-test-v1.json",
     "eBay Seller OS",
     "eBay real bloqueado",
     "No publicar",

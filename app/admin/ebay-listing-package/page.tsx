@@ -15,6 +15,7 @@ import completeListingPackageBuilder from "../../../tools/fixtures/ebay-complete
 import listingReviewApprovalWorkspace from "../../../tools/fixtures/ebay-listing-review-approval-workspace-v1.json"
 import winnerToListingIntakeBridge from "../../../tools/fixtures/ebay-winner-to-listing-intake-bridge-v1.json"
 import endToEndSellerFlowDemo from "../../../tools/fixtures/ebay-end-to-end-seller-flow-demo-v1.json"
+import sellerFlowOperationalSmokeTest from "../../../tools/fixtures/ebay-seller-flow-operational-smoke-test-v1.json"
 import listingCompletionWorkspace from "../../../tools/fixtures/ebay-listing-completion-workspace-v1.json"
 import ebaySecretEnvironmentStrategy from "../../../tools/fixtures/ebay-secret-environment-strategy-v1.json"
 import ebayImageGenerationServiceDesign from "../../../tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -450,6 +451,22 @@ const sellerReadinessSignals = [
       "border-red-300/25 bg-red-300/[0.10] text-red-50",
   },
 ]
+
+const sellerOperationalSmokeTestRows =
+  sellerFlowOperationalSmokeTest.testScenarios.map((scenario) => ({
+    product:
+      scenario.productName,
+    signal:
+      scenario.radarSignal ||
+      scenario.pipelineDecision ||
+      "seller_flow_signal",
+    expectedQueue:
+      scenario.expectedPrimaryQueue,
+    listingAllowed:
+      scenario.listingAllowed
+        ? "Listing permitido"
+        : "Listing bloqueado",
+  }))
 
 const imageAssetManifestCopy = {
   manifestStatus:
@@ -1968,6 +1985,88 @@ export default function EbayListingPackagePage() {
                 </li>
               ))}
             </ul>
+          </div>
+        </Section>
+
+        <Section
+          title="Prueba operativa del flujo vendedor"
+          eyebrow="Smoke test read-only"
+        >
+          <div className="rounded-3xl border border-emerald-300/15 bg-emerald-300/[0.045] p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-emerald-100/60">
+                  {sellerFlowOperationalSmokeTest.smokeTestStatus}
+                </p>
+                <h3 className="mt-2 text-2xl font-black text-white">
+                  Cada producto cae en una sola cola principal.
+                </h3>
+                <p className="mt-3 max-w-4xl text-sm leading-7 text-white/65">
+                  Esta prueba valida que el flujo vendedor enruta productos sin publicar, sin crear drafts y sin generar imágenes reales.
+                </p>
+              </div>
+              <span className="w-fit rounded-full border border-red-300/25 bg-red-300/[0.10] px-4 py-2 text-xs font-black text-red-50">
+                eBay real: bloqueado
+              </span>
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-100/50">
+                Cola prioritaria
+              </p>
+              <p className="mt-2 break-words text-sm font-black leading-6 text-white [overflow-wrap:anywhere]">
+                {sellerFlowOperationalSmokeTest.queuePriorityRule}
+              </p>
+              <p className="mt-3 text-xs font-bold leading-5 text-red-50/80">
+                Kerasys out_of_stock → Sin stock
+              </p>
+            </div>
+
+            <div className="mt-5 grid gap-3 lg:grid-cols-3">
+              {[
+                "Vender ahora exige stock confirmado.",
+                "Un producto sin stock no puede venderse ahora.",
+                "Listing respeta la decisión del Pipeline.",
+              ].map((rule) => (
+                <div
+                  key={rule}
+                  className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm font-bold leading-6 text-white/70"
+                >
+                  {rule}
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {sellerOperationalSmokeTestRows.map((row) => (
+                <article
+                  key={`${row.product}-${row.expectedQueue}`}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
+                  <p className="text-sm font-black text-white">
+                    {row.product}
+                  </p>
+                  <p className="mt-2 text-xs font-semibold leading-5 text-white/45">
+                    {row.signal}
+                  </p>
+                  <p className="mt-3 rounded-xl border border-emerald-300/20 bg-emerald-300/[0.08] px-3 py-2 text-xs font-black text-emerald-50">
+                    {row.expectedQueue}
+                  </p>
+                  <p className="mt-2 text-[11px] font-semibold leading-5 text-white/50">
+                    {row.listingAllowed}
+                  </p>
+                </article>
+              ))}
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.045] p-4">
+              <p className="text-sm font-black text-white">
+                Siguiente fase: imágenes reales desde catálogo Luna Portex.
+              </p>
+              <p className="mt-2 text-xs font-semibold leading-5 text-white/55">
+                {sellerFlowOperationalSmokeTest.nextRecommendedPhase.firstStep}
+              </p>
+            </div>
           </div>
         </Section>
 
