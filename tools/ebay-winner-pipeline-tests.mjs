@@ -19875,6 +19875,14 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
+    /Razón/
+  )
+  assert.match(
+    source,
+    /getSellerOperationalReason\(product\)/
+  )
+  assert.match(
+    source,
     /Proteger existentes/
   )
   assert.match(
@@ -20036,6 +20044,22 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   assert.match(
     source,
     /function getSellerOperationalRoute/
+  )
+  assert.match(
+    source,
+    /function getSellerOperationalReason/
+  )
+  assert.match(
+    source,
+    /function getPipelineBlockedReasonLabel/
+  )
+  assert.match(
+    source,
+    /product\.pipeline_blocked_reason/
+  )
+  assert.match(
+    source,
+    /Precio bajo \(\$\{formatCurrency\(lowestVisiblePrice\)\}\)\. Revisar fees, shipping y margen minimo antes de vender\./
   )
   const sellerRouteBlock =
     source.slice(
