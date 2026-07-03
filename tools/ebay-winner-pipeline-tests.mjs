@@ -769,6 +769,19 @@ const ebayCompleteListingPackageBuilderFixture =
     )
   )
 
+const ebayListingReviewApprovalWorkspaceFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-listing-review-approval-workspace-v1.json"
+  )
+
+const ebayListingReviewApprovalWorkspaceFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayListingReviewApprovalWorkspaceFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -10013,6 +10026,191 @@ test("ebay complete listing package builder fixture: no contiene tokens endpoint
   }
 })
 
+test("ebay listing review approval workspace fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayListingReviewApprovalWorkspaceFixturePath
+    )
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.workspaceVersion,
+    "EBAY_LISTING_REVIEW_APPROVAL_WORKSPACE_V1"
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.workspaceStatus,
+    "LISTING_REVIEW_APPROVAL_WORKSPACE_READY"
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.reviewStatus,
+    "READY_FOR_HUMAN_REVIEW_INTERNAL_ONLY"
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.approvalStatus,
+    "HUMAN_APPROVAL_REQUIRED_NOT_GRANTED"
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.internalModuleStatus,
+    "LISTING_INTERNAL_MODULE_READY_FOR_REVIEW"
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.externalEbayStatus,
+    "EBAY_EXTERNAL_ACTIONS_BLOCKED"
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+})
+
+test("ebay listing review approval workspace fixture: checklist blockers y gates bloquean acciones externas", () => {
+  assert.ok(
+    ebayListingReviewApprovalWorkspaceFixture.approvalChecklist.length >= 10
+  )
+  assert.ok(
+    ebayListingReviewApprovalWorkspaceFixture.blockingIssues.includes(
+      "human_approval_not_granted"
+    )
+  )
+  assert.ok(
+    ebayListingReviewApprovalWorkspaceFixture.blockingIssues.includes(
+      "ebay_connection_not_authorized"
+    )
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.readinessSummary
+      .canReviewInternalListing,
+    true
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.readinessSummary
+      .canSubmitPayloadToEbay,
+    false
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.readinessSummary
+      .canCreateEbayDraft,
+    false
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.readinessSummary.canPublishToEbay,
+    false
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.finalModuleDefinition
+      .listingInternalModuleComplete,
+    true
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.finalModuleDefinition
+      .readyForHumanReview,
+    true
+  )
+  assert.equal(
+    ebayListingReviewApprovalWorkspaceFixture.finalModuleDefinition
+      .readyForExternalEbayIntegration,
+    false
+  )
+})
+
+test("ebay listing review approval workspace fixture: safety flags mantienen modulo interno y acciones externas bloqueadas", () => {
+  const safetyFlags =
+    ebayListingReviewApprovalWorkspaceFixture.safetyFlags
+
+  assert.equal(safetyFlags.listingInternalModuleComplete, true)
+  assert.equal(safetyFlags.humanApprovalRequired, true)
+  assert.equal(safetyFlags.humanApprovalGranted, false)
+  assert.equal(safetyFlags.ebayApiUsed, false)
+  assert.equal(safetyFlags.oauthUsed, false)
+  assert.equal(safetyFlags.tokensUsed, false)
+  assert.equal(safetyFlags.realDraftCreated, false)
+  assert.equal(safetyFlags.publishedToEbay, false)
+  assert.equal(safetyFlags.imageGenerationUsed, false)
+  assert.equal(safetyFlags.imageUploadUsed, false)
+  assert.equal(safetyFlags.supabaseWriteUsed, false)
+  assert.equal(safetyFlags.migrationCreated, false)
+  assert.equal(safetyFlags.listingMutated, false)
+})
+
+test("ebay listing review approval workspace module: existe y bloquea integraciones reales", () => {
+  const modulePath =
+    "lib/ebay/listing-review-approval-workspace.ts"
+
+  assert.ok(
+    fs.existsSync(modulePath),
+    `missing module: ${modulePath}`
+  )
+
+  const source =
+    fs.readFileSync(
+      modulePath,
+      "utf8"
+    )
+
+  for (const forbiddenPattern of [
+    /process\.env/,
+    /fetch\(/,
+    /new OpenAI/,
+    /openai/i,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /console\.log/,
+    /console\.error/,
+    /createDraft/,
+    /publishListing/,
+    /images\.generate/,
+    /writeFile/,
+    /download/i,
+    /sharp/i,
+    /canvas/i,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern,
+      `forbidden pattern in ${modulePath}: ${forbiddenPattern}`
+    )
+  }
+})
+
+test("ebay listing review approval workspace fixture: no contiene tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebayListingReviewApprovalWorkspaceFixturePath,
+      "lib/ebay/listing-review-approval-workspace.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -15346,6 +15544,50 @@ test("ebay listing package admin MVP: muestra complete listing package builder",
   assert.doesNotMatch(
     source,
     /Complete Listing Package Builder[\s\S]{0,5000}onClick=/
+  )
+})
+
+test("ebay listing package admin MVP: muestra listing review approval workspace", () => {
+  const source =
+    fs.readFileSync(
+      ebayListingPackageAdminPagePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "ebay-listing-review-approval-workspace-v1.json",
+    "Listing Review & Approval Workspace",
+    "EBAY_LISTING_REVIEW_APPROVAL_WORKSPACE_V1",
+    "LISTING_REVIEW_APPROVAL_WORKSPACE_READY",
+    "READY_FOR_HUMAN_REVIEW_INTERNAL_ONLY",
+    "HUMAN_APPROVAL_REQUIRED_NOT_GRANTED",
+    "LISTING_INTERNAL_MODULE_READY_FOR_REVIEW",
+    "EBAY_EXTERNAL_ACTIONS_BLOCKED",
+    "Selected Product Review",
+    "Listing Content Review",
+    "Catalog Image Package Review",
+    "Secondary Image Prompts Review",
+    "Draft Payload Dry Run Review",
+    "Missing Facts Review",
+    "Blocked Fields Review",
+    "Readiness Gates Review",
+    "Approval Checklist",
+    "Final Internal Module Status",
+    "Internal Listing module is ready for human review.",
+    "External eBay actions remain blocked.",
+    "No draft will be created.",
+    "No listing will be published.",
+    "PHASE 2 \u2014 Real Image Execution + eBay Sandbox Integration",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing listing review approval workspace admin text: ${expectedText}`
+    )
+  }
+
+  assert.doesNotMatch(
+    source,
+    /Listing Review & Approval Workspace[\s\S]{0,5000}onClick=/
   )
 })
 
