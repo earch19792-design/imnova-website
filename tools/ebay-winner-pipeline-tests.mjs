@@ -14872,8 +14872,6 @@ test("ebay listing package admin MVP: contiene secciones requeridas", () => {
   for (const expectedSection of [
     "Estado ejecutivo",
     "Vista vendedor",
-    "Menu del vendedor",
-    "Ruta de trabajo del vendedor",
     "Vista previa del listing",
     "Bloqueos para publicar",
     "Plan de accion",
@@ -14989,72 +14987,44 @@ test("ebay listing package admin MVP: muestra preview vendedor y plan de accion"
   }
 })
 
-test("ebay listing package admin MVP: muestra menu vendedor navegable en espanol", () => {
+test("ebay listing package admin MVP: evita menu vendedor redundante en listing", () => {
   const source =
     fs.readFileSync(
       ebayListingPackageAdminPagePath,
       "utf8"
     )
 
-  for (const expectedText of [
-    "Menu del vendedor",
-    "Producto fuente",
-    "Datos del listing",
-    "Rentabilidad",
-    "Imagenes",
-    "Refresh del paquete",
-    "QA final",
-    "Empezar aqui. Confirmar que producto Luna Portex usaria este listing.",
-    "Validar los datos del producto que eBay y el comprador necesitan.",
-    "Revisar costo, fees, margen, shipping, devoluciones, stock y prueba de mercado.",
-    "#source-product",
-    "#facts-gate",
-    "#commercial-gate",
-    "#image-plan",
-    "#source-aware-refresh",
-    "#qa-details",
-  ]) {
-    assert.ok(
-      source.includes(expectedText),
-      `missing seller command menu text: ${expectedText}`
-    )
-  }
-
   assert.ok(
-    source.indexOf("Menu del vendedor") <
+    source.indexOf("Preparar listing") <
       source.indexOf("Estado ejecutivo")
+  )
+  assert.ok(
+    source.includes("Qué producto estoy preparando")
+  )
+  assert.ok(
+    source.includes("Cómo quedará el listing")
+  )
+  assert.ok(
+    source.includes("Qué falta para avanzar")
+  )
+  assert.ok(
+    !source.includes("Menu del vendedor")
   )
 })
 
-test("ebay listing package admin MVP: muestra orden profesional de vendedor en espanol", () => {
+test("ebay listing package admin MVP: evita ruta vendedor duplicada", () => {
   const source =
     fs.readFileSync(
       ebayListingPackageAdminPagePath,
       "utf8"
     )
 
-  for (const expectedText of [
-    "Ruta de trabajo del vendedor",
-    "Confirmar producto fuente",
-    "Validar datos del listing",
-    "Validar rentabilidad",
-    "Aprobar fuente e imagenes",
-    "Actualizar paquete y mapear draft",
-    "Actualizar el listing package y mapear un eBay draft solo despues de aprobar fuente, datos, rentabilidad, imagenes y revision humana.",
-  ]) {
-    assert.ok(
-      source.includes(expectedText),
-      `missing seller workflow order text: ${expectedText}`
-    )
-  }
-
   assert.ok(
-    source.indexOf("Ruta de trabajo del vendedor") <
-      source.indexOf("Vista previa del listing")
+    !source.includes("Ruta de trabajo del vendedor")
   )
   assert.ok(
-    source.indexOf("Confirmar producto fuente") <
-      source.indexOf("Actualizar paquete y mapear draft")
+    source.indexOf("Estado ejecutivo") <
+      source.indexOf("Vista previa del listing")
   )
 })
 
@@ -16289,7 +16259,7 @@ test("ebay listing package admin MVP: sidebar incluye ruta segura", () => {
   )
   assert.match(
     source,
-    /Preparar listing/
+    /Centro de venta/
   )
   assert.match(
     source,
@@ -16321,7 +16291,11 @@ test("ebay listing package admin MVP: sidebar incluye ruta segura", () => {
   )
   assert.match(
     source,
-    /No publicar/
+    /Centro de venta/
+  )
+  assert.match(
+    source,
+    /eBay real bloqueado/
   )
   assert.match(
     source,
@@ -16354,34 +16328,11 @@ test("ebay admin flow: muestra Seller OS humano y puente winner to listing", () 
     "ebay-winner-to-listing-intake-bridge-v1.json",
     "ebay-end-to-end-seller-flow-demo-v1.json",
     "eBay Seller OS",
-    "Prueba de flujo completo",
-    "Market Radar → eBay Pipeline → Products → Listing → Review/Gates",
-    "Storage Organizer",
-    "candidate_for_listing",
-    "82/100",
-    "6 prompts de imágenes",
-    "Payload dry run",
-    "eBay real: bloqueado",
-    "Generar imágenes reales desde catálogo Luna Portex antes de eBay Sandbox.",
-    "Semáforo vendedor",
-    "Flujo interno probado",
-    "Faltan imágenes, precio, shipping y returns",
     "eBay real bloqueado",
     "No publicar",
-    "Guía de conversión",
-    "Cómo preparar un listing que pueda vender",
     "Producto correcto",
-    "Rentabilidad heredada",
-    "Oferta clara",
     "7 imágenes",
-    "Blockers visibles",
-    "Rojo significa obligatorio antes de eBay real.",
-    "Flujo simple",
-    "Read-only",
     "Producto correcto. Listing claro. Faltantes obligatorios.",
-    "Market Radar",
-    "eBay Pipeline",
-    "Valida rentabilidad",
     "Paquete visual vendedor",
     "7 imágenes para un listing que convierta",
     "Imagen principal: fotografía ecommerce desde catálogo Luna Portex",
@@ -16422,18 +16373,27 @@ test("ebay admin flow: muestra Seller OS humano y puente winner to listing", () 
 
   for (const expectedText of [
     "eBay Seller OS",
-    "Buscar ganadores, preparar listing y revisar blockers.",
+    "Radar, Pipeline, Listing y Review.",
+    "Centro de venta",
+    "Radar → Pipeline → Listing → Review",
+    "eBay real bloqueado",
+  ]) {
+    assert.ok(
+      sidebarSource.includes(expectedText),
+      `missing Seller OS sidebar text: ${expectedText}`
+    )
+  }
+  for (const removedSidebarText of [
     "Detectar oportunidad",
     "Buscar productos ganadores",
     "Confirmar producto",
-    "Preparar listing",
     "Revisar y aprobar",
     "Preparar imágenes",
     "Conectar eBay",
   ]) {
     assert.ok(
-      sidebarSource.includes(expectedText),
-      `missing Seller OS sidebar text: ${expectedText}`
+      !sidebarSource.includes(removedSidebarText),
+      `redundant Seller OS sidebar text remains: ${removedSidebarText}`
     )
   }
 
@@ -16469,8 +16429,10 @@ test("ebay listing package admin MVP: conserva guia vendedor en espanol y estado
     )
 
   for (const expectedText of [
-    "Menu del vendedor",
-    "Ruta de trabajo del vendedor",
+    "Preparar listing",
+    "Qué producto estoy preparando",
+    "Cómo quedará el listing",
+    "Qué falta para avanzar",
     "Orden de trabajo de imagenes",
     "Producto fuente",
     "Datos del listing",
@@ -16484,6 +16446,8 @@ test("ebay listing package admin MVP: conserva guia vendedor en espanol y estado
       `listing package admin should preserve seller Spanish guidance and technical states: ${expectedText}`
     )
   }
+  assert.ok(!source.includes("Menu del vendedor"))
+  assert.ok(!source.includes("Ruta de trabajo del vendedor"))
 })
 
 test("ebay listing package admin MVP: no contiene patrones de seguridad prohibidos", () => {
@@ -16540,7 +16504,7 @@ test("ebay admin sidebar: normaliza labels eBay en ingles", () => {
   for (const expectedText of [
     "eBay Proposals",
     "eBay Seller OS",
-    "Preparar listing",
+    "Centro de venta",
     "Image Dry Run",
     "/admin/ebay-listings",
     "/admin/ebay-listing-package",
@@ -16563,8 +16527,6 @@ test("ebay listing package admin MVP: mantiene resumen ejecutivo y navegacion ve
   for (const expectedText of [
     "Estado ejecutivo",
     "Vista vendedor",
-    "Menu del vendedor",
-    "Ruta de trabajo del vendedor",
     "Vista previa del listing",
     "Bloqueos para publicar",
     "Plan de accion",
@@ -19722,7 +19684,70 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /filter === "listing_risk"[\s\S]*hasListingProtectionRiskSignal/
+    /type SellerOperationalRoute/
+  )
+  assert.match(
+    source,
+    /function getSellerOperationalRoute/
+  )
+  const sellerRouteBlock =
+    source.slice(
+      source.indexOf("function getSellerOperationalRoute"),
+      source.indexOf("function matchesRadarRankingFilter")
+    )
+  const expectedRoutePriority = [
+    "isConfirmedOutOfStockProduct",
+    "hasListingProtectionRiskSignal",
+    "isExistingStockRiskSignal",
+    "hasPriceOrMarginChangeSignal",
+    "isBlockedOrNeedsReviewSignal",
+    "isRadarProductActionable",
+    "\"reviewed\"",
+  ]
+  let lastPriorityIndex = -1
+  for (const priorityToken of expectedRoutePriority) {
+    const currentPriorityIndex =
+      sellerRouteBlock.indexOf(priorityToken)
+    assert.ok(
+      currentPriorityIndex > lastPriorityIndex,
+      `${priorityToken} must keep seller queue priority order`
+    )
+    lastPriorityIndex = currentPriorityIndex
+  }
+  const sellerFlowScenarios = [
+    ["confirmed_out_of_stock", "out_of_stock"],
+    ["listed_now_out_of_stock", "out_of_stock"],
+    ["listed_low_stock", "listing_risk"],
+    ["listed_stock_needs_validation", "listing_risk"],
+    ["new_stock_needs_validation", "stock_needs_validation"],
+    ["unknown_stock_candidate", "stock_needs_validation"],
+    ["margin_changed_after_review", "price_margin_changes"],
+    ["blocked_candidate", "blocked_or_review"],
+    ["stock_confirmed_new_opportunity", "actionable"],
+    ["reviewed_no_urgent_change", "reviewed"],
+  ]
+  assert.equal(
+    sellerFlowScenarios.length,
+    10
+  )
+  assert.deepEqual(
+    sellerFlowScenarios.map(([, expectedRoute]) => expectedRoute),
+    [
+      "out_of_stock",
+      "out_of_stock",
+      "listing_risk",
+      "listing_risk",
+      "stock_needs_validation",
+      "stock_needs_validation",
+      "price_margin_changes",
+      "blocked_or_review",
+      "actionable",
+      "reviewed",
+    ]
+  )
+  assert.match(
+    source,
+    /filter === "listing_risk"[\s\S]*getSellerOperationalRoute\(product\) ===[\s\S]*"listing_risk"/
   )
   assert.match(
     source,
@@ -19730,7 +19755,23 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /filter === "out_of_stock"[\s\S]*isConfirmedOutOfStockProduct/
+    /filter === "out_of_stock"[\s\S]*getSellerOperationalRoute\(product\) ===[\s\S]*"out_of_stock"/
+  )
+  assert.match(
+    source,
+    /function isRadarProductActionable[\s\S]*stockStatus !== "stock_confirmed"[\s\S]*return false/
+  )
+  assert.match(
+    source,
+    /function isExistingStockRiskSignal[\s\S]*status === "stock_unknown"[\s\S]*status === "stock_needs_validation"/
+  )
+  assert.match(
+    source,
+    /function getRadarActionStatusLabel[\s\S]*stockStatus === "stock_needs_validation"[\s\S]*stockStatus === "stock_unknown"[\s\S]*return "Revisar stock"/
+  )
+  assert.match(
+    source,
+    /function isConfirmedOutOfStockProduct[\s\S]*return Boolean\([\s\S]*getRadarStockValidationStatus\(product\) ===[\s\S]*"out_of_stock"[\s\S]*\)/
   )
   assert.match(
     source,
@@ -19742,11 +19783,27 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /filter === "reviewed"[\s\S]*isQuietReviewedRadarProduct\(product\)/
+    /filter === "stock_needs_validation"[\s\S]*getSellerOperationalRoute\(product\) ===[\s\S]*"stock_needs_validation"/
+  )
+  assert.match(
+    source,
+    /filter === "actionable"[\s\S]*getSellerOperationalRoute\(product\) ===[\s\S]*"actionable"/
+  )
+  assert.match(
+    source,
+    /filter === "reviewed"[\s\S]*getSellerOperationalRoute\(product\) ===[\s\S]*"reviewed"/
   )
   assert.match(
     source,
     /const reviewed =[\s\S]*matchesRadarRankingFilter\([\s\S]*"reviewed"/
+  )
+  assert.match(
+    source,
+    /const actionable =[\s\S]*getSellerOperationalRoute\(product\) ===[\s\S]*"actionable"/
+  )
+  assert.match(
+    source,
+    /const outOfStock =[\s\S]*getSellerOperationalRoute\(product\) ===[\s\S]*"out_of_stock"/
   )
   assert.match(
     source,
@@ -19796,33 +19853,13 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
     source,
     /Vender, revisar, pausar o monitorear\./
   )
-  assert.match(
+  assert.doesNotMatch(
     source,
     /operationalSummaryCards/
   )
-  assert.match(
+  assert.doesNotMatch(
     source,
     /grid min-w-0 grid-cols-\[auto_3\.5rem_1fr\] items-center gap-3/
-  )
-  assert.match(
-    source,
-    /text-right text-3xl font-black leading-none tracking-normal/
-  )
-  assert.match(
-    source,
-    /min-w-0 text-\[11px\] font-semibold leading-4 opacity-75/
-  )
-  assert.match(
-    source,
-    /Oportunidades para revisar listing\./
-  )
-  assert.match(
-    source,
-    /No listar hasta restock\./
-  )
-  assert.match(
-    source,
-    /Evitar ventas con riesgo\./
   )
   assert.match(
     source,

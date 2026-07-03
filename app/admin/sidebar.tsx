@@ -73,7 +73,7 @@ export function Sidebar({
     {
       label: "eBay Seller OS",
       description:
-        "Buscar ganadores, preparar listing y revisar blockers.",
+        "Radar, Pipeline, Listing y Review.",
       step: "07",
       icon: Trophy,
       value: "ebay-winner-pipeline",
@@ -322,19 +322,27 @@ export function Sidebar({
             eBay Seller OS
           </span>
           <span className="mt-2 block text-sm font-black text-white">
-            Preparar listing
+            Centro de venta
           </span>
           <span className="mt-1 block text-xs leading-5 text-white/45">
-            Radar → Pipeline → Listing → Review | No publicar
+            Radar → Pipeline → Listing → Review
           </span>
-          <span className="mt-3 grid gap-1 text-[11px] font-semibold leading-5 text-cyan-50/55">
-            <span>Detectar oportunidad</span>
-            <span>Buscar productos ganadores</span>
-            <span>Confirmar producto</span>
-            <span>Preparar listing</span>
-            <span>Revisar y aprobar</span>
-            <span>Preparar imágenes</span>
-            <span>Conectar eBay</span>
+          <span className="mt-3 grid grid-cols-2 gap-1.5 text-[10px] font-black uppercase tracking-[0.08em] text-cyan-50/70">
+            <span className="rounded-md border border-cyan-300/15 bg-black/20 px-2 py-1">
+              Radar
+            </span>
+            <span className="rounded-md border border-cyan-300/15 bg-black/20 px-2 py-1">
+              Pipeline
+            </span>
+            <span className="rounded-md border border-cyan-300/15 bg-black/20 px-2 py-1">
+              Listing
+            </span>
+            <span className="rounded-md border border-cyan-300/15 bg-black/20 px-2 py-1">
+              Review
+            </span>
+          </span>
+          <span className="mt-3 block rounded-md border border-red-300/20 bg-red-300/[0.08] px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-red-50/75">
+            eBay real bloqueado
           </span>
         </a>
 
