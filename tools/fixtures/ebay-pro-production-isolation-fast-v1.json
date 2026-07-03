@@ -20,6 +20,7 @@
     "connectedInThisLoop": false
   },
   "blockedProductionPaths": [
+    "/admin/ebay-pro",
     "/admin/market-radar",
     "/admin/ebay-seller-os",
     "/admin/ebay-listing",

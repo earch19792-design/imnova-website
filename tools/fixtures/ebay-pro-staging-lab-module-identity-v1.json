@@ -1,0 +1,74 @@
+{
+  "moduleIdentityVersion": "EBAY_PRO_STAGING_LAB_MODULE_IDENTITY_V1",
+  "caseId": "EBAY-PRO-STAGING-LAB-MODULE-IDENTITY-001",
+  "status": "EBAY_PRO_DECLARED_STAGING_LAB_ONLY_MODULE",
+  "mode": "OPERATIONAL_INDEPENDENCE_FAST_TRACK",
+  "suite": {
+    "name": "eBay Professional Seller Suite",
+    "independentOperationalModule": true,
+    "physicallySeparateDatabase": false,
+    "separateRepo": false,
+    "stagingLabOnly": true
+  },
+  "production": {
+    "role": "IMNOVA Core only",
+    "ebayProAllowed": false,
+    "blockedByMiddleware": true
+  },
+  "staging": {
+    "role": "eBay Pro controlled testing",
+    "ebayProAllowed": true
+  },
+  "localNetworkVm": {
+    "role": "Heavy lab processing with separate test DB",
+    "connectedInThisLoop": false,
+    "plannedForNextLoop": true
+  },
+  "routes": {
+    "hub": "/admin/ebay-pro",
+    "modules": [
+      "/admin/market-radar",
+      "/admin/ebay-seller-os",
+      "/admin/ebay-listing",
+      "/admin/ebay-listing-package",
+      "/admin/ebay-listings",
+      "/admin/ebay-image-generator"
+    ],
+    "api": [
+      "/api/admin/market-radar",
+      "/api/admin/ebay-winner-pipeline",
+      "/api/admin/active-listing-risks",
+      "/api/admin/ebay/oauth"
+    ]
+  },
+  "dataBoundaries": {
+    "imnovaCore": "products/community/store/campaigns/analytics",
+    "ebayPro": "radar/seller-os/listing/candidates/snapshots/benchmark future",
+    "sharedMinimum": [
+      "product_id",
+      "slug",
+      "product facts",
+      "status summary"
+    ]
+  },
+  "safetyFlags": {
+    "productionCoreProtected": true,
+    "ebayProProductionDisabled": true,
+    "ebayProStagingLabOnly": true,
+    "moduleHubCreated": true,
+    "localVmConnected": false,
+    "liveSupabaseQueried": false,
+    "supabaseWriteUsed": false,
+    "sqlMigrationCreated": false,
+    "dbPushUsed": false,
+    "dbPullUsed": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "openAiUsed": false,
+    "imageGenerationUsed": false,
+    "imageUploadUsed": false
+  }
+}

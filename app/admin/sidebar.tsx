@@ -276,6 +276,13 @@ export function Sidebar({
         <div className="grid gap-3">
           {[
             {
+              href: "/admin/ebay-pro",
+              eyebrow: "Staging/Lab",
+              title: "eBay Pro Suite",
+              detail:
+                "Modulo profesional eBay bloqueado en produccion.",
+            },
+            {
               href: "/admin/market-radar",
               eyebrow: "Hub ligero",
               title: "Market Radar",
