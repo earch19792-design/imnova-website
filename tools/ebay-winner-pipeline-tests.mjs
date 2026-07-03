@@ -21530,6 +21530,41 @@ test("market radar dashboard: snapshot manual 0 no se reemplaza por stock anteri
   )
 })
 
+test("market radar dashboard: trae snapshots manuales aunque el historial reciente los desplace", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve(
+        "app/api/admin/market-radar/route.ts"
+      ),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /const historyData =[\s\S]*historyResult\.data \|\| \[\]/
+  )
+  assert.match(
+    source,
+    /const manualResult =[\s\S]*\.from\("market_radar_snapshots"\)[\s\S]*\.not\(\s*"raw->manual_stock_confirmation",\s*"is",\s*null\s*\)/
+  )
+  assert.match(
+    source,
+    /MARKET RADAR MANUAL SNAPSHOT HISTORY TIMEOUT; CONTINUING WITH RECENT SNAPSHOT DETAILS/
+  )
+  assert.match(
+    source,
+    /const snapshotsById =[\s\S]*new Map/
+  )
+  assert.match(
+    source,
+    /\.\.\.historyData[\s\S]*manualResult\.data/
+  )
+  assert.match(
+    source,
+    /return Array\.from\([\s\S]*snapshotsById\.values\(\)/
+  )
+})
+
 test("market radar panel: confirmacion manual permite guardar cantidad 0", () => {
   const source =
     fs.readFileSync(

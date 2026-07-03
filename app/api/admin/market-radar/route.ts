@@ -886,7 +886,73 @@ async function getLatestProductSnapshots(
       .limit(historyLimit)
 
   if (!historyResult.error) {
-    return historyResult.data || []
+    const historyData =
+      historyResult.data || []
+
+    const manualResult =
+      await supabase
+        .from("market_radar_snapshots")
+        .select(selectFields)
+        .in(
+          "product_id",
+          productIds
+        )
+        .not(
+          "raw->manual_stock_confirmation",
+          "is",
+          null
+        )
+        .order(
+          "captured_at",
+          {
+            ascending: false,
+            nullsFirst: false,
+          }
+        )
+        .limit(
+          Math.min(
+            Math.max(productIds.length, 50),
+            300
+          )
+        )
+
+    if (manualResult.error) {
+      if (
+        isStatementTimeoutError(
+          manualResult.error
+        )
+      ) {
+        console.warn(
+          "MARKET RADAR MANUAL SNAPSHOT HISTORY TIMEOUT; CONTINUING WITH RECENT SNAPSHOT DETAILS:",
+          manualResult.error.message
+        )
+
+        return historyData
+      }
+
+      throw new Error(
+        manualResult.error.message
+      )
+    }
+
+    const snapshotsById =
+      new Map<string, NonNullable<typeof historyData>[number]>()
+
+    ;[
+      ...historyData,
+      ...(
+        manualResult.data || []
+      ),
+    ].forEach(snapshot => {
+      snapshotsById.set(
+        snapshot.id,
+        snapshot
+      )
+    })
+
+    return Array.from(
+      snapshotsById.values()
+    )
   }
 
   if (
