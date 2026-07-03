@@ -795,6 +795,19 @@ const ebayWinnerToListingIntakeBridgeFixture =
     )
   )
 
+const ebayEndToEndSellerFlowDemoFixturePath =
+  path.resolve(
+    "tools/fixtures/ebay-end-to-end-seller-flow-demo-v1.json"
+  )
+
+const ebayEndToEndSellerFlowDemoFixture =
+  JSON.parse(
+    fs.readFileSync(
+      ebayEndToEndSellerFlowDemoFixturePath,
+      "utf8"
+    )
+  )
+
 const ebayImageGenerationServiceDesignFixturePath =
   path.resolve(
     "tools/fixtures/ebay-image-generation-service-design-v1.json"
@@ -10415,6 +10428,220 @@ test("ebay winner to listing intake bridge fixture: no contiene tokens endpoints
   }
 })
 
+test("ebay end-to-end seller flow demo fixture: existe y cumple contrato V1", () => {
+  assert.ok(
+    fs.existsSync(
+      ebayEndToEndSellerFlowDemoFixturePath
+    )
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.demoVersion,
+    "EBAY_END_TO_END_SELLER_FLOW_DEMO_V1"
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.demoStatus,
+    "END_TO_END_INTERNAL_SELLER_FLOW_READY"
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.flowMode,
+    "INTERNAL_READ_ONLY_DEMO"
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.externalEbayStatus,
+    "EBAY_EXTERNAL_ACTIONS_BLOCKED"
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.draftImpact,
+    "DO_NOT_CREATE_EBAY_DRAFT"
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.publicationImpact,
+    "DO_NOT_PUBLISH"
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.sellerFlowSteps.length,
+    5
+  )
+
+  const stages =
+    ebayEndToEndSellerFlowDemoFixture.sellerFlowSteps.map(
+      (step) => step.stage
+    )
+
+  for (const expectedStage of [
+    "Market Radar",
+    "eBay Pipeline",
+    "Products",
+    "Listing",
+    "Review/Gates",
+  ]) {
+    assert.ok(
+      stages.includes(expectedStage),
+      `missing demo stage: ${expectedStage}`
+    )
+  }
+
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.pipelineCommercialSignal.listingUsesPipelineDecisionByReference,
+    true
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.pipelineCommercialSignal.listingDuplicatesProfitabilityTruth,
+    false
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.pipelineCommercialSignal.listingRecalculatesProfitability,
+    false
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.listingPackageResult.completeListingPackageAvailable,
+    true
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.listingPackageResult.secondaryImagePromptCount,
+    6
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.listingPackageResult.draftPayloadDryRunAvailable,
+    true
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.listingPackageResult.realImagesGenerated,
+    false
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.reviewGateResult.readyForInternalHumanReview,
+    true
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.reviewGateResult.readyForRealImageExecution,
+    true
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.reviewGateResult.readyForEbaySandbox,
+    false
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.reviewGateResult.readyForDraftCreation,
+    false
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.reviewGateResult.readyForPublication,
+    false
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.safetyFlags.ebayApiUsed,
+    false
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.safetyFlags.realDraftCreated,
+    false
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.safetyFlags.publishedToEbay,
+    false
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.safetyFlags.imageGenerationUsed,
+    false
+  )
+  assert.equal(
+    ebayEndToEndSellerFlowDemoFixture.safetyFlags.imageUploadUsed,
+    false
+  )
+})
+
+test("ebay end-to-end seller flow demo module: existe y no usa acciones externas", () => {
+  const modulePath =
+    "lib/ebay/end-to-end-seller-flow-demo.ts"
+
+  assert.ok(
+    fs.existsSync(modulePath),
+    `missing module: ${modulePath}`
+  )
+
+  const source =
+    fs.readFileSync(
+      modulePath,
+      "utf8"
+    )
+
+  for (const expectedText of [
+    "getEndToEndSellerFlowDemo",
+    "getSellerFlowSteps",
+    "getDemoPipelineCommercialSignal",
+    "getEndToEndDemoReadiness",
+    "getBlockedEndToEndSellerFlowResponse",
+  ]) {
+    assert.ok(
+      source.includes(expectedText),
+      `missing export in ${modulePath}: ${expectedText}`
+    )
+  }
+
+  for (const forbiddenPattern of [
+    /process\.env/,
+    /fetch\(/,
+    /http:\/\//,
+    /https:\/\//,
+    /new OpenAI/,
+    /openai/i,
+    /\.insert\(/,
+    /\.update\(/,
+    /\.delete\(/,
+    /\.upsert\(/,
+    /\.rpc\(/,
+    /console\.log/,
+    /console\.error/,
+    /createDraft/,
+    /publishListing/,
+    /images\.generate/,
+    /writeFile/,
+    /download/,
+    /sharp/,
+    /canvas/,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern,
+      `forbidden pattern in ${modulePath}: ${forbiddenPattern}`
+    )
+  }
+})
+
+test("ebay end-to-end seller flow demo fixture: no contiene tokens endpoints ni datos privados", () => {
+  const rawFixture =
+    [
+      ebayEndToEndSellerFlowDemoFixturePath,
+      "lib/ebay/end-to-end-seller-flow-demo.ts",
+    ]
+      .map((fixturePath) =>
+        fs.readFileSync(
+          fixturePath,
+          "utf8"
+        )
+      )
+      .join("\n")
+
+  for (const forbiddenPattern of [
+    /client_id/i,
+    /client_secret/i,
+    /access_token/i,
+    /refresh_token/i,
+    /Authorization:/,
+    /Bearer[ \t]+[A-Za-z0-9._-]+/,
+    /realEndpoint/,
+    /customerEmail/,
+    /customerPhone/,
+    /supplierEmail/,
+  ]) {
+    assert.doesNotMatch(
+      rawFixture,
+      forbiddenPattern
+    )
+  }
+})
+
 test("ebay sandbox read-only connection status fixture: existe y cumple contrato V1", () => {
   assert.ok(
     fs.existsSync(
@@ -16125,7 +16352,30 @@ test("ebay admin flow: muestra Seller OS humano y puente winner to listing", () 
 
   for (const expectedText of [
     "ebay-winner-to-listing-intake-bridge-v1.json",
+    "ebay-end-to-end-seller-flow-demo-v1.json",
     "eBay Seller OS",
+    "Prueba de flujo completo",
+    "Market Radar → eBay Pipeline → Products → Listing → Review/Gates",
+    "Storage Organizer",
+    "candidate_for_listing",
+    "82/100",
+    "6 prompts de imágenes",
+    "Payload dry run",
+    "eBay real: bloqueado",
+    "Generar imágenes reales desde catálogo Luna Portex antes de eBay Sandbox.",
+    "Semáforo vendedor",
+    "Flujo interno probado",
+    "Faltan imágenes, precio, shipping y returns",
+    "eBay real bloqueado",
+    "No publicar",
+    "Guía de conversión",
+    "Cómo preparar un listing que pueda vender",
+    "Producto correcto",
+    "Rentabilidad heredada",
+    "Oferta clara",
+    "7 imágenes",
+    "Blockers visibles",
+    "Rojo significa obligatorio antes de eBay real.",
     "Flujo simple",
     "Read-only",
     "Producto correcto. Listing claro. Faltantes obligatorios.",
@@ -17658,6 +17908,43 @@ test("product selection visibility: UI muestra bloque read-only y empty state se
   assert.match(
     source,
     /next_human_action/
+  )
+})
+
+test("seller os stock visibility: stock agotado del pipeline prevalece sobre fallback sin cantidad", () => {
+  const source =
+    fs.readFileSync(
+      ebayWinnerPipelinePanelPath,
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /function candidateHasConfirmedNoStockSignal/
+  )
+  assert.match(
+    source,
+    /candidateRecord\.available === false/
+  )
+  assert.match(
+    source,
+    /stockStatus === "stock_insufficient"/
+  )
+  assert.match(
+    source,
+    /stockStatus === "out_of_stock"/
+  )
+  assert.match(
+    source,
+    /Sin stock confirmado \/ no disponible/
+  )
+  assert.match(
+    source,
+    /hasConfirmedNoStockSignal[\s\S]{0,120}\? "danger"/
+  )
+  assert.match(
+    source,
+    /Usa datos visibles del pipeline\./
   )
 })
 
@@ -19201,11 +19488,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Primero protege listings activos con riesgo real/
+    /Protege primero lo que ya puede afectar ventas/
   )
   assert.match(
     source,
-    /Despues revisa stock, margen y nuevas oportunidades/
+    /Luego decide que vender, revisar o pausar/
   )
   assert.match(
     source,
@@ -19217,7 +19504,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Menu de trabajo/
+    /Mapa de trabajo/
   )
   assert.match(
     source,
@@ -19385,11 +19672,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Primero protege listings activos con riesgo real/
+    /Protege primero lo que ya puede afectar ventas/
   )
   assert.match(
     source,
-    /Despues revisa stock, margen y nuevas oportunidades/
+    /Luego decide que vender, revisar o pausar/
   )
   assert.match(
     source,
@@ -19397,11 +19684,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Listings en riesgo/
+    /Proteger listings/
   )
   assert.match(
     source,
-    /Out of Stock/
+    /Sin stock/
   )
   assert.match(
     source,
@@ -19449,7 +19736,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Bajo o validar/
+    /Validar antes/
   )
   assert.match(
     source,
@@ -19461,15 +19748,15 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /quedan fuera de Revisar ahora hasta restock/
+    /vender ahora/
   )
   assert.match(
     source,
-    /listings requieren proteccion por stock, precio o margen antes de vender/
+    /proteger/
   )
   assert.match(
     source,
-    /riesgo de stock y requieren validacion antes de vender/
+    /revisar stock/
   )
   assert.match(
     source,
@@ -19477,11 +19764,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Cambios precio\/margen/
+    /Revisar margen/
   )
   assert.match(
     source,
-    /Bloqueados o por revisar/
+    /Bloqueados/
   )
   assert.doesNotMatch(
     source,
@@ -19490,6 +19777,30 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   assert.match(
     source,
     /Lista operativa del vendedor/
+  )
+  assert.match(
+    source,
+    /Mapa de trabajo/
+  )
+  assert.match(
+    source,
+    /Vender ahora/
+  )
+  assert.match(
+    source,
+    /Stock y margen visibles\./
+  )
+  assert.match(
+    source,
+    /Revisar antes/
+  )
+  assert.match(
+    source,
+    /No listar/
+  )
+  assert.match(
+    source,
+    /Elige una cola\. Ninguna publica ni modifica eBay\./
   )
   assert.match(
     source,
@@ -19806,11 +20117,11 @@ test("market radar panel: orden operativo prioriza riesgos antes de monitoreo", 
   )
   assert.match(
     source,
-    /const sellerCommandMenuItems[\s\S]*id:[\s\S]*"listing-risk"[\s\S]*id:[\s\S]*"out-of-stock"[\s\S]*id:[\s\S]*"stock-risk"[\s\S]*id:[\s\S]*"price-margin-changes"[\s\S]*id:[\s\S]*"blocked-or-review"[\s\S]*id:[\s\S]*"reviewed"[\s\S]*id:[\s\S]*"all-monitored"/
+    /const sellerCommandMenuItems[\s\S]*id:[\s\S]*"listing-risk"[\s\S]*id:[\s\S]*"out-of-stock"[\s\S]*id:[\s\S]*"stock-risk"[\s\S]*id:[\s\S]*"price-margin-changes"[\s\S]*id:[\s\S]*"blocked-or-review"[\s\S]*id:[\s\S]*"sell-now"[\s\S]*id:[\s\S]*"reviewed"[\s\S]*id:[\s\S]*"all-monitored"/
   )
   assert.match(
     source,
-    /value:[\s\S]*"listing_risk" as const[\s\S]*value:[\s\S]*"out_of_stock" as const[\s\S]*value:[\s\S]*"stock_needs_validation" as const[\s\S]*value:[\s\S]*"actionable" as const[\s\S]*value:[\s\S]*"price_margin_changes" as const[\s\S]*value:[\s\S]*"stock_confirmed" as const/
+    /filter:[\s\S]*"listing_risk"[\s\S]*filter:[\s\S]*"out_of_stock"[\s\S]*filter:[\s\S]*"stock_needs_validation"[\s\S]*filter:[\s\S]*"price_margin_changes"[\s\S]*filter:[\s\S]*"blocked_or_review"[\s\S]*filter:[\s\S]*"actionable"/
   )
 })
 
