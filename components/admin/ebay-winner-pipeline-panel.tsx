@@ -1490,6 +1490,59 @@ function candidateHasInsufficientStock(
     quantity <= 0
 }
 
+function candidateHasConfirmedNoStockSignal(
+  candidate: EbayCandidate
+) {
+  const quantity =
+    getCandidateInventoryQuantityFromList(
+      candidate
+    )
+
+  if (
+    quantity !== null &&
+    quantity <= 0
+  ) {
+    return true
+  }
+
+  const stockStatus =
+    getCandidateStockRotationStatus(
+      candidate
+    )
+
+  if (
+    stockStatus === "stock_insufficient" ||
+    stockStatus === "out_of_stock"
+  ) {
+    return true
+  }
+
+  const candidateRecord =
+    candidate as unknown as Record<string, unknown>
+
+  if (candidateRecord.available === false) {
+    return true
+  }
+
+  const visibleStockText = [
+    candidate.blocked_reason,
+    candidate.stock_rotation_risk?.label,
+    candidate.stock_rotation_risk?.message,
+    candidate.stock_rotation_risk?.stock_guardrail?.stock_decision,
+    candidate.stock_rotation_risk?.stock_guardrail?.stock_risk_level,
+  ]
+    .filter(
+      (value): value is string =>
+        typeof value === "string"
+    )
+    .join(" ")
+    .toLowerCase()
+
+  return visibleStockText.includes("sin stock") ||
+    visibleStockText.includes("out of stock") ||
+    visibleStockText.includes("no disponible")
+}
+
 function candidateHasRotationRisk(
   candidate: EbayCandidate
 ) {
@@ -1682,6 +1735,14 @@ function getCandidateReviewSignal(
 function getCandidateStockSignal(
   candidate: EbayCandidate
 ) {
+  if (
+    candidateHasConfirmedNoStockSignal(
+      candidate
+    )
+  ) {
+    return "Stock: sin stock confirmado / no disponible"
+  }
+
   const quantity =
     getCandidateInventoryQuantityFromList(
       candidate
@@ -3868,6 +3929,13 @@ function CandidateDetailDrawer({
       detail
     )
 
+  const hasConfirmedNoStockSignal =
+    detail?.candidate
+      ? candidateHasConfirmedNoStockSignal(
+        detail.candidate
+      )
+      : false
+
   const hasVisibleStockQuantity =
     inventoryQuantity !== null
 
@@ -3876,29 +3944,50 @@ function CandidateDetailDrawer({
     detail?.pipelineReanalysisAdvisor?.inventory_scope === "variant_level"
 
   const stockDiagnosis =
-    hasVisibleStockQuantity
-      ? `Cantidad confirmada: ${formatNumber(inventoryQuantity)}`
-      : hasHighInventoryConfidence
-        ? "Inventario con confianza alta, pero cantidad no visible"
-        : "Sin cantidad confirmada"
+    hasConfirmedNoStockSignal
+      ? "Sin stock confirmado / no disponible"
+      : hasVisibleStockQuantity
+        ? `Cantidad confirmada: ${formatNumber(inventoryQuantity)}`
+        : hasHighInventoryConfidence
+          ? "Inventario con confianza alta, pero cantidad no visible"
+          : "Sin cantidad confirmada"
 
   const stockRotationStatus =
-    stockRotationRisk || {
-      label:
-        "Stock no confirmado",
-      message:
-        "Stock no confirmado. Validar inventario antes de preparar listing, pack o campana.",
-      tone:
-        "warning" as SellerDecisionTone,
-      confirmed_stock:
-        null,
-      campaign_blocked_by_stock:
-        true,
-      pack_blocked_by_stock:
-        false,
-      stock_guardrail:
-        null,
-    }
+    stockRotationRisk || (
+      hasConfirmedNoStockSignal
+        ? {
+          label:
+            "Sin stock confirmado",
+          message:
+            "Radar/Pipeline confirma producto sin stock o no disponible. No preparar listing hasta que vuelva a stock.",
+          tone:
+            "danger" as SellerDecisionTone,
+          confirmed_stock:
+            0,
+          campaign_blocked_by_stock:
+            true,
+          pack_blocked_by_stock:
+            true,
+          stock_guardrail:
+            null,
+        }
+        : {
+          label:
+            "Stock no confirmado",
+          message:
+            "Stock no confirmado. Validar inventario antes de preparar listing, pack o campana.",
+          tone:
+            "warning" as SellerDecisionTone,
+          confirmed_stock:
+            null,
+          campaign_blocked_by_stock:
+            true,
+          pack_blocked_by_stock:
+            false,
+          stock_guardrail:
+            null,
+        }
+    )
 
   const supplierStrategyAlignment = (() => {
     if (unitPassesMinimums) {
@@ -4562,7 +4651,13 @@ function CandidateDetailDrawer({
                       label="Stock"
                       value={stockDiagnosis}
                       detail="Usa datos visibles del pipeline."
-                      tone={hasVisibleStockQuantity ? "success" : "warning"}
+                      tone={
+                        hasConfirmedNoStockSignal
+                          ? "danger"
+                          : hasVisibleStockQuantity
+                            ? "success"
+                            : "warning"
+                      }
                       isCompact
                     />
                     <SummaryMetric

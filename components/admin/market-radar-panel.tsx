@@ -123,9 +123,9 @@ const catalogCoverageAuditCopy = {
 const sellerCommandCenterCopy = {
   title: "Centro de Venta eBay",
   protectFirst:
-    "Primero protege listings activos con riesgo real",
+    "Protege primero lo que ya puede afectar ventas",
   findWithinScope:
-    "Despues revisa stock, margen y nuevas oportunidades",
+    "Luego decide que vender, revisar o pausar",
   readOnlyRecommendations:
     "Recomendaciones de solo lectura",
   noAutomaticListingActions:
@@ -135,7 +135,7 @@ const sellerCommandCenterCopy = {
   referenceScenarios:
     "Escenarios de referencia",
   commandMenu:
-    "Menu de trabajo",
+    "Mapa de trabajo",
   nextBestAction:
     "Siguiente accion",
   topCardLabels: [
@@ -169,6 +169,54 @@ const sellerCommandCenterCopy = {
     "Morado: evento nuevo, reanalizar",
   ],
 }
+
+const sellerRadarFlowMap: Array<{
+  title: string
+  helper: string
+  icon: ElementType
+  className: string
+}> = [
+  {
+    title:
+      "Vender ahora",
+    helper:
+      "Stock y margen visibles.",
+    icon:
+      PackageCheck,
+    className:
+      "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-50",
+  },
+  {
+    title:
+      "Revisar antes",
+    helper:
+      "Falta validar stock, precio o margen.",
+    icon:
+      FileSearch,
+    className:
+      "border-amber-300/20 bg-amber-300/[0.08] text-amber-50",
+  },
+  {
+    title:
+      "No listar",
+    helper:
+      "Sin stock o bloqueado.",
+    icon:
+      PackageX,
+    className:
+      "border-red-300/25 bg-red-300/[0.10] text-red-50",
+  },
+  {
+    title:
+      "Monitorear",
+    helper:
+      "Revisado, sin cambio urgente.",
+    icon:
+      Radar,
+    className:
+      "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-50",
+  },
+]
 
 const sellerScenarioEventLabels: Record<string, string> = {
   low_stock:
@@ -6717,30 +6765,45 @@ export function MarketRadarPanel({
     filter: RadarRankingFilter
     count: number
     note: string
+    helper: string
+    icon: ElementType
+    className: string
   }> = [
     {
       id:
         "listing-risk",
       label:
-        "Listings en riesgo",
+        "Proteger listings",
       filter:
         "listing_risk",
       count:
         rankingCounts.listingRisk,
       note:
-        "Evitar orden riesgosa",
+        "No perder ventas",
+      helper:
+        "Stock, precio o margen cambiaron.",
+      icon:
+        ShieldAlert,
+      className:
+        "border-red-300/25 bg-red-300/[0.09] text-red-50",
     },
     {
       id:
         "out-of-stock",
       label:
-        "Out of Stock",
+        "Sin stock",
       filter:
         "out_of_stock",
       count:
         rankingCounts.outOfStock,
       note:
-        "Monitorear restock",
+        "No listar",
+      helper:
+        "Esperar restock antes de avanzar.",
+      icon:
+        PackageX,
+      className:
+        "border-red-300/25 bg-red-300/[0.09] text-red-50",
     },
     {
       id:
@@ -6752,55 +6815,103 @@ export function MarketRadarPanel({
       count:
         rankingCounts.stockNeedsValidation,
       note:
-        "Bajo o validar",
+        "Validar antes",
+      helper:
+        "Cantidad baja o no confiable.",
+      icon:
+        TriangleAlert,
+      className:
+        "border-amber-300/25 bg-amber-300/[0.08] text-amber-50",
     },
     {
       id:
         "price-margin-changes",
       label:
-        "Cambios precio/margen",
+        "Revisar margen",
       filter:
         "price_margin_changes",
       count:
         rankingCounts.priceMarginChanges,
       note:
-        "Reevaluar margen",
+        "Actualizar precio",
+      helper:
+        "Costo o precio cambió.",
+      icon:
+        DollarSign,
+      className:
+        "border-amber-300/25 bg-amber-300/[0.08] text-amber-50",
     },
     {
       id:
         "blocked-or-review",
       label:
-        "Bloqueados o por revisar",
+        "Bloqueados",
       filter:
         "blocked_or_review",
       count:
         rankingCounts.blockedOrReview,
       note:
-        "Nueva señal",
+        "No avanzar",
+      helper:
+        "Requiere resolver blocker.",
+      icon:
+        ShieldAlert,
+      className:
+        "border-red-300/25 bg-red-300/[0.09] text-red-50",
+    },
+    {
+      id:
+        "sell-now",
+      label:
+        "Vender ahora",
+      filter:
+        "actionable",
+      count:
+        rankingCounts.actionable,
+      note:
+        "Oportunidad",
+      helper:
+        "Revisar para preparar listing.",
+      icon:
+        PackageCheck,
+      className:
+        "border-emerald-300/25 bg-emerald-300/[0.09] text-emerald-50",
     },
     {
       id:
         "reviewed",
       label:
-        "Revisados sin cambios",
+        "Monitorear",
       filter:
         "reviewed",
       count:
         rankingCounts.reviewed,
       note:
-        "Monitorear",
+        "Sin cambio",
+      helper:
+        "Producto revisado, sin urgencia.",
+      icon:
+        Radar,
+      className:
+        "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-50",
     },
     {
       id:
         "all-monitored",
       label:
-        "Todo monitoreado",
+        "Todo",
       filter:
         "existing",
       count:
         rankingCounts.existing,
       note:
-        "Flujo eBay",
+        "Vista completa",
+      helper:
+        "Todos los productos monitoreados.",
+      icon:
+        Activity,
+      className:
+        "border-white/10 bg-white/[0.04] text-white/70",
     },
   ]
 
@@ -6841,6 +6952,12 @@ export function MarketRadarPanel({
         ),
       note:
         "Filtro activo",
+      helper:
+        "Vista seleccionada.",
+      icon:
+        FileSearch,
+      className:
+        "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-50",
     }
 
   return (
@@ -7186,21 +7303,45 @@ export function MarketRadarPanel({
           </p>
         </div>
 
+        <div className="mt-4 grid gap-2 md:grid-cols-4">
+          {sellerRadarFlowMap.map(item => {
+            const Icon =
+              item.icon
+
+            return (
+              <div
+                key={item.title}
+                className={`rounded-lg border p-3 ${item.className}`}
+              >
+                <div className="flex items-center gap-2">
+                  <Icon className="h-4 w-4" />
+                  <p className="text-xs font-black uppercase tracking-[0.12em]">
+                    {item.title}
+                  </p>
+                </div>
+                <p className="mt-2 text-[11px] font-semibold leading-5 opacity-70">
+                  {item.helper}
+                </p>
+              </div>
+            )
+          })}
+        </div>
+
         <div className="mt-4 rounded-lg border border-emerald-200/15 bg-black/20 p-3">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-100/50">
               {sellerCommandCenterCopy.commandMenu}
             </p>
-            <div className="flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-50/55">
-              {sellerCommandCenterCopy.queueLabels.map(label => (
-                <span key={label}>{label}</span>
-              ))}
-            </div>
+            <p className="text-[11px] font-semibold text-emerald-50/55">
+              Elige una cola. Ninguna publica ni modifica eBay.
+            </p>
           </div>
           <div className="mt-3 grid gap-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
             {sellerCommandMenuItems.map(item => {
               const isActive =
                 rankingFilter === item.filter
+              const Icon =
+                item.icon
 
               return (
                 <button
@@ -7219,11 +7360,12 @@ export function MarketRadarPanel({
                     text-left
                     transition
                     ${isActive
-                      ? "border-emerald-200/45 bg-emerald-300/[0.18] text-white"
-                      : "border-emerald-200/15 bg-black/20 text-emerald-50/75 hover:border-emerald-200/30 hover:bg-emerald-300/[0.08]"}
+                      ? item.className
+                      : "border-white/10 bg-black/20 text-white/65 hover:border-emerald-200/30 hover:bg-white/[0.04]"}
                   `}
                 >
-                  <span className="block text-[11px] font-black uppercase tracking-[0.1em]">
+                  <span className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.1em]">
+                    <Icon className="h-4 w-4" />
                     {item.label}
                   </span>
                   <span className="mt-2 block text-2xl font-black">
@@ -7231,6 +7373,9 @@ export function MarketRadarPanel({
                   </span>
                   <span className="mt-1 block text-[11px] font-semibold text-emerald-50/55">
                     {item.note}
+                  </span>
+                  <span className="mt-1 block text-[11px] leading-5 opacity-60">
+                    {item.helper}
                   </span>
                   <span className="mt-3 inline-flex rounded-md border border-emerald-200/15 bg-black/20 px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-emerald-50/65">
                     Ver productos
@@ -7460,22 +7605,22 @@ export function MarketRadarPanel({
               <h3 className="mt-2 text-xl font-black text-white">
                 Lista operativa del vendedor
               </h3>
-              <div className="mt-2 space-y-1 text-xs leading-5 text-white/45">
-                <p>
-                  {rankingCounts.actionable} productos necesitan revisión.
-                </p>
-                <p>
-                  {rankingCounts.reviewed} ya fueron revisados sin cambios nuevos.
-                </p>
-                <p>
-                  {rankingCounts.listingRisk} listings requieren proteccion por stock, precio o margen antes de vender.
-                </p>
-                <p>
-                  {rankingCounts.stockNeedsValidation} tienen riesgo de stock y requieren validacion antes de vender.
-                </p>
-                <p>
-                  {rankingCounts.outOfStock} estan sin stock confirmado y quedan fuera de Revisar ahora hasta restock.
-                </p>
+              <div className="mt-3 grid gap-2 text-xs md:grid-cols-2 xl:grid-cols-5">
+                <span className="rounded-md border border-emerald-300/20 bg-emerald-300/[0.08] px-3 py-2 font-bold text-emerald-50">
+                  {rankingCounts.actionable} vender ahora
+                </span>
+                <span className="rounded-md border border-amber-300/20 bg-amber-300/[0.08] px-3 py-2 font-bold text-amber-50">
+                  {rankingCounts.stockNeedsValidation} revisar stock
+                </span>
+                <span className="rounded-md border border-red-300/20 bg-red-300/[0.08] px-3 py-2 font-bold text-red-50">
+                  {rankingCounts.outOfStock} sin stock
+                </span>
+                <span className="rounded-md border border-red-300/20 bg-red-300/[0.08] px-3 py-2 font-bold text-red-50">
+                  {rankingCounts.listingRisk} proteger
+                </span>
+                <span className="rounded-md border border-cyan-300/20 bg-cyan-300/[0.08] px-3 py-2 font-bold text-cyan-50">
+                  {rankingCounts.reviewed} monitorear
+                </span>
               </div>
             </div>
             <div className="flex flex-col gap-3 md:items-end">
@@ -7485,13 +7630,13 @@ export function MarketRadarPanel({
                     value:
                       "listing_risk" as const,
                     label:
-                      "Listings en riesgo",
+                      "Proteger listings",
                   },
                   {
                     value:
                       "out_of_stock" as const,
                     label:
-                      "Out of Stock",
+                      "Sin stock",
                   },
                   {
                     value:
@@ -7503,13 +7648,13 @@ export function MarketRadarPanel({
                     value:
                       "actionable" as const,
                     label:
-                      "Revisar ahora",
+                      "Vender ahora",
                   },
                   {
                     value:
                       "price_margin_changes" as const,
                     label:
-                      "Precio/margen",
+                      "Revisar margen",
                   },
                   {
                     value:
@@ -7527,13 +7672,13 @@ export function MarketRadarPanel({
                     value:
                       "reviewed" as const,
                     label:
-                      "Ya revisados",
+                      "Monitorear",
                   },
                   {
                     value:
                       "existing" as const,
                     label:
-                      "Monitoreados",
+                      "Todo monitoreado",
                   },
                   {
                     value:

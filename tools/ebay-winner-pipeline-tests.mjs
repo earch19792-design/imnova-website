@@ -17911,6 +17911,43 @@ test("product selection visibility: UI muestra bloque read-only y empty state se
   )
 })
 
+test("seller os stock visibility: stock agotado del pipeline prevalece sobre fallback sin cantidad", () => {
+  const source =
+    fs.readFileSync(
+      ebayWinnerPipelinePanelPath,
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /function candidateHasConfirmedNoStockSignal/
+  )
+  assert.match(
+    source,
+    /candidateRecord\.available === false/
+  )
+  assert.match(
+    source,
+    /stockStatus === "stock_insufficient"/
+  )
+  assert.match(
+    source,
+    /stockStatus === "out_of_stock"/
+  )
+  assert.match(
+    source,
+    /Sin stock confirmado \/ no disponible/
+  )
+  assert.match(
+    source,
+    /hasConfirmedNoStockSignal[\s\S]{0,120}\? "danger"/
+  )
+  assert.match(
+    source,
+    /Usa datos visibles del pipeline\./
+  )
+})
+
 test("pipeline reactivation visibility: UI muestra ruta de desbloqueo operativa", () => {
   const source =
     fs.readFileSync(
@@ -19451,11 +19488,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Primero protege listings activos con riesgo real/
+    /Protege primero lo que ya puede afectar ventas/
   )
   assert.match(
     source,
-    /Despues revisa stock, margen y nuevas oportunidades/
+    /Luego decide que vender, revisar o pausar/
   )
   assert.match(
     source,
@@ -19467,7 +19504,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Menu de trabajo/
+    /Mapa de trabajo/
   )
   assert.match(
     source,
@@ -19635,11 +19672,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Primero protege listings activos con riesgo real/
+    /Protege primero lo que ya puede afectar ventas/
   )
   assert.match(
     source,
-    /Despues revisa stock, margen y nuevas oportunidades/
+    /Luego decide que vender, revisar o pausar/
   )
   assert.match(
     source,
@@ -19647,11 +19684,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Listings en riesgo/
+    /Proteger listings/
   )
   assert.match(
     source,
-    /Out of Stock/
+    /Sin stock/
   )
   assert.match(
     source,
@@ -19699,7 +19736,7 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Bajo o validar/
+    /Validar antes/
   )
   assert.match(
     source,
@@ -19711,15 +19748,15 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /quedan fuera de Revisar ahora hasta restock/
+    /vender ahora/
   )
   assert.match(
     source,
-    /listings requieren proteccion por stock, precio o margen antes de vender/
+    /proteger/
   )
   assert.match(
     source,
-    /riesgo de stock y requieren validacion antes de vender/
+    /revisar stock/
   )
   assert.match(
     source,
@@ -19727,11 +19764,11 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /Cambios precio\/margen/
+    /Revisar margen/
   )
   assert.match(
     source,
-    /Bloqueados o por revisar/
+    /Bloqueados/
   )
   assert.doesNotMatch(
     source,
@@ -19740,6 +19777,30 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   assert.match(
     source,
     /Lista operativa del vendedor/
+  )
+  assert.match(
+    source,
+    /Mapa de trabajo/
+  )
+  assert.match(
+    source,
+    /Vender ahora/
+  )
+  assert.match(
+    source,
+    /Stock y margen visibles\./
+  )
+  assert.match(
+    source,
+    /Revisar antes/
+  )
+  assert.match(
+    source,
+    /No listar/
+  )
+  assert.match(
+    source,
+    /Elige una cola\. Ninguna publica ni modifica eBay\./
   )
   assert.match(
     source,
@@ -20056,11 +20117,11 @@ test("market radar panel: orden operativo prioriza riesgos antes de monitoreo", 
   )
   assert.match(
     source,
-    /const sellerCommandMenuItems[\s\S]*id:[\s\S]*"listing-risk"[\s\S]*id:[\s\S]*"out-of-stock"[\s\S]*id:[\s\S]*"stock-risk"[\s\S]*id:[\s\S]*"price-margin-changes"[\s\S]*id:[\s\S]*"blocked-or-review"[\s\S]*id:[\s\S]*"reviewed"[\s\S]*id:[\s\S]*"all-monitored"/
+    /const sellerCommandMenuItems[\s\S]*id:[\s\S]*"listing-risk"[\s\S]*id:[\s\S]*"out-of-stock"[\s\S]*id:[\s\S]*"stock-risk"[\s\S]*id:[\s\S]*"price-margin-changes"[\s\S]*id:[\s\S]*"blocked-or-review"[\s\S]*id:[\s\S]*"sell-now"[\s\S]*id:[\s\S]*"reviewed"[\s\S]*id:[\s\S]*"all-monitored"/
   )
   assert.match(
     source,
-    /value:[\s\S]*"listing_risk" as const[\s\S]*value:[\s\S]*"out_of_stock" as const[\s\S]*value:[\s\S]*"stock_needs_validation" as const[\s\S]*value:[\s\S]*"actionable" as const[\s\S]*value:[\s\S]*"price_margin_changes" as const[\s\S]*value:[\s\S]*"stock_confirmed" as const/
+    /filter:[\s\S]*"listing_risk"[\s\S]*filter:[\s\S]*"out_of_stock"[\s\S]*filter:[\s\S]*"stock_needs_validation"[\s\S]*filter:[\s\S]*"price_margin_changes"[\s\S]*filter:[\s\S]*"blocked_or_review"[\s\S]*filter:[\s\S]*"actionable"/
   )
 })
 
