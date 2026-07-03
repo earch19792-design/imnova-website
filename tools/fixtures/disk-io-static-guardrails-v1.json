@@ -1,0 +1,103 @@
+{
+  "guardrailVersion": "DISK_IO_STATIC_GUARDRAILS_V1",
+  "caseId": "DISK-IO-GUARDRAILS-001",
+  "reason": "Supabase Disk IO warning and oversized mixed admin/eBay modules",
+  "status": "STATIC_GUARDRAILS_READY",
+  "mode": "STATIC_CODE_ANALYSIS_ONLY",
+  "doesNotQueryLiveSupabase": true,
+  "lightweightHubRules": {
+    "protectedHubs": [
+      "app/admin/market-radar/page.tsx",
+      "app/admin/ebay-seller-os/page.tsx",
+      "app/admin/ebay-listing/page.tsx"
+    ],
+    "mustRemainLightweight": true,
+    "loadsHeavyPanels": false,
+    "performsSupabaseRead": false,
+    "performsProductRead": false
+  },
+  "heavyPanelImportBlocklist": [
+    "market-radar-panel",
+    "ebay-winner-pipeline-panel",
+    "ebay-listing-package",
+    "components/admin/market-radar-panel",
+    "components/admin/ebay-winner-pipeline-panel"
+  ],
+  "supabaseReadBlocklistForHubs": [
+    "createClient",
+    "createServerClient",
+    "supabase",
+    ".from(",
+    ".select(",
+    "fetch(",
+    "getProducts",
+    "getPublicProducts",
+    "getProductsService",
+    "process.env"
+  ],
+  "selectStarPolicy": {
+    "enabled": true,
+    "failOnNewSelectStarOutsideAllowlist": true,
+    "scanPaths": [
+      "app",
+      "components",
+      "lib"
+    ],
+    "patterns": [
+      "select(\"*\")",
+      "select('*')"
+    ]
+  },
+  "knownDebtAllowlist": [
+    {
+      "path": "lib/products-service.ts",
+      "reason": "Existing product service select-star reads discovered in LOOP 132A; keep baseline while summary endpoints and explicit columns are planned.",
+      "plannedFixPhase": "132C-132E",
+      "maxAllowedOccurrences": 17
+    },
+    {
+      "path": "lib/ebay-winner-pipeline/service.mjs",
+      "reason": "Existing winner pipeline select-star reads discovered in LOOP 132A; keep baseline until queue summaries and pagination are introduced.",
+      "plannedFixPhase": "132C-132E",
+      "maxAllowedOccurrences": 6
+    },
+    {
+      "path": "lib/ebay-winner-pipeline/price-intelligence-service.mjs",
+      "reason": "Existing price intelligence select-star reads discovered in LOOP 132A; keep baseline until explicit field selection is introduced.",
+      "plannedFixPhase": "132C-132E",
+      "maxAllowedOccurrences": 5
+    },
+    {
+      "path": "lib/ebay-winner-pipeline/admin-read-service.mjs",
+      "reason": "Existing admin read service select-star read discovered in LOOP 132A; keep baseline until read models are narrowed.",
+      "plannedFixPhase": "132C-132E",
+      "maxAllowedOccurrences": 1
+    }
+  ],
+  "futureSummaryEndpointRules": {
+    "endpoints": [
+      "app/api/admin/market-radar/summary/route.ts",
+      "app/api/admin/ebay-seller-os/summary/route.ts",
+      "app/api/admin/ebay-listing/summary/route.ts"
+    ],
+    "requiresExplicitColumns": true,
+    "requiresLimitOrRange": true,
+    "forbidsSelectStar": true,
+    "forbidsWrites": true
+  },
+  "safetyFlags": {
+    "staticAnalysisOnly": true,
+    "liveSupabaseQueried": false,
+    "supabaseWriteUsed": false,
+    "sqlMigrationCreated": false,
+    "ebayApiUsed": false,
+    "oauthUsed": false,
+    "tokensUsed": false,
+    "realDraftCreated": false,
+    "publishedToEbay": false,
+    "openAiUsed": false,
+    "imageGenerationUsed": false,
+    "imageUploadUsed": false,
+    "heavyRuntimeLogicChanged": false
+  }
+}
