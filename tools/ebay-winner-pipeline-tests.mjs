@@ -19748,15 +19748,15 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   )
   assert.match(
     source,
-    /vender ahora/
+    /Vender ahora/
   )
   assert.match(
     source,
-    /proteger/
+    /Proteger/
   )
   assert.match(
     source,
-    /revisar stock/
+    /Revisar stock/
   )
   assert.match(
     source,
@@ -19777,6 +19777,26 @@ test("market radar panel: muestra catalog coverage parcial sin acciones nuevas",
   assert.match(
     source,
     /Lista operativa del vendedor/
+  )
+  assert.match(
+    source,
+    /Lee el mapa de izquierda a derecha: vender, revisar, pausar o monitorear\./
+  )
+  assert.match(
+    source,
+    /operationalSummaryCards/
+  )
+  assert.match(
+    source,
+    /Oportunidades para revisar listing\./
+  )
+  assert.match(
+    source,
+    /No listar hasta restock\./
+  )
+  assert.match(
+    source,
+    /Evitar ventas con riesgo\./
   )
   assert.match(
     source,

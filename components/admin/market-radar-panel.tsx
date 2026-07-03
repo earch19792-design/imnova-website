@@ -6960,6 +6960,86 @@ export function MarketRadarPanel({
         "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-50",
     }
 
+  const operationalSummaryCards: Array<{
+    id: string
+    label: string
+    count: number
+    helper: string
+    icon: ElementType
+    className: string
+  }> = [
+    {
+      id:
+        "sell-now-summary",
+      label:
+        "Vender ahora",
+      count:
+        rankingCounts.actionable,
+      helper:
+        "Oportunidades para revisar listing.",
+      icon:
+        PackageCheck,
+      className:
+        "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-50",
+    },
+    {
+      id:
+        "stock-review-summary",
+      label:
+        "Revisar stock",
+      count:
+        rankingCounts.stockNeedsValidation,
+      helper:
+        "Validar cantidad antes de vender.",
+      icon:
+        TriangleAlert,
+      className:
+        "border-amber-300/20 bg-amber-300/[0.08] text-amber-50",
+    },
+    {
+      id:
+        "out-of-stock-summary",
+      label:
+        "Sin stock",
+      count:
+        rankingCounts.outOfStock,
+      helper:
+        "No listar hasta restock.",
+      icon:
+        PackageX,
+      className:
+        "border-red-300/20 bg-red-300/[0.08] text-red-50",
+    },
+    {
+      id:
+        "protect-summary",
+      label:
+        "Proteger",
+      count:
+        rankingCounts.listingRisk,
+      helper:
+        "Evitar ventas con riesgo.",
+      icon:
+        ShieldAlert,
+      className:
+        "border-red-300/20 bg-red-300/[0.08] text-red-50",
+    },
+    {
+      id:
+        "monitor-summary",
+      label:
+        "Monitorear",
+      count:
+        rankingCounts.reviewed,
+      helper:
+        "Revisado, sin urgencia.",
+      icon:
+        Radar,
+      className:
+        "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-50",
+    },
+  ]
+
   return (
     <div className="mt-16 space-y-6">
       {isMounted &&
@@ -7605,22 +7685,36 @@ export function MarketRadarPanel({
               <h3 className="mt-2 text-xl font-black text-white">
                 Lista operativa del vendedor
               </h3>
-              <div className="mt-3 grid gap-2 text-xs md:grid-cols-2 xl:grid-cols-5">
-                <span className="rounded-md border border-emerald-300/20 bg-emerald-300/[0.08] px-3 py-2 font-bold text-emerald-50">
-                  {rankingCounts.actionable} vender ahora
-                </span>
-                <span className="rounded-md border border-amber-300/20 bg-amber-300/[0.08] px-3 py-2 font-bold text-amber-50">
-                  {rankingCounts.stockNeedsValidation} revisar stock
-                </span>
-                <span className="rounded-md border border-red-300/20 bg-red-300/[0.08] px-3 py-2 font-bold text-red-50">
-                  {rankingCounts.outOfStock} sin stock
-                </span>
-                <span className="rounded-md border border-red-300/20 bg-red-300/[0.08] px-3 py-2 font-bold text-red-50">
-                  {rankingCounts.listingRisk} proteger
-                </span>
-                <span className="rounded-md border border-cyan-300/20 bg-cyan-300/[0.08] px-3 py-2 font-bold text-cyan-50">
-                  {rankingCounts.reviewed} monitorear
-                </span>
+              <p className="mt-2 max-w-2xl text-xs font-semibold leading-5 text-white/45">
+                Lee el mapa de izquierda a derecha: vender, revisar, pausar o monitorear.
+              </p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                {operationalSummaryCards.map(card => {
+                  const Icon =
+                    card.icon
+
+                  return (
+                    <div
+                      key={card.id}
+                      className={`min-w-0 rounded-lg border p-3 ${card.className}`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="flex min-w-0 items-center gap-2 text-[11px] font-black uppercase tracking-[0.1em]">
+                          <Icon className="h-4 w-4 shrink-0" />
+                          <span className="truncate">
+                            {card.label}
+                          </span>
+                        </span>
+                        <span className="rounded-md border border-white/10 bg-black/20 px-2 py-1 text-lg font-black leading-none">
+                          {card.count}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-[11px] font-semibold leading-5 opacity-70">
+                        {card.helper}
+                      </p>
+                    </div>
+                  )
+                })}
               </div>
             </div>
             <div className="flex flex-col gap-3 md:items-end">
