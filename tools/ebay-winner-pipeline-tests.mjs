@@ -19603,6 +19603,75 @@ test("market radar manual stock confirmation: cantidad cero guarda out of stock"
   )
 })
 
+test("market radar ui: muestra evaluación persistente y próxima acción por producto", () => {
+  const source =
+    fs.readFileSync(
+      "components/admin/market-radar-panel.tsx",
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /getPipelineEvaluationLabel/
+  )
+  assert.match(
+    source,
+    /Evaluado en Pipeline/
+  )
+  assert.match(
+    source,
+    /En Pipeline, falta evaluar/
+  )
+  assert.match(
+    source,
+    /Pendiente de evaluar/
+  )
+  assert.match(
+    source,
+    /getMarketPriceEvaluationLabel/
+  )
+  assert.match(
+    source,
+    /Precio mercado:/
+  )
+  assert.match(
+    source,
+    /Precio mercado pendiente/
+  )
+  assert.match(
+    source,
+    /getSellerNextActionLabel/
+  )
+  assert.match(
+    source,
+    /Próxima acción:/
+  )
+  assert.match(
+    source,
+    /Última evaluación:/
+  )
+  assert.match(
+    source,
+    /Actualizar precio de mercado/
+  )
+  assert.match(
+    source,
+    /Reevaluar en eBay Pipeline \(dryRun\)/
+  )
+  assert.match(
+    source,
+    /Completar evaluación Pipeline \(dryRun\)/
+  )
+  assert.match(
+    source,
+    /pipeline_last_evaluated_at/
+  )
+  assert.match(
+    source,
+    /estimated_sale_price/
+  )
+})
+
 test("market radar actionable ranking: ya revisados muestra candidato sin cambios materiales", () => {
   const result =
     getMarketRadarActionability({

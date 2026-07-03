@@ -1937,6 +1937,82 @@ function getSellerOperationalReason(
   return "Revisado sin urgencia. Monitorear cambios de stock, precio o margen."
 }
 
+function getPipelineEvaluationLabel(
+  product: MarketRadarProductRow
+) {
+  if (product.pipeline_last_evaluated_at) {
+    return "Evaluado en Pipeline"
+  }
+
+  if (product.pipeline_candidate_id) {
+    return "En Pipeline, falta evaluar"
+  }
+
+  return "Pendiente de evaluar"
+}
+
+function getPipelineEvaluationClassName(
+  product: MarketRadarProductRow
+) {
+  if (product.pipeline_last_evaluated_at) {
+    return "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100"
+  }
+
+  if (product.pipeline_candidate_id) {
+    return "border-amber-300/25 bg-amber-300/[0.10] text-amber-100"
+  }
+
+  return "border-white/10 bg-white/[0.04] text-white/55"
+}
+
+function getMarketPriceEvaluationLabel(
+  product: MarketRadarProductRow
+) {
+  const estimatedSalePrice =
+    toNumber(
+      product.estimated_sale_price
+    )
+
+  if (estimatedSalePrice !== null) {
+    return `Precio mercado: ${formatCurrency(estimatedSalePrice)}`
+  }
+
+  return "Precio mercado pendiente"
+}
+
+function getSellerNextActionLabel(
+  product: MarketRadarProductRow
+) {
+  const route =
+    getSellerOperationalRoute(product)
+
+  if (route === "out_of_stock") {
+    return "Esperar restock"
+  }
+
+  if (route === "listing_risk") {
+    return "Proteger listing"
+  }
+
+  if (route === "stock_needs_validation") {
+    return "Confirmar cantidad"
+  }
+
+  if (route === "price_margin_changes") {
+    return "Revisar margen"
+  }
+
+  if (route === "blocked_or_review") {
+    return "Resolver bloqueo"
+  }
+
+  if (route === "actionable") {
+    return "Preparar venta"
+  }
+
+  return "Monitorear"
+}
+
 function getStockValidationLabel(
   product: MarketRadarProductRow
 ) {
@@ -4448,6 +4524,14 @@ function ProductRow({
     getProductPreviewImageUrl(
       product
     )
+  const estimatedSalePrice =
+    toNumber(
+      product.estimated_sale_price
+    )
+  const pipelineEvaluated =
+    Boolean(
+      product.pipeline_last_evaluated_at
+    )
 
   return (
     <tr
@@ -4527,6 +4611,57 @@ function ProductRow({
               {product.sku || product.handle}
             </p>
 
+            <div className="mt-3 grid gap-2 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+              <div className="flex flex-wrap gap-2">
+                <span
+                  className={`
+                    inline-flex
+                    items-center
+                    gap-1.5
+                    rounded-md
+                    border
+                    px-2
+                    py-1
+                    text-[10px]
+                    font-black
+                    uppercase
+                    tracking-[0.12em]
+                    ${getPipelineEvaluationClassName(product)}
+                  `}
+                >
+                  {pipelineEvaluated ? (
+                    <CheckCircle2 className="h-3 w-3" />
+                  ) : (
+                    <Clock3 className="h-3 w-3" />
+                  )}
+                  {getPipelineEvaluationLabel(product)}
+                </span>
+                <span className="rounded-md border border-cyan-300/20 bg-cyan-300/[0.08] px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-cyan-50">
+                  {getMarketPriceEvaluationLabel(product)}
+                </span>
+              </div>
+              <div className="grid gap-1 text-[11px] leading-5 text-white/50 sm:grid-cols-2">
+                <p>
+                  Resultado:{" "}
+                  <span className="font-semibold text-white/75">
+                    {getActionableReasonLabel(product)}
+                  </span>
+                </p>
+                <p>
+                  Próxima acción:{" "}
+                  <span className="font-semibold text-white/75">
+                    {getSellerNextActionLabel(product)}
+                  </span>
+                </p>
+              </div>
+              {product.pipeline_last_evaluated_at ? (
+                <p className="text-[11px] text-white/35">
+                  Última evaluación:{" "}
+                  {formatDate(product.pipeline_last_evaluated_at)}
+                </p>
+              ) : null}
+            </div>
+
             <div className="mt-4">
               <div className="flex flex-wrap gap-2">
                 <button
@@ -4552,7 +4687,9 @@ function ProductRow({
                   "
                 >
                   <DollarSign className="h-3.5 w-3.5" />
-                  Agregar precio de mercado
+                  {estimatedSalePrice === null
+                    ? "Agregar precio de mercado"
+                    : "Actualizar precio de mercado"}
                 </button>
 
                 <button
@@ -4589,7 +4726,11 @@ function ProductRow({
                   />
                   {isEvaluating
                     ? "Evaluando"
-                    : "Evaluar en eBay Pipeline (dryRun)"}
+                    : pipelineEvaluated
+                      ? "Reevaluar en eBay Pipeline (dryRun)"
+                      : product.pipeline_candidate_id
+                        ? "Completar evaluación Pipeline (dryRun)"
+                        : "Evaluar en eBay Pipeline (dryRun)"}
                 </button>
               </div>
 
