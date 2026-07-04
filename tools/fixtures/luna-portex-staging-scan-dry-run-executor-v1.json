@@ -1,0 +1,45 @@
+{
+  "dryRunVersion": "LUNA_PORTEX_STAGING_SCAN_DRY_RUN_EXECUTOR_V1",
+  "caseId": "LUNA-PORTEX-STAGING-SCAN-DRY-RUN-001",
+  "status": "STAGING_SCAN_DRY_RUN_EXECUTOR_READY",
+  "mode": "LOCAL_FIXTURE_ONLY_NO_DB_WRITES",
+  "production": {
+    "coreOnly": true,
+    "offLimits": true,
+    "writesAllowed": false
+  },
+  "staging": {
+    "reservedForEbayPro": true,
+    "writesInThisLoop": false
+  },
+  "localVmLab": {
+    "connectedInThisLoop": false
+  },
+  "scanPolicy": {
+    "scanType": "FIRST_REAL_LUNA_PORTEX_SCAN",
+    "excludePreBaselineDemo": true,
+    "demoDataType": "PRE_BASELINE_DEMO"
+  },
+  "limits": {
+    "maxProductsPerDryRun": 20
+  },
+  "candidatePreviewPolicy": {
+    "previewOnly": true,
+    "persistCandidates": false
+  },
+  "whatsappPolicy": {
+    "dryRunDefault": true,
+    "realDeliveryUsed": false
+  },
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWrites": true,
+    "noDbConnections": true,
+    "noExternalCalls": true,
+    "noVmConnection": true,
+    "noEbayApi": true,
+    "noOpenAi": true,
+    "noMessagingRealDelivery": true,
+    "noSecretsCommitted": true
+  }
+}
