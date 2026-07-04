@@ -1,0 +1,85 @@
+{
+  "readinessVersion": "LOCAL_VM_LAB_FIRST_SCAN_READINESS_V1",
+  "caseId": "LOCAL-VM-LAB-FIRST-SCAN-READINESS-001",
+  "status": "LOCAL_VM_LAB_FIRST_SCAN_READINESS_DOCUMENTED",
+  "mode": "STATIC_READINESS_NO_CONNECTIONS",
+  "production": {
+    "productionCoreOnly": true,
+    "productionEbayProDataCleaned": true,
+    "productionTargetTablesExactRowsZero": true,
+    "productionOffLimitsForFirstScan": true
+  },
+  "staging": {
+    "stagingReservedForEbayPro": true,
+    "firstRealLunaPortexScanControlPlane": true,
+    "heavyProcessingAllowed": false
+  },
+  "localVmLab": {
+    "localVmConnectedInThisLoop": false,
+    "localVmPlannedForHeavyProcessing": true,
+    "labDbConnectionPlannedForFutureLoop": true,
+    "heavyWorkerExecutionAllowedInThisLoop": false
+  },
+  "firstScan": {
+    "firstRealLunaPortexScanReadyForPlanning": true,
+    "firstScanExecutedInThisLoop": false,
+    "baselineType": "FIRST_REAL_LUNA_PORTEX_SCAN",
+    "preBaselineDemoDataMustStayIgnored": true
+  },
+  "whatsapp": {
+    "whatsappDryRunDefault": true,
+    "realSendAllowedInThisLoop": false,
+    "coreWhatsappProductionAllowed": true,
+    "ebayProWhatsappProductionAllowed": false
+  },
+  "dataBoundaries": {
+    "stagingCanHold": [
+      "eBay Pro summaries",
+      "first real Luna Portex scan control state",
+      "candidate review state",
+      "seller action status",
+      "safe product facts shared from Core",
+      "dry-run WhatsApp seller alert previews"
+    ],
+    "localVmLabCanHold": [
+      "heavy scan batches",
+      "raw benchmark samples",
+      "large Market Radar snapshots",
+      "price intelligence working data",
+      "worker logs for lab runs",
+      "future image workflow experiments"
+    ],
+    "productionMustNeverReceive": [
+      "eBay Pro scan batches",
+      "Market Radar heavy snapshots",
+      "benchmark raw data",
+      "scanner outputs",
+      "lab worker logs",
+      "external marketplace authorization tokens",
+      "real listing drafts",
+      "publication actions"
+    ]
+  },
+  "futureRunbook": {
+    "localVmConnectionDocumentedOnly": true,
+    "connectionCreatedInThisLoop": false,
+    "requiresDedicatedLabDb": true,
+    "requiresNoSharedProductionCredentials": true,
+    "requiresOperatorApprovalBeforeConnection": true
+  },
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noDbConnectionsInThisLoop": true,
+    "noSecretsCommitted": true,
+    "noVmConnection": true,
+    "noSupabaseWrite": true,
+    "noSqlMigration": true,
+    "noEbayApi": true,
+    "noMarketplaceAuthFlow": true,
+    "noOpenAi": true,
+    "noImageGeneration": true,
+    "noUploads": true,
+    "noScraper": true,
+    "noDownloads": true
+  }
+}
