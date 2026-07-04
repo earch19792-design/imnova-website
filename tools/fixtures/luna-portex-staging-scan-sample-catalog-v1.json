@@ -1,0 +1,71 @@
+{
+  "catalogVersion": "LUNA_PORTEX_STAGING_SCAN_SAMPLE_CATALOG_V1",
+  "catalogName": "Luna Portex Local Dry Run Fixture",
+  "items": [
+    {
+      "sourceId": "LP-DRY-001",
+      "sourceName": "Luna Portex simulated catalog",
+      "scanType": "FIRST_REAL_LUNA_PORTEX_SCAN",
+      "title": "Luna Portex Modular Pendant Light",
+      "category": "lighting",
+      "estimatedCost": 24.5,
+      "estimatedRetailPrice": 59.99,
+      "stockStatus": "in_stock",
+      "stockQuantity": 18,
+      "currency": "USD",
+      "notes": "simulated first scan item"
+    },
+    {
+      "sourceId": "LP-DRY-002",
+      "sourceName": "Luna Portex simulated catalog",
+      "scanType": "FIRST_REAL_LUNA_PORTEX_SCAN",
+      "title": "Luna Portex Ceramic Wall Hook Set",
+      "category": "home decor",
+      "estimatedCost": 8.25,
+      "estimatedRetailPrice": 24.99,
+      "stockStatus": "out_of_stock",
+      "stockQuantity": 0,
+      "currency": "USD",
+      "notes": "simulated out of stock item"
+    },
+    {
+      "sourceId": "LP-DEMO-001",
+      "sourceName": "Luna Portex simulated catalog",
+      "scanType": "PRE_BASELINE_DEMO",
+      "title": "Demo Product Excluded From Baseline",
+      "category": "demo",
+      "estimatedCost": 1,
+      "estimatedRetailPrice": 2,
+      "stockStatus": "in_stock",
+      "stockQuantity": 1,
+      "currency": "USD",
+      "notes": "must be excluded"
+    },
+    {
+      "sourceId": "LP-DRY-003",
+      "sourceName": "Luna Portex simulated catalog",
+      "scanType": "FIRST_REAL_LUNA_PORTEX_SCAN",
+      "title": "",
+      "category": "kitchen",
+      "estimatedCost": null,
+      "estimatedRetailPrice": 39.99,
+      "stockStatus": "in_stock",
+      "stockQuantity": 7,
+      "currency": "USD",
+      "notes": "incomplete item for warning"
+    },
+    {
+      "sourceId": "LP-DRY-004",
+      "sourceName": "Luna Portex simulated catalog",
+      "scanType": "FIRST_REAL_LUNA_PORTEX_SCAN",
+      "title": "Luna Portex Desk Organizer",
+      "category": "office",
+      "estimatedCost": 11.75,
+      "estimatedRetailPrice": 34.5,
+      "stockStatus": "in_stock",
+      "stockQuantity": 11,
+      "currency": "USD",
+      "notes": "simulated stocked item"
+    }
+  ]
+}
