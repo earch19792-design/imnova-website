@@ -1,0 +1,111 @@
+{
+  "contractVersion": "LOCAL_VM_LAB_CONNECTION_CONTRACT_V1",
+  "caseId": "LOCAL-VM-LAB-CONNECTION-CONTRACT-001",
+  "status": "LOCAL_VM_LAB_CONNECTION_CONTRACT_READY",
+  "mode": "STATIC_CONTRACT_AND_DRY_RUN_ONLY",
+  "productionCoreOnly": true,
+  "productionEbayProDataCleaned": true,
+  "stagingReservedForEbayPro": true,
+  "localVmConnectedInThisLoop": false,
+  "localVmDryRunHarnessCreated": true,
+  "localVmNetworkCallsUsed": false,
+  "localVmDbWritesUsed": false,
+  "firstRealLunaPortexScanStillPending": true,
+  "whatsappDryRunDefault": true,
+  "secretsCommitted": false,
+  "envFilesCreated": false,
+  "futureEnvironmentVariables": [
+    {
+      "name": "LOCAL_VM_LAB_ENABLED",
+      "defaultValue": "false"
+    },
+    {
+      "name": "LOCAL_VM_LAB_HOST",
+      "defaultValue": "not_set"
+    },
+    {
+      "name": "LOCAL_VM_LAB_PORT",
+      "defaultValue": "not_set"
+    },
+    {
+      "name": "LOCAL_VM_LAB_DB_NAME",
+      "defaultValue": "not_set"
+    },
+    {
+      "name": "LOCAL_VM_LAB_DB_USER",
+      "defaultValue": "not_set"
+    },
+    {
+      "name": "LOCAL_VM_LAB_DB_SSLMODE",
+      "defaultValue": "require"
+    },
+    {
+      "name": "LOCAL_VM_LAB_DRY_RUN",
+      "defaultValue": "true"
+    },
+    {
+      "name": "EBAY_PRO_RUNTIME",
+      "defaultValue": "staging"
+    },
+    {
+      "name": "LUNA_PORTEX_SCAN_MODE",
+      "defaultValue": "FIRST_REAL_LUNA_PORTEX_SCAN"
+    }
+  ],
+  "vmAllowedWorkloads": [
+    "heavy scan batches",
+    "lab-only worker runs",
+    "raw scan simulations",
+    "benchmark experiments",
+    "large fixture processing",
+    "price intelligence working data",
+    "Luna Portex scan simulations"
+  ],
+  "productionNeverTouches": [
+    "VM/Lab database connections",
+    "heavy eBay Pro scan batches",
+    "raw benchmark data",
+    "worker scratch output",
+    "lab-only fixtures",
+    "marketplace authorization flows",
+    "real listing drafts",
+    "publication actions"
+  ],
+  "firstWorkerChecklist": [
+    "confirm Production remains Core-only and clean",
+    "confirm eBay Pro runtime remains staging/lab-only",
+    "confirm VM/Lab dry-run mode is enabled by default",
+    "confirm no real host or database locator is committed",
+    "confirm dedicated lab database exists before any future connection",
+    "confirm first worker command runs in dry-run mode first",
+    "confirm Luna Portex first scan baseline is still pending",
+    "confirm WhatsApp Seller Alerts remain dry-run"
+  ],
+  "safetyFlags": {
+    "staticContractOnly": true,
+    "dryRunHarnessOnly": true,
+    "productionWrites": false,
+    "stagingDbWrites": false,
+    "dbConnectionsInThisLoop": false,
+    "localVmConnectedInThisLoop": false,
+    "networkCallsUsed": false,
+    "sqlMigrationCreated": false,
+    "remoteDbWriteUsed": false,
+    "dbPushUsed": false,
+    "dbPullUsed": false,
+    "marketplaceApiUsed": false,
+    "marketplaceAuthUsed": false,
+    "tokensUsed": false,
+    "realDraftCreated": false,
+    "publishedToMarketplace": false,
+    "openAiUsed": false,
+    "imageGenerationUsed": false,
+    "uploadsUsed": false,
+    "scraperUsed": false,
+    "downloadsUsed": false,
+    "messagingRealDeliveryUsed": false,
+    "secretsCommitted": false,
+    "envFilesCreated": false,
+    "dumpFilesCommitted": false
+  }
+}
