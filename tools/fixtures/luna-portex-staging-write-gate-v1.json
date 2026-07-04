@@ -1,0 +1,41 @@
+{
+  "gateVersion": "LUNA_PORTEX_STAGING_WRITE_GATE_V1",
+  "caseId": "LUNA-PORTEX-STAGING-WRITE-GATE-001",
+  "status": "STAGING_WRITE_GATE_READY_NOT_EXECUTED",
+  "mode": "LOCAL_DRY_RUN_WRITE_PLAN_ONLY",
+  "production": {
+    "offLimits": true,
+    "writesAllowed": false
+  },
+  "staging": {
+    "reservedForEbayPro": true,
+    "writeExecutedInThisLoop": false,
+    "writeApprovalRequired": true
+  },
+  "scanType": "FIRST_REAL_LUNA_PORTEX_SCAN",
+  "excludesPreBaselineDemo": true,
+  "maxCandidatesPerWritePlan": 20,
+  "targetTablesAllowed": [
+    "ebay_product_candidates",
+    "ebay_candidate_scores",
+    "ebay_candidate_validations",
+    "ebay_profit_scenarios"
+  ],
+  "targetTablesForbidden": [
+    "products",
+    "subscribers",
+    "notification_logs",
+    "community tables",
+    "production tables"
+  ],
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noDbConnections": true,
+    "noExternalCalls": true,
+    "noEbayApi": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noSecretsCommitted": true
+  }
+}
