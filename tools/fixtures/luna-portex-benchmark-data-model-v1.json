@@ -1,0 +1,48 @@
+{
+  "benchmarkVersion": "LUNA_PORTEX_BENCHMARK_DATA_MODEL_DIRECT_SOURCING_PRICING_V1",
+  "status": "BENCHMARK_DATA_MODEL_READY",
+  "mode": "LOCAL_DRY_RUN_BENCHMARK_MODEL_ONLY",
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "ebayApi": {
+    "usedInThisLoop": false
+  },
+  "oauth": {
+    "usedInThisLoop": false
+  },
+  "terapeakRealData": {
+    "usedInThisLoop": false
+  },
+  "soldPriceFixture": {
+    "usedInThisLoop": true
+  },
+  "directSourcing": {
+    "included": true
+  },
+  "pricingPsychology": {
+    "included": true
+  },
+  "soldPriceIntelligence": {
+    "included": true
+  },
+  "priceWarProtection": {
+    "included": true
+  },
+  "maxBenchmarkCandidates": 10,
+  "sourceDataClass": "LOOP_143_BENCHMARK_DATA_MODEL",
+  "nextLoop": "144 — Winner Score V2 + Buy-Direct Opportunity Score",
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noEbayApi": true,
+    "noOauth": true,
+    "noTokens": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noSecretsCommitted": true
+  }
+}

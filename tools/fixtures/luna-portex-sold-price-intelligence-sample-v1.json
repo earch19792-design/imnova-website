@@ -1,0 +1,186 @@
+[
+  {
+    "candidateKey": "luna-portex:first_real_mini_scan:dm0628n",
+    "query": "DM0628N sanitized comparable",
+    "candidateSnapshot": {
+      "candidate_key": "luna-portex:first_real_mini_scan:dm0628n",
+      "supplier_variant_id": "DM0628N",
+      "title": "Luna Portex sanitized DM0628N candidate",
+      "normalized_payload": {
+        "cost": 18.5,
+        "stockStatus": "in_stock",
+        "imageCount": 1
+      },
+      "needs_data": []
+    },
+    "soldListingsSample": [
+      {
+        "title": "sanitized sold listing DM0628N comparable A",
+        "soldPrice": 34.99,
+        "shippingPrice": 5.99,
+        "totalBuyerPrice": 40.98,
+        "condition": "New",
+        "soldDate": "2026-07-01",
+        "source": "manual_sold_items_fixture"
+      },
+      {
+        "title": "sanitized sold listing DM0628N comparable B",
+        "soldPrice": 31.5,
+        "shippingPrice": 6.49,
+        "totalBuyerPrice": 37.99,
+        "condition": "New",
+        "soldDate": "2026-07-02",
+        "source": "manual_sold_items_fixture"
+      },
+      {
+        "title": "sanitized sold listing DM0628N comparable C",
+        "soldPrice": 36,
+        "shippingPrice": 4.99,
+        "totalBuyerPrice": 40.99,
+        "condition": "New",
+        "soldDate": "2026-07-04",
+        "source": "manual_sold_items_fixture"
+      }
+    ],
+    "activeCompetitionSample": [
+      {
+        "title": "sanitized active listing DM0628N low anchor",
+        "activePrice": 29.99,
+        "shippingPrice": 6.99,
+        "watchers": 2,
+        "source": "manual_active_listing_fixture"
+      },
+      {
+        "title": "sanitized active listing DM0628N quality anchor",
+        "activePrice": 38.99,
+        "shippingPrice": 4.99,
+        "watchers": 4,
+        "source": "manual_active_listing_fixture"
+      }
+    ],
+    "marketSummary": {
+      "averageSoldPrice": 34.16,
+      "medianSoldPrice": 34.99,
+      "soldCountSample": 3,
+      "activeListingsSample": 2,
+      "estimatedSellThroughRate": 0.6,
+      "priceRangeLow": 31.5,
+      "priceRangeHigh": 36
+    }
+  },
+  {
+    "candidateKey": "luna-portex:first_real_mini_scan:rustoleum-smokey-beige-12oz",
+    "query": "RUSTOLEUM-SMOKEY-BEIGE-12OZ sanitized comparable",
+    "candidateSnapshot": {
+      "candidate_key": "luna-portex:first_real_mini_scan:rustoleum-smokey-beige-12oz",
+      "supplier_variant_id": "RUSTOLEUM-SMOKEY-BEIGE-12OZ",
+      "title": "Luna Portex sanitized smokey beige candidate",
+      "normalized_payload": {
+        "cost": 9.75,
+        "stockStatus": "low_stock",
+        "imageCount": 0
+      },
+      "needs_data": [
+        "missing image"
+      ]
+    },
+    "soldListingsSample": [
+      {
+        "title": "sanitized sold listing spray finish comparable A",
+        "soldPrice": 12.99,
+        "shippingPrice": 6.99,
+        "totalBuyerPrice": 19.98,
+        "condition": "New",
+        "soldDate": "2026-07-01",
+        "source": "manual_sold_items_fixture"
+      },
+      {
+        "title": "sanitized sold listing spray finish comparable B",
+        "soldPrice": 13.49,
+        "shippingPrice": 7.49,
+        "totalBuyerPrice": 20.98,
+        "condition": "New",
+        "soldDate": "2026-07-03",
+        "source": "manual_sold_items_fixture"
+      }
+    ],
+    "activeCompetitionSample": [
+      {
+        "title": "sanitized active listing low priced spray finish",
+        "activePrice": 9.99,
+        "shippingPrice": 8.99,
+        "watchers": 7,
+        "source": "manual_active_listing_fixture"
+      },
+      {
+        "title": "sanitized active listing matched spray finish",
+        "activePrice": 14.99,
+        "shippingPrice": 6.99,
+        "watchers": 1,
+        "source": "manual_active_listing_fixture"
+      },
+      {
+        "title": "sanitized active listing premium spray finish",
+        "activePrice": 18.99,
+        "shippingPrice": 5.99,
+        "watchers": 1,
+        "source": "manual_active_listing_fixture"
+      }
+    ],
+    "marketSummary": {
+      "averageSoldPrice": 13.24,
+      "medianSoldPrice": 13.24,
+      "soldCountSample": 2,
+      "activeListingsSample": 3,
+      "estimatedSellThroughRate": 0.4,
+      "priceRangeLow": 12.99,
+      "priceRangeHigh": 13.49
+    }
+  },
+  {
+    "candidateKey": "luna-portex:first_real_mini_scan:gg-16000tsm",
+    "query": "GG-16000TSM sanitized comparable",
+    "candidateSnapshot": {
+      "candidate_key": "luna-portex:first_real_mini_scan:gg-16000tsm",
+      "supplier_variant_id": "GG-16000TSM",
+      "title": "Luna Portex sanitized GG-16000TSM candidate",
+      "normalized_payload": {
+        "cost": 68,
+        "stockStatus": "in_stock",
+        "imageCount": 0
+      },
+      "needs_data": [
+        "missing image"
+      ]
+    },
+    "soldListingsSample": [
+      {
+        "title": "sanitized sold listing GG-16000TSM single comparable",
+        "soldPrice": 89.99,
+        "shippingPrice": 12.99,
+        "totalBuyerPrice": 102.98,
+        "condition": "New",
+        "soldDate": "2026-07-05",
+        "source": "manual_sold_items_fixture"
+      }
+    ],
+    "activeCompetitionSample": [
+      {
+        "title": "sanitized active listing GG-16000TSM comparable",
+        "activePrice": 94.99,
+        "shippingPrice": 14.99,
+        "watchers": 3,
+        "source": "manual_active_listing_fixture"
+      }
+    ],
+    "marketSummary": {
+      "averageSoldPrice": 89.99,
+      "medianSoldPrice": 89.99,
+      "soldCountSample": 1,
+      "activeListingsSample": 1,
+      "estimatedSellThroughRate": 0.5,
+      "priceRangeLow": 89.99,
+      "priceRangeHigh": 89.99
+    }
+  }
+]
