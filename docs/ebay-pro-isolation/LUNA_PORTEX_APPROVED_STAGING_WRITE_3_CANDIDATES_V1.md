@@ -74,6 +74,33 @@ Dry-run mode is the default and never connects to DB. Execute mode reads existin
 
 LOOP 141 requires the LOOP 140 compatibility contract and a real read-only Staging preflight before write execution. Missing required payload columns block the write. Optional columns such as source metadata, `listableInEbay`, and `publishable` can be skipped with warnings if the real table does not expose them.
 
+## Real Staging Schema Mapping
+
+LOOP 141 writes to the existing Staging schema only. It does not add columns, create migrations, or require schema changes.
+
+For `ebay_product_candidates`:
+
+- `candidate_key` is the product candidate dedupe key.
+- `candidate_key` is set from the Luna Portex `dedupeKey`.
+- `supplier_variant_id` and `title` are required before insert/update.
+- `source_payload` stores the original adapter payload plus internal execution metadata.
+- `normalized_payload` stores normalized candidate fields plus internal execution metadata.
+- `state` is `DETECTED` or `REVIEW_PENDING`.
+- `needs_data` defaults to an empty array for the controlled LOOP 141 write.
+- `idempotency_key` is not required for `ebay_product_candidates`.
+
+For child tables:
+
+- `ebay_candidate_scores`, `ebay_candidate_validations`, and `ebay_profit_scenarios` use `idempotency_key`.
+- `candidate_id` is resolved after the product candidate row is selected, inserted, or updated.
+- Child rows are not written until exactly one product candidate `id` is available for each `candidate_key`.
+- Duplicate `candidate_key` or duplicate child `idempotency_key` rows abort the write as conflicts.
+
+Internal metadata:
+
+- `sourceDataClass`, `sourceRunId`, `executionRunId`, `listableInEbay`, `publishable`, and internal dry-run flags are not written as direct columns unless the schema provides dedicated columns.
+- Those values are stored inside JSONB payload fields such as `source_payload`, `normalized_payload`, `score_payload`, and `assumptions`.
+
 ## Post-Write Verification
 
 After any real Staging write, the executor verifies:

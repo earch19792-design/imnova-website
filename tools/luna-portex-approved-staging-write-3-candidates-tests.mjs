@@ -427,6 +427,64 @@ test("execute mode does not print Supabase secrets or full URL", () => {
   assert.equal(cliSource.includes("errors.push(stagingUrlSafety.reason)"), true);
 });
 
+test("real schema mapping uses candidate_key for product candidate dedupe", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("candidate_key:"), true);
+  assert.equal(cliSource.includes("payload.dedupeKey"), true);
+  assert.equal(cliSource.includes("supplier_variant_id:"), true);
+  assert.equal(cliSource.includes("source_payload:"), true);
+  assert.equal(cliSource.includes("normalized_payload:"), true);
+  assert.equal(cliSource.includes("state:"), true);
+  assert.equal(cliSource.includes("needs_data:"), true);
+  assert.equal(cliSource.includes("blocked_reason:"), true);
+  assert.equal(cliSource.includes(".eq(\"candidate_key\", row.candidate_key)"), true);
+  assert.equal(cliSource.includes("idempotency_key") && cliSource.includes("ebay_product_candidates: real schema preflight failed"), false);
+});
+
+test("real schema mapping requires idempotency_key on child tables only", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("`${payload.dedupeKey}:score`"), true);
+  assert.equal(cliSource.includes("`${payload.dedupeKey}:validation`"), true);
+  assert.equal(cliSource.includes("`${payload.dedupeKey}:profit`"), true);
+  assert.equal(cliSource.includes(".eq(\"idempotency_key\", idempotencyKey)"), true);
+  assert.equal(cliSource.includes("duplicated idempotency_key"), true);
+});
+
+test("child rows require candidate_id resolved after product candidate write", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("function resolveChildCandidateIds"), true);
+  assert.equal(cliSource.includes("candidate_id not resolved"), true);
+  assert.equal(cliSource.includes("candidateIdsByKey[row.candidate_key]"), true);
+  assert.equal(cliSource.includes("select(\"id,candidate_key\")"), true);
+});
+
+test("real writer does not write nonexistent metadata columns directly", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("optionalMetadataColumns"), false);
+  assert.equal(cliSource.includes(".upsert("), false);
+  assert.equal(cliSource.includes("source_payload:"), true);
+  assert.equal(cliSource.includes("normalized_payload:"), true);
+  assert.equal(cliSource.includes("score_payload:"), true);
+  assert.equal(cliSource.includes("assumptions:"), true);
+});
+
+test("duplicate candidate_key and child idempotency_key abort as conflicts", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("duplicated candidate_key"), true);
+  assert.equal(cliSource.includes("duplicated idempotency_key"), true);
+  assert.equal(cliSource.includes("idempotency pre-read blocked write"), true);
+});
+
 test("route helper points LOOP 141 to LOOP 142", async () => {
   const routeModule =
     await import(`../${routeModulePath}`);
@@ -468,7 +526,9 @@ test("process env and Supabase client are restricted to LOOP 141 CLI", () => {
   assert.equal(cliSource.includes("@supabase/supabase-js"), true);
   assert.equal(cliSource.includes("createClient"), true);
   assert.equal(cliSource.includes(".from("), true);
-  assert.equal(cliSource.includes(".upsert("), true);
+  assert.equal(cliSource.includes(".upsert("), false);
+  assert.equal(cliSource.includes(".insert("), true);
+  assert.equal(cliSource.includes(".update("), true);
   assert.equal(cliSource.includes(".select("), true);
   assert.equal(cliSource.includes("console.log"), true);
   assert.equal(cliSource.includes("SUPABASE_STAGING_SERVICE_ROLE_KEY"), true);

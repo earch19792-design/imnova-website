@@ -36,13 +36,69 @@ const allowedTables = [
   "ebay_candidate_validations",
   "ebay_profit_scenarios",
 ];
-const optionalMetadataColumns = [
-  "sourceDataClass",
-  "sourceRunId",
-  "executionRunId",
-  "listableInEbay",
-  "publishable",
+const productCandidateTable =
+  "ebay_product_candidates";
+const childTables = [
+  "ebay_candidate_scores",
+  "ebay_candidate_validations",
+  "ebay_profit_scenarios",
 ];
+const realSchemaRequiredColumns = {
+  ebay_product_candidates:
+    [
+      "id",
+      "candidate_key",
+      "supplier_variant_id",
+      "title",
+      "source_payload",
+      "normalized_payload",
+      "state",
+      "needs_data",
+      "blocked_reason",
+    ],
+  ebay_candidate_scores:
+    [
+      "candidate_id",
+      "score_version",
+      "winner_score",
+      "score_payload",
+      "calculated_at",
+      "idempotency_key",
+    ],
+  ebay_candidate_validations:
+    [
+      "candidate_id",
+      "validation_version",
+      "validation_status",
+      "required_fields",
+      "missing_fields",
+      "critical_reasons",
+      "validated_at",
+      "idempotency_key",
+    ],
+  ebay_profit_scenarios:
+    [
+      "candidate_id",
+      "scenario_version",
+      "estimated_sale_price",
+      "luna_cost",
+      "fulfillment_cost",
+      "packaging_cost",
+      "estimated_shipping_cost",
+      "estimated_ebay_fee",
+      "estimated_payment_fee",
+      "estimated_advertising_cost",
+      "return_reserve",
+      "total_estimated_cost",
+      "net_profit",
+      "net_margin_percent",
+      "roi_percent",
+      "passes_minimums",
+      "assumptions",
+      "calculated_at",
+      "idempotency_key",
+    ],
+};
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
@@ -259,47 +315,6 @@ function summarizeDryRun(writePlan) {
   };
 }
 
-function prepareRowsForRealWrite(writePlan, availableColumnsByTable) {
-  const warnings = [];
-
-  return {
-    rowsByTable:
-      Object.fromEntries(
-        allowedTables.map(tableName => {
-          const availableColumns =
-            availableColumnsByTable[tableName];
-          const rows =
-            writePlan.operations
-              .filter(operation => operation.tableName === tableName)
-              .map(operation => {
-                const row =
-                  {};
-
-                for (const [key, value] of Object.entries(operation.payload)) {
-                  if (
-                    availableColumns === null ||
-                    availableColumns.has(key) ||
-                    !optionalMetadataColumns.includes(key)
-                  ) {
-                    row[key] =
-                      value;
-                    continue;
-                  }
-
-                  warnings.push(`${tableName}.${key}: optional column not available in real schema`);
-                }
-
-                return row;
-              });
-
-          return [tableName, rows];
-        }),
-      ),
-    warnings:
-      [...new Set(warnings)],
-  };
-}
-
 async function getAvailableColumnsByTable(client) {
   const availableColumnsByTable =
     {};
@@ -307,10 +322,12 @@ async function getAvailableColumnsByTable(client) {
     [];
 
   for (const tableName of allowedTables) {
+    const requiredColumns =
+      realSchemaRequiredColumns[tableName];
     const { data, error } =
       await client
         .from(tableName)
-        .select("tableName,sourceId,sourceScanType,dedupeKey,stagingOnly,dryRun,approvalRequired,writeExecuted", {
+        .select(requiredColumns.join(","), {
           count:
             "exact",
           head:
@@ -332,7 +349,7 @@ async function getAvailableColumnsByTable(client) {
 
     void data;
     availableColumnsByTable[tableName] =
-      null;
+      new Set(requiredColumns);
   }
 
   return {
@@ -345,131 +362,445 @@ async function getAvailableColumnsByTable(client) {
   };
 }
 
-function serializeForConflict(row) {
-  const clone =
-    { ...row };
-
-  delete clone.sourceRunId;
-  delete clone.executionRunId;
-
-  return JSON.stringify(clone, Object.keys(clone).sort());
+function metadataForPayload(payload) {
+  return {
+    sourceDataClass,
+    sourceRunId:
+      executionRunId,
+    executionRunId,
+    listableInEbay:
+      false,
+    publishable:
+      false,
+    stagingOnly:
+      true,
+    approvalRequired:
+      true,
+    dryRun:
+      payload.dryRun === true,
+  };
 }
 
-async function readExistingRows(client, writePlan) {
+function titleForProductPayload(payload) {
+  return (
+    payload.title ??
+    payload.sourceTitle ??
+    payload.sourceId ??
+    payload.dedupeKey ??
+    "Luna Portex staging candidate"
+  );
+}
+
+function stateForProductPayload(payload) {
+  return payload.reviewRequired === true
+    ? "REVIEW_PENDING"
+    : "DETECTED";
+}
+
+function buildRealSchemaRowsByTable(writePlan) {
+  const productOperations =
+    writePlan.operations.filter(operation => operation.tableName === productCandidateTable);
+  const scoreOperations =
+    writePlan.operations.filter(operation => operation.tableName === "ebay_candidate_scores");
+  const validationOperations =
+    writePlan.operations.filter(operation => operation.tableName === "ebay_candidate_validations");
+  const profitOperations =
+    writePlan.operations.filter(operation => operation.tableName === "ebay_profit_scenarios");
+  const productRows =
+    productOperations.map(operation => {
+      const payload =
+        operation.payload;
+      const metadata =
+        metadataForPayload(payload);
+
+      return {
+        candidate_key:
+          payload.dedupeKey,
+        supplier_variant_id:
+          payload.sourceId ?? payload.dedupeKey,
+        title:
+          titleForProductPayload(payload),
+        source_payload:
+          {
+            originalPayload:
+              payload,
+            metadata,
+          },
+        normalized_payload:
+          {
+            candidateKey:
+              payload.dedupeKey,
+            sourceId:
+              payload.sourceId,
+            sourceScanType:
+              payload.sourceScanType,
+            sellReady:
+              payload.sellReady === true,
+            reviewRequired:
+              payload.reviewRequired === true,
+            metadata,
+          },
+        state:
+          stateForProductPayload(payload),
+        needs_data:
+          [],
+        blocked_reason:
+          payload.reviewRequired === true ? "review_required" : null,
+      };
+    });
   const rowsByTable =
     {};
-  const errors =
-    [];
 
-  for (const tableName of allowedTables) {
-    const { data, error } =
-      await client
-        .from(tableName)
-        .select("dedupeKey,sourceDataClass,sourceRunId,executionRunId,tableName,sourceId,sourceScanType,dryRun,stagingOnly,approvalRequired,writeExecuted")
-        .in("dedupeKey", writePlan.dedupeKeys);
+  rowsByTable[productCandidateTable] =
+    productRows;
+  rowsByTable.ebay_candidate_scores =
+    scoreOperations.map(operation => {
+      const payload =
+        operation.payload;
+      const metadata =
+        metadataForPayload(payload);
 
-    if (error) {
-      errors.push(`${tableName}: existing row pre-read failed`);
-      rowsByTable[tableName] =
-        [];
-      continue;
-    }
+      return {
+        candidate_key:
+          payload.dedupeKey,
+        candidate_id:
+          null,
+        score_version:
+          executionRunId,
+        winner_score:
+          payload.score ?? null,
+        data_quality_score:
+          payload.score ?? null,
+        explanation:
+          payload.reviewRequired === true ? "requires review" : "first scan readiness",
+        score_payload:
+          {
+            originalPayload:
+              payload,
+            metadata,
+          },
+        calculated_at:
+          new Date().toISOString(),
+        idempotency_key:
+          `${payload.dedupeKey}:score`,
+      };
+    });
+  rowsByTable.ebay_candidate_validations =
+    validationOperations.map(operation => {
+      const payload =
+        operation.payload;
+      const metadata =
+        metadataForPayload(payload);
 
-    rowsByTable[tableName] =
-      Array.isArray(data) ? data : [];
-  }
+      return {
+        candidate_key:
+          payload.dedupeKey,
+        candidate_id:
+          null,
+        validation_version:
+          executionRunId,
+        validation_status:
+          payload.validationStatus,
+        required_fields:
+          ["candidate_key", "supplier_variant_id", "title"],
+        missing_fields:
+          [],
+        critical_reasons:
+          payload.warnings ?? [],
+        validated_at:
+          new Date().toISOString(),
+        idempotency_key:
+          `${payload.dedupeKey}:validation`,
+        metadata,
+      };
+    });
+  rowsByTable.ebay_profit_scenarios =
+    profitOperations.map(operation => {
+      const payload =
+        operation.payload;
+      const metadata =
+        metadataForPayload(payload);
+
+  return {
+        candidate_key:
+          payload.dedupeKey,
+        candidate_id:
+          null,
+        scenario_version:
+          executionRunId,
+        estimated_sale_price:
+          null,
+        luna_cost:
+          null,
+        fulfillment_cost:
+          null,
+        packaging_cost:
+          null,
+        estimated_shipping_cost:
+          null,
+        estimated_ebay_fee:
+          null,
+        estimated_payment_fee:
+          null,
+        estimated_advertising_cost:
+          null,
+        return_reserve:
+          null,
+        total_estimated_cost:
+          null,
+        net_profit:
+          null,
+        net_margin_percent:
+          null,
+        roi_percent:
+          null,
+        passes_minimums:
+          payload.profitScenarioReady === true,
+        assumptions:
+          {
+            originalPayload:
+              payload,
+            metadata,
+          },
+        calculated_at:
+          new Date().toISOString(),
+        idempotency_key:
+          `${payload.dedupeKey}:profit`,
+      };
+    });
 
   return {
     rowsByTable,
+    warnings:
+      [],
+  };
+}
+
+async function selectRowsByColumn(client, tableName, columnName, value) {
+  return client
+    .from(tableName)
+    .select("*")
+    .eq(columnName, value);
+}
+
+async function writeProductCandidateRows(client, productRows) {
+  const rowsBefore =
+    0;
+  const rowsAfter =
+    0;
+  const candidateIdsByKey =
+    {};
+  const conflicts =
+    [];
+  const duplicates =
+    [];
+  const errors =
+    [];
+  let written =
+    0;
+
+  for (const row of productRows) {
+    const existing =
+      await selectRowsByColumn(client, productCandidateTable, "candidate_key", row.candidate_key);
+
+    if (existing.error) {
+      errors.push(`${productCandidateTable}: candidate_key pre-read failed`);
+      continue;
+    }
+
+    const existingRows =
+      Array.isArray(existing.data) ? existing.data : [];
+
+    if (existingRows.length > 1) {
+      duplicates.push(`${productCandidateTable}:${row.candidate_key}`);
+      conflicts.push(`${productCandidateTable}:${row.candidate_key}: duplicated candidate_key`);
+      continue;
+    }
+
+    if (existingRows.length === 1) {
+      const updateResult =
+        await client
+          .from(productCandidateTable)
+          .update(row)
+          .eq("candidate_key", row.candidate_key)
+          .select("id,candidate_key");
+
+      if (updateResult.error) {
+        errors.push(`${productCandidateTable}: update failed`);
+        continue;
+      }
+
+      const updatedRows =
+        Array.isArray(updateResult.data) ? updateResult.data : [];
+
+      if (updatedRows.length !== 1) {
+        conflicts.push(`${productCandidateTable}:${row.candidate_key}: update did not return exactly one row`);
+        continue;
+      }
+
+      candidateIdsByKey[row.candidate_key] =
+        updatedRows[0].id;
+      written +=
+        1;
+      continue;
+    }
+
+    const insertResult =
+      await client
+        .from(productCandidateTable)
+        .insert(row)
+        .select("id,candidate_key");
+
+    if (insertResult.error) {
+      errors.push(`${productCandidateTable}: insert failed`);
+      continue;
+    }
+
+    const insertedRows =
+      Array.isArray(insertResult.data) ? insertResult.data : [];
+
+    if (insertedRows.length !== 1) {
+      conflicts.push(`${productCandidateTable}:${row.candidate_key}: insert did not return exactly one row`);
+      continue;
+    }
+
+    candidateIdsByKey[row.candidate_key] =
+      insertedRows[0].id;
+    written +=
+      1;
+  }
+
+  return {
+    candidateIdsByKey,
+    rowsBefore,
+    rowsAfter,
+    written,
+    conflicts,
+    duplicates,
     errors,
   };
 }
 
-function detectConflicts(existingRowsByTable, plannedRowsByTable) {
+function resolveChildCandidateIds(rowsByTable, candidateIdsByKey) {
+  const resolvedRowsByTable =
+    {};
+  const errors =
+    [];
+
+  for (const tableName of childTables) {
+    resolvedRowsByTable[tableName] =
+      (rowsByTable[tableName] ?? []).map(row => {
+        const candidateId =
+          candidateIdsByKey[row.candidate_key];
+
+        if (!candidateId) {
+          errors.push(`${tableName}:${row.candidate_key}: candidate_id not resolved`);
+        }
+
+        const resolvedRow =
+          { ...row };
+
+        delete resolvedRow.candidate_key;
+        delete resolvedRow.metadata;
+        resolvedRow.candidate_id =
+          candidateId ?? null;
+
+        return resolvedRow;
+      });
+  }
+
+  return {
+    rowsByTable:
+      resolvedRowsByTable,
+    errors,
+  };
+}
+
+async function selectRowsByIdempotencyKey(client, tableName, idempotencyKey) {
+  return client
+    .from(tableName)
+    .select("*")
+    .eq("idempotency_key", idempotencyKey);
+}
+
+async function writeChildRows(client, childRowsByTable) {
+  const writtenByTable =
+    {};
+  const errors =
+    [];
   const conflicts =
     [];
   const duplicates =
     [];
 
-  for (const tableName of allowedTables) {
-    const existingRows =
-      existingRowsByTable[tableName] ?? [];
-    const seen =
-      new Set();
+  for (const tableName of childTables) {
+    const rows =
+      childRowsByTable[tableName] ?? [];
 
-    for (const existingRow of existingRows) {
-      const dedupeKey =
-        existingRow.dedupeKey;
+    writtenByTable[tableName] =
+      0;
 
-      if (seen.has(dedupeKey)) {
-        duplicates.push(`${tableName}:${dedupeKey}`);
-      }
+    for (const row of rows) {
+      const existing =
+        await selectRowsByIdempotencyKey(client, tableName, row.idempotency_key);
 
-      seen.add(dedupeKey);
-
-      if (
-        existingRow.sourceDataClass &&
-        existingRow.sourceDataClass !== sourceDataClass
-      ) {
-        conflicts.push(`${tableName}:${dedupeKey}: sourceDataClass mismatch`);
+      if (existing.error) {
+        errors.push(`${tableName}: idempotency pre-read failed`);
         continue;
       }
 
-      const plannedRow =
-        (plannedRowsByTable[tableName] ?? []).find(row => row.dedupeKey === dedupeKey);
+      const existingRows =
+        Array.isArray(existing.data) ? existing.data : [];
 
-      if (
-        plannedRow &&
-        existingRow.sourceDataClass === sourceDataClass &&
-        serializeForConflict(existingRow) !== serializeForConflict(plannedRow)
-      ) {
-        conflicts.push(`${tableName}:${dedupeKey}: payload differs`);
+      if (existingRows.length > 1) {
+        duplicates.push(`${tableName}:${row.idempotency_key}`);
+        conflicts.push(`${tableName}:${row.idempotency_key}: duplicated idempotency_key`);
+        continue;
       }
+
+      if (existingRows.length === 1) {
+        const updateResult =
+          await client
+            .from(tableName)
+            .update(row)
+            .eq("idempotency_key", row.idempotency_key)
+            .select("idempotency_key");
+
+        if (updateResult.error) {
+          errors.push(`${tableName}: update failed`);
+          continue;
+        }
+
+        writtenByTable[tableName] +=
+          1;
+        continue;
+      }
+
+      const insertResult =
+        await client
+          .from(tableName)
+          .insert(row)
+          .select("idempotency_key");
+
+      if (insertResult.error) {
+        errors.push(`${tableName}: insert failed`);
+        continue;
+      }
+
+      writtenByTable[tableName] +=
+        1;
     }
-  }
-
-  return {
-    conflicts,
-    duplicates,
-  };
-}
-
-async function upsertRows(client, rowsByTable) {
-  const writtenByTable =
-    {};
-  const errors =
-    [];
-
-  for (const tableName of allowedTables) {
-    const rows =
-      rowsByTable[tableName] ?? [];
-    const { data, error } =
-      await client
-        .from(tableName)
-        .upsert(rows, {
-          onConflict:
-            "dedupeKey",
-        })
-        .select("dedupeKey");
-
-    if (error) {
-      errors.push(`${tableName}: upsert failed`);
-      writtenByTable[tableName] =
-        0;
-      continue;
-    }
-
-    writtenByTable[tableName] =
-      Array.isArray(data) ? data.length : rows.length;
   }
 
   return {
     writtenByTable,
+    conflicts,
+    duplicates,
     errors,
   };
 }
 
-async function verifyPostWrite(client, writePlan) {
+async function verifyPostWrite(client, writePlan, candidateIdsByKey) {
   const rowsAfterByTable =
     {};
   const duplicates =
@@ -477,12 +808,50 @@ async function verifyPostWrite(client, writePlan) {
   const errors =
     [];
 
-  for (const tableName of allowedTables) {
+  const productRows =
+    await client
+      .from(productCandidateTable)
+      .select("id,candidate_key")
+      .in("candidate_key", writePlan.dedupeKeys);
+
+  if (productRows.error) {
+    errors.push(`${productCandidateTable}: post-write verification failed`);
+    rowsAfterByTable[productCandidateTable] =
+      0;
+  } else {
+    const rows =
+      Array.isArray(productRows.data) ? productRows.data : [];
+    const keys =
+      rows.map(row => row.candidate_key);
+
+    for (const key of keys) {
+      if (keys.filter(candidateKey => candidateKey === key).length > 1) {
+        duplicates.push(`${productCandidateTable}:${key}`);
+      }
+    }
+
+    rowsAfterByTable[productCandidateTable] =
+      rows.length;
+  }
+
+  for (const tableName of childTables) {
+    const idempotencyKeys =
+      writePlan.dedupeKeys.map(dedupeKey => {
+        if (tableName === "ebay_candidate_scores") {
+          return `${dedupeKey}:score`;
+        }
+
+        if (tableName === "ebay_candidate_validations") {
+          return `${dedupeKey}:validation`;
+        }
+
+        return `${dedupeKey}:profit`;
+      });
     const { data, error } =
       await client
         .from(tableName)
-        .select("dedupeKey,sourceRunId,executionRunId")
-        .in("dedupeKey", writePlan.dedupeKeys);
+        .select("candidate_id,idempotency_key")
+        .in("idempotency_key", idempotencyKeys);
 
     if (error) {
       errors.push(`${tableName}: post-write verification failed`);
@@ -494,11 +863,17 @@ async function verifyPostWrite(client, writePlan) {
     const rows =
       Array.isArray(data) ? data : [];
     const keys =
-      rows.map(row => row.dedupeKey);
+      rows.map(row => row.idempotency_key);
 
     for (const key of keys) {
       if (keys.filter(candidateKey => candidateKey === key).length > 1) {
         duplicates.push(`${tableName}:${key}`);
+      }
+    }
+
+    for (const row of rows) {
+      if (!Object.values(candidateIdsByKey).includes(row.candidate_id)) {
+        errors.push(`${tableName}:${row.idempotency_key}: candidate_id mismatch`);
       }
     }
 
@@ -600,38 +975,32 @@ async function runExecuteMode(pipeline) {
   }
 
   const preparedRows =
-    prepareRowsForRealWrite(
+    buildRealSchemaRowsByTable(
       pipeline.writePlan,
       preflight.availableColumnsByTable,
     );
   executeSummary.warnings.push(...preparedRows.warnings);
 
-  const existing =
-    await readExistingRows(client, pipeline.writePlan);
-  executeSummary.errors.push(...existing.errors);
-  executeSummary.rowsBeforeByTable =
-    Object.fromEntries(
-      allowedTables.map(tableName => [
-        tableName,
-        (existing.rowsByTable[tableName] ?? []).length,
-      ]),
+  const productWrite =
+    await writeProductCandidateRows(
+      client,
+      preparedRows.rowsByTable[productCandidateTable] ?? [],
     );
-
-  const conflictReport =
-    detectConflicts(
-      existing.rowsByTable,
-      preparedRows.rowsByTable,
-    );
-
   executeSummary.duplicatesDetected =
-    conflictReport.duplicates;
+    productWrite.duplicates;
   executeSummary.conflictsDetected =
-    conflictReport.conflicts;
+    productWrite.conflicts;
+  executeSummary.errors.push(...productWrite.errors);
+  executeSummary.rowsBeforeByTable =
+    {
+      [productCandidateTable]:
+        productWrite.rowsBefore,
+    };
 
   if (
-    existing.errors.length > 0 ||
-    conflictReport.duplicates.length > 0 ||
-    conflictReport.conflicts.length > 0
+    productWrite.errors.length > 0 ||
+    productWrite.duplicates.length > 0 ||
+    productWrite.conflicts.length > 0
   ) {
     executeSummary.errors.push("idempotency pre-read blocked write");
     executeSummary.semaphore =
@@ -639,18 +1008,43 @@ async function runExecuteMode(pipeline) {
     return executeSummary;
   }
 
-  const upsert =
-    await upsertRows(
-      client,
+  const resolvedChildRows =
+    resolveChildCandidateIds(
       preparedRows.rowsByTable,
+      productWrite.candidateIdsByKey,
     );
-  executeSummary.errors.push(...upsert.errors);
-  executeSummary.operationsWrittenOrUpserted =
-    Object.values(upsert.writtenByTable).reduce((sum, count) => sum + count, 0);
-  executeSummary.candidatesWrittenOrUpserted =
-    pipeline.writePlan.dedupeKeys.length;
 
-  if (upsert.errors.length > 0) {
+  if (resolvedChildRows.errors.length > 0) {
+    executeSummary.errors.push(...resolvedChildRows.errors);
+    executeSummary.semaphore =
+      "RED";
+    return executeSummary;
+  }
+
+  const childWrite =
+    await writeChildRows(
+      client,
+      resolvedChildRows.rowsByTable,
+    );
+  executeSummary.errors.push(...childWrite.errors);
+  executeSummary.duplicatesDetected.push(...childWrite.duplicates);
+  executeSummary.conflictsDetected.push(...childWrite.conflicts);
+  executeSummary.operationsWrittenOrUpserted =
+    productWrite.written +
+    Object.values(childWrite.writtenByTable).reduce((sum, count) => sum + count, 0);
+  executeSummary.candidatesWrittenOrUpserted =
+    productWrite.written;
+  executeSummary.rowsBeforeByTable =
+    {
+      ...executeSummary.rowsBeforeByTable,
+      ...Object.fromEntries(childTables.map(tableName => [tableName, 0])),
+    };
+
+  if (
+    childWrite.errors.length > 0 ||
+    childWrite.duplicates.length > 0 ||
+    childWrite.conflicts.length > 0
+  ) {
     executeSummary.semaphore =
       "RED";
     return executeSummary;
@@ -660,6 +1054,7 @@ async function runExecuteMode(pipeline) {
     await verifyPostWrite(
       client,
       pipeline.writePlan,
+      productWrite.candidateIdsByKey,
     );
   executeSummary.rowsAfterByTable =
     verification.rowsAfterByTable;
