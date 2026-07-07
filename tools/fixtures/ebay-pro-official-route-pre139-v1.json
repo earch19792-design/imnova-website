@@ -1,0 +1,118 @@
+{
+  "version": "EBAY_PRO_OFFICIAL_ROUTE_PRE139_V1",
+  "status": "OFFICIAL_ROUTE_LOCKED",
+  "production": {
+    "frozen": true,
+    "coreOnly": true,
+    "ebayProEnabled": false
+  },
+  "staging": {
+    "reservedForEbayPro": true,
+    "futureBaseBranch": "staging/ebay-pro-seller-os"
+  },
+  "main": {
+    "stabilityRule": "no ebay pro workstream merges unless checkpoint approved"
+  },
+  "ebayDeveloper": {
+    "sandboxKeysetCreated": true,
+    "useBeforeLoop148": false
+  },
+  "whatsapp": {
+    "mobileApprovalRequired": true,
+    "realSendDefault": false
+  },
+  "lunaPortex": {
+    "automaticScanIncluded": true
+  },
+  "supplierStockGuard": {
+    "included": true
+  },
+  "directSourcing": {
+    "included": true
+  },
+  "pricingPsychology": {
+    "included": true
+  },
+  "ebayActiveListingsViewMapping": {
+    "included": true
+  },
+  "definitionOfDone": {
+    "required": true
+  },
+  "humanExplanation": {
+    "required": true
+  },
+  "semaphore": {
+    "allowedStatuses": [
+      "GREEN",
+      "YELLOW",
+      "RED"
+    ]
+  },
+  "route": [
+    {
+      "loopId": "PRE-139",
+      "label": "eBay Pro Staging Workstream Structure + Definition of Done Framework + Human Explanation Rule"
+    },
+    {
+      "loopId": "139",
+      "label": "Execution Harness con candado"
+    },
+    {
+      "loopId": "140",
+      "label": "Staging schema compatibility"
+    },
+    {
+      "loopId": "141",
+      "label": "Approved Staging Write de 3 candidatos"
+    },
+    {
+      "loopId": "142",
+      "label": "First Real Luna Portex Mini Scan + Automatic Scan Foundation"
+    },
+    {
+      "loopId": "143",
+      "label": "Benchmark Data Model + Direct Sourcing Signals + Pricing Psychology Inputs + Sold Price Intelligence"
+    },
+    {
+      "loopId": "144",
+      "label": "Winner Score V2 + Buy-Direct Opportunity Score + Price Confidence Score + Price War Risk Score + Perceived Value Score + Margin Protection Score"
+    },
+    {
+      "loopId": "145",
+      "label": "Advisor OS Candidate Review + WhatsApp Mobile Approval + Sourcing Recommendation + Pricing Advisor"
+    },
+    {
+      "loopId": "146",
+      "label": "Listing Package Builder + WhatsApp Listing Approval + Value-Based Pricing Strategy + Trust-Based Listing Optimization"
+    },
+    {
+      "loopId": "147",
+      "label": "Image Package Workflow + WhatsApp Image Alerts + Perceived Value Image Check"
+    },
+    {
+      "loopId": "148",
+      "label": "eBay Sandbox OAuth"
+    },
+    {
+      "loopId": "149",
+      "label": "eBay Sandbox Draft Listing"
+    },
+    {
+      "loopId": "150",
+      "label": "First Human-Approved Real Listing + WhatsApp Final Approval"
+    },
+    {
+      "loopId": "151",
+      "label": "Seller OS Dashboard + Mobile Decision Center + Direct Sourcing Radar + Pricing Intelligence Panel + eBay Active Listings View Mapping + Reminder: configure and order eBay Seller Hub active listing columns"
+    },
+    {
+      "loopId": "152",
+      "label": "Active Listing Monitor + eBay Listing Data Sync + Automatic Luna Portex Scan + Supplier Stock Guard + WhatsApp Seller Alerts + Price Adjustment Alerts + Price War Protection + Reminder: validate eBay Seller Hub active listing view as manual backup"
+    },
+    {
+      "loopId": "153",
+      "label": "Direct Supplier / Brand Sourcing Pipeline"
+    }
+  ]
+}
