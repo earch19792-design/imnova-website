@@ -1,0 +1,50 @@
+{
+  "advisorVersion": "LUNA_PORTEX_ADVISOR_OS_CANDIDATE_REVIEW_WHATSAPP_PRICING_V1",
+  "status": "ADVISOR_OS_CANDIDATE_REVIEW_READY",
+  "mode": "LOCAL_DRY_RUN_ADVISOR_REVIEW_ONLY",
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "ebayApi": {
+    "usedInThisLoop": false
+  },
+  "oauth": {
+    "usedInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false,
+    "previewOnly": true,
+    "mobileApprovalLayerIncluded": true
+  },
+  "advisorOs": {
+    "included": true
+  },
+  "sourcingRecommendation": {
+    "included": true
+  },
+  "pricingAdvisor": {
+    "included": true
+  },
+  "listing": {
+    "createdInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "maxAdvisorCandidates": 10,
+  "sourceDataClass": "LOOP_145_ADVISOR_OS_CANDIDATE_REVIEW",
+  "nextLoop": "146 — Listing Package Builder + WhatsApp Listing Approval + Value-Based Pricing Strategy + Trust-Based Listing Optimization",
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noEbayApi": true,
+    "noOauth": true,
+    "noTokens": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noSecretsCommitted": true
+  }
+}
