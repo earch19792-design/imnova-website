@@ -1,0 +1,51 @@
+{
+  "winnerScoreVersion": "LUNA_PORTEX_WINNER_SCORE_V2_BUY_DIRECT_OPPORTUNITY_V1",
+  "status": "WINNER_SCORE_V2_READY",
+  "mode": "LOCAL_DRY_RUN_WINNER_SCORE_ONLY",
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "ebayApi": {
+    "usedInThisLoop": false
+  },
+  "oauth": {
+    "usedInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false
+  },
+  "listing": {
+    "createdInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "benchmarkInput": {
+    "required": true
+  },
+  "directSourcing": {
+    "included": true
+  },
+  "pricingPsychology": {
+    "included": true
+  },
+  "buyDirectOpportunityScore": {
+    "included": true
+  },
+  "maxWinnerScoreCandidates": 10,
+  "sourceDataClass": "LOOP_144_WINNER_SCORE_V2",
+  "nextLoop": "145 — Advisor OS Candidate Review + WhatsApp Mobile Approval + Sourcing Recommendation + Pricing Advisor",
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noEbayApi": true,
+    "noOauth": true,
+    "noTokens": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noSecretsCommitted": true
+  }
+}
