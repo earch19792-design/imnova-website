@@ -1,0 +1,56 @@
+{
+  "schemaCompatibilityVersion": "LUNA_PORTEX_STAGING_SCHEMA_COMPATIBILITY_V1",
+  "status": "STAGING_SCHEMA_COMPATIBILITY_READY_LOCAL_SNAPSHOT_ONLY",
+  "mode": "LOCAL_DRY_RUN_SCHEMA_COMPATIBILITY_ONLY",
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "reservedForEbayPro": true,
+    "writeExecutedInThisLoop": false,
+    "realSchemaInspectionExecutedInThisLoop": false,
+    "writeApprovalRequired": true
+  },
+  "readOnlySql": {
+    "prepared": true,
+    "executedInThisLoop": false,
+    "source": "information_schema.columns"
+  },
+  "allowedTables": [
+    "ebay_product_candidates",
+    "ebay_candidate_scores",
+    "ebay_candidate_validations",
+    "ebay_profit_scenarios"
+  ],
+  "forbiddenTables": [
+    "products",
+    "subscribers",
+    "notification_logs",
+    "community tables",
+    "production tables"
+  ],
+  "expectedDryRunResult": {
+    "eligibleCandidates": 3,
+    "blockedCandidates": 1,
+    "payloadTablesChecked": 4,
+    "payloadsChecked": 12,
+    "schemaTablesChecked": 4,
+    "compatible": true,
+    "incompatibleTables": [],
+    "missingRequiredColumns": [],
+    "readOnlySqlPrepared": true,
+    "realSchemaInspectionExecutedInThisLoop": false,
+    "stagingWriteExecuted": false,
+    "approvalRequiredBeforeWrite": true
+  },
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noDbConnections": true,
+    "noExternalCalls": true,
+    "noEbayApi": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noSecretsCommitted": true
+  }
+}

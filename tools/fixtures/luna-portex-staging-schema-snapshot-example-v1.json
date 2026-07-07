@@ -1,0 +1,70 @@
+{
+  "snapshotVersion": "LUNA_PORTEX_STAGING_SCHEMA_SNAPSHOT_EXAMPLE_V1",
+  "source": "LOCAL_FIXTURE_ONLY",
+  "realSchemaInspectionExecutedInThisLoop": false,
+  "tables": [
+    {
+      "tableName": "ebay_product_candidates",
+      "columns": [
+        { "columnName": "tableName", "dataType": "text", "isNullable": false },
+        { "columnName": "sourceId", "dataType": "text", "isNullable": false },
+        { "columnName": "sourceScanType", "dataType": "text", "isNullable": false },
+        { "columnName": "dedupeKey", "dataType": "text", "isNullable": false },
+        { "columnName": "stagingOnly", "dataType": "boolean", "isNullable": false },
+        { "columnName": "dryRun", "dataType": "boolean", "isNullable": false },
+        { "columnName": "approvalRequired", "dataType": "boolean", "isNullable": false },
+        { "columnName": "writeExecuted", "dataType": "boolean", "isNullable": false },
+        { "columnName": "sellReady", "dataType": "boolean", "isNullable": false },
+        { "columnName": "reviewRequired", "dataType": "boolean", "isNullable": false },
+        { "columnName": "status", "dataType": "text", "isNullable": false }
+      ]
+    },
+    {
+      "tableName": "ebay_candidate_scores",
+      "columns": [
+        { "columnName": "tableName", "dataType": "text", "isNullable": false },
+        { "columnName": "sourceId", "dataType": "text", "isNullable": false },
+        { "columnName": "sourceScanType", "dataType": "text", "isNullable": false },
+        { "columnName": "dedupeKey", "dataType": "text", "isNullable": false },
+        { "columnName": "stagingOnly", "dataType": "boolean", "isNullable": false },
+        { "columnName": "dryRun", "dataType": "boolean", "isNullable": false },
+        { "columnName": "approvalRequired", "dataType": "boolean", "isNullable": false },
+        { "columnName": "writeExecuted", "dataType": "boolean", "isNullable": false },
+        { "columnName": "scoreType", "dataType": "text", "isNullable": false },
+        { "columnName": "score", "dataType": "numeric", "isNullable": false },
+        { "columnName": "reviewRequired", "dataType": "boolean", "isNullable": false }
+      ]
+    },
+    {
+      "tableName": "ebay_candidate_validations",
+      "columns": [
+        { "columnName": "tableName", "dataType": "text", "isNullable": false },
+        { "columnName": "sourceId", "dataType": "text", "isNullable": false },
+        { "columnName": "sourceScanType", "dataType": "text", "isNullable": false },
+        { "columnName": "dedupeKey", "dataType": "text", "isNullable": false },
+        { "columnName": "stagingOnly", "dataType": "boolean", "isNullable": false },
+        { "columnName": "dryRun", "dataType": "boolean", "isNullable": false },
+        { "columnName": "approvalRequired", "dataType": "boolean", "isNullable": false },
+        { "columnName": "writeExecuted", "dataType": "boolean", "isNullable": false },
+        { "columnName": "validationStatus", "dataType": "text", "isNullable": false },
+        { "columnName": "warnings", "dataType": "jsonb", "isNullable": true }
+      ]
+    },
+    {
+      "tableName": "ebay_profit_scenarios",
+      "columns": [
+        { "columnName": "tableName", "dataType": "text", "isNullable": false },
+        { "columnName": "sourceId", "dataType": "text", "isNullable": false },
+        { "columnName": "sourceScanType", "dataType": "text", "isNullable": false },
+        { "columnName": "dedupeKey", "dataType": "text", "isNullable": false },
+        { "columnName": "stagingOnly", "dataType": "boolean", "isNullable": false },
+        { "columnName": "dryRun", "dataType": "boolean", "isNullable": false },
+        { "columnName": "approvalRequired", "dataType": "boolean", "isNullable": false },
+        { "columnName": "writeExecuted", "dataType": "boolean", "isNullable": false },
+        { "columnName": "scenarioType", "dataType": "text", "isNullable": false },
+        { "columnName": "profitScenarioReady", "dataType": "boolean", "isNullable": false },
+        { "columnName": "requiresStockReview", "dataType": "boolean", "isNullable": false }
+      ]
+    }
+  ]
+}
