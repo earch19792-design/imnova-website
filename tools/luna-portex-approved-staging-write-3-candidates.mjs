@@ -156,6 +156,10 @@ function readExecuteConfig() {
     missingRequiredStagingEnvVars.push("SUPABASE_STAGING_SERVICE_ROLE_KEY");
   }
 
+  if (!env.EBAY_PRO_STAGING_PROJECT_REF) {
+    missingRequiredStagingEnvVars.push("EBAY_PRO_STAGING_PROJECT_REF");
+  }
+
   return {
     targetEnv:
       env.EBAY_PRO_TARGET_ENV,
@@ -165,23 +169,64 @@ function readExecuteConfig() {
       env.SUPABASE_STAGING_URL,
     supabaseStagingServiceRoleKey:
       env.SUPABASE_STAGING_SERVICE_ROLE_KEY,
+    stagingProjectRef:
+      env.EBAY_PRO_STAGING_PROJECT_REF,
     missingRequiredStagingEnvVars,
   };
 }
 
-function isSafeStagingUrl(url) {
+function isProductionMarkedUrl(url) {
   if (typeof url !== "string") {
-    return false;
+    return true;
   }
 
   const lowerUrl =
     url.toLowerCase();
 
   return (
-    lowerUrl.includes("staging") &&
-    !lowerUrl.includes("production") &&
-    !lowerUrl.includes("prod")
+    lowerUrl.includes("production") ||
+    lowerUrl.includes("prod")
   );
+}
+
+function isSafeStagingUrl(url, expectedProjectRef) {
+  if (
+    typeof url !== "string" ||
+    typeof expectedProjectRef !== "string" ||
+    expectedProjectRef.trim().length === 0
+  ) {
+    return {
+      safe:
+        false,
+      reason:
+        "missing explicit Staging project ref confirmation",
+    };
+  }
+
+  if (isProductionMarkedUrl(url)) {
+    return {
+      safe:
+        false,
+      reason:
+        "Supabase URL is marked as Production",
+    };
+  }
+
+  if (!url.includes(expectedProjectRef.trim())) {
+    return {
+      safe:
+        false,
+      reason:
+        "Supabase URL does not contain expected Staging project ref",
+    };
+  }
+
+  return {
+    safe:
+      true,
+    reason:
+      "Supabase URL matched expected Staging project ref",
+  };
 }
 
 function summarizeDryRun(writePlan) {
@@ -511,8 +556,14 @@ async function runExecuteMode(pipeline) {
     return executeSummary;
   }
 
-  if (!isSafeStagingUrl(config.supabaseStagingUrl)) {
-    executeSummary.errors.push("Supabase URL is not confirmed as Staging-safe");
+  const stagingUrlSafety =
+    isSafeStagingUrl(
+      config.supabaseStagingUrl,
+      config.stagingProjectRef,
+    );
+
+  if (!stagingUrlSafety.safe) {
+    executeSummary.errors.push(stagingUrlSafety.reason);
     executeSummary.semaphore =
       "RED";
     return executeSummary;

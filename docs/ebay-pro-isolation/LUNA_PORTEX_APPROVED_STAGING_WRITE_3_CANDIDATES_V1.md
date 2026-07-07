@@ -33,7 +33,7 @@ LOOP 141 creates the first controlled Staging write path for eBay Pro candidate 
 
 ## Production Off-Limits
 
-Any Production target is blocked. Execute mode requires `EBAY_PRO_TARGET_ENV=staging` and rejects URLs that look like Production or do not carry a Staging signal.
+Any Production target is blocked. Execute mode requires `EBAY_PRO_TARGET_ENV=staging`, rejects URLs that look like Production, and confirms the Staging project through the non-secret `EBAY_PRO_STAGING_PROJECT_REF` value. The executor must verify that `SUPABASE_STAGING_URL` contains that project ref before any connection.
 
 ## Staging-Only Write Boundary
 
@@ -41,7 +41,10 @@ The only permitted write target is Supabase Staging, and only for LOOP 141 when 
 
 - `EBAY_PRO_TARGET_ENV=staging`
 - `EBAY_PRO_STAGING_WRITE_APPROVED=APPROVE_LOOP_141_STAGING_WRITE_3_CANDIDATES`
+- `EBAY_PRO_STAGING_PROJECT_REF` set to the expected non-secret Staging project ref
 - `--execute-approved-staging-write`
+- `SUPABASE_STAGING_URL` contains the expected Staging project ref
+- `SUPABASE_STAGING_URL` is not marked as Production
 - compatible real Staging schema
 - no idempotency conflicts
 - maximum 3 candidate dedupe keys
@@ -65,7 +68,7 @@ The only permitted write target is Supabase Staging, and only for LOOP 141 when 
 
 ## Approval Gate
 
-Dry-run mode is the default and never connects to DB. Execute mode reads existing Staging env vars only after the explicit CLI flag is present. If Staging env vars are missing, the executor does not write and reports the missing env names without printing values.
+Dry-run mode is the default and never connects to DB. Execute mode reads existing Staging env vars only after the explicit CLI flag is present. If Staging env vars are missing, the executor does not write and reports the missing env names without printing values. URL confirmation is sanitized: the executor reports only whether the project ref check passed or failed, never the full Supabase URL or service role key.
 
 ## Preflight Schema Check
 

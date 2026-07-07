@@ -360,9 +360,71 @@ test("execute mode requires explicit flags and exact approval", () => {
   );
   assert.equal(cliSource.includes("SUPABASE_STAGING_URL"), true);
   assert.equal(cliSource.includes("SUPABASE_STAGING_SERVICE_ROLE_KEY"), true);
+  assert.equal(cliSource.includes("EBAY_PRO_STAGING_PROJECT_REF"), true);
   assert.equal(cliSource.includes("missingRequiredStagingEnvVars"), true);
   assert.equal(cliSource.includes("stagingWriteExecuted:"), true);
   assert.equal(cliSource.includes("false"), true);
+});
+
+test("execute mode requires explicit Staging project ref confirmation", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("EBAY_PRO_STAGING_PROJECT_REF"), true);
+  assert.equal(
+    cliSource.includes("missingRequiredStagingEnvVars.push(\"EBAY_PRO_STAGING_PROJECT_REF\")"),
+    true,
+  );
+  assert.equal(cliSource.includes("stagingProjectRef:"), true);
+  assert.equal(cliSource.includes("expectedProjectRef"), true);
+});
+
+test("execute mode blocks URLs that do not contain the expected project ref", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("function isSafeStagingUrl(url, expectedProjectRef)"), true);
+  assert.equal(cliSource.includes("!url.includes(expectedProjectRef.trim())"), true);
+  assert.equal(
+    cliSource.includes("Supabase URL does not contain expected Staging project ref"),
+    true,
+  );
+});
+
+test("execute mode still blocks Production-marked URLs before connecting", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("function isProductionMarkedUrl(url)"), true);
+  assert.equal(cliSource.includes("lowerUrl.includes(\"production\")"), true);
+  assert.equal(cliSource.includes("lowerUrl.includes(\"prod\")"), true);
+  assert.equal(cliSource.includes("Supabase URL is marked as Production"), true);
+});
+
+test("execute mode accepts URL safety only through project ref match", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(
+    cliSource.includes("Supabase URL matched expected Staging project ref"),
+    true,
+  );
+  assert.equal(cliSource.includes("stagingUrlSafety.safe"), true);
+  assert.equal(cliSource.includes("createClient("), true);
+  assert.equal(
+    cliSource.indexOf("stagingUrlSafety.safe") < cliSource.indexOf("createClient("),
+    true,
+  );
+});
+
+test("execute mode does not print Supabase secrets or full URL", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("console.log(config.supabaseStagingUrl)"), false);
+  assert.equal(cliSource.includes("console.log(config.supabaseStagingServiceRoleKey)"), false);
+  assert.equal(cliSource.includes("supabaseStagingServiceRoleKey:"), true);
+  assert.equal(cliSource.includes("errors.push(stagingUrlSafety.reason)"), true);
 });
 
 test("route helper points LOOP 141 to LOOP 142", async () => {
@@ -410,6 +472,7 @@ test("process env and Supabase client are restricted to LOOP 141 CLI", () => {
   assert.equal(cliSource.includes(".select("), true);
   assert.equal(cliSource.includes("console.log"), true);
   assert.equal(cliSource.includes("SUPABASE_STAGING_SERVICE_ROLE_KEY"), true);
+  assert.equal(cliSource.includes("EBAY_PRO_STAGING_PROJECT_REF"), true);
   assert.equal(cliSource.includes("console.log(config.supabaseStagingServiceRoleKey)"), false);
 });
 
