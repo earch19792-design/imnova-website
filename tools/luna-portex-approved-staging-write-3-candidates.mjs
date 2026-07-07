@@ -118,6 +118,9 @@ const requiredProductCandidateInsertFields = [
   "state",
   "needs_data",
 ];
+const allowedCandidateStates = [
+  "DETECTED",
+];
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
@@ -411,9 +414,46 @@ function titleForProductPayload(payload) {
 }
 
 function stateForProductPayload(payload) {
+  void payload;
+  return "DETECTED";
+}
+
+function reviewStatusForProductPayload(payload) {
   return payload.reviewRequired === true
     ? "REVIEW_PENDING"
-    : "DETECTED";
+    : "READY_FOR_REVIEW";
+}
+
+function normalizeCandidateStateForRealSchema(state) {
+  if (allowedCandidateStates.includes(state)) {
+    return {
+      state,
+      normalized:
+        false,
+      error:
+        null,
+    };
+  }
+
+  if (state === "REVIEW_PENDING") {
+    return {
+      state:
+        "DETECTED",
+      normalized:
+        true,
+      error:
+        null,
+    };
+  }
+
+  return {
+    state:
+      null,
+    normalized:
+      false,
+    error:
+      `invalid candidate state for real schema: ${state}`,
+  };
 }
 
 function isPlainObject(value) {
@@ -455,8 +495,11 @@ function validateProductCandidateInsertRow(row) {
     }
   }
 
-  if (!["DETECTED", "REVIEW_PENDING"].includes(row.state)) {
-    errors.push("missing required candidate insert field: state");
+  const stateValidation =
+    normalizeCandidateStateForRealSchema(row.state);
+
+  if (stateValidation.error !== null) {
+    errors.push(stateValidation.error);
   }
 
   if (
@@ -512,6 +555,8 @@ function buildRealSchemaRowsByTable(writePlan) {
         operation.payload;
       const metadata =
         metadataForPayload(payload);
+      const reviewStatus =
+        reviewStatusForProductPayload(payload);
 
       return {
         candidate_key:
@@ -538,6 +583,7 @@ function buildRealSchemaRowsByTable(writePlan) {
               payload.sellReady === true,
             reviewRequired:
               payload.reviewRequired === true,
+            reviewStatus,
             metadata,
           },
         state:

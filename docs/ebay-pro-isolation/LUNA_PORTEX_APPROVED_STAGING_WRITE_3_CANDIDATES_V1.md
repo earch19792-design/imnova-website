@@ -85,13 +85,29 @@ For `ebay_product_candidates`:
 - `supplier_variant_id` and `title` are required before insert/update.
 - `source_payload` stores the original adapter payload plus internal execution metadata.
 - `normalized_payload` stores normalized candidate fields plus internal execution metadata.
-- `state` is `DETECTED` or `REVIEW_PENDING`.
+- `state` uses the real-schema-safe value `DETECTED` for LOOP 141.
 - `needs_data` defaults to an empty array for the controlled LOOP 141 write.
 - `idempotency_key` is not required for `ebay_product_candidates`.
 - `candidate_id` is not written to `ebay_product_candidates`.
 - The base candidate row is locally validated before insert/update.
 - Missing `candidate_key`, `supplier_variant_id`, `title`, `source_payload`, `normalized_payload`, `state`, or `needs_data` blocks the row before Supabase insert/update.
 - The base candidate row writes only existing product candidate columns.
+
+State constraint handling:
+
+- `DETECTED` is the safe base state for product candidate writes in LOOP 141.
+- `REVIEW_PENDING` must not be written to `ebay_product_candidates.state` unless the real constraint explicitly allows it.
+- Review status is preserved in `blocked_reason`, JSONB metadata, and child validation rows.
+- If state constraint details need manual inspection, use read-only SQL only:
+
+```sql
+select
+  conname,
+  pg_get_constraintdef(oid) as constraint_definition
+from pg_constraint
+where conrelid = 'public.ebay_product_candidates'::regclass
+  and conname = 'ebay_product_candidates_state_check';
+```
 
 For child tables:
 

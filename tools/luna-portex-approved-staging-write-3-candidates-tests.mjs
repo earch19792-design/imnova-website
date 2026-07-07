@@ -525,8 +525,40 @@ test("candidate insert row validates required fields before Supabase insert", ()
   }
 
   assert.equal(cliSource.includes("missing required candidate insert field: ${field}"), true);
-  assert.equal(cliSource.includes("[\"DETECTED\", \"REVIEW_PENDING\"].includes(row.state)"), true);
+  assert.equal(cliSource.includes("allowedCandidateStates"), true);
+  assert.equal(cliSource.includes("invalid candidate state for real schema: ${state}"), true);
   assert.equal(cliSource.includes("validateProductCandidateInsertRow(row)"), true);
+});
+
+test("candidate base row uses DETECTED state for real schema", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("const allowedCandidateStates ="), true);
+  assert.equal(cliSource.includes("\"DETECTED\""), true);
+  assert.equal(cliSource.includes("return \"DETECTED\";"), true);
+  assert.equal(cliSource.includes("stateForProductPayload(payload)"), true);
+});
+
+test("candidate base row does not write REVIEW_PENDING into state by default", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("if (state === \"REVIEW_PENDING\")"), true);
+  assert.equal(cliSource.includes("state:\n        \"DETECTED\""), true);
+  assert.equal(cliSource.includes("reviewStatusForProductPayload"), true);
+  assert.equal(cliSource.includes("reviewStatus,"), true);
+});
+
+test("review status is preserved outside product candidate state", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("reviewStatusForProductPayload(payload)"), true);
+  assert.equal(cliSource.includes("\"REVIEW_PENDING\""), true);
+  assert.equal(cliSource.includes("blocked_reason:"), true);
+  assert.equal(cliSource.includes("validation_status:"), true);
+  assert.equal(cliSource.includes("normalized_payload:"), true);
 });
 
 test("candidate insert row does not include candidate_id or idempotency_key", () => {
