@@ -1,0 +1,47 @@
+{
+  "scanVersion": "LUNA_PORTEX_FIRST_REAL_MINI_SCAN_AUTOMATIC_FOUNDATION_V1",
+  "status": "MINI_SCAN_FOUNDATION_READY",
+  "mode": "LOCAL_DRY_RUN_AND_GATED_STAGING_WRITE",
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "reservedForEbayPro": true,
+    "writeAllowedInThisLoop": true,
+    "allowedWriteTables": [
+      "ebay_product_candidates"
+    ],
+    "forbiddenWriteTables": [
+      "ebay_candidate_scores",
+      "ebay_candidate_validations",
+      "ebay_profit_scenarios",
+      "products",
+      "subscribers",
+      "notification_logs",
+      "community tables",
+      "production tables"
+    ]
+  },
+  "maxMiniScanProducts": 10,
+  "realInputMustNotBeCommitted": true,
+  "automaticScanFoundation": {
+    "included": true,
+    "schedulerCreated": false,
+    "realWhatsappAlerts": false,
+    "futureCadence": {
+      "catalogSnapshot": "daily",
+      "stockAndCostWatch": "every_4_to_6_hours",
+      "activeListingStockGuard": "every_1_to_2_hours_after_loop_152"
+    }
+  },
+  "sourceDataClass": "LOOP_142_FIRST_REAL_LUNA_PORTEX_MINI_SCAN",
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noEbayApi": true,
+    "noOauth": true,
+    "noTokens": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noSecretsCommitted": true
+  }
+}

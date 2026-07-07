@@ -1,0 +1,78 @@
+[
+  {
+    "supplierProductId": "lp-sanitized-product-001",
+    "supplierVariantId": "lp-sanitized-variant-001",
+    "supplierSku": "LP-SAFE-001",
+    "title": "Luna Portex Sanitized Desk Lamp",
+    "productUrl": "https://example.invalid/luna-portex/sanitized-desk-lamp",
+    "brand": "Luna Portex",
+    "productType": "lighting",
+    "category": "home office",
+    "cost": 18.75,
+    "currency": "USD",
+    "stockQuantity": 12,
+    "stockStatus": "in_stock",
+    "weight": "2 lb",
+    "dimensions": "10 x 6 x 14 in",
+    "imageUrls": [
+      "https://example.invalid/images/luna-portex-sanitized-001.jpg"
+    ],
+    "updatedAt": "2026-07-07T00:00:00.000Z"
+  },
+  {
+    "supplierProductId": "lp-sanitized-product-002",
+    "supplierVariantId": "lp-sanitized-variant-002",
+    "supplierSku": "LP-SAFE-002",
+    "title": "Luna Portex Sanitized Ceramic Hook",
+    "productUrl": "https://example.invalid/luna-portex/sanitized-ceramic-hook",
+    "brand": "Luna Portex",
+    "productType": "home decor",
+    "category": "storage",
+    "cost": 7.1,
+    "currency": "USD",
+    "stockQuantity": 0,
+    "stockStatus": "out_of_stock",
+    "weight": "8 oz",
+    "dimensions": "4 x 2 x 2 in",
+    "imageUrls": [
+      "https://example.invalid/images/luna-portex-sanitized-002.jpg"
+    ],
+    "updatedAt": "2026-07-07T00:00:00.000Z"
+  },
+  {
+    "supplierProductId": "lp-sanitized-product-003",
+    "supplierVariantId": "lp-sanitized-variant-003",
+    "supplierSku": "LP-SAFE-003",
+    "title": "Luna Portex Sanitized Incomplete Product",
+    "productUrl": "https://example.invalid/luna-portex/sanitized-incomplete",
+    "brand": "Luna Portex",
+    "productType": "kitchen",
+    "category": "kitchen",
+    "cost": null,
+    "currency": "USD",
+    "stockQuantity": null,
+    "stockStatus": "unknown",
+    "weight": "",
+    "dimensions": "",
+    "imageUrls": [],
+    "updatedAt": "2026-07-07T00:00:00.000Z"
+  },
+  {
+    "supplierProductId": "lp-sanitized-product-004",
+    "supplierVariantId": "",
+    "supplierSku": "LP-SAFE-004",
+    "title": "Luna Portex Sanitized Missing Variant",
+    "productUrl": "https://example.invalid/luna-portex/sanitized-missing-variant",
+    "brand": "Luna Portex",
+    "productType": "office",
+    "category": "desk",
+    "cost": 11.5,
+    "currency": "USD",
+    "stockQuantity": 3,
+    "stockStatus": "low_stock",
+    "weight": "1 lb",
+    "dimensions": "8 x 4 x 4 in",
+    "imageUrls": [],
+    "updatedAt": "2026-07-07T00:00:00.000Z"
+  }
+]
