@@ -88,18 +88,29 @@ For `ebay_product_candidates`:
 - `state` is `DETECTED` or `REVIEW_PENDING`.
 - `needs_data` defaults to an empty array for the controlled LOOP 141 write.
 - `idempotency_key` is not required for `ebay_product_candidates`.
+- `candidate_id` is not written to `ebay_product_candidates`.
+- The base candidate row is locally validated before insert/update.
+- Missing `candidate_key`, `supplier_variant_id`, `title`, `source_payload`, `normalized_payload`, `state`, or `needs_data` blocks the row before Supabase insert/update.
+- The base candidate row writes only existing product candidate columns.
 
 For child tables:
 
 - `ebay_candidate_scores`, `ebay_candidate_validations`, and `ebay_profit_scenarios` use `idempotency_key`.
 - `candidate_id` is resolved after the product candidate row is selected, inserted, or updated.
 - Child rows are not written until exactly one product candidate `id` is available for each `candidate_key`.
+- If the product candidate base write fails, child writes are skipped with `candidate base write failed; child writes skipped`.
 - Duplicate `candidate_key` or duplicate child `idempotency_key` rows abort the write as conflicts.
 
 Internal metadata:
 
 - `sourceDataClass`, `sourceRunId`, `executionRunId`, `listableInEbay`, `publishable`, and internal dry-run flags are not written as direct columns unless the schema provides dedicated columns.
 - Those values are stored inside JSONB payload fields such as `source_payload`, `normalized_payload`, `score_payload`, and `assumptions`.
+
+Safe Supabase error reporting:
+
+- Supabase errors are sanitized before reporting.
+- Reports include only `table`, `operation`, `code`, `message`, `details`, `hint`, and `attemptedColumns`.
+- Reports must not include the Supabase URL, service role key, headers, or full payload body.
 
 ## Post-Write Verification
 

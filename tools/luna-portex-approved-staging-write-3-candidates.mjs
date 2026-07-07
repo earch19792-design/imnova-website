@@ -99,6 +99,25 @@ const realSchemaRequiredColumns = {
       "idempotency_key",
     ],
 };
+const productCandidateInsertColumns = [
+  "candidate_key",
+  "supplier_variant_id",
+  "title",
+  "source_payload",
+  "normalized_payload",
+  "state",
+  "needs_data",
+  "blocked_reason",
+];
+const requiredProductCandidateInsertFields = [
+  "candidate_key",
+  "supplier_variant_id",
+  "title",
+  "source_payload",
+  "normalized_payload",
+  "state",
+  "needs_data",
+];
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
@@ -397,6 +416,87 @@ function stateForProductPayload(payload) {
     : "DETECTED";
 }
 
+function isPlainObject(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  );
+}
+
+function validateProductCandidateInsertRow(row) {
+  const errors = [];
+
+  for (const field of requiredProductCandidateInsertFields) {
+    if (!Object.hasOwn(row, field)) {
+      errors.push(`missing required candidate insert field: ${field}`);
+      continue;
+    }
+
+    const value =
+      row[field];
+
+    if (
+      ["candidate_key", "supplier_variant_id", "title", "state"].includes(field) &&
+      (typeof value !== "string" || value.trim().length === 0)
+    ) {
+      errors.push(`missing required candidate insert field: ${field}`);
+    }
+
+    if (
+      ["source_payload", "normalized_payload"].includes(field) &&
+      !isPlainObject(value)
+    ) {
+      errors.push(`missing required candidate insert field: ${field}`);
+    }
+
+    if (field === "needs_data" && !Array.isArray(value)) {
+      errors.push(`missing required candidate insert field: ${field}`);
+    }
+  }
+
+  if (!["DETECTED", "REVIEW_PENDING"].includes(row.state)) {
+    errors.push("missing required candidate insert field: state");
+  }
+
+  if (
+    Object.hasOwn(row, "idempotency_key") ||
+    Object.hasOwn(row, "candidate_id")
+  ) {
+    errors.push("product candidate row contains forbidden candidate base column");
+  }
+
+  const unexpectedColumns =
+    Object.keys(row).filter(column => !productCandidateInsertColumns.includes(column));
+
+  if (unexpectedColumns.length > 0) {
+    errors.push(`product candidate row contains unknown columns: ${unexpectedColumns.join(", ")}`);
+  }
+
+  return {
+    valid:
+      errors.length === 0,
+    errors,
+  };
+}
+
+function sanitizeSupabaseError(table, operation, error, attemptedColumns = []) {
+  return {
+    table,
+    operation,
+    code:
+      typeof error?.code === "string" ? error.code : null,
+    message:
+      typeof error?.message === "string" ? error.message : "Supabase operation failed",
+    details:
+      typeof error?.details === "string" ? error.details : null,
+    hint:
+      typeof error?.hint === "string" ? error.hint : null,
+    attemptedColumns:
+      [...attemptedColumns],
+  };
+}
+
 function buildRealSchemaRowsByTable(writePlan) {
   const productOperations =
     writePlan.operations.filter(operation => operation.tableName === productCandidateTable);
@@ -584,9 +684,9 @@ async function selectRowsByColumn(client, tableName, columnName, value) {
 }
 
 async function writeProductCandidateRows(client, productRows) {
-  const rowsBefore =
+  let rowsBefore =
     0;
-  const rowsAfter =
+  let rowsAfter =
     0;
   const candidateIdsByKey =
     {};
@@ -604,16 +704,33 @@ async function writeProductCandidateRows(client, productRows) {
       await selectRowsByColumn(client, productCandidateTable, "candidate_key", row.candidate_key);
 
     if (existing.error) {
-      errors.push(`${productCandidateTable}: candidate_key pre-read failed`);
+      errors.push(
+        sanitizeSupabaseError(
+          productCandidateTable,
+          "select by candidate_key",
+          existing.error,
+          ["candidate_key"],
+        ),
+      );
       continue;
     }
 
     const existingRows =
       Array.isArray(existing.data) ? existing.data : [];
+    rowsBefore +=
+      existingRows.length;
 
     if (existingRows.length > 1) {
       duplicates.push(`${productCandidateTable}:${row.candidate_key}`);
       conflicts.push(`${productCandidateTable}:${row.candidate_key}: duplicated candidate_key`);
+      continue;
+    }
+
+    const localValidation =
+      validateProductCandidateInsertRow(row);
+
+    if (!localValidation.valid) {
+      errors.push(...localValidation.errors);
       continue;
     }
 
@@ -626,7 +743,14 @@ async function writeProductCandidateRows(client, productRows) {
           .select("id,candidate_key");
 
       if (updateResult.error) {
-        errors.push(`${productCandidateTable}: update failed`);
+        errors.push(
+          sanitizeSupabaseError(
+            productCandidateTable,
+            "update by candidate_key",
+            updateResult.error,
+            Object.keys(row),
+          ),
+        );
         continue;
       }
 
@@ -652,7 +776,14 @@ async function writeProductCandidateRows(client, productRows) {
         .select("id,candidate_key");
 
     if (insertResult.error) {
-      errors.push(`${productCandidateTable}: insert failed`);
+      errors.push(
+        sanitizeSupabaseError(
+          productCandidateTable,
+          "insert",
+          insertResult.error,
+          Object.keys(row),
+        ),
+      );
       continue;
     }
 
@@ -669,6 +800,9 @@ async function writeProductCandidateRows(client, productRows) {
     written +=
       1;
   }
+
+  rowsAfter +=
+    written;
 
   return {
     candidateIdsByKey,
@@ -745,7 +879,14 @@ async function writeChildRows(client, childRowsByTable) {
         await selectRowsByIdempotencyKey(client, tableName, row.idempotency_key);
 
       if (existing.error) {
-        errors.push(`${tableName}: idempotency pre-read failed`);
+        errors.push(
+          sanitizeSupabaseError(
+            tableName,
+            "select by idempotency_key",
+            existing.error,
+            ["idempotency_key"],
+          ),
+        );
         continue;
       }
 
@@ -767,7 +908,14 @@ async function writeChildRows(client, childRowsByTable) {
             .select("idempotency_key");
 
         if (updateResult.error) {
-          errors.push(`${tableName}: update failed`);
+          errors.push(
+            sanitizeSupabaseError(
+              tableName,
+              "update by idempotency_key",
+              updateResult.error,
+              Object.keys(row),
+            ),
+          );
           continue;
         }
 
@@ -783,7 +931,14 @@ async function writeChildRows(client, childRowsByTable) {
           .select("idempotency_key");
 
       if (insertResult.error) {
-        errors.push(`${tableName}: insert failed`);
+        errors.push(
+          sanitizeSupabaseError(
+            tableName,
+            "insert",
+            insertResult.error,
+            Object.keys(row),
+          ),
+        );
         continue;
       }
 
@@ -815,7 +970,14 @@ async function verifyPostWrite(client, writePlan, candidateIdsByKey) {
       .in("candidate_key", writePlan.dedupeKeys);
 
   if (productRows.error) {
-    errors.push(`${productCandidateTable}: post-write verification failed`);
+    errors.push(
+      sanitizeSupabaseError(
+        productCandidateTable,
+        "post-write verification select by candidate_key",
+        productRows.error,
+        ["id", "candidate_key"],
+      ),
+    );
     rowsAfterByTable[productCandidateTable] =
       0;
   } else {
@@ -854,7 +1016,14 @@ async function verifyPostWrite(client, writePlan, candidateIdsByKey) {
         .in("idempotency_key", idempotencyKeys);
 
     if (error) {
-      errors.push(`${tableName}: post-write verification failed`);
+      errors.push(
+        sanitizeSupabaseError(
+          tableName,
+          "post-write verification select by idempotency_key",
+          error,
+          ["candidate_id", "idempotency_key"],
+        ),
+      );
       rowsAfterByTable[tableName] =
         0;
       continue;
@@ -1002,7 +1171,7 @@ async function runExecuteMode(pipeline) {
     productWrite.duplicates.length > 0 ||
     productWrite.conflicts.length > 0
   ) {
-    executeSummary.errors.push("idempotency pre-read blocked write");
+    executeSummary.errors.push("candidate base write failed; child writes skipped");
     executeSummary.semaphore =
       "RED";
     return executeSummary;

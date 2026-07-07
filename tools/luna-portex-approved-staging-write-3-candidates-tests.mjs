@@ -482,7 +482,87 @@ test("duplicate candidate_key and child idempotency_key abort as conflicts", () 
 
   assert.equal(cliSource.includes("duplicated candidate_key"), true);
   assert.equal(cliSource.includes("duplicated idempotency_key"), true);
-  assert.equal(cliSource.includes("idempotency pre-read blocked write"), true);
+  assert.equal(cliSource.includes("candidate base write failed; child writes skipped"), true);
+});
+
+test("candidate insert row has only real product candidate columns", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("const productCandidateInsertColumns ="), true);
+  for (const column of [
+    "candidate_key",
+    "supplier_variant_id",
+    "title",
+    "source_payload",
+    "normalized_payload",
+    "state",
+    "needs_data",
+    "blocked_reason",
+  ]) {
+    assert.equal(cliSource.includes(`\"${column}\"`), true);
+  }
+
+  assert.equal(cliSource.includes("product candidate row contains unknown columns"), true);
+  assert.equal(cliSource.includes("Object.keys(row).filter(column => !productCandidateInsertColumns.includes(column))"), true);
+});
+
+test("candidate insert row validates required fields before Supabase insert", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("function validateProductCandidateInsertRow"), true);
+  for (const field of [
+    "candidate_key",
+    "supplier_variant_id",
+    "title",
+    "source_payload",
+    "normalized_payload",
+    "state",
+    "needs_data",
+  ]) {
+    assert.equal(cliSource.includes(`\"${field}\"`), true);
+  }
+
+  assert.equal(cliSource.includes("missing required candidate insert field: ${field}"), true);
+  assert.equal(cliSource.includes("[\"DETECTED\", \"REVIEW_PENDING\"].includes(row.state)"), true);
+  assert.equal(cliSource.includes("validateProductCandidateInsertRow(row)"), true);
+});
+
+test("candidate insert row does not include candidate_id or idempotency_key", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("Object.hasOwn(row, \"idempotency_key\")"), true);
+  assert.equal(cliSource.includes("Object.hasOwn(row, \"candidate_id\")"), true);
+  assert.equal(cliSource.includes("product candidate row contains forbidden candidate base column"), true);
+});
+
+test("Supabase errors are sanitized with table operation details and attempted columns", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("function sanitizeSupabaseError"), true);
+  assert.equal(cliSource.includes("table,"), true);
+  assert.equal(cliSource.includes("operation,"), true);
+  assert.equal(cliSource.includes("error?.code"), true);
+  assert.equal(cliSource.includes("error?.message"), true);
+  assert.equal(cliSource.includes("error?.details"), true);
+  assert.equal(cliSource.includes("error?.hint"), true);
+  assert.equal(cliSource.includes("attemptedColumns:"), true);
+  assert.equal(cliSource.includes("Object.keys(row)"), true);
+});
+
+test("candidate base insert failure skips child writes with clear message", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("candidate base write failed; child writes skipped"), true);
+  assert.equal(
+    cliSource.indexOf("candidate base write failed; child writes skipped") <
+      cliSource.indexOf("const resolvedChildRows"),
+    true,
+  );
 });
 
 test("route helper points LOOP 141 to LOOP 142", async () => {
