@@ -1,0 +1,49 @@
+{
+  "writeVersion": "LUNA_PORTEX_APPROVED_STAGING_WRITE_3_CANDIDATES_V1",
+  "status": "APPROVED_STAGING_WRITE_READY",
+  "mode": "APPROVED_STAGING_WRITE_GATED_EXECUTION",
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "reservedForEbayPro": true,
+    "writeAllowedInThisLoop": true,
+    "writeMaxCandidates": 3,
+    "writeMaxOperations": 12,
+    "realWriterRequiresExplicitApproval": true,
+    "preflightReadOnlySchemaRequired": true,
+    "postWriteVerificationRequired": true,
+    "writeExecutedByDefault": false
+  },
+  "sourceDataClass": "LOOP_141_CONTROLLED_STAGING_CANDIDATE_WRITE",
+  "scanType": "FIRST_REAL_LUNA_PORTEX_SCAN",
+  "listableInEbay": false,
+  "publishable": false,
+  "allowedTables": [
+    "ebay_product_candidates",
+    "ebay_candidate_scores",
+    "ebay_candidate_validations",
+    "ebay_profit_scenarios"
+  ],
+  "forbiddenTables": [
+    "products",
+    "subscribers",
+    "notification_logs",
+    "community tables",
+    "production tables"
+  ],
+  "expectedDedupeKeys": [
+    "luna-portex:first_real_luna_portex_scan:lp-dry-001",
+    "luna-portex:first_real_luna_portex_scan:lp-dry-002",
+    "luna-portex:first_real_luna_portex_scan:lp-dry-004"
+  ],
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noEbayApi": true,
+    "noOauth": true,
+    "noTokens": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noSecretsCommitted": true
+  }
+}

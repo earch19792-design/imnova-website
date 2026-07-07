@@ -1,0 +1,777 @@
+import assert from "node:assert/strict";
+import { readFileSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import test from "node:test";
+
+const fixturePath =
+  "tools/fixtures/luna-portex-approved-staging-write-3-candidates-v1.json";
+const catalogPath =
+  "tools/fixtures/luna-portex-staging-scan-sample-catalog-v1.json";
+const schemaSnapshotPath =
+  "tools/fixtures/luna-portex-staging-schema-snapshot-example-v1.json";
+const scanModulePath =
+  "lib/ebay/luna-portex-staging-scan-dry-run-executor.ts";
+const gateModulePath =
+  "lib/ebay/luna-portex-staging-write-gate.ts";
+const adapterModulePath =
+  "lib/ebay/luna-portex-staging-write-adapter.ts";
+const schemaModulePath =
+  "lib/ebay/luna-portex-staging-schema-compatibility.ts";
+const approvedPlanModulePath =
+  "lib/ebay/luna-portex-approved-staging-write-plan.ts";
+const routeModulePath =
+  "lib/ebay/ebay-pro-official-route.ts";
+const cliPath =
+  "tools/luna-portex-approved-staging-write-3-candidates.mjs";
+const docPath =
+  "docs/ebay-pro-isolation/LUNA_PORTEX_APPROVED_STAGING_WRITE_3_CANDIDATES_V1.md";
+
+function readText(path) {
+  return readFileSync(path, "utf8");
+}
+
+function readJson(path) {
+  return JSON.parse(readText(path));
+}
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function fileExists(path) {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function buildPayloadBundle() {
+  const scanModule =
+    await import(`../${scanModulePath}`);
+  const gateModule =
+    await import(`../${gateModulePath}`);
+  const adapterModule =
+    await import(`../${adapterModulePath}`);
+  const catalog =
+    readJson(catalogPath);
+  const scanResult =
+    scanModule.runLunaPortexStagingScanDryRun({
+      catalog:
+        catalog.items,
+      maxProductsPerDryRun:
+        20,
+    });
+  const writePlan =
+    gateModule.buildLunaPortexStagingWritePlan(scanResult);
+
+  return adapterModule.buildLunaPortexStagingWritePayloads(
+    writePlan,
+    {
+      maxPayloadCandidates:
+        20,
+    },
+  );
+}
+
+async function buildCompatibilityReport(payloadBundle) {
+  const schemaModule =
+    await import(`../${schemaModulePath}`);
+  const schemaSnapshot =
+    readJson(schemaSnapshotPath);
+
+  return schemaModule.validatePayloadBundleAgainstStagingSchema(
+    payloadBundle,
+    schemaSnapshot,
+    {
+      readOnlySqlPrepared:
+        true,
+    },
+  );
+}
+
+async function buildApprovedPlan(payloadBundle) {
+  const approvedPlanModule =
+    await import(`../${approvedPlanModulePath}`);
+  const schemaCompatibilityReport =
+    await buildCompatibilityReport(payloadBundle);
+
+  return approvedPlanModule.buildApprovedStagingWritePlan(
+    payloadBundle,
+    {
+      schemaCompatibilityReport,
+      maxCandidates:
+        3,
+      maxOperations:
+        12,
+    },
+  );
+}
+
+const fixture =
+  readJson(fixturePath);
+
+test("approved staging write fixture is ready and bounded", () => {
+  assert.equal(
+    fixture.writeVersion,
+    "LUNA_PORTEX_APPROVED_STAGING_WRITE_3_CANDIDATES_V1",
+  );
+  assert.equal(fixture.status, "APPROVED_STAGING_WRITE_READY");
+  assert.equal(fixture.production.offLimits, true);
+  assert.equal(fixture.staging.writeAllowedInThisLoop, true);
+  assert.equal(fixture.staging.writeMaxCandidates, 3);
+  assert.equal(fixture.staging.writeMaxOperations, 12);
+  assert.equal(fixture.staging.writeExecutedByDefault, false);
+  assert.deepEqual(
+    fixture.allowedTables,
+    [
+      "ebay_product_candidates",
+      "ebay_candidate_scores",
+      "ebay_candidate_validations",
+      "ebay_profit_scenarios",
+    ],
+  );
+  assert.deepEqual(
+    fixture.expectedDedupeKeys,
+    [
+      "luna-portex:first_real_luna_portex_scan:lp-dry-001",
+      "luna-portex:first_real_luna_portex_scan:lp-dry-002",
+      "luna-portex:first_real_luna_portex_scan:lp-dry-004",
+    ],
+  );
+  assert.equal(fixture.safetyFlags.noProductionWrites, true);
+  assert.equal(fixture.safetyFlags.noEbayApi, true);
+  assert.equal(fixture.safetyFlags.noOauth, true);
+  assert.equal(fixture.safetyFlags.noTokens, true);
+});
+
+test("approved write plan builds exactly three candidates and twelve operations", async () => {
+  const approvedPlanModule =
+    await import(`../${approvedPlanModulePath}`);
+  const payloadBundle =
+    await buildPayloadBundle();
+  const writePlan =
+    await buildApprovedPlan(payloadBundle);
+  const summary =
+    approvedPlanModule.summarizeApprovedStagingWritePlan(writePlan);
+
+  assert.equal(writePlan.validation.valid, true);
+  assert.equal(summary.candidatesPlanned, 3);
+  assert.equal(summary.operationsPlanned, 12);
+  assert.equal(summary.tablesPlanned, 4);
+  assert.deepEqual(summary.dedupeKeys, fixture.expectedDedupeKeys);
+  assert.equal(summary.writeExecuted, false);
+  assert.equal(summary.approvalRequired, true);
+  assert.equal(summary.stagingOnly, true);
+  assert.equal(summary.listableInEbay, false);
+  assert.equal(summary.publishable, false);
+});
+
+test("approved write plan blocks more than three candidates", async () => {
+  const payloadBundle =
+    clone(await buildPayloadBundle());
+
+  for (const tableName of fixture.allowedTables) {
+    payloadBundle.payloadsByTable[tableName].push({
+      ...payloadBundle.payloadsByTable[tableName][0],
+      sourceId:
+        "lp-dry-999",
+      dedupeKey:
+        "luna-portex:first_real_luna_portex_scan:lp-dry-999",
+    });
+  }
+
+  payloadBundle.eligibleCandidates =
+    4;
+  payloadBundle.dedupeKeys.push("luna-portex:first_real_luna_portex_scan:lp-dry-999");
+
+  const writePlan =
+    await buildApprovedPlan(payloadBundle);
+
+  assert.equal(writePlan.validation.valid, false);
+  assert.equal(
+    writePlan.validation.errors.some(error => error.includes("too many candidate")),
+    true,
+  );
+});
+
+test("approved write plan blocks more than twelve operations", async () => {
+  const payloadBundle =
+    clone(await buildPayloadBundle());
+
+  payloadBundle.payloadsByTable.ebay_product_candidates.push({
+    ...payloadBundle.payloadsByTable.ebay_product_candidates[0],
+    sourceId:
+      "lp-dry-001-extra",
+  });
+
+  const writePlan =
+    await buildApprovedPlan(payloadBundle);
+
+  assert.equal(writePlan.validation.valid, false);
+  assert.equal(
+    writePlan.validation.errors.some(error => error.includes("too many write operations")),
+    true,
+  );
+});
+
+test("approved write plan blocks missing dedupeKey", async () => {
+  const payloadBundle =
+    clone(await buildPayloadBundle());
+
+  delete payloadBundle.payloadsByTable.ebay_candidate_scores[0].dedupeKey;
+
+  const writePlan =
+    await buildApprovedPlan(payloadBundle);
+
+  assert.equal(writePlan.validation.valid, false);
+  assert.equal(
+    writePlan.validation.errors.some(error => error.includes("dedupeKey required")),
+    true,
+  );
+});
+
+test("approved write plan blocks missing dryRun, stagingOnly, and approvalRequired", async () => {
+  const payloadBundle =
+    clone(await buildPayloadBundle());
+
+  payloadBundle.payloadsByTable.ebay_product_candidates[0].dryRun =
+    false;
+  payloadBundle.payloadsByTable.ebay_candidate_validations[0].stagingOnly =
+    false;
+  payloadBundle.payloadsByTable.ebay_profit_scenarios[0].approvalRequired =
+    false;
+
+  const writePlan =
+    await buildApprovedPlan(payloadBundle);
+
+  assert.equal(writePlan.validation.valid, false);
+  assert.equal(
+    writePlan.validation.errors.some(error => error.includes("dryRun required")),
+    true,
+  );
+  assert.equal(
+    writePlan.validation.errors.some(error => error.includes("stagingOnly required")),
+    true,
+  );
+  assert.equal(
+    writePlan.validation.errors.some(error => error.includes("approvalRequired required")),
+    true,
+  );
+});
+
+test("approved write plan blocks forbidden tables and Production targets", async () => {
+  const payloadBundle =
+    clone(await buildPayloadBundle());
+
+  payloadBundle.payloadsByTable.products = [
+    {
+      tableName:
+        "products",
+      sourceId:
+        "blocked",
+      dedupeKey:
+        "blocked-products",
+      dryRun:
+        true,
+      stagingOnly:
+        true,
+      approvalRequired:
+        true,
+      writeExecuted:
+        false,
+      targetEnvironment:
+        "production",
+    },
+  ];
+
+  const writePlan =
+    await buildApprovedPlan(payloadBundle);
+
+  assert.equal(writePlan.validation.valid, false);
+  assert.equal(
+    writePlan.validation.errors.some(error => error.includes("table not allowed")),
+    true,
+  );
+  assert.equal(
+    writePlan.validation.errors.some(error => error.includes("Production target blocked")),
+    true,
+  );
+});
+
+test("post-write verification plan is explicit and idempotent", async () => {
+  const approvedPlanModule =
+    await import(`../${approvedPlanModulePath}`);
+  const payloadBundle =
+    await buildPayloadBundle();
+  const writePlan =
+    await buildApprovedPlan(payloadBundle);
+  const verificationPlan =
+    approvedPlanModule.buildPostWriteVerificationPlan(writePlan);
+
+  assert.equal(verificationPlan.executionRunId, "loop141-approved-staging-write-v1");
+  assert.equal(verificationPlan.postWriteVerificationRequired, true);
+  assert.equal(verificationPlan.requireNoDuplicates, true);
+  assert.equal(verificationPlan.expectedCandidates, 3);
+  assert.equal(verificationPlan.expectedOperations, 12);
+  assert.deepEqual(verificationPlan.dedupeKeys, fixture.expectedDedupeKeys);
+  assert.deepEqual(
+    Object.values(verificationPlan.expectedRowsByTable),
+    [3, 3, 3, 3],
+  );
+});
+
+test("default CLI dry-run is wired and plan prints expected numbers", async () => {
+  const cliSource =
+    readText(cliPath);
+  const approvedPlanModule =
+    await import(`../${approvedPlanModulePath}`);
+  const payloadBundle =
+    await buildPayloadBundle();
+  const writePlan =
+    await buildApprovedPlan(payloadBundle);
+  const summary =
+    approvedPlanModule.summarizeApprovedStagingWritePlan(writePlan);
+
+  assert.equal(cliSource.includes("mode:"), true);
+  assert.equal(cliSource.includes("\"dry-run\""), true);
+  assert.equal(cliSource.includes("writeExecuted"), true);
+  assert.equal(cliSource.includes("stagingWriteExecuted"), true);
+  assert.equal(cliSource.includes("approvalRequired"), true);
+  assert.equal(summary.candidatesPlanned, 3);
+  assert.equal(summary.operationsPlanned, 12);
+  assert.equal(summary.tablesPlanned, 4);
+  assert.equal(summary.writeExecuted, false);
+  assert.equal(summary.stagingWriteExecuted, false);
+  assert.equal(summary.approvalRequired, true);
+});
+
+test("execute mode requires explicit flags and exact approval", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("--execute-approved-staging-write"), true);
+  assert.equal(cliSource.includes("EBAY_PRO_TARGET_ENV"), true);
+  assert.equal(cliSource.includes("EBAY_PRO_TARGET_ENV !== \"staging\""), true);
+  assert.equal(cliSource.includes("EBAY_PRO_STAGING_WRITE_APPROVED"), true);
+  assert.equal(
+    cliSource.includes("APPROVE_LOOP_141_STAGING_WRITE_3_CANDIDATES"),
+    true,
+  );
+  assert.equal(cliSource.includes("SUPABASE_STAGING_URL"), true);
+  assert.equal(cliSource.includes("SUPABASE_STAGING_SERVICE_ROLE_KEY"), true);
+  assert.equal(cliSource.includes("EBAY_PRO_STAGING_PROJECT_REF"), true);
+  assert.equal(cliSource.includes("missingRequiredStagingEnvVars"), true);
+  assert.equal(cliSource.includes("stagingWriteExecuted:"), true);
+  assert.equal(cliSource.includes("false"), true);
+});
+
+test("execute mode requires explicit Staging project ref confirmation", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("EBAY_PRO_STAGING_PROJECT_REF"), true);
+  assert.equal(
+    cliSource.includes("missingRequiredStagingEnvVars.push(\"EBAY_PRO_STAGING_PROJECT_REF\")"),
+    true,
+  );
+  assert.equal(cliSource.includes("stagingProjectRef:"), true);
+  assert.equal(cliSource.includes("expectedProjectRef"), true);
+});
+
+test("execute mode blocks URLs that do not contain the expected project ref", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("function isSafeStagingUrl(url, expectedProjectRef)"), true);
+  assert.equal(cliSource.includes("!url.includes(expectedProjectRef.trim())"), true);
+  assert.equal(
+    cliSource.includes("Supabase URL does not contain expected Staging project ref"),
+    true,
+  );
+});
+
+test("execute mode still blocks Production-marked URLs before connecting", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("function isProductionMarkedUrl(url)"), true);
+  assert.equal(cliSource.includes("lowerUrl.includes(\"production\")"), true);
+  assert.equal(cliSource.includes("lowerUrl.includes(\"prod\")"), true);
+  assert.equal(cliSource.includes("Supabase URL is marked as Production"), true);
+});
+
+test("execute mode accepts URL safety only through project ref match", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(
+    cliSource.includes("Supabase URL matched expected Staging project ref"),
+    true,
+  );
+  assert.equal(cliSource.includes("stagingUrlSafety.safe"), true);
+  assert.equal(cliSource.includes("createClient("), true);
+  assert.equal(
+    cliSource.indexOf("stagingUrlSafety.safe") < cliSource.indexOf("createClient("),
+    true,
+  );
+});
+
+test("execute mode does not print Supabase secrets or full URL", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("console.log(config.supabaseStagingUrl)"), false);
+  assert.equal(cliSource.includes("console.log(config.supabaseStagingServiceRoleKey)"), false);
+  assert.equal(cliSource.includes("supabaseStagingServiceRoleKey:"), true);
+  assert.equal(cliSource.includes("errors.push(stagingUrlSafety.reason)"), true);
+});
+
+test("real schema mapping uses candidate_key for product candidate dedupe", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("candidate_key:"), true);
+  assert.equal(cliSource.includes("payload.dedupeKey"), true);
+  assert.equal(cliSource.includes("supplier_variant_id:"), true);
+  assert.equal(cliSource.includes("source_payload:"), true);
+  assert.equal(cliSource.includes("normalized_payload:"), true);
+  assert.equal(cliSource.includes("state:"), true);
+  assert.equal(cliSource.includes("needs_data:"), true);
+  assert.equal(cliSource.includes("blocked_reason:"), true);
+  assert.equal(cliSource.includes(".eq(\"candidate_key\", row.candidate_key)"), true);
+  assert.equal(cliSource.includes("idempotency_key") && cliSource.includes("ebay_product_candidates: real schema preflight failed"), false);
+});
+
+test("real schema mapping requires idempotency_key on child tables only", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("`${payload.dedupeKey}:score`"), true);
+  assert.equal(cliSource.includes("`${payload.dedupeKey}:validation`"), true);
+  assert.equal(cliSource.includes("`${payload.dedupeKey}:profit`"), true);
+  assert.equal(cliSource.includes(".eq(\"idempotency_key\", idempotencyKey)"), true);
+  assert.equal(cliSource.includes("duplicated idempotency_key"), true);
+});
+
+test("child rows require candidate_id resolved after product candidate write", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("function resolveChildCandidateIds"), true);
+  assert.equal(cliSource.includes("candidate_id not resolved"), true);
+  assert.equal(cliSource.includes("candidateIdsByKey[row.candidate_key]"), true);
+  assert.equal(cliSource.includes("select(\"id,candidate_key\")"), true);
+});
+
+test("real writer does not write nonexistent metadata columns directly", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("optionalMetadataColumns"), false);
+  assert.equal(cliSource.includes(".upsert("), false);
+  assert.equal(cliSource.includes("source_payload:"), true);
+  assert.equal(cliSource.includes("normalized_payload:"), true);
+  assert.equal(cliSource.includes("score_payload:"), true);
+  assert.equal(cliSource.includes("assumptions:"), true);
+});
+
+test("duplicate candidate_key and child idempotency_key abort as conflicts", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("duplicated candidate_key"), true);
+  assert.equal(cliSource.includes("duplicated idempotency_key"), true);
+  assert.equal(cliSource.includes("candidate base write failed; child writes skipped"), true);
+});
+
+test("candidate insert row has only real product candidate columns", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("const productCandidateInsertColumns ="), true);
+  for (const column of [
+    "candidate_key",
+    "supplier_variant_id",
+    "title",
+    "source_payload",
+    "normalized_payload",
+    "state",
+    "needs_data",
+    "blocked_reason",
+  ]) {
+    assert.equal(cliSource.includes(`\"${column}\"`), true);
+  }
+
+  assert.equal(cliSource.includes("product candidate row contains unknown columns"), true);
+  assert.equal(cliSource.includes("Object.keys(row).filter(column => !productCandidateInsertColumns.includes(column))"), true);
+});
+
+test("candidate insert row validates required fields before Supabase insert", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("function validateProductCandidateInsertRow"), true);
+  for (const field of [
+    "candidate_key",
+    "supplier_variant_id",
+    "title",
+    "source_payload",
+    "normalized_payload",
+    "state",
+    "needs_data",
+  ]) {
+    assert.equal(cliSource.includes(`\"${field}\"`), true);
+  }
+
+  assert.equal(cliSource.includes("missing required candidate insert field: ${field}"), true);
+  assert.equal(cliSource.includes("allowedCandidateStates"), true);
+  assert.equal(cliSource.includes("invalid candidate state for real schema: ${state}"), true);
+  assert.equal(cliSource.includes("validateProductCandidateInsertRow(row)"), true);
+});
+
+test("candidate base row uses DETECTED state for real schema", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("const allowedCandidateStates ="), true);
+  assert.equal(cliSource.includes("\"DETECTED\""), true);
+  assert.equal(cliSource.includes("return \"DETECTED\";"), true);
+  assert.equal(cliSource.includes("stateForProductPayload(payload)"), true);
+});
+
+test("candidate base row does not write REVIEW_PENDING into state by default", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("if (state === \"REVIEW_PENDING\")"), true);
+  assert.equal(cliSource.includes("state:\n        \"DETECTED\""), true);
+  assert.equal(cliSource.includes("reviewStatusForProductPayload"), true);
+  assert.equal(cliSource.includes("reviewStatus,"), true);
+});
+
+test("review status is preserved outside product candidate state", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("reviewStatusForProductPayload(payload)"), true);
+  assert.equal(cliSource.includes("\"REVIEW_PENDING\""), true);
+  assert.equal(cliSource.includes("blocked_reason:"), true);
+  assert.equal(cliSource.includes("validation_status:"), true);
+  assert.equal(cliSource.includes("normalized_payload:"), true);
+});
+
+test("validation status mapping respects real constraint values", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("const allowedValidationStatuses ="), true);
+  assert.equal(cliSource.includes("\"passed\""), true);
+  assert.equal(cliSource.includes("\"needs_data\""), true);
+  assert.equal(cliSource.includes("\"blocked\""), true);
+  assert.equal(cliSource.includes("function validationStatusForRealSchema"), true);
+  assert.equal(cliSource.includes("payload.validationStatus === \"requires_review\""), true);
+  assert.equal(cliSource.includes("return \"needs_data\";"), true);
+});
+
+test("internal review status is preserved in JSONB validation payload fields", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("internalValidationStatus"), true);
+  assert.equal(cliSource.includes("reviewStatusForProductPayload(payload)"), true);
+  assert.equal(cliSource.includes("review_required"), true);
+  assert.equal(cliSource.includes("critical_reasons:"), true);
+  assert.equal(cliSource.includes("required_fields:"), true);
+  assert.equal(cliSource.includes("missing_fields:"), true);
+});
+
+test("profit scenario numeric fields default to zero when missing", () => {
+  const cliSource =
+    readText(cliPath);
+
+  for (const field of [
+    "estimated_sale_price",
+    "luna_cost",
+    "fulfillment_cost",
+    "packaging_cost",
+    "estimated_shipping_cost",
+    "estimated_ebay_fee",
+    "estimated_payment_fee",
+    "estimated_advertising_cost",
+    "return_reserve",
+    "total_estimated_cost",
+    "net_profit",
+    "net_margin_percent",
+    "roi_percent",
+  ]) {
+    assert.equal(cliSource.includes(`${field}:`), true);
+  }
+
+  assert.equal(cliSource.includes("function zeroIfMissing"), true);
+  assert.equal(cliSource.includes(": 0;"), true);
+});
+
+test("profit scenario never sends null for boolean or assumptions", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("passes_minimums:"), true);
+  assert.equal(cliSource.includes("payload.profitScenarioReady === true && missingPricingInputs.length === 0"), true);
+  assert.equal(cliSource.includes("assumptions:"), true);
+  assert.equal(cliSource.includes("missingPricingInputs"), true);
+  assert.equal(cliSource.includes("buildMissingPricingInputs"), true);
+});
+
+test("partial resume updates by candidate_key and child idempotency_key", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes(".eq(\"candidate_key\", row.candidate_key)"), true);
+  assert.equal(cliSource.includes(".update(row)"), true);
+  assert.equal(cliSource.includes(".eq(\"idempotency_key\", row.idempotency_key)"), true);
+  assert.equal(cliSource.includes("existingByTable"), true);
+  assert.equal(cliSource.includes("missingByTable"), true);
+  assert.equal(cliSource.includes("rowsMissingBeforeByTable"), true);
+});
+
+test("post-write verification requires final twelve rows connected by candidate_id", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("verifyPostWrite"), true);
+  assert.equal(cliSource.includes("Object.values(rowsAfterByTable).every(count => count === writePlan.dedupeKeys.length)"), true);
+  assert.equal(cliSource.includes("candidate_id mismatch"), true);
+  assert.equal(cliSource.includes("postWriteVerificationPassed"), true);
+});
+
+test("candidate insert row does not include candidate_id or idempotency_key", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("Object.hasOwn(row, \"idempotency_key\")"), true);
+  assert.equal(cliSource.includes("Object.hasOwn(row, \"candidate_id\")"), true);
+  assert.equal(cliSource.includes("product candidate row contains forbidden candidate base column"), true);
+});
+
+test("Supabase errors are sanitized with table operation details and attempted columns", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("function sanitizeSupabaseError"), true);
+  assert.equal(cliSource.includes("table,"), true);
+  assert.equal(cliSource.includes("operation,"), true);
+  assert.equal(cliSource.includes("error?.code"), true);
+  assert.equal(cliSource.includes("error?.message"), true);
+  assert.equal(cliSource.includes("error?.details"), true);
+  assert.equal(cliSource.includes("error?.hint"), true);
+  assert.equal(cliSource.includes("attemptedColumns:"), true);
+  assert.equal(cliSource.includes("Object.keys(row)"), true);
+});
+
+test("candidate base insert failure skips child writes with clear message", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("candidate base write failed; child writes skipped"), true);
+  assert.equal(
+    cliSource.indexOf("candidate base write failed; child writes skipped") <
+      cliSource.indexOf("const resolvedChildRows"),
+    true,
+  );
+});
+
+test("route helper points LOOP 141 to LOOP 142", async () => {
+  const routeModule =
+    await import(`../${routeModulePath}`);
+  const nextLoop =
+    routeModule.getNextEbayProLoop("141");
+
+  assert.equal(nextLoop.loopId, "142");
+  assert.equal(
+    nextLoop.label.includes("First Real Luna Portex Mini Scan"),
+    true,
+  );
+});
+
+test("pure module has no runtime client, env, filesystem, or external action patterns", () => {
+  const source =
+    readText(approvedPlanModulePath);
+  const forbiddenPatterns = [
+    ["create", "Client"].join(""),
+    [".", "from", "("].join(""),
+    [".", "upsert", "("].join(""),
+    ["fetch", "("].join(""),
+    ["process", ".env"].join(""),
+    ["read", "File", "Sync"].join(""),
+    ["new ", "OpenAI"].join(""),
+    ["send", "WhatsApp"].join(""),
+    ["send", "Whatsapp"].join(""),
+  ];
+
+  for (const pattern of forbiddenPatterns) {
+    assert.equal(source.includes(pattern), false, `${approvedPlanModulePath} contains ${pattern}`);
+  }
+});
+
+test("process env and Supabase client are restricted to LOOP 141 CLI", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("process.env"), true);
+  assert.equal(cliSource.includes("@supabase/supabase-js"), true);
+  assert.equal(cliSource.includes("createClient"), true);
+  assert.equal(cliSource.includes(".from("), true);
+  assert.equal(cliSource.includes(".upsert("), false);
+  assert.equal(cliSource.includes(".insert("), true);
+  assert.equal(cliSource.includes(".update("), true);
+  assert.equal(cliSource.includes(".select("), true);
+  assert.equal(cliSource.includes("console.log"), true);
+  assert.equal(cliSource.includes("SUPABASE_STAGING_SERVICE_ROLE_KEY"), true);
+  assert.equal(cliSource.includes("EBAY_PRO_STAGING_PROJECT_REF"), true);
+  assert.equal(cliSource.includes("console.log(config.supabaseStagingServiceRoleKey)"), false);
+});
+
+test("LOOP 141 files avoid eBay, OpenAI, WhatsApp send, env files, dumps, and images", () => {
+  for (const path of [
+    fixturePath,
+    approvedPlanModulePath,
+    cliPath,
+    docPath,
+  ]) {
+    assert.equal(fileExists(path), true);
+    const source =
+      readText(path);
+    const forbiddenPatterns = [
+      ["new ", "OpenAI"].join(""),
+      ["images", ".generate"].join(""),
+      ["create", "Draft"].join(""),
+      ["publish", "Listing"].join(""),
+      ["send", "WhatsApp"].join(""),
+      ["send", "Whatsapp"].join(""),
+      ["access", "_token"].join(""),
+      ["refresh", "_token"].join(""),
+      ["client", "_secret"].join(""),
+      "Authorization:",
+    ];
+
+    for (const pattern of forbiddenPatterns) {
+      assert.equal(source.includes(pattern), false, `${path} contains ${pattern}`);
+    }
+  }
+
+  const status =
+    spawnSync(
+      "git",
+      ["status", "--short", "--untracked-files=all"],
+      {
+        encoding:
+          "utf8",
+      },
+    );
+
+  assert.equal(status.status, 0);
+  assert.equal(/\.env($|\.|\/)/.test(status.stdout), false);
+  assert.equal(/\.(dump|sql\.dump|backup)$/im.test(status.stdout), false);
+  assert.equal(/\.(png|jpg|jpeg|webp|gif|svg|avif|heic|tiff)$/im.test(status.stdout), false);
+});
