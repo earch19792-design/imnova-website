@@ -117,6 +117,24 @@ For child tables:
 - If the product candidate base write fails, child writes are skipped with `candidate base write failed; child writes skipped`.
 - Duplicate `candidate_key` or duplicate child `idempotency_key` rows abort the write as conflicts.
 
+Child table constraint handling:
+
+- `ebay_candidate_validations.validation_status` must respect the real constraint values: `passed`, `needs_data`, or `blocked`.
+- Internal review statuses such as `requires_review` or `REVIEW_PENDING` are mapped to the DB-safe value `needs_data`.
+- The original internal review status is preserved in JSONB fields such as `required_fields`, `missing_fields`, and `critical_reasons`.
+- `ebay_profit_scenarios` numeric fields must never be written as `null`.
+- Missing numeric profit inputs are written as `0`.
+- `passes_minimums` is always boolean and defaults to `false` when pricing inputs are missing.
+- `assumptions` is always JSONB and includes `metadata.missingPricingInputs` when defaults are used.
+
+Partial-write resume and idempotent repair:
+
+- Manual deletes, truncates, and resets are not part of LOOP 141.
+- Product candidates are selected by `candidate_key`; one existing row is updated, zero rows are inserted, and multiple rows abort as conflict.
+- Child rows are selected by `idempotency_key`; one existing row is updated, zero rows are inserted, and multiple rows abort as conflict.
+- Post-write verification checks final state, not only newly inserted rows.
+- Verification passes only when there are 3 final base candidates, 3 final score rows, 3 final validation rows, and 3 final profit scenario rows connected by the resolved `candidate_id`.
+
 Internal metadata:
 
 - `sourceDataClass`, `sourceRunId`, `executionRunId`, `listableInEbay`, `publishable`, and internal dry-run flags are not written as direct columns unless the schema provides dedicated columns.

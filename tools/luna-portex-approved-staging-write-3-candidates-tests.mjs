@@ -561,6 +561,90 @@ test("review status is preserved outside product candidate state", () => {
   assert.equal(cliSource.includes("normalized_payload:"), true);
 });
 
+test("validation status mapping respects real constraint values", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("const allowedValidationStatuses ="), true);
+  assert.equal(cliSource.includes("\"passed\""), true);
+  assert.equal(cliSource.includes("\"needs_data\""), true);
+  assert.equal(cliSource.includes("\"blocked\""), true);
+  assert.equal(cliSource.includes("function validationStatusForRealSchema"), true);
+  assert.equal(cliSource.includes("payload.validationStatus === \"requires_review\""), true);
+  assert.equal(cliSource.includes("return \"needs_data\";"), true);
+});
+
+test("internal review status is preserved in JSONB validation payload fields", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("internalValidationStatus"), true);
+  assert.equal(cliSource.includes("reviewStatusForProductPayload(payload)"), true);
+  assert.equal(cliSource.includes("review_required"), true);
+  assert.equal(cliSource.includes("critical_reasons:"), true);
+  assert.equal(cliSource.includes("required_fields:"), true);
+  assert.equal(cliSource.includes("missing_fields:"), true);
+});
+
+test("profit scenario numeric fields default to zero when missing", () => {
+  const cliSource =
+    readText(cliPath);
+
+  for (const field of [
+    "estimated_sale_price",
+    "luna_cost",
+    "fulfillment_cost",
+    "packaging_cost",
+    "estimated_shipping_cost",
+    "estimated_ebay_fee",
+    "estimated_payment_fee",
+    "estimated_advertising_cost",
+    "return_reserve",
+    "total_estimated_cost",
+    "net_profit",
+    "net_margin_percent",
+    "roi_percent",
+  ]) {
+    assert.equal(cliSource.includes(`${field}:`), true);
+  }
+
+  assert.equal(cliSource.includes("function zeroIfMissing"), true);
+  assert.equal(cliSource.includes(": 0;"), true);
+});
+
+test("profit scenario never sends null for boolean or assumptions", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("passes_minimums:"), true);
+  assert.equal(cliSource.includes("payload.profitScenarioReady === true && missingPricingInputs.length === 0"), true);
+  assert.equal(cliSource.includes("assumptions:"), true);
+  assert.equal(cliSource.includes("missingPricingInputs"), true);
+  assert.equal(cliSource.includes("buildMissingPricingInputs"), true);
+});
+
+test("partial resume updates by candidate_key and child idempotency_key", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes(".eq(\"candidate_key\", row.candidate_key)"), true);
+  assert.equal(cliSource.includes(".update(row)"), true);
+  assert.equal(cliSource.includes(".eq(\"idempotency_key\", row.idempotency_key)"), true);
+  assert.equal(cliSource.includes("existingByTable"), true);
+  assert.equal(cliSource.includes("missingByTable"), true);
+  assert.equal(cliSource.includes("rowsMissingBeforeByTable"), true);
+});
+
+test("post-write verification requires final twelve rows connected by candidate_id", () => {
+  const cliSource =
+    readText(cliPath);
+
+  assert.equal(cliSource.includes("verifyPostWrite"), true);
+  assert.equal(cliSource.includes("Object.values(rowsAfterByTable).every(count => count === writePlan.dedupeKeys.length)"), true);
+  assert.equal(cliSource.includes("candidate_id mismatch"), true);
+  assert.equal(cliSource.includes("postWriteVerificationPassed"), true);
+});
+
 test("candidate insert row does not include candidate_id or idempotency_key", () => {
   const cliSource =
     readText(cliPath);

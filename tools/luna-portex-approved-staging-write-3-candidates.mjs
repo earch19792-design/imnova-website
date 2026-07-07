@@ -121,6 +121,26 @@ const requiredProductCandidateInsertFields = [
 const allowedCandidateStates = [
   "DETECTED",
 ];
+const allowedValidationStatuses = [
+  "passed",
+  "needs_data",
+  "blocked",
+];
+const profitScenarioNumericFields = [
+  "estimated_sale_price",
+  "luna_cost",
+  "fulfillment_cost",
+  "packaging_cost",
+  "estimated_shipping_cost",
+  "estimated_ebay_fee",
+  "estimated_payment_fee",
+  "estimated_advertising_cost",
+  "return_reserve",
+  "total_estimated_cost",
+  "net_profit",
+  "net_margin_percent",
+  "roi_percent",
+];
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
@@ -424,6 +444,36 @@ function reviewStatusForProductPayload(payload) {
     : "READY_FOR_REVIEW";
 }
 
+function validationStatusForRealSchema(payload) {
+  if (payload.validationStatus === "passed") {
+    return "passed";
+  }
+
+  if (
+    payload.reviewRequired === true ||
+    payload.validationStatus === "requires_review"
+  ) {
+    return "needs_data";
+  }
+
+  if (allowedValidationStatuses.includes(payload.validationStatus)) {
+    return payload.validationStatus;
+  }
+
+  return "needs_data";
+}
+
+function buildMissingPricingInputs(payload) {
+  void payload;
+  return [...profitScenarioNumericFields];
+}
+
+function zeroIfMissing(value) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : 0;
+}
+
 function normalizeCandidateStateForRealSchema(state) {
   if (allowedCandidateStates.includes(state)) {
     return {
@@ -637,6 +687,8 @@ function buildRealSchemaRowsByTable(writePlan) {
         operation.payload;
       const metadata =
         metadataForPayload(payload);
+      const internalValidationStatus =
+        payload.validationStatus;
 
       return {
         candidate_key:
@@ -646,13 +698,26 @@ function buildRealSchemaRowsByTable(writePlan) {
         validation_version:
           executionRunId,
         validation_status:
-          payload.validationStatus,
+          validationStatusForRealSchema(payload),
         required_fields:
-          ["candidate_key", "supplier_variant_id", "title"],
+          [
+            "candidate_key",
+            "supplier_variant_id",
+            "title",
+            {
+              internalValidationStatus,
+              reviewStatus:
+                reviewStatusForProductPayload(payload),
+              metadata,
+            },
+          ],
         missing_fields:
-          [],
+          payload.reviewRequired === true ? ["review_required"] : [],
         critical_reasons:
-          payload.warnings ?? [],
+          [
+            ...(payload.warnings ?? []),
+            ...(payload.reviewRequired === true ? ["review_required"] : []),
+          ],
         validated_at:
           new Date().toISOString(),
         idempotency_key:
@@ -666,8 +731,10 @@ function buildRealSchemaRowsByTable(writePlan) {
         operation.payload;
       const metadata =
         metadataForPayload(payload);
+      const missingPricingInputs =
+        buildMissingPricingInputs(payload);
 
-  return {
+      return {
         candidate_key:
           payload.dedupeKey,
         candidate_id:
@@ -675,38 +742,42 @@ function buildRealSchemaRowsByTable(writePlan) {
         scenario_version:
           executionRunId,
         estimated_sale_price:
-          null,
+          zeroIfMissing(payload.estimatedSalePrice),
         luna_cost:
-          null,
+          zeroIfMissing(payload.lunaCost),
         fulfillment_cost:
-          null,
+          zeroIfMissing(payload.fulfillmentCost),
         packaging_cost:
-          null,
+          zeroIfMissing(payload.packagingCost),
         estimated_shipping_cost:
-          null,
+          zeroIfMissing(payload.estimatedShippingCost),
         estimated_ebay_fee:
-          null,
+          zeroIfMissing(payload.estimatedEbayFee),
         estimated_payment_fee:
-          null,
+          zeroIfMissing(payload.estimatedPaymentFee),
         estimated_advertising_cost:
-          null,
+          zeroIfMissing(payload.estimatedAdvertisingCost),
         return_reserve:
-          null,
+          zeroIfMissing(payload.returnReserve),
         total_estimated_cost:
-          null,
+          zeroIfMissing(payload.totalEstimatedCost),
         net_profit:
-          null,
+          zeroIfMissing(payload.netProfit),
         net_margin_percent:
-          null,
+          zeroIfMissing(payload.netMarginPercent),
         roi_percent:
-          null,
+          zeroIfMissing(payload.roiPercent),
         passes_minimums:
-          payload.profitScenarioReady === true,
+          payload.profitScenarioReady === true && missingPricingInputs.length === 0,
         assumptions:
           {
             originalPayload:
               payload,
-            metadata,
+            metadata:
+              {
+                ...metadata,
+                missingPricingInputs,
+              },
           },
         calculated_at:
           new Date().toISOString(),
@@ -906,6 +977,10 @@ async function selectRowsByIdempotencyKey(client, tableName, idempotencyKey) {
 async function writeChildRows(client, childRowsByTable) {
   const writtenByTable =
     {};
+  const existingByTable =
+    {};
+  const missingByTable =
+    {};
   const errors =
     [];
   const conflicts =
@@ -919,6 +994,10 @@ async function writeChildRows(client, childRowsByTable) {
 
     writtenByTable[tableName] =
       0;
+    existingByTable[tableName] =
+      0;
+    missingByTable[tableName] =
+      [];
 
     for (const row of rows) {
       const existing =
@@ -938,6 +1017,8 @@ async function writeChildRows(client, childRowsByTable) {
 
       const existingRows =
         Array.isArray(existing.data) ? existing.data : [];
+      existingByTable[tableName] +=
+        existingRows.length;
 
       if (existingRows.length > 1) {
         duplicates.push(`${tableName}:${row.idempotency_key}`);
@@ -970,6 +1051,8 @@ async function writeChildRows(client, childRowsByTable) {
         continue;
       }
 
+      missingByTable[tableName].push(row.idempotency_key);
+
       const insertResult =
         await client
           .from(tableName)
@@ -995,6 +1078,8 @@ async function writeChildRows(client, childRowsByTable) {
 
   return {
     writtenByTable,
+    existingByTable,
+    missingByTable,
     conflicts,
     duplicates,
     errors,
@@ -1125,6 +1210,8 @@ async function runExecuteMode(pipeline) {
       {},
     rowsAfterByTable:
       {},
+    rowsMissingBeforeByTable:
+      {},
     duplicatesDetected:
       [],
     conflictsDetected:
@@ -1252,8 +1339,10 @@ async function runExecuteMode(pipeline) {
   executeSummary.rowsBeforeByTable =
     {
       ...executeSummary.rowsBeforeByTable,
-      ...Object.fromEntries(childTables.map(tableName => [tableName, 0])),
+      ...childWrite.existingByTable,
     };
+  executeSummary.rowsMissingBeforeByTable =
+    childWrite.missingByTable;
 
   if (
     childWrite.errors.length > 0 ||
