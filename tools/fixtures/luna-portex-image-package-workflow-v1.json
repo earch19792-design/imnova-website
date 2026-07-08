@@ -1,0 +1,58 @@
+{
+  "imageWorkflowVersion": "LUNA_PORTEX_IMAGE_PACKAGE_WORKFLOW_PERCEIVED_VALUE_V1",
+  "status": "IMAGE_PACKAGE_WORKFLOW_READY",
+  "mode": "LOCAL_DRY_RUN_IMAGE_PACKAGE_ONLY",
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "ebayApi": {
+    "usedInThisLoop": false
+  },
+  "oauth": {
+    "usedInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false,
+    "previewOnly": true
+  },
+  "openAi": {
+    "usedInThisLoop": false
+  },
+  "imageGeneration": {
+    "executedInThisLoop": false
+  },
+  "imageUpload": {
+    "executedInThisLoop": false
+  },
+  "imagePackage": {
+    "included": true
+  },
+  "perceivedValueImageCheck": {
+    "included": true
+  },
+  "imagePackageRequiredBeforeDraft": true,
+  "listingDraft": {
+    "createdInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "maxImagePackages": 10,
+  "sourceDataClass": "LOOP_147_IMAGE_PACKAGE_WORKFLOW",
+  "nextLoop": "148 \u2014 eBay Sandbox OAuth",
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noEbayApi": true,
+    "noOauth": true,
+    "noTokens": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noImageGeneration": true,
+    "noUploads": true,
+    "noSecretsCommitted": true
+  }
+}
