@@ -1,0 +1,52 @@
+{
+  "oauthVersion": "EBAY_SANDBOX_OAUTH_V1",
+  "status": "EBAY_SANDBOX_OAUTH_READY",
+  "mode": "LOCAL_DRY_RUN_AND_GATED_SANDBOX_OAUTH_ONLY",
+  "production": {
+    "offLimits": true
+  },
+  "ebayProduction": {
+    "usedInThisLoop": false
+  },
+  "ebaySandbox": {
+    "usedInThisLoop": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "oauth": {
+    "sandboxIncluded": true,
+    "productionBlocked": true,
+    "tokenExchangeDefault": false,
+    "tokenStorageDefault": false,
+    "requiresExplicitApproval": true,
+    "noSecretsInLogs": true
+  },
+  "listingDraft": {
+    "createdInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false
+  },
+  "openAi": {
+    "usedInThisLoop": false
+  },
+  "imageGeneration": {
+    "executedInThisLoop": false
+  },
+  "sourceDataClass": "LOOP_148_EBAY_SANDBOX_OAUTH",
+  "nextLoop": "149 \u2014 eBay Sandbox Draft Listing",
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noEbayProductionApi": true,
+    "noDraftCreation": true,
+    "noPublication": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noSecretsCommitted": true
+  }
+}
