@@ -1,0 +1,53 @@
+{
+  "listingPackageVersion": "LUNA_PORTEX_LISTING_PACKAGE_BUILDER_VALUE_PRICING_V1",
+  "status": "LISTING_PACKAGE_BUILDER_READY",
+  "mode": "LOCAL_DRY_RUN_LISTING_PACKAGE_ONLY",
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "ebayApi": {
+    "usedInThisLoop": false
+  },
+  "oauth": {
+    "usedInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false,
+    "previewOnly": true
+  },
+  "listingPackage": {
+    "included": true
+  },
+  "listingDraft": {
+    "createdInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "valueBasedPricing": {
+    "included": true
+  },
+  "trustBasedOptimization": {
+    "included": true
+  },
+  "priceWarProtection": {
+    "included": true
+  },
+  "imagePackageRequiredBeforeDraft": true,
+  "maxListingPackages": 10,
+  "sourceDataClass": "LOOP_146_LISTING_PACKAGE_BUILDER",
+  "nextLoop": "147 \u2014 Image Package Workflow + WhatsApp Image Alerts + Perceived Value Image Check",
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noEbayApi": true,
+    "noOauth": true,
+    "noTokens": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noSecretsCommitted": true
+  }
+}
