@@ -1,0 +1,161 @@
+{
+  "asinDecisionVersion": "AMAZON_EXISTING_ASIN_VS_NEW_ASIN_DECISION_ENGINE_V1",
+  "status": "AMAZON_ASIN_DECISION_ENGINE_READY",
+  "mode": "LOCAL_DRY_RUN_ASIN_DECISION_ONLY",
+  "sourceDataClass": "LOOP_149F_AMAZON_EXISTING_ASIN_VS_NEW_ASIN_DECISION",
+  "nextLoop": "149G — Amazon Listing Package Builder",
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "amazonApi": {
+    "usedInThisLoop": false
+  },
+  "spApi": {
+    "usedInThisLoop": false
+  },
+  "sellerCentral": {
+    "writeExecutedInThisLoop": false
+  },
+  "asinCreation": {
+    "createdInThisLoop": false
+  },
+  "listing": {
+    "createdInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false
+  },
+  "openAi": {
+    "usedInThisLoop": false
+  },
+  "scraper": {
+    "usedInThisLoop": false
+  },
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noAmazonApi": true,
+    "noSpApi": true,
+    "noSellerCentralWrite": true,
+    "noAsinCreation": true,
+    "noListingCreation": true,
+    "noPublication": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noScraper": true,
+    "noSecretsCommitted": true
+  },
+  "feesProfitAssessments": [
+    {
+      "supplierSku": "luna-portex:first_real_mini_scan:dm0628n",
+      "productTitle": "Glisten Dishwasher Detergent Booster & Freshener 28 oz",
+      "brand": "Glisten",
+      "catalogMatchType": "STRONG_BRAND_MODEL_SIZE_MATCH",
+      "matchConfidenceScore": 97,
+      "bestMatchAsin": "B0SANITIZED1",
+      "previousAsinStrategyRecommendation": "SELL_ON_EXISTING_ASIN",
+      "duplicateAsinRisk": "LOW",
+      "wrongAsinRisk": "LOW",
+      "missingUpcGtin": true,
+      "categoryApprovalLikelyRequired": "unknown",
+      "brandApprovalLikelyRequired": "unknown",
+      "gtinOrExemptionRequired": "unknown",
+      "hazmatReviewRequired": true,
+      "chemicalComplianceReviewRequired": true,
+      "electricalSafetyReviewRequired": false,
+      "restrictionGateDecision": "NEED_HAZMAT_REVIEW",
+      "overallRestrictionRiskScore": 61,
+      "profitGuardDecision": "LOW_MARGIN_WATCHLIST",
+      "netProfitEstimate": 3.58,
+      "netMarginPercent": 15.57,
+      "roiPercent": 49.72,
+      "canProceedToListingPackage": false,
+      "blockedReasons": [
+        "hazmat review required",
+        "chemical compliance review required",
+        "listing package remains blocked by prior gates"
+      ],
+      "warnings": [
+        "missing UPC/GTIN",
+        "existing ASIN match does not prove sell eligibility",
+        "low margin watchlist"
+      ]
+    },
+    {
+      "supplierSku": "luna-portex:first_real_mini_scan:gg-16000tsm",
+      "productTitle": "GoGreen Power 6-Outlet Side-Mount Wall Tap Adapter White GG-16000TSM",
+      "brand": "GoGreen Power",
+      "catalogMatchType": "CONFLICTING_MATCH",
+      "matchConfidenceScore": 78,
+      "bestMatchAsin": "B0SANITIZED2",
+      "previousAsinStrategyRecommendation": "HUMAN_REVIEW_EXISTING_ASIN",
+      "duplicateAsinRisk": "HIGH",
+      "wrongAsinRisk": "HIGH",
+      "missingUpcGtin": true,
+      "categoryApprovalLikelyRequired": "unknown",
+      "brandApprovalLikelyRequired": "unknown",
+      "gtinOrExemptionRequired": "unknown",
+      "hazmatReviewRequired": false,
+      "chemicalComplianceReviewRequired": false,
+      "electricalSafetyReviewRequired": true,
+      "restrictionGateDecision": "NEED_ELECTRICAL_COMPLIANCE_REVIEW",
+      "overallRestrictionRiskScore": 69,
+      "profitGuardDecision": "BLOCKED_BY_RESTRICTION_GATE",
+      "netProfitEstimate": -1.05,
+      "netMarginPercent": -7.78,
+      "roiPercent": -18.75,
+      "canProceedToListingPackage": false,
+      "blockedReasons": [
+        "conflicting catalog match requires human review",
+        "wrong ASIN risk high from catalog matcher",
+        "electrical safety review required",
+        "listing package remains blocked by prior gates"
+      ],
+      "warnings": [
+        "missing UPC/GTIN",
+        "dimensions and weight are estimated only"
+      ]
+    },
+    {
+      "supplierSku": "luna-portex:first_real_mini_scan:rustoleum-spray-sanitized",
+      "productTitle": "Sanitized Rust-Oleum aerosol spray paint candidate 12 oz",
+      "brand": "Rust-Oleum",
+      "catalogMatchType": "NO_MATCH",
+      "matchConfidenceScore": 15,
+      "bestMatchAsin": null,
+      "previousAsinStrategyRecommendation": "NEED_GTIN_OR_EXEMPTION",
+      "duplicateAsinRisk": "HIGH",
+      "wrongAsinRisk": "LOW",
+      "missingUpcGtin": true,
+      "categoryApprovalLikelyRequired": true,
+      "brandApprovalLikelyRequired": true,
+      "gtinOrExemptionRequired": true,
+      "hazmatReviewRequired": true,
+      "chemicalComplianceReviewRequired": true,
+      "electricalSafetyReviewRequired": false,
+      "restrictionGateDecision": "REJECT_FOR_NOW",
+      "overallRestrictionRiskScore": 92,
+      "profitGuardDecision": "BLOCKED_BY_RESTRICTION_GATE",
+      "netProfitEstimate": -4.48,
+      "netMarginPercent": -34.49,
+      "roiPercent": -92.37,
+      "canProceedToListingPackage": false,
+      "blockedReasons": [
+        "category approval likely required",
+        "brand approval likely required",
+        "hazmat review required",
+        "listing package remains blocked by prior gates"
+      ],
+      "warnings": [
+        "aerosol paint candidate is high hazmat risk",
+        "brand and category approval must be verified"
+      ]
+    }
+  ]
+}
