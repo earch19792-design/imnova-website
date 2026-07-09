@@ -72,6 +72,9 @@ test("product rows include DM0628N and local Amazon decision state", async () =>
   assert.ok(dm);
   assert.equal(dm.matchConfidenceScore, 97);
   assert.equal(dm.finalAsinRouteDecision, "WATCHLIST_EXISTING_ASIN");
+  assert.equal(dm.sellerStatusLabel, "Revisar antes de vender");
+  assert.equal(dm.sellerRouteLabel, "Posible venta sobre ASIN existente");
+  assert.equal(dm.sellerNextActionLabel.includes("Seller Central"), true);
   assert.equal(dm.canProceedToAmazonListingPackage, false);
   assert.equal(dm.published, false);
   assert.equal(dm.sellerCentralWriteReady, false);
@@ -91,6 +94,11 @@ test("dashboard summary prints expected local-only output", async () => {
   assert.equal(summary.watchlistExistingAsinCandidates, 1);
   assert.equal(summary.rejectedCandidates, 1);
   assert.equal(summary.averageAsinDecisionScore, 22.33);
+  assert.equal(summary.sellerFriendlyNavigationEnabled, true);
+  assert.equal(summary.sellerFriendlyDecisionLanguageEnabled, true);
+  assert.equal(summary.productsReadyForListingPackage, 0);
+  assert.equal(summary.primarySellerQuestion.includes("Que producto puedo vender"), true);
+  assert.equal(summary.adminMenuLabel, "Marketplace OS");
   assert.equal(summary.codexSelfImprovementRoadmapVisible, true);
   assert.equal(summary.codexApiUsed, false);
   assert.equal(summary.automaticCodeChangesExecuted, false);
@@ -167,9 +175,13 @@ test("CLI dry-run executes and components/routes exist", async () => {
   assert.equal(readText(decisionCenterComponentPath).includes("export function AmazonDecisionCenter"), true);
   assert.equal(readText(sidebarPath).includes("/admin/marketplace-os"), true);
   assert.equal(readText(sidebarPath).includes("Marketplace OS"), true);
-  assert.equal(readText(dashboardComponentPath).includes("Codex Roadmap"), true);
-  assert.equal(readText(decisionCenterComponentPath).includes("Codex Self-Improvement"), true);
-  assert.equal(readText(viewModelPath).includes("Codex Handoff"), true);
+  assert.equal(readText(sidebarPath).includes("Productos, bloqueos, margen y proxima accion."), true);
+  assert.equal(readText(dashboardComponentPath).includes("Que vender, que bloquear y que hacer ahora"), true);
+  assert.equal(readText(decisionCenterComponentPath).includes("Por que no avanza"), true);
+  assert.equal(readText(docPath).includes("Regla UX Para Vendedor"), true);
+  assert.equal(readText(dashboardComponentPath).includes("Automejora IMNOVA"), true);
+  assert.equal(readText(decisionCenterComponentPath).includes("automejora con Codex"), true);
+  assert.equal(readText(viewModelPath).includes("Capa de handoff a Codex"), true);
 });
 
 test("module, components, and CLI avoid integrations writes and sensitive calls", () => {

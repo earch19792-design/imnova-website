@@ -17,13 +17,13 @@ import type {
 type DashboardViewModel = ReturnType<typeof buildMarketplaceOsDashboardViewModel>
 
 const pipelineSteps = [
-  "149A Product Winner Metrics",
-  "149B Seller Account + Category Gate",
-  "149C Catalog Matcher",
-  "149D Restriction Gate",
-  "149E Fees + ROI",
-  "149F ASIN Decision Engine",
-  "149G Listing Package Builder next",
+  "Encontrar productos ganadores",
+  "Validar cuenta y categoria",
+  "Buscar ASIN correcto",
+  "Bloquear riesgos antes de listar",
+  "Calcular margen y ROI",
+  "Decidir ASIN existente vs nuevo",
+  "Preparar listing cuando este aprobado",
 ]
 
 export function MarketplaceOsDashboard({
@@ -43,7 +43,7 @@ export function MarketplaceOsDashboard({
 
         <header className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.045] p-6 md:p-8">
           <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-100/55">
-            Local decision layer · no API · no publication
+            Centro de decisiones local · sin API · sin publicacion
           </p>
           <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
             <div>
@@ -51,7 +51,7 @@ export function MarketplaceOsDashboard({
                 IMNOVA Marketplace OS
               </h1>
               <p className="mt-3 text-xl font-black text-cyan-100">
-                Amazon Decision Center
+                Que vender, que bloquear y que hacer ahora
               </p>
             </div>
             <div className="rounded-lg border border-white/10 bg-black/25 p-4">
@@ -64,7 +64,7 @@ export function MarketplaceOsDashboard({
             </div>
           </div>
           <p className="mt-5 max-w-4xl text-sm leading-7 text-white/65">
-            Read-only command view for Marketplace Seller OS. It shows Amazon route decisions, blocked products, human review requirements, and roadmap previews without touching Seller Central, Amazon API, eBay Production, WhatsApp, OpenAI, Production, or Staging DB.
+            Vista operativa para vendedores. Resume productos evaluados, margen, bloqueos, ASIN probable y proxima accion sin tocar Seller Central, Amazon API, eBay Production, WhatsApp, OpenAI, Produccion o Staging DB.
           </p>
         </header>
 
@@ -73,7 +73,7 @@ export function MarketplaceOsDashboard({
             <div className="flex items-center gap-2 text-amber-100">
               <PauseCircle className="h-4 w-4" />
               <h2 className="text-sm font-black uppercase tracking-[0.18em]">
-                eBay Track
+                eBay
               </h2>
             </div>
             <p className="mt-4 text-lg font-black text-white">
@@ -88,14 +88,14 @@ export function MarketplaceOsDashboard({
             <div className="flex items-center gap-2 text-emerald-100">
               <RadioTower className="h-4 w-4" />
               <h2 className="text-sm font-black uppercase tracking-[0.18em]">
-                Amazon Track
+                Amazon
               </h2>
             </div>
             <p className="mt-4 text-lg font-black text-white">
               {viewModel.amazonTrack.status}
             </p>
             <p className="mt-2 text-sm leading-6 text-white/60">
-              Next: {viewModel.amazonTrack.nextRecommendedLoop}. Optional UI: {viewModel.amazonTrack.optionalUiLoop}.
+              Track activo para investigar productos, decidir ruta ASIN y evitar listings riesgosos.
             </p>
           </article>
 
@@ -103,14 +103,14 @@ export function MarketplaceOsDashboard({
             <div className="flex items-center gap-2 text-cyan-100">
               <Lock className="h-4 w-4" />
               <h2 className="text-sm font-black uppercase tracking-[0.18em]">
-                Production
+                Produccion
               </h2>
             </div>
             <p className="mt-4 text-lg font-black text-white">
               {viewModel.production.status}
             </p>
             <p className="mt-2 text-sm leading-6 text-white/60">
-              All marketplace actions remain local, dry-run, and read-only.
+              Nada se publica ni se escribe en marketplaces desde esta vista.
             </p>
           </article>
         </section>
@@ -119,7 +119,7 @@ export function MarketplaceOsDashboard({
           <div className="flex items-center gap-2 text-cyan-100">
             <Boxes className="h-4 w-4" />
             <h2 className="text-sm font-black uppercase tracking-[0.18em]">
-              Amazon Pipeline
+              Flujo Amazon
             </h2>
           </div>
           <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
@@ -130,6 +130,9 @@ export function MarketplaceOsDashboard({
               >
                 <p className="text-sm font-black text-white">
                   {step}
+                </p>
+                <p className="mt-2 text-xs leading-5 text-white/45">
+                  Control local antes de vender
                 </p>
               </div>
             ))}
@@ -142,24 +145,24 @@ export function MarketplaceOsDashboard({
           <div className="flex items-center gap-2 text-violet-100">
             <GitBranch className="h-4 w-4" />
             <h2 className="text-sm font-black uppercase tracking-[0.18em]">
-              IMNOVA Self-Improvement / Codex Roadmap
+              Automejora IMNOVA / Roadmap Codex
             </h2>
           </div>
           <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_0.9fr]">
             <div>
               <p className="text-lg font-black text-white">
-                {viewModel.codexSelfImprovement.status}
+                Mejoras internas con aprobacion humana
               </p>
               <p className="mt-3 text-sm leading-7 text-white/65">
-                IMNOVA OS will be able to detect internal improvement opportunities, generate work orders/prompts for Codex, and route them through a human approval gate before any implementation work starts.
+                IMNOVA OS podra detectar oportunidades de mejora, preparar work orders/prompts para Codex y pasarlos por aprobacion humana antes de cualquier implementacion.
               </p>
               <p className="mt-3 text-sm leading-7 text-white/65">
-                Codex API is not connected in this loop. There are no automatic code changes, no automatic merge, no main branch writes, no Production touch, and no secrets in prompts.
+                Codex API no esta conectada. No hay cambios automaticos de codigo, merge automatico, writes a main, toque a Produccion ni secretos en prompts.
               </p>
             </div>
             <div className="rounded-lg border border-white/10 bg-black/25 p-4">
               <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-                Strategic sequence
+                Secuencia segura
               </p>
               <p className="mt-3 text-sm font-black text-white">
                 {viewModel.codexSelfImprovement.nextPlannedLoop}
@@ -168,14 +171,14 @@ export function MarketplaceOsDashboard({
                 {viewModel.codexSelfImprovement.futureApiLoop}
               </p>
               <p className="mt-3 text-sm font-black text-cyan-100">
-                Then continue Amazon: {viewModel.thenContinueToAmazonListingPackageBuilder}
+                Luego continuar Amazon: {viewModel.thenContinueToAmazonListingPackageBuilder}
               </p>
               <button
                 className="mt-5 rounded-md border border-white/10 px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-white/35"
                 disabled
                 type="button"
               >
-                Handoff preview only
+                Solo preview
               </button>
             </div>
           </div>
@@ -185,7 +188,7 @@ export function MarketplaceOsDashboard({
           <div className="flex items-center gap-2 text-cyan-100">
             <ShieldCheck className="h-4 w-4" />
             <h2 className="text-sm font-black uppercase tracking-[0.18em]">
-              WhatsApp + Automation Roadmap
+              WhatsApp + Automatizacion
             </h2>
           </div>
           <div className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -208,7 +211,7 @@ export function MarketplaceOsDashboard({
                   disabled
                   type="button"
                 >
-                  Preview only
+                  Solo preview
                 </button>
               </article>
             ))}
