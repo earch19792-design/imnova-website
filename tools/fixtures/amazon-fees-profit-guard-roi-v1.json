@@ -1,0 +1,154 @@
+{
+  "feesProfitGuardVersion": "AMAZON_FEES_PROFIT_GUARD_ROI_V1",
+  "status": "AMAZON_FEES_PROFIT_GUARD_ROI_READY",
+  "mode": "LOCAL_DRY_RUN_FEES_PROFIT_GUARD_ONLY",
+  "sourceDataClass": "LOOP_149E_AMAZON_FEES_PROFIT_GUARD_ROI",
+  "nextLoop": "149F — Amazon Existing ASIN vs New ASIN Decision Engine",
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "amazonApi": {
+    "usedInThisLoop": false
+  },
+  "spApi": {
+    "usedInThisLoop": false
+  },
+  "sellerCentral": {
+    "writeExecutedInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false
+  },
+  "openAi": {
+    "usedInThisLoop": false
+  },
+  "scraper": {
+    "usedInThisLoop": false
+  },
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noAmazonApi": true,
+    "noSpApi": true,
+    "noSellerCentralWrite": true,
+    "noPublication": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noScraper": true,
+    "noSecretsCommitted": true
+  },
+  "profitGuardConfig": {
+    "minimumNetMarginPercent": 18,
+    "minimumRoiPercent": 35,
+    "priceRangeSpreadPercent": 8,
+    "defaultReferralFeeRate": 0.15,
+    "defaultAdReserveRate": 0.08,
+    "defaultReturnReserveRate": 0.04
+  },
+  "restrictionGateAssessments": [
+    {
+      "supplierSku": "luna-portex:first_real_mini_scan:dm0628n",
+      "productTitle": "Glisten Dishwasher Detergent Booster & Freshener 28 oz",
+      "brand": "Glisten",
+      "asinStrategyRecommendation": "SELL_ON_EXISTING_ASIN",
+      "restrictionGateDecision": "NEED_HAZMAT_REVIEW",
+      "canProceedToFeesRoi": true,
+      "canProceedToListingPackage": false,
+      "humanReviewRequired": true,
+      "overallRestrictionRiskScore": 61,
+      "blockedReasons": [
+        "hazmat review required",
+        "chemical compliance review required",
+        "listing package blocked until restrictions are resolved"
+      ],
+      "warnings": [
+        "missing UPC/GTIN",
+        "existing ASIN match does not prove sell eligibility"
+      ],
+      "supplierCost": 7.2,
+      "amazonSalePriceEstimate": 22.99,
+      "referralFeeRateEstimate": 0.15,
+      "fbaFeeEstimate": 5.05,
+      "fbmCostEstimate": 6.85,
+      "prepPackagingCostEstimate": 0.55,
+      "shippingCostEstimate": 0.4,
+      "advertisingReserveRate": 0.08,
+      "returnReserveRate": 0.04,
+      "weightOz": 32,
+      "dimensionsKnown": true,
+      "fulfillmentPreference": "FBA"
+    },
+    {
+      "supplierSku": "luna-portex:first_real_mini_scan:gg-16000tsm",
+      "productTitle": "GoGreen Power 6-Outlet Side-Mount Wall Tap Adapter White GG-16000TSM",
+      "brand": "GoGreen Power",
+      "asinStrategyRecommendation": "HUMAN_REVIEW_EXISTING_ASIN",
+      "restrictionGateDecision": "NEED_ELECTRICAL_COMPLIANCE_REVIEW",
+      "canProceedToFeesRoi": false,
+      "canProceedToListingPackage": false,
+      "humanReviewRequired": true,
+      "overallRestrictionRiskScore": 69,
+      "blockedReasons": [
+        "conflicting catalog match requires human review",
+        "wrong ASIN risk high from catalog matcher",
+        "electrical safety review required",
+        "listing package blocked until restrictions are resolved"
+      ],
+      "warnings": [
+        "missing UPC/GTIN",
+        "dimensions and weight are estimated only"
+      ],
+      "supplierCost": 5.6,
+      "amazonSalePriceEstimate": 13.49,
+      "referralFeeRateEstimate": 0.15,
+      "fbaFeeEstimate": null,
+      "fbmCostEstimate": 4.25,
+      "prepPackagingCostEstimate": 0.45,
+      "shippingCostEstimate": 0.85,
+      "advertisingReserveRate": 0.07,
+      "returnReserveRate": 0.05,
+      "weightOz": null,
+      "dimensionsKnown": false,
+      "fulfillmentPreference": "UNKNOWN"
+    },
+    {
+      "supplierSku": "luna-portex:first_real_mini_scan:rustoleum-spray-sanitized",
+      "productTitle": "Sanitized Rust-Oleum aerosol spray paint candidate 12 oz",
+      "brand": "Rust-Oleum",
+      "asinStrategyRecommendation": "NEED_GTIN_OR_EXEMPTION",
+      "restrictionGateDecision": "REJECT_FOR_NOW",
+      "canProceedToFeesRoi": false,
+      "canProceedToListingPackage": false,
+      "humanReviewRequired": true,
+      "overallRestrictionRiskScore": 92,
+      "blockedReasons": [
+        "category approval likely required",
+        "brand approval likely required",
+        "hazmat review required",
+        "listing package blocked until restrictions are resolved"
+      ],
+      "warnings": [
+        "aerosol paint candidate is high hazmat risk",
+        "brand and category approval must be verified"
+      ],
+      "supplierCost": 4.85,
+      "amazonSalePriceEstimate": 12.99,
+      "referralFeeRateEstimate": 0.15,
+      "fbaFeeEstimate": 5.8,
+      "fbmCostEstimate": 6.6,
+      "prepPackagingCostEstimate": 0.85,
+      "shippingCostEstimate": 0.9,
+      "advertisingReserveRate": 0.1,
+      "returnReserveRate": 0.06,
+      "weightOz": 18,
+      "dimensionsKnown": true,
+      "fulfillmentPreference": "FBA"
+    }
+  ]
+}
