@@ -1,0 +1,104 @@
+{
+  "lunaPrepPackingVersion": "AMAZON_LUNA_FBA_PREP_PACKING_COSTS_V1",
+  "status": "LUNA_FBA_PREP_PACKING_COSTS_READY",
+  "mode": "LOCAL_DRY_RUN_USER_PROVIDED_LUNA_COST_BASELINE_ONLY",
+  "source": "USER_PROVIDED_LUNA_WAREHOUSE_FBA_PREP_AND_FBM_MATERIALS",
+  "sellerCentralVerified": false,
+  "spApiVerified": false,
+  "lunaCostVerifiedByUser": true,
+  "production": { "offLimits": true },
+  "staging": { "writeExecutedInThisLoop": false },
+  "amazonApi": { "usedInThisLoop": false },
+  "spApi": { "usedInThisLoop": false },
+  "sellerCentral": { "writeExecutedInThisLoop": false },
+  "scraper": { "usedInThisLoop": false },
+  "publication": { "createdInThisLoop": false },
+  "nextLoop": "149G - Amazon Listing Package Builder",
+  "professionalSellerPlan": {
+    "monthlyFee": 39.99
+  },
+  "fbaPrepRules": {
+    "inventoryReception": {
+      "preparedAndSentToFbaWithLuna": 0,
+      "notSentToFba": 0.2
+    },
+    "fnSkuLabeling": {
+      "lunaClient": 0.5,
+      "externalClient": 0.8
+    },
+    "bundlePreparation": {
+      "lunaClient": { "1": 0.6, "3": 0.8, "6": 1, "12": 1.25 },
+      "externalClient": { "1": 1, "3": 1.25, "6": 1.5, "12": 2 }
+    },
+    "bundleWrap": {
+      "lunaClient": { "1": 1, "3": 1.25, "6": 1.75, "12": 2 },
+      "externalClient": { "1": 1.5, "3": 2, "6": 2.5, "12": 3 }
+    },
+    "boxes": {
+      "lunaClient": { "SMALL": 2, "MEDIUM": 3, "LARGE": 4 },
+      "externalClient": { "SMALL": 3, "MEDIUM": 4, "LARGE": 5 }
+    },
+    "palletWrapping": 10
+  },
+  "fbmMaterialRequirements": [
+    { "materialKey": "thermal_printer", "label": "Thermal printer", "costStatus": "NEED_UNIT_COST_INPUT" },
+    { "materialKey": "shipping_labels_4x6", "label": "Shipping labels 4x6", "packQuantity": 100, "costStatus": "NEED_UNIT_COST_INPUT" },
+    { "materialKey": "fnsku_labels_2x1", "label": "FN-SKU labels 2x1", "packQuantity": 100, "costStatus": "NEED_UNIT_COST_INPUT" },
+    { "materialKey": "bundle_stickers_do_not_separate", "label": "This is a Set, Do Not Separate stickers", "packQuantity": 100, "costStatus": "NEED_UNIT_COST_INPUT" },
+    { "materialKey": "poly_bags_suffocation_warning", "label": "Poly bags with Suffocation Warning", "packQuantity": 100, "costStatus": "NEED_UNIT_COST_INPUT" },
+    { "materialKey": "team_lift_stickers", "label": "Team Lift stickers for 40-50 lb boxes", "costStatus": "NEED_UNIT_COST_INPUT" },
+    { "materialKey": "combined_warning_stickers", "label": "Combined warning stickers", "costStatus": "NEED_UNIT_COST_INPUT" },
+    { "materialKey": "large_scale", "label": "Large scale", "costStatus": "NEED_UNIT_COST_INPUT" },
+    { "materialKey": "small_scale", "label": "Small scale", "costStatus": "NEED_UNIT_COST_INPUT" },
+    { "materialKey": "fbm_poly_mailer_14_5x19", "label": "FBM Poly Mailers 14.5x19", "packQuantity": 100, "costStatus": "NEED_UNIT_COST_INPUT" },
+    { "materialKey": "fbm_poly_mailer_19x24", "label": "FBM Poly Mailers 19x24", "packQuantity": 60, "costStatus": "NEED_UNIT_COST_INPUT" },
+    { "materialKey": "fbm_poly_mailer_12x15_5", "label": "FBM Poly Mailers 12x15.5", "packQuantity": 100, "costStatus": "NEED_UNIT_COST_INPUT" },
+    { "materialKey": "fbm_bubble_mailers_various", "label": "FBM Bubble Mailers various sizes", "packQuantity": 40, "costStatus": "NEED_UNIT_COST_INPUT" },
+    { "materialKey": "fbm_bubble_mailer_8_5x12", "label": "FBM Bubble Mailers 8.5x12", "packQuantity": 100, "costStatus": "NEED_UNIT_COST_INPUT" }
+  ],
+  "operationalCostAssessments": [
+    {
+      "productKey": "dm0628n",
+      "productTitle": "Glisten Dishwasher Detergent Booster & Freshener 28 oz",
+      "fulfillmentPath": "FBA",
+      "customerType": "LUNA_CLIENT",
+      "preparedAndSentToFbaWithLuna": true,
+      "fnSkuLabelingRequired": true,
+      "bundleUnits": 0,
+      "wrapUnits": 0,
+      "boxRequired": false,
+      "palletRequired": false,
+      "expectedMonthlyUnits": 50
+    },
+    {
+      "productKey": "gg-16000tsm",
+      "productTitle": "GoGreen Power 6-Outlet Side-Mount Wall Tap Adapter",
+      "fulfillmentPath": "FBM",
+      "customerType": "LUNA_CLIENT",
+      "preparedAndSentToFbaWithLuna": false,
+      "fnSkuLabelingRequired": false,
+      "fbmPackingMaterialType": "fbm_poly_mailer_14_5x19",
+      "expectedMonthlyUnits": 50
+    },
+    {
+      "productKey": "rustoleum-spray",
+      "productTitle": "Sanitized Rust-Oleum aerosol spray paint candidate 12 oz",
+      "fulfillmentPath": "UNKNOWN",
+      "customerType": "LUNA_CLIENT",
+      "preparedAndSentToFbaWithLuna": false,
+      "fnSkuLabelingRequired": true,
+      "bundleUnits": 13,
+      "expectedMonthlyUnits": 0
+    }
+  ],
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noAmazonApi": true,
+    "noSpApi": true,
+    "noSellerCentralWrite": true,
+    "noScraper": true,
+    "noPublication": true,
+    "noSecretsCommitted": true
+  }
+}

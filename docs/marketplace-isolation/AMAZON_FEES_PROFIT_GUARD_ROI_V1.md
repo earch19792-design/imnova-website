@@ -81,6 +81,47 @@ This remains a local user-provided baseline. It is not a live Seller Central fee
 
 Seller Central or SP-API must verify the final category and actual fee before any production listing or pricing decision.
 
+## Luna FBA Prep / Packing Costs Patch
+
+149E now also uses `AMAZON_LUNA_FBA_PREP_PACKING_COSTS_V1` to model user-provided Luna Warehouse operational costs.
+
+These costs are separate from Amazon FBA fulfillment fees. Amazon FBA fulfillment remains an Amazon-side estimate. Luna prep and packing costs represent warehouse-side operational work:
+
+- inventory reception;
+- FNSKU labeling;
+- bundle preparation;
+- bundle wrap;
+- boxes;
+- pallet wrapping allocation;
+- FBM packing material requirements.
+
+The model does not invent FBM material costs when the document does not include prices. Those requirements remain marked as `NEED_UNIT_COST_INPUT` until the user provides cost per pack.
+
+## Amazon Professional Seller Plan Fee Allocation
+
+149E now allocates the Amazon Professional seller plan monthly fee:
+
+- monthly fee: 39.99;
+- per-unit allocation: `39.99 / expectedMonthlyUnits`;
+- 10 units/month: approx 4.00 per unit;
+- 50 units/month: approx 0.80 per unit;
+- 100 units/month: approx 0.40 per unit.
+
+If expected monthly units are missing, the model warns with `NEED_EXPECTED_MONTHLY_UNITS` and keeps the fee per unit at 0 in dry-run mode.
+
+## Profit Before and After Operational Add-ons
+
+149E now reports both views:
+
+- netProfitBeforeOperationalAddOns;
+- netProfitAfterOperationalAddOns;
+- roiAfterOperationalAddOns;
+- marginAfterOperationalAddOns;
+- breakEvenPriceAfterOperationalAddOns;
+- minimumProfitablePriceAfterOperationalAddOns.
+
+This keeps the original Amazon fee estimate visible while showing how Luna prep, packing, FBM material requirements, and Professional plan allocation affect the real operating picture.
+
 ## DM0628N Example
 
 DM0628N can proceed to fees and ROI research because LOOP 149D allowed financial analysis. It still cannot proceed to listing package because hazmat and chemical review remain unresolved. Positive ROI does not override Amazon restriction gates.
@@ -90,6 +131,15 @@ With the referral fee schedule patch, DM0628N maps to Home and Kitchen for the l
 - sale price: 22.99;
 - referral fee rate: 15%;
 - referral fee amount: approx 3.45.
+
+With the Luna prep and Professional plan patch, the conservative local scenario adds:
+
+- FNSKU labeling: 0.50;
+- expected monthly units: 50;
+- Professional plan allocation: 0.80;
+- total operational add-on: 1.30.
+
+DM0628N remains blocked from listing package until hazmat, chemical, and manual review gates are resolved.
 
 ## Why ROI Can Advance While Listing Package Stays Blocked
 
