@@ -12,6 +12,8 @@ const cliPath =
   "tools/marketplace-os-dashboard-dry-run.mjs";
 const pagePath =
   "app/admin/marketplace-os/page.tsx";
+const sidebarPath =
+  "app/admin/sidebar.tsx";
 const docPath =
   "docs/marketplace-isolation/IMNOVA_MARKETPLACE_OS_DASHBOARD_AMAZON_DECISION_CENTER_V1.md";
 
@@ -155,6 +157,7 @@ test("CLI dry-run executes and components/routes exist", async () => {
     dashboardComponentPath,
     decisionCenterComponentPath,
     pagePath,
+    sidebarPath,
     docPath,
   ]) {
     assert.equal(fileExists(path), true);
@@ -162,6 +165,8 @@ test("CLI dry-run executes and components/routes exist", async () => {
 
   assert.equal(readText(dashboardComponentPath).includes("export function MarketplaceOsDashboard"), true);
   assert.equal(readText(decisionCenterComponentPath).includes("export function AmazonDecisionCenter"), true);
+  assert.equal(readText(sidebarPath).includes("/admin/marketplace-os"), true);
+  assert.equal(readText(sidebarPath).includes("Marketplace OS"), true);
   assert.equal(readText(dashboardComponentPath).includes("Codex Roadmap"), true);
   assert.equal(readText(decisionCenterComponentPath).includes("Codex Self-Improvement"), true);
   assert.equal(readText(viewModelPath).includes("Codex Handoff"), true);
