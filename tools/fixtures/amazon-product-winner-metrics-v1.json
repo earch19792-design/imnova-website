@@ -1,0 +1,227 @@
+{
+  "amazonProductWinnerMetricsVersion": "AMAZON_PRODUCT_WINNER_METRICS_LISTING_READINESS_V1",
+  "status": "AMAZON_PRODUCT_WINNER_METRICS_READY",
+  "loop": "149A",
+  "sourceDataClass": "LOOP_149A_AMAZON_PRODUCT_WINNER_METRICS",
+  "production": {
+    "offLimits": true,
+    "writeExecutedInThisLoop": false
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "amazonApi": {
+    "usedInThisLoop": false
+  },
+  "sellerCentral": {
+    "writeExecutedInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "products": [
+    {
+      "candidateKey": "amazon-loop149a:cleaning-chemical-sanitary-spray",
+      "title": "Sanitized cleaning chemical spray candidate",
+      "productType": "cleaning_chemical",
+      "category": "Household Cleaning Products",
+      "brand": "Generic",
+      "authorizedBrands": [],
+      "hasExistingAsinMatch": false,
+      "existingAsin": null,
+      "hasGtin": true,
+      "gtinExemptionLikely": false,
+      "brandApprovalRequired": false,
+      "categoryApprovalRequired": true,
+      "supplierInvoiceAvailable": false,
+      "demand": {
+        "estimatedMonthlySalesSignal": 72,
+        "bsrSignal": 66,
+        "keywordDemand": 78
+      },
+      "competition": {
+        "competingAsinCount": 18,
+        "averageReviewCount": 2400,
+        "averageRating": 4.5,
+        "buyBoxDifficulty": 78,
+        "fbaFbmFit": 62
+      },
+      "profitability": {
+        "expectedSellPrice": 18.99,
+        "landedCost": 11.5,
+        "estimatedAmazonFees": 5.95,
+        "expectedRoiPercent": 18,
+        "feeRisk": 68
+      },
+      "restrictionRisk": {
+        "categoryRestrictionRisk": 78,
+        "brandIpRisk": 22,
+        "hazmatRisk": 68,
+        "expirationRisk": 24,
+        "supplyRisk": 72
+      },
+      "keywordOpportunity": {
+        "researchKeywords": [
+          "household cleaner research",
+          "surface spray category research"
+        ],
+        "unauthorizedTrademarkKeywords": [],
+        "exactListingCopyRequested": false,
+        "medicalClaimsPresent": false,
+        "unconfirmedClaimsPresent": false,
+        "differentiationOpportunity": 52,
+        "listingWeaknessOpportunity": 41
+      },
+      "listingAssets": {
+        "titleReady": false,
+        "bulletsReady": false,
+        "imagePackageReady": false,
+        "backendKeywordsReady": false,
+        "categoryAttributesComplete": false,
+        "complianceReady": false,
+        "priceCompetitive": false,
+        "conversionReady": false
+      },
+      "missingData": [
+        "category approval status",
+        "supplier invoice",
+        "hazmat classification",
+        "image package"
+      ]
+    },
+    {
+      "candidateKey": "amazon-loop149a:electrical-desk-lamp-existing-asin",
+      "title": "Sanitized compact electrical desk lamp candidate",
+      "productType": "electrical",
+      "category": "Home Lighting",
+      "brand": "AuthorizedGeneric",
+      "authorizedBrands": [
+        "AuthorizedGeneric"
+      ],
+      "hasExistingAsinMatch": true,
+      "existingAsin": "B0SANITIZED1",
+      "hasGtin": true,
+      "gtinExemptionLikely": false,
+      "brandApprovalRequired": false,
+      "categoryApprovalRequired": false,
+      "supplierInvoiceAvailable": true,
+      "demand": {
+        "estimatedMonthlySalesSignal": 95,
+        "bsrSignal": 90,
+        "keywordDemand": 92
+      },
+      "competition": {
+        "competingAsinCount": 5,
+        "averageReviewCount": 180,
+        "averageRating": 4.4,
+        "buyBoxDifficulty": 24,
+        "fbaFbmFit": 90
+      },
+      "profitability": {
+        "expectedSellPrice": 29.99,
+        "landedCost": 12.5,
+        "estimatedAmazonFees": 8.25,
+        "expectedRoiPercent": 88,
+        "feeRisk": 18
+      },
+      "restrictionRisk": {
+        "categoryRestrictionRisk": 28,
+        "brandIpRisk": 18,
+        "hazmatRisk": 12,
+        "expirationRisk": 0,
+        "supplyRisk": 20
+      },
+      "keywordOpportunity": {
+        "researchKeywords": [
+          "desk lamp research",
+          "compact lighting research"
+        ],
+        "unauthorizedTrademarkKeywords": [],
+        "exactListingCopyRequested": false,
+        "medicalClaimsPresent": false,
+        "unconfirmedClaimsPresent": false,
+        "differentiationOpportunity": 68,
+        "listingWeaknessOpportunity": 58
+      },
+      "listingAssets": {
+        "titleReady": true,
+        "bulletsReady": true,
+        "imagePackageReady": true,
+        "backendKeywordsReady": true,
+        "categoryAttributesComplete": true,
+        "complianceReady": true,
+        "priceCompetitive": true,
+        "conversionReady": true
+      },
+      "missingData": []
+    },
+    {
+      "candidateKey": "amazon-loop149a:household-simple-storage-bin",
+      "title": "Sanitized household storage bin candidate",
+      "productType": "household_simple",
+      "category": "Home Storage",
+      "brand": "Unbranded",
+      "authorizedBrands": [],
+      "hasExistingAsinMatch": false,
+      "existingAsin": null,
+      "hasGtin": false,
+      "gtinExemptionLikely": true,
+      "brandApprovalRequired": false,
+      "categoryApprovalRequired": false,
+      "supplierInvoiceAvailable": true,
+      "demand": {
+        "estimatedMonthlySalesSignal": 55,
+        "bsrSignal": 48,
+        "keywordDemand": 61
+      },
+      "competition": {
+        "competingAsinCount": 12,
+        "averageReviewCount": 180,
+        "averageRating": 4.1,
+        "buyBoxDifficulty": 35,
+        "fbaFbmFit": 74
+      },
+      "profitability": {
+        "expectedSellPrice": 15.49,
+        "landedCost": 6.25,
+        "estimatedAmazonFees": 4.2,
+        "expectedRoiPercent": 58,
+        "feeRisk": 33
+      },
+      "restrictionRisk": {
+        "categoryRestrictionRisk": 12,
+        "brandIpRisk": 10,
+        "hazmatRisk": 0,
+        "expirationRisk": 0,
+        "supplyRisk": 18
+      },
+      "keywordOpportunity": {
+        "researchKeywords": [
+          "storage bin research",
+          "household organizer research"
+        ],
+        "unauthorizedTrademarkKeywords": [],
+        "exactListingCopyRequested": false,
+        "medicalClaimsPresent": false,
+        "unconfirmedClaimsPresent": false,
+        "differentiationOpportunity": 62,
+        "listingWeaknessOpportunity": 70
+      },
+      "listingAssets": {
+        "titleReady": true,
+        "bulletsReady": false,
+        "imagePackageReady": false,
+        "backendKeywordsReady": false,
+        "categoryAttributesComplete": false,
+        "complianceReady": true,
+        "priceCompetitive": true,
+        "conversionReady": false
+      },
+      "missingData": [
+        "GTIN exemption confirmation",
+        "image package",
+        "category attributes"
+      ]
+    }
+  ]
+}
