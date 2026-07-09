@@ -1,0 +1,161 @@
+{
+  "sellerAccountGateVersion": "AMAZON_SELLER_ACCOUNT_SETUP_CATEGORY_GATE_V1",
+  "status": "AMAZON_SELLER_ACCOUNT_CATEGORY_GATE_READY",
+  "mode": "LOCAL_DRY_RUN_ACCOUNT_AND_CATEGORY_GATE_ONLY",
+  "sourceDataClass": "LOOP_149B_AMAZON_SELLER_ACCOUNT_CATEGORY_GATE",
+  "nextLoop": "149C — Luna Portex ↔ Amazon Catalog Matcher",
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "amazonApi": {
+    "usedInThisLoop": false
+  },
+  "spApi": {
+    "usedInThisLoop": false
+  },
+  "sellerCentral": {
+    "writeExecutedInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false
+  },
+  "openAi": {
+    "usedInThisLoop": false
+  },
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noAmazonApi": true,
+    "noSpApi": true,
+    "noSellerCentralWrite": true,
+    "noPublication": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noSecretsCommitted": true
+  },
+  "sellerAccounts": [
+    {
+      "sellerAccountId": "sanitized-imnova-amazon-seller-usa",
+      "identityVerificationStatus": "SET",
+      "businessType": "LLC",
+      "marketplaceTarget": "US",
+      "professionalPlanRecommended": true,
+      "bankAccountStatus": "PARTIAL",
+      "chargeMethodStatus": "SET",
+      "taxInterviewStatus": "PARTIAL",
+      "addressStatus": "SET",
+      "phoneStatus": "SET",
+      "returnAddressStatus": "PARTIAL",
+      "sellerProfileStatus": "PARTIAL",
+      "twoStepVerificationStatus": "SET",
+      "accountHealthBaseline": "UNKNOWN",
+      "apiReadinessStatus": "MISSING",
+      "documents": {
+        "identityDocument": "SET",
+        "businessInformation": "SET",
+        "taxInformation": "PARTIAL",
+        "bankStatement": "MISSING",
+        "chargeMethod": "SET",
+        "addressVerification": "SET",
+        "returnAddress": "PARTIAL",
+        "phoneVerification": "SET",
+        "twoStepVerification": "SET"
+      },
+      "missingAccountItems": [
+        "bank verification final approval",
+        "tax interview final confirmation",
+        "return address final confirmation",
+        "account health baseline review"
+      ]
+    }
+  ],
+  "products": [
+    {
+      "productKey": "luna-portex-amazon149b:cleaning-chemical-spray",
+      "productTitle": "Sanitized Luna Portex cleaning chemical spray candidate",
+      "supplierSku": "LP-SAN-CHEM-001",
+      "partNumber": "CHEM-SAN-001",
+      "modelNumber": null,
+      "brand": "Generic",
+      "productType": "cleaning_chemical",
+      "possibleAmazonCategory": "Household Cleaning Products",
+      "categoryRiskLevel": "HIGH",
+      "categoryApprovalLikelyRequired": true,
+      "brandApprovalLikelyRequired": false,
+      "invoiceLikelyRequired": true,
+      "gtinOrExemptionRequired": true,
+      "hazmatReviewRequired": true,
+      "electricalSafetyReviewRequired": false,
+      "chemicalComplianceReviewRequired": true,
+      "expirationOrLotTrackingRequired": "unknown",
+      "sellerCentralCategoryCheckCompleted": false,
+      "humanCategoryReviewCompleted": false,
+      "knownApprovedCategory": false,
+      "missingData": [
+        "SDS or hazmat classification",
+        "supplier invoice",
+        "GTIN or exemption path",
+        "category restriction confirmation"
+      ]
+    },
+    {
+      "productKey": "luna-portex-amazon149b:electrical-desk-lamp",
+      "productTitle": "Sanitized Luna Portex electrical desk lamp candidate",
+      "supplierSku": "LP-SAN-ELEC-002",
+      "partNumber": "ELEC-SAN-002",
+      "modelNumber": "MODEL-SAN-002",
+      "brand": "AuthorizedGeneric",
+      "productType": "electrical",
+      "possibleAmazonCategory": "Home Lighting",
+      "categoryRiskLevel": "MEDIUM",
+      "categoryApprovalLikelyRequired": "unknown",
+      "brandApprovalLikelyRequired": "unknown",
+      "invoiceLikelyRequired": true,
+      "gtinOrExemptionRequired": false,
+      "hazmatReviewRequired": false,
+      "electricalSafetyReviewRequired": true,
+      "chemicalComplianceReviewRequired": false,
+      "expirationOrLotTrackingRequired": false,
+      "sellerCentralCategoryCheckCompleted": false,
+      "humanCategoryReviewCompleted": false,
+      "knownApprovedCategory": false,
+      "missingData": [
+        "electrical safety evidence",
+        "brand approval status",
+        "supplier invoice"
+      ]
+    },
+    {
+      "productKey": "luna-portex-amazon149b:household-storage-bin",
+      "productTitle": "Sanitized Luna Portex household storage bin candidate",
+      "supplierSku": "LP-SAN-HOME-003",
+      "partNumber": "HOME-SAN-003",
+      "modelNumber": null,
+      "brand": "Unbranded",
+      "productType": "household_simple",
+      "possibleAmazonCategory": "Home Storage",
+      "categoryRiskLevel": "LOW",
+      "categoryApprovalLikelyRequired": false,
+      "brandApprovalLikelyRequired": false,
+      "invoiceLikelyRequired": "unknown",
+      "gtinOrExemptionRequired": true,
+      "hazmatReviewRequired": false,
+      "electricalSafetyReviewRequired": false,
+      "chemicalComplianceReviewRequired": false,
+      "expirationOrLotTrackingRequired": false,
+      "sellerCentralCategoryCheckCompleted": false,
+      "humanCategoryReviewCompleted": false,
+      "knownApprovedCategory": false,
+      "missingData": [
+        "GTIN or exemption path",
+        "invoice requirement confirmation"
+      ]
+    }
+  ]
+}
