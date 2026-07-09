@@ -283,6 +283,13 @@ export function Sidebar({
                 "Modulo profesional eBay bloqueado en produccion.",
             },
             {
+              href: "/admin/marketplace-os",
+              eyebrow: "Amazon Decision Center",
+              title: "Marketplace OS",
+              detail:
+                "Amazon 149A-149F, bloqueos, ROI y Codex roadmap.",
+            },
+            {
               href: "/admin/market-radar",
               eyebrow: "Hub ligero",
               title: "Market Radar",
