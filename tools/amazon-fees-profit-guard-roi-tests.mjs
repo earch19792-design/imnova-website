@@ -93,6 +93,10 @@ test("builds three bounded fees and profit assessments", async () => {
     assert.equal(typeof assessment.recommendedPriceRange.max, "number");
     assert.equal(assessment.recommendedPriceRange.max >= assessment.recommendedPriceRange.min, true);
     assert.equal(assessment.canProceedToListingPackage, false);
+    assert.equal(assessment.referralFeeScheduleVersion, "AMAZON_REFERRAL_FEE_SCHEDULE_CATEGORY_RESOLVER_V1");
+    assert.equal(typeof assessment.referralFeeAmount, "number");
+    assert.equal(assessment.sellerCentralFeeVerified, false);
+    assert.equal(assessment.spApiFeeVerified, false);
     assert.equal(assessment.publicationExecuted, false);
     assert.equal(assessment.amazonApiUsed, false);
     assert.equal(assessment.spApiUsed, false);
@@ -111,6 +115,11 @@ test("net profit, margin, and ROI formulas are deterministic", async () => {
   assert.equal(dm.netProfitEstimate, Number((dm.amazonSalePriceEstimate - dm.totalCostEstimate).toFixed(2)));
   assert.equal(dm.netMarginPercent, Number(((dm.netProfitEstimate / dm.amazonSalePriceEstimate) * 100).toFixed(2)));
   assert.equal(dm.roiPercent, Number(((dm.netProfitEstimate / dm.supplierCost) * 100).toFixed(2)));
+  assert.equal(dm.referralFeeCategory, "Home and Kitchen");
+  assert.equal(dm.referralFeeAmount, 3.45);
+  assert.equal(dm.effectiveReferralFeePercent, 15.01);
+  assert.equal(dm.sellerCentralFeeVerified, false);
+  assert.equal(dm.spApiFeeVerified, false);
 });
 
 test("negative profit and low ROI products are rejected or strongly warned", async () => {
@@ -169,6 +178,8 @@ test("DM0628N can calculate ROI but remains blocked from listing package", async
   assert.equal(dm.canProceedToFeesRoi, true);
   assert.equal(dm.netProfitEstimate > 0, true);
   assert.equal(dm.roiPercent > 0, true);
+  assert.equal(dm.referralFeeRuleType, "SIMPLE_PERCENT");
+  assert.equal(dm.referralFeeMinimumApplied, false);
   assert.equal(dm.canProceedToListingPackage, false);
   assert.equal(dm.blockedReasons.includes("listing package remains blocked by prior gates"), true);
 });
@@ -211,6 +222,11 @@ test("CLI dry-run executes and prints expected numeric output", async () => {
   assert.equal(summary.productsEligibleForFeesRoi >= 1, true);
   assert.equal(summary.productsBlockedFromListingPackage >= 1, true);
   assert.equal(summary.productsRequiringHumanReview >= 1, true);
+  assert.equal(summary.referralFeeScheduleUsed, true);
+  assert.equal(summary.referralFeeCategoriesResolved, 3);
+  assert.equal(summary.uncertainReferralFeeCategories >= 1, true);
+  assert.equal(summary.sellerCentralFeeVerified, false);
+  assert.equal(summary.spApiFeeVerified, false);
   assert.equal(typeof summary.averageNetProfitEstimate, "number");
   assert.equal(typeof summary.averageNetMarginPercent, "number");
   assert.equal(typeof summary.averageRoiPercent, "number");

@@ -1,0 +1,95 @@
+{
+  "referralFeeScheduleVersion": "AMAZON_REFERRAL_FEE_SCHEDULE_CATEGORY_RESOLVER_V1",
+  "status": "AMAZON_REFERRAL_FEE_SCHEDULE_READY",
+  "mode": "LOCAL_DRY_RUN_USER_PROVIDED_FEE_BASELINE_ONLY",
+  "source": "USER_PROVIDED_REFERRAL_FEE_TABLE",
+  "sellerCentralVerified": false,
+  "spApiVerified": false,
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "amazonApi": {
+    "usedInThisLoop": false
+  },
+  "spApi": {
+    "usedInThisLoop": false
+  },
+  "sellerCentral": {
+    "writeExecutedInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "scraper": {
+    "usedInThisLoop": false
+  },
+  "nextLoop": "149G - Amazon Listing Package Builder",
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noAmazonApi": true,
+    "noSpApi": true,
+    "noSellerCentralWrite": true,
+    "noScraper": true,
+    "noPublication": true,
+    "noSecretsCommitted": true
+  },
+  "feeAssessments": [
+    {
+      "productKey": "dm0628n",
+      "category": "Cleaning/Household",
+      "salePrice": 22.99
+    },
+    {
+      "productKey": "gg-16000tsm",
+      "category": "Tools and Home Improvement",
+      "salePrice": 13.49
+    },
+    {
+      "productKey": "rustoleum-spray",
+      "category": "Unknown Paint Aerosol",
+      "salePrice": 12.99
+    }
+  ],
+  "categories": [
+    { "categoryLabel": "Amazon Device Accessories", "ruleType": "SIMPLE_PERCENT", "percent": 0.45, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Appliances - Compact", "ruleType": "TIERED_PORTION_PERCENT", "tiers": [{ "upTo": 300, "percent": 0.15 }, { "above": 300, "percent": 0.08 }], "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Appliances - Full-size", "ruleType": "SIMPLE_PERCENT", "percent": 0.08, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Automotive and Powersports", "ruleType": "SIMPLE_PERCENT", "percent": 0.12, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Base Equipment Power Tools", "ruleType": "SIMPLE_PERCENT", "percent": 0.12, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Baby Products", "ruleType": "PRICE_BAND_PERCENT", "bands": [{ "max": 10, "percent": 0.08 }, { "minExclusive": 10, "percent": 0.15 }], "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Beauty, Health, and Personal Care", "ruleType": "PRICE_BAND_PERCENT", "bands": [{ "max": 10, "percent": 0.08 }, { "minExclusive": 10, "percent": 0.15 }], "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Business, Industrial, and Scientific Supplies", "ruleType": "SIMPLE_PERCENT", "percent": 0.12, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Clothing and Accessories", "ruleType": "PRICE_BAND_PERCENT", "bands": [{ "max": 15, "percent": 0.05 }, { "minExclusive": 15, "max": 20, "percent": 0.1 }, { "minExclusive": 20, "percent": 0.17 }], "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Computers", "ruleType": "SIMPLE_PERCENT", "percent": 0.08, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Consumer Electronics", "ruleType": "SIMPLE_PERCENT", "percent": 0.08, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Electronics Accessories", "ruleType": "TIERED_PORTION_PERCENT", "tiers": [{ "upTo": 100, "percent": 0.15 }, { "above": 100, "percent": 0.08 }], "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Eyewear", "ruleType": "SIMPLE_PERCENT", "percent": 0.15, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Fine Art", "ruleType": "TIERED_PORTION_PERCENT", "tiers": [{ "upTo": 100, "percent": 0.2 }, { "upTo": 1000, "percent": 0.15 }, { "upTo": 5000, "percent": 0.1 }, { "above": 5000, "percent": 0.05 }], "minimumFeeAmount": 1 },
+    { "categoryLabel": "Footwear", "ruleType": "SIMPLE_PERCENT", "percent": 0.15, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Furniture", "ruleType": "TIERED_PORTION_PERCENT", "tiers": [{ "upTo": 200, "percent": 0.15 }, { "above": 200, "percent": 0.1 }], "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Gift Cards", "ruleType": "SIMPLE_PERCENT", "percent": 0.2, "minimumFeeAmount": null },
+    { "categoryLabel": "Grocery and Gourmet", "ruleType": "PRICE_BAND_PERCENT", "bands": [{ "max": 15, "percent": 0.08 }, { "minExclusive": 15, "percent": 0.15 }], "minimumFeeAmount": null },
+    { "categoryLabel": "Home and Kitchen", "ruleType": "SIMPLE_PERCENT", "percent": 0.15, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Jewelry", "ruleType": "TIERED_PORTION_PERCENT", "tiers": [{ "upTo": 250, "percent": 0.2 }, { "above": 250, "percent": 0.05 }], "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Lawn and Garden", "ruleType": "SIMPLE_PERCENT", "percent": 0.15, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Lawn Mowers and Snow Throwers", "ruleType": "PRICE_BAND_PERCENT", "bands": [{ "max": 500, "percent": 0.15 }, { "minExclusive": 500, "percent": 0.08 }], "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Mattresses", "ruleType": "SIMPLE_PERCENT", "percent": 0.15, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Media - Books, DVD, Music, Software, Video", "ruleType": "SIMPLE_PERCENT", "percent": 0.15, "minimumFeeAmount": null },
+    { "categoryLabel": "Merchant Fulfilled Services", "ruleType": "SIMPLE_PERCENT", "percent": 0.2, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Musical Instruments and AV Production", "ruleType": "SIMPLE_PERCENT", "percent": 0.15, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Office Products", "ruleType": "SIMPLE_PERCENT", "percent": 0.15, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Pet Supplies", "ruleType": "SPECIAL_CASE", "percent": 0.15, "specialCases": [{ "match": "veterinary diet", "percent": 0.22 }], "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Sports and Outdoors", "ruleType": "SIMPLE_PERCENT", "percent": 0.15, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Tires", "ruleType": "SIMPLE_PERCENT", "percent": 0.1, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Tools and Home Improvement", "ruleType": "SIMPLE_PERCENT", "percent": 0.15, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Toys and Games", "ruleType": "SIMPLE_PERCENT", "percent": 0.15, "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Video Games and Gaming Accessories", "ruleType": "SIMPLE_PERCENT", "percent": 0.15, "minimumFeeAmount": null },
+    { "categoryLabel": "Video Game Consoles", "ruleType": "SIMPLE_PERCENT", "percent": 0.08, "minimumFeeAmount": null },
+    { "categoryLabel": "Watches", "ruleType": "TIERED_PORTION_PERCENT", "tiers": [{ "upTo": 1500, "percent": 0.16 }, { "above": 1500, "percent": 0.03 }], "minimumFeeAmount": 0.3 },
+    { "categoryLabel": "Everything Else", "ruleType": "SIMPLE_PERCENT", "percent": 0.15, "minimumFeeAmount": 0.3 }
+  ]
+}

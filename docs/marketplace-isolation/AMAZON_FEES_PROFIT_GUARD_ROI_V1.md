@@ -23,7 +23,7 @@ Revenue is the estimated Amazon sale price. Gross profit is not enough for Amazo
 ## Costs Considered
 
 - Supplier cost from Luna Portex or a sanitized estimate.
-- Amazon referral fee estimate from configurable fixture rates.
+- Amazon referral fee estimate from the local category fee resolver baseline.
 - FBA fee estimate where dimensions and weight are known enough for local modeling.
 - FBM cost estimate where merchant fulfillment is plausible.
 - Prep and packaging cost.
@@ -51,9 +51,45 @@ Price war risk increases when the estimated net margin is too close to the minim
 
 Allowed decisions are `PROFITABLE_CONTINUE`, `LOW_MARGIN_WATCHLIST`, `REJECT_LOW_ROI`, `REJECT_NEGATIVE_PROFIT`, `NEED_REAL_AMAZON_FEES`, `NEED_FBA_FBM_DECISION`, `PRICE_TOO_COMPETITIVE`, `BLOCKED_BY_RESTRICTION_GATE`, and `CONTINUE_RESEARCH_ONLY`.
 
+## Referral Fee Schedule Patch
+
+149E now uses the Amazon Referral Fee Schedule Category Resolver baseline from `AMAZON_REFERRAL_FEE_SCHEDULE_CATEGORY_RESOLVER_V1`.
+
+The resolver maps probable Amazon categories to local referral fee rules:
+
+- simple percent rules;
+- price band rules;
+- tiered portion rules;
+- special cases;
+- minimum referral fee rules;
+- fallback to Everything Else when the category is unknown.
+
+This remains a local user-provided baseline. It is not a live Seller Central fee preview and it is not SP-API verified.
+
+149E now reports:
+
+- referralFeeScheduleVersion;
+- referralFeeCategory;
+- referralFeeRuleType;
+- referralFeeAmount;
+- effectiveReferralFeePercent;
+- referralFeeMinimumApplied;
+- referralFeeCategoryConfidence;
+- sellerCentralFeeVerified false;
+- spApiFeeVerified false;
+- referralFeeWarnings.
+
+Seller Central or SP-API must verify the final category and actual fee before any production listing or pricing decision.
+
 ## DM0628N Example
 
 DM0628N can proceed to fees and ROI research because LOOP 149D allowed financial analysis. It still cannot proceed to listing package because hazmat and chemical review remain unresolved. Positive ROI does not override Amazon restriction gates.
+
+With the referral fee schedule patch, DM0628N maps to Home and Kitchen for the local baseline:
+
+- sale price: 22.99;
+- referral fee rate: 15%;
+- referral fee amount: approx 3.45.
 
 ## Why ROI Can Advance While Listing Package Stays Blocked
 
