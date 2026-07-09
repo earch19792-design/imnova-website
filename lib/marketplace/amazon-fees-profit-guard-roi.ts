@@ -3,6 +3,8 @@ export const AMAZON_FEES_PROFIT_GUARD_ROI_VERSION =
 
 // @ts-ignore Node dry-runs import TypeScript modules directly.
 import { buildAmazonReferralFeeEstimate as buildResolvedAmazonReferralFeeEstimate } from "./amazon-referral-fee-schedule.ts"
+// @ts-ignore Node dry-runs import TypeScript modules directly.
+import { buildAmazonOperationalCostStack } from "./amazon-luna-fba-prep-packing-costs.ts"
 
 const sourceDataClass =
   "LOOP_149E_AMAZON_FEES_PROFIT_GUARD_ROI"
@@ -131,6 +133,22 @@ function average(values: number[]) {
 
 function unique(values: string[]) {
   return [...new Set(values)]
+}
+
+function productKeyFromSku(supplierSku: string) {
+  if (supplierSku.includes("dm0628n")) {
+    return "dm0628n"
+  }
+
+  if (supplierSku.includes("gg-16000tsm")) {
+    return "gg-16000tsm"
+  }
+
+  if (supplierSku.includes("rustoleum")) {
+    return "rustoleum-spray"
+  }
+
+  return supplierSku
 }
 
 function buildConfig(config?: ProfitGuardConfig | null) {
@@ -266,6 +284,87 @@ export function buildAmazonReferralFeeEstimate(input: ReturnType<typeof buildAma
         input.possibleAmazonCategory,
       ].filter(Boolean).join(" "),
   })
+}
+
+function buildAmazonOperationalCostInput(input: ReturnType<typeof buildAmazonFeesProfitGuardInput>) {
+  const productKey =
+    productKeyFromSku(input.supplierSku)
+
+  if (productKey === "dm0628n") {
+    return {
+      productKey,
+      productTitle:
+        input.productTitle,
+      fulfillmentPath:
+        "FBA",
+      customerType:
+        "LUNA_CLIENT",
+      preparedAndSentToFbaWithLuna:
+        true,
+      fnSkuLabelingRequired:
+        true,
+      productRequiresPrep:
+        false,
+      expectedMonthlyUnits:
+        50,
+    }
+  }
+
+  if (productKey === "gg-16000tsm") {
+    return {
+      productKey,
+      productTitle:
+        input.productTitle,
+      fulfillmentPath:
+        "FBM",
+      customerType:
+        "LUNA_CLIENT",
+      preparedAndSentToFbaWithLuna:
+        false,
+      fnSkuLabelingRequired:
+        false,
+      fbmPackingMaterialType:
+        "fbm_poly_mailer_14_5x19",
+      expectedMonthlyUnits:
+        50,
+    }
+  }
+
+  if (productKey === "rustoleum-spray") {
+    return {
+      productKey,
+      productTitle:
+        input.productTitle,
+      fulfillmentPath:
+        "UNKNOWN",
+      customerType:
+        "LUNA_CLIENT",
+      preparedAndSentToFbaWithLuna:
+        false,
+      fnSkuLabelingRequired:
+        true,
+      bundleUnits:
+        13,
+      expectedMonthlyUnits:
+        0,
+    }
+  }
+
+  return {
+    productKey,
+    productTitle:
+      input.productTitle,
+    fulfillmentPath:
+      input.fulfillmentPreference === "FBM" ? "FBM" : input.fulfillmentPreference === "FBA" ? "FBA" : "UNKNOWN",
+    customerType:
+      "LUNA_CLIENT",
+    preparedAndSentToFbaWithLuna:
+      input.fulfillmentPreference === "FBA",
+    fnSkuLabelingRequired:
+      input.fulfillmentPreference === "FBA",
+    expectedMonthlyUnits:
+      0,
+  }
 }
 
 export function buildAmazonFbaFeeEstimate(input: ReturnType<typeof buildAmazonFeesProfitGuardInput>) {
@@ -417,6 +516,8 @@ export function buildAmazonFeesProfitGuardAssessment(
     buildAmazonFulfillmentCostModel(input)
   const referralFeeEstimate =
     buildAmazonReferralFeeEstimate(input)
+  const operationalCostStack =
+    buildAmazonOperationalCostStack(buildAmazonOperationalCostInput(input))
   const fbaFeeEstimate =
     buildAmazonFbaFeeEstimate(input)
   const fbmCostEstimate =
@@ -445,9 +546,26 @@ export function buildAmazonFeesProfitGuardAssessment(
         input.amazonSalePriceEstimate,
       totalCostEstimate,
     })
+  const netProfitBeforeOperationalAddOns =
+    netProfitEstimate
+  const totalOperationalCostAddOn =
+    operationalCostStack.totalOperationalCostAddOn
+  const totalCostAfterOperationalAddOns =
+    money(totalCostEstimate + totalOperationalCostAddOn)
+  const netProfitAfterOperationalAddOns =
+    money(netProfitBeforeOperationalAddOns - totalOperationalCostAddOn)
   const roi =
     buildAmazonRoiEstimate({
       netProfitEstimate,
+      supplierCost:
+        input.supplierCost,
+      amazonSalePriceEstimate:
+        input.amazonSalePriceEstimate,
+    })
+  const roiAfterOperationalAddOns =
+    buildAmazonRoiEstimate({
+      netProfitEstimate:
+        netProfitAfterOperationalAddOns,
       supplierCost:
         input.supplierCost,
       amazonSalePriceEstimate:
@@ -469,9 +587,28 @@ export function buildAmazonFeesProfitGuardAssessment(
         input.shippingCostEstimate,
       variableRate,
     })
+  const breakEvenPriceAfterOperationalAddOns =
+    buildAmazonBreakEvenPrice({
+      supplierCost:
+        input.supplierCost,
+      fulfillmentCostEstimate:
+        fulfillment.fulfillmentCostEstimate,
+      prepPackagingCostEstimate:
+        input.prepPackagingCostEstimate + totalOperationalCostAddOn,
+      shippingCostEstimate:
+        input.shippingCostEstimate,
+      variableRate,
+    })
   const minimumProfitablePrice =
     buildAmazonMinimumProfitablePrice({
       breakEvenPrice,
+      minimumNetMarginPercent:
+        input.config.minimumNetMarginPercent,
+    })
+  const minimumProfitablePriceAfterOperationalAddOns =
+    buildAmazonMinimumProfitablePrice({
+      breakEvenPrice:
+        breakEvenPriceAfterOperationalAddOns,
       minimumNetMarginPercent:
         input.config.minimumNetMarginPercent,
     })
@@ -530,6 +667,7 @@ export function buildAmazonFeesProfitGuardAssessment(
       ...input.warnings,
       "Amazon fees are estimates only until Seller Central or SP-API confirms real fees",
       ...referralFeeEstimate.warnings,
+      ...operationalCostStack.warnings,
       profitGuardDecision === "BLOCKED_BY_RESTRICTION_GATE" ? "positive margin cannot override restriction gate" : "",
       fulfillment.missingDimensionsWeight ? "FBA/FBM decision needs dimensions and weight" : "",
     ].filter(Boolean))
@@ -576,6 +714,35 @@ export function buildAmazonFeesProfitGuardAssessment(
       false,
     referralFeeWarnings:
       referralFeeEstimate.warnings,
+    lunaPrepPackingCostScheduleUsed:
+      true,
+    professionalSellerPlanFeeIncluded:
+      true,
+    amazonProfessionalPlanMonthlyFee:
+      operationalCostStack.amazonProfessionalPlanMonthlyFee,
+    expectedMonthlyUnits:
+      operationalCostStack.expectedMonthlyUnits,
+    professionalPlanFeePerUnit:
+      operationalCostStack.professionalPlanFeePerUnit,
+    lunaFbaPrepCost:
+      operationalCostStack.totalLunaPrepPackingCost,
+    fnSkuLabelingCost:
+      operationalCostStack.fnSkuLabelingCost,
+    packingMaterialCost:
+      operationalCostStack.fbmPackingMaterialCostPerUnit,
+    packingMaterialCostStatus:
+      operationalCostStack.fbmPackingMaterialCostStatus,
+    totalOperationalCostAddOn,
+    netProfitBeforeOperationalAddOns,
+    netProfitAfterOperationalAddOns,
+    marginAfterOperationalAddOns:
+      roiAfterOperationalAddOns.netMarginPercent,
+    roiAfterOperationalAddOns:
+      roiAfterOperationalAddOns.roiPercent,
+    breakEvenPriceAfterOperationalAddOns,
+    minimumProfitablePriceAfterOperationalAddOns,
+    operationalCostWarnings:
+      operationalCostStack.warnings,
     referralFeeEstimate:
       referralFeeEstimate.referralFeeAmount,
     fbaFeeEstimate,
@@ -588,6 +755,7 @@ export function buildAmazonFeesProfitGuardAssessment(
     returnReserveEstimate,
     totalAmazonFeeEstimate,
     totalCostEstimate,
+    totalCostAfterOperationalAddOns,
     landedCostEstimate,
     netProfitEstimate,
     netMarginPercent:
@@ -726,12 +894,28 @@ export function summarizeAmazonFeesProfitGuardQueue(queue: ReturnType<typeof bui
       false,
     spApiFeeVerified:
       false,
+    lunaPrepPackingCostScheduleUsed:
+      assessments.every(entry => entry.lunaPrepPackingCostScheduleUsed),
+    professionalSellerPlanFeeIncluded:
+      assessments.every(entry => entry.professionalSellerPlanFeeIncluded),
     dm0628nNetProfitEstimate:
       dm0628nAssessment?.netProfitEstimate ?? 0,
     dm0628nRoiPercent:
       dm0628nAssessment?.roiPercent ?? 0,
     dm0628nReferralFeeAmount:
       dm0628nAssessment?.referralFeeAmount ?? 0,
+    dm0628nFnSkuLabelingCost:
+      dm0628nAssessment?.fnSkuLabelingCost ?? 0,
+    dm0628nProfessionalPlanFeePerUnit:
+      dm0628nAssessment?.professionalPlanFeePerUnit ?? 0,
+    dm0628nTotalOperationalCostAddOn:
+      dm0628nAssessment?.totalOperationalCostAddOn ?? 0,
+    dm0628nNetProfitBeforeOperationalAddOns:
+      dm0628nAssessment?.netProfitBeforeOperationalAddOns ?? 0,
+    dm0628nNetProfitAfterOperationalAddOns:
+      dm0628nAssessment?.netProfitAfterOperationalAddOns ?? 0,
+    dm0628nRoiAfterOperationalAddOns:
+      dm0628nAssessment?.roiAfterOperationalAddOns ?? 0,
     amazonApiUsed:
       false,
     spApiUsed:
