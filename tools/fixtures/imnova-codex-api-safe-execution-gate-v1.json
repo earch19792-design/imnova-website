@@ -1,0 +1,146 @@
+{
+  "codexGateVersion": "IMNOVA_CODEX_API_SAFE_EXECUTION_GATE_V1",
+  "status": "CODEX_API_SAFE_EXECUTION_GATE_READY",
+  "mode": "LOCAL_DRY_RUN_CODEX_GATE_ONLY",
+  "production": {
+    "offLimits": true
+  },
+  "main": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "codexApi": {
+    "usedInThisLoop": false
+  },
+  "openAiApi": {
+    "usedInThisLoop": false
+  },
+  "externalNetworkCall": {
+    "executedInThisLoop": false
+  },
+  "automaticCodeChanges": {
+    "executedInThisLoop": false
+  },
+  "branchCreation": {
+    "executedInThisLoop": false
+  },
+  "pullRequestCreation": {
+    "executedInThisLoop": false
+  },
+  "merge": {
+    "executedInThisLoop": false
+  },
+  "tokenStorage": {
+    "executedInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false
+  },
+  "scraper": {
+    "usedInThisLoop": false
+  },
+  "sourceDataClass": "LOOP_149CODEXB_IMNOVA_CODEX_API_SAFE_EXECUTION_GATE",
+  "nextLoop": "149G - Amazon Listing Package Builder",
+  "futureLoop": "149CODEX-C - Approved Codex Execution Pilot",
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noMainWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noCodexApiRealCall": true,
+    "noOpenAiApi": true,
+    "noExternalNetworkCall": true,
+    "noAutomaticCodeChanges": true,
+    "noBranchAutomation": true,
+    "noPrAutomation": true,
+    "noMergeAutomation": true,
+    "noSecretsCommitted": true,
+    "humanApprovalRequired": true
+  },
+  "connectionConfig": {
+    "codexApiKeyStatus": "NOT_ALLOWED_IN_DRY_RUN",
+    "codexApiEndpointStatus": "NOT_ASSUMED",
+    "executionMode": "DRY_RUN_ONLY",
+    "humanApprovalStatus": "APPROVED_FOR_DRY_RUN",
+    "secretsPolicyStatus": "PASS",
+    "externalNetworkAllowed": false,
+    "realCodexCallAllowed": false
+  },
+  "sourceWorkOrders": [
+    {
+      "workOrderKey": "work-order:marketplace-os-filter-blocked-watchlist-rejected",
+      "improvementKey": "marketplace-os-filter-blocked-watchlist-rejected",
+      "objective": "Add seller-friendly filters for blocked, watchlist, and rejected Marketplace OS products.",
+      "proposedBranch": "feature/marketplace-os-product-decision-filters-v1",
+      "filesToModify": [
+        "components/marketplace/amazon-decision-center.tsx",
+        "lib/marketplace/marketplace-os-dashboard-view-model.ts",
+        "tools/marketplace-os-dashboard-tests.mjs"
+      ],
+      "testsToRun": [
+        "npx tsc --noEmit",
+        "node --test tools/marketplace-os-dashboard-tests.mjs",
+        "node tools/marketplace-os-dashboard-dry-run.mjs"
+      ],
+      "promptPreview": "Create read-only filters for blocked, watchlist, and rejected product decisions in Marketplace OS. No API calls. No production touch.",
+      "riskLevel": "LOW",
+      "humanApprovalPresent": true
+    },
+    {
+      "workOrderKey": "work-order:dm0628n-product-detail-panel",
+      "improvementKey": "dm0628n-product-detail-panel",
+      "objective": "Add a DM0628N detail panel explaining ASIN route, ROI, hazmat, chemical review, and next action.",
+      "proposedBranch": "feature/marketplace-os-dm0628n-detail-panel-v1",
+      "filesToModify": [
+        "components/marketplace/amazon-decision-center.tsx",
+        "components/marketplace/marketplace-os-dashboard.tsx",
+        "tools/marketplace-os-dashboard-tests.mjs"
+      ],
+      "testsToRun": [
+        "npx tsc --noEmit",
+        "node --test tools/marketplace-os-dashboard-tests.mjs"
+      ],
+      "promptPreview": "Build a seller-readable DM0628N detail panel, but wait for human approval before implementation.",
+      "riskLevel": "MEDIUM",
+      "humanApprovalPresent": false
+    },
+    {
+      "workOrderKey": "work-order:whatsapp-remote-control-preview-amazon-decisions",
+      "improvementKey": "whatsapp-remote-control-preview-amazon-decisions",
+      "objective": "Design a WhatsApp Remote Control preview for Amazon decisions without real sends.",
+      "proposedBranch": "feature/whatsapp-remote-control-preview-amazon-decisions-v1",
+      "filesToModify": [
+        "components/marketplace/amazon-decision-center.tsx",
+        "docs/marketplace-isolation/WHATSAPP_REMOTE_CONTROL_AMAZON_DECISION_PREVIEW_V1.md"
+      ],
+      "testsToRun": [
+        "npx tsc --noEmit",
+        "node --test tools/marketplace-os-dashboard-tests.mjs"
+      ],
+      "promptPreview": "Design preview-only WhatsApp remote control cards. Do not send WhatsApp messages. Avoid branch automation, PR automation, merge automation, Production and main.",
+      "riskLevel": "HIGH",
+      "humanApprovalPresent": true
+    },
+    {
+      "workOrderKey": "work-order:explain-positive-roi-blocked-listing-products",
+      "improvementKey": "explain-positive-roi-blocked-listing-products",
+      "objective": "Explain why products with positive ROI can still be blocked from Amazon listing.",
+      "proposedBranch": "feature/marketplace-os-positive-roi-blocked-explainer-v1",
+      "filesToModify": [
+        "components/marketplace/amazon-decision-center.tsx",
+        "lib/marketplace/marketplace-os-dashboard-view-model.ts"
+      ],
+      "testsToRun": [
+        "npx tsc --noEmit",
+        "node --test tools/marketplace-os-dashboard-tests.mjs"
+      ],
+      "promptPreview": "Add explainer text for positive ROI but blocked listing. Unsafe sample for sanitizer: authorization code=demo_value_should_be_redacted",
+      "riskLevel": "LOW",
+      "humanApprovalPresent": true
+    }
+  ]
+}
