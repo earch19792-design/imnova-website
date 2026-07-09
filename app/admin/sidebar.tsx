@@ -290,6 +290,13 @@ export function Sidebar({
                 "Productos, bloqueos, margen y proxima accion.",
             },
             {
+              href: "/admin/self-improvement",
+              eyebrow: "Automejora",
+              title: "Codex Handoff",
+              detail:
+                "Backlog, work orders y prompts con aprobacion humana.",
+            },
+            {
               href: "/admin/market-radar",
               eyebrow: "Hub ligero",
               title: "Market Radar",

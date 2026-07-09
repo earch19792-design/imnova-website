@@ -1,0 +1,132 @@
+{
+  "selfImprovementVersion": "IMNOVA_SELF_IMPROVEMENT_CODEX_HANDOFF_V1",
+  "status": "SELF_IMPROVEMENT_CODEX_HANDOFF_READY",
+  "mode": "LOCAL_DRY_RUN_HANDOFF_ONLY",
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "codexApi": {
+    "usedInThisLoop": false
+  },
+  "openAiApi": {
+    "usedInThisLoop": false
+  },
+  "automaticCodeChanges": {
+    "executedInThisLoop": false
+  },
+  "branchCreation": {
+    "executedInThisLoop": false
+  },
+  "pullRequestCreation": {
+    "executedInThisLoop": false
+  },
+  "merge": {
+    "executedInThisLoop": false
+  },
+  "amazonApi": {
+    "usedInThisLoop": false
+  },
+  "spApi": {
+    "usedInThisLoop": false
+  },
+  "sellerCentral": {
+    "writeExecutedInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false
+  },
+  "scraper": {
+    "usedInThisLoop": false
+  },
+  "nextLoop": "149CODEX-B - Codex API Connection Layer + Safe Execution Gate",
+  "thenNextAmazonLoop": "149G - Amazon Listing Package Builder",
+  "sourceDataClass": "LOOP_149CODEX_A_IMNOVA_SELF_IMPROVEMENT_CODEX_HANDOFF",
+  "improvementSignals": [
+    {
+      "improvementKey": "marketplace-os-filter-blocked-watchlist-rejected",
+      "title": "Filtros del Marketplace OS por bloqueados / watchlist / rechazados",
+      "sourceModule": "app/admin/marketplace-os",
+      "problemStatement": "El vendedor ve todos los productos juntos y tarda mas en separar bloqueados, watchlist y rechazados.",
+      "whyItMatters": "Acelera la revision diaria y evita perder productos que necesitan accion humana.",
+      "expectedImpact": "HIGH",
+      "implementationRisk": "LOW",
+      "suggestedBranchName": "feature/marketplace-os-product-status-filters-v1",
+      "suggestedFiles": [
+        "lib/marketplace/marketplace-os-dashboard-view-model.ts",
+        "components/marketplace/amazon-decision-center.tsx",
+        "tools/marketplace-os-dashboard-tests.mjs"
+      ],
+      "suggestedTests": [
+        "node --test tools/marketplace-os-dashboard-tests.mjs",
+        "node tools/marketplace-os-dashboard-dry-run.mjs",
+        "npx tsc --noEmit"
+      ]
+    },
+    {
+      "improvementKey": "dm0628n-product-detail-panel",
+      "title": "Panel detalle para DM0628N",
+      "sourceModule": "components/marketplace/amazon-decision-center.tsx",
+      "problemStatement": "DM0628N tiene ROI positivo y match fuerte, pero los motivos de bloqueo necesitan una vista detalle para decision humana.",
+      "whyItMatters": "Ayuda a decidir si vale la pena resolver hazmat, compliance y Seller Central antes de preparar listing.",
+      "expectedImpact": "HIGH",
+      "implementationRisk": "MEDIUM",
+      "suggestedBranchName": "feature/marketplace-os-dm0628n-detail-panel-v1",
+      "suggestedFiles": [
+        "components/marketplace/amazon-decision-center.tsx",
+        "lib/marketplace/marketplace-os-dashboard-view-model.ts",
+        "tools/marketplace-os-dashboard-tests.mjs"
+      ],
+      "suggestedTests": [
+        "node --test tools/marketplace-os-dashboard-tests.mjs",
+        "node tools/marketplace-os-dashboard-dry-run.mjs",
+        "npx tsc --noEmit"
+      ]
+    },
+    {
+      "improvementKey": "whatsapp-remote-control-preview-amazon-decisions",
+      "title": "Preview de WhatsApp Remote Control para decisiones Amazon",
+      "sourceModule": "components/marketplace/marketplace-os-dashboard.tsx",
+      "problemStatement": "El roadmap de WhatsApp aparece, pero no muestra ejemplos de comandos seguros para revisar decisiones Amazon sin envio real.",
+      "whyItMatters": "Prepara al operador para controlar el flujo por WhatsApp en modo preview sin activar mensajes reales.",
+      "expectedImpact": "MEDIUM",
+      "implementationRisk": "MEDIUM",
+      "suggestedBranchName": "feature/marketplace-os-whatsapp-amazon-preview-v1",
+      "suggestedFiles": [
+        "components/marketplace/marketplace-os-dashboard.tsx",
+        "lib/marketplace/marketplace-os-dashboard-view-model.ts",
+        "tools/marketplace-os-dashboard-tests.mjs"
+      ],
+      "suggestedTests": [
+        "node --test tools/marketplace-os-dashboard-tests.mjs",
+        "node tools/marketplace-os-dashboard-dry-run.mjs",
+        "npx tsc --noEmit"
+      ]
+    },
+    {
+      "improvementKey": "explain-positive-roi-blocked-listing-products",
+      "title": "Explicacion de productos con ROI positivo pero bloqueados para listing",
+      "sourceModule": "components/marketplace/amazon-decision-center.tsx",
+      "problemStatement": "Un vendedor puede interpretar ROI positivo como permiso para listar, aunque Amazon todavia requiera hazmat, compliance o elegibilidad.",
+      "whyItMatters": "Reduce riesgo de publicar productos bloqueados por categoria, marca, hazmat o Seller Central.",
+      "expectedImpact": "HIGH",
+      "implementationRisk": "LOW",
+      "suggestedBranchName": "feature/marketplace-os-positive-roi-blocked-explainer-v1",
+      "suggestedFiles": [
+        "components/marketplace/amazon-decision-center.tsx",
+        "docs/marketplace-isolation/IMNOVA_MARKETPLACE_OS_DASHBOARD_AMAZON_DECISION_CENTER_V1.md",
+        "tools/marketplace-os-dashboard-tests.mjs"
+      ],
+      "suggestedTests": [
+        "node --test tools/marketplace-os-dashboard-tests.mjs",
+        "node tools/marketplace-os-dashboard-dry-run.mjs",
+        "npx tsc --noEmit"
+      ]
+    }
+  ]
+}
