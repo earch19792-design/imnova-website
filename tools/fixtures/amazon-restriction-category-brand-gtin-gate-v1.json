@@ -1,0 +1,138 @@
+{
+  "restrictionGateVersion": "AMAZON_RESTRICTION_CATEGORY_BRAND_GTIN_GATE_V1",
+  "status": "AMAZON_RESTRICTION_CATEGORY_BRAND_GTIN_GATE_READY",
+  "mode": "LOCAL_DRY_RUN_RESTRICTION_GATE_ONLY",
+  "sourceDataClass": "LOOP_149D_AMAZON_RESTRICTION_CATEGORY_BRAND_GTIN_GATE",
+  "nextLoop": "149E — Amazon Fees + Profit Guard + ROI",
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "amazonApi": {
+    "usedInThisLoop": false
+  },
+  "spApi": {
+    "usedInThisLoop": false
+  },
+  "sellerCentral": {
+    "writeExecutedInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false
+  },
+  "openAi": {
+    "usedInThisLoop": false
+  },
+  "scraper": {
+    "usedInThisLoop": false
+  },
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noAmazonApi": true,
+    "noSpApi": true,
+    "noSellerCentralWrite": true,
+    "noPublication": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noScraper": true,
+    "noSecretsCommitted": true
+  },
+  "catalogMatches": [
+    {
+      "supplierSku": "luna-portex:first_real_mini_scan:dm0628n",
+      "productTitle": "Glisten Dishwasher Detergent Booster & Freshener 28 oz",
+      "brand": "Glisten",
+      "asinStrategyRecommendation": "SELL_ON_EXISTING_ASIN",
+      "catalogMatchType": "STRONG_BRAND_MODEL_SIZE_MATCH",
+      "matchConfidenceScore": 97,
+      "productType": "cleaning chemical dishwasher detergent booster",
+      "possibleAmazonCategory": "Household Cleaning Products",
+      "wrongAsinRisk": "LOW",
+      "duplicateAsinRisk": "LOW",
+      "missingUpcGtin": true,
+      "hasSupplierInvoice": false,
+      "brandAuthorizationStatus": "unknown",
+      "categoryApprovalLikelyRequired": "unknown",
+      "brandApprovalLikelyRequired": "unknown",
+      "invoiceLikelyRequired": true,
+      "gtinOrExemptionRequired": "unknown",
+      "hazmatReviewRequired": "unknown",
+      "chemicalComplianceReviewRequired": true,
+      "electricalSafetyReviewRequired": false,
+      "claimsRiskPresent": false,
+      "ipRiskPresent": false,
+      "sellerCentralManualCheckRequired": true,
+      "categoryRestrictionRisk": "MEDIUM",
+      "notes": [
+        "missing UPC/GTIN from Luna Portex",
+        "cleaning compliance must be reviewed before listing"
+      ]
+    },
+    {
+      "supplierSku": "luna-portex:first_real_mini_scan:gg-16000tsm",
+      "productTitle": "GoGreen Power 6-Outlet Side-Mount Wall Tap Adapter White GG-16000TSM",
+      "brand": "GoGreen Power",
+      "asinStrategyRecommendation": "HUMAN_REVIEW_EXISTING_ASIN",
+      "catalogMatchType": "CONFLICTING_MATCH",
+      "matchConfidenceScore": 78,
+      "productType": "electrical outlet adapter wall tap",
+      "possibleAmazonCategory": "Electrical Outlet Adapters",
+      "wrongAsinRisk": "HIGH",
+      "duplicateAsinRisk": "HIGH",
+      "missingUpcGtin": true,
+      "hasSupplierInvoice": false,
+      "brandAuthorizationStatus": "unknown",
+      "categoryApprovalLikelyRequired": "unknown",
+      "brandApprovalLikelyRequired": "unknown",
+      "invoiceLikelyRequired": true,
+      "gtinOrExemptionRequired": "unknown",
+      "hazmatReviewRequired": false,
+      "chemicalComplianceReviewRequired": false,
+      "electricalSafetyReviewRequired": true,
+      "claimsRiskPresent": false,
+      "ipRiskPresent": false,
+      "sellerCentralManualCheckRequired": true,
+      "categoryRestrictionRisk": "MEDIUM",
+      "notes": [
+        "conflicting candidate ASINs from catalog matcher",
+        "electrical safety evidence needed"
+      ]
+    },
+    {
+      "supplierSku": "luna-portex:first_real_mini_scan:rustoleum-spray-sanitized",
+      "productTitle": "Sanitized Rust-Oleum aerosol spray paint candidate 12 oz",
+      "brand": "Rust-Oleum",
+      "asinStrategyRecommendation": "NEED_GTIN_OR_EXEMPTION",
+      "catalogMatchType": "NO_MATCH",
+      "matchConfidenceScore": 15,
+      "productType": "aerosol spray paint hazmat",
+      "possibleAmazonCategory": "Paint and Primer",
+      "wrongAsinRisk": "LOW",
+      "duplicateAsinRisk": "HIGH",
+      "missingUpcGtin": true,
+      "hasSupplierInvoice": false,
+      "brandAuthorizationStatus": "unknown",
+      "categoryApprovalLikelyRequired": true,
+      "brandApprovalLikelyRequired": true,
+      "invoiceLikelyRequired": true,
+      "gtinOrExemptionRequired": true,
+      "hazmatReviewRequired": true,
+      "chemicalComplianceReviewRequired": true,
+      "electricalSafetyReviewRequired": false,
+      "claimsRiskPresent": false,
+      "ipRiskPresent": true,
+      "sellerCentralManualCheckRequired": true,
+      "categoryRestrictionRisk": "HIGH",
+      "notes": [
+        "aerosol paint candidate is high hazmat risk",
+        "brand and category approval must be verified"
+      ]
+    }
+  ]
+}
