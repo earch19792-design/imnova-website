@@ -1,6 +1,9 @@
 export const AMAZON_FEES_PROFIT_GUARD_ROI_VERSION =
   "AMAZON_FEES_PROFIT_GUARD_ROI_V1"
 
+// @ts-ignore Node dry-runs import TypeScript modules directly.
+import { buildAmazonReferralFeeEstimate as buildResolvedAmazonReferralFeeEstimate } from "./amazon-referral-fee-schedule.ts"
+
 const sourceDataClass =
   "LOOP_149E_AMAZON_FEES_PROFIT_GUARD_ROI"
 
@@ -59,6 +62,8 @@ type FeesProfitEntry = {
   referralFeeRateEstimate?: number | null
   fbaFeeEstimate?: number | null
   fbmCostEstimate?: number | null
+  possibleAmazonCategory?: string | null
+  referralFeeCategory?: string | null
   prepPackagingCostEstimate?: number | null
   shippingCostEstimate?: number | null
   advertisingReserveRate?: number | null
@@ -184,6 +189,10 @@ export function buildAmazonFeesProfitGuardInput(
       money(Math.max(0, normalizeNumber(entry.amazonSalePriceEstimate, 0))),
     referralFeeRateEstimate:
       normalizePercentRate(entry.referralFeeRateEstimate, normalizedConfig.defaultReferralFeeRate),
+    possibleAmazonCategory:
+      normalizeText(entry.possibleAmazonCategory),
+    referralFeeCategory:
+      normalizeText(entry.referralFeeCategory) ?? normalizeText(entry.possibleAmazonCategory),
     fbaFeeEstimate:
       normalizeNullableNumber(entry.fbaFeeEstimate),
     fbmCostEstimate:
@@ -244,7 +253,19 @@ export function buildAmazonFulfillmentCostModel(input: ReturnType<typeof buildAm
 }
 
 export function buildAmazonReferralFeeEstimate(input: ReturnType<typeof buildAmazonFeesProfitGuardInput>) {
-  return money(input.amazonSalePriceEstimate * input.referralFeeRateEstimate)
+  return buildResolvedAmazonReferralFeeEstimate({
+    category:
+      input.referralFeeCategory ?? input.possibleAmazonCategory ?? null,
+    salePrice:
+      input.amazonSalePriceEstimate,
+    productContext:
+      [
+        input.productTitle,
+        input.brand,
+        input.referralFeeCategory,
+        input.possibleAmazonCategory,
+      ].filter(Boolean).join(" "),
+  })
 }
 
 export function buildAmazonFbaFeeEstimate(input: ReturnType<typeof buildAmazonFeesProfitGuardInput>) {
@@ -407,11 +428,11 @@ export function buildAmazonFeesProfitGuardAssessment(
   const landedCostEstimate =
     buildAmazonLandedCostEstimate(input)
   const totalAmazonFeeEstimate =
-    money(referralFeeEstimate + fulfillment.fulfillmentCostEstimate)
+    money(referralFeeEstimate.referralFeeAmount + fulfillment.fulfillmentCostEstimate)
   const totalCostEstimate =
     money(
       input.supplierCost +
-      referralFeeEstimate +
+      referralFeeEstimate.referralFeeAmount +
       fulfillment.fulfillmentCostEstimate +
       input.prepPackagingCostEstimate +
       input.shippingCostEstimate +
@@ -433,7 +454,7 @@ export function buildAmazonFeesProfitGuardAssessment(
         input.amazonSalePriceEstimate,
     })
   const variableRate =
-    input.referralFeeRateEstimate +
+    (referralFeeEstimate.effectiveReferralFeePercent / 100) +
     input.advertisingReserveRate +
     input.returnReserveRate
   const breakEvenPrice =
@@ -508,6 +529,7 @@ export function buildAmazonFeesProfitGuardAssessment(
     unique([
       ...input.warnings,
       "Amazon fees are estimates only until Seller Central or SP-API confirms real fees",
+      ...referralFeeEstimate.warnings,
       profitGuardDecision === "BLOCKED_BY_RESTRICTION_GATE" ? "positive margin cannot override restriction gate" : "",
       fulfillment.missingDimensionsWeight ? "FBA/FBM decision needs dimensions and weight" : "",
     ].filter(Boolean))
@@ -534,7 +556,28 @@ export function buildAmazonFeesProfitGuardAssessment(
       input.supplierCost,
     amazonSalePriceEstimate:
       input.amazonSalePriceEstimate,
-    referralFeeEstimate,
+    referralFeeScheduleVersion:
+      referralFeeEstimate.referralFeeScheduleVersion,
+    referralFeeCategory:
+      referralFeeEstimate.categoryLabel,
+    referralFeeRuleType:
+      referralFeeEstimate.feeRuleType,
+    referralFeeAmount:
+      referralFeeEstimate.referralFeeAmount,
+    effectiveReferralFeePercent:
+      referralFeeEstimate.effectiveReferralFeePercent,
+    referralFeeMinimumApplied:
+      referralFeeEstimate.minimumFeeApplied,
+    referralFeeCategoryConfidence:
+      referralFeeEstimate.categoryConfidence,
+    sellerCentralFeeVerified:
+      false,
+    spApiFeeVerified:
+      false,
+    referralFeeWarnings:
+      referralFeeEstimate.warnings,
+    referralFeeEstimate:
+      referralFeeEstimate.referralFeeAmount,
     fbaFeeEstimate,
     fbmCostEstimate,
     prepPackagingCostEstimate:
@@ -623,6 +666,8 @@ export function buildAmazonFeesProfitGuardQueue(fixture: FeesProfitFixture) {
 export function summarizeAmazonFeesProfitGuardQueue(queue: ReturnType<typeof buildAmazonFeesProfitGuardQueue>) {
   const assessments =
     queue.assessments
+  const dm0628nAssessment =
+    assessments.find(entry => entry.supplierSku === "luna-portex:first_real_mini_scan:dm0628n")
 
   return {
     inputRestrictionGateAssessments:
@@ -671,6 +716,22 @@ export function summarizeAmazonFeesProfitGuardQueue(queue: ReturnType<typeof bui
       assessments.filter(entry => entry.canProceedToNextDecisionEngine).length,
     productsRequiringHumanReview:
       assessments.filter(entry => entry.humanReviewRequired).length,
+    referralFeeScheduleUsed:
+      assessments.every(entry => Boolean(entry.referralFeeScheduleVersion)),
+    referralFeeCategoriesResolved:
+      assessments.filter(entry => entry.referralFeeCategory).length,
+    uncertainReferralFeeCategories:
+      assessments.filter(entry => entry.referralFeeCategoryConfidence !== "HIGH").length,
+    sellerCentralFeeVerified:
+      false,
+    spApiFeeVerified:
+      false,
+    dm0628nNetProfitEstimate:
+      dm0628nAssessment?.netProfitEstimate ?? 0,
+    dm0628nRoiPercent:
+      dm0628nAssessment?.roiPercent ?? 0,
+    dm0628nReferralFeeAmount:
+      dm0628nAssessment?.referralFeeAmount ?? 0,
     amazonApiUsed:
       false,
     spApiUsed:
