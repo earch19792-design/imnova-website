@@ -1,0 +1,183 @@
+{
+  "catalogMatcherVersion": "LUNA_PORTEX_AMAZON_CATALOG_MATCHER_V1",
+  "status": "LUNA_PORTEX_AMAZON_CATALOG_MATCHER_READY",
+  "mode": "LOCAL_DRY_RUN_CATALOG_MATCHER_ONLY",
+  "sourceDataClass": "LOOP_149C_LUNA_PORTEX_AMAZON_CATALOG_MATCHER",
+  "nextLoop": "149D — Amazon Restriction / Category / Brand / GTIN Gate",
+  "production": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "amazonApi": {
+    "usedInThisLoop": false
+  },
+  "spApi": {
+    "usedInThisLoop": false
+  },
+  "sellerCentral": {
+    "writeExecutedInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false
+  },
+  "openAi": {
+    "usedInThisLoop": false
+  },
+  "scraper": {
+    "usedInThisLoop": false
+  },
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noAmazonApi": true,
+    "noSpApi": true,
+    "noSellerCentralWrite": true,
+    "noPublication": true,
+    "noWhatsappRealSend": true,
+    "noOpenAi": true,
+    "noScraper": true,
+    "noSecretsCommitted": true
+  },
+  "supplierProducts": [
+    {
+      "supplierSku": "luna-portex:first_real_mini_scan:dm0628n",
+      "productTitle": "Glisten Dishwasher Detergent Booster & Freshener 28 oz",
+      "brand": "Glisten",
+      "partNumber": "DM0628N",
+      "modelNumber": "DM0628N",
+      "manufacturerPartNumber": "DM0628N",
+      "upc": "missing",
+      "gtin": "unknown",
+      "productType": "dishwasher cleaner / detergent booster",
+      "size": "28 oz",
+      "packCount": 1,
+      "color": null,
+      "dimensions": null,
+      "category": "Household Cleaning Products",
+      "categoryRisk": "HIGH"
+    },
+    {
+      "supplierSku": "luna-portex:first_real_mini_scan:gg-16000tsm",
+      "productTitle": "GoGreen Power 6-Outlet Side-Mount Wall Tap Adapter White GG-16000TSM",
+      "brand": "GoGreen Power",
+      "partNumber": "GG-16000TSM",
+      "modelNumber": "GG-16000TSM",
+      "manufacturerPartNumber": "GG-16000TSM",
+      "upc": "missing",
+      "gtin": "unknown",
+      "productType": "outlet adapter / wall tap",
+      "size": null,
+      "packCount": 1,
+      "color": "white",
+      "dimensions": null,
+      "category": "Electrical Outlet Adapters",
+      "categoryRisk": "MEDIUM"
+    },
+    {
+      "supplierSku": "luna-portex:first_real_mini_scan:rustoleum-spray-sanitized",
+      "productTitle": "Sanitized Rust-Oleum aerosol spray paint candidate 12 oz",
+      "brand": "Rust-Oleum",
+      "partNumber": "SAN-SPRAY-12OZ",
+      "modelNumber": "SAN-SPRAY-12OZ",
+      "manufacturerPartNumber": "SAN-SPRAY-12OZ",
+      "upc": "missing",
+      "gtin": "unknown",
+      "productType": "aerosol spray paint",
+      "size": "12 oz",
+      "packCount": 1,
+      "color": "smokey beige",
+      "dimensions": null,
+      "category": "Paint and Primer",
+      "categoryRisk": "HIGH"
+    }
+  ],
+  "amazonCatalogCandidates": [
+    {
+      "amazonCandidateAsin": "B0SANITIZED1",
+      "title": "Glisten Dishwasher Detergent Booster and Freshener 28 oz",
+      "brand": "Glisten",
+      "modelNumber": "DM0628N",
+      "partNumber": "DM0628N",
+      "manufacturerPartNumber": "DM0628N",
+      "upc": null,
+      "gtin": null,
+      "size": "28 oz",
+      "packCount": 1,
+      "color": null,
+      "category": "Household Cleaning Products",
+      "productType": "dishwasher cleaner detergent booster",
+      "marketplace": "AMAZON_US",
+      "listingRiskNotes": [
+        "sanitized catalog candidate",
+        "cleaning compliance still requires restriction gate"
+      ],
+      "source": "SANITIZED_FIXTURE_ONLY"
+    },
+    {
+      "amazonCandidateAsin": "B0SANITIZED2",
+      "title": "GoGreen Power GG-16000TSM 6 Outlet Side Mount Wall Tap Adapter White",
+      "brand": "GoGreen Power",
+      "modelNumber": "GG-16000TSM",
+      "partNumber": "GG-16000TSM",
+      "manufacturerPartNumber": "GG-16000TSM",
+      "upc": null,
+      "gtin": null,
+      "size": null,
+      "packCount": 1,
+      "color": "white",
+      "category": "Electrical Outlet Adapters",
+      "productType": "outlet adapter wall tap",
+      "marketplace": "AMAZON_US",
+      "listingRiskNotes": [
+        "electrical safety review required later"
+      ],
+      "source": "SANITIZED_FIXTURE_ONLY"
+    },
+    {
+      "amazonCandidateAsin": "B0SANITIZED3",
+      "title": "GoGreen Power GG-16000TSM Wall Tap Adapter White Alternate Pack",
+      "brand": "GoGreen Power",
+      "modelNumber": "GG-16000TSM",
+      "partNumber": "GG-16000TSM",
+      "manufacturerPartNumber": "GG-16000TSM",
+      "upc": null,
+      "gtin": null,
+      "size": null,
+      "packCount": 2,
+      "color": "white",
+      "category": "Electrical Outlet Adapters",
+      "productType": "outlet adapter wall tap",
+      "marketplace": "AMAZON_US",
+      "listingRiskNotes": [
+        "pack count mismatch creates conflict"
+      ],
+      "source": "SANITIZED_FIXTURE_ONLY"
+    },
+    {
+      "amazonCandidateAsin": "B0SANITIZED4",
+      "title": "Generic 12 oz craft spray paint blue single can",
+      "brand": "Generic",
+      "modelNumber": "CRAFT-SPRAY-BLUE",
+      "partNumber": "CRAFT-SPRAY-BLUE",
+      "manufacturerPartNumber": "CRAFT-SPRAY-BLUE",
+      "upc": null,
+      "gtin": null,
+      "size": "12 oz",
+      "packCount": 1,
+      "color": "blue",
+      "category": "Craft Paint",
+      "productType": "craft spray paint",
+      "marketplace": "AMAZON_US",
+      "listingRiskNotes": [
+        "title only similarity",
+        "brand color and category mismatch"
+      ],
+      "source": "SANITIZED_FIXTURE_ONLY"
+    }
+  ]
+}
