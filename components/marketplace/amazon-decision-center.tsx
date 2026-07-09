@@ -24,10 +24,6 @@ function statusClasses(status: string) {
   return "border-rose-300/25 bg-rose-300/[0.08] text-rose-100"
 }
 
-function decisionLabel(value: string) {
-  return value.replaceAll("_", " ")
-}
-
 export function AmazonDecisionCenter({
   viewModel,
 }: {
@@ -38,7 +34,7 @@ export function AmazonDecisionCenter({
       <div className="grid gap-4 lg:grid-cols-4">
         <div className="rounded-lg border border-white/10 bg-white/[0.035] p-5">
           <p className="text-xs font-black uppercase tracking-[0.2em] text-white/45">
-            Products
+            Evaluados
           </p>
           <p className="mt-3 text-3xl font-black text-white">
             {viewModel.metrics.productsEvaluated}
@@ -46,7 +42,7 @@ export function AmazonDecisionCenter({
         </div>
         <div className="rounded-lg border border-rose-300/20 bg-rose-300/[0.045] p-5">
           <p className="text-xs font-black uppercase tracking-[0.2em] text-rose-100/55">
-            Blocked
+            Bloqueados
           </p>
           <p className="mt-3 text-3xl font-black text-white">
             {viewModel.metrics.productsBlockedFromListingPackage}
@@ -54,7 +50,7 @@ export function AmazonDecisionCenter({
         </div>
         <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.045] p-5">
           <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-100/55">
-            Human Review
+            Revision humana
           </p>
           <p className="mt-3 text-3xl font-black text-white">
             {viewModel.metrics.productsRequiringHumanReview}
@@ -62,10 +58,10 @@ export function AmazonDecisionCenter({
         </div>
         <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.045] p-5">
           <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/55">
-            Avg ASIN Score
+            Listos para listing
           </p>
           <p className="mt-3 text-3xl font-black text-white">
-            {viewModel.metrics.averageAsinDecisionScore}
+            {viewModel.metrics.productsReadyForListingPackage}
           </p>
         </div>
       </div>
@@ -73,19 +69,19 @@ export function AmazonDecisionCenter({
       <div className="overflow-hidden rounded-lg border border-white/10 bg-black/25">
         <div className="grid gap-3 border-b border-white/10 px-5 py-4 md:grid-cols-[1.2fr_0.9fr_0.7fr_0.8fr_0.8fr]">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-            Product
+            Producto
           </p>
           <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-            Route
+            Ruta
           </p>
           <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-            Match
+            ASIN
           </p>
           <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-            Profit
+            Ganancia
           </p>
           <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-            Gate
+            Estado
           </p>
         </div>
 
@@ -106,10 +102,10 @@ export function AmazonDecisionCenter({
 
               <div>
                 <p className="text-sm font-black text-cyan-100">
-                  {decisionLabel(row.finalAsinRouteDecision)}
+                  {row.sellerRouteLabel}
                 </p>
                 <p className="mt-1 text-xs text-white/50">
-                  Next: {decisionLabel(row.nextRecommendedAction)}
+                  Siguiente: {row.sellerNextActionLabel}
                 </p>
               </div>
 
@@ -118,7 +114,7 @@ export function AmazonDecisionCenter({
                   {row.matchConfidenceScore}
                 </p>
                 <p className="mt-1 text-xs text-white/50">
-                  {decisionLabel(row.catalogMatchType)}
+                  confianza de match
                 </p>
               </div>
 
@@ -127,7 +123,7 @@ export function AmazonDecisionCenter({
                   ${row.netProfitEstimate.toFixed(2)} · {row.roiPercent.toFixed(2)}%
                 </p>
                 <p className="mt-1 text-xs text-white/50">
-                  {decisionLabel(row.profitGuardDecision)}
+                  {row.sellerProfitLabel}
                 </p>
               </div>
 
@@ -136,7 +132,7 @@ export function AmazonDecisionCenter({
                   {row.semanticStatus}
                 </span>
                 <p className="mt-2 text-xs text-white/50">
-                  Listing package: {row.canProceedToAmazonListingPackage ? "ready" : "blocked"}
+                  {row.sellerStatusLabel}
                 </p>
               </div>
 
@@ -146,10 +142,13 @@ export function AmazonDecisionCenter({
                     <div className="flex items-center gap-2 text-rose-100">
                       <Ban className="h-4 w-4" />
                       <p className="text-xs font-black uppercase tracking-[0.16em]">
-                        Blocks
+                        Por que no avanza
                       </p>
                     </div>
                     <ul className="mt-3 grid gap-2 text-sm leading-6 text-white/65">
+                      <li className="font-semibold text-white/75">
+                        {row.sellerBlockSummary}
+                      </li>
                       {row.blockedReasons.map(reason => (
                         <li key={reason}>
                           {reason}
@@ -162,7 +161,7 @@ export function AmazonDecisionCenter({
                     <div className="flex items-center gap-2 text-amber-100">
                       <ShieldAlert className="h-4 w-4" />
                       <p className="text-xs font-black uppercase tracking-[0.16em]">
-                        Warnings
+                        Alertas
                       </p>
                     </div>
                     <ul className="mt-3 grid gap-2 text-sm leading-6 text-white/65">
@@ -185,14 +184,14 @@ export function AmazonDecisionCenter({
           <div className="flex items-center gap-2 text-cyan-100">
             <FileSearch className="h-4 w-4" />
             <h2 className="text-sm font-black uppercase tracking-[0.18em]">
-              Decision Rules
+              Reglas de venta
             </h2>
           </div>
           <p className="mt-4 text-sm leading-7 text-white/65">
-            A profitable product does not automatically pass to listing. Existing ASIN evidence still needs Seller Central eligibility, compliance review, and human approval.
+            Que un producto tenga margen no significa que ya se pueda vender. Un ASIN probable todavia necesita elegibilidad en Seller Central, compliance y aprobacion humana.
           </p>
           <p className="mt-3 text-sm leading-7 text-white/65">
-            Codex Self-Improvement and Codex Handoff stay roadmap-only here: the dashboard can explain future work orders, but it cannot execute code changes or connect a Codex API.
+            La automejora con Codex y el handoff a Codex quedan como roadmap: la vista puede explicar futuras mejoras, pero no ejecuta codigo ni conecta Codex API.
           </p>
         </section>
 
@@ -200,11 +199,11 @@ export function AmazonDecisionCenter({
           <div className="flex items-center gap-2 text-amber-100">
             <AlertTriangle className="h-4 w-4" />
             <h2 className="text-sm font-black uppercase tracking-[0.18em]">
-              Seller Central
+              No es Seller Central
             </h2>
           </div>
           <p className="mt-4 text-sm leading-7 text-white/65">
-            This dashboard is not Seller Central. It is a local decision center and never writes to Amazon, creates ASINs, creates listings, or publishes offers.
+            Este dashboard ayuda a decidir. No escribe en Amazon, no crea ASINs, no crea listings y no publica ofertas.
           </p>
         </section>
 
@@ -212,7 +211,7 @@ export function AmazonDecisionCenter({
           <div className="flex items-center gap-2 text-emerald-100">
             <CheckCircle2 className="h-4 w-4" />
             <h2 className="text-sm font-black uppercase tracking-[0.18em]">
-              Next Actions
+              Proximas acciones
             </h2>
           </div>
           <ul className="mt-4 grid gap-2 text-sm leading-6 text-white/65">

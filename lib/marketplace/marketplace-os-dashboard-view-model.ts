@@ -18,6 +18,11 @@ type ProductDecisionRow = {
   netMarginPercent: number
   roiPercent: number
   finalAsinRouteDecision: string
+  sellerStatusLabel: string
+  sellerRouteLabel: string
+  sellerNextActionLabel: string
+  sellerBlockSummary: string
+  sellerProfitLabel: string
   canProceedToAmazonListingPackage: boolean
   sellerCentralWriteReady: boolean
   published: boolean
@@ -41,19 +46,24 @@ const productRows: ProductDecisionRow[] = [
     netMarginPercent: 15.57,
     roiPercent: 49.72,
     finalAsinRouteDecision: "WATCHLIST_EXISTING_ASIN",
+    sellerStatusLabel: "Revisar antes de vender",
+    sellerRouteLabel: "Posible venta sobre ASIN existente",
+    sellerNextActionLabel: "Validar hazmat/quimico y elegibilidad en Seller Central",
+    sellerBlockSummary: "No listar hasta resolver compliance, Seller Central y margen.",
+    sellerProfitLabel: "Margen positivo, pero estrecho",
     canProceedToAmazonListingPackage: false,
     sellerCentralWriteReady: false,
     published: false,
     blockedReasons: [
-      "hazmat review required",
-      "chemical compliance review required",
-      "manual Seller Central eligibility check required",
-      "listing package blocked until margin watchlist is reviewed",
+      "requiere revision hazmat",
+      "requiere revision quimica/compliance",
+      "requiere revision manual de elegibilidad en Seller Central",
+      "listing bloqueado hasta revisar margen watchlist",
     ],
     warnings: [
-      "missing UPC/GTIN",
-      "existing ASIN match does not prove sell eligibility",
-      "positive ROI cannot override compliance gates",
+      "falta UPC/GTIN",
+      "un ASIN probable no confirma permiso de venta",
+      "ROI positivo no elimina los bloqueos de compliance",
     ],
     nextRecommendedAction: "WATCHLIST_EXISTING_ASIN",
     semanticStatus: "YELLOW",
@@ -71,17 +81,22 @@ const productRows: ProductDecisionRow[] = [
     netMarginPercent: -7.78,
     roiPercent: -18.75,
     finalAsinRouteDecision: "NEED_SELLER_CENTRAL_ELIGIBILITY_CHECK",
+    sellerStatusLabel: "Bloqueado para listing",
+    sellerRouteLabel: "Requiere revision por ASIN/conflicto",
+    sellerNextActionLabel: "Revisar elegibilidad, factura y seguridad electrica",
+    sellerBlockSummary: "No vender hasta resolver ASIN correcto y compliance electrico.",
+    sellerProfitLabel: "Margen negativo en estimacion",
     canProceedToAmazonListingPackage: false,
     sellerCentralWriteReady: false,
     published: false,
     blockedReasons: [
-      "conflicting catalog match requires human review",
-      "wrong ASIN risk high",
-      "electrical safety review required",
+      "match de catalogo conflictivo requiere revision humana",
+      "riesgo alto de ASIN equivocado",
+      "requiere revision de seguridad electrica",
     ],
     warnings: [
-      "missing UPC/GTIN",
-      "invoice and compliance evidence needed",
+      "falta UPC/GTIN",
+      "requiere factura y evidencia de compliance",
     ],
     nextRecommendedAction: "NEED_SELLER_CENTRAL_ELIGIBILITY_CHECK",
     semanticStatus: "RED",
@@ -99,18 +114,23 @@ const productRows: ProductDecisionRow[] = [
     netMarginPercent: -34.49,
     roiPercent: -92.37,
     finalAsinRouteDecision: "REJECT_FOR_NOW",
+    sellerStatusLabel: "No vender por ahora",
+    sellerRouteLabel: "Rechazar o dejar fuera del pipeline",
+    sellerNextActionLabel: "No avanzar sin nueva evidencia y aprobaciones",
+    sellerBlockSummary: "Riesgo alto por aerosol/hazmat, marca y GTIN.",
+    sellerProfitLabel: "No rentable en estimacion",
     canProceedToAmazonListingPackage: false,
     sellerCentralWriteReady: false,
     published: false,
     blockedReasons: [
-      "high hazmat risk",
-      "category approval likely required",
-      "brand approval likely required",
-      "new ASIN blocked by GTIN and duplicate risk",
+      "riesgo hazmat alto",
+      "probable aprobacion de categoria requerida",
+      "probable aprobacion de marca requerida",
+      "ASIN nuevo bloqueado por GTIN y riesgo de duplicado",
     ],
     warnings: [
-      "aerosol paint candidate is high risk",
-      "do not route to listing package",
+      "producto aerosol/pintura es de alto riesgo",
+      "no enviar a preparacion de listing",
     ],
     nextRecommendedAction: "REJECT_FOR_NOW",
     semanticStatus: "RED",
@@ -137,16 +157,16 @@ export function buildAmazonTrackStatusSummary() {
     ],
     nextRecommendedLoop: "149G",
     optionalUiLoop: "149UI",
-    description: "Amazon Track is active as a local decision layer with no API usage, no Seller Central writes, and no publication.",
+    description: "Amazon esta activo como centro local de decisiones, sin API, sin writes a Seller Central y sin publicacion.",
   }
 }
 
 export function buildEbayTrackStatusSummary() {
   return {
     status: "PAUSED_YELLOW_OPERATIONAL",
-    reason: "eBay seller account suspended / unresolved",
+    reason: "cuenta eBay suspendida / sin resolver",
     currentLoop: "149 YELLOW foundation",
-    nextAction: "resolve eBay account before LOOP 150",
+    nextAction: "resolver cuenta eBay antes de LOOP 150",
   }
 }
 
@@ -162,12 +182,12 @@ export function buildAmazonDecisionCenterRows() {
 
 export function buildMarketplaceNextActions() {
   return [
-    "Build 149CODEX-A Self-Improvement Backlog + Codex Handoff before connecting any Codex API.",
-    "Review Seller Central eligibility for existing ASIN candidates.",
-    "Validate hazmat, chemical, and electrical requirements before listing package work.",
-    "Request supplier invoice where brand/category or compliance evidence is needed.",
-    "Verify GTIN, UPC, or exemption before any new ASIN path.",
-    "Continue to 149G only when a product is approved for listing package preparation.",
+    "Revisar elegibilidad en Seller Central antes de vender sobre un ASIN existente.",
+    "Validar hazmat, quimico y electrico antes de preparar listings.",
+    "Pedir factura del proveedor cuando falte evidencia de marca, categoria o compliance.",
+    "Confirmar GTIN, UPC o exencion antes de cualquier ASIN nuevo.",
+    "Construir 149CODEX-A como backlog de mejoras antes de conectar cualquier Codex API.",
+    "Continuar a 149G solo cuando un producto este aprobado para preparar listing.",
   ]
 }
 
@@ -184,6 +204,21 @@ export function buildMarketplaceOsDashboardViewModel() {
       MARKETPLACE_OS_DASHBOARD_VERSION,
     marketplaceOsStatus:
       "LOCAL_READ_ONLY_DECISION_CENTER",
+    sellerExperience:
+      {
+        navigationMode:
+          "SELLER_FRIENDLY_OPERATION_CENTER",
+        primaryQuestion:
+          "Que producto puedo vender, cual esta bloqueado y que hago ahora?",
+        menuLabel:
+          "Marketplace OS",
+        menuDescription:
+          "Productos, bloqueos, margen y proxima accion.",
+        technicalLanguageReduced:
+          true,
+        sellerDecisionLanguageEnabled:
+          true,
+      },
     ebayTrack,
     amazonTrack,
     production:
@@ -203,6 +238,8 @@ export function buildMarketplaceOsDashboardViewModel() {
           rows.filter(row => row.finalAsinRouteDecision === "WATCHLIST_EXISTING_ASIN").length,
         rejectedCandidates:
           rows.filter(row => row.finalAsinRouteDecision === "REJECT_FOR_NOW").length,
+        productsReadyForListingPackage:
+          rows.filter(row => row.canProceedToAmazonListingPackage).length,
         averageAsinDecisionScore:
           22.33,
         averageNetMarginPercent:
@@ -245,44 +282,44 @@ export function buildMarketplaceOsDashboardViewModel() {
     roadmap:
       [
         {
-          name: "Codex Self-Improvement Engine",
-          status: "planned safe handoff only",
-          safety: "IMNOVA can suggest improvements, but human approval is required before Codex work.",
+          name: "Motor de automejora con Codex",
+          status: "planificado como handoff seguro",
+          safety: "IMNOVA puede sugerir mejoras, pero requiere aprobacion humana antes de trabajar con Codex.",
         },
         {
-          name: "Codex Handoff Layer",
-          status: "149CODEX-A next strategic loop",
-          safety: "Generates work orders/prompts only; no Codex API, no automatic code changes.",
+          name: "Capa de handoff a Codex",
+          status: "149CODEX-A como siguiente loop estrategico",
+          safety: "Solo genera work orders/prompts; sin Codex API ni cambios automaticos de codigo.",
         },
         {
-          name: "Self-Improvement Backlog",
-          status: "planned",
-          safety: "Backlog entries must avoid secrets and cannot write to main or Production.",
+          name: "Backlog de automejora",
+          status: "planificado",
+          safety: "Las tareas no pueden incluir secretos ni escribir en main o Produccion.",
         },
         {
-          name: "Codex API Connection Layer",
-          status: "future gated loop",
-          safety: "149CODEX-B can only proceed after safe execution gates are defined.",
+          name: "Conexion futura Codex API",
+          status: "loop futuro con gates",
+          safety: "149CODEX-B solo avanza cuando existan gates de ejecucion segura.",
         },
         {
           name: "WhatsApp Remote Control",
-          status: "planned / previews only",
-          safety: "No real WhatsApp send.",
+          status: "planificado / solo preview",
+          safety: "Sin envio real de WhatsApp.",
         },
         {
           name: "Marketplace Automation Engine",
-          status: "planned",
-          safety: "No automated marketplace writes.",
+          status: "planificado",
+          safety: "Sin writes automaticos a marketplaces.",
         },
         {
-          name: "Amazon SP-API Connection",
-          status: "later",
-          safety: "No credentials or API calls in this loop.",
+          name: "Conexion Amazon SP-API",
+          status: "mas adelante",
+          safety: "Sin credenciales ni llamadas API en este loop.",
         },
         {
           name: "Amazon Listing Package Builder",
-          status: "next after UI",
-          safety: "Only after gates approve listing package work.",
+          status: "siguiente despues de UX",
+          safety: "Solo despues de aprobar los gates para preparar listing.",
         },
       ],
     nextActions:
@@ -343,6 +380,16 @@ export function summarizeMarketplaceOsDashboard(viewModel = buildMarketplaceOsDa
       viewModel.metrics.rejectedCandidates,
     averageAsinDecisionScore:
       viewModel.metrics.averageAsinDecisionScore,
+    sellerFriendlyNavigationEnabled:
+      viewModel.sellerExperience.navigationMode === "SELLER_FRIENDLY_OPERATION_CENTER",
+    sellerFriendlyDecisionLanguageEnabled:
+      viewModel.sellerExperience.sellerDecisionLanguageEnabled,
+    productsReadyForListingPackage:
+      viewModel.metrics.productsReadyForListingPackage,
+    primarySellerQuestion:
+      viewModel.sellerExperience.primaryQuestion,
+    adminMenuLabel:
+      viewModel.sellerExperience.menuLabel,
     codexSelfImprovementRoadmapVisible:
       viewModel.codexSelfImprovement.status === "PLANNED_SAFE_HANDOFF_ONLY",
     codexApiUsed:
@@ -386,12 +433,13 @@ export function summarizeMarketplaceOsDashboard(viewModel = buildMarketplaceOsDa
 
 export function getMarketplaceOsDashboardChecklist() {
   return [
-    "Render Marketplace Seller OS status as a local read-only decision center.",
-    "Show eBay Track paused/YELLOW while Amazon Track remains active.",
-    "Summarize Amazon loops 149A through 149F and point to 149G.",
-    "Show Codex Self-Improvement, Codex Handoff, and Self-Improvement Backlog as roadmap-only future work.",
-    "Show product-level route, blocks, warnings, ROI, match confidence, and next action.",
-    "Keep WhatsApp Remote Control and Marketplace Automation as roadmap previews only.",
-    "Keep the dashboard local only: no API calls, no Codex API, no automatic code changes, no Seller Central writes, no ASIN creation, no listing creation, no publication.",
+    "Mostrar Marketplace Seller OS como centro local read-only.",
+    "Mostrar eBay pausado/YELLOW mientras Amazon sigue activo.",
+    "Resumir Amazon 149A a 149F y apuntar a 149G.",
+    "Usar lenguaje de vendedor para estado, ruta, bloqueo, margen y proxima accion.",
+    "Mostrar automejora con Codex, handoff y backlog solo como roadmap futuro.",
+    "Mostrar ruta, bloqueos, alertas, ROI, confianza de match y proxima accion por producto.",
+    "Mantener WhatsApp Remote Control y Marketplace Automation como previews de roadmap.",
+    "Mantener el dashboard local: sin APIs, sin Codex API, sin cambios automaticos, sin Seller Central writes, sin ASIN creation, sin listing creation y sin publicacion.",
   ]
 }

@@ -284,10 +284,10 @@ export function Sidebar({
             },
             {
               href: "/admin/marketplace-os",
-              eyebrow: "Amazon Decision Center",
+              eyebrow: "Centro de venta",
               title: "Marketplace OS",
               detail:
-                "Amazon 149A-149F, bloqueos, ROI y Codex roadmap.",
+                "Productos, bloqueos, margen y proxima accion.",
             },
             {
               href: "/admin/market-radar",
