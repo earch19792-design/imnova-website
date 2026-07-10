@@ -1,0 +1,165 @@
+{
+  "resolverVersion": "EBAY_WINNING_LISTING_DATA_RESOLVER_RESUME_B2A_V1",
+  "status": "EBAY_WINNING_LISTING_DATA_RESOLVER_READY",
+  "mode": "LOCAL_DRY_RUN_WINNING_LISTING_DATA_RESOLVER_ONLY",
+  "sourceRoute": "EBAY-RESUME-B2",
+  "storeName": "ShopEliteCart",
+  "targetMarketplace": "EBAY_US",
+  "warehouse": {
+    "warehouseAlias": "LUNA_PORTEX_BOCA_RATON",
+    "city": "Boca Raton",
+    "state": "FL",
+    "postalCode": "33487",
+    "country": "US",
+    "fullWarehouseStreetAddressCommitted": false
+  },
+  "strategies": ["LUNA_FIRST", "EBAY_FIRST"],
+  "sourceCandidateFromB2": {
+    "productName": "Compact Silicone Cable Organizer Clips 20 Pack",
+    "riskLevel": "LOW",
+    "buyItNowPrice": 18.99,
+    "estimatedProfit": 5.44,
+    "estimatedMarginPercent": 28.65,
+    "canProceedToControlledDraftExecution": true,
+    "canPublish": false
+  },
+  "marketFirstDiscovery": {
+    "enabled": true,
+    "source": "LOCAL_FIXTURE_ONLY_IN_THIS_LOOP",
+    "ebayApiUsedInThisLoop": false,
+    "scraperUsedInThisLoop": false,
+    "purpose": "detect winning product patterns before draft execution"
+  },
+  "marketDataSource": "LOCAL_FIXTURE_ONLY_IN_THIS_LOOP",
+  "realEbayWinningDataResolved": false,
+  "realLunaMatchConfirmed": false,
+  "requiresB2ARunBeforeDraftExecution": true,
+  "nextRecommendedRoute": "EBAY-RESUME-B2A-RUN",
+  "nextRouteAfterB2ARun": "EBAY-RESUME-B2-RUN",
+  "comparables": [
+    {
+      "comparableId": "CMP-LUNA-CABLE-CLIPS",
+      "sourceStrategy": "LUNA_FIRST",
+      "productPatternName": "Unbranded silicone cable organizer multipack",
+      "soldSignalStrength": "HIGH",
+      "titlePattern": "material + product type + pack count + mounting feature + use case",
+      "extractedKeywords": ["silicone cable organizer", "20 pack", "self adhesive", "cord holder", "desk organization"],
+      "priceRange": { "min": 17.99, "max": 20.99, "currency": "USD", "median": 18.99 },
+      "suggestedCategory": { "name": "Cable Organizers", "categoryId": "runtime_required" },
+      "suggestedItemSpecifics": {
+        "Brand": "Unbranded",
+        "Type": "Cable Organizer Clip",
+        "Material": "Silicone",
+        "Color": "Black",
+        "Number in Pack": "20",
+        "Mounting": "Self-Adhesive"
+      },
+      "shippingPattern": "tracked economy shipping with one-business-day handling review",
+      "returnPattern": "30-day returns subject to approved Seller Hub policy",
+      "riskFlags": [],
+      "lunaMatch": { "status": "MATCHED_TO_LUNA", "matchScore": 96, "estimatedMarginPercent": 28.65 },
+      "copySafety": {
+        "exactTitleCopied": false,
+        "descriptionCopied": false,
+        "imagesCopied": false,
+        "competitorBrandMisused": false
+      }
+    },
+    {
+      "comparableId": "CMP-MARKET-DRAWER-ORGANIZER",
+      "sourceStrategy": "EBAY_FIRST",
+      "productPatternName": "Expandable drawer organizer tray",
+      "soldSignalStrength": "MEDIUM",
+      "titlePattern": "product type + expandable feature + material + room use",
+      "extractedKeywords": ["drawer organizer", "expandable tray", "desk storage", "plastic organizer"],
+      "priceRange": { "min": 21.99, "max": 27.99, "currency": "USD", "median": 24.99 },
+      "suggestedCategory": { "name": "Drawer Organizers", "categoryId": "runtime_required" },
+      "suggestedItemSpecifics": {
+        "Brand": "Unbranded",
+        "Type": "Drawer Organizer",
+        "Material": "Plastic",
+        "Features": "Expandable"
+      },
+      "shippingPattern": "tracked shipping with dimensions confirmed before approval",
+      "returnPattern": "30-day returns subject to approved Seller Hub policy",
+      "riskFlags": [],
+      "lunaMatch": { "status": "MATCHED_TO_LUNA", "matchScore": 82, "estimatedMarginPercent": 22.4 },
+      "copySafety": {
+        "exactTitleCopied": false,
+        "descriptionCopied": false,
+        "imagesCopied": false,
+        "competitorBrandMisused": false
+      }
+    },
+    {
+      "comparableId": "CMP-MARKET-BRANDED-AEROSOL",
+      "sourceStrategy": "EBAY_FIRST",
+      "productPatternName": "Restricted branded aerosol care spray",
+      "soldSignalStrength": "HIGH",
+      "titlePattern": "brand + aerosol product + size + performance claim",
+      "extractedKeywords": ["aerosol spray", "surface care", "multipurpose spray"],
+      "priceRange": { "min": 14.99, "max": 19.99, "currency": "USD", "median": 16.99 },
+      "suggestedCategory": { "name": "Household Cleaning Products", "categoryId": "runtime_required" },
+      "suggestedItemSpecifics": {
+        "Type": "Aerosol Spray",
+        "Form": "Spray"
+      },
+      "shippingPattern": "hazardous-material shipping restrictions apply",
+      "returnPattern": "restricted return handling may apply",
+      "riskFlags": ["AEROSOL", "HAZMAT", "RESTRICTED_BRAND", "VERO_IP", "UNSUPPORTED_CLAIM_RISK"],
+      "lunaMatch": { "status": "NO_MATCH", "matchScore": 0, "estimatedMarginPercent": 0 },
+      "copySafety": {
+        "exactTitleCopied": false,
+        "descriptionCopied": false,
+        "imagesCopied": false,
+        "competitorBrandMisused": false
+      }
+    }
+  ],
+  "production": { "offLimitsForWrites": true },
+  "main": { "offLimits": true },
+  "staging": { "writeExecutedInThisLoop": false },
+  "ebayApi": { "usedInThisLoop": false },
+  "ebayWriteApi": { "usedInThisLoop": false },
+  "ebaySearchApi": { "usedInThisLoop": false },
+  "oauth": { "usedInThisLoop": false },
+  "tokenStorage": { "usedInThisLoop": false },
+  "draft": { "createdInThisLoop": false },
+  "listing": { "createdInThisLoop": false },
+  "offer": { "createdInThisLoop": false },
+  "publication": { "createdInThisLoop": false },
+  "imageGeneration": { "usedInThisLoop": false },
+  "amazonTrack": { "touchedInThisLoop": false },
+  "whatsapp": { "realSendUsedInThisLoop": false },
+  "openAi": { "usedInThisLoop": false },
+  "scraper": { "usedInThisLoop": false },
+  "sourceDataClass": "EBAY_RESUME_B2A_WINNING_LISTING_DATA_RESOLVER",
+  "nextRecommendedRouteOptions": [
+    "EBAY-RESUME-B2A-RUN — Controlled eBay Read-Only Winning Listing Resolver Execution",
+    "EBAY-RESUME-B2-RUN — Controlled Draft / Unpublished Offer Execution",
+    "NEED_MARKET_DATA",
+    "NEED_LUNA_MATCH",
+    "NEED_HUMAN_APPROVAL",
+    "EBAY-RESUME-HOLD — Resolve eBay Account Risk Before Any Listing"
+  ],
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noMainWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noEbayApiInThisLoop": true,
+    "noEbayWrites": true,
+    "noOauthInThisLoop": true,
+    "noTokenStorage": true,
+    "noTokenPrinting": true,
+    "noDraftCreation": true,
+    "noListingCreation": true,
+    "noOfferCreation": true,
+    "noPublication": true,
+    "noImageGeneration": true,
+    "noScraper": true,
+    "noAmazonTrackMixing": true,
+    "noWhatsappRealSend": true,
+    "noSecretsCommitted": true,
+    "noFullWarehouseStreetAddressCommitted": true
+  }
+}
