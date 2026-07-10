@@ -1,0 +1,122 @@
+{
+  "fixPlanVersion": "EBAY_SELLER_HUB_MISSING_DATA_FIX_PLAN_RESUME_A4_V1",
+  "status": "EBAY_SELLER_HUB_MISSING_DATA_FIX_PLAN_READY",
+  "mode": "LOCAL_DRY_RUN_SELLER_HUB_FIX_PLAN_ONLY",
+  "sourceAudit": "EBAY-RESUME-A3-RUN",
+  "oauthAuthorizationSucceeded": true,
+  "realTokenExchangeExecutedInPreviousStep": true,
+  "ebayReadOnlyApiUsedInPreviousStep": true,
+  "ebayWriteApiUsedInPreviousStep": false,
+  "targetMarketplace": "EBAY_US",
+  "sellerAccountTypeCurrent": "PERSONAL",
+  "plannedFutureSellerAccountType": "BUSINESS",
+  "plannedBusinessConversionWindowDays": 15,
+  "production": {
+    "offLimitsForWrites": true
+  },
+  "main": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "ebayApi": {
+    "usedInThisLoop": false
+  },
+  "ebayWriteApi": {
+    "usedInThisLoop": false
+  },
+  "oauth": {
+    "usedInThisLoop": false
+  },
+  "tokenStorage": {
+    "usedInThisLoop": false
+  },
+  "draft": {
+    "createdInThisLoop": false
+  },
+  "listing": {
+    "createdInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "amazonTrack": {
+    "touchedInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false
+  },
+  "openAi": {
+    "usedInThisLoop": false
+  },
+  "scraper": {
+    "usedInThisLoop": false
+  },
+  "sourceDataClass": "EBAY_RESUME_A4_SELLER_HUB_MISSING_DATA_FIX_PLAN",
+  "nextRecommendedRouteOptions": [
+    "EBAY-RESUME-B — Complete eBay LOOP 149 Sandbox Draft Listing",
+    "EBAY-RESUME-C — First Manual Human-Approved eBay Listing Package",
+    "EBAY-RESUME-HOLD — Resolve eBay Account Risk Before Any Listing",
+    "EBAY-RESUME-A3-RUN — Re-run Seller Account Read-Only OAuth Audit"
+  ],
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noMainWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noEbayApiInThisLoop": true,
+    "noEbayWrites": true,
+    "noOauthInThisLoop": true,
+    "noTokenStorage": true,
+    "noTokenPrinting": true,
+    "noDraftCreation": true,
+    "noListingCreation": true,
+    "noPublication": true,
+    "noAmazonTrackMixing": true,
+    "noWhatsappRealSend": true,
+    "noSecretsCommitted": true
+  },
+  "a3SanitizedAuditResult": {
+    "businessPoliciesReadable": false,
+    "fulfillmentPoliciesCount": 0,
+    "returnPoliciesCount": 0,
+    "paymentPoliciesCount": 0,
+    "inventoryLocationsCount": 0,
+    "missingPolicyTypes": [
+      "fulfillment_policy",
+      "return_policy",
+      "payment_policy"
+    ],
+    "missingManualSellerHubData": [
+      "Seller Hub account alerts",
+      "Identity verification status",
+      "Payments and payouts final approval",
+      "Seller limits",
+      "eBay messages",
+      "Personal-to-business conversion status",
+      "Manual Seller Hub checklist confirmation"
+    ],
+    "endpointAvailability": {
+      "fulfillmentPolicies": {
+        "available": false,
+        "count": 0,
+        "errorType": "unavailable_or_scope_missing_400"
+      },
+      "returnPolicies": {
+        "available": false,
+        "count": 0,
+        "errorType": "unavailable_or_scope_missing_400"
+      },
+      "paymentPolicies": {
+        "available": false,
+        "count": 0,
+        "errorType": "unavailable_or_scope_missing_400"
+      },
+      "inventoryLocations": {
+        "available": true,
+        "count": 0,
+        "errorType": null
+      }
+    }
+  }
+}
