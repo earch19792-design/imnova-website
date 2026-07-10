@@ -1,0 +1,93 @@
+{
+  "readinessVersion": "EBAY_DEVELOPER_SELLER_LINK_READINESS_RESUME_A2_V1",
+  "status": "EBAY_DEVELOPER_SELLER_LINK_READINESS_READY",
+  "mode": "LOCAL_DRY_RUN_DEVELOPER_SELLER_LINK_CHECKLIST_ONLY",
+  "sellerAccountTypeCurrent": "PERSONAL",
+  "plannedFutureSellerAccountType": "BUSINESS",
+  "plannedBusinessConversionWindowDays": 15,
+  "targetMarketplace": "EBAY_US",
+  "sourceDataClass": "EBAY_RESUME_A2_DEVELOPER_SELLER_LINK_READINESS",
+  "production": {
+    "offLimits": true
+  },
+  "main": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "ebayApi": {
+    "usedInThisLoop": false
+  },
+  "ebayProductionApi": {
+    "writeUsedInThisLoop": false
+  },
+  "oauth": {
+    "realTokenExchangeExecutedInThisLoop": false,
+    "accessTokenStoredInThisLoop": false,
+    "refreshTokenStoredInThisLoop": false
+  },
+  "draft": {
+    "createdInThisLoop": false
+  },
+  "listing": {
+    "createdInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "amazonTrack": {
+    "touchedInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false
+  },
+  "openAi": {
+    "usedInThisLoop": false
+  },
+  "scraper": {
+    "usedInThisLoop": false
+  },
+  "nextRecommendedRouteOptions": [
+    "EBAY-RESUME-A3 — Seller Account Read-Only OAuth Data Audit",
+    "EBAY-RESUME-B — Complete eBay LOOP 149 Sandbox Draft Listing",
+    "EBAY-RESUME-C — First Manual Human-Approved eBay Listing Package",
+    "EBAY-RESUME-HOLD — Resolve eBay Account Risk Before Any Listing"
+  ],
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noMainWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noEbayProductionWrites": true,
+    "noRealTokenExchangeInThisLoop": true,
+    "noTokenStorage": true,
+    "noDraftCreation": true,
+    "noListingCreation": true,
+    "noPublication": true,
+    "noAmazonTrackMixing": true,
+    "noWhatsappRealSend": true,
+    "noSecretsCommitted": true
+  },
+  "developerSellerLinkChecklist": {
+    "developerAccountCreated": "unknown",
+    "developerApplicationCreated": "unknown",
+    "productionKeysAvailable": "unknown",
+    "sandboxKeysAvailable": "unknown",
+    "redirectUriConfigured": "unknown",
+    "sellerPersonalAccountCreated": "confirmed",
+    "sellerAccountAuthorizationStatus": "unknown",
+    "sellerHubManualChecklistStatus": "NEED_MORE_SELLER_HUB_DATA",
+    "businessPoliciesReadableViaApi": "unknown",
+    "fulfillmentPoliciesReadableViaApi": "unknown",
+    "returnPoliciesReadableViaApi": "unknown",
+    "paymentPoliciesReadableViaApi": "unknown",
+    "inventoryLocationsReadableViaApi": "unknown",
+    "sellerLimitsReadableViaApi": "unknown_or_manual_required",
+    "paymentsPayoutsReadableViaApi": "partial_or_manual_required",
+    "accountAlertsReadableViaApi": "partial_or_manual_required",
+    "businessConversionPlanned": true,
+    "businessConversionDays": 15,
+    "accountRiskStatus": "unknown",
+    "humanApprovalForReadOnlyOauthAudit": false
+  }
+}
