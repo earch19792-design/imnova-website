@@ -16,11 +16,12 @@ C-AUTO selected a LOW-risk first product and produced a complete listing package
 ## Official route after C-AUTO
 
 1. EBAY-RESUME-B2 / LOOP 149R — gated draft and unpublished-offer builder.
-2. EBAY-RESUME-B2-RUN — future controlled draft or unpublished-offer execution.
-3. LOOP 150 — first human-approved real listing.
-4. LOOP 151 — Seller OS dashboard.
-5. LOOP 152 — active listing monitor, Luna scan, stock guard, and alerts.
-6. Safe self-improvement only after selling and operating.
+2. EBAY-RESUME-B2A — eBay winning-listing data resolver and missing-data enrichment.
+3. EBAY-RESUME-B2-RUN — future controlled draft or unpublished-offer execution.
+4. LOOP 150 — first human-approved real listing.
+5. LOOP 151 — Seller OS dashboard.
+6. LOOP 152 — active listing monitor, Luna scan, stock guard, and alerts.
+7. Safe self-improvement only after selling and operating.
 
 ## What the builder means
 
@@ -63,11 +64,11 @@ Draft readiness and publication approval are different gates. Publication expose
 
 ## What B2-RUN will be
 
-B2-RUN is the future controlled execution gate. It must resolve approved runtime dependencies, revalidate account risk, show the exact proposed action, require explicit human authorization, protect credentials, and default to blocked. B2 does not implement or execute that runtime.
+B2 builds the technical mold only. B2A must first enrich it with winning and comparable eBay listing evidence: useful keyword patterns, final category evidence, item-specific gaps, and pricing signals, without copying competitor titles or images. B2-RUN is the later controlled execution gate after that enrichment and human review. It must resolve approved runtime dependencies, revalidate account risk, show the exact proposed action, require explicit human authorization, protect credentials, and default to blocked. B2 does not implement or execute either later runtime.
 
 ## Route decisions
 
-Advance to `EBAY-RESUME-B2-RUN` when C-AUTO is ready, risk is LOW, core content and specifics are complete, an authorized image is available for approval, payload previews are complete, account risk is clear, and runtime dependencies are explicitly marked.
+Advance to `EBAY-RESUME-B2A` when C-AUTO is ready, risk is LOW, core content and specifics are complete, an authorized image is available for approval, payload previews are complete, account risk is clear, and runtime dependencies are explicitly marked. B2A resolves winning/comparable listing evidence and missing listing data before B2-RUN can be considered.
 
 Return to `EBAY-RESUME-A3-RUN` when read-only account facts need renewed verification. Return to `EBAY-RESUME-A4` when Seller Hub unlock or policy setup assumptions are incomplete. Use `NEED_DRAFT_EXECUTION_DATA` when product, image, category, specifics, or payload evidence is insufficient. Move to `EBAY-RESUME-HOLD` whenever account risk appears.
 
@@ -93,4 +94,4 @@ Every handoff must explain the difference between a local payload preview and an
 
 ## Next step according to result
 
-The expected result is **EBAY-RESUME-B2-RUN — Controlled Draft / Unpublished Offer Execution**, still behind a strict default-blocked gate. Missing critical data routes to `NEED_DRAFT_EXECUTION_DATA` or A4; account risk routes to HOLD. LOOP 150 remains after controlled draft inspection and explicit human approval.
+The expected result is **EBAY-RESUME-B2A — eBay Winning Listing Data Resolver + Missing Data Enrichment**. After B2A enriches and validates the listing package, **EBAY-RESUME-B2-RUN — Controlled Draft / Unpublished Offer Execution** remains behind a strict default-blocked gate. Missing critical data routes to `NEED_DRAFT_EXECUTION_DATA` or A4; account risk routes to HOLD. LOOP 150 remains after controlled draft inspection and explicit human approval.

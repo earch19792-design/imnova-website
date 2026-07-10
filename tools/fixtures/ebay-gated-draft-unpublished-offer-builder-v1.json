@@ -79,6 +79,7 @@
   "scraper": { "usedInThisLoop": false },
   "sourceDataClass": "EBAY_RESUME_B2_GATED_DRAFT_UNPUBLISHED_OFFER_BUILDER",
   "nextRecommendedRouteOptions": [
+    "EBAY-RESUME-B2A — eBay Winning Listing Data Resolver + Missing Data Enrichment",
     "EBAY-RESUME-B2-RUN — Controlled Draft / Unpublished Offer Execution",
     "EBAY-RESUME-A3-RUN — Re-run Seller Account Read-Only OAuth Audit",
     "EBAY-RESUME-A4 — Seller Hub Missing Data Fix Plan",

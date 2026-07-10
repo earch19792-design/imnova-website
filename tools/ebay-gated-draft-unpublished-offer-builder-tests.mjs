@@ -105,7 +105,7 @@ test("controlled execution readiness does not imply any real write", () => {
   assert.equal(report.canCreateOfferNow, false);
   assert.equal(report.canPublish, false);
   assert.equal(report.requiresHumanApproval, true);
-  assert.equal(report.nextRecommendedRoute, "EBAY-RESUME-B2-RUN");
+  assert.equal(report.nextRecommendedRoute, "EBAY-RESUME-B2A");
 });
 
 test("payload previews contain no credential material", () => {
@@ -193,5 +193,5 @@ test("CLI dry-run executes with the expected candidate and route", async () => {
   assert.equal(output.canCreateDraftNow, false);
   assert.equal(output.canCreateOfferNow, false);
   assert.equal(output.canPublish, false);
-  assert.equal(output.nextRecommendedRoute, "EBAY-RESUME-B2-RUN");
+  assert.equal(output.nextRecommendedRoute, "EBAY-RESUME-B2A");
 });

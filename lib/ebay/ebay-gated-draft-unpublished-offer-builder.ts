@@ -252,7 +252,7 @@ export function buildEbayDraftBuilderRouteRecommendation(input: ReturnType<typeo
   if (!gate.sourceListingPackageReady) return "NEED_DRAFT_EXECUTION_DATA"
   if (gate.blockers.length > 0) return "NEED_DRAFT_EXECUTION_DATA"
   if (!input.policy.payoutUnlockModelDetected || !input.policy.businessPoliciesUnlockModelDetected) return "EBAY-RESUME-A4"
-  return gate.canProceedToControlledDraftExecution ? "EBAY-RESUME-B2-RUN" : "NEED_DRAFT_EXECUTION_DATA"
+  return gate.canProceedToControlledDraftExecution ? "EBAY-RESUME-B2A" : "NEED_DRAFT_EXECUTION_DATA"
 }
 
 export function buildEbayGatedDraftUnpublishedOfferBuilderReport(fixture: Fixture) {
