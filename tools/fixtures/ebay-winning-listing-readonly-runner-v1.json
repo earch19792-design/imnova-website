@@ -1,0 +1,91 @@
+{
+  "runnerVersion": "EBAY_WINNING_LISTING_READONLY_RUNNER_RESUME_B2A_RUN_V1",
+  "status": "EBAY_WINNING_LISTING_READONLY_RUNNER_READY",
+  "mode": "LOCAL_DRY_RUN_AND_OPTIONAL_GATED_READONLY_MARKET_RESOLVER",
+  "sourceRoute": "EBAY-RESUME-B2A",
+  "storeName": "ShopEliteCart",
+  "targetMarketplace": "EBAY_US",
+  "warehouse": {
+    "warehouseAlias": "LUNA_PORTEX_BOCA_RATON",
+    "city": "Boca Raton",
+    "state": "FL",
+    "postalCode": "33487",
+    "country": "US",
+    "fullWarehouseStreetAddressCommitted": false
+  },
+  "sourceCandidate": {
+    "productName": "Unbranded silicone cable organizer multipack",
+    "optimizedTitleFromB2A": "Silicone Cable Organizer Clips 20 Pack Self Adhesive Cord Holders Black",
+    "recommendedPriceFromB2A": 18.99,
+    "currency": "USD",
+    "riskLevel": "LOW"
+  },
+  "queryPlan": [
+    "silicone cable organizer clips 20 pack",
+    "20 pack cable organizer self adhesive",
+    "adhesive cord holder desk organization"
+  ],
+  "dryRunMarketData": {
+    "source": "NO_REAL_MARKET_DATA_IN_DRY_RUN",
+    "realEbayWinningDataResolved": false,
+    "realEbayComparableDataResolved": false,
+    "soldDataResolved": false,
+    "soldDataUnavailableReason": "unavailable_or_scope_missing",
+    "comparables": [],
+    "realLunaMatchConfirmed": false,
+    "lunaPackQuantityConfirmed": false,
+    "lunaUnitCost": 0,
+    "estimatedPackShippingCost": 0,
+    "humanApprovalConfirmed": false,
+    "accountRiskKnown": false
+  },
+  "production": { "offLimitsForWrites": true },
+  "main": { "offLimits": true },
+  "staging": { "writeExecutedInThisLoop": false },
+  "ebayApi": {
+    "readOnlyAllowedInGatedRunner": true,
+    "writeUsedInThisLoop": false
+  },
+  "ebaySearchApi": {
+    "readOnlyAllowedInGatedRunner": true,
+    "writeUsedInThisLoop": false
+  },
+  "oauth": { "realTokenExchangeAllowedInGatedRunner": true },
+  "tokenStorage": { "usedInThisLoop": false },
+  "tokenPrinting": { "usedInThisLoop": false },
+  "draft": { "createdInThisLoop": false },
+  "listing": { "createdInThisLoop": false },
+  "offer": { "createdInThisLoop": false },
+  "publication": { "createdInThisLoop": false },
+  "imageGeneration": { "usedInThisLoop": false },
+  "scraper": { "usedInThisLoop": false },
+  "amazonTrack": { "touchedInThisLoop": false },
+  "whatsapp": { "realSendUsedInThisLoop": false },
+  "openAi": { "usedInThisLoop": false },
+  "sourceDataClass": "EBAY_RESUME_B2A_RUN_WINNING_LISTING_READONLY_RESOLVER",
+  "nextRecommendedRouteOptions": [
+    "EBAY-RESUME-B2-RUN — Controlled Draft / Unpublished Offer Execution",
+    "NEED_MARKET_DATA",
+    "NEED_LUNA_MATCH",
+    "NEED_HUMAN_APPROVAL",
+    "EBAY-RESUME-HOLD"
+  ],
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noMainWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noEbayWrites": true,
+    "noTokenStorage": true,
+    "noTokenPrinting": true,
+    "noDraftCreation": true,
+    "noListingCreation": true,
+    "noOfferCreation": true,
+    "noPublication": true,
+    "noImageGeneration": true,
+    "noScraper": true,
+    "noAmazonTrackMixing": true,
+    "noWhatsappRealSend": true,
+    "noSecretsCommitted": true,
+    "noFullWarehouseStreetAddressCommitted": true
+  }
+}
