@@ -1,0 +1,108 @@
+{
+  "routeVersion": "EBAY_SELLER_HUB_UNLOCK_AUTOMATION_ROUTE_RESUME_A5_V1",
+  "status": "EBAY_SELLER_HUB_UNLOCK_AUTOMATION_ROUTE_READY",
+  "mode": "LOCAL_DRY_RUN_ROUTE_RECONCILIATION_ONLY",
+  "sourceState": {
+    "EBAY-RESUME-A": "integrated",
+    "EBAY-RESUME-A2": "integrated",
+    "EBAY-RESUME-A3": "integrated",
+    "EBAY-RESUME-A3-RUN": "production_readonly_oauth_succeeded",
+    "EBAY-RESUME-A4": "integrated"
+  },
+  "storeName": "ShopEliteCart",
+  "warehouse": {
+    "warehouseAlias": "LUNA_PORTEX_BOCA_RATON",
+    "city": "Boca Raton",
+    "state": "FL",
+    "postalCode": "33487",
+    "country": "US",
+    "streetAddressStoredInGit": false,
+    "shipFromConfiguredManually": true,
+    "returnAddressConfiguredManually": true
+  },
+  "sellerHubFindings": {
+    "sellerHubAccessible": true,
+    "accountCriticalAlertsVisible": false,
+    "messagesCritical": false,
+    "paymentMethodCardVisibleInAccount": true,
+    "payoutMethodMayUnlockAfterListingOrFirstSale": true,
+    "businessPoliciesMayUnlockDuringListingFlow": true,
+    "payoutNotTreatedAsPermanentBlocker": true,
+    "listingStillRequiresHumanApproval": true
+  },
+  "automationSignals": {
+    "benchmarkPipelineAvailable": true,
+    "candidateScoringAvailable": true,
+    "listingPackageBuilderPlanned": true,
+    "ebayPayloadPreparationPlanned": true,
+    "gatedDraftOrUnpublishedOfferPlanned": true,
+    "productCandidateExists": true,
+    "accountRiskVisible": false
+  },
+  "production": {
+    "offLimitsForWrites": true
+  },
+  "main": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "ebayApi": {
+    "usedInThisLoop": false
+  },
+  "ebayWriteApi": {
+    "usedInThisLoop": false
+  },
+  "oauth": {
+    "usedInThisLoop": false
+  },
+  "tokenStorage": {
+    "usedInThisLoop": false
+  },
+  "draft": {
+    "createdInThisLoop": false
+  },
+  "listing": {
+    "createdInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "amazonTrack": {
+    "touchedInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false
+  },
+  "openAi": {
+    "usedInThisLoop": false
+  },
+  "scraper": {
+    "usedInThisLoop": false
+  },
+  "sourceDataClass": "EBAY_RESUME_A5_SELLER_HUB_UNLOCK_AUTOMATION_ROUTE",
+  "nextRecommendedRouteOptions": [
+    "EBAY-RESUME-C-AUTO — First Automated Listing Package from Benchmark",
+    "EBAY-RESUME-B2 — Gated eBay Draft / Unpublished Offer Builder",
+    "EBAY-RESUME-A3-RUN — Re-run Seller Account Read-Only OAuth Audit",
+    "EBAY-RESUME-HOLD — Resolve eBay Account Risk Before Any Listing"
+  ],
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noMainWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noEbayApiInThisLoop": true,
+    "noEbayWrites": true,
+    "noOauthInThisLoop": true,
+    "noTokenStorage": true,
+    "noTokenPrinting": true,
+    "noDraftCreation": true,
+    "noListingCreation": true,
+    "noPublication": true,
+    "noAmazonTrackMixing": true,
+    "noWhatsappRealSend": true,
+    "noSecretsCommitted": true,
+    "noFullWarehouseStreetAddressCommitted": true
+  }
+}
