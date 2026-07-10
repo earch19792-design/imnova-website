@@ -1,0 +1,84 @@
+{
+  "readinessVersion": "EBAY_SELLER_ACCOUNT_READINESS_RESUME_A_V1",
+  "status": "EBAY_SELLER_ACCOUNT_READINESS_READY",
+  "mode": "LOCAL_DRY_RUN_SELLER_ACCOUNT_CHECKLIST_ONLY",
+  "sourceDataClass": "EBAY_RESUME_A_SELLER_ACCOUNT_READINESS",
+  "production": {
+    "offLimits": true
+  },
+  "main": {
+    "offLimits": true
+  },
+  "staging": {
+    "writeExecutedInThisLoop": false
+  },
+  "ebayApi": {
+    "usedInThisLoop": false
+  },
+  "ebayProductionApi": {
+    "usedInThisLoop": false
+  },
+  "oauth": {
+    "usedInThisLoop": false
+  },
+  "draft": {
+    "createdInThisLoop": false
+  },
+  "listing": {
+    "createdInThisLoop": false
+  },
+  "publication": {
+    "createdInThisLoop": false
+  },
+  "amazonTrack": {
+    "touchedInThisLoop": false
+  },
+  "whatsapp": {
+    "realSendUsedInThisLoop": false
+  },
+  "openAi": {
+    "usedInThisLoop": false
+  },
+  "scraper": {
+    "usedInThisLoop": false
+  },
+  "nextRecommendedRouteOptions": [
+    "EBAY-RESUME-B — Complete eBay LOOP 149 Sandbox Draft Listing",
+    "EBAY-RESUME-C — First Manual Human-Approved eBay Listing Package + Seller Hub Checklist",
+    "EBAY-RESUME-HOLD — Resolve eBay Account Risk Before Any Listing"
+  ],
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noMainWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noEbayApi": true,
+    "noEbayProductionApi": true,
+    "noOauth": true,
+    "noDraftCreation": true,
+    "noListingCreation": true,
+    "noPublication": true,
+    "noAmazonTrackMixing": true,
+    "noWhatsappRealSend": true,
+    "noSecretsCommitted": true
+  },
+  "sellerAccountChecklist": {
+    "sellerAccountActive": "unknown",
+    "sellerHubAccessible": "unknown",
+    "paymentsSetupStatus": "unknown",
+    "payoutsSetupStatus": "unknown",
+    "paymentMethodStatus": "unknown",
+    "bankAccountStatus": "unknown",
+    "itemLocationStatus": "unknown",
+    "targetMarketplace": "EBAY_US",
+    "shippingPoliciesStatus": "unknown",
+    "returnPoliciesStatus": "unknown",
+    "handlingTimeStatus": "unknown",
+    "sellerLimitsStatus": "unknown",
+    "categoryPermissionStatus": "unknown",
+    "warehouseLogisticsStatus": "unknown",
+    "firstProductCandidateStatus": "unknown",
+    "mainImageStatus": "unknown",
+    "accountRiskStatus": "unknown",
+    "preferredResumeStrategy": "unknown"
+  }
+}
