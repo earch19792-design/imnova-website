@@ -1100,6 +1100,31 @@ function getScoreClassName(
   return "text-white/45"
 }
 
+function getProfessionalReadinessLabel(
+  product: MarketRadarProductRow
+) {
+  switch (product.professional_readiness_route) {
+    case "READY_FOR_EBAY_DEMAND_VALIDATION":
+      return "Listo para validar demanda eBay"
+    case "HOLD_OUT_OF_STOCK":
+      return "Hold: sin stock"
+    case "NEED_STOCK_RECONFIRMATION":
+      return "Reconfirmar stock"
+    case "NEED_STOCK_CONFIRMATION":
+      return "Confirmar stock por variante"
+    case "NEED_SUPPLIER_IDENTITY":
+      return "Completar SKU/variante"
+    case "NEED_SUPPLIER_PRICE":
+      return "Confirmar costo proveedor"
+    case "NEED_EBAY_MARKET_PRICE":
+      return "Agregar precio observado eBay"
+    case "NEED_MARGIN_REVIEW":
+      return "Revisar margen neto"
+    default:
+      return "Readiness profesional pendiente"
+  }
+}
+
 function getEventValue(
   event: MarketRadarEventRow
 ) {
@@ -5030,6 +5055,15 @@ function ProductRow({
         </p>
         <p className="mt-1 text-[11px] text-white/35">
           {product.event_count_7d || 0} eventos 7d
+        </p>
+        <p className="mt-2 text-[11px] font-semibold text-cyan-100/70">
+          Readiness seller: {formatNumber(product.professional_readiness_score)}
+        </p>
+        <p className="mt-1 text-[11px] leading-4 text-white/45">
+          {getProfessionalReadinessLabel(product)}
+        </p>
+        <p className="mt-1 text-[10px] leading-4 text-white/30">
+          Señal scan, no garantía de venta.
         </p>
       </td>
       <td className="px-4 py-4">

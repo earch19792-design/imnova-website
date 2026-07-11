@@ -2096,7 +2096,7 @@ function calculateCollectionScore(
   }
 
   if (collections.includes("out-of-stock")) {
-    score += 8
+    score += 0
   }
 
   if (collections.includes("products")) {
@@ -2128,15 +2128,14 @@ function calculateScores(
     snapshot.available === true
       ? 12
       : snapshot.available === false
-      ? 2
+      ? 0
       : 5
 
   const rotationScore =
     Math.min(
-      stats.eventCount7d * 3 +
-      stats.restockCount7d * 8 +
-      stats.outOfStockCount7d * 8,
-      35
+      stats.eventCount7d * 2 +
+      stats.restockCount7d * 5,
+      25
     )
 
   const priceScore =
@@ -2150,14 +2149,25 @@ function calculateScores(
       15
     )
 
-  const opportunityScore =
+  const riskPenalty =
     Math.min(
+      stats.outOfStockCount7d * 12 +
+      (snapshot.available === false ? 20 : 0),
+      40
+    )
+
+  const opportunityScore =
+    Math.max(
+      0,
+      Math.min(
       discountScore +
       collectionScore +
       stockScore +
       rotationScore +
-      priceScore,
-      100
+        priceScore -
+        riskPenalty,
+        100
+      )
     )
 
   return {

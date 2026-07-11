@@ -17,6 +17,7 @@ import {
 import {
   decorateMarketRadarProductActionability,
   getManualStockQuantity,
+  getProfessionalRadarAssessment,
   getRadarFreshnessState,
   MANUAL_STOCK_CONFIRMATION_TTL_HOURS,
 } from "@/lib/market-radar-actionable-ranking.mjs"
@@ -2665,8 +2666,9 @@ async function getMarketRadarDashboard(
   }
 
   const actionableProducts =
-    latestProducts.map(product =>
-      decorateMarketRadarProductActionability({
+    latestProducts.map(product => {
+      const actionable =
+        decorateMarketRadarProductActionability({
         product,
         candidate:
           getCandidateForMarketRadarProduct({
@@ -2677,8 +2679,15 @@ async function getMarketRadarDashboard(
         events:
           eventsByProductId.get(product.product_id) ||
           [],
-      })
-    ) as MarketRadarProductRow[]
+        })
+
+      return {
+        ...actionable,
+        ...getProfessionalRadarAssessment(
+          actionable
+        ),
+      }
+    }) as MarketRadarProductRow[]
 
   const advisorAlerts =
     dedupeAdvisorAlerts(
