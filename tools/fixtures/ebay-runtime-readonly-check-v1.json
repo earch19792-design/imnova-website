@@ -1,0 +1,14 @@
+{
+  "version": "EBAY_RUNTIME_READONLY_CHECK_RUN_V1",
+  "status": "READY",
+  "productTitle": "Reusable Hook and Loop Cable Ties 50 Pack Adjustable Cord Organizer Straps",
+  "marketplaceId": "EBAY_US",
+  "environment": "PRODUCTION",
+  "exactApprovalPhrase": "READ_ONLY_RUNTIME_CHECK_APPROVED_NO_WRITE",
+  "merchantLocationRequired": true,
+  "requiredData": ["categoryId", "fulfillmentPolicyId", "returnPolicyId", "paymentPolicyId", "merchantLocationKey"],
+  "allowedMethods": ["GET"],
+  "forbiddenActions": ["createOrReplaceInventoryItem", "createOffer", "publishOffer", "publish", "createActiveListing", "reviseActiveListing", "bulkPublish"],
+  "canExecuteEbayWrite": false,
+  "canPublish": false
+}
