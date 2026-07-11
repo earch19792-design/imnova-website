@@ -968,6 +968,27 @@ function getProductInventoryMessage(
   product: MarketRadarProductRow
 ) {
   if (
+    product.observation_status ===
+      "stale_missing_from_source"
+  ) {
+    return `Producto no observado en aproximadamente ${product.consecutive_missing_scans_estimate || 2} scans. El stock anterior no es vendible hasta reconfirmar en Luna.`
+  }
+
+  if (
+    product.observation_status ===
+      "not_observed_latest_scan"
+  ) {
+    return "Producto no observado en el último scan. No se declara sin stock, pero requiere seguimiento."
+  }
+
+  if (
+    product.stock_confirmation_status ===
+      "stale_reconfirmation_required"
+  ) {
+    return "La confirmación manual de stock venció. Reconfirmar cantidad antes de listar."
+  }
+
+  if (
     getRadarStockValidationStatus(product) ===
     "out_of_stock"
   ) {
@@ -1224,6 +1245,27 @@ function getProductStatusLabel(
   product: MarketRadarProductRow
 ) {
   if (
+    product.observation_status ===
+      "stale_missing_from_source"
+  ) {
+    return "No observado / stock vencido"
+  }
+
+  if (
+    product.observation_status ===
+      "not_observed_latest_scan"
+  ) {
+    return "No observado en último scan"
+  }
+
+  if (
+    product.stock_confirmation_status ===
+      "stale_reconfirmation_required"
+  ) {
+    return "Reconfirmar stock"
+  }
+
+  if (
     getRadarStockValidationStatus(product) ===
     "out_of_stock"
   ) {
@@ -1360,6 +1402,11 @@ function isStrictStockConfirmed(
     toNumber(product.inventory_quantity)
 
   return Boolean(
+    product.stock_reconfirmation_required !== true &&
+    product.observation_status !==
+      "stale_missing_from_source" &&
+    product.stock_confirmation_status !==
+      "stale_reconfirmation_required" &&
     product.stock_validation_status === "stock_confirmed" ||
     (
       product.available === true &&
