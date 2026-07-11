@@ -1,0 +1,89 @@
+{
+  "version": "EBAY_LUNA_SCAN_MATCH_CONFIRMATION_B2A_V1",
+  "status": "READY",
+  "previousIncorrectBlocker": "NEED_REAL_LUNA_CATALOG_FILE",
+  "correctedBlocker": "NEED_LUNA_SCAN_MATCH_CONFIRMATION",
+  "requiresRealLunaCatalogFile": false,
+  "requiresWarehouseConsultation": false,
+  "requiresManualProductSearch": false,
+  "usesLunaScanCandidates": true,
+  "usesEbayWinnerMarketData": true,
+  "usesHumanWhatsappConfirmation": true,
+  "realWhatsappSendUsed": false,
+  "canPublish": false,
+  "marketObservedDataFromEbay": {
+    "optimizedTitleCandidate": "Silicone Cable Organizer Clips 20 Pack Self Adhesive Cord Holders Black",
+    "keywords": ["silicone cable organizer", "20 pack", "self adhesive", "cord holder", "desk organization"],
+    "suggestedCategory": "Cable Organizers",
+    "priceRange": { "min": 17.99, "max": 27.99, "currency": "USD" },
+    "recommendedPrice": 18.99,
+    "itemSpecifics": {
+      "Brand": "Unbranded", "Type": "Cable Organizer Clip", "Material": "Silicone",
+      "Color": "Black", "Mounting": "Self-Adhesive", "Number in Pack": 20
+    },
+    "listingDataSource": "EBAY_MARKET_OBSERVED"
+  },
+  "lunaScanCandidates": [
+    {
+      "candidateId": "LUNA-SCAN-CABLE-STRONG", "productName": "Black Silicone Self Adhesive Cable Organizer Clips Multipack",
+      "descriptionSignal": "Cord holder clips for desk organization", "color": "Black", "material": "Silicone",
+      "packSignal": "multipack", "availabilitySignal": "AVAILABLE", "supplierSku": "LP-SCAN-CC-MULTI",
+      "supplierCost": null, "supplierStock": null, "supplierImageReference": "SCAN_REFERENCE_AVAILABLE",
+      "riskSignals": [], "source": "LUNA_SCAN_OBSERVED"
+    },
+    {
+      "candidateId": "LUNA-SCAN-CABLE-PARTIAL", "productName": "Cable Clips Set", "descriptionSignal": "Cord management clips",
+      "color": null, "material": "Silicone", "packSignal": null, "availabilitySignal": "UNKNOWN",
+      "supplierSku": null, "supplierCost": null, "supplierStock": null, "supplierImageReference": null,
+      "riskSignals": [], "source": "LUNA_SCAN_OBSERVED"
+    },
+    {
+      "candidateId": "LUNA-SCAN-NO-MATCH", "productName": "Bamboo Kitchen Drawer Divider",
+      "descriptionSignal": "Expandable kitchen storage", "color": "Natural", "material": "Bamboo",
+      "packSignal": "2 pack", "availabilitySignal": "AVAILABLE", "supplierSku": "LP-SCAN-KITCHEN",
+      "supplierCost": null, "supplierStock": null, "supplierImageReference": "SCAN_REFERENCE_AVAILABLE",
+      "riskSignals": [], "source": "LUNA_SCAN_OBSERVED"
+    },
+    {
+      "candidateId": "LUNA-SCAN-HIGH-RISK", "productName": "Restricted Brand Aerosol Battery Cleaner",
+      "descriptionSignal": "Hazmat aerosol cleaner", "color": "Blue", "material": "Chemical",
+      "packSignal": "1 pack", "availabilitySignal": "AVAILABLE", "supplierSku": "LP-SCAN-RISK",
+      "supplierCost": null, "supplierStock": null, "supplierImageReference": "SCAN_REFERENCE_AVAILABLE",
+      "riskSignals": ["AEROSOL", "BATTERY", "RESTRICTED_BRAND", "HAZMAT"], "source": "LUNA_SCAN_OBSERVED"
+    }
+  ],
+  "humanWhatsappConfirmation": {
+    "status": "PENDING",
+    "allowedStatuses": ["PENDING", "CONFIRMED_SAME_PRODUCT", "REJECTED_NOT_SAME_PRODUCT", "NEEDS_MORE_REVIEW"],
+    "confirmationPrompt": "Confirma si el producto encontrado en Luna Scan es el mismo producto ganador detectado en eBay.",
+    "exactPositiveConfirmation": "HUMAN_CONFIRMED_SAME_PRODUCT",
+    "exactNegativeConfirmation": "HUMAN_REJECTED_NOT_SAME_PRODUCT"
+  },
+  "fieldCompletionPolicy": {
+    "title": "EBAY_MARKET_OBSERVED", "category": "EBAY_MARKET_OBSERVED",
+    "itemSpecifics": "EBAY_MARKET_OBSERVED", "description": "EBAY_MARKET_OBSERVED",
+    "priceRecommendation": "EBAY_MARKET_OBSERVED", "packWording": "EBAY_MARKET_OBSERVED",
+    "weightIfMissing": "EBAY_MARKET_OBSERVED_WITH_LOW_CONFIDENCE",
+    "dimensionsIfMissing": "EBAY_MARKET_OBSERVED_WITH_LOW_CONFIDENCE",
+    "supplierSku": "LUNA_SCAN_OBSERVED_IF_PRESENT",
+    "supplierCost": "LUNA_SCAN_OBSERVED_IF_PRESENT_ELSE_UNKNOWN_FROM_SUPPLIER",
+    "supplierStock": "LUNA_SCAN_OBSERVED_IF_PRESENT_ELSE_UNKNOWN_FROM_SUPPLIER",
+    "supplierImage": "LUNA_SCAN_OBSERVED_IF_PRESENT_ELSE_EBAY_REFERENCE_FOR_REVIEW_ONLY",
+    "humanProductMatch": "HUMAN_WHATSAPP_CONFIRMED"
+  },
+  "routes": {
+    "PENDING": "NEED_LUNA_SCAN_MATCH_CONFIRMATION",
+    "CONFIRMED_SAME_PRODUCT": "EBAY-RESUME-B2-RUN",
+    "REJECTED_NOT_SAME_PRODUCT": "NEED_LUNA_SCAN_REMATCH",
+    "LOW_MATCH": "NEED_LUNA_SCAN_REMATCH",
+    "HIGH_RISK": "EBAY-RESUME-HOLD"
+  },
+  "safetyFlags": {
+    "noProductionWrites": true, "noMainWrites": true, "noStagingWrites": true,
+    "noEbayApi": true, "noOauth": true, "noTokenStorage": true, "noTokenPrinting": true,
+    "noDraftCreation": true, "noListingCreation": true, "noOfferCreation": true,
+    "noPublication": true, "noImageGeneration": true, "noScraper": true,
+    "noRealWhatsappSend": true, "noAmazonTrackMixing": true,
+    "noSecretsCommitted": true, "noFullWarehouseStreetAddressCommitted": true
+  }
+}
