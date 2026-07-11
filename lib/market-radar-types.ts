@@ -94,6 +94,17 @@ export type MarketRadarProductRow = {
     | "not_applicable"
   stock_confirmation_age_hours?: number | null
   stock_reconfirmation_required?: boolean
+  professional_readiness_score?: number
+  professional_readiness_route?: string
+  professional_missing_fields?: string[]
+  supplier_price_observed?: number | null
+  ebay_market_price_observed?: number | null
+  gross_spread_precheck?: number | null
+  gross_spread_percent_precheck?: number | null
+  margin_precheck_passed?: boolean
+  ebay_demand_validation_required?: true
+  authorized_image_review_required?: true
+  sales_guarantee_claim_allowed?: false
   pipeline_candidate_id?: string | null
   pipeline_candidate_state?: string | null
   pipeline_blocked_reason?: string | null

@@ -73,6 +73,22 @@ export function getStockValidationStatus(
   product: Partial<MarketRadarProductRow> | null | undefined
 ): MarketRadarStockValidationStatus
 
+export function getProfessionalRadarAssessment(
+  product: Partial<MarketRadarProductRow> | null | undefined
+): {
+  professional_readiness_score: number
+  professional_readiness_route: string
+  professional_missing_fields: string[]
+  supplier_price_observed: number | null
+  ebay_market_price_observed: number | null
+  gross_spread_precheck: number | null
+  gross_spread_percent_precheck: number | null
+  margin_precheck_passed: boolean
+  ebay_demand_validation_required: true
+  authorized_image_review_required: true
+  sales_guarantee_claim_allowed: false
+}
+
 export function getMaterialChangeAfterReview(input: {
   candidate?: MarketRadarPipelineCandidateSummary | null
   events?: Array<Partial<MarketRadarEventRow>> | null

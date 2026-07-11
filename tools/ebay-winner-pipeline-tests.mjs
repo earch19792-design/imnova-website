@@ -82,6 +82,7 @@ import {
 import {
   getManualStockQuantity,
   getRadarFreshnessState,
+  getProfessionalRadarAssessment,
   getMarketRadarActionability,
   isConfirmedVariantStock,
 } from "../lib/market-radar-actionable-ranking.mjs"
@@ -19809,6 +19810,79 @@ test("market radar freshness: ausencia no equivale a stock cero y dos scans bloq
   assert.equal(
     stale.stock_confirmation_status,
     "stale_reconfirmation_required"
+  )
+})
+
+test("market radar professional readiness: exige stock identidad precio margen y demanda eBay", () => {
+  const ready =
+    getProfessionalRadarAssessment({
+      available: true,
+      inventory_quantity: 21,
+      inventory_scope: "variant_level",
+      inventory_confidence: "high",
+      inventory_source: "manual_admin_confirmation",
+      observation_status: "observed",
+      stock_reconfirmation_required: false,
+      sku: "RUST-BLUE-21",
+      supplier_variant_id: "variant-blue",
+      price: 6,
+      estimated_sale_price: 12,
+      featured_image_url: "https://example.invalid/reference.jpg",
+    })
+
+  assert.equal(
+    ready.professional_readiness_route,
+    "READY_FOR_EBAY_DEMAND_VALIDATION"
+  )
+  assert.equal(
+    ready.margin_precheck_passed,
+    true
+  )
+  assert.equal(
+    ready.ebay_demand_validation_required,
+    true
+  )
+  assert.equal(
+    ready.sales_guarantee_claim_allowed,
+    false
+  )
+
+  const risky =
+    getProfessionalRadarAssessment({
+      ...baseActionableRadarProduct,
+      available: false,
+      inventory_quantity: 0,
+      estimated_sale_price: 12,
+    })
+
+  assert.equal(
+    risky.professional_readiness_route,
+    "HOLD_OUT_OF_STOCK"
+  )
+  assert.ok(
+    risky.professional_readiness_score <
+      ready.professional_readiness_score
+  )
+})
+
+test("market radar scan score: stock-outs penalizan y no se premian como oportunidad", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve("lib/market-radar-lunaportex.ts"),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /const riskPenalty =[\s\S]*outOfStockCount7d \* 12[\s\S]*snapshot\.available === false \? 20 : 0/
+  )
+  assert.match(
+    source,
+    /priceScore -[\s\S]*riskPenalty/
+  )
+  assert.doesNotMatch(
+    source,
+    /outOfStockCount7d \* 8/
   )
 })
 
