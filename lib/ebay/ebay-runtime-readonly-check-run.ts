@@ -1,11 +1,13 @@
 export const EBAY_RUNTIME_READONLY_CHECK_RUN_VERSION = "EBAY_RUNTIME_READONLY_CHECK_RUN_V1"
 
 export type RuntimeReadResult = {
-  categoryLookupExecuted?: boolean; categoryId?: string | null; categoryNameOrPath?: string | null
-  fulfillmentPoliciesLookupExecuted?: boolean; fulfillmentPolicyId?: string | null
-  returnPoliciesLookupExecuted?: boolean; returnPolicyId?: string | null
-  paymentPoliciesLookupExecuted?: boolean; paymentPolicyId?: string | null
-  merchantLocationLookupExecuted?: boolean; merchantLocationKey?: string | null
+  categoryLookupExecuted?: boolean; categoryLookupStatus?: string | null; categoryLookupError?: string | null; categoryId?: string | null; categoryNameOrPath?: string | null
+  fulfillmentPoliciesLookupExecuted?: boolean; fulfillmentPoliciesLookupStatus?: string | null; fulfillmentPolicyId?: string | null
+  returnPoliciesLookupExecuted?: boolean; returnPoliciesLookupStatus?: string | null; returnPolicyId?: string | null
+  paymentPoliciesLookupExecuted?: boolean; paymentPoliciesLookupStatus?: string | null; paymentPolicyId?: string | null
+  merchantLocationLookupExecuted?: boolean; merchantLocationLookupStatus?: string | null; merchantLocationKey?: string | null
+  readOnlyHttpErrors?: Array<{ lookupName?: string | null; endpointKind?: string | null; httpStatus?: number | null; ebayErrorCode?: string | null; ebayErrorMessage?: string | null }>
+  failedLookupName?: string | null; failedEndpointKind?: string | null; failedHttpStatus?: number | null; failedEbayErrorCode?: string | null; failedEbayErrorMessage?: string | null
   error?: string | null
 }
 
@@ -29,13 +31,15 @@ export function buildNoWriteReadonlyGuard(input: ReturnType<typeof buildEbayRunt
   return { noWriteGuardPassed: input.fixture.allowedMethods?.every(x => x === "GET") === true && forbidden.every(x => input.fixture.forbiddenActions?.includes(x)), publishOfferForbidden: true, ebayWriteApiUsed: false, canExecuteEbayWrite: false, canPublish: false }
 }
 export function sanitizeRuntimeReadonlyResult(result: RuntimeReadResult): RuntimeReadResult {
-  return { categoryLookupExecuted: result.categoryLookupExecuted === true, categoryId: value(result.categoryId), categoryNameOrPath: value(result.categoryNameOrPath), fulfillmentPoliciesLookupExecuted: result.fulfillmentPoliciesLookupExecuted === true, fulfillmentPolicyId: value(result.fulfillmentPolicyId), returnPoliciesLookupExecuted: result.returnPoliciesLookupExecuted === true, returnPolicyId: value(result.returnPolicyId), paymentPoliciesLookupExecuted: result.paymentPoliciesLookupExecuted === true, paymentPolicyId: value(result.paymentPolicyId), merchantLocationLookupExecuted: result.merchantLocationLookupExecuted === true, merchantLocationKey: value(result.merchantLocationKey), error: value(result.error) }
+  const errors = Array.isArray(result.readOnlyHttpErrors) ? result.readOnlyHttpErrors.map(x => ({ lookupName: value(x.lookupName), endpointKind: value(x.endpointKind), httpStatus: typeof x.httpStatus === "number" ? x.httpStatus : null, ebayErrorCode: value(x.ebayErrorCode), ebayErrorMessage: value(x.ebayErrorMessage) })) : []
+  return { categoryLookupExecuted: result.categoryLookupExecuted === true, categoryLookupStatus: value(result.categoryLookupStatus) ?? "NOT_EXECUTED", categoryLookupError: value(result.categoryLookupError), categoryId: value(result.categoryId), categoryNameOrPath: value(result.categoryNameOrPath), fulfillmentPoliciesLookupExecuted: result.fulfillmentPoliciesLookupExecuted === true, fulfillmentPoliciesLookupStatus: value(result.fulfillmentPoliciesLookupStatus) ?? "NOT_EXECUTED", fulfillmentPolicyId: value(result.fulfillmentPolicyId), returnPoliciesLookupExecuted: result.returnPoliciesLookupExecuted === true, returnPoliciesLookupStatus: value(result.returnPoliciesLookupStatus) ?? "NOT_EXECUTED", returnPolicyId: value(result.returnPolicyId), paymentPoliciesLookupExecuted: result.paymentPoliciesLookupExecuted === true, paymentPoliciesLookupStatus: value(result.paymentPoliciesLookupStatus) ?? "NOT_EXECUTED", paymentPolicyId: value(result.paymentPolicyId), merchantLocationLookupExecuted: result.merchantLocationLookupExecuted === true, merchantLocationLookupStatus: value(result.merchantLocationLookupStatus) ?? "NOT_EXECUTED", merchantLocationKey: value(result.merchantLocationKey), readOnlyHttpErrors: errors, error: value(result.error), failedLookupName: errors[0]?.lookupName ?? null, failedEndpointKind: errors[0]?.endpointKind ?? null, failedHttpStatus: errors[0]?.httpStatus ?? null, failedEbayErrorCode: errors[0]?.ebayErrorCode ?? null, failedEbayErrorMessage: errors[0]?.ebayErrorMessage ?? null }
 }
 export function buildRuntimeReadonlyRouteRecommendation(input: ReturnType<typeof buildEbayRuntimeReadonlyCheckInput>) {
   const gate = buildReadonlyRuntimeGate(input), r = sanitizeRuntimeReadonlyResult(input.result)
   if (!input.gate.executeRequested) return "SAFE_NO_READ"
   if (!gate.tokenPresentBooleanOnly) return "NEED_RUNTIME_EBAY_ACCESS_TOKEN"
-  if (!gate.gatePassed || r.error) return "EBAY-RESUME-HOLD"
+  if (!gate.gatePassed) return "EBAY-RESUME-HOLD"
+  if (r.readOnlyHttpErrors?.some(x => x.httpStatus === 401)) return "NEED_RUNTIME_EBAY_ACCESS_TOKEN"
   if (!r.categoryId) return "NEED_CATEGORY_RUNTIME_CONFIRMATION"
   if (!r.fulfillmentPolicyId || !r.returnPolicyId || !r.paymentPolicyId) return "NEED_SELLER_POLICY_RUNTIME_CONFIRMATION"
   if (input.fixture.merchantLocationRequired && !r.merchantLocationKey) return "NEED_INVENTORY_LOCATION_RUNTIME_CONFIRMATION"
@@ -44,5 +48,5 @@ export function buildRuntimeReadonlyRouteRecommendation(input: ReturnType<typeof
 export function buildEbayRuntimeReadonlyCheckReport(fixture: Fixture, gate: Gate = {}, result: RuntimeReadResult = {}) {
   const input = buildEbayRuntimeReadonlyCheckInput(fixture, gate, result), g = buildReadonlyRuntimeGate(input), guard = buildNoWriteReadonlyGuard(input), r = sanitizeRuntimeReadonlyResult(result)
   const resolved = [r.categoryId, r.fulfillmentPolicyId, r.returnPolicyId, r.paymentPolicyId, input.fixture.merchantLocationRequired ? r.merchantLocationKey : "NOT_REQUIRED"]
-  return { runtimeReadonlyCheckReportBuilt: true, mode: gate.executeRequested ? "HARD_GATED_READ_ONLY_RUNTIME_CHECK" : "SAFE_NO_READ", productTitle: input.productTitle, marketplaceId: input.marketplaceId, environment: input.environment, ...r, categoryIdResolved: Boolean(r.categoryId), fulfillmentPolicyResolved: Boolean(r.fulfillmentPolicyId), returnPolicyResolved: Boolean(r.returnPolicyId), paymentPolicyResolved: Boolean(r.paymentPolicyId), merchantLocationKeyResolved: Boolean(r.merchantLocationKey), ...g, ...guard, tokenStored: false, tokenPrinted: false, realEbayApiUsed: gate.executeRequested === true && g.gatePassed && (r.categoryLookupExecuted === true || r.error?.startsWith("READ_ONLY_GET_FAILED_") === true), draftCreated: false, inventoryItemCreated: false, offerCreated: false, listingCreated: false, publicationExecuted: false, runtimeDataResolvedCount: resolved.filter(Boolean).length, runtimeDataRequiredCount: 5, runtimeDataAllResolved: resolved.every(Boolean), nextRecommendedRoute: buildRuntimeReadonlyRouteRecommendation(input) }
+  return { runtimeReadonlyCheckReportBuilt: true, mode: gate.executeRequested ? "HARD_GATED_READ_ONLY_RUNTIME_CHECK" : "SAFE_NO_READ", productTitle: input.productTitle, marketplaceId: input.marketplaceId, environment: input.environment, ...r, categoryIdResolved: Boolean(r.categoryId), fulfillmentPolicyResolved: Boolean(r.fulfillmentPolicyId), returnPolicyResolved: Boolean(r.returnPolicyId), paymentPolicyResolved: Boolean(r.paymentPolicyId), merchantLocationKeyResolved: Boolean(r.merchantLocationKey), ...g, ...guard, tokenStored: false, tokenPrinted: false, realEbayApiUsed: gate.executeRequested === true && g.gatePassed && [r.categoryLookupExecuted,r.fulfillmentPoliciesLookupExecuted,r.returnPoliciesLookupExecuted,r.paymentPoliciesLookupExecuted,r.merchantLocationLookupExecuted].some(Boolean), draftCreated: false, inventoryItemCreated: false, offerCreated: false, listingCreated: false, publicationExecuted: false, runtimeDataResolvedCount: resolved.filter(Boolean).length, runtimeDataRequiredCount: 5, runtimeDataAllResolved: resolved.every(Boolean), nextRecommendedRoute: buildRuntimeReadonlyRouteRecommendation(input) }
 }
