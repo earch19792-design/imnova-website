@@ -1,0 +1,39 @@
+{
+  "version": "EBAY_SELLER_RUNTIME_DATA_RESOLVER_B2_RUN_V1",
+  "status": "READY",
+  "sourceRoute": "EBAY-RESUME-B2-RUN-CONTROLLED-WRITE-DRAFT-ONLY-RUN",
+  "selectedProduct": {
+    "sku": "IMNOVA-HOOK-LOOP-CABLE-TIES-50PK-DRAFTONLY-V1",
+    "title": "Reusable Hook and Loop Cable Ties 50 Pack Adjustable Cord Organizer Straps",
+    "marketplaceId": "EBAY_US",
+    "condition": "New",
+    "price": {"value": 12.99, "currency": "USD"},
+    "observedStockQuantity": {"value": 20, "source": "HUMAN_MOBILE_CONFIRMED"},
+    "quantityForDraftOnly": {"value": 1, "source": "PREVIEW_ONLY"},
+    "canPublish": false
+  },
+  "runtimeDataRequired": {
+    "categoryId": {"required": true, "status": "PENDING", "source": "RUNTIME_RESOLVER_REQUIRED"},
+    "fulfillmentPolicy": {"required": true, "status": "PENDING", "source": "RUNTIME_RESOLVER_REQUIRED"},
+    "returnPolicy": {"required": true, "status": "PENDING", "source": "RUNTIME_RESOLVER_REQUIRED"},
+    "paymentPolicy": {"required": true, "status": "PENDING", "source": "RUNTIME_RESOLVER_REQUIRED"},
+    "finalStockReview": {"required": true, "status": "PENDING", "minimumRequiredQuantity": 1},
+    "finalPriceReview": {"required": true, "status": "PENDING", "recommendedPrice": 12.99},
+    "finalImageAssetReview": {"required": true, "status": "PENDING", "allowUnpublishedOnlyBypass": true, "imageGenerationUsed": false, "imageDownloadUsed": false, "imageCopyAllowed": false},
+    "ebayAccessTokenRuntimePresence": {"requiredForRealRun": true, "status": "NOT_CHECKED", "tokenStored": false, "tokenPrinted": false},
+    "targetEnvironment": {"allowedValues": ["SANDBOX", "PRODUCTION"], "preferredBeforeProduction": "SANDBOX", "status": "PENDING"}
+  },
+  "resolverModes": {"default": "SAFE_NO_RUNTIME_READ", "dryRun": "LOCAL_MODEL_ONLY", "optionalReadOnlyCheck": "HARD_GATED_READ_ONLY_CHECK"},
+  "exactOptionalReadOnlyApproval": {"EBAY_RUNTIME_RESOLVER_READONLY_APPROVED": "READ_ONLY_RUNTIME_CHECK_APPROVED_NO_WRITE"},
+  "forbiddenActions": ["createOrReplaceInventoryItem", "createOffer", "publishOffer", "publish", "createActiveListing", "reviseActiveListing", "bulkPublish"],
+  "allowedInThisLoop": ["localChecklistBuild", "localReadinessAssessment", "optionalReadOnlyPolicyLookupFuture", "tokenPresenceBooleanCheck"],
+  "safetyFlags": {
+    "noProductionWrites": true, "noMainWrites": true, "noStagingWritesInThisLoop": true, "noSupabaseWrites": true,
+    "noEbayWrites": true, "noOauthInThisLoop": true, "noTokenExchange": true, "noTokenStorage": true,
+    "noTokenPrinting": true, "noDraftCreation": true, "noInventoryItemCreation": true, "noOfferCreation": true,
+    "noListingCreation": true, "noPublication": true, "publishOfferForbidden": true,
+    "noImageGeneration": true, "noImageDownload": true, "noImageCopy": true, "noScraper": true,
+    "noAmazonTrackMixing": true, "noOpenAiOrCodexApiReal": true, "noWhatsappRealSend": true,
+    "noSmsRealSend": true, "noSecretsCommitted": true, "noFullWarehouseStreetAddressCommitted": true
+  }
+}
