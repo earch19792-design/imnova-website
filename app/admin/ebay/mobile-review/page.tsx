@@ -73,9 +73,11 @@ export default function EbayMobileReviewPage() {
         if (!active) return
         setReport(nextReport)
         setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates)))
-        setLoadMessage(nextReport.top5Candidates.length
-          ? `${nextReport.top5Candidates.length} candidatos cargados.`
-          : "No hay Top 5 real disponible. Ejecuta o revisa Market Radar antes de tomar decisiones.")
+        setLoadMessage(nextReport.realRadarCandidatesCount === 0
+          ? "Radar no devolvió productos. Ejecuta o revisa Market Radar antes de tomar decisiones."
+          : nextReport.realRadarTop5Loaded || nextReport.fixtureUsed
+            ? `${nextReport.top5Candidates.length} candidatos cargados.`
+            : `Radar devolvió ${nextReport.realRadarCandidatesCount} productos: ${nextReport.eligibleCandidatesCount} elegibles y ${nextReport.stockHoldCandidates.length} en STOCK_HOLD. Faltan ${nextReport.candidatesNeededForTop5} para completar el Top 5.`)
       } catch {
         if (!active) return
         setReport(emptyReport)
@@ -174,6 +176,23 @@ export default function EbayMobileReviewPage() {
             )
           })}
         </div>
+
+        {report.stockHoldCandidates.length > 0 && (
+          <section className="rounded-3xl border border-rose-300/20 bg-rose-300/[0.06] p-5">
+            <p className="text-xs font-black uppercase tracking-widest text-rose-100/70">Productos reales excluidos · STOCK_HOLD</p>
+            <p className="mt-2 text-sm leading-6 text-white/60">Estos productos sí llegaron desde Market Radar, pero no pueden entrar al Top 5 ni avanzar a B2-RUN.</p>
+            <div className="mt-4 space-y-3">
+              {report.stockHoldCandidates.map((candidate) => (
+                <article key={candidate.candidateId} className="rounded-2xl border border-rose-200/15 bg-black/25 p-4 text-xs leading-5">
+                  <h2 className="text-base font-black text-white">{candidate.productTitle}</h2>
+                  <p className="mt-2 text-white/55">Radar product: {candidate.marketRadarProductId}<br />Snapshot: {formatValue(candidate.marketRadarSnapshotId)}<br />SKU: {formatValue(candidate.supplierSku)} · Variant: {formatValue(candidate.supplierVariantId)}</p>
+                  <p className="mt-2 text-rose-100/75">Razón: {candidate.routeRecommendation}<br />Inventory/observation: {candidate.inventoryStatus}<br />Stock source: {candidate.stockSource} · confidence: {candidate.stockConfidence}<br />Último scan: {formatValue(candidate.lastSeenAt)}<br />Último snapshot: {formatValue(candidate.lastSnapshotAt)}</p>
+                  <div className="mt-3 flex flex-wrap gap-2"><StatusPill>STOCK_HOLD</StatusPill><StatusPill>canProceedToB2Run: false</StatusPill></div>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section ref={confirmationRef} className="scroll-mt-20 rounded-3xl border border-white/10 bg-white/[0.035] p-5">
           <h2 className="text-xl font-black">Confirmaciones del seleccionado</h2>

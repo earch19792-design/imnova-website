@@ -182,6 +182,8 @@ export function buildMobileReviewRealRadarConnector(
     .slice(0, 5)
     .map((candidate, index) => ({ ...candidate, candidateRank: index + 1 }))
   const realRadarTop5Loaded = !fixtureUsed && top5Candidates.length === 5
+  const eligibleCandidatesCount = top5Candidates.length
+  const candidatesNeededForTop5 = Math.max(0, 5 - eligibleCandidatesCount)
   const dataSource = fixtureUsed
     ? "DEMO_FIXTURE_ONLY"
     : products.length
@@ -193,6 +195,8 @@ export function buildMobileReviewRealRadarConnector(
     mobileReviewRealRadarConnectorBuilt: true,
     realRadarTop5Loaded,
     realRadarCandidatesCount: products.length,
+    eligibleCandidatesCount,
+    candidatesNeededForTop5,
     fixtureUsed,
     dataSource,
     top5Candidates,
@@ -212,6 +216,8 @@ export function buildMobileReviewRealRadarConnector(
       ? "DEMO_ONLY_NO_APPROVAL"
       : realRadarTop5Loaded
         ? "NEED_MOBILE_REVIEW_OF_REAL_TOP5"
+        : stockHoldCandidates.length
+          ? "NEED_REVIEW_OF_RADAR_STOCK_HOLDS"
         : "NEED_MARKET_RADAR_REFRESH",
   }
 }
