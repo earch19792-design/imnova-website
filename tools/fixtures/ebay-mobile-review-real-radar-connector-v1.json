@@ -1,0 +1,57 @@
+{
+  "version": "EBAY_MOBILE_REVIEW_REAL_RADAR_CONNECTOR_V1",
+  "mode": "REAL_READONLY",
+  "products": [
+    {
+      "product_id": "radar-product-101", "snapshot_id": "radar-snapshot-501",
+      "supplier_product_id": "luna-product-101", "supplier_variant_id": "luna-variant-101", "sku": "LP-DRAWER-6",
+      "title": "Clear Drawer Organizer Trays 6 Piece Set", "variant_title": "Clear / 6 Piece", "handle": "clear-drawer-organizer-trays-6-piece", "product_url": "https://lunaportex.example/products/clear-drawer-organizer-trays-6-piece", "featured_image_url": "https://cdn.example.invalid/radar/clear-drawer-reference.jpg",
+      "last_seen_at": "2026-07-11T20:00:00.000Z", "last_captured_at": "2026-07-11T20:00:00.000Z",
+      "inventory_status": "in_stock", "observation_status": "observed", "inventory_quantity": 42, "inventory_source": "luna_numeric", "inventory_scope": "variant_level", "inventory_confidence": "high", "stock_confirmation_age_hours": 2,
+      "price": 8.75, "compare_at_price": 12.5, "discount_percent": 30, "collections": ["products", "weekly-deals"], "opportunity_score": 88.6,
+      "professional_readiness_route": "READY_FOR_MOBILE_REVIEW", "estimated_sale_price": 19.99, "ebay_price_source": "EBAY_MARKET_OBSERVED_READONLY", "ebay_category_id": "159897", "margin_precheck_passed": true, "pipeline_candidate_state": "RADAR_REVIEW_PENDING", "professional_missing_fields": []
+    },
+    {
+      "product_id": "radar-product-102", "snapshot_id": "radar-snapshot-502",
+      "supplier_product_id": "luna-product-102", "supplier_variant_id": "luna-variant-102", "sku": "LP-MAG-CABLE-6",
+      "title": "Magnetic Desk Cable Holder 6 Pack", "variant_title": "Black / 6 Pack", "handle": "magnetic-desk-cable-holder-6", "product_url": "https://lunaportex.example/products/magnetic-desk-cable-holder-6", "featured_image_url": "https://cdn.example.invalid/radar/magnetic-holder-reference.jpg",
+      "last_seen_at": "2026-07-11T20:00:00.000Z", "last_captured_at": "2026-07-11T20:00:00.000Z",
+      "inventory_status": "in_stock", "observation_status": "observed", "inventory_quantity": null, "inventory_source": "luna_availability", "inventory_scope": "availability_only", "inventory_confidence": "low", "stock_confirmation_age_hours": null,
+      "price": 6.25, "compare_at_price": 9.99, "discount_percent": 37.44, "collections": ["products", "flash-sale"], "opportunity_score": 84.2,
+      "professional_readiness_route": "STOCK_CONFIRMATION_REQUIRED", "estimated_sale_price": 14.99, "ebay_price_source": "EBAY_MARKET_OBSERVED_READONLY", "ebay_category_id": "159897", "margin_precheck_passed": true, "pipeline_candidate_state": "RADAR_REVIEW_PENDING", "professional_missing_fields": ["stockQuantity"]
+    },
+    {
+      "product_id": "radar-product-103", "snapshot_id": "radar-snapshot-503",
+      "supplier_product_id": "luna-product-103", "supplier_variant_id": "luna-variant-103", "sku": "LP-FURN-16",
+      "title": "Silicone Furniture Leg Protectors 16 Pack", "variant_title": "Clear / 16 Pack", "handle": "silicone-furniture-leg-protectors-16", "product_url": "https://lunaportex.example/products/silicone-furniture-leg-protectors-16", "featured_image_url": "https://cdn.example.invalid/radar/furniture-leg-reference.jpg",
+      "last_seen_at": "2026-07-11T19:40:00.000Z", "last_captured_at": "2026-07-10T17:00:00.000Z",
+      "inventory_status": "in_stock", "observation_status": "observed", "inventory_quantity": 18, "inventory_source": "manual_admin_confirmation", "inventory_scope": "variant_level", "inventory_confidence": "high", "stock_confirmation_age_hours": 27, "stock_reconfirmation_required": true,
+      "price": 5.5, "compare_at_price": 7.5, "discount_percent": 26.67, "collections": ["products"], "opportunity_score": 81.7,
+      "professional_readiness_route": "STOCK_RECONFIRMATION_REQUIRED", "estimated_sale_price": 13.49, "ebay_price_source": "EBAY_MARKET_OBSERVED_READONLY", "ebay_category_id": "159897", "margin_precheck_passed": true, "pipeline_candidate_state": "RADAR_REVIEW_PENDING", "professional_missing_fields": ["freshStockConfirmation"]
+    },
+    {
+      "product_id": "radar-product-104", "snapshot_id": "radar-snapshot-504",
+      "supplier_product_id": "luna-product-104", "supplier_variant_id": "luna-variant-104", "sku": "LP-TRAVEL-10",
+      "title": "Travel Cord Organizer Straps 10 Pack", "variant_title": "Assorted / 10 Pack", "handle": "travel-cord-organizer-straps-10", "product_url": "https://lunaportex.example/products/travel-cord-organizer-straps-10", "featured_image_url": "https://cdn.example.invalid/radar/travel-straps-reference.jpg",
+      "last_seen_at": "2026-07-11T20:00:00.000Z", "last_captured_at": "2026-07-11T20:00:00.000Z",
+      "inventory_status": "in_stock", "observation_status": "observed", "inventory_quantity": 30, "inventory_source": "luna_numeric", "inventory_scope": "variant_level", "inventory_confidence": "high", "stock_confirmation_age_hours": 2,
+      "price": 4.25, "compare_at_price": 6.25, "discount_percent": 32, "collections": ["products"], "opportunity_score": 79.9,
+      "professional_readiness_route": "EBAY_PRICE_REQUIRED", "estimated_sale_price": null, "ebay_price_source": null, "ebay_category_id": "159897", "margin_precheck_passed": true, "pipeline_candidate_state": "RADAR_REVIEW_PENDING", "professional_missing_fields": ["ebayMarketPrice"]
+    },
+    {
+      "product_id": "radar-product-105", "snapshot_id": "radar-snapshot-505",
+      "supplier_product_id": "luna-product-105", "supplier_variant_id": "luna-variant-105", "sku": "LP-LAUNDRY-6",
+      "title": "Mesh Laundry Wash Bags 6 Pack", "variant_title": "White / 6 Pack", "handle": "mesh-laundry-wash-bags-6", "product_url": "https://lunaportex.example/products/mesh-laundry-wash-bags-6", "featured_image_url": "https://cdn.example.invalid/radar/laundry-bags-reference.jpg",
+      "last_seen_at": "2026-07-11T20:00:00.000Z", "last_captured_at": "2026-07-11T20:00:00.000Z",
+      "inventory_status": "in_stock", "observation_status": "observed", "inventory_quantity": 25, "inventory_source": "luna_numeric", "inventory_scope": "variant_level", "inventory_confidence": "high", "stock_confirmation_age_hours": 2,
+      "price": 11.5, "compare_at_price": 14.5, "discount_percent": 20.69, "collections": ["products"], "opportunity_score": 77.5,
+      "professional_readiness_route": "MARGIN_REVIEW_REQUIRED", "estimated_sale_price": 14.99, "ebay_price_source": "EBAY_MARKET_OBSERVED_READONLY", "ebay_category_id": null, "margin_precheck_passed": false, "pipeline_candidate_state": "RADAR_REVIEW_PENDING", "professional_missing_fields": ["preliminaryMargin", "ebayCategoryId"]
+    },
+    {
+      "product_id": "radar-product-106", "snapshot_id": "radar-snapshot-506", "supplier_product_id": "luna-product-106", "supplier_variant_id": "luna-variant-106", "sku": "LP-REMOVED-1", "title": "Reusable Hook and Loop Cable Ties 50 Pack", "variant_title": "50 Pack", "handle": "reusable-hook-loop-cable-ties-50", "last_seen_at": "2026-07-09T20:00:00.000Z", "last_captured_at": "2026-07-09T20:00:00.000Z", "inventory_status": "out_of_stock", "observation_status": "observed", "inventory_quantity": 0, "inventory_source": "luna_numeric", "inventory_scope": "variant_level", "inventory_confidence": "high", "price": 5.25, "opportunity_score": 92.4, "collections": ["out-of-stock"], "professional_missing_fields": []
+    },
+    {
+      "product_id": "radar-product-107", "snapshot_id": "radar-snapshot-507", "supplier_product_id": "luna-product-107", "supplier_variant_id": "luna-variant-107", "sku": "LP-REMOVED-2", "title": "Cord Keeper Appliance Cable Organizer", "variant_title": "8 Pack", "handle": "cord-keeper-appliance-cable-organizer", "last_seen_at": "2026-07-08T20:00:00.000Z", "last_captured_at": "2026-07-08T20:00:00.000Z", "inventory_status": "in_stock", "observation_status": "stale_missing_from_source", "inventory_quantity": 12, "inventory_source": "luna_numeric", "inventory_scope": "variant_level", "inventory_confidence": "low", "price": 7.25, "opportunity_score": 90.8, "collections": ["products"], "professional_missing_fields": []
+    }
+  ]
+}
