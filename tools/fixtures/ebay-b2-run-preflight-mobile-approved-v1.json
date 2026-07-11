@@ -1,0 +1,101 @@
+{
+  "version": "EBAY_B2_RUN_PREFLIGHT_MOBILE_APPROVED_V1",
+  "status": "READY",
+  "sourceRoute": "EBAY-RESUME-B2A-MOBILE-WHATSAPP-APPROVAL-CENTER",
+  "selectedCandidate": {
+    "rank": 1,
+    "productName": "Reusable Hook and Loop Cable Ties 50 Pack",
+    "opportunityScore": 93.31,
+    "source": "TOP50_EBAY_DEMAND_RANKER"
+  },
+  "mobileApproval": {
+    "selectedCandidateRank": 1,
+    "sameProductConfirmed": true,
+    "sameProductSource": "HUMAN_MOBILE_CONFIRMED",
+    "stockQuantityObservedByHuman": 20,
+    "stockQuantitySource": "HUMAN_MOBILE_CONFIRMED",
+    "imageReviewOk": true,
+    "imageReviewSource": "HUMAN_MOBILE_CONFIRMED",
+    "b2RunPreflightApproved": true,
+    "approvalSource": "HUMAN_MOBILE_CONFIRMED",
+    "mobileApprovalGatePassed": true
+  },
+  "canProceedToB2RunPreflight": true,
+  "canExecuteEbayWrite": false,
+  "canPublish": false,
+  "requiresFinalWriteApproval": true,
+  "realEbayApiUsedInThisLoop": false,
+  "ebayWriteApiUsedInThisLoop": false,
+  "oauthUsedInThisLoop": false,
+  "draftCreatedInThisLoop": false,
+  "listingCreatedInThisLoop": false,
+  "offerCreatedInThisLoop": false,
+  "publicationExecutedInThisLoop": false,
+  "listingPackagePreview": {
+    "title": "Reusable Hook and Loop Cable Ties 50 Pack Adjustable Cord Organizer Straps",
+    "titleSource": "EBAY_MARKET_OBSERVED",
+    "condition": "New",
+    "categorySignal": "Cable Ties & Organizers",
+    "categorySource": "EBAY_MARKET_OBSERVED",
+    "categoryIdStatus": "PENDING_RUNTIME_CONFIRMATION",
+    "recommendedPrice": {"value": 12.99, "currency": "USD", "source": "EBAY_MARKET_OBSERVED"},
+    "priceRange": {"min": 9.99, "max": 16.99, "currency": "USD"},
+    "quantity": {"value": 1, "source": "PREVIEW_ONLY", "guard": "DO_NOT_PUBLISH_WITHOUT_FINAL_STOCK_REVIEW"},
+    "observedStockQuantity": {"value": 20, "source": "HUMAN_MOBILE_CONFIRMED", "guard": "FINAL_STOCK_REVIEW_REQUIRED_BEFORE_WRITE"},
+    "itemSpecifics": {
+      "Brand": "Unbranded", "Type": "Cable Tie", "Material": "Nylon / Hook and Loop", "Color": "Black",
+      "Number in Pack": 50, "Features": "Reusable", "Use": "Cable Management"
+    },
+    "packQuantity": 50,
+    "packSource": "EBAY_MARKET_OBSERVED",
+    "descriptionSource": "EBAY_MARKET_OBSERVED",
+    "imageSourcePolicy": {
+      "lunaScanImageIfPresent": "LUNA_SCAN_OBSERVED_FOR_REVIEW",
+      "ebayImages": "EBAY_REFERENCE_FOR_STRUCTURE_ONLY",
+      "imageGenerationUsed": false,
+      "imageDownloadUsed": false,
+      "competitorImageCopyAllowed": false,
+      "imageApprovalRequired": true,
+      "humanImageReviewOk": true
+    },
+    "supplierOperationalFields": {
+      "supplierCost": {"value": null, "source": "UNKNOWN_FROM_SUPPLIER", "guard": "LOW_CONFIDENCE_GUARD"},
+      "supplierSku": {"source": "LUNA_SCAN_OBSERVED_IF_PRESENT"},
+      "supplierStock": {"value": 20, "source": "HUMAN_MOBILE_CONFIRMED", "guard": "FINAL_STOCK_REVIEW_REQUIRED_BEFORE_WRITE"}
+    },
+    "warehouse": {
+      "warehouseAlias": "LUNA_PORTEX_BOCA_RATON", "city": "Boca Raton", "state": "FL", "postalCode": "33487", "country": "US",
+      "fullWarehouseStreetAddressCommitted": false
+    },
+    "fulfillmentPolicyStatus": "REVIEW_REQUIRED",
+    "returnPolicyStatus": "REVIEW_REQUIRED",
+    "paymentPolicyStatus": "REVIEW_REQUIRED",
+    "handlingTimeStatus": "REVIEW_REQUIRED"
+  },
+  "payloadPreviews": {
+    "inventoryItemPayloadPreviewBuilt": true,
+    "offerPayloadPreviewBuilt": true,
+    "draftPackagePreviewBuilt": true,
+    "payloadPreviewOnly": true,
+    "writeExecutionEnabled": false
+  },
+  "runtimeChecksRequired": [
+    "categoryIdRuntimeConfirmation", "fulfillmentPolicyRuntimeConfirmation", "returnPolicyRuntimeConfirmation",
+    "paymentPolicyRuntimeConfirmation", "finalStockReview", "finalPriceReview", "imageApprovalReview", "finalHumanWriteApproval"
+  ],
+  "routes": {
+    "mobileApprovalMissing": "NEED_MOBILE_CONFIRMATIONS",
+    "selectedCandidateMissing": "NEED_HUMAN_TOP_PRODUCT_SELECTION",
+    "packageBuilt": "READY_FOR_B2_RUN_WRITE_APPROVAL",
+    "runtimeChecksMissing": "READY_FOR_B2_RUN_WRITE_APPROVAL_WITH_RUNTIME_CHECKS",
+    "highRisk": "EBAY-RESUME-HOLD"
+  },
+  "safetyFlags": {
+    "noProductionWrites": true, "noMainWrites": true, "noStagingWrites": true, "noEbayApi": true,
+    "noEbayWrites": true, "noOauth": true, "noTokenStorage": true, "noTokenPrinting": true,
+    "noDraftCreation": true, "noListingCreation": true, "noOfferCreation": true, "noPublication": true,
+    "noImageGeneration": true, "noImageDownload": true, "noImageCopy": true, "noScraper": true,
+    "noRealWhatsappSend": true, "noRealSmsSend": true, "noAmazonTrackMixing": true,
+    "noOpenAiOrCodexApiReal": true, "noSecretsCommitted": true, "noFullWarehouseStreetAddressCommitted": true
+  }
+}
