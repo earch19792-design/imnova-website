@@ -81,6 +81,7 @@ import {
 } from "../lib/radar-advisor-events.mjs"
 import {
   getManualStockQuantity,
+  getRadarFreshnessState,
   getMarketRadarActionability,
   isConfirmedVariantStock,
 } from "../lib/market-radar-actionable-ranking.mjs"
@@ -19744,6 +19745,87 @@ test("market radar manual stock confirmation: valida cantidades antes de guardar
   assert.equal(
     getManualStockQuantity(50000),
     null
+  )
+})
+
+test("market radar freshness: ausencia no equivale a stock cero y dos scans bloquean", () => {
+  const oneMissing =
+    getRadarFreshnessState(
+      {
+        last_seen_at:
+          "2026-07-11T10:00:00.000Z",
+        inventory_source:
+          "manual_admin_confirmation",
+        last_captured_at:
+          "2026-07-11T09:55:00.000Z",
+      },
+      {
+        sourceLastSuccessAt:
+          "2026-07-11T10:15:00.000Z",
+        pollIntervalMinutes:
+          15,
+        now:
+          "2026-07-11T10:15:00.000Z",
+      }
+    )
+
+  assert.equal(
+    oneMissing.observation_status,
+    "not_observed_latest_scan"
+  )
+  assert.equal(
+    oneMissing.stock_reconfirmation_required,
+    true
+  )
+
+  const stale =
+    getRadarFreshnessState(
+      {
+        last_seen_at:
+          "2026-07-11T10:00:00.000Z",
+        inventory_source:
+          "manual_admin_confirmation",
+        last_captured_at:
+          "2026-07-10T09:00:00.000Z",
+      },
+      {
+        sourceLastSuccessAt:
+          "2026-07-11T10:30:00.000Z",
+        pollIntervalMinutes:
+          15,
+        now:
+          "2026-07-11T10:30:00.000Z",
+      }
+    )
+
+  assert.equal(
+    stale.observation_status,
+    "stale_missing_from_source"
+  )
+  assert.equal(
+    stale.consecutive_missing_scans_estimate,
+    2
+  )
+  assert.equal(
+    stale.stock_confirmation_status,
+    "stale_reconfirmation_required"
+  )
+})
+
+test("market radar dashboard: snapshot manual antiguo no reemplaza evidencia nueva", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve("app/api/admin/market-radar/route.ts"),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /currentCapturedAt[\s\S]*nextCapturedAt[\s\S]*currentCapturedAt >= nextCapturedAt[\s\S]*currentIsExplicitOutOfStock[\s\S]*isTrustedPositiveStockSnapshot[\s\S]*return false/
+  )
+  assert.match(
+    source,
+    /return isFreshManualStockSnapshot\([\s\S]*nextSnapshot/
   )
 })
 

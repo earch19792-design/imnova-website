@@ -41,6 +41,30 @@ export function getManualStockQuantity(
   value: number | string | null | undefined
 ): number | null
 
+export const MANUAL_STOCK_CONFIRMATION_TTL_HOURS: 24
+export const MISSING_SCAN_STALE_THRESHOLD: 2
+
+export function getRadarFreshnessState(
+  product: Partial<MarketRadarProductRow> | null | undefined,
+  context?: {
+    sourceLastSuccessAt?: string | null
+    pollIntervalMinutes?: number | null
+    now?: string | null
+  }
+): {
+  observation_status:
+    | "observed"
+    | "not_observed_latest_scan"
+    | "stale_missing_from_source"
+  consecutive_missing_scans_estimate: number
+  stock_confirmation_status:
+    | "fresh"
+    | "stale_reconfirmation_required"
+    | "not_applicable"
+  stock_confirmation_age_hours: number | null
+  stock_reconfirmation_required: boolean
+}
+
 export function isConfirmedVariantStock(
   product: Partial<MarketRadarProductRow> | null | undefined
 ): boolean

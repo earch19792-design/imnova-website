@@ -83,6 +83,17 @@ export type MarketRadarProductRow = {
   price_change_count_7d: number | null
   last_event_at: string | null
   score_updated_at: string | null
+  observation_status?:
+    | "observed"
+    | "not_observed_latest_scan"
+    | "stale_missing_from_source"
+  consecutive_missing_scans_estimate?: number
+  stock_confirmation_status?:
+    | "fresh"
+    | "stale_reconfirmation_required"
+    | "not_applicable"
+  stock_confirmation_age_hours?: number | null
+  stock_reconfirmation_required?: boolean
   pipeline_candidate_id?: string | null
   pipeline_candidate_state?: string | null
   pipeline_blocked_reason?: string | null

@@ -17,6 +17,8 @@ import {
 import {
   decorateMarketRadarProductActionability,
   getManualStockQuantity,
+  getRadarFreshnessState,
+  MANUAL_STOCK_CONFIRMATION_TTL_HOURS,
 } from "@/lib/market-radar-actionable-ranking.mjs"
 import {
   type MarketRadarDashboard,
@@ -465,7 +467,7 @@ function getInventoryContext(
   value: {
     available?: boolean | null
     inventory_quantity?: number | string | null
-    raw?: {
+      raw?: {
       inventory_context?: {
         inventory_source?: string | null
         inventory_scope?: string | null
@@ -757,6 +759,38 @@ function isTrustedPositiveStockSnapshot(
   )
 }
 
+function isFreshManualStockSnapshot(
+  snapshot: {
+    captured_at?: string | null
+    raw?: {
+      inventory_context?: {
+        inventory_source?: string | null
+      } | null
+      manual_stock_confirmation?: unknown
+    } | null
+  } | null | undefined
+) {
+  if (
+    !isManualStockConfirmationSnapshot(
+      snapshot
+    )
+  ) {
+    return false
+  }
+
+  const capturedAt =
+    new Date(
+      snapshot?.captured_at || 0
+    ).getTime()
+
+  return Boolean(
+    Number.isFinite(capturedAt) &&
+    Date.now() - capturedAt <
+      MANUAL_STOCK_CONFIRMATION_TTL_HOURS *
+        60 * 60 * 1000
+  )
+}
+
 function shouldPreferSnapshotForDashboard({
   currentSnapshot,
   nextSnapshot,
@@ -772,6 +806,7 @@ function shouldPreferSnapshotForDashboard({
       } | null
       manual_stock_confirmation?: unknown
     } | null
+    captured_at?: string | null
   } | null
   nextSnapshot: {
     available?: boolean | null
@@ -784,6 +819,7 @@ function shouldPreferSnapshotForDashboard({
       } | null
       manual_stock_confirmation?: unknown
     } | null
+    captured_at?: string | null
   }
 }) {
   if (!currentSnapshot) {
@@ -803,6 +839,40 @@ function shouldPreferSnapshotForDashboard({
       nextSnapshot
     )
   ) {
+    const currentCapturedAt =
+      new Date(
+        currentSnapshot.captured_at || 0
+      ).getTime()
+    const nextCapturedAt =
+      new Date(
+        nextSnapshot.captured_at || 0
+      ).getTime()
+
+    if (
+      Number.isFinite(currentCapturedAt) &&
+      Number.isFinite(nextCapturedAt) &&
+      currentCapturedAt >= nextCapturedAt
+    ) {
+      const currentIsExplicitOutOfStock =
+        currentSnapshot.available === false ||
+        toNumber(
+          currentSnapshot.inventory_quantity
+        ) === 0
+
+      if (
+        currentIsExplicitOutOfStock ||
+        isTrustedPositiveStockSnapshot(
+          currentSnapshot
+        )
+      ) {
+        return false
+      }
+
+      return isFreshManualStockSnapshot(
+        nextSnapshot
+      )
+    }
+
     return !isTrustedPositiveStockSnapshot(
       currentSnapshot
     )
@@ -1588,7 +1658,7 @@ async function getLatestMarketRadarProducts(
           snapshot
         )
 
-      return {
+      const baseProduct = {
         product_id:
           product.id,
         source_id:
@@ -1681,6 +1751,19 @@ async function getLatestMarketRadarProducts(
           score?.last_event_at || null,
         score_updated_at:
           score?.updated_at || null,
+      } satisfies MarketRadarProductRow
+
+      return {
+        ...baseProduct,
+        ...getRadarFreshnessState(
+          baseProduct,
+          {
+            sourceLastSuccessAt:
+              source.last_success_at,
+            pollIntervalMinutes:
+              source.poll_interval_minutes,
+          }
+        ),
       } satisfies MarketRadarProductRow
     })
     .filter(Boolean) as MarketRadarProductRow[]
