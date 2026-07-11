@@ -1,0 +1,4 @@
+import{readFileSync}from"node:fs";import{buildEbaySellerRuntimeDataResolverRunReport,summarizeEbaySellerRuntimeDataResolverRun}from"../lib/ebay/ebay-seller-runtime-data-resolver-run.ts";
+const f=JSON.parse(readFileSync("tools/fixtures/ebay-seller-runtime-data-resolver-run-v1.json","utf8")),a=process.argv.slice(2),full=a.includes("--simulate-local-runtime-confirmed");
+const s=full?{localConfirmationPhrase:f.exactLocalConfirmationPhrase,categoryConfirmed:!a.includes("--simulate-missing-category"),fulfillmentConfirmed:!a.includes("--simulate-missing-policy"),returnConfirmed:true,paymentConfirmed:true,stockConfirmed:true,priceConfirmed:true,imageConfirmed:!a.includes("--simulate-missing-image"),environmentConfirmed:true,tokenPresenceChecked:true,tokenPresentBooleanOnly:!a.includes("--simulate-missing-token")}:{ };
+console.log(JSON.stringify(summarizeEbaySellerRuntimeDataResolverRun(buildEbaySellerRuntimeDataResolverRunReport(f,s)),null,2));

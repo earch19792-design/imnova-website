@@ -1,30 +1,13 @@
 import { readFileSync } from "node:fs";
-
-const fixture = JSON.parse(readFileSync("tools/fixtures/ebay-seller-runtime-data-resolver-v1.json", "utf8"));
-const checkRequested = process.argv.includes("--check-runtime-presence-readonly");
-const tokenKey = ["EBAY", "ACCESS", "TOKEN"].join("_");
-const approvalKey = ["EBAY", "RUNTIME", "RESOLVER", "READONLY", "APPROVED"].join("_");
-const environmentKey = ["EBAY", "ENVIRONMENT"].join("_");
-const exactApproval = fixture.exactOptionalReadOnlyApproval.EBAY_RUNTIME_RESOLVER_READONLY_APPROVED;
-const approvalPassed = checkRequested && process.env[approvalKey] === exactApproval;
-const tokenPresenceChecked = approvalPassed;
-const tokenPresentBooleanOnly = approvalPassed && typeof process.env[tokenKey] === "string" && process.env[tokenKey].length > 0;
-const environment = approvalPassed ? process.env[environmentKey] : undefined;
-const targetEnvironmentStatus = environment === "SANDBOX" || environment === "PRODUCTION" ? "CONFIRMED" : "PENDING";
-
-console.log(JSON.stringify({
-  mode: checkRequested ? "HARD_GATED_READ_ONLY_CHECK" : "SAFE_NO_RUNTIME_READ",
-  readOnlyPresenceCheckRequested: checkRequested,
-  approvalPassed,
-  realEbayApiUsed: false,
-  ebayWriteApiUsed: false,
-  tokenPresenceChecked,
-  tokenPresentBooleanOnly,
-  tokenStored: false,
-  tokenPrinted: false,
-  targetEnvironmentStatus,
-  runtimeDataAllResolved: false,
-  canExecuteEbayWrite: false,
-  canPublish: false,
-  nextRecommendedRoute: checkRequested ? approvalPassed ? "LOCAL_RUNTIME_PRESENCE_CHECK_COMPLETE" : "NEED_READONLY_RUNTIME_APPROVAL" : "SAFE_NO_RUNTIME_READ",
-}, null, 2));
+const fixture=JSON.parse(readFileSync("tools/fixtures/ebay-seller-runtime-data-resolver-v1.json","utf8"));
+const checkRequested=process.argv.includes("--check-runtime-presence-readonly");
+const tokenKey=["EBAY", "ACCESS", "TOKEN"].join("_");
+const approvalKey=["EBAY", "RUNTIME", "RESOLVER", "READONLY", "APPROVED"].join("_");
+const environmentKey=["EBAY", "ENVIRONMENT"].join("_");
+const exactApproval=fixture.exactOptionalReadOnlyApproval.EBAY_RUNTIME_RESOLVER_READONLY_APPROVED;
+const approvalPassed=checkRequested&&process.env[approvalKey]===exactApproval;
+const tokenPresenceChecked=approvalPassed;
+const tokenPresentBooleanOnly=approvalPassed&&typeof process.env[tokenKey]==="string"&&process.env[tokenKey].length>0;
+const environment=approvalPassed?process.env[environmentKey]:undefined;
+const targetEnvironmentStatus=environment==="SANDBOX"||environment==="PRODUCTION"?"CONFIRMED":"PENDING";
+console.log(JSON.stringify({mode:checkRequested?"HARD_GATED_READ_ONLY_CHECK":"SAFE_NO_RUNTIME_READ",readOnlyPresenceCheckRequested:checkRequested,approvalPassed,realEbayApiUsed:false,ebayWriteApiUsed:false,tokenPresenceChecked,tokenPresentBooleanOnly,tokenStored:false,tokenPrinted:false,targetEnvironmentStatus,runtimeDataAllResolved:false,canExecuteEbayWrite:false,canPublish:false,nextRecommendedRoute:checkRequested?approvalPassed?"LOCAL_RUNTIME_PRESENCE_CHECK_COMPLETE":"NEED_READONLY_RUNTIME_APPROVAL":"SAFE_NO_RUNTIME_READ"},null,2));
