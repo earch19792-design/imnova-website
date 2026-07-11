@@ -16,6 +16,8 @@ test("loads a modeled real Market Radar Top 5 without fixture fallback", () => {
   assert.equal(report.mobileReviewRealRadarConnectorBuilt, true)
   assert.equal(report.realRadarTop5Loaded, true)
   assert.equal(report.realRadarCandidatesCount, 7)
+  assert.equal(report.eligibleCandidatesCount, 5)
+  assert.equal(report.candidatesNeededForTop5, 0)
   assert.equal(report.fixtureUsed, false)
   assert.equal(report.dataSource, "MARKET_RADAR_READONLY")
   assert.equal(report.top5Candidates.length, 5)
@@ -36,7 +38,23 @@ test("empty Radar data does not silently use a fixture", () => {
   assert.equal(report.fixtureUsed, false)
   assert.equal(report.dataSource, "NO_REAL_RADAR_DATA_AVAILABLE")
   assert.equal(report.top5Candidates.length, 0)
+  assert.equal(report.eligibleCandidatesCount, 0)
+  assert.equal(report.candidatesNeededForTop5, 5)
   assert.equal(report.canProceedToB2RunPreflight, false)
+})
+
+test("real Radar stock holds stay visible and explain a missing Top 5", () => {
+  const blockedProducts = fixture.products.filter((product) =>
+    ["radar-product-106", "radar-product-107"].includes(product.product_id)
+  )
+  const report = buildMobileReviewRealRadarConnector({ products: blockedProducts })
+  assert.equal(report.dataSource, "MARKET_RADAR_READONLY")
+  assert.equal(report.realRadarCandidatesCount, 2)
+  assert.equal(report.eligibleCandidatesCount, 0)
+  assert.equal(report.stockHoldCandidates.length, 2)
+  assert.equal(report.candidatesNeededForTop5, 5)
+  assert.equal(report.nextRecommendedRoute, "NEED_REVIEW_OF_RADAR_STOCK_HOLDS")
+  assert.ok(report.stockHoldCandidates.every((candidate) => candidate.routeRecommendation === "STOCK_HOLD"))
 })
 
 test("fixture is only exposed through explicit DEMO_FIXTURE_ONLY mode", () => {
@@ -62,7 +80,7 @@ test("mobile UI exposes source, Radar fields and browser-only persistence", () =
     /marketRadarSnapshotId/, /supplierSku/, /supplierVariantId/, /lastSeenAt/,
     /lastSnapshotAt/, /stock source/, /stock age/, /BROWSER_STATE_ONLY/,
     /officialApprovalRecord: false/, /canPublish: false/, /no eBay write/,
-    /No hay Top 5 real disponible/,
+    /Productos reales excluidos/, /Radar devolvió/, /candidatesNeededForTop5/,
   ]) assert.match(pageSource, expected)
 })
 

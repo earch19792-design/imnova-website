@@ -71,6 +71,15 @@ La interfaz debe explicar en lenguaje directo de dónde viene cada dato, qué es
 pendiente y por qué un producto está bloqueado. Nunca debe presentar una señal
 modelada o browser-only como hecho operativo persistido.
 
+### Transparencia cuando no existe Top 5 elegible
+
+Que Market Radar devuelva productos no significa que existan cinco candidatos
+vendibles. La página muestra el total recibido, el total elegible, cuántos
+faltan y todos los productos excluidos por `STOCK_HOLD`, junto con product ID,
+snapshot, SKU/variant, estado de observación, fuente/confianza de stock y último
+scan. La ruta `NEED_REVIEW_OF_RADAR_STOCK_HOLDS` diferencia este caso de un
+Radar realmente vacío.
+
 ## Siguiente paso
 
 Persistir decisiones en un registro oficial separado y auditado, después de
