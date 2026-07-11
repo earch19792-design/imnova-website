@@ -1,0 +1,85 @@
+{
+  "version": "EBAY_MOBILE_WHATSAPP_APPROVAL_CENTER_B2A_V1",
+  "status": "READY",
+  "sourceRoute": "EBAY-RESUME-B2A-LUNA-TOP50-EBAY-DEMAND-RANKER",
+  "mode": "LOCAL_DRY_RUN_MOBILE_APPROVAL_CENTER_ONLY",
+  "realWhatsappSendUsed": false,
+  "realSmsSendUsed": false,
+  "realEbayApiUsedInThisLoop": false,
+  "canPublish": false,
+  "mobileApprovalRequired": true,
+  "userChannel": "WHATSAPP_MODELED_ONLY",
+  "approvalCenterPurpose": ["allowPhoneBasedReview", "reduceDesktopDependency", "approveOrRejectTop5", "confirmQuantityObserved", "confirmSameProduct", "approveB2RunPreflight", "requestLunaScanRefresh", "holdForReview"],
+  "top5Candidates": [
+    {
+      "candidateRank": 1,
+      "candidateId": "LUNA-TOP50-002",
+      "productName": "Reusable Hook and Loop Cable Ties 50 Pack",
+      "opportunityScore": 93.31,
+      "ebayDemandSignal": {"demandScore": 93.2, "demandObserved": true, "categorySignal": "Cable Management", "packWinningPattern": "50 Pack"},
+      "listingBlueprintSummary": "Reusable cable ties, 50-pack clarity, cord organization keywords and observed USD 12.99–22.99 range.",
+      "riskFlags": [],
+      "missingFields": ["supplierCost", "supplierStock"],
+      "imageBlueprintSummary": "White background, full pack fan and reusable closure detail; own or authorized images required.",
+      "recommendedAction": "REVIEW_AND_SELECT"
+    },
+    {
+      "candidateRank": 2,
+      "candidateId": "LUNA-TOP50-035",
+      "productName": "Cord Keeper Appliance Cable Organizer",
+      "opportunityScore": 91.96,
+      "ebayDemandSignal": {"demandScore": 82.2, "demandObserved": true, "categorySignal": "Kitchen Organizers", "packWinningPattern": "8 Pack"},
+      "listingBlueprintSummary": "Appliance cord organizer with strong listing quality gap and clear eight-pack presentation.",
+      "riskFlags": [],
+      "missingFields": ["supplierCost", "supplierStock"],
+      "imageBlueprintSummary": "Appliance installation, winding steps and eight-count visual; own or authorized images required.",
+      "recommendedAction": "REVIEW_AND_SELECT"
+    },
+    {
+      "candidateRank": 3,
+      "candidateId": "LUNA-TOP50-003",
+      "productName": "Clear Acrylic Drawer Organizer Trays Set",
+      "opportunityScore": 87.36,
+      "ebayDemandSignal": {"demandScore": 86.8, "demandObserved": true, "categorySignal": "Drawer Organizers", "packWinningPattern": "6 Piece Set"},
+      "listingBlueprintSummary": "Clear drawer trays with six-piece structure, dimensions panel and organization use case.",
+      "riskFlags": [],
+      "missingFields": ["supplierCost", "supplierStock", "supplierDimensions"],
+      "imageBlueprintSummary": "Nested set, installed drawer and dimensions; own or authorized images required.",
+      "recommendedAction": "REVIEW_AND_SELECT"
+    },
+    {
+      "candidateRank": 4,
+      "candidateId": "LUNA-TOP50-012",
+      "productName": "Silicone Chair Leg Floor Protectors",
+      "opportunityScore": 87.19,
+      "ebayDemandSignal": {"demandScore": 77.8, "demandObserved": true, "categorySignal": "Furniture Pads", "packWinningPattern": "16 Pack"},
+      "listingBlueprintSummary": "Clear silicone protectors with pack-count, fit-range and floor-protection positioning.",
+      "riskFlags": [],
+      "missingFields": ["supplierCost", "supplierStock", "fitRange"],
+      "imageBlueprintSummary": "Installed chair leg, fit range and sixteen-count visual; own or authorized images required.",
+      "recommendedAction": "REVIEW_AND_SELECT"
+    },
+    {
+      "candidateRank": 5,
+      "candidateId": "LUNA-TOP50-009",
+      "productName": "Magnetic Cable Holder Desk Set",
+      "opportunityScore": 86.81,
+      "ebayDemandSignal": {"demandScore": 84.2, "demandObserved": true, "categorySignal": "Cable Organizers", "packWinningPattern": "6 Pack"},
+      "listingBlueprintSummary": "Magnetic desk cable holder with low competition and high listing quality gap.",
+      "riskFlags": [],
+      "missingFields": ["supplierCost", "supplierStock", "magnetStrength"],
+      "imageBlueprintSummary": "Magnetic mechanism, desk setup and cable compatibility; own or authorized images required.",
+      "recommendedAction": "REVIEW_AND_SELECT"
+    }
+  ],
+  "previousSingleConfirmedCandidate": {"rank": 7, "productName": "Black Silicone Self Adhesive Cable Organizer Clips Multipack", "stillRecommended": true, "note": "still valid but not rank 1"},
+  "allowedCommands": ["TOP5_SHOW", "SELECT_RANK_1", "SELECT_RANK_2", "SELECT_RANK_3", "SELECT_RANK_4", "SELECT_RANK_5", "REJECT_ALL", "REQUEST_REFRESH", "CONFIRM_SAME_PRODUCT", "REJECT_NOT_SAME_PRODUCT", "CONFIRM_STOCK_QTY:<number>", "CONFIRM_IMAGE_REVIEW_OK", "APPROVE_B2_RUN_PREFLIGHT", "HOLD_FOR_REVIEW", "HELP"],
+  "modeledMessages": ["TOP5_SUMMARY_CARD", "CANDIDATE_DETAIL_CARD", "STOCK_QUANTITY_CONFIRMATION_PROMPT", "SAME_PRODUCT_CONFIRMATION_PROMPT", "IMAGE_REVIEW_PROMPT", "B2_RUN_PREFLIGHT_APPROVAL_PROMPT", "REJECTION_REFRESH_PROMPT", "HELP_PROMPT"],
+  "safetyFlags": {
+    "noWhatsappRealSend": true, "noSmsRealSend": true, "noEbayWrites": true, "noOauthInThisLoop": true,
+    "noTokenStorage": true, "noDraftCreation": true, "noListingCreation": true, "noOfferCreation": true,
+    "noPublication": true, "noImageGeneration": true, "noImageDownload": true, "noScraper": true,
+    "noAmazonTrackMixing": true, "noOpenAiOrCodexApiReal": true, "noSecretsCommitted": true,
+    "noFullWarehouseStreetAddressCommitted": true
+  }
+}
