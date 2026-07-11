@@ -8,6 +8,8 @@ La confirmación exacta funciona tanto desde TTY como mediante stdin/pipe. Con e
 
 Cada lookup registra ejecución, estado y error sanitizado por tipo de endpoint. Un fallo 400/403 no impide probar los demás GET independientes; un 401 detiene la secuencia como token inválido. El reporte nunca incluye URL completa, Authorization ni token.
 
+`EBAY_MARKETPLACE_ID` se normaliza con trim y uppercase antes del gate y de cualquier GET. Taxonomy y Seller Policies reciben exclusivamente `marketplace_id=EBAY_US`; el valor crudo del entorno nunca llega a la URL.
+
 No inventa valores. Categoría ausente produce `NEED_CATEGORY_RUNTIME_CONFIRMATION`; policies ausentes, `NEED_SELLER_POLICY_RUNTIME_CONFIRMATION`; location ausente, `NEED_INVENTORY_LOCATION_RUNTIME_CONFIRMATION`. `READY_FOR_CONTROLLED_DRAFT_ONLY_REAL_RUN` significa datos resueltos, no autorización de write.
 
 Todas las acciones write, incluido `publishOffer`, están prohibidas. `canExecuteEbayWrite` y `canPublish` permanecen false. No hay OAuth exchange, draft, inventory item, offer, listing, publicación, imágenes, scraper ni integraciones externas adicionales.
