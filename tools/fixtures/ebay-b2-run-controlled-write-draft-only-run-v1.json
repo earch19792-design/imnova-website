@@ -1,0 +1,41 @@
+{
+  "version": "EBAY_B2_RUN_CONTROLLED_WRITE_DRAFT_ONLY_RUN_V1",
+  "status": "READY",
+  "sourceRoute": "EBAY-RESUME-B2-RUN-CONTROLLED-WRITE-DRAFT-ONLY",
+  "defaultMode": "SAFE_NO_WRITE",
+  "realRunModeAvailableButHardGated": true,
+  "canPublish": false,
+  "publishOfferForbidden": true,
+  "finalApprovalRequiredAgainForRealRun": true,
+  "exactRunApprovalPhrase": "RUN_CONTROLLED_DRAFT_ONLY_NOW_NO_PUBLICATION",
+  "exactInteractiveConfirmation": "CREATE_UNPUBLISHED_DRAFT_ONLY_NO_PUBLICATION",
+  "allowedEbayActions": ["createOrReplaceInventoryItem", "createOfferUnpublishedOnly"],
+  "forbiddenEbayActions": ["publishOffer", "publish", "createActiveListing", "reviseActiveListing", "bulkPublish"],
+  "requiredRuntimeInputs": [
+    "EBAY_ENVIRONMENT", "EBAY_ACCESS_TOKEN_PROVIDED_AT_RUNTIME", "EBAY_MARKETPLACE_ID",
+    "EBAY_B2_CONTROLLED_WRITE_APPROVED", "EBAY_B2_WRITE_RUN_ID",
+    "AUTHORIZED_IMAGE_URL_OR_IMAGE_APPROVAL_BYPASS_FOR_UNPUBLISHED_ONLY"
+  ],
+  "requiredRuntimeChecks": [
+    "categoryIdConfirmed", "fulfillmentPolicyConfirmed", "returnPolicyConfirmed", "paymentPolicyConfirmed",
+    "finalStockConfirmed", "finalPriceConfirmed", "finalImageApprovedOrUnpublishedOnlyBypassConfirmed",
+    "finalInteractiveConfirmation"
+  ],
+  "product": {
+    "sku": "IMNOVA-HOOK-LOOP-CABLE-TIES-50PK-DRAFTONLY-V1",
+    "title": "Reusable Hook and Loop Cable Ties 50 Pack Adjustable Cord Organizer Straps",
+    "condition": "New",
+    "quantityPreview": 1,
+    "observedStockQuantity": 20,
+    "price": {"value": 12.99, "currency": "USD"},
+    "canPublish": false
+  },
+  "safetyFlags": {
+    "noMainWrites": true, "noProductionDeploymentWrites": true, "noStagingDbWrites": true,
+    "noSupabaseWrites": true, "noTokenStorage": true, "noTokenPrinting": true,
+    "noPublishEndpoint": true, "noPublication": true, "noImageGeneration": true,
+    "noImageDownload": true, "noImageCopy": true, "noScraper": true,
+    "noAmazonTrackMixing": true, "noWhatsappRealSend": true, "noSmsRealSend": true,
+    "noSecretsCommitted": true, "noFullWarehouseStreetAddressCommitted": true
+  }
+}
