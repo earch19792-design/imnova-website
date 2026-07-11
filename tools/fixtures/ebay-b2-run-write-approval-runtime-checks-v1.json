@@ -1,0 +1,59 @@
+{
+  "version": "EBAY_B2_RUN_WRITE_APPROVAL_RUNTIME_CHECKS_V1",
+  "status": "READY",
+  "sourceRoute": "EBAY-RESUME-B2-RUN-PREFLIGHT",
+  "selectedCandidate": {
+    "productName": "Reusable Hook and Loop Cable Ties 50 Pack",
+    "rank": 1,
+    "opportunityScore": 93.31,
+    "source": "B2_RUN_PREFLIGHT_MOBILE_APPROVED"
+  },
+  "listingPackage": {
+    "title": "Reusable Hook and Loop Cable Ties 50 Pack Adjustable Cord Organizer Straps",
+    "condition": "New",
+    "categorySignal": "Cable Ties & Organizers",
+    "recommendedPrice": {"value": 12.99, "currency": "USD", "source": "EBAY_MARKET_OBSERVED"},
+    "observedStockQuantity": {"value": 20, "source": "HUMAN_MOBILE_CONFIRMED"},
+    "supplierCost": {"value": null, "source": "UNKNOWN_FROM_SUPPLIER", "guard": "LOW_CONFIDENCE_GUARD"},
+    "canPublish": false
+  },
+  "runtimeChecks": {
+    "categoryId": {"status": "PENDING_RUNTIME_CONFIRMATION", "value": null, "source": "RUNTIME_CHECK_REQUIRED"},
+    "fulfillmentPolicy": {"status": "REVIEW_REQUIRED", "value": null, "source": "RUNTIME_CHECK_REQUIRED"},
+    "returnPolicy": {"status": "REVIEW_REQUIRED", "value": null, "source": "RUNTIME_CHECK_REQUIRED"},
+    "paymentPolicy": {"status": "REVIEW_REQUIRED", "value": null, "source": "RUNTIME_CHECK_REQUIRED"},
+    "finalStockReview": {"status": "PENDING", "observedStockQuantity": 20, "minimumRequiredQuantityForDraft": 1, "source": "HUMAN_MOBILE_CONFIRMED"},
+    "finalPriceReview": {"status": "PENDING", "recommendedPrice": 12.99, "currency": "USD", "source": "EBAY_MARKET_OBSERVED"},
+    "finalImageReview": {"status": "PENDING", "humanImageReviewOkFromMobile": true, "imageCopyAllowed": false, "imageGenerationUsed": false, "imageDownloadUsed": false},
+    "finalHumanWriteApproval": {"status": "PENDING", "exactApprovalPhrase": "FINAL_WRITE_APPROVED_FOR_UNPUBLISHED_DRAFT_ONLY"}
+  },
+  "approvalPolicy": {
+    "canExecuteEbayWriteInThisLoop": false,
+    "canPublish": false,
+    "canPrepareControlledWriteNextLoop": false,
+    "requiresAllRuntimeChecksPassed": true,
+    "requiresExactFinalWriteApprovalPhrase": true,
+    "publishAllowedByThisApproval": false,
+    "listingActivePublicationAllowed": false,
+    "draftOrUnpublishedOnlyFutureRoute": true
+  },
+  "routes": {
+    "missingCategory": "NEED_CATEGORY_RUNTIME_CONFIRMATION",
+    "missingSellerPolicies": "NEED_SELLER_POLICY_RUNTIME_CONFIRMATION",
+    "missingStockConfirmation": "NEED_FINAL_STOCK_REVIEW",
+    "missingPriceConfirmation": "NEED_FINAL_PRICE_REVIEW",
+    "missingImageConfirmation": "NEED_FINAL_IMAGE_REVIEW",
+    "missingFinalApproval": "NEED_FINAL_WRITE_APPROVAL",
+    "allChecksPassed": "READY_FOR_CONTROLLED_B2_WRITE_DRAFT_ONLY",
+    "highRisk": "EBAY-RESUME-HOLD"
+  },
+  "safetyFlags": {
+    "noProductionWrites": true, "noMainWrites": true, "noStagingWritesInThisLoop": true, "noSupabaseWrites": true,
+    "noEbayApiReal": true, "noEbayWrites": true, "noOauthInThisLoop": true, "noTokenStorage": true,
+    "noTokenPrinting": true, "noDraftCreation": true, "noListingCreation": true, "noOfferCreation": true,
+    "noPublication": true, "noImageGeneration": true, "noImageDownload": true, "noImageCopy": true,
+    "noScraper": true, "noAmazonTrackMixing": true, "noOpenAiOrCodexApiReal": true,
+    "noWhatsappRealSend": true, "noSmsRealSend": true, "noSecretsCommitted": true,
+    "noFullWarehouseStreetAddressCommitted": true
+  }
+}
