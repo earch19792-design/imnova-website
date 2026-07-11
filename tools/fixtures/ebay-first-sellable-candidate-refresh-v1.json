@@ -1,0 +1,96 @@
+{
+  "version": "EBAY_FIRST_SELLABLE_CANDIDATE_REFRESH_V1",
+  "mobileReviewDecisions": [
+    {
+      "productName": "Reusable Hook and Loop Cable Ties 50 Pack",
+      "availabilityStatus": "REMOVED_FROM_LUNA_SCAN",
+      "riskFlags": ["STOCK_HOLD"],
+      "canProceedToB2Run": false
+    },
+    {
+      "productName": "Cord Keeper Appliance Cable Organizer",
+      "availabilityStatus": "REMOVED_FROM_LUNA_SCAN",
+      "riskFlags": ["STOCK_HOLD"],
+      "canProceedToB2Run": false
+    }
+  ],
+  "refreshedLunaScanCandidates": [
+    {
+      "candidateId": "LUNA-REFRESH-001",
+      "productName": "Reusable Hook and Loop Cable Ties 50 Pack",
+      "opportunityScore": 92.4,
+      "suggestedPrice": { "value": 12.99, "currency": "USD" },
+      "suggestedCategory": "Cable Organizers",
+      "listingBlueprintSummary": "Removed by mobile review; retained only to prove exclusion.",
+      "availabilityStatus": "REMOVED_FROM_LUNA_SCAN",
+      "riskFlags": ["STOCK_HOLD"],
+      "missingFields": []
+    },
+    {
+      "candidateId": "LUNA-REFRESH-002",
+      "productName": "Cord Keeper Appliance Cable Organizer",
+      "opportunityScore": 90.8,
+      "suggestedPrice": { "value": 16.99, "currency": "USD" },
+      "suggestedCategory": "Kitchen Organizers",
+      "listingBlueprintSummary": "Removed by mobile review; retained only to prove exclusion.",
+      "availabilityStatus": "REMOVED_FROM_LUNA_SCAN",
+      "riskFlags": ["STOCK_HOLD"],
+      "missingFields": []
+    },
+    {
+      "candidateId": "LUNA-REFRESH-003",
+      "productName": "Clear Drawer Organizer Trays 6 Piece Set",
+      "opportunityScore": 88.6,
+      "suggestedPrice": { "value": 19.99, "currency": "USD" },
+      "suggestedCategory": "Drawer Organizers",
+      "listingBlueprintSummary": "Six clear trays with dimensions and modular drawer layout.",
+      "availabilityStatus": "AVAILABLE",
+      "riskFlags": [],
+      "missingFields": ["stockQuantity", "imageConfirmation"]
+    },
+    {
+      "candidateId": "LUNA-REFRESH-004",
+      "productName": "Magnetic Desk Cable Holder 6 Pack",
+      "opportunityScore": 84.2,
+      "suggestedPrice": { "value": 14.99, "currency": "USD" },
+      "suggestedCategory": "Cable Organizers",
+      "listingBlueprintSummary": "Six magnetic holders for desk cable routing and access.",
+      "availabilityStatus": "AVAILABLE",
+      "riskFlags": [],
+      "missingFields": ["stockQuantity", "imageConfirmation"]
+    },
+    {
+      "candidateId": "LUNA-REFRESH-005",
+      "productName": "Silicone Furniture Leg Protectors 16 Pack",
+      "opportunityScore": 81.7,
+      "suggestedPrice": { "value": 13.49, "currency": "USD" },
+      "suggestedCategory": "Furniture Accessories",
+      "listingBlueprintSummary": "Clear silicone protectors with pack count and fit range.",
+      "availabilityStatus": "AVAILABLE",
+      "riskFlags": [],
+      "missingFields": ["stockQuantity", "imageConfirmation"]
+    },
+    {
+      "candidateId": "LUNA-REFRESH-006",
+      "productName": "Travel Cord Organizer Straps 10 Pack",
+      "opportunityScore": 79.9,
+      "suggestedPrice": { "value": 11.99, "currency": "USD" },
+      "suggestedCategory": "Cable Organizers",
+      "listingBlueprintSummary": "Ten reusable straps for travel cable organization.",
+      "availabilityStatus": "AVAILABLE",
+      "riskFlags": [],
+      "missingFields": ["stockQuantity", "imageConfirmation"]
+    },
+    {
+      "candidateId": "LUNA-REFRESH-007",
+      "productName": "Mesh Laundry Wash Bags 6 Pack",
+      "opportunityScore": 77.5,
+      "suggestedPrice": { "value": 14.99, "currency": "USD" },
+      "suggestedCategory": "Laundry Accessories",
+      "listingBlueprintSummary": "Six mesh wash bags with zipper details and size assortment.",
+      "availabilityStatus": "AVAILABLE",
+      "riskFlags": [],
+      "missingFields": ["stockQuantity", "imageConfirmation"]
+    }
+  ]
+}
