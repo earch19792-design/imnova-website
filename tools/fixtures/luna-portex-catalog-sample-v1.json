@@ -1,0 +1,39 @@
+[
+  {
+    "sku": "LP-SAMPLE-CC20", "productName": "Silicone Cable Organizer Clips 20 Pack",
+    "description": "Black self adhesive silicone cord holders for desk organization", "brand": "Unbranded",
+    "upcOrGtin": "SAMPLE-NOT-FOR-COMMERCE-001", "cost": 6.2, "stockAvailable": 120,
+    "packQuantity": 20, "color": "Black", "material": "Silicone",
+    "weight": { "value": 6, "unit": "oz" },
+    "dimensions": { "length": 8, "width": 6, "height": 2, "unit": "in" },
+    "imageUrl": "https://catalog.example.invalid/authorized-sample-cable-organizer",
+    "category": "Cable Organizers", "handlingTime": 1, "shippingNotes": "Small parcel"
+  },
+  {
+    "sku": "LP-SAMPLE-CC06", "productName": "Cable Clips 6 Pack", "description": "Self adhesive cord clips",
+    "brand": "Unbranded", "upcOrGtin": "SAMPLE-NOT-FOR-COMMERCE-002", "cost": 3.5,
+    "stockAvailable": 18, "packQuantity": 6, "color": "Black", "material": "Silicone",
+    "weight": null, "dimensions": null, "imageUrl": null, "category": "Cable Organizers",
+    "handlingTime": 2, "shippingNotes": "Dimensions pending"
+  },
+  {
+    "sku": "LP-SAMPLE-KITCHEN", "productName": "Bamboo Kitchen Drawer Divider",
+    "description": "Expandable kitchen organization divider", "brand": "Unbranded",
+    "upcOrGtin": "SAMPLE-NOT-FOR-COMMERCE-003", "cost": 9.8, "stockAvailable": 40,
+    "packQuantity": 2, "color": "Natural", "material": "Bamboo",
+    "weight": { "value": 2, "unit": "lb" },
+    "dimensions": { "length": 18, "width": 4, "height": 3, "unit": "in" },
+    "imageUrl": "https://catalog.example.invalid/authorized-sample-divider",
+    "category": "Kitchen Storage", "handlingTime": 2, "shippingNotes": "Long parcel"
+  },
+  {
+    "sku": "LP-SAMPLE-RISK", "productName": "Restricted Brand Aerosol Battery Cleaner",
+    "description": "Aerosol cleaner with battery-powered applicator", "brand": "Restricted Brand",
+    "upcOrGtin": "SAMPLE-NOT-FOR-COMMERCE-004", "cost": 4.5, "stockAvailable": 60,
+    "packQuantity": 1, "color": "Blue", "material": "Chemical aerosol",
+    "weight": { "value": 12, "unit": "oz" },
+    "dimensions": { "length": 3, "width": 3, "height": 9, "unit": "in" },
+    "imageUrl": "https://catalog.example.invalid/authorized-sample-risk-item",
+    "category": "Cleaning Supplies", "handlingTime": 3, "shippingNotes": "Hazmat restricted"
+  }
+]
