@@ -1,0 +1,73 @@
+{
+  "version": "EBAY_B2_RUN_CONTROLLED_WRITE_DRAFT_ONLY_V1",
+  "status": "READY",
+  "sourceRoute": "EBAY-RESUME-B2-RUN-WRITE-APPROVAL-RUNTIME-CHECKS",
+  "finalApprovalPhraseReceived": {
+    "value": "FINAL_WRITE_APPROVED_FOR_UNPUBLISHED_DRAFT_ONLY",
+    "accepted": true,
+    "source": "HUMAN_EXACT_APPROVAL"
+  },
+  "selectedProduct": {
+    "name": "Reusable Hook and Loop Cable Ties 50 Pack",
+    "rank": 1,
+    "opportunityScore": 93.31,
+    "stockObserved": 20,
+    "stockSource": "HUMAN_MOBILE_CONFIRMED"
+  },
+  "writeModePolicy": {
+    "defaultMode": "SAFE_NO_WRITE",
+    "localImplementationExecutesWrite": false,
+    "futureControlledWriteAllowedOnlyWithHardGate": true,
+    "publishAllowed": false,
+    "listingActiveAllowed": false,
+    "draftOrUnpublishedOnly": true
+  },
+  "requiredExecutionGates": [
+    "finalApprovalPhraseExact", "runtimeChecksAllPassed", "executeControlledWriteFlag",
+    "explicitEnvironmentApproval", "interactiveConfirmation", "noPublishEndpointGuard",
+    "imageAssetAllowedGuard", "policyRuntimeReady", "categoryRuntimeReady", "stockRuntimeReady", "priceRuntimeReady"
+  ],
+  "exactEnvApproval": {
+    "EBAY_B2_CONTROLLED_WRITE_APPROVED": "FINAL_WRITE_APPROVED_FOR_UNPUBLISHED_DRAFT_ONLY"
+  },
+  "exactInteractiveConfirmation": "CREATE_UNPUBLISHED_DRAFT_ONLY_NO_PUBLICATION",
+  "forbiddenEbayActions": ["publishOffer", "createActiveListing", "reviseActiveListing", "publish", "bulkPublish"],
+  "allowedFutureDraftOnlyActions": ["createOrReplaceInventoryItem", "createOfferUnpublishedOnly"],
+  "payloadPreview": {
+    "sku": "IMNOVA-HOOK-LOOP-CABLE-TIES-50PK-DRAFTONLY-V1",
+    "title": "Reusable Hook and Loop Cable Ties 50 Pack Adjustable Cord Organizer Straps",
+    "condition": "New",
+    "categoryStatus": "RUNTIME_REQUIRED",
+    "price": {"value": 12.99, "currency": "USD", "source": "EBAY_MARKET_OBSERVED"},
+    "quantity": {"previewQuantity": 1, "stockObserved": 20, "source": "HUMAN_MOBILE_CONFIRMED"},
+    "imagePolicy": {
+      "competitorImageCopyAllowed": false,
+      "ebayImageUseAllowed": false,
+      "imageGenerationUsed": false,
+      "imageDownloadUsed": false,
+      "requiresAuthorizedImageUrlBeforeRealWrite": true
+    },
+    "supplierCost": {"value": null, "source": "UNKNOWN_FROM_SUPPLIER", "guard": "LOW_CONFIDENCE_GUARD"}
+  },
+  "routeOutcomes": {
+    "default": "EXECUTION_NOT_REQUESTED_SAFE_NO_WRITE",
+    "dryRunApproved": "CONTROLLED_WRITE_DRAFT_ONLY_READY_BUT_NOT_EXECUTED",
+    "missingRuntimeCheck": "NEED_RUNTIME_CHECKS",
+    "missingAuthorizedImage": "NEED_FINAL_IMAGE_ASSET",
+    "missingPolicy": "NEED_SELLER_POLICY_RUNTIME_CONFIRMATION",
+    "missingCategory": "NEED_CATEGORY_RUNTIME_CONFIRMATION",
+    "missingApproval": "NEED_FINAL_WRITE_APPROVAL",
+    "futureControlledWriteSuccess": "UNPUBLISHED_DRAFT_CREATED_REQUIRES_LOOP_150_REVIEW",
+    "futureControlledWriteBlocked": "CONTROLLED_WRITE_BLOCKED"
+  },
+  "safetyFlags": {
+    "noProductionWritesInImplementation": true, "noMainWrites": true, "noStagingWritesInThisLoop": true,
+    "noSupabaseWrites": true, "noEbayApiRealInImplementation": true, "noOauthInImplementation": true,
+    "noTokenStorage": true, "noTokenPrinting": true, "noDraftCreationInImplementation": true,
+    "noListingCreation": true, "noOfferCreationInImplementation": true, "noPublication": true,
+    "publishOfferForbidden": true, "noImageGeneration": true, "noImageDownload": true, "noImageCopy": true,
+    "noScraper": true, "noAmazonTrackMixing": true, "noOpenAiOrCodexApiReal": true,
+    "noWhatsappRealSend": true, "noSmsRealSend": true, "noSecretsCommitted": true,
+    "noFullWarehouseStreetAddressCommitted": true
+  }
+}
