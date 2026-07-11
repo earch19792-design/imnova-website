@@ -1,0 +1,49 @@
+{
+  "runnerVersion": "EBAY_LUNA_CATALOG_RUNNER_B2A_LUNA_CATALOG_RUN_V1",
+  "status": "EBAY_LUNA_CATALOG_RUNNER_READY",
+  "mode": "LOCAL_DRY_RUN_AND_OPTIONAL_LOCAL_FILE_INGEST",
+  "sourceRoute": "EBAY-RESUME-B2A-LUNA-CATALOG-INGEST",
+  "realCatalogFileUsedInThisLoop": false,
+  "sampleCatalogUsedInDryRun": true,
+  "requiredCatalogColumns": [
+    "sku", "productName", "description", "brand", "upcOrGtin", "cost",
+    "stockAvailable", "packQuantity", "color", "material", "weight",
+    "dimensions", "imageUrl", "category", "handlingTime", "shippingNotes"
+  ],
+  "targetMarketplace": "EBAY_US",
+  "storeName": "ShopEliteCart",
+  "warehouseAlias": "LUNA_PORTEX_BOCA_RATON",
+  "fullWarehouseStreetAddressCommitted": false,
+  "snapshotPolicy": {
+    "maxCatalogAgeHours": 24,
+    "minimumGrossMargin": 1,
+    "catalogSource": "LOCAL_SAMPLE_CATALOG_DRY_RUN",
+    "logicalSnapshotOnly": true,
+    "snapshotFileWriteEnabled": false
+  },
+  "marketObservedDataFromEbay": {
+    "keywords": ["silicone cable organizer", "20 pack", "self adhesive", "cord holder", "desk organization"],
+    "optimizedTitleCandidate": "Silicone Cable Organizer Clips 20 Pack Self Adhesive Cord Holders Black",
+    "priceRange": { "min": 17.99, "max": 27.99, "currency": "USD" },
+    "recommendedPrice": 18.99,
+    "suggestedCategory": "Cable Organizers",
+    "normalizedPackSizesDetected": [20, 6, 2, 10, 1],
+    "invalidPackSizesRemoved": [0]
+  },
+  "safetyFlags": {
+    "noProductionWrites": true,
+    "noMainWrites": true,
+    "noStagingWritesInThisLoop": true,
+    "noEbayWrites": true,
+    "noOauthInThisLoop": true,
+    "noTokenStorage": true,
+    "noDraftCreation": true,
+    "noListingCreation": true,
+    "noOfferCreation": true,
+    "noPublication": true,
+    "noScraper": true,
+    "noSnapshotFileWrites": true,
+    "noRealCatalogCommitted": true,
+    "noFullWarehouseStreetAddressCommitted": true
+  }
+}
