@@ -555,6 +555,38 @@ function getInventoryContext(
   if (
     numericQuantity !== null &&
     rawInventoryContext?.inventory_source ===
+      "manual_admin_confirmation" &&
+    rawInventoryContext?.inventory_scope ===
+      "product_level"
+  ) {
+    const productQuantity =
+      Math.trunc(numericQuantity)
+
+    return {
+      inventory_quantity:
+        productQuantity,
+      product_available_quantity:
+        productQuantity,
+      inventory_status:
+        productQuantity > 0
+          ? "in_stock"
+          : "out_of_stock",
+      inventory_source:
+        "manual_admin_confirmation",
+      inventory_confidence:
+        "medium",
+      inventory_scope:
+        "product_level",
+      stock_message:
+        productQuantity > 0
+          ? `Cantidad confirmada manualmente a nivel producto: ${new Intl.NumberFormat("en-US").format(productQuantity)} unidades. Confirmar variante/SKU antes de listar.`
+          : "Producto confirmado manualmente sin stock a nivel producto.",
+    } as const
+  }
+
+  if (
+    numericQuantity !== null &&
+    rawInventoryContext?.inventory_source ===
       "luna_authenticated_html" &&
     numericQuantity >= 10000
   ) {
@@ -1686,6 +1718,9 @@ async function confirmMarketRadarStockQuantity({
   quantity: number
   note?: string | null
 }) {
+  const confirmedAt =
+    new Date().toISOString()
+
   const storedSupplierVariantId =
     supplierVariantId ||
     `manual_product_level:${productId}`
@@ -1774,9 +1809,13 @@ async function confirmMarketRadarStockQuantity({
             inventory_source:
               "manual_admin_confirmation",
             inventory_scope:
-              "variant_level",
+              supplierVariantId
+                ? "variant_level"
+                : "product_level",
             inventory_confidence:
-              "high",
+              supplierVariantId
+                ? "high"
+                : "medium",
             inventory_status:
               quantity > 0
                 ? "in_stock"
@@ -1802,7 +1841,7 @@ async function confirmMarketRadarStockQuantity({
             previous_snapshot_id:
               latestSnapshot?.id || null,
             confirmed_at:
-              new Date().toISOString(),
+              confirmedAt,
           },
         },
       })
@@ -1820,6 +1859,14 @@ async function confirmMarketRadarStockQuantity({
       data?.id || null,
     confirmed_quantity:
       quantity,
+    confirmation_scope:
+      supplierVariantId
+        ? "variant_level"
+        : "product_level_manual_fallback",
+    inventory_source:
+      "manual_admin_confirmation",
+    confirmed_at:
+      confirmedAt,
   }
 }
 
@@ -2841,13 +2888,31 @@ export async function POST(
           note,
         })
 
-      const dashboard =
-        await getMarketRadarDashboard()
+      let dashboard:
+        MarketRadarDashboard | null = null
+      let dashboardRefreshWarning:
+        string | null = null
+
+      try {
+        dashboard =
+          await getMarketRadarDashboard()
+      } catch (dashboardError) {
+        dashboardRefreshWarning =
+          "stock_saved_dashboard_refresh_failed"
+        console.warn(
+          "MARKET RADAR STOCK SAVED; DASHBOARD REFRESH FAILED:",
+          dashboardError instanceof Error
+            ? dashboardError.message
+            : "unknown_dashboard_refresh_error"
+        )
+      }
 
       return NextResponse.json({
         success: true,
         stockConfirmation,
         dashboard,
+        warning:
+          dashboardRefreshWarning,
       })
     }
 

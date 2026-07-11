@@ -66,6 +66,12 @@ type MarketRadarApiResponse = {
   stockConfirmation?: {
     snapshot_id?: string | null
     confirmed_quantity?: number
+    confirmation_scope?:
+      | "variant_level"
+      | "product_level_manual_fallback"
+    inventory_source?:
+      "manual_admin_confirmation"
+    confirmed_at?: string
   }
   error?: string
   error_detail?: string
@@ -6297,7 +6303,7 @@ export function MarketRadarPanel({
         if (
           !response.ok ||
           !payload.success ||
-          !payload.dashboard
+          !payload.stockConfirmation
         ) {
           throw new Error(
             payload.error ||
@@ -6305,25 +6311,34 @@ export function MarketRadarPanel({
           )
         }
 
-        setDashboard(
-          payload.dashboard
-        )
+        if (payload.dashboard) {
+          setDashboard(
+            payload.dashboard
+          )
+        }
+
+        const confirmedQuantity =
+          payload.stockConfirmation.confirmed_quantity ??
+          Number(form.quantity)
+
         setStockConfirmationResults(current => ({
           ...current,
           [productKey]: {
             status:
               "success",
             message:
-              form.quantity === "0"
+              confirmedQuantity === 0
                 ? "Producto marcado sin stock en IMNOVA OS."
-                : "Cantidad confirmada en IMNOVA OS.",
+                : payload.dashboard
+                  ? `Stock confirmado y guardado: ${confirmedQuantity} unidades.`
+                  : `Stock guardado: ${confirmedQuantity} unidades. Actualiza el radar para ver el snapshot confirmado.`,
           },
         }))
         setStockConfirmationForms(current => ({
           ...current,
           [productKey]: {
             quantity:
-              "",
+              String(confirmedQuantity),
             note:
               "",
           },

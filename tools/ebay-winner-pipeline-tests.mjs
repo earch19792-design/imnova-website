@@ -21812,6 +21812,61 @@ test("market radar panel: confirmacion manual positiva cuenta como stock confirm
   )
 })
 
+test("market radar stock confirmation: conserva cantidad visible y separa guardado de refresh", () => {
+  const apiSource =
+    fs.readFileSync(
+      path.resolve("app/api/admin/market-radar/route.ts"),
+      "utf8"
+    )
+  const panelSource =
+    fs.readFileSync(
+      path.resolve("components/admin/market-radar-panel.tsx"),
+      "utf8"
+    )
+
+  assert.match(
+    apiSource,
+    /stock_saved_dashboard_refresh_failed/
+  )
+  assert.match(
+    apiSource,
+    /success:\s*true,[\s\S]*stockConfirmation,[\s\S]*dashboard,/
+  )
+  assert.match(
+    panelSource,
+    /!payload\.stockConfirmation/
+  )
+  assert.match(
+    panelSource,
+    /Stock confirmado y guardado: \$\{confirmedQuantity\} unidades\./
+  )
+  assert.match(
+    panelSource,
+    /quantity:[\s\S]*String\(confirmedQuantity\)/
+  )
+})
+
+test("market radar stock confirmation: fallback sin variante no afirma stock variant-level", () => {
+  const source =
+    fs.readFileSync(
+      path.resolve("app/api/admin/market-radar/route.ts"),
+      "utf8"
+    )
+
+  assert.match(
+    source,
+    /inventory_scope:[\s\S]*supplierVariantId[\s\S]*"variant_level"[\s\S]*"product_level"/
+  )
+  assert.match(
+    source,
+    /inventory_confidence:[\s\S]*supplierVariantId[\s\S]*"high"[\s\S]*"medium"/
+  )
+  assert.match(
+    source,
+    /Cantidad confirmada manualmente a nivel producto:[\s\S]*Confirmar variante\/SKU antes de listar\./
+  )
+})
+
 test("market radar panel: sin stock muestra cola principal y bloqueo secundario", () => {
   const source =
     fs.readFileSync(
