@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 
 import fixtureJson from "@/tools/fixtures/ebay-mobile-review-page-mvp-v1.json"
 import {
@@ -26,14 +26,39 @@ export default function EbayMobileReviewPage() {
     buildInitialMobileReviewState(fixture)
   )
   const [stockQuantity, setStockQuantity] = useState("20")
+  const [lastActionMessage, setLastActionMessage] = useState(
+    "Todavía no realizaste ninguna acción."
+  )
+  const confirmationRef = useRef<HTMLElement>(null)
   const decision = useMemo(() => buildMobileReviewDecision(state), [state])
   const summary = useMemo(
     () => buildMobileReviewCopyPasteSummary(state),
     [state]
   )
 
-  const act = (action: Parameters<typeof applyMobileReviewAction>[1]) =>
+  const act = (action: Parameters<typeof applyMobileReviewAction>[1]) => {
     setState((current) => applyMobileReviewAction(current, action))
+    const messages: Record<string, string> = {
+      MARK_UNAVAILABLE:
+        "Producto marcado como removido. B2-RUN quedó bloqueado y se recomienda refrescar el scan.",
+      SELECT_CANDIDATE:
+        "Candidato seleccionado. Continúa con mismo producto, stock e imagen.",
+      CONFIRM_SAME_PRODUCT: "Mismo producto confirmado localmente.",
+      CONFIRM_STOCK_QTY: `Stock local confirmado: ${stockQuantity} unidades.`,
+      CONFIRM_IMAGE_OK: "Revisión visual confirmada localmente.",
+      REQUEST_LUNA_SCAN_REFRESH: "Solicitud de refresco preparada localmente.",
+      HOLD_FOR_REVIEW: "Decisión puesta en espera para revisión.",
+      APPROVE_B2_RUN_PREFLIGHT:
+        "Aprobación evaluada. Revisa la ruta resultante en el resumen.",
+    }
+    setLastActionMessage(messages[action.type] ?? "Acción local registrada.")
+    if (action.type === "SELECT_CANDIDATE") {
+      window.setTimeout(
+        () => confirmationRef.current?.scrollIntoView({ behavior: "smooth" }),
+        50
+      )
+    }
+  }
 
   return (
     <main className="min-h-screen bg-[#05070d] px-4 py-6 text-white sm:px-6">
@@ -61,6 +86,24 @@ export default function EbayMobileReviewPage() {
             <StatusPill>canPublish: false</StatusPill>
           </div>
         </header>
+
+        <aside className="rounded-3xl border border-rose-300/20 bg-rose-300/[0.06] p-5">
+          <p className="text-xs font-black uppercase tracking-widest text-rose-100/65">
+            Fuente actual: fixture modelado · no es data viva
+          </p>
+          <p className="mt-3 text-sm leading-6 text-white/65">
+            Este Top 5 viene del fixture del Approval Center. No se actualiza con
+            el último scan, la base de datos ni eBay. Score, precio y categoría
+            son señales modeladas hasta conectar una fuente read-only real.
+          </p>
+        </aside>
+
+        <div
+          aria-live="polite"
+          className="sticky top-2 z-20 rounded-2xl border border-emerald-300/25 bg-[#102019]/95 p-4 text-sm font-bold leading-5 text-emerald-50 shadow-xl backdrop-blur"
+        >
+          Última acción: {lastActionMessage}
+        </div>
 
         <article className="rounded-3xl border border-amber-300/20 bg-amber-300/[0.06] p-5">
           <p className="text-xs font-black uppercase tracking-widest text-amber-100/60">
@@ -105,12 +148,18 @@ export default function EbayMobileReviewPage() {
                       Rank #{candidate.candidateRank}
                       {candidate.candidateRank === 1 ? " · Recomendado" : ""}
                     </p>
+                    <p className="mt-2 text-xs font-bold text-cyan-100/65">
+                      Estado: {candidate.availabilityStatus}
+                    </p>
                     <h2 className="mt-2 text-xl font-black leading-6">
                       {candidate.productName}
                     </h2>
                   </div>
                   <span className="rounded-2xl bg-white/10 px-3 py-2 text-lg font-black">
                     {candidate.opportunityScore.toFixed(2)}
+                    <span className="mt-1 block text-[9px] font-bold uppercase text-white/35">
+                      score modelado
+                    </span>
                   </span>
                 </div>
 
@@ -120,10 +169,12 @@ export default function EbayMobileReviewPage() {
                     <dd className="mt-1 font-black">
                       {candidate.suggestedPrice.currency} {candidate.suggestedPrice.value.toFixed(2)}
                     </dd>
+                    <dd className="mt-1 text-[10px] text-white/35">Fixture · no precio runtime</dd>
                   </div>
                   <div className="rounded-2xl bg-black/25 p-3">
                     <dt className="text-white/40">Categoría</dt>
                     <dd className="mt-1 font-black">{candidate.suggestedCategory}</dd>
+                    <dd className="mt-1 text-[10px] text-white/35">Fixture · no Category ID</dd>
                   </div>
                 </dl>
 
@@ -145,7 +196,8 @@ export default function EbayMobileReviewPage() {
                     }
                     className="min-h-12 rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-black disabled:cursor-not-allowed disabled:opacity-30"
                   >
-                    SELECT_CANDIDATE
+                    Seleccionar candidato
+                    <span className="block text-[10px]">SELECT_CANDIDATE</span>
                   </button>
                   <button
                     type="button"
@@ -154,7 +206,8 @@ export default function EbayMobileReviewPage() {
                     }
                     className="min-h-12 rounded-2xl border border-rose-300/30 px-4 py-3 text-sm font-black text-rose-100"
                   >
-                    MARK_UNAVAILABLE
+                    Marcar no disponible
+                    <span className="block text-[10px]">MARK_UNAVAILABLE</span>
                   </button>
                 </div>
               </article>
@@ -162,7 +215,10 @@ export default function EbayMobileReviewPage() {
           })}
         </div>
 
-        <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
+        <section
+          ref={confirmationRef}
+          className="scroll-mt-20 rounded-3xl border border-white/10 bg-white/[0.035] p-5"
+        >
           <h2 className="text-xl font-black">Confirmaciones del seleccionado</h2>
           <p className="mt-2 text-sm text-white/50">
             {decision.selectedCandidateName ?? "Selecciona primero un candidato del Top 5."}
@@ -170,8 +226,9 @@ export default function EbayMobileReviewPage() {
           <div className="mt-4 space-y-3">
             <button
               type="button"
+              disabled={!state.selectedCandidateRank}
               onClick={() => act({ type: "CONFIRM_SAME_PRODUCT" })}
-              className="min-h-12 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black"
+              className="min-h-12 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-30"
             >
               CONFIRM_SAME_PRODUCT {state.sameProductConfirmed ? "✓" : ""}
             </button>
@@ -185,25 +242,28 @@ export default function EbayMobileReviewPage() {
               />
               <button
                 type="button"
+                disabled={!state.selectedCandidateRank}
                 onClick={() =>
                   act({ type: "CONFIRM_STOCK_QTY", quantity: Number(stockQuantity) })
                 }
-                className="min-h-12 rounded-2xl bg-cyan-200 px-4 py-3 text-xs font-black text-black"
+                className="min-h-12 rounded-2xl bg-cyan-200 px-4 py-3 text-xs font-black text-black disabled:cursor-not-allowed disabled:opacity-30"
               >
                 CONFIRM_STOCK_QTY
               </button>
             </div>
             <button
               type="button"
+              disabled={!state.selectedCandidateRank}
               onClick={() => act({ type: "CONFIRM_IMAGE_OK" })}
-              className="min-h-12 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black"
+              className="min-h-12 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-30"
             >
               CONFIRM_IMAGE_OK {state.imageConfirmed ? "✓" : ""}
             </button>
             <button
               type="button"
+              disabled={!state.selectedCandidateRank}
               onClick={() => act({ type: "APPROVE_B2_RUN_PREFLIGHT" })}
-              className="min-h-14 w-full rounded-2xl bg-emerald-300 px-4 py-4 text-sm font-black text-black"
+              className="min-h-14 w-full rounded-2xl bg-emerald-300 px-4 py-4 text-sm font-black text-black disabled:cursor-not-allowed disabled:opacity-30"
             >
               APPROVE_B2_RUN_PREFLIGHT
             </button>
