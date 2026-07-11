@@ -30,6 +30,12 @@ test("mobile review page loads exactly the Top 5 and recommends rank 1", () => {
   assert.equal(report.top5Visible, true)
   assert.equal(report.recommendedCandidateRank, 1)
   assert.match(pageSource, /Top 5 móvil/)
+  assert.match(pageSource, /Fuente actual: fixture modelado · no es data viva/)
+  assert.match(pageSource, /score modelado/)
+  assert.match(pageSource, /Fixture · no precio runtime/)
+  assert.match(pageSource, /Fixture · no Category ID/)
+  assert.match(pageSource, /aria-live="polite"/)
+  assert.match(pageSource, /scrollIntoView/)
 })
 
 test("rank 1 can be marked unavailable and blocks B2-RUN", () => {

@@ -25,6 +25,19 @@ El resultado se presenta como JSON copiable con candidato, disponibilidad,
 stock, imagen y siguiente ruta. No se persiste: al recargar la página se pierde
 la decisión local.
 
+### Procedencia de los datos del MVP
+
+El Top 5 visible en esta versión proviene de
+`tools/fixtures/ebay-mobile-review-page-mvp-v1.json`. Los candidatos, scores,
+precios y categorías son datos modelados del flujo Top 50/Approval Center; no
+son una consulta viva al último scan, a Supabase o a eBay. La interfaz debe
+mostrar esta procedencia y no presentar estos valores como runtime confirmados.
+
+La UI muestra feedback persistente para la última acción, el estado de
+disponibilidad dentro de cada tarjeta y desplaza el teléfono automáticamente a
+las confirmaciones después de seleccionar. Los controles que necesitan un
+candidato permanecen deshabilitados hasta completar la selección.
+
 ## Reglas
 
 - Un producto removido queda en `REMOVED_FROM_LUNA_SCAN` y `STOCK_HOLD`.
