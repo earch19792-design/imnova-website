@@ -1,0 +1,79 @@
+{
+  "version": "EBAY_MOBILE_REVIEW_PAGE_MVP_B2A_V1",
+  "status": "READY",
+  "top5Candidates": [
+    {
+      "candidateRank": 1,
+      "candidateId": "LUNA-TOP50-002",
+      "productName": "Reusable Hook and Loop Cable Ties 50 Pack",
+      "opportunityScore": 93.31,
+      "suggestedPrice": { "value": 12.99, "currency": "USD" },
+      "suggestedCategory": "Cable Management",
+      "riskFlags": [],
+      "missingFields": ["supplierCost", "supplierStock"],
+      "listingBlueprintSummary": "Reusable cable ties, 50-pack clarity and cord organization keywords.",
+      "availabilityStatus": "UNKNOWN"
+    },
+    {
+      "candidateRank": 2,
+      "candidateId": "LUNA-TOP50-035",
+      "productName": "Cord Keeper Appliance Cable Organizer",
+      "opportunityScore": 91.96,
+      "suggestedPrice": { "value": 13.99, "currency": "USD" },
+      "suggestedCategory": "Kitchen Organizers",
+      "riskFlags": [],
+      "missingFields": ["supplierCost", "supplierStock"],
+      "listingBlueprintSummary": "Appliance cord organizer with clear eight-pack presentation.",
+      "availabilityStatus": "UNKNOWN"
+    },
+    {
+      "candidateRank": 3,
+      "candidateId": "LUNA-TOP50-003",
+      "productName": "Clear Acrylic Drawer Organizer Trays Set",
+      "opportunityScore": 87.36,
+      "suggestedPrice": { "value": 19.99, "currency": "USD" },
+      "suggestedCategory": "Drawer Organizers",
+      "riskFlags": [],
+      "missingFields": ["supplierCost", "supplierStock", "supplierDimensions"],
+      "listingBlueprintSummary": "Clear drawer trays with six-piece structure and dimensions panel.",
+      "availabilityStatus": "UNKNOWN"
+    },
+    {
+      "candidateRank": 4,
+      "candidateId": "LUNA-TOP50-012",
+      "productName": "Silicone Chair Leg Floor Protectors",
+      "opportunityScore": 87.19,
+      "suggestedPrice": { "value": 14.99, "currency": "USD" },
+      "suggestedCategory": "Furniture Pads",
+      "riskFlags": [],
+      "missingFields": ["supplierCost", "supplierStock", "fitRange"],
+      "listingBlueprintSummary": "Clear silicone protectors with pack count and fit range.",
+      "availabilityStatus": "UNKNOWN"
+    },
+    {
+      "candidateRank": 5,
+      "candidateId": "LUNA-TOP50-009",
+      "productName": "Magnetic Cable Holder Desk Set",
+      "opportunityScore": 86.81,
+      "suggestedPrice": { "value": 15.99, "currency": "USD" },
+      "suggestedCategory": "Cable Organizers",
+      "riskFlags": [],
+      "missingFields": ["supplierCost", "supplierStock", "magnetStrength"],
+      "listingBlueprintSummary": "Magnetic desk cable holder with six-pack presentation.",
+      "availabilityStatus": "UNKNOWN"
+    }
+  ],
+  "previousCandidate": {
+    "candidateRank": 1,
+    "candidateId": "LUNA-TOP50-002-PREVIOUS",
+    "productName": "Reusable Hook and Loop Cable Ties 50 Pack",
+    "opportunityScore": 93.31,
+    "suggestedPrice": { "value": 12.99, "currency": "USD" },
+    "suggestedCategory": "Cable Management",
+    "riskFlags": ["STOCK_HOLD"],
+    "missingFields": ["freshLunaScan", "supplierStock"],
+    "listingBlueprintSummary": "Previously recommended candidate; removed from current Luna scan.",
+    "availabilityStatus": "REMOVED_FROM_LUNA_SCAN",
+    "previousStatus": "REMOVED_FROM_LUNA_SCAN"
+  }
+}
