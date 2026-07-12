@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
 
-import { applyPinnedCandidateAction, buildPinnedCandidateContinuityReport } from "../lib/ebay/ebay-mobile-review-pinned-candidate-continuity.ts"
+import { applyPinnedCandidateAction, buildPinnedCandidateContinuityReport, detectPinnedCandidateSupplierDrift } from "../lib/ebay/ebay-mobile-review-pinned-candidate-continuity.ts"
 
 const fixture = JSON.parse(readFileSync("tools/fixtures/ebay-mobile-review-pinned-candidate-continuity-v1.json", "utf8"))
 const moduleSource = readFileSync("lib/ebay/ebay-mobile-review-pinned-candidate-continuity.ts", "utf8")
@@ -44,6 +44,57 @@ test("candidate returning to Top 5 is deduped and retains context", () => {
   assert.equal(report.radarPresenceStatus, "PINNED_AND_IN_CURRENT_TOP5")
   assert.equal(report.pinnedCandidatesOutsideTop5.length, 0)
   assert.equal(report.humanConfirmationsPreserved, true)
+})
+
+const observation = (overrides = {}) => ({
+  ...pinned.latestRadarObservation,
+  ...overrides,
+})
+
+test("supplier stock drift routes quantity changes and stock zero safely", () => {
+  const reduced = detectPinnedCandidateSupplierDrift(pinned, observation({ latestStockQuantity: 1 }))
+  assert.equal(reduced.stockChanged, true)
+  assert.equal(reduced.status, "STOCK_CHANGED_WARNING")
+  assert.equal(reduced.nextRecommendedRoute, "NEED_STOCK_RECONFIRMATION")
+  const zero = detectPinnedCandidateSupplierDrift(pinned, observation({ latestStockQuantity: 0 }))
+  assert.equal(zero.status, "OUT_OF_STOCK")
+  assert.equal(zero.nextRecommendedRoute, "STOCK_HOLD")
+  const unknown = detectPinnedCandidateSupplierDrift(pinned, observation({ latestStockQuantity: null }))
+  assert.equal(unknown.status, "STOCK_RECONFIRMATION_REQUIRED")
+  assert.equal(unknown.nextRecommendedRoute, "NEED_STOCK_RECONFIRMATION")
+})
+
+test("supplier price, availability and image drift produce independent routes", () => {
+  const price = detectPinnedCandidateSupplierDrift(pinned, observation({ latestLunaPrice: 4.5 }))
+  assert.equal(price.priceChanged, true)
+  assert.equal(price.status, "SUPPLIER_PRICE_CHANGED")
+  assert.equal(price.nextRecommendedRoute, "NEED_MARGIN_REVIEW")
+  assert.equal(price.marginReviewPreserved, false)
+  const unavailable = detectPinnedCandidateSupplierDrift(pinned, observation({ latestAvailabilityStatus: "OUT_OF_STOCK" }))
+  assert.equal(unavailable.status, "SUPPLIER_UNAVAILABLE")
+  assert.equal(unavailable.nextRecommendedRoute, "STOCK_HOLD")
+  const image = detectPinnedCandidateSupplierDrift(pinned, observation({ latestImageReference: "https://example.invalid/changed-reference" }))
+  assert.equal(image.imageReferenceChanged, true)
+  assert.equal(image.status, "IMAGE_REFERENCE_CHANGED")
+  assert.equal(image.nextRecommendedRoute, "NEED_IMAGE_REVIEW")
+})
+
+test("missing scan intervals distinguish recheck from stale hold", () => {
+  const one = detectPinnedCandidateSupplierDrift(pinned, observation({ isPresentInLatestScan: false, missingIntervals: 1 }))
+  assert.equal(one.status, "NOT_OBSERVED_LATEST_SCAN")
+  assert.equal(one.nextRecommendedRoute, "NEED_RADAR_RECHECK")
+  const two = detectPinnedCandidateSupplierDrift(pinned, observation({ isPresentInLatestScan: false, missingIntervals: 2 }))
+  assert.equal(two.status, "STALE_MISSING_FROM_SOURCE")
+  assert.equal(two.nextRecommendedRoute, "STOCK_HOLD")
+})
+
+test("unchanged supplier observation preserves confirmations and eBay continuation", () => {
+  const drift = detectPinnedCandidateSupplierDrift(pinned, pinned.latestRadarObservation)
+  assert.equal(drift.supplierDriftDetected, false)
+  const report = buildPinnedCandidateContinuityReport([], fixture.pinnedCandidates)
+  assert.equal(report.canContinueEbayMarketValidation, true)
+  assert.equal(report.canProceedToB2RunPreflight, false)
+  assert.equal(report.canPublish, false)
 })
 
 test("mobile UI shows pinned continuity controls and persistence boundary", () => {

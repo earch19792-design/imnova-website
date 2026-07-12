@@ -27,6 +27,16 @@ Radar ni historial.
 registro oficial. Precio eBay, demanda, margen, Category ID y riesgos siguen
 bloqueando B2-RUN. `canProceedToB2RunPreflight` y `canPublish` son false.
 
+## Supplier drift
+
+Las confirmaciones humanas son contexto, no verdad permanente. Cada pinned
+compara stock, precio Luna, disponibilidad e imagen confirmados contra la última
+observación Radar. Cambios de stock exigen reconfirmación; cero o unavailable
+producen `STOCK_HOLD`; precio distinto invalida el margen; imagen distinta exige
+revisión. Una ausencia por un intervalo pide recheck y por dos intervalos pasa a
+stale/hold. Sin drift se conserva `NEED_EBAY_MARKET_VALIDATION`, siempre con
+B2-RUN y publicación bloqueados.
+
 ## Safety
 
 Sin Production/main, DB/Supabase writes, eBay API/write, draft, offer, listing,
