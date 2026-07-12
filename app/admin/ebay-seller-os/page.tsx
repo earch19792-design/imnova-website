@@ -44,6 +44,29 @@ export default function EbaySellerOsHubPage() {
           </p>
         </div>
 
+        <a
+          href="/admin/ebay/seller-performance"
+          className="group rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.07] p-6 transition hover:border-cyan-200/40 hover:bg-cyan-200/[0.10]"
+        >
+          <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-100/55">
+            Analytics oficial · read-only
+          </p>
+          <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-black text-white">
+                Estadísticas de Seller Performance
+              </h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">
+                Consulta impresiones, vistas, CTR, transacciones y conversión de
+                tu propia cuenta mediante eBay Traffic Report.
+              </p>
+            </div>
+            <span className="rounded-full bg-cyan-200 px-4 py-2 text-xs font-black uppercase tracking-wider text-black">
+              Abrir panel →
+            </span>
+          </div>
+        </a>
+
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {cards.map((card) => (
             <article
