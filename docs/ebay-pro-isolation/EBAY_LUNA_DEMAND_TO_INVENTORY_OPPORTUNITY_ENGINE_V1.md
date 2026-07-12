@@ -66,7 +66,9 @@ Persistence is disabled by default. Both conditions are required:
 1. server variable `EBAY_MARKET_OBSERVATION_WRITES_ENABLED=true`
 2. explicit authenticated request `persistObservations: true`
 
-No migration or remote write was executed in this development loop.
+The required Supabase migrations are deployed and their local/remote history is
+synchronized. Runtime observation persistence remains disabled by default and
+still requires both gates above.
 
 ## Opportunity score and hard gates
 
@@ -180,9 +182,8 @@ On the first scan, the correct result is normally `WATCHLIST_BASELINE_REQUIRED`;
 ## Safety
 
 - No `main` touch.
-- No Production touch.
-- No migration applied.
-- No remote Supabase write executed.
+- Supabase schema migrations applied; runtime observation writes remain disabled
+  by default and require both server configuration and an explicit request.
 - No eBay write endpoint.
 - No draft, offer or listing.
 - No publish operation.
