@@ -1,5 +1,5 @@
 export const EBAY_SELLER_KEYWORD_DEMAND_VALIDATION_VERSION =
-  "EBAY-SELLER-KEYWORD-DEMAND-VALIDATION-V1"
+  "EBAY-PROFESSIONAL-KEYWORD-CLASSIFICATION-V2"
 
 export type EbaySalesEvidenceSource =
   | "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
@@ -75,6 +75,28 @@ const UNIT_ALIASES: Record<string, string> = {
   inches: "in",
 }
 
+const COLOR_TERMS = new Set([
+  "black", "blue", "brown", "clear", "gold", "gray", "green", "grey",
+  "orange", "pink", "purple", "red", "silver", "tan", "white", "yellow",
+])
+
+const PACKAGING_TERMS = new Set([
+  "bag", "bottle", "box", "bundle", "can", "case", "jar", "pack", "pouch",
+  "set", "tube",
+])
+
+const BUYER_INTENT_TERMS = new Set([
+  "clean", "cleaner", "cleaning", "control", "fill", "filler", "filling", "fix", "hold",
+  "holder", "maintain", "maintenance", "organize", "organizer", "patch",
+  "refill", "repair", "replacement", "restore", "seal", "spray", "storage", "treat",
+])
+
+const GENERIC_LOW_SIGNAL_TERMS = new Set([
+  "bottle", "box", "brand", "item", "new", "original", "pack", "sale", "set",
+])
+
+const UNIT_TERMS = new Set(Object.values(UNIT_ALIASES))
+
 function cleanText(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
 }
@@ -91,6 +113,7 @@ function normalize(value: unknown) {
     .toLowerCase()
     .replace(/&/g, " and ")
     .replace(/[^a-z0-9.]+/g, " ")
+    .replace(/\.(?=\s|$)/g, "")
     .trim()
 }
 
@@ -156,6 +179,10 @@ function getFacts(value: unknown) {
   return facts
 }
 
+function getColors(value: unknown) {
+  return new Set(tokens(value).filter((token) => COLOR_TERMS.has(token)))
+}
+
 function buildIdentityAssessment(candidateText: string, listingTitle: string) {
   const candidateTokens = unique(tokens(candidateText))
   const listingTokens = new Set(tokens(listingTitle))
@@ -167,6 +194,15 @@ function buildIdentityAssessment(candidateText: string, listingTitle: string) {
   for (const [unit, value] of candidateFacts) {
     const observed = listingFacts.get(unit)
     if (observed && observed !== value) conflicts.push(`${unit}:${value}!=${observed}`)
+  }
+  const candidateColors = getColors(candidateText)
+  const listingColors = getColors(listingTitle)
+  if (
+    candidateColors.size > 0 &&
+    listingColors.size > 0 &&
+    ![...candidateColors].some((color) => listingColors.has(color))
+  ) {
+    conflicts.push(`color:${[...candidateColors].join("|")}!=${[...listingColors].join("|")}`)
   }
   const factsMatched = [...candidateFacts].filter(([unit, value]) => listingFacts.get(unit) === value).length
   const factsCoverage = candidateFacts.size ? factsMatched / candidateFacts.size : 1
@@ -191,7 +227,68 @@ function keywordTerms(title: string) {
     .slice(0, -1)
     .map((token, index) => `${token} ${titleTokens[index + 1]}`)
     .filter((term) => term.length <= 40)
-  return unique([...unigrams, ...bigrams])
+  const trigrams = titleTokens
+    .slice(0, -2)
+    .map((token, index) => `${token} ${titleTokens[index + 1]} ${titleTokens[index + 2]}`)
+    .filter((term) => term.length <= 56)
+  return unique([...unigrams, ...bigrams, ...trigrams])
+}
+
+function classifyKeywordRole(term: string) {
+  const termTokens = tokens(term)
+  const hasNumber = termTokens.some((token) => /^\d+(?:\.\d+)?$/.test(token))
+  const hasUnit = termTokens.some((token) => UNIT_TERMS.has(token))
+  if (hasNumber || hasUnit) return "CONFIRMED_SPECIFICATION_OR_QUANTITY"
+  if (termTokens.some((token) => COLOR_TERMS.has(token))) return "PRODUCT_ATTRIBUTE"
+  if (termTokens.some((token) => PACKAGING_TERMS.has(token))) return "PACKAGING_OR_FORMAT"
+  if (termTokens.some((token) => BUYER_INTENT_TERMS.has(token))) return "BUYER_INTENT_OR_USE_CASE"
+  if (termTokens.length >= 2) return "CORE_PRODUCT_PHRASE"
+  if (termTokens.some((token) => GENERIC_LOW_SIGNAL_TERMS.has(token))) return "GENERIC_LOW_SIGNAL"
+  return "PRODUCT_IDENTITY_TOKEN"
+}
+
+function termIsConfirmedByCandidate(term: string, candidateText: string) {
+  const candidateTokens = new Set(tokens(candidateText))
+  const termTokens = tokens(term)
+  return termTokens.length > 0 && termTokens.every((token) => candidateTokens.has(token))
+}
+
+function buildBuyerIntentType(terms: string[]) {
+  const searchable = terms.join(" ")
+  if (/\b(?:repair|fix|patch|filler|filling|seal|restore|joint|crack)\b/.test(searchable)) {
+    return {
+      intentType: "PROBLEM_SOLUTION_REPAIR",
+      buyerProfileLabel: "Comprador con necesidad inmediata de reparación o mantenimiento",
+    }
+  }
+  if (/\b(?:replacement|refill)\b/.test(searchable)) {
+    return {
+      intentType: "REPLACEMENT_OR_REFILL",
+      buyerProfileLabel: "Comprador que ya conoce el producto y busca reemplazo o reposición",
+    }
+  }
+  if (/\b(?:organizer|holder|storage|organize)\b/.test(searchable)) {
+    return {
+      intentType: "ORGANIZATION_OR_STORAGE",
+      buyerProfileLabel: "Comprador que busca resolver una necesidad de organización o almacenamiento",
+    }
+  }
+  if (/\b(?:clean|cleaner|cleaning|detergent|maintenance)\b/.test(searchable)) {
+    return {
+      intentType: "CLEANING_OR_MAINTENANCE",
+      buyerProfileLabel: "Comprador orientado a limpieza y mantenimiento recurrente",
+    }
+  }
+  if (/\b(?:hair|beauty|spray|control|care)\b/.test(searchable)) {
+    return {
+      intentType: "PERSONAL_CARE_RESULT",
+      buyerProfileLabel: "Comprador que busca un resultado específico de cuidado personal",
+    }
+  }
+  return {
+    intentType: "PRODUCT_SPECIFIC_PURCHASE",
+    buyerProfileLabel: "Comprador con intención específica de adquirir este tipo de producto",
+  }
 }
 
 export function buildEbaySellerKeywordSearchQuery(
@@ -273,6 +370,8 @@ export function buildEbaySellerKeywordDemandValidation(
       comparableIds: Set<string>
       sellerIds: Set<string>
       salesSellerIds: Set<string>
+      verifiedSellerIds: Set<string>
+      estimatedSellerIds: Set<string>
       activeListings: number
     }
   >()
@@ -285,6 +384,8 @@ export function buildEbaySellerKeywordDemandValidation(
         comparableIds: new Set<string>(),
         sellerIds: new Set<string>(),
         salesSellerIds: new Set<string>(),
+        verifiedSellerIds: new Set<string>(),
+        estimatedSellerIds: new Set<string>(),
         activeListings: 0,
       }
       current.verifiedSoldQuantity += comparable.verifiedSoldQuantity
@@ -293,6 +394,12 @@ export function buildEbaySellerKeywordDemandValidation(
       current.sellerIds.add(comparable.sellerUsername)
       if (comparable.salesQuantity > 0) {
         current.salesSellerIds.add(comparable.sellerUsername)
+      }
+      if (comparable.verifiedSoldQuantity > 0) {
+        current.verifiedSellerIds.add(comparable.sellerUsername)
+      }
+      if (comparable.estimatedSoldQuantity > 0) {
+        current.estimatedSellerIds.add(comparable.sellerUsername)
       }
       current.activeListings += 1
       keywordMap.set(term, current)
@@ -307,6 +414,8 @@ export function buildEbaySellerKeywordDemandValidation(
       salesQuantity: entry.verifiedSoldQuantity || entry.estimatedSoldQuantity,
       comparableListingCount: entry.comparableIds.size,
       sellerCount: entry.salesSellerIds.size || entry.sellerIds.size,
+      verifiedSellerCount: entry.verifiedSellerIds.size,
+      estimatedSellerCount: entry.estimatedSellerIds.size,
       activeListingCount: entry.activeListings,
       evidenceSource: entry.verifiedSoldQuantity > 0
         ? "VERIFIED_SOLD_HISTORY"
@@ -314,6 +423,19 @@ export function buildEbaySellerKeywordDemandValidation(
           ? "ACTIVE_LISTING_ESTIMATED_SALES"
           : "ACTIVE_LISTING_FREQUENCY",
       crossSellerSignal: (entry.salesSellerIds.size || entry.sellerIds.size) >= 2,
+      keywordRole: classifyKeywordRole(entry.term),
+      candidateConfirmed: termIsConfirmedByCandidate(entry.term, candidateText),
+      professionalEvidenceClass: entry.verifiedSoldQuantity > 0 && entry.verifiedSellerIds.size >= 2
+        ? "VERIFIED_HISTORICAL_MULTI_SELLER"
+        : entry.estimatedSoldQuantity > 0 && entry.estimatedSellerIds.size >= 2
+          ? "ESTIMATED_MULTI_SELLER_SIGNAL"
+          : (entry.verifiedSoldQuantity > 0 || entry.estimatedSoldQuantity > 0)
+            ? "SINGLE_SELLER_OBSERVATION"
+            : "ACTIVE_LISTING_FREQUENCY_ONLY",
+      safeToCallVerifiedSalesKeyword:
+        entry.verifiedSoldQuantity > 0 && entry.verifiedSellerIds.size >= 2,
+      safeToCallEstimatedOpportunity:
+        entry.estimatedSoldQuantity > 0 && entry.estimatedSellerIds.size >= 2,
     }))
     .sort((left, right) =>
       right.verifiedSoldQuantity - left.verifiedSoldQuantity ||
@@ -322,13 +444,101 @@ export function buildEbaySellerKeywordDemandValidation(
       right.comparableListingCount - left.comparableListingCount ||
       right.term.length - left.term.length
     )
-    .slice(0, 12)
+    .slice(0, 30)
 
-  const topSellingListings = [...eligible]
+  const verifiedHistoricalMultiSellerKeywords = keywords.filter(
+    (entry) => entry.professionalEvidenceClass === "VERIFIED_HISTORICAL_MULTI_SELLER"
+  )
+  const estimatedMultiSellerKeywords = keywords.filter(
+    (entry) => entry.professionalEvidenceClass === "ESTIMATED_MULTI_SELLER_SIGNAL"
+  )
+  const singleSellerKeywordObservations = keywords.filter(
+    (entry) => entry.professionalEvidenceClass === "SINGLE_SELLER_OBSERVATION"
+  )
+  const activeListingKeywordObservations = keywords.filter(
+    (entry) => entry.professionalEvidenceClass === "ACTIVE_LISTING_FREQUENCY_ONLY"
+  )
+  const strategyEvidencePool = verifiedHistoricalMultiSellerKeywords.length
+    ? verifiedHistoricalMultiSellerKeywords
+    : estimatedMultiSellerKeywords
+  const primaryKeywordCandidates = strategyEvidencePool
+    .filter((entry) =>
+      entry.candidateConfirmed &&
+      ["BUYER_INTENT_OR_USE_CASE", "CORE_PRODUCT_PHRASE"].includes(entry.keywordRole) &&
+      entry.term.includes(" ")
+    )
     .sort((left, right) =>
+      Number(right.keywordRole === "BUYER_INTENT_OR_USE_CASE") -
+        Number(left.keywordRole === "BUYER_INTENT_OR_USE_CASE") ||
+      right.term.split(" ").length - left.term.split(" ").length ||
+      right.salesQuantity - left.salesQuantity
+    )
+  const primarySearchPhrase = primaryKeywordCandidates[0]?.term ?? null
+  const secondarySearchTerms = strategyEvidencePool
+    .filter((entry) =>
+      entry.candidateConfirmed &&
+      entry.term !== primarySearchPhrase &&
+      !["PRODUCT_ATTRIBUTE", "PACKAGING_OR_FORMAT", "CONFIRMED_SPECIFICATION_OR_QUANTITY", "GENERIC_LOW_SIGNAL"].includes(entry.keywordRole)
+    )
+    .map((entry) => entry.term)
+    .filter((term) => !primarySearchPhrase?.includes(term))
+    .slice(0, 5)
+  const confirmedAttributes = keywords
+    .filter((entry) =>
+      entry.candidateConfirmed &&
+      ["PRODUCT_ATTRIBUTE", "PACKAGING_OR_FORMAT", "CONFIRMED_SPECIFICATION_OR_QUANTITY"].includes(entry.keywordRole)
+    )
+    .map((entry) => entry.term)
+    .slice(0, 6)
+  const termsToKeepExploratory = unique([
+    ...singleSellerKeywordObservations.map((entry) => entry.term),
+    ...strategyEvidencePool
+      .filter((entry) =>
+        !entry.candidateConfirmed ||
+        ["PRODUCT_ATTRIBUTE", "PACKAGING_OR_FORMAT", "GENERIC_LOW_SIGNAL"].includes(entry.keywordRole)
+      )
+      .map((entry) => entry.term),
+  ]).slice(0, 8)
+  const buyerIntent = buildBuyerIntentType([
+    primarySearchPhrase ?? "",
+    ...secondarySearchTerms,
+  ])
+  const strategyConfidence = verifiedHistoricalMultiSellerKeywords.length
+    ? "HIGH_VERIFIED_HISTORY"
+    : estimatedMultiSellerKeywords.length
+      ? "MEDIUM_ESTIMATED_MULTI_SELLER"
+      : "LOW_INSUFFICIENT_EVIDENCE"
+
+  const maxSalesSignal = Math.max(0, ...eligible.map((entry) => entry.salesQuantity))
+  const topSellingListings = eligible
+    .map((entry) => {
+      const salesSignalScore = maxSalesSignal > 0
+        ? Math.round((entry.salesQuantity / maxSalesSignal) * 100)
+        : 0
+      const evidenceQualityScore = entry.verifiedSoldQuantity > 0
+        ? 100
+        : entry.estimatedSoldQuantity > 0
+          ? 65
+          : 15
+      const professionalReferenceScore = Math.round(
+        entry.identityMatchScore * 0.6 +
+        salesSignalScore * 0.25 +
+        evidenceQualityScore * 0.15
+      )
+      return {
+        ...entry,
+        professionalReferenceScore,
+        salesSignalScore,
+        referenceRecommendation: entry.identityMatchQuality === "EXACT"
+          ? "PREFERRED_IDENTITY_REFERENCE"
+          : "POSSIBLE_REFERENCE_REQUIRES_HUMAN_CONFIRMATION",
+      }
+    })
+    .sort((left, right) =>
+      right.professionalReferenceScore - left.professionalReferenceScore ||
+      right.identityMatchScore - left.identityMatchScore ||
       right.verifiedSoldQuantity - left.verifiedSoldQuantity ||
       right.estimatedSoldQuantity - left.estimatedSoldQuantity ||
-      right.identityMatchScore - left.identityMatchScore ||
       right.sellerFeedbackScore - left.sellerFeedbackScore
     )
     .slice(0, 5)
@@ -343,6 +553,11 @@ export function buildEbaySellerKeywordDemandValidation(
   const demandValidationPassed =
     (soldEvidence.length >= 2 && totalVerifiedSoldQuantity >= 3) ||
     (estimatedEvidence.length >= 2 && totalEstimatedSoldQuantity >= 3)
+  const demandValidationBasis = soldEvidence.length >= 2 && totalVerifiedSoldQuantity >= 3
+    ? "VERIFIED_HISTORICAL_MULTI_SELLER"
+    : estimatedEvidence.length >= 2 && totalEstimatedSoldQuantity >= 3
+      ? "ESTIMATED_MULTI_SELLER_SIGNAL"
+      : "INSUFFICIENT_EVIDENCE"
   const pendingGuards = [
     !eligible.length ? "NEED_EBAY_COMPARABLE_LISTINGS" : "",
     !demandValidationPassed ? "NEED_EBAY_SALES_EVIDENCE" : "",
@@ -353,9 +568,18 @@ export function buildEbaySellerKeywordDemandValidation(
   const insightsAvailability = input.insightsAvailability ?? "NOT_CONFIGURED"
   const marketplaceInsightsStatus = insightsAvailability === "AVAILABLE"
     ? "MARKETPLACE_INSIGHTS_AUTHORIZED"
+    : insightsAvailability === "NOT_CONFIGURED"
+      ? "MARKETPLACE_INSIGHTS_NOT_ENABLED"
+      : insightsAvailability === "NOT_ENTITLED"
+        ? "MARKETPLACE_INSIGHTS_NOT_AUTHORIZED"
     : insightsAvailability === "REQUEST_FAILED"
       ? "MARKETPLACE_INSIGHTS_REQUEST_FAILED"
-      : "MARKETPLACE_INSIGHTS_NOT_AUTHORIZED"
+      : "MARKETPLACE_INSIGHTS_STATUS_UNKNOWN"
+  const keywordEvidenceHeading = verifiedHistoricalMultiSellerKeywords.length
+    ? "Keywords con ventas históricas verificadas entre vendedores"
+    : estimatedMultiSellerKeywords.length
+      ? "Keywords con señal de ventas estimada entre vendedores"
+      : "Keywords observadas sin evidencia de ventas suficiente"
 
   return {
     validationVersion: EBAY_SELLER_KEYWORD_DEMAND_VALIDATION_VERSION,
@@ -372,9 +596,52 @@ export function buildEbaySellerKeywordDemandValidation(
     totalEstimatedSoldQuantity,
     salesEvidenceAvailable: soldEvidence.length > 0 || estimatedEvidence.length > 0,
     demandValidationPassed,
+    demandValidationBasis,
     topSellingListings,
-    keywordsBringingSales: keywords.filter((entry) => entry.salesQuantity > 0),
+    keywordEvidenceHeading,
+    keywordEvidenceGroups: {
+      verifiedHistoricalMultiSeller: verifiedHistoricalMultiSellerKeywords,
+      estimatedMultiSellerSignal: estimatedMultiSellerKeywords,
+      singleSellerObservations: singleSellerKeywordObservations,
+      activeListingFrequencyOnly: activeListingKeywordObservations,
+    },
+    keywordsBringingSales: verifiedHistoricalMultiSellerKeywords,
+    keywordsWithEstimatedSalesSignal: estimatedMultiSellerKeywords,
+    singleSellerKeywordObservations,
     activeListingKeywords: keywords,
+    recommendedListingKeywordStructure: {
+      strategyConfidence,
+      primarySearchPhrase,
+      secondarySearchTerms,
+      confirmedAttributes,
+      termsToKeepExploratory,
+      titleFormula:
+        "Marca confirmada + frase principal + beneficio/uso relevante + variante + tamaño/cantidad confirmados",
+      exactCompetitorTitleCopied: false,
+      humanTitleReviewRequired: true,
+    },
+    highestPotentialBuyerIntent: {
+      ...buyerIntent,
+      highestPotentialSearchIntent: primarySearchPhrase,
+      supportingIntentTerms: secondarySearchTerms,
+      potentialLevel: verifiedHistoricalMultiSellerKeywords.length
+        ? "HIGH_WITH_VERIFIED_HISTORY"
+        : estimatedMultiSellerKeywords.length
+          ? "MEDIUM_WITH_ESTIMATED_SIGNAL"
+          : "LOW_UNVERIFIED",
+      evidenceBasis: demandValidationBasis,
+      explanation: primarySearchPhrase
+        ? `La intención con mayor señal es “${primarySearchPhrase}”; se prioriza por coincidencia con Luna y evidencia entre vendedores.`
+        : "No existe todavía una frase multi-vendedor suficientemente confiable para definir la intención principal.",
+      usesPersonalBuyerData: false,
+    },
+    professionalReferenceGuidance: {
+      recommendedComparableId: topSellingListings[0]?.comparableId ?? null,
+      recommendedComparableScore: topSellingListings[0]?.professionalReferenceScore ?? 0,
+      selectionRule:
+        "Priorizar identidad exacta, evidencia de ventas, consistencia de variante y reputación; nunca elegir sólo por cantidad estimada.",
+      finalHumanConfirmationRequired: true,
+    },
     pendingGuards,
     nextRecommendedRoute: demandValidationPassed
       ? "NEED_HUMAN_EBAY_IDENTITY_CONFIRMATION"

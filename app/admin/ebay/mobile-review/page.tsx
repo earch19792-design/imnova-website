@@ -459,6 +459,14 @@ export default function EbayMobileReviewPage() {
   }
 
   const sourceLabel = report.dataSource === "MARKET_RADAR_READONLY" ? "REAL RADAR" : report.dataSource === "DEMO_FIXTURE_ONLY" ? "DEMO" : loadState === "AUTH_REQUIRED" ? "SESIÓN REQUERIDA" : loadState === "RADAR_REQUEST_FAILED" ? "ERROR DE RADAR" : "SIN DATOS"
+  const professionalKeywordSignals = sellerKeywordDemand
+    ? sellerKeywordDemand.keywordEvidenceGroups.verifiedHistoricalMultiSeller.length
+      ? sellerKeywordDemand.keywordEvidenceGroups.verifiedHistoricalMultiSeller
+      : sellerKeywordDemand.keywordEvidenceGroups.estimatedMultiSellerSignal
+    : []
+  const professionalKeywordSignalsAreVerified = Boolean(
+    sellerKeywordDemand?.keywordEvidenceGroups.verifiedHistoricalMultiSeller.length
+  )
   const tabs: { id: View; label: string; count?: number }[] = [{ id: "top5", label: "Top 5", count: report.top5Candidates.length }, { id: "pinned", label: "En revisión", count: pinnedCandidates.length }, { id: "blocked", label: "Bloqueados", count: report.stockHoldCandidates.length }, { id: "decision", label: "Decisión" }]
 
   return (
@@ -568,28 +576,73 @@ export default function EbayMobileReviewPage() {
                         </div>
                         <p className="mt-3 text-sm leading-6 text-white/80">{sellerKeywordDemand.evidenceDisclaimer}</p>
                         {sellerKeywordDemand.insightsAvailability !== "AVAILABLE" && (
-                          <p className="mt-2 text-xs leading-5 text-amber-100"><strong>{sellerKeywordDemand.marketplaceInsightsStatus}</strong> · El historial vendido completo de 90 días requiere acceso de eBay a Marketplace Insights. Se usa Browse como fallback estimado cuando eBay expone esa señal; el análisis no la presenta como venta verificada.</p>
+                          <p className="mt-2 text-xs leading-5 text-amber-100"><strong>{sellerKeywordDemand.marketplaceInsightsStatus}</strong> · {sellerKeywordDemand.marketplaceInsightsStatus === "MARKETPLACE_INSIGHTS_NOT_ENABLED" ? "Marketplace Insights está desactivado por configuración; no se intentó usar ese permiso." : "eBay no entregó historial vendido autorizado para esta consulta."} Se usa Browse como fallback estimado cuando eBay expone esa señal; nunca se presenta como venta histórica verificada.</p>
                         )}
                       </div>
 
                       <section aria-labelledby="sales-keywords-heading">
-                        <h3 id="sales-keywords-heading" className="font-black">Keywords respaldadas por ventas</h3>
-                        {sellerKeywordDemand.keywordsBringingSales.length ? (
+                        <h3 id="sales-keywords-heading" className="font-black">{sellerKeywordDemand.keywordEvidenceHeading}</h3>
+                        <p className="mt-1 text-xs leading-5 text-white/65">
+                          {professionalKeywordSignalsAreVerified
+                            ? "Estas palabras tienen historial vendido oficial en al menos dos vendedores comparables."
+                            : "Estas palabras se repiten en al menos dos vendedores con cantidad vendida estimada por eBay. No son ventas históricas verificadas."}
+                        </p>
+                        {professionalKeywordSignals.length ? (
                           <ul className="mt-2 grid gap-2 sm:grid-cols-2">
-                            {sellerKeywordDemand.keywordsBringingSales.slice(0, 8).map((keyword) => (
+                            {professionalKeywordSignals.slice(0, 8).map((keyword) => (
                               <li key={keyword.term} className="rounded-2xl border border-white/15 bg-black/25 p-3">
                                 <p className="font-black text-cyan-50">{keyword.term}</p>
-                                <p className="mt-1 text-xs text-white/65">Señal: {keyword.salesQuantity} ventas · {keyword.sellerCount} vendedor{keyword.sellerCount === 1 ? "" : "es"}</p>
+                                <p className="mt-1 text-xs text-white/65">
+                                  {professionalKeywordSignalsAreVerified
+                                    ? `Historial verificado: ${keyword.verifiedSoldQuantity}`
+                                    : `Señal estimada: ${keyword.estimatedSoldQuantity}`} · {professionalKeywordSignalsAreVerified ? keyword.verifiedSellerCount : keyword.estimatedSellerCount} vendedores
+                                </p>
+                                <p className="mt-1 text-[11px] font-bold text-white/45">Rol: {keyword.keywordRole.replaceAll("_", " ")}</p>
                               </li>
                             ))}
                           </ul>
                         ) : (
-                          <p className="mt-2 rounded-2xl border border-amber-200/25 bg-amber-200/[0.07] p-3 text-sm text-amber-50">Todavía no hay una señal de ventas verificable. Las palabras de listings activos no se marcarán como ganadoras.</p>
+                          <p className="mt-2 rounded-2xl border border-amber-200/25 bg-amber-200/[0.07] p-3 text-sm text-amber-50">Todavía no hay señal suficiente entre varios vendedores. Ninguna palabra se marcará como keyword ganadora.</p>
                         )}
                       </section>
 
+                      {sellerKeywordDemand.singleSellerKeywordObservations.length > 0 && (
+                        <details className="rounded-2xl border border-amber-200/20 bg-amber-200/[0.05] p-3">
+                          <summary className="cursor-pointer text-sm font-black">Señales exploratorias de un solo vendedor</summary>
+                          <p className="mt-2 text-xs leading-5 text-amber-50">Sirven para investigar, pero no se consideran keywords ganadoras ni evidencia de mercado.</p>
+                          <ul className="mt-2 flex flex-wrap gap-2">
+                            {sellerKeywordDemand.singleSellerKeywordObservations.slice(0, 8).map((keyword) => (
+                              <li key={keyword.term} className="rounded-full border border-amber-200/25 px-3 py-1.5 text-xs">{keyword.term} · 1 vendedor</li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+
+                      <section aria-labelledby="listing-keyword-structure-heading" className="rounded-2xl border border-violet-200/25 bg-violet-200/[0.07] p-3">
+                        <h3 id="listing-keyword-structure-heading" className="font-black">Estructura profesional recomendada</h3>
+                        <dl className="mt-3 grid gap-2 text-sm">
+                          <div><dt className="text-white/55">Frase principal</dt><dd className="font-black text-violet-50">{sellerKeywordDemand.recommendedListingKeywordStructure.primarySearchPhrase ?? "Pendiente por falta de señal multi-vendedor"}</dd></div>
+                          <div><dt className="text-white/55">Términos secundarios</dt><dd className="font-bold">{sellerKeywordDemand.recommendedListingKeywordStructure.secondarySearchTerms.join(" · ") || "Ninguno confirmado"}</dd></div>
+                          <div><dt className="text-white/55">Atributos confirmados en Luna</dt><dd className="font-bold">{sellerKeywordDemand.recommendedListingKeywordStructure.confirmedAttributes.join(" · ") || "Ninguno confirmado"}</dd></div>
+                          <div><dt className="text-white/55">Fórmula de título</dt><dd className="leading-5">{sellerKeywordDemand.recommendedListingKeywordStructure.titleFormula}</dd></div>
+                          <div><dt className="text-white/55">Confianza</dt><dd className="font-black">{sellerKeywordDemand.recommendedListingKeywordStructure.strategyConfidence.replaceAll("_", " ")}</dd></div>
+                        </dl>
+                        {sellerKeywordDemand.recommendedListingKeywordStructure.termsToKeepExploratory.length > 0 && (
+                          <p className="mt-3 text-xs leading-5 text-white/60">Mantener fuera del título principal hasta confirmar: {sellerKeywordDemand.recommendedListingKeywordStructure.termsToKeepExploratory.join(" · ")}.</p>
+                        )}
+                      </section>
+
+                      <section aria-labelledby="buyer-intent-heading" className="rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.07] p-3">
+                        <h3 id="buyer-intent-heading" className="font-black">Intención de compra con mayor potencial</h3>
+                        <p className="mt-2 font-black text-emerald-50">{sellerKeywordDemand.highestPotentialBuyerIntent.buyerProfileLabel}</p>
+                        <p className="mt-1 text-sm leading-6 text-white/75">{sellerKeywordDemand.highestPotentialBuyerIntent.explanation}</p>
+                        <div className="mt-2 flex flex-wrap gap-2"><StatusPill>{sellerKeywordDemand.highestPotentialBuyerIntent.intentType.replaceAll("_", " ")}</StatusPill><StatusPill tone={professionalKeywordSignalsAreVerified ? "good" : "warning"}>{sellerKeywordDemand.highestPotentialBuyerIntent.potentialLevel.replaceAll("_", " ")}</StatusPill></div>
+                        <p className="mt-2 text-[11px] text-white/50">Perfil de intención agregado; no utiliza datos personales de compradores.</p>
+                      </section>
+
                       <section aria-labelledby="top-selling-heading">
-                        <h3 id="top-selling-heading" className="font-black">Listings comparables con mayor señal</h3>
+                        <h3 id="top-selling-heading" className="font-black">Comparables para escoger la mejor referencia</h3>
+                        <p className="mt-1 text-xs leading-5 text-white/65">El orden combina identidad, calidad de evidencia, señal comercial y reputación. La cantidad estimada por sí sola no decide.</p>
                         <div className="mt-2 grid gap-3">
                           {sellerKeywordDemand.topSellingListings.map((comparable, index) => (
                             <article key={comparable.comparableId} className={`rounded-2xl border p-3 ${ebayListingUrl === comparable.itemWebUrl ? "border-cyan-200/60 bg-cyan-200/[0.08]" : "border-white/15 bg-black/25"}`}>
@@ -600,7 +653,7 @@ export default function EbayMobileReviewPage() {
                                   <div className="flex size-20 shrink-0 items-center justify-center rounded-xl bg-white/10 text-center text-[10px] text-white/60">Sin imagen</div>
                                 )}
                                 <div className="min-w-0 flex-1">
-                                  <p className="text-xs font-black text-cyan-100">#{index + 1} · match {comparable.identityMatchScore}%</p>
+                                  <p className="text-xs font-black text-cyan-100">#{index + 1} · score profesional {comparable.professionalReferenceScore}% · match {comparable.identityMatchScore}%</p>
                                   <p className="mt-1 text-sm font-bold leading-5">{comparable.title}</p>
                                   <p className="mt-1 text-xs text-white/60">{comparable.sellerUsername} · ${comparable.price.toFixed(2)} {comparable.currency}</p>
                                   <p className="mt-1 text-xs font-bold text-emerald-100">
@@ -610,6 +663,7 @@ export default function EbayMobileReviewPage() {
                                         ? `${comparable.estimatedSoldQuantity} ventas estimadas por eBay`
                                         : "Listing activo; ventas no demostradas"}
                                   </p>
+                                  <p className="mt-1 text-[11px] font-bold text-white/45">{comparable.referenceRecommendation.replaceAll("_", " ")}</p>
                                 </div>
                               </div>
                               <div className="mt-3 grid gap-2 sm:grid-cols-2">
