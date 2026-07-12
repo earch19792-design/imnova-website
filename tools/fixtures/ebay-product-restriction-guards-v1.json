@@ -1,0 +1,88 @@
+{
+  "version": "EBAY-MARKET-VALIDATION-WITH-RESTRICTION-GUARDS-V1",
+  "basePendingGuards": [
+    "missingEbayPrice",
+    "missingMargin",
+    "missingCategoryId",
+    "missingDemandValidation"
+  ],
+  "cases": [
+    {
+      "id": "it-mega-frizz-hair-spray",
+      "input": {
+        "title": "IT Mega Frizz Hair Spray Bonus, 10 oz.",
+        "productName": "IT Mega Frizz Hair Spray Bonus, 10 oz.",
+        "handle": "it-mega-frizz-hair-spray-bonus-10-oz",
+        "productType": "Hair Care",
+        "imageReference": "https://cdn.shopify.com/example/it-mega-frizz-hair-spray.png"
+      },
+      "expectedRiskType": "AEROSOL_OR_SPRAY",
+      "expectedGuards": [
+        "NEED_SHIPPING_RESTRICTION_REVIEW",
+        "NEED_HAZMAT_OR_AEROSOL_REVIEW"
+      ]
+    },
+    {
+      "id": "rust-oleum-striping-paint-spray",
+      "input": {
+        "title": "Blue Rust-Oleum Striping Paint Spray",
+        "handle": "blue-rust-oleum-striping-paint-spray",
+        "categoryText": "Paint and marking supplies"
+      },
+      "expectedRiskType": "PAINT_SPRAY_OR_FLAMMABLE",
+      "expectedGuards": [
+        "NEED_SHIPPING_RESTRICTION_REVIEW",
+        "NEED_HAZMAT_OR_AEROSOL_REVIEW"
+      ]
+    },
+    {
+      "id": "glisten-dishwasher-detergent",
+      "input": {
+        "title": "Glisten Dishwasher Detergent",
+        "productType": "Household Cleaner"
+      },
+      "expectedRiskType": "CHEMICAL_PRODUCT_REVIEW",
+      "expectedGuards": [
+        "NEED_SHIPPING_RESTRICTION_REVIEW",
+        "NEED_CHEMICAL_PRODUCT_REVIEW"
+      ]
+    },
+    {
+      "id": "healthy-origins-vitamin-d3",
+      "input": {
+        "title": "Healthy Origins Vitamin D3",
+        "categoryText": "Vitamins and supplements"
+      },
+      "expectedRiskType": "HEALTH_CLAIMS_REVIEW",
+      "expectedGuards": ["NEED_HEALTH_CLAIMS_REVIEW"]
+    },
+    {
+      "id": "baby-brezza-sterilizer",
+      "input": {
+        "title": "Baby Brezza Sterilizer",
+        "productType": "Electrical baby device"
+      },
+      "expectedRiskType": "BABY_PRODUCT_REVIEW",
+      "expectedGuards": ["NEED_BABY_PRODUCT_REVIEW"]
+    },
+    {
+      "id": "ram-holder",
+      "input": {
+        "title": "RAM Holder",
+        "description": "Device holder compatible with selected mounts"
+      },
+      "expectedRiskType": "BRAND_OR_COMPATIBILITY_REVIEW",
+      "expectedGuards": ["NEED_BRAND_REVIEW"]
+    },
+    {
+      "id": "paper-towel-holder",
+      "input": {
+        "title": "Stainless Steel Paper Towel Holder",
+        "handle": "stainless-steel-paper-towel-holder",
+        "productType": "Kitchen Organization"
+      },
+      "expectedRiskType": null,
+      "expectedGuards": []
+    }
+  ]
+}
