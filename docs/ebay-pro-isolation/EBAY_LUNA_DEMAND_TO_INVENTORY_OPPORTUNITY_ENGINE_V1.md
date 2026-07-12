@@ -163,6 +163,27 @@ Client ID and client secret are not sufficient because Traffic Report requires s
 
 The access token is held in memory for the request, cleared after use, never returned and never logged.
 
+The authenticated Admin dashboard is available at:
+
+`/admin/ebay/seller-performance`
+
+It supports official Traffic Report analysis by day or by up to 200 seller
+listing IDs, with a maximum 90-day window. It maps eBay's positional
+`metricValues` against the returned `header.metrics`, preserves unknown fields
+for forward compatibility, and displays:
+
+- total impressions
+- total listing views
+- click-through rate calculated from search-result views and impressions
+- completed transactions
+- sales conversion calculated from transactions and total views
+- trend chart and row-level report details
+
+The dashboard requires an authenticated IMNOVA Admin session. The refresh token
+remains server-only, and the panel never exposes OAuth credentials to the
+browser. The report applies only to IMNOVA's seller account and is not evidence
+of competitor sales.
+
 ## Mobile review
 
 The existing eBay demand action now also returns and displays:
