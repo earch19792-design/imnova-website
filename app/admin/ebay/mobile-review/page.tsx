@@ -50,6 +50,8 @@ export default function EbayMobileReviewPage() {
   const [report, setReport] = useState(emptyReport)
   const [state, setState] = useState(() => buildInitialMobileReviewState(toMobileFixture([])))
   const [stockQuantity, setStockQuantity] = useState("20")
+  const [lunaPrice, setLunaPrice] = useState("2.00")
+  const [lunaPriceConfirmed, setLunaPriceConfirmed] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadMessage, setLoadMessage] = useState("Cargando Market Radar read-only…")
   const [lastActionMessage, setLastActionMessage] = useState("Todavía no realizaste ninguna acción.")
@@ -102,7 +104,15 @@ export default function EbayMobileReviewPage() {
     top5Candidates: report.top5Candidates,
     selectedCandidate: selectedRadarCandidate,
     localConfirmationsComplete: Boolean(state.sameProductConfirmed && state.stockQuantityConfirmed && state.imageConfirmed),
-  }), [report, selectedRadarCandidate, state.sameProductConfirmed, state.stockQuantityConfirmed, state.imageConfirmed])
+    manualConfirmations: {
+      sameProductConfirmed: state.sameProductConfirmed,
+      stockConfirmed: (state.stockQuantityConfirmed ?? 0) > 0,
+      stockQuantityConfirmed: state.stockQuantityConfirmed,
+      imageConfirmed: state.imageConfirmed,
+      lunaPriceConfirmed,
+      lunaPrice: lunaPriceConfirmed ? Number(lunaPrice) : null,
+    },
+  }), [report, selectedRadarCandidate, state.sameProductConfirmed, state.stockQuantityConfirmed, state.imageConfirmed, lunaPriceConfirmed, lunaPrice])
   const summary = useMemo(() => JSON.stringify({
     ...JSON.parse(buildMobileReviewCopyPasteSummary(state)),
     dataSource: report.dataSource,
@@ -112,10 +122,14 @@ export default function EbayMobileReviewPage() {
     primaryBlockingReason: radarGuards.primaryBlockingReason,
     showScoreTieWarning: radarGuards.showScoreTieWarning,
     needsScoreDisambiguation: radarGuards.needsScoreDisambiguation,
+    manualConfirmationReconciliation: radarGuards.reconciliation,
     canPublish: false,
   }, null, 2), [state, report.dataSource, radarGuards])
 
   const act = (action: Parameters<typeof applyMobileReviewAction>[1]) => {
+    if (action.type === "SELECT_CANDIDATE" || action.type === "MARK_UNAVAILABLE") {
+      setLunaPriceConfirmed(false)
+    }
     if (action.type === "APPROVE_B2_RUN_PREFLIGHT") {
       const attempted = buildMobileReviewRadarGuardEnforcement({
         dataSource: report.dataSource,
@@ -124,6 +138,14 @@ export default function EbayMobileReviewPage() {
         selectedCandidate: selectedRadarCandidate,
         approveAttempt: true,
         localConfirmationsComplete: Boolean(state.sameProductConfirmed && state.stockQuantityConfirmed && state.imageConfirmed),
+        manualConfirmations: {
+          sameProductConfirmed: state.sameProductConfirmed,
+          stockConfirmed: (state.stockQuantityConfirmed ?? 0) > 0,
+          stockQuantityConfirmed: state.stockQuantityConfirmed,
+          imageConfirmed: state.imageConfirmed,
+          lunaPriceConfirmed,
+          lunaPrice: lunaPriceConfirmed ? Number(lunaPrice) : null,
+        },
       })
       if (attempted.approveAttemptBlocked) {
         setLastActionMessage(`No se puede aprobar B2-RUN todavía. Guardas pendientes: ${attempted.pendingGuards.join(", ") || attempted.approveBlockedReason}.`)
@@ -243,6 +265,7 @@ export default function EbayMobileReviewPage() {
           <div className="mt-4 space-y-3">
             <button type="button" disabled={!state.selectedCandidateRank} onClick={() => act({ type: "CONFIRM_SAME_PRODUCT" })} className="min-h-12 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black disabled:opacity-30">CONFIRM_SAME_PRODUCT {state.sameProductConfirmed ? "✓" : ""}</button>
             <div className="flex gap-2"><input aria-label="Cantidad de stock confirmada" inputMode="numeric" value={stockQuantity} onChange={(event) => setStockQuantity(event.target.value)} className="min-w-0 flex-1 rounded-2xl border border-white/15 bg-black/30 px-4 text-lg font-black" /><button type="button" disabled={!state.selectedCandidateRank} onClick={() => act({ type: "CONFIRM_STOCK_QTY", quantity: Number(stockQuantity) })} className="min-h-12 rounded-2xl bg-cyan-200 px-4 py-3 text-xs font-black text-black disabled:opacity-30">CONFIRM_STOCK_QTY</button></div>
+            <div className="flex gap-2"><input aria-label="Precio Luna confirmado" inputMode="decimal" value={lunaPrice} onChange={(event) => { setLunaPrice(event.target.value); setLunaPriceConfirmed(false) }} className="min-w-0 flex-1 rounded-2xl border border-white/15 bg-black/30 px-4 text-lg font-black" /><button type="button" disabled={!state.selectedCandidateRank || !(Number(lunaPrice) > 0)} onClick={() => { setLunaPriceConfirmed(true); setLastActionMessage(`Precio Luna confirmado manualmente: USD ${Number(lunaPrice).toFixed(2)}.`) }} className="min-h-12 rounded-2xl bg-cyan-200 px-4 py-3 text-xs font-black text-black disabled:opacity-30">CONFIRM_LUNA_PRICE:{lunaPrice} {lunaPriceConfirmed ? "✓" : ""}</button></div>
             <button type="button" disabled={!state.selectedCandidateRank} onClick={() => act({ type: "CONFIRM_IMAGE_OK" })} className="min-h-12 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black disabled:opacity-30">CONFIRM_IMAGE_OK {state.imageConfirmed ? "✓" : ""}</button>
             <button type="button" disabled={!state.selectedCandidateRank || report.fixtureUsed} onClick={() => act({ type: "APPROVE_B2_RUN_PREFLIGHT" })} className="min-h-14 w-full rounded-2xl bg-emerald-300 px-4 py-4 text-sm font-black text-black disabled:opacity-30">APPROVE_B2_RUN_PREFLIGHT</button>
             <button type="button" onClick={() => act({ type: "REQUEST_LUNA_SCAN_REFRESH" })} className="min-h-12 w-full rounded-2xl border border-amber-200/25 px-4 py-3 text-sm font-black text-amber-100">REQUEST_LUNA_SCAN_REFRESH</button>

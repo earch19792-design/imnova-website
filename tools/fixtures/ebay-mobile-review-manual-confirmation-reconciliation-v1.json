@@ -1,0 +1,21 @@
+{
+  "selectedCandidateRank": 1,
+  "confirmations": {
+    "sameProductConfirmed": true,
+    "stockConfirmed": true,
+    "stockQuantityConfirmed": 2,
+    "imageConfirmed": true,
+    "lunaPriceConfirmed": true,
+    "lunaPrice": 2
+  },
+  "expected": {
+    "stockSource": "HUMAN_MOBILE_CONFIRMED",
+    "stockWarning": "STOCK_LIMITED_WARNING",
+    "imageReviewSource": "HUMAN_MOBILE_CONFIRMED",
+    "lunaPriceSource": "HUMAN_MOBILE_CONFIRMED",
+    "productMatchSource": "HUMAN_MOBILE_CONFIRMED",
+    "nextRecommendedRoute": "NEED_EBAY_MARKET_VALIDATION",
+    "canProceedToB2RunPreflight": false,
+    "canPublish": false
+  }
+}

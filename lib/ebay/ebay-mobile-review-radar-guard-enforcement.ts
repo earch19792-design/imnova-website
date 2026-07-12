@@ -1,4 +1,6 @@
 import type { RealRadarCandidate } from "@/lib/ebay/ebay-mobile-review-real-radar-connector"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { reconcileMobileConfirmationsWithRadarGuards, type MobileManualConfirmations } from "./ebay-mobile-review-manual-confirmation-reconciliation.ts"
 
 export type RadarGuardName = "missingSnapshot" | "missingVariant" | "missingSku" | "stockUnknown" | "stockAvailabilityOnly" | "stockStale" | "missingLunaPrice" | "missingEbayPrice" | "missingMargin" | "missingCategoryId" | "missingDemandValidation" | "missingImageValidation" | "riskHold" | "outOfStock" | "staleMissingFromSource"
 
@@ -9,6 +11,7 @@ type GuardInput = {
   selectedCandidate?: RealRadarCandidate | null
   approveAttempt?: boolean
   localConfirmationsComplete?: boolean
+  manualConfirmations?: MobileManualConfirmations
 }
 
 const includesMissing = (candidate: RealRadarCandidate, value: string) =>
@@ -55,7 +58,11 @@ export function buildMobileReviewRadarGuardEnforcement(input: GuardInput) {
     const pendingGuards = getCandidatePendingRadarGuards(candidate)
     return { candidateRank: candidate.candidateRank, candidateId: candidate.candidateId, productName: candidate.productName, pendingGuards, primaryBlockingReason: getPrimaryRadarGuardRoute(pendingGuards), canProceedToB2RunPreflight: false }
   })
-  const pendingGuards = selectedCandidate ? getCandidatePendingRadarGuards(selectedCandidate) : []
+  const rawPendingGuards = selectedCandidate ? getCandidatePendingRadarGuards(selectedCandidate) : []
+  const reconciliation = selectedCandidate && input.manualConfirmations
+    ? reconcileMobileConfirmationsWithRadarGuards(selectedCandidate, rawPendingGuards, input.manualConfirmations)
+    : null
+  const pendingGuards = (reconciliation?.pendingGuards ?? rawPendingGuards) as RadarGuardName[]
   const primaryBlockingReason = getPrimaryRadarGuardRoute(pendingGuards)
   const scores = input.top5Candidates.map((candidate) => candidate.opportunityScore)
   const scoreTie = scores.length === 5 && new Set(scores).size === 1
@@ -79,6 +86,7 @@ export function buildMobileReviewRadarGuardEnforcement(input: GuardInput) {
     needsScoreDisambiguation: scoreTie,
     canProceedToB2RunPreflight,
     canPublish: false,
-    nextRecommendedRoute: primaryBlockingReason ?? (canProceedToB2RunPreflight ? "READY_FOR_B2_RUN_PREFLIGHT" : validSource && input.realRadarTop5Loaded ? "NEED_MOBILE_REVIEW_OF_REAL_TOP5" : "NEED_REAL_RADAR_TOP5"),
+    reconciliation,
+    nextRecommendedRoute: reconciliation?.nextRecommendedRoute ?? primaryBlockingReason ?? (canProceedToB2RunPreflight ? "READY_FOR_B2_RUN_PREFLIGHT" : validSource && input.realRadarTop5Loaded ? "NEED_MOBILE_REVIEW_OF_REAL_TOP5" : "NEED_REAL_RADAR_TOP5"),
   }
 }
