@@ -31,6 +31,7 @@ import {
   buildLunaEbayIdentityComparison,
 } from "@/lib/ebay/ebay-luna-ebay-identity-comparison"
 import type { EbaySellerKeywordDemandReport } from "@/lib/ebay/ebay-seller-keyword-demand-validation"
+import type { EbayLunaOpportunityAssessment } from "@/lib/ebay/ebay-luna-demand-opportunity-engine"
 import {
   MOBILE_REVIEW_PINNED_STORAGE_KEY,
   parsePinnedCandidates,
@@ -200,6 +201,7 @@ export default function EbayMobileReviewPage() {
     compatibleReference: false,
   })
   const [sellerKeywordDemand, setSellerKeywordDemand] = useState<EbaySellerKeywordDemandReport | null>(null)
+  const [opportunityAssessment, setOpportunityAssessment] = useState<EbayLunaOpportunityAssessment | null>(null)
   const [sellerKeywordDemandLoading, setSellerKeywordDemandLoading] = useState(false)
   const [sellerKeywordDemandError, setSellerKeywordDemandError] = useState("")
   const [loading, setLoading] = useState(true)
@@ -223,7 +225,7 @@ export default function EbayMobileReviewPage() {
         return loadMarketRadarReadonlyDashboard(`Bearer ${data.session.access_token}`)
       })()
       const nextReport = buildMobileReviewRealRadarConnector({ products, mode: demoRequested ? "DEMO_FIXTURE_ONLY" : "REAL_READONLY" })
-      setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setSellerKeywordDemandError("")
+      setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError("")
       if (nextReport.realRadarCandidatesCount === 0) { setLoadState("RADAR_EMPTY"); setLoadMessage("Radar respondió, pero no devolvió productos. Ejecuta o revisa el scan antes de decidir.") }
       else { setLoadState("READY"); setLoadMessage(`${nextReport.top5Candidates.length} candidatos disponibles de ${nextReport.realRadarCandidatesCount} productos observados.`) }
     } catch (error) {
@@ -271,7 +273,7 @@ export default function EbayMobileReviewPage() {
   }, [radarGuards.pendingGuards, sellerKeywordDemand])
   const marketValidation = useMemo(() => buildEbayMarketValidationSelectedCandidate({ selectedCandidate: selectedRadarCandidate, humanConfirmationsComplete: localConfirmationsComplete, pendingGuards: [...demandAwareRadarGuards, ...(selectedRadarCandidate && !identityComparison.identityComparisonComplete ? identityComparison.pendingGuards : [])] }), [selectedRadarCandidate, localConfirmationsComplete, demandAwareRadarGuards, identityComparison.identityComparisonComplete, identityComparison.pendingGuards])
   const effectiveDecision = useMemo(() => buildMobileReviewEffectiveDecision({ dataSource: report.dataSource, selectedCandidateName: decision.selectedCandidateName, pendingGuards: marketValidation.pendingGuards, primaryBlockingReason: localConfirmationsComplete ? marketValidation.nextRecommendedRoute : radarGuards.primaryBlockingReason, localConfirmationsComplete, holdForReview: state.holdForReview, refreshRequested: state.refreshRequested }), [report.dataSource, decision.selectedCandidateName, marketValidation, radarGuards.primaryBlockingReason, localConfirmationsComplete, state.holdForReview, state.refreshRequested])
-  const summary = useMemo(() => JSON.stringify({ ...JSON.parse(buildMobileReviewCopyPasteSummary(state)), dataSource: report.dataSource, mobileDecisionPersistence: "BROWSER_STATE_ONLY", decisionPersistence: "BROWSER_STATE_OR_LOCAL_STORAGE", officialApprovalRecord: false, effectiveDecision, lunaEbayIdentityComparison: identityComparison, ebaySellerKeywordDemand: sellerKeywordDemand, marketValidationSelectedCandidate: marketValidation, pendingGuards: selectedRadarCandidate ? marketValidation.pendingGuards : null, guardsEvaluated: Boolean(selectedRadarCandidate), manualConfirmationReconciliation: radarGuards.reconciliation, pinnedCandidateContinuity: pinnedContinuity, canPublish: false }, null, 2), [state, report.dataSource, effectiveDecision, identityComparison, sellerKeywordDemand, marketValidation, selectedRadarCandidate, radarGuards.reconciliation, pinnedContinuity])
+  const summary = useMemo(() => JSON.stringify({ ...JSON.parse(buildMobileReviewCopyPasteSummary(state)), dataSource: report.dataSource, mobileDecisionPersistence: "BROWSER_STATE_ONLY", decisionPersistence: "BROWSER_STATE_OR_LOCAL_STORAGE", officialApprovalRecord: false, effectiveDecision, lunaEbayIdentityComparison: identityComparison, ebaySellerKeywordDemand: sellerKeywordDemand, ebayLunaOpportunityAssessment: opportunityAssessment, marketValidationSelectedCandidate: marketValidation, pendingGuards: selectedRadarCandidate ? marketValidation.pendingGuards : null, guardsEvaluated: Boolean(selectedRadarCandidate), manualConfirmationReconciliation: radarGuards.reconciliation, pinnedCandidateContinuity: pinnedContinuity, canPublish: false }, null, 2), [state, report.dataSource, effectiveDecision, identityComparison, sellerKeywordDemand, opportunityAssessment, marketValidation, selectedRadarCandidate, radarGuards.reconciliation, pinnedContinuity])
 
   useEffect(() => {
     if (!selectedRadarCandidate || !localConfirmationsComplete) return
@@ -326,7 +328,7 @@ export default function EbayMobileReviewPage() {
 
   const actPinned = (action: PinnedCandidateAction) => { setPinnedCandidates((current) => applyPinnedCandidateAction(current, action, report.allCandidates)); setLastActionMessage(`Acción de candidato en revisión: ${action.type}. Guardada solo en este navegador.`) }
   const act = (action: Parameters<typeof applyMobileReviewAction>[1]) => {
-    if (action.type === "SELECT_CANDIDATE" || action.type === "MARK_UNAVAILABLE") { setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setSellerKeywordDemandError("") }
+    if (action.type === "SELECT_CANDIDATE" || action.type === "MARK_UNAVAILABLE") { setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError("") }
     if (action.type === "APPROVE_B2_RUN_PREFLIGHT") { setLastActionMessage(`B2-RUN continúa bloqueado. Próximo paso: ${routeLabel(effectiveDecision.nextRecommendedRoute)}.`); return }
     setState((current) => applyMobileReviewAction(current, action))
     const messages: Record<string, string> = { MARK_UNAVAILABLE: "Producto marcado no disponible en este navegador. Puedes deshacer recargando antes de persistir otro estado.", SELECT_CANDIDATE: "Producto seleccionado para evaluar; todavía no es una recomendación. Completa las tres confirmaciones.", CONFIRM_SAME_PRODUCT: "Identidad del producto confirmada localmente.", CONFIRM_STOCK_QTY: `Stock confirmado: ${stockQuantity} unidades.`, CONFIRM_IMAGE_OK: "Precio e imagen de Luna confirmados localmente.", REQUEST_LUNA_SCAN_REFRESH: "Se marcó localmente que Radar necesita un refresco; todavía no se envió una solicitud.", HOLD_FOR_REVIEW: "La revisión quedó pausada en esta sesión." }
@@ -355,6 +357,7 @@ export default function EbayMobileReviewPage() {
     setSellerKeywordDemandLoading(true)
     setSellerKeywordDemandError("")
     setSellerKeywordDemand(null)
+    setOpportunityAssessment(null)
     setEbayListingUrl("")
     setEbayObservedTitle("")
     setEbayReferenceOpened(false)
@@ -376,17 +379,35 @@ export default function EbayMobileReviewPage() {
           variantTitle: selectedRadarCandidate.variantTitle,
           supplierSku: selectedRadarCandidate.supplierSku,
           categoryId: selectedRadarCandidate.categoryId,
+          candidateKey: `luna-portex:${selectedRadarCandidate.supplierProductId}:${selectedRadarCandidate.supplierVariantId ?? selectedRadarCandidate.supplierSku ?? "unknown"}`,
+          marketRadarProductId: selectedRadarCandidate.marketRadarProductId,
+          supplierProductId: selectedRadarCandidate.supplierProductId,
+          supplierVariantId: selectedRadarCandidate.supplierVariantId,
+          brand: selectedRadarCandidate.brand,
+          gtin: selectedRadarCandidate.gtin,
+          productType: selectedRadarCandidate.productType,
+          supplierCost: lunaPriceConfirmed ? Number(lunaPrice) : selectedRadarCandidate.lunaPrice,
+          available: selectedRadarCandidate.availabilityStatus === "AVAILABLE",
+          inventoryQuantity: state.stockQuantityConfirmed ?? selectedRadarCandidate.stockQuantity,
+          stockCapturedAt: selectedRadarCandidate.lastSnapshotAt,
+          weight: selectedRadarCandidate.weight,
+          weightUnit: selectedRadarCandidate.weightUnit,
+          imageUrls: selectedRadarCandidate.imageReference ? [selectedRadarCandidate.imageReference] : [],
+          imageAuthorized: state.imageConfirmed,
+          restrictionGuards: marketValidation.restrictionGuards,
         }),
       })
       const payload = await response.json() as {
         success?: boolean
         error?: string
         report?: EbaySellerKeywordDemandReport
+        opportunityAssessment?: EbayLunaOpportunityAssessment
       }
       if (!response.ok || !payload.success || !payload.report) {
         throw new Error(payload.error || "EBAY_READONLY_MARKET_VALIDATION_FAILED")
       }
       setSellerKeywordDemand(payload.report)
+      setOpportunityAssessment(payload.opportunityAssessment ?? null)
       setLastActionMessage(
         `eBay analizado en modo read-only: ${payload.report.eligibleComparableListings} comparables y ${payload.report.sellersAnalyzed} vendedores.`
       )
@@ -639,6 +660,44 @@ export default function EbayMobileReviewPage() {
                         <div className="mt-2 flex flex-wrap gap-2"><StatusPill>{sellerKeywordDemand.highestPotentialBuyerIntent.intentType.replaceAll("_", " ")}</StatusPill><StatusPill tone={professionalKeywordSignalsAreVerified ? "good" : "warning"}>{sellerKeywordDemand.highestPotentialBuyerIntent.potentialLevel.replaceAll("_", " ")}</StatusPill></div>
                         <p className="mt-2 text-[11px] text-white/50">Perfil de intención agregado; no utiliza datos personales de compradores.</p>
                       </section>
+
+                      {opportunityAssessment && (
+                        <section aria-labelledby="professional-opportunity-heading" className="rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.07] p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h3 id="professional-opportunity-heading" className="font-black">Oportunidad profesional Luna ↔ eBay</h3>
+                              <p className="mt-1 text-xs leading-5 text-white/65">Combina identidad, demanda, economía, competencia, stock y preparación del listing. No garantiza ventas.</p>
+                            </div>
+                            <span className="rounded-2xl bg-cyan-100 px-3 py-2 text-xl font-black text-black">{Math.round(opportunityAssessment.scores.opportunityScore)}</span>
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
+                            <div className="rounded-xl bg-black/25 p-2"><p className="text-white/50">Demanda</p><p className="mt-1 font-black">{Math.round(opportunityAssessment.scores.demandScore)}</p></div>
+                            <div className="rounded-xl bg-black/25 p-2"><p className="text-white/50">Economía</p><p className="mt-1 font-black">{Math.round(opportunityAssessment.scores.economicsScore)}</p></div>
+                            <div className="rounded-xl bg-black/25 p-2"><p className="text-white/50">Identidad</p><p className="mt-1 font-black">{Math.round(opportunityAssessment.scores.identityScore)}</p></div>
+                            <div className="rounded-xl bg-black/25 p-2"><p className="text-white/50">Competencia</p><p className="mt-1 font-black">{Math.round(opportunityAssessment.scores.competitionScore)}</p></div>
+                            <div className="rounded-xl bg-black/25 p-2"><p className="text-white/50">Stock</p><p className="mt-1 font-black">{Math.round(opportunityAssessment.scores.supplyScore)}</p></div>
+                            <div className="rounded-xl bg-black/25 p-2"><p className="text-white/50">Listing</p><p className="mt-1 font-black">{Math.round(opportunityAssessment.scores.listingReadinessScore)}</p></div>
+                          </div>
+                          <dl className="mt-3 grid gap-2 text-sm">
+                            <div><dt className="text-white/55">Decisión</dt><dd className="font-black text-cyan-50">{opportunityAssessment.decision.replaceAll("_", " ")}</dd></div>
+                            <div><dt className="text-white/55">Rotación</dt><dd className="font-bold">{opportunityAssessment.market.rotationEvidenceStatus.replaceAll("_", " ")}</dd></div>
+                            <div><dt className="text-white/55">Velocidad semanal observada</dt><dd className="font-bold">{opportunityAssessment.market.totalEstimatedWeeklyVelocity > 0 ? `${opportunityAssessment.market.totalEstimatedWeeklyVelocity} unidades estimadas` : "Se necesita una segunda observación"}</dd></div>
+                            <div><dt className="text-white/55">Precio total mediano</dt><dd className="font-bold">{opportunityAssessment.market.medianTotalBuyerPrice === null ? "Pendiente" : `$${opportunityAssessment.market.medianTotalBuyerPrice.toFixed(2)}`}</dd></div>
+                            <div><dt className="text-white/55">Beneficio neto estimado</dt><dd className="font-bold">{opportunityAssessment.economics.estimatedNetProfit === null ? "Pendiente" : `$${opportunityAssessment.economics.estimatedNetProfit.toFixed(2)}`}</dd></div>
+                            <div><dt className="text-white/55">Categoría oficial</dt><dd className="font-bold">{opportunityAssessment.listingIntelligencePackage.categoryRecommendation.categoryName ?? opportunityAssessment.listingIntelligencePackage.categoryRecommendation.categoryId ?? "Pendiente"}</dd></div>
+                            <div><dt className="text-white/55">Aspectos obligatorios</dt><dd className="font-bold">{opportunityAssessment.listingIntelligencePackage.categoryRecommendation.requiredAspects.map((aspect) => aspect.name).join(" · ") || "eBay no devolvió aspectos obligatorios"}</dd></div>
+                          </dl>
+                          {(opportunityAssessment.hardGates.length > 0 || opportunityAssessment.evidenceGuards.length > 0) && (
+                            <details className="mt-3 rounded-xl border border-amber-200/20 bg-amber-200/[0.05] p-3">
+                              <summary className="cursor-pointer text-sm font-black">Guardas antes del listing package</summary>
+                              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-50">
+                                {[...opportunityAssessment.hardGates, ...opportunityAssessment.evidenceGuards].map((guard) => <li key={guard}>{guard.replaceAll("_", " ")}</li>)}
+                              </ul>
+                            </details>
+                          )}
+                          <p className="mt-3 text-[11px] leading-5 text-white/50">Una lectura aislada de estimatedSoldQuantity no demuestra rotación. El sistema requiere snapshots separados antes de calcular deltas de 7/30 días.</p>
+                        </section>
+                      )}
 
                       <section aria-labelledby="top-selling-heading">
                         <h3 id="top-selling-heading" className="font-black">Comparables para escoger la mejor referencia</h3>

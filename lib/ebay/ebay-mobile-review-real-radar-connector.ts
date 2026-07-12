@@ -13,9 +13,14 @@ export type RealRadarCandidate = {
   supplierProductId: string
   supplierVariantId: string | null
   supplierSku: string | null
+  gtin: string | null
+  weight: number | null
+  weightUnit: string | null
   productName: string
   productTitle: string
   variantTitle: string | null
+  brand: string | null
+  productType: string | null
   handle: string
   productUrl: string | null
   imageReference: string | null
@@ -133,9 +138,14 @@ export function mapMarketRadarProductToMobileCandidate(
     supplierProductId: text(product.supplier_product_id),
     supplierVariantId: product.supplier_variant_id ?? null,
     supplierSku: product.sku ?? null,
+    gtin: product.barcode ?? null,
+    weight: numberOrNull(product.weight),
+    weightUnit: product.weight_unit ?? null,
     productName: text(product.title, "Producto sin título"),
     productTitle: text(product.title, "Producto sin título"),
     variantTitle: product.variant_title ?? null,
+    brand: product.vendor ?? null,
+    productType: product.product_type ?? null,
     handle: text(product.handle),
     productUrl: product.product_url ?? null,
     imageReference: product.featured_image_url ?? null,

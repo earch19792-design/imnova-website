@@ -2,10 +2,20 @@ export const runtime = "nodejs"
 
 import { NextResponse } from "next/server"
 import { validateAdminApiRequest } from "@/lib/supabase-admin"
-import { runEbaySellerKeywordDemandValidation } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
+import {
+  getEbayTaxonomyListingIntelligence,
+  runEbaySellerKeywordDemandValidation,
+} from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
+import { buildEbayLunaOpportunityAssessment } from "@/lib/ebay/ebay-luna-demand-opportunity-engine"
 
 function text(value: unknown, maxLength: number) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : ""
+}
+
+function numberOrNull(value: unknown) {
+  if (value === null || value === undefined || value === "") return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 function safeErrorCode(error: unknown) {
@@ -32,6 +42,14 @@ export async function POST(req: Request) {
       variantTitle: text(raw.variantTitle, 160),
       supplierSku: text(raw.supplierSku, 100),
       categoryId: text(raw.categoryId, 20),
+      gtin: text(raw.gtin, 20),
+      brand: text(raw.brand, 120),
+      mpn: text(raw.mpn, 120),
+      color: text(raw.color, 80),
+      size: text(raw.size, 80),
+      packQuantity: numberOrNull(raw.packQuantity),
+      productType: text(raw.productType, 120),
+      description: text(raw.description, 500),
     }
     if (!candidate.productName && !candidate.productTitle) {
       return NextResponse.json(
@@ -41,9 +59,54 @@ export async function POST(req: Request) {
     }
 
     const report = await runEbaySellerKeywordDemandValidation(candidate)
+    const taxonomyIntelligence = await getEbayTaxonomyListingIntelligence(
+      report.searchQuery,
+      report.topSellingListings[0]?.categoryId ?? candidate.categoryId
+    )
+    const opportunityAssessment = buildEbayLunaOpportunityAssessment({
+      candidate: {
+        candidateKey: text(raw.candidateKey, 240),
+        marketRadarProductId: text(raw.marketRadarProductId, 80),
+        supplierProductId: text(raw.supplierProductId, 120),
+        supplierVariantId: text(raw.supplierVariantId, 120),
+        sku: candidate.supplierSku,
+        title: candidate.productName || candidate.productTitle,
+        variantTitle: candidate.variantTitle,
+        brand: candidate.brand,
+        mpn: candidate.mpn,
+        gtin: candidate.gtin,
+        color: candidate.color,
+        size: candidate.size,
+        packQuantity: candidate.packQuantity,
+        productType: candidate.productType,
+        categoryId: candidate.categoryId,
+        description: candidate.description,
+        supplierCost: numberOrNull(raw.supplierCost),
+        available: raw.available === true ? true : raw.available === false ? false : null,
+        inventoryQuantity: numberOrNull(raw.inventoryQuantity),
+        stockCapturedAt: text(raw.stockCapturedAt, 80),
+        weight: numberOrNull(raw.weight),
+        weightUnit: text(raw.weightUnit, 20),
+        dimensions: raw.dimensions && typeof raw.dimensions === "object"
+          ? raw.dimensions as Record<string, unknown>
+          : null,
+        imageUrls: Array.isArray(raw.imageUrls)
+          ? raw.imageUrls.filter((value): value is string => typeof value === "string").slice(0, 12)
+          : [],
+        imageAuthorized: raw.imageAuthorized === true,
+        restrictionGuards: Array.isArray(raw.restrictionGuards)
+          ? raw.restrictionGuards.filter((value): value is string => typeof value === "string").slice(0, 20)
+          : [],
+      },
+      demandReport: report,
+      observationHistory: [],
+      taxonomyIntelligence,
+    })
     return NextResponse.json({
       success: true,
       report,
+      taxonomyIntelligence,
+      opportunityAssessment,
       safety: {
         mode: "EBAY_OFFICIAL_READ_ONLY",
         ebayWriteUsed: false,

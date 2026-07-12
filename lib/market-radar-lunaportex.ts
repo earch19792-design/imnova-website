@@ -103,6 +103,10 @@ type ShopifyVariant = {
   id?: number | string | null
   title?: string | null
   sku?: string | null
+  barcode?: string | null
+  grams?: number | string | null
+  weight?: number | string | null
+  weight_unit?: string | null
   price?: string | number | null
   compare_at_price?: string | number | null
   available?: boolean | null
@@ -190,6 +194,9 @@ type SnapshotInsert = {
   supplier_variant_id: string
   variant_title: string | null
   sku: string | null
+  barcode: string | null
+  weight: number | null
+  weight_unit: string | null
   price: number | null
   compare_at_price: number | null
   available: boolean | null
@@ -1679,6 +1686,16 @@ function buildSnapshotsAndEvents(
         sku:
           getString(variant.sku) ||
           null,
+        barcode:
+          getString(variant.barcode) ||
+          null,
+        weight:
+          getNumber(variant.grams) ??
+          getNumber(variant.weight),
+        weight_unit:
+          getNumber(variant.grams) !== null
+            ? "g"
+            : getString(variant.weight_unit) || null,
         price,
         compare_at_price:
           compareAtPrice,

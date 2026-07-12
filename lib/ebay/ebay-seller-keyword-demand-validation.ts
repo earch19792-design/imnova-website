@@ -21,6 +21,20 @@ export type EbaySellerComparableInput = {
   totalSoldQuantity?: number | null
   estimatedSoldQuantity?: number | null
   lastSoldDate?: string | null
+  gtin?: string | null
+  brand?: string | null
+  mpn?: string | null
+  color?: string | null
+  size?: string | null
+  shortDescription?: string | null
+  localizedAspects?: Array<{
+    name?: string | null
+    value?: string | null
+  }> | null
+  shippingCost?: number | string | null
+  returnsAccepted?: boolean | null
+  itemOriginDate?: string | null
+  itemEndDate?: string | null
   source: EbaySalesEvidenceSource
 }
 
@@ -30,6 +44,14 @@ export type EbaySellerKeywordCandidate = {
   variantTitle?: string | null
   supplierSku?: string | null
   categoryId?: string | null
+  gtin?: string | null
+  brand?: string | null
+  mpn?: string | null
+  color?: string | null
+  size?: string | null
+  packQuantity?: number | null
+  productType?: string | null
+  description?: string | null
 }
 
 export type EbaySellerKeywordDemandInput = {
@@ -161,7 +183,10 @@ export function assertEbaySellerKeywordReadonlyRequest(
   const allowedPath =
     url.pathname === "/buy/browse/v1/item_summary/search" ||
     url.pathname.startsWith("/buy/browse/v1/item/") ||
-    url.pathname === "/buy/marketplace-insights/v1_beta/item_sales/search"
+    url.pathname === "/buy/marketplace-insights/v1_beta/item_sales/search" ||
+    url.pathname === "/buy/marketing/v1_beta/merchandised_product" ||
+    url.pathname === "/commerce/taxonomy/v1/get_default_category_tree_id" ||
+    /^\/commerce\/taxonomy\/v1\/category_tree\/[^/]+\/(get_category_suggestions|get_item_aspects_for_category)$/.test(url.pathname)
   if (method !== "GET" || url.origin !== "https://api.ebay.com" || !allowedPath) {
     throw new Error("BLOCKED_NON_READONLY_EBAY_REQUEST")
   }
@@ -337,6 +362,24 @@ export function buildEbaySellerKeywordDemandValidation(
       estimatedSoldQuantity,
       salesQuantity,
       lastSoldDate: cleanText(entry.lastSoldDate) || null,
+      gtin: cleanText(entry.gtin) || null,
+      brand: cleanText(entry.brand) || null,
+      mpn: cleanText(entry.mpn) || null,
+      color: cleanText(entry.color) || null,
+      size: cleanText(entry.size) || null,
+      shortDescription: cleanText(entry.shortDescription) || null,
+      localizedAspects: Array.isArray(entry.localizedAspects)
+        ? entry.localizedAspects
+            .map((aspect) => ({
+              name: cleanText(aspect?.name) || null,
+              value: cleanText(aspect?.value) || null,
+            }))
+            .filter((aspect) => aspect.name && aspect.value)
+        : [],
+      shippingCost: numberOrZero(entry.shippingCost),
+      returnsAccepted: entry.returnsAccepted === true,
+      itemOriginDate: cleanText(entry.itemOriginDate) || null,
+      itemEndDate: cleanText(entry.itemEndDate) || null,
       evidenceSource: entry.source,
       identityMatchScore: identity.score,
       identityMatchQuality: identity.matchQuality,
@@ -673,6 +716,10 @@ export function getEbaySellerKeywordDemandGatewaySafety() {
       "/buy/browse/v1/item_summary/search",
       "/buy/browse/v1/item/{item_id}",
       "/buy/marketplace-insights/v1_beta/item_sales/search",
+      "/buy/marketing/v1_beta/merchandised_product",
+      "/commerce/taxonomy/v1/get_default_category_tree_id",
+      "/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions",
+      "/commerce/taxonomy/v1/category_tree/{tree_id}/get_item_aspects_for_category",
     ],
     tokenStored: false,
     tokenReturnedToBrowser: false,

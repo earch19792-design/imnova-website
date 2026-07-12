@@ -12,11 +12,16 @@ const BROWSE_SEARCH_ENDPOINT =
 const BROWSE_ITEM_ENDPOINT = "https://api.ebay.com/buy/browse/v1/item"
 const MARKETPLACE_INSIGHTS_ENDPOINT =
   "https://api.ebay.com/buy/marketplace-insights/v1_beta/item_sales/search"
+const BUY_MARKETING_ENDPOINT =
+  "https://api.ebay.com/buy/marketing/v1_beta/merchandised_product"
+const TAXONOMY_ENDPOINT = "https://api.ebay.com/commerce/taxonomy/v1"
 const BROWSE_SCOPE = "https://api.ebay.com/oauth/api_scope"
 const MARKETPLACE_INSIGHTS_SCOPE =
   "https://api.ebay.com/oauth/api_scope/buy.marketplace.insights"
 const MARKETPLACE_ID = "EBAY_US"
-const DETAIL_SAMPLE_LIMIT = 10
+const DETAIL_SAMPLE_LIMIT = 20
+const DETAIL_CONCURRENCY = 5
+const EBAY_REQUEST_TIMEOUT_MS = 8_000
 
 type JsonRecord = Record<string, unknown>
 
@@ -48,6 +53,37 @@ function firstAvailability(value: unknown) {
   return record(array(value)[0])
 }
 
+function firstShippingOption(value: unknown) {
+  return record(array(value)[0])
+}
+
+function normalizeAspects(value: unknown) {
+  return array(value).map(record).map((aspect) => ({
+    name: text(aspect.name),
+    value: text(aspect.value),
+  })).filter((aspect) => aspect.name && aspect.value)
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<R>
+) {
+  const output = new Array<R>(values.length)
+  let cursor = 0
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (cursor < values.length) {
+        const index = cursor++
+        output[index] = await mapper(values[index])
+      }
+    }
+  )
+  await Promise.all(workers)
+  return output
+}
+
 function safeErrorCode(error: unknown) {
   const message = error instanceof Error ? error.message : ""
   return /^[A-Z0-9_]+$/.test(message)
@@ -70,6 +106,7 @@ async function getApplicationToken(scope: string) {
     },
     body: new URLSearchParams({ grant_type: "client_credentials", scope }),
     cache: "no-store",
+    signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
   })
   if (!response.ok) throw new Error(`EBAY_OAUTH_${response.status}`)
   const payload = record(await response.json())
@@ -89,6 +126,7 @@ async function getEbayJson(url: URL, accessToken: string) {
         "contextualLocation=country%3DUS%2Czip%3D33487",
     },
     cache: "no-store",
+    signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
   })
   if (!response.ok) throw new Error(`EBAY_READONLY_GET_${response.status}`)
   return record(await response.json())
@@ -104,6 +142,9 @@ function mapComparable(
   const image = record(item.image)
   const category = firstCategory(item.categories)
   const availability = firstAvailability(item.estimatedAvailabilities)
+  const shippingOption = firstShippingOption(item.shippingOptions)
+  const shippingCost = record(shippingOption.shippingCost)
+  const returnTerms = record(item.returnTerms)
   return {
     itemId: text(item.itemId),
     title: text(item.title),
@@ -119,14 +160,39 @@ function mapComparable(
     totalSoldQuantity: numberOrNull(item.totalSoldQuantity),
     estimatedSoldQuantity: numberOrNull(availability.estimatedSoldQuantity),
     lastSoldDate: text(item.lastSoldDate),
+    gtin: text(item.gtin),
+    brand: text(item.brand),
+    mpn: text(item.mpn),
+    color: text(item.color),
+    size: text(item.size),
+    shortDescription: text(item.shortDescription),
+    localizedAspects: normalizeAspects(item.localizedAspects),
+    shippingCost: numberOrNull(shippingCost.value),
+    returnsAccepted: returnTerms.returnsAccepted === true,
+    itemOriginDate: text(item.itemOriginDate),
+    itemEndDate: text(item.itemEndDate),
     source,
   }
 }
 
-async function searchActiveListings(query: string, token: string) {
+function normalizedGtin(value: unknown) {
+  const candidate = text(value).replace(/\D/g, "")
+  return /^\d{8,14}$/.test(candidate) ? candidate : ""
+}
+
+async function searchActiveListings(
+  candidate: EbaySellerKeywordCandidate,
+  query: string,
+  token: string
+) {
   const url = new URL(BROWSE_SEARCH_ENDPOINT)
-  url.searchParams.set("q", query)
-  url.searchParams.set("limit", "30")
+  const gtin = normalizedGtin(candidate.gtin)
+  if (gtin) url.searchParams.set("gtin", gtin)
+  else url.searchParams.set("q", query)
+  if (/^\d+$/.test(text(candidate.categoryId))) {
+    url.searchParams.set("category_ids", text(candidate.categoryId))
+  }
+  url.searchParams.set("limit", "50")
   url.searchParams.set("filter", "buyingOptions:{FIXED_PRICE},conditions:{NEW}")
   url.searchParams.set(
     "fieldgroups",
@@ -187,11 +253,18 @@ export async function runEbaySellerKeywordDemandValidation(
   let insightsToken = ""
   try {
     browseToken = await getApplicationToken(BROWSE_SCOPE)
-    const activeSearch = await searchActiveListings(query, browseToken)
-    const activeDetails = await Promise.all(
-      activeSearch.items
-        .slice(0, DETAIL_SAMPLE_LIMIT)
-        .map((item) => enrichActiveListing(item, browseToken))
+    let activeSearch = await searchActiveListings(candidate, query, browseToken)
+    if (activeSearch.items.length === 0 && normalizedGtin(candidate.gtin)) {
+      activeSearch = await searchActiveListings(
+        { ...candidate, gtin: null },
+        query,
+        browseToken
+      )
+    }
+    const activeDetails = await mapWithConcurrency(
+      activeSearch.items.slice(0, DETAIL_SAMPLE_LIMIT),
+      DETAIL_CONCURRENCY,
+      (item) => enrichActiveListing(item, browseToken)
     )
     const activeComparables = activeDetails.map((item) => {
       const mapped = mapComparable(item, "EBAY_BROWSE_ACTIVE_LISTING")
@@ -242,5 +315,162 @@ export async function runEbaySellerKeywordDemandValidation(
   } finally {
     browseToken = ""
     insightsToken = ""
+  }
+}
+
+export type EbayBestSellingProductSignal = {
+  categoryId: string
+  epid: string | null
+  title: string
+  imageUrl: string | null
+  averageRating: number | null
+  ratingCount: number | null
+  reviewCount: number | null
+  evidenceClass: "EBAY_MARKETING_BEST_SELLING_PRODUCT"
+}
+
+export async function discoverEbayBestSellingProducts(
+  categoryId: string
+): Promise<{
+  status: "AVAILABLE" | "NOT_AUTHORIZED" | "REQUEST_FAILED"
+  products: EbayBestSellingProductSignal[]
+}> {
+  if (!/^\d+$/.test(categoryId)) {
+    throw new Error("EBAY_CATEGORY_ID_REQUIRED")
+  }
+  let token = ""
+  try {
+    token = await getApplicationToken(BROWSE_SCOPE)
+    const url = new URL(BUY_MARKETING_ENDPOINT)
+    url.searchParams.set("category_id", categoryId)
+    url.searchParams.set("metric_name", "BEST_SELLING")
+    assertEbaySellerKeywordReadonlyRequest(url.href, "GET")
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
+    })
+    if (response.status === 401 || response.status === 403) {
+      return { status: "NOT_AUTHORIZED", products: [] }
+    }
+    if (!response.ok) return { status: "REQUEST_FAILED", products: [] }
+    const payload = record(await response.json())
+    const products = array(payload.merchandisedProducts).map(record).map((product) => ({
+      categoryId,
+      epid: text(product.epid) || null,
+      title: text(product.title),
+      imageUrl: text(record(product.image).imageUrl) || null,
+      averageRating: numberOrNull(product.averageRating),
+      ratingCount: numberOrNull(product.ratingCount),
+      reviewCount: numberOrNull(product.reviewCount),
+      evidenceClass: "EBAY_MARKETING_BEST_SELLING_PRODUCT" as const,
+    })).filter((product) => product.title)
+    return { status: "AVAILABLE", products }
+  } finally {
+    token = ""
+  }
+}
+
+export type EbayTaxonomyListingIntelligence = {
+  status: "AVAILABLE" | "CATEGORY_NOT_RESOLVED" | "REQUEST_FAILED"
+  categoryTreeId: string | null
+  categoryId: string | null
+  categoryName: string | null
+  requiredAspects: Array<{
+    name: string
+    mode: string | null
+    cardinality: string | null
+    expectedRequiredByDate: string | null
+    suggestedValues: string[]
+  }>
+  recommendedAspects: Array<{
+    name: string
+    mode: string | null
+    cardinality: string | null
+    expectedRequiredByDate: string | null
+    suggestedValues: string[]
+  }>
+  source: "EBAY_TAXONOMY_OFFICIAL_READONLY"
+}
+
+function mapTaxonomyAspect(value: unknown) {
+  const aspect = record(value)
+  const constraint = record(aspect.aspectConstraint)
+  return {
+    name: text(aspect.localizedAspectName),
+    mode: text(constraint.aspectMode) || null,
+    cardinality: text(constraint.itemToAspectCardinality) || null,
+    expectedRequiredByDate: text(constraint.expectedRequiredByDate) || null,
+    required: constraint.aspectRequired === true,
+    usage: text(constraint.aspectUsage),
+    suggestedValues: array(aspect.aspectValues)
+      .map(record)
+      .map((entry) => text(entry.localizedValue))
+      .filter(Boolean)
+      .slice(0, 25),
+  }
+}
+
+export async function getEbayTaxonomyListingIntelligence(
+  query: string,
+  knownCategoryId?: string | null
+): Promise<EbayTaxonomyListingIntelligence> {
+  let token = ""
+  const empty = (status: EbayTaxonomyListingIntelligence["status"]): EbayTaxonomyListingIntelligence => ({
+    status,
+    categoryTreeId: null,
+    categoryId: null,
+    categoryName: null,
+    requiredAspects: [],
+    recommendedAspects: [],
+    source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
+  })
+  try {
+    token = await getApplicationToken(BROWSE_SCOPE)
+    const treeUrl = new URL(`${TAXONOMY_ENDPOINT}/get_default_category_tree_id`)
+    treeUrl.searchParams.set("marketplace_id", MARKETPLACE_ID)
+    const treePayload = await getEbayJson(treeUrl, token)
+    const categoryTreeId = text(treePayload.categoryTreeId)
+    if (!categoryTreeId) return empty("REQUEST_FAILED")
+
+    let categoryId = /^\d+$/.test(text(knownCategoryId)) ? text(knownCategoryId) : ""
+    let categoryName = ""
+    if (!categoryId) {
+      const suggestionUrl = new URL(
+        `${TAXONOMY_ENDPOINT}/category_tree/${encodeURIComponent(categoryTreeId)}/get_category_suggestions`
+      )
+      suggestionUrl.searchParams.set("q", query.slice(0, 350))
+      const suggestionPayload = await getEbayJson(suggestionUrl, token)
+      const suggestion = record(array(suggestionPayload.categorySuggestions)[0])
+      const category = record(suggestion.category)
+      categoryId = text(category.categoryId)
+      categoryName = text(category.categoryName)
+    }
+    if (!categoryId) {
+      return { ...empty("CATEGORY_NOT_RESOLVED"), categoryTreeId }
+    }
+    const aspectsUrl = new URL(
+      `${TAXONOMY_ENDPOINT}/category_tree/${encodeURIComponent(categoryTreeId)}/get_item_aspects_for_category`
+    )
+    aspectsUrl.searchParams.set("category_id", categoryId)
+    const aspectsPayload = await getEbayJson(aspectsUrl, token)
+    const aspects = array(aspectsPayload.aspects).map(mapTaxonomyAspect).filter((aspect) => aspect.name)
+    return {
+      status: "AVAILABLE",
+      categoryTreeId,
+      categoryId,
+      categoryName: categoryName || null,
+      requiredAspects: aspects.filter((aspect) => aspect.required).map(({ required: _required, usage: _usage, ...aspect }) => aspect),
+      recommendedAspects: aspects.filter((aspect) => !aspect.required && aspect.usage === "RECOMMENDED").map(({ required: _required, usage: _usage, ...aspect }) => aspect),
+      source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
+    }
+  } catch {
+    return empty("REQUEST_FAILED")
+  } finally {
+    token = ""
   }
 }
