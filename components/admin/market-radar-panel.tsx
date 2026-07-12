@@ -7678,6 +7678,17 @@ export function MarketRadarPanel({
                 Scores: <strong className="text-white">{syncResult.scoredProducts}</strong>
               </span>
             </div>
+            <div className="mt-3 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] p-4 text-xs leading-5 text-white/70">
+              <p className="font-black text-cyan-50">
+                Cobertura del scan: {syncResult.scanStatus || "UNKNOWN"} · {syncResult.scanCompletenessPercent ?? 0}%
+              </p>
+              <p className="mt-1">
+                Catálogo recibido: {syncResult.catalogProductsFetched ?? syncResult.fetchedProducts} · únicos: {syncResult.uniqueProductsFetched ?? syncResult.fetchedProducts} · guardados: {syncResult.productsUpserted ?? 0} · con snapshot: {syncResult.productsWithSnapshots ?? 0} · con score: {syncResult.scoredProducts}
+              </p>
+              <p className="mt-1">
+                Reintentos adaptativos: {syncResult.adaptiveRetryCount ?? 0} · lotes fallidos: {syncResult.failedBatchCount ?? 0}
+              </p>
+            </div>
             <div
               className="
                 mt-3
