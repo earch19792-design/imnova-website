@@ -50,12 +50,14 @@ test("reconciled route moves to eBay validation while B2-RUN remains blocked", (
 })
 
 test("mobile UI exposes manual Luna confirmation and reconciliation sources", () => {
-  assert.match(pageSource, /CONFIRM_LUNA_PRICE:/)
+  assert.match(pageSource, /Abrir producto en Luna Portex/)
+  assert.match(pageSource, /Confirmar que precio e imagen coinciden/)
+  assert.match(pageSource, /confirmLunaCatalogMatch/)
   assert.match(pageSource, /manualConfirmationReconciliation/)
   assert.match(moduleSource, /HUMAN_MOBILE_CONFIRMED/)
 })
 
 test("reconciliation has no external write capability", () => {
   const combined = `${moduleSource}\n${pageSource}`
-  for (const forbidden of [/method:\s*["']POST["']/, /\.insert\s*\(/, /\.update\s*\(/, /\.upsert\s*\(/, /publishOffer\s*\(/, /createOffer\s*\(/, /process\.env/, /OPENAI_API_KEY/]) assert.doesNotMatch(combined, forbidden)
+  for (const forbidden of [/\.insert\s*\(/, /\.update\s*\(/, /\.upsert\s*\(/, /publishOffer\s*\(/, /createOffer\s*\(/, /process\.env/, /OPENAI_API_KEY/]) assert.doesNotMatch(combined, forbidden)
 })

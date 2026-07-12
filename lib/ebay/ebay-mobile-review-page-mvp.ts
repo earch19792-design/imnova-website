@@ -5,8 +5,11 @@ export type MobileReviewAction =
   | { type: "MARK_UNAVAILABLE"; rank: number }
   | { type: "SELECT_CANDIDATE"; rank: number }
   | { type: "CONFIRM_SAME_PRODUCT" }
+  | { type: "RESET_SAME_PRODUCT_CONFIRMATION" }
   | { type: "CONFIRM_STOCK_QTY"; quantity: number }
+  | { type: "RESET_STOCK_CONFIRMATION" }
   | { type: "CONFIRM_IMAGE_OK" }
+  | { type: "RESET_LUNA_CATALOG_CONFIRMATION" }
   | { type: "REQUEST_LUNA_SCAN_REFRESH" }
   | { type: "HOLD_FOR_REVIEW" }
   | { type: "APPROVE_B2_RUN_PREFLIGHT" }
@@ -120,6 +123,14 @@ export function applyMobileReviewAction(
     return { ...state, sameProductConfirmed: true }
   }
 
+  if (action.type === "RESET_SAME_PRODUCT_CONFIRMATION") {
+    return {
+      ...state,
+      sameProductConfirmed: false,
+      preflightApproved: false,
+    }
+  }
+
   if (action.type === "CONFIRM_STOCK_QTY" && state.selectedCandidateRank) {
     if (!Number.isInteger(action.quantity) || action.quantity < 1) return state
     return {
@@ -134,11 +145,27 @@ export function applyMobileReviewAction(
     }
   }
 
+  if (action.type === "RESET_STOCK_CONFIRMATION") {
+    return {
+      ...state,
+      stockQuantityConfirmed: null,
+      preflightApproved: false,
+    }
+  }
+
   if (action.type === "CONFIRM_IMAGE_OK" && state.selectedCandidateRank) {
     return {
       ...state,
       mobileReviewState: "IMAGE_CONFIRMED",
       imageConfirmed: true,
+    }
+  }
+
+  if (action.type === "RESET_LUNA_CATALOG_CONFIRMATION") {
+    return {
+      ...state,
+      imageConfirmed: false,
+      preflightApproved: false,
     }
   }
 

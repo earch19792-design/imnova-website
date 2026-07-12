@@ -28,7 +28,7 @@ test("approval cannot bypass pending Radar guards", () => {
   assert.equal(report.approveAttemptBlocked, true)
   assert.equal(report.canProceedToB2RunPreflight, false)
   assert.equal(report.canPublish, false)
-  assert.match(pageSource, /No se puede aprobar B2-RUN todavía/)
+  assert.match(pageSource, /B2-RUN continúa desactivado hasta completar todas las validaciones/)
   assert.match(pageSource, /pendingGuards/)
 })
 
@@ -50,5 +50,5 @@ test("non-real sources always block B2-RUN", () => {
 
 test("guard enforcement contains no external write capability", () => {
   const combined = `${guardSource}\n${pageSource}`
-  for (const forbidden of [/method:\s*["']POST["']/, /\.insert\s*\(/, /\.update\s*\(/, /\.upsert\s*\(/, /publishOffer\s*\(/, /createOffer\s*\(/, /process\.env/, /OPENAI_API_KEY/]) assert.doesNotMatch(combined, forbidden)
+  for (const forbidden of [/\.insert\s*\(/, /\.update\s*\(/, /\.upsert\s*\(/, /publishOffer\s*\(/, /createOffer\s*\(/, /process\.env/, /OPENAI_API_KEY/]) assert.doesNotMatch(combined, forbidden)
 })

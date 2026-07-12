@@ -88,6 +88,21 @@ test("selection with same product, stock and image enables only preflight", () =
   assert.equal(decision.canPublish, false)
 })
 
+test("editing identity, stock or Luna evidence invalidates stale confirmations", () => {
+  let state = buildInitialMobileReviewState(fixture)
+  state = applyMobileReviewAction(state, { type: "SELECT_CANDIDATE", rank: 2 })
+  state = applyMobileReviewAction(state, { type: "CONFIRM_SAME_PRODUCT" })
+  state = applyMobileReviewAction(state, { type: "CONFIRM_STOCK_QTY", quantity: 6 })
+  state = applyMobileReviewAction(state, { type: "CONFIRM_IMAGE_OK" })
+  state = applyMobileReviewAction(state, { type: "RESET_SAME_PRODUCT_CONFIRMATION" })
+  assert.equal(state.sameProductConfirmed, false)
+  state = applyMobileReviewAction(state, { type: "RESET_STOCK_CONFIRMATION" })
+  assert.equal(state.stockQuantityConfirmed, null)
+  state = applyMobileReviewAction(state, { type: "RESET_LUNA_CATALOG_CONFIRMATION" })
+  assert.equal(state.imageConfirmed, false)
+  assert.equal(state.preflightApproved, false)
+})
+
 test("an unavailable candidate does not prevent reviewing another Top 5 candidate", () => {
   let state = buildInitialMobileReviewState(fixture)
   state = applyMobileReviewAction(state, { type: "MARK_UNAVAILABLE", rank: 1 })

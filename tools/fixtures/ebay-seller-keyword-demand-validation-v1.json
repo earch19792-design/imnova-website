@@ -1,0 +1,66 @@
+{
+  "candidate": {
+    "productName": "IT Mega Frizz Hair Spray Bonus, 10 oz.",
+    "productTitle": "IT Mega Frizz Hair Spray Bonus, 10 oz.",
+    "variantTitle": "10 oz",
+    "supplierSku": "LUNA-IT-MEGA-10",
+    "categoryId": "11860"
+  },
+  "comparables": [
+    {
+      "itemId": "v1|100000000001|0",
+      "title": "IT Mega Frizz Hair Spray Bonus 10 oz Professional Hold",
+      "itemWebUrl": "https://www.ebay.com/itm/100000000001",
+      "imageUrl": "https://i.ebayimg.com/images/g/example1/s-l500.jpg",
+      "price": 18.99,
+      "currency": "USD",
+      "categoryId": "11860",
+      "sellerUsername": "seller-alpha",
+      "sellerFeedbackScore": 5200,
+      "totalSoldQuantity": 37,
+      "lastSoldDate": "2026-07-10T12:00:00.000Z",
+      "source": "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
+    },
+    {
+      "itemId": "v1|100000000002|0",
+      "title": "IT Hair Care Mega Frizz Control Hair Spray 10 Ounce Bonus",
+      "itemWebUrl": "https://www.ebay.com/itm/100000000002",
+      "imageUrl": "https://i.ebayimg.com/images/g/example2/s-l500.jpg",
+      "price": 17.49,
+      "currency": "USD",
+      "categoryId": "11860",
+      "sellerUsername": "seller-beta",
+      "sellerFeedbackScore": 2100,
+      "totalSoldQuantity": 22,
+      "lastSoldDate": "2026-07-09T12:00:00.000Z",
+      "source": "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
+    },
+    {
+      "itemId": "v1|100000000003|0",
+      "title": "IT Mega Frizz Hair Spray 8 oz Travel Size",
+      "itemWebUrl": "https://www.ebay.com/itm/100000000003",
+      "imageUrl": "https://i.ebayimg.com/images/g/example3/s-l500.jpg",
+      "price": 12.99,
+      "currency": "USD",
+      "categoryId": "11860",
+      "sellerUsername": "seller-gamma",
+      "sellerFeedbackScore": 9999,
+      "totalSoldQuantity": 100,
+      "lastSoldDate": "2026-07-11T12:00:00.000Z",
+      "source": "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
+    },
+    {
+      "itemId": "v1|100000000004|0",
+      "title": "IT Mega Frizz Hair Spray Bonus 10 oz",
+      "itemWebUrl": "https://www.ebay.com/itm/100000000004",
+      "imageUrl": "https://i.ebayimg.com/images/g/example4/s-l500.jpg",
+      "price": 16.99,
+      "currency": "USD",
+      "categoryId": "11860",
+      "sellerUsername": "seller-delta",
+      "sellerFeedbackScore": 850,
+      "estimatedSoldQuantity": 12,
+      "source": "EBAY_BROWSE_ESTIMATED_SALES"
+    }
+  ]
+}

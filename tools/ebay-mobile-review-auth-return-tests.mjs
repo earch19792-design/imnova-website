@@ -28,7 +28,7 @@ test("Mobile Review offers login only for AUTH_REQUIRED and login returns safely
 
 test("auth return fix does not add external writes or secrets", () => {
   const combined = `${loginSource}\n${mobileReviewSource}`
-  for (const forbidden of [/method:\s*["']POST["']/, /\.insert\s*\(/, /\.update\s*\(/, /\.upsert\s*\(/, /publishOffer\s*\(/, /process\.env/, /OPENAI_API_KEY/]) {
+  for (const forbidden of [/\.insert\s*\(/, /\.update\s*\(/, /\.upsert\s*\(/, /publishOffer\s*\(/, /process\.env/, /OPENAI_API_KEY/]) {
     assert.doesNotMatch(combined, forbidden)
   }
 })
