@@ -6,6 +6,16 @@ Agregar una barrera read-only entre la confirmación humana móvil y la preparac
 
 Este loop no determina si un producto está permitido. Únicamente exige una revisión humana especializada antes de preparar cualquier listing package o intentar B2-RUN.
 
+## Prerrequisito de identidad Luna ↔ eBay
+
+`sameProductConfirmed` ya no representa una afirmación sin referencia. La UI requiere que el operador:
+
+1. seleccione una URL HTTPS de un listing individual en `ebay.com`;
+2. abra ese listing y registre el título observado;
+3. confirme misma marca/producto, misma variante/tamaño/pack y ausencia de contradicciones en SKU, UPC, MPN o referencia.
+
+Solo entonces se registra `HUMAN_LUNA_EBAY_COMPARISON`. La búsqueda y apertura ocurren en el navegador; no hay eBay API ni escritura externa.
+
 ## Entradas inspeccionadas
 
 El detector combina texto ya disponible en el candidato:

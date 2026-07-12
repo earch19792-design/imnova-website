@@ -78,9 +78,9 @@ test("mobile UI exposes source, Radar fields and browser-only persistence", () =
   for (const expected of [
     /REAL RADAR/, /FIXTURE\/DEMO/, /MARKET_RADAR_READONLY/, /marketRadarProductId/,
     /marketRadarSnapshotId/, /supplierSku/, /supplierVariantId/, /lastSeenAt/,
-    /lastSnapshotAt/, /stock source/, /stock age/, /BROWSER_STATE_ONLY/,
-    /officialApprovalRecord: false/, /canPublish: false/, /no eBay write/,
-    /Productos reales excluidos/, /Radar devolvió/, /candidatesNeededForTop5/,
+    /lastSnapshotAt/, /candidate\.stockSource/, /candidate\.stockConfirmationAgeHours/, /BROWSER_STATE_ONLY/,
+    /officialApprovalRecord: false/, /canPublish: false/, /sin eBay write/,
+    /productos observados/, /candidatos seleccionables/, /B2-RUN continúa desactivado/,
   ]) assert.match(pageSource, expected)
 })
 

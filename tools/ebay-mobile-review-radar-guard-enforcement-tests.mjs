@@ -28,7 +28,7 @@ test("approval cannot bypass pending Radar guards", () => {
   assert.equal(report.approveAttemptBlocked, true)
   assert.equal(report.canProceedToB2RunPreflight, false)
   assert.equal(report.canPublish, false)
-  assert.match(pageSource, /No se puede aprobar B2-RUN todavía/)
+  assert.match(pageSource, /B2-RUN continúa desactivado hasta completar todas las validaciones/)
   assert.match(pageSource, /pendingGuards/)
 })
 

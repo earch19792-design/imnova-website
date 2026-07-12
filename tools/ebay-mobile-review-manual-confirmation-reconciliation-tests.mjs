@@ -50,7 +50,9 @@ test("reconciled route moves to eBay validation while B2-RUN remains blocked", (
 })
 
 test("mobile UI exposes manual Luna confirmation and reconciliation sources", () => {
-  assert.match(pageSource, /CONFIRM_LUNA_PRICE:/)
+  assert.match(pageSource, /Abrir producto en Luna Portex/)
+  assert.match(pageSource, /Confirmar que precio e imagen coinciden/)
+  assert.match(pageSource, /confirmLunaCatalogMatch/)
   assert.match(pageSource, /manualConfirmationReconciliation/)
   assert.match(moduleSource, /HUMAN_MOBILE_CONFIRMED/)
 })

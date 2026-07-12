@@ -27,6 +27,10 @@ import {
 import { buildMobileReviewEffectiveDecision } from "@/lib/ebay/ebay-mobile-review-effective-decision"
 import { buildEbayMarketValidationSelectedCandidate } from "@/lib/ebay/ebay-market-validation-selected-candidate"
 import {
+  buildEbayIdentitySearchUrl,
+  buildLunaEbayIdentityComparison,
+} from "@/lib/ebay/ebay-luna-ebay-identity-comparison"
+import {
   MOBILE_REVIEW_PINNED_STORAGE_KEY,
   parsePinnedCandidates,
   serializePinnedCandidates,
@@ -67,6 +71,7 @@ const humanRouteLabels: Record<string, string> = {
   NEED_CATEGORY_RUNTIME_CONFIRMATION: "Confirmar categoría eBay",
   NEED_EBAY_DEMAND_VALIDATION: "Validar demanda eBay",
   NEED_IMAGE_REVIEW: "Revisar imagen",
+  NEED_EBAY_IDENTITY_REFERENCE: "Comparar identidad Luna con un listing de eBay",
   NEED_SHIPPING_RESTRICTION_REVIEW: "Revisar restricciones de envío",
   NEED_HAZMAT_OR_AEROSOL_REVIEW: "Revisar aerosol o material regulado",
   NEED_BRAND_REVIEW: "Revisar marca y compatibilidad",
@@ -78,9 +83,60 @@ const humanRouteLabels: Record<string, string> = {
   STOCK_HOLD: "Bloqueado por stock",
 }
 
+const humanGuardLabels: Record<string, string> = {
+  missingSnapshot: "Falta una observación reciente de Radar",
+  missingVariant: "Falta identificar la variante",
+  missingSku: "Falta confirmar el SKU",
+  stockUnknown: "Falta confirmar la cantidad disponible",
+  stockAvailabilityOnly: "Luna sólo informó disponibilidad, no cantidad",
+  stockStale: "La confirmación de stock está vencida",
+  missingLunaPrice: "Falta confirmar el precio actual en Luna",
+  missingEbayPrice: "Falta validar el precio de mercado en eBay",
+  missingMargin: "Falta revisar el margen estimado",
+  missingCategoryId: "Falta confirmar la categoría de eBay",
+  missingDemandValidation: "Falta validar la demanda en eBay",
+  missingImageValidation: "Falta comparar la imagen con Luna",
+  riskHold: "El producto tiene una alerta de riesgo pendiente",
+  outOfStock: "Radar reporta el producto sin stock",
+  staleMissingFromSource: "El producto ya no aparece en la fuente reciente",
+}
+
 const formatValue = (value: unknown) => value === null || value === undefined || value === "" ? "Pendiente" : String(value)
 const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat("es", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : "Pendiente"
+const formatStockAge = (hours: number | null) => hours === null ? "edad pendiente" : hours < 1 ? "menos de 1 h" : `${Math.round(hours)} h`
 const routeLabel = (route: string | null) => route ? humanRouteLabels[route] ?? route.replaceAll("_", " ") : "Sin ruta"
+const guardLabel = (guard: string) => humanGuardLabels[guard] ?? humanRouteLabels[guard] ?? guard
+
+function getLunaCatalogUrl(value: string | null | undefined) {
+  if (!value) return null
+  try {
+    const url = new URL(value)
+    const isLunaHost =
+      url.hostname === "lunaportex.com" ||
+      url.hostname.endsWith(".lunaportex.com")
+    return url.protocol === "https:" && isLunaHost
+      ? url.href
+      : null
+  } catch {
+    return null
+  }
+}
+
+function getSafeProductImageUrl(value: string | null | undefined) {
+  if (!value) return null
+  try {
+    const url = new URL(value)
+    const isTrustedImageHost =
+      url.hostname === "cdn.shopify.com" ||
+      url.hostname === "lunaportex.com" ||
+      url.hostname.endsWith(".lunaportex.com")
+    return url.protocol === "https:" && isTrustedImageHost
+      ? url.href
+      : null
+  } catch {
+    return null
+  }
+}
 
 function StatusPill({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "good" | "warning" | "danger" }) {
   const colors = { neutral: "border-white/20 bg-white/10 text-white", good: "border-emerald-200/30 bg-emerald-200/10 text-emerald-50", warning: "border-amber-200/30 bg-amber-200/10 text-amber-50", danger: "border-rose-200/30 bg-rose-200/10 text-rose-50" }
@@ -99,7 +155,7 @@ function CandidateCard({ candidate, selected, pinned, provisional, onSelect, onU
         <span className="shrink-0 rounded-2xl bg-white/10 px-3 py-2 text-lg font-black">{candidate.opportunityScore.toFixed(2)}</span>
       </div>
       <div className="mt-4 grid gap-2 text-sm">
-        <div className="flex justify-between gap-3 rounded-2xl bg-black/30 p-3"><span className="text-white/70">Stock</span><strong className="text-right">{formatValue(candidate.stockQuantity)} · {candidate.stockSource}</strong></div>
+        <div className="flex justify-between gap-3 rounded-2xl bg-black/30 p-3"><span className="text-white/70">Stock</span><strong className="text-right">{formatValue(candidate.stockQuantity)} · {candidate.stockSource}<span className="block text-xs font-medium text-white/55">Actualizado: {formatStockAge(candidate.stockConfirmationAgeHours)}</span></strong></div>
         <div className="flex justify-between gap-3 rounded-2xl bg-black/30 p-3"><span className="text-white/70">Precio Luna</span><strong>{candidate.lunaPrice === null ? "Pendiente" : `$${candidate.lunaPrice.toFixed(2)}`}</strong></div>
         <div className="flex justify-between gap-3 rounded-2xl bg-black/30 p-3"><span className="text-white/70">Siguiente paso</span><strong className="text-right text-amber-100">{routeLabel(candidate.routeRecommendation)}</strong></div>
       </div>
@@ -115,8 +171,8 @@ function CandidateCard({ candidate, selected, pinned, provisional, onSelect, onU
         </dl>
       </details>
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        <button type="button" onClick={onSelect} className="min-h-12 rounded-2xl bg-emerald-200 px-4 py-3 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white">Revisar producto<span className="block text-[10px]">SELECT_CANDIDATE</span></button>
-        <button type="button" onClick={() => { if (window.confirm(`¿Marcar “${candidate.productTitle}” como no disponible?`)) onUnavailable() }} className="min-h-12 rounded-2xl border border-rose-200/35 px-4 py-3 font-bold text-rose-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-rose-200">Marcar no disponible<span className="block text-[10px]">MARK_UNAVAILABLE</span></button>
+        <button type="button" onClick={onSelect} className="min-h-12 rounded-2xl bg-emerald-200 px-4 py-3 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white">Revisar producto</button>
+        <button type="button" onClick={() => { if (window.confirm(`¿Marcar “${candidate.productTitle}” como no disponible?`)) onUnavailable() }} className="min-h-12 rounded-2xl border border-rose-200/35 px-4 py-3 font-bold text-rose-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-rose-200">Marcar no disponible</button>
       </div>
     </article>
   )
@@ -128,6 +184,15 @@ export default function EbayMobileReviewPage() {
   const [stockQuantity, setStockQuantity] = useState("")
   const [lunaPrice, setLunaPrice] = useState("")
   const [lunaPriceConfirmed, setLunaPriceConfirmed] = useState(false)
+  const [catalogCheckOpened, setCatalogCheckOpened] = useState(false)
+  const [ebayListingUrl, setEbayListingUrl] = useState("")
+  const [ebayObservedTitle, setEbayObservedTitle] = useState("")
+  const [ebayReferenceOpened, setEbayReferenceOpened] = useState(false)
+  const [identityChecks, setIdentityChecks] = useState({
+    sameProductAndBrand: false,
+    sameVariantSizeOrPack: false,
+    compatibleReference: false,
+  })
   const [loading, setLoading] = useState(true)
   const [loadState, setLoadState] = useState("LOADING")
   const [loadMessage, setLoadMessage] = useState("Cargando Market Radar read-only…")
@@ -149,7 +214,7 @@ export default function EbayMobileReviewPage() {
         return loadMarketRadarReadonlyDashboard(`Bearer ${data.session.access_token}`)
       })()
       const nextReport = buildMobileReviewRealRadarConnector({ products, mode: demoRequested ? "DEMO_FIXTURE_ONLY" : "REAL_READONLY" })
-      setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates)))
+      setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false })
       if (nextReport.realRadarCandidatesCount === 0) { setLoadState("RADAR_EMPTY"); setLoadMessage("Radar respondió, pero no devolvió productos. Ejecuta o revisa el scan antes de decidir.") }
       else { setLoadState("READY"); setLoadMessage(`${nextReport.top5Candidates.length} candidatos disponibles de ${nextReport.realRadarCandidatesCount} productos observados.`) }
     } catch (error) {
@@ -174,12 +239,21 @@ export default function EbayMobileReviewPage() {
 
   const decision = useMemo(() => buildMobileReviewDecision(state), [state])
   const selectedRadarCandidate = report.top5Candidates.find((candidate) => candidate.candidateRank === state.selectedCandidateRank) ?? null
+  const lunaCatalogUrl = getLunaCatalogUrl(selectedRadarCandidate?.productUrl)
+  const safeProductImageUrl = getSafeProductImageUrl(selectedRadarCandidate?.imageReference)
+  const ebayIdentitySearchUrl = buildEbayIdentitySearchUrl(selectedRadarCandidate)
+  const identityComparison = useMemo(() => buildLunaEbayIdentityComparison({ lunaCandidate: selectedRadarCandidate, ebayListingUrl, ebayObservedTitle, ebayReferenceOpened, checklist: identityChecks, confirmationRecorded: state.sameProductConfirmed }), [selectedRadarCandidate, ebayListingUrl, ebayObservedTitle, ebayReferenceOpened, identityChecks, state.sameProductConfirmed])
   const pinnedContinuity = useMemo(() => buildPinnedCandidateContinuityReport(report.top5Candidates, pinnedCandidates, report.allCandidates), [report, pinnedCandidates])
-  const localConfirmationsComplete = Boolean(state.sameProductConfirmed && state.stockQuantityConfirmed && state.imageConfirmed && lunaPriceConfirmed)
-  const radarGuards = useMemo(() => buildMobileReviewRadarGuardEnforcement({ dataSource: report.dataSource, realRadarTop5Loaded: report.realRadarTop5Loaded, top5Candidates: report.top5Candidates, selectedCandidate: selectedRadarCandidate, localConfirmationsComplete, manualConfirmations: { sameProductConfirmed: state.sameProductConfirmed, stockConfirmed: (state.stockQuantityConfirmed ?? 0) > 0, stockQuantityConfirmed: state.stockQuantityConfirmed, imageConfirmed: state.imageConfirmed, lunaPriceConfirmed, lunaPrice: lunaPriceConfirmed ? Number(lunaPrice) : null } }), [report, selectedRadarCandidate, localConfirmationsComplete, state, lunaPriceConfirmed, lunaPrice])
-  const marketValidation = useMemo(() => buildEbayMarketValidationSelectedCandidate({ selectedCandidate: selectedRadarCandidate, humanConfirmationsComplete: localConfirmationsComplete, pendingGuards: radarGuards.pendingGuards }), [selectedRadarCandidate, localConfirmationsComplete, radarGuards.pendingGuards])
+  const localConfirmationsComplete = Boolean(identityComparison.identityComparisonComplete && state.stockQuantityConfirmed && state.imageConfirmed && lunaPriceConfirmed)
+  const localConfirmationCount = [
+    identityComparison.identityComparisonComplete,
+    Boolean(state.stockQuantityConfirmed),
+    Boolean(state.imageConfirmed && lunaPriceConfirmed),
+  ].filter(Boolean).length
+  const radarGuards = useMemo(() => buildMobileReviewRadarGuardEnforcement({ dataSource: report.dataSource, realRadarTop5Loaded: report.realRadarTop5Loaded, top5Candidates: report.top5Candidates, selectedCandidate: selectedRadarCandidate, localConfirmationsComplete, manualConfirmations: { sameProductConfirmed: identityComparison.identityComparisonComplete, stockConfirmed: (state.stockQuantityConfirmed ?? 0) > 0, stockQuantityConfirmed: state.stockQuantityConfirmed, imageConfirmed: state.imageConfirmed, lunaPriceConfirmed, lunaPrice: lunaPriceConfirmed ? Number(lunaPrice) : null } }), [report, selectedRadarCandidate, localConfirmationsComplete, identityComparison.identityComparisonComplete, state.stockQuantityConfirmed, state.imageConfirmed, lunaPriceConfirmed, lunaPrice])
+  const marketValidation = useMemo(() => buildEbayMarketValidationSelectedCandidate({ selectedCandidate: selectedRadarCandidate, humanConfirmationsComplete: localConfirmationsComplete, pendingGuards: [...radarGuards.pendingGuards, ...(selectedRadarCandidate && !identityComparison.identityComparisonComplete ? identityComparison.pendingGuards : [])] }), [selectedRadarCandidate, localConfirmationsComplete, radarGuards.pendingGuards, identityComparison.identityComparisonComplete, identityComparison.pendingGuards])
   const effectiveDecision = useMemo(() => buildMobileReviewEffectiveDecision({ dataSource: report.dataSource, selectedCandidateName: decision.selectedCandidateName, pendingGuards: marketValidation.pendingGuards, primaryBlockingReason: localConfirmationsComplete ? marketValidation.nextRecommendedRoute : radarGuards.primaryBlockingReason, localConfirmationsComplete, holdForReview: state.holdForReview, refreshRequested: state.refreshRequested }), [report.dataSource, decision.selectedCandidateName, marketValidation, radarGuards.primaryBlockingReason, localConfirmationsComplete, state.holdForReview, state.refreshRequested])
-  const summary = useMemo(() => JSON.stringify({ ...JSON.parse(buildMobileReviewCopyPasteSummary(state)), dataSource: report.dataSource, mobileDecisionPersistence: "BROWSER_STATE_ONLY", decisionPersistence: "BROWSER_STATE_OR_LOCAL_STORAGE", officialApprovalRecord: false, effectiveDecision, marketValidationSelectedCandidate: marketValidation, pendingGuards: selectedRadarCandidate ? marketValidation.pendingGuards : null, guardsEvaluated: Boolean(selectedRadarCandidate), manualConfirmationReconciliation: radarGuards.reconciliation, pinnedCandidateContinuity: pinnedContinuity, canPublish: false }, null, 2), [state, report.dataSource, effectiveDecision, marketValidation, selectedRadarCandidate, radarGuards.reconciliation, pinnedContinuity])
+  const summary = useMemo(() => JSON.stringify({ ...JSON.parse(buildMobileReviewCopyPasteSummary(state)), dataSource: report.dataSource, mobileDecisionPersistence: "BROWSER_STATE_ONLY", decisionPersistence: "BROWSER_STATE_OR_LOCAL_STORAGE", officialApprovalRecord: false, effectiveDecision, lunaEbayIdentityComparison: identityComparison, marketValidationSelectedCandidate: marketValidation, pendingGuards: selectedRadarCandidate ? marketValidation.pendingGuards : null, guardsEvaluated: Boolean(selectedRadarCandidate), manualConfirmationReconciliation: radarGuards.reconciliation, pinnedCandidateContinuity: pinnedContinuity, canPublish: false }, null, 2), [state, report.dataSource, effectiveDecision, identityComparison, marketValidation, selectedRadarCandidate, radarGuards.reconciliation, pinnedContinuity])
 
   useEffect(() => {
     if (!selectedRadarCandidate || !localConfirmationsComplete) return
@@ -234,12 +308,69 @@ export default function EbayMobileReviewPage() {
 
   const actPinned = (action: PinnedCandidateAction) => { setPinnedCandidates((current) => applyPinnedCandidateAction(current, action, report.allCandidates)); setLastActionMessage(`Acción de candidato en revisión: ${action.type}. Guardada solo en este navegador.`) }
   const act = (action: Parameters<typeof applyMobileReviewAction>[1]) => {
-    if (action.type === "SELECT_CANDIDATE" || action.type === "MARK_UNAVAILABLE") { setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false) }
+    if (action.type === "SELECT_CANDIDATE" || action.type === "MARK_UNAVAILABLE") { setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }) }
     if (action.type === "APPROVE_B2_RUN_PREFLIGHT") { setLastActionMessage(`B2-RUN continúa bloqueado. Próximo paso: ${routeLabel(effectiveDecision.nextRecommendedRoute)}.`); return }
     setState((current) => applyMobileReviewAction(current, action))
-    const messages: Record<string, string> = { MARK_UNAVAILABLE: "Producto marcado no disponible en este navegador. Puedes deshacer recargando antes de persistir otro estado.", SELECT_CANDIDATE: "Producto seleccionado. Completa las cuatro confirmaciones.", CONFIRM_SAME_PRODUCT: "Identidad del producto confirmada localmente.", CONFIRM_STOCK_QTY: `Stock confirmado: ${stockQuantity} unidades.`, CONFIRM_IMAGE_OK: "Imagen confirmada localmente.", REQUEST_LUNA_SCAN_REFRESH: "Solicitud de refresco preparada localmente.", HOLD_FOR_REVIEW: "Revisión puesta en espera." }
+    const messages: Record<string, string> = { MARK_UNAVAILABLE: "Producto marcado no disponible en este navegador. Puedes deshacer recargando antes de persistir otro estado.", SELECT_CANDIDATE: "Producto seleccionado para evaluar; todavía no es una recomendación. Completa las tres confirmaciones.", CONFIRM_SAME_PRODUCT: "Identidad del producto confirmada localmente.", CONFIRM_STOCK_QTY: `Stock confirmado: ${stockQuantity} unidades.`, CONFIRM_IMAGE_OK: "Precio e imagen de Luna confirmados localmente.", REQUEST_LUNA_SCAN_REFRESH: "Se marcó localmente que Radar necesita un refresco; todavía no se envió una solicitud.", HOLD_FOR_REVIEW: "La revisión quedó pausada en esta sesión." }
     setLastActionMessage(messages[action.type] ?? "Acción local registrada.")
     if (action.type === "SELECT_CANDIDATE") { setView("decision"); window.setTimeout(() => confirmationRef.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 50) }
+  }
+
+  const resetIdentityConfirmation = () => {
+    setState((current) =>
+      applyMobileReviewAction(current, {
+        type: "RESET_SAME_PRODUCT_CONFIRMATION",
+      })
+    )
+  }
+
+  const updateIdentityCheck = (key: keyof typeof identityChecks, checked: boolean) => {
+    setIdentityChecks((current) => ({ ...current, [key]: checked }))
+    resetIdentityConfirmation()
+  }
+
+  const confirmIdentityComparison = () => {
+    if (!identityComparison.canConfirmSameProduct) return
+    act({ type: "CONFIRM_SAME_PRODUCT" })
+    setLastActionMessage(
+      "Identidad confirmada mediante comparación humana entre Luna Portex y el listing de referencia en eBay."
+    )
+  }
+
+  const resetStockConfirmation = (value: string) => {
+    setStockQuantity(value)
+    setState((current) =>
+      applyMobileReviewAction(
+        current,
+        { type: "RESET_STOCK_CONFIRMATION" }
+      )
+    )
+  }
+
+  const resetLunaCatalogConfirmation = (value: string) => {
+    setLunaPrice(value)
+    setLunaPriceConfirmed(false)
+    setState((current) =>
+      applyMobileReviewAction(
+        current,
+        { type: "RESET_LUNA_CATALOG_CONFIRMATION" }
+      )
+    )
+  }
+
+  const confirmLunaCatalogMatch = () => {
+    const price = Number(lunaPrice)
+    if (!catalogCheckOpened || !lunaCatalogUrl || !safeProductImageUrl || !(price > 0)) return
+    setLunaPriceConfirmed(true)
+    setState((current) =>
+      applyMobileReviewAction(
+        current,
+        { type: "CONFIRM_IMAGE_OK" }
+      )
+    )
+    setLastActionMessage(
+      `Precio USD ${price.toFixed(2)} e imagen confirmados contra el catálogo de Luna Portex.`
+    )
   }
 
   const sourceLabel = report.dataSource === "MARKET_RADAR_READONLY" ? "REAL RADAR" : report.dataSource === "DEMO_FIXTURE_ONLY" ? "DEMO" : loadState === "AUTH_REQUIRED" ? "SESIÓN REQUERIDA" : loadState === "RADAR_REQUEST_FAILED" ? "ERROR DE RADAR" : "SIN DATOS"
@@ -255,9 +386,10 @@ export default function EbayMobileReviewPage() {
 
         <section className={`rounded-3xl border p-4 ${loadState === "READY" ? "border-emerald-200/25 bg-emerald-200/[0.07]" : "border-amber-200/25 bg-amber-200/[0.07]"}`}>
           <p className="font-black">{loadMessage}</p><p className="mt-2 text-sm text-white/75">Publicación desactivada · sin eBay write · sin Supabase write.</p>
-          <p className="sr-only">Radar devolvió {report.realRadarCandidatesCount} productos; candidatesNeededForTop5: {report.candidatesNeededForTop5}. stock source y stock age disponibles en detalles. no eBay write.</p>
+          <p className="sr-only">Radar observó {report.realRadarCandidatesCount} productos y muestra {report.top5Candidates.length} candidatos seleccionables. La fuente y antigüedad del stock están disponibles en los detalles.</p>
           {loadState === "AUTH_REQUIRED" ? <a href="/admin/login?returnTo=%2Fadmin%2Febay%2Fmobile-review" className="mt-3 inline-flex min-h-11 items-center rounded-2xl bg-white px-4 py-2 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200">Iniciar sesión</a> : loadState !== "READY" && <button type="button" onClick={() => void load()} className="mt-3 min-h-11 rounded-2xl bg-white px-4 py-2 font-black text-black">Reintentar lectura</button>}
         </section>
+        {loadState === "READY" && <dl className="grid grid-cols-3 gap-2 rounded-2xl border border-white/15 bg-black/30 p-2 text-center"><div className="rounded-xl bg-white/[0.04] px-2 py-3"><dt className="text-[10px] font-bold uppercase tracking-wide text-white/55">Observados</dt><dd className="mt-1 text-xl font-black">{report.realRadarCandidatesCount}</dd></div><div className="rounded-xl bg-emerald-200/[0.07] px-2 py-3"><dt className="text-[10px] font-bold uppercase tracking-wide text-emerald-50/70">Top 5</dt><dd className="mt-1 text-xl font-black">{report.top5Candidates.length}</dd></div><div className="rounded-xl bg-rose-200/[0.07] px-2 py-3"><dt className="text-[10px] font-bold uppercase tracking-wide text-rose-50/70">Bloqueados</dt><dd className="mt-1 text-xl font-black">{report.stockHoldCandidates.length}</dd></div></dl>}
         {report.fixtureUsed && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4 text-sm"><p className="font-black">FIXTURE/DEMO · no usar para aprobación real</p><p className="mt-2 text-white/80">Fuente actual: fixture modelado · no es data viva. score modelado · Fixture · no precio runtime · Fixture · no Category ID.</p></aside>}
 
         <div role="status" aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.07] p-3 text-sm text-cyan-50">{lastActionMessage}</div>
@@ -266,7 +398,7 @@ export default function EbayMobileReviewPage() {
         <nav aria-label="Secciones de Mobile Review" className="grid grid-cols-4 gap-1 rounded-2xl border border-white/15 bg-black/40 p-1">
           {tabs.map((tab) => <button key={tab.id} type="button" aria-current={view === tab.id ? "page" : undefined} onClick={() => setView(tab.id)} className={`min-h-12 rounded-xl px-1 py-2 text-[11px] font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${view === tab.id ? "bg-white text-black" : "text-white/75"}`}>{tab.label}{tab.count !== undefined && <span className="block">{tab.count}</span>}</button>)}
         </nav>
-        <p className="sr-only">Productos reales excluidos. No se puede aprobar B2-RUN todavía.</p>
+        <p className="sr-only">{report.stockHoldCandidates.length} productos están bloqueados por stock. B2-RUN continúa desactivado hasta completar todas las validaciones.</p>
 
         {view === "top5" && <section aria-labelledby="top5-heading"><h2 id="top5-heading" className="mb-3 text-xl font-black">Top 5 actual</h2><div className="space-y-4">{report.top5Candidates.map((candidate) => <CandidateCard key={candidate.candidateId} candidate={candidate} selected={state.selectedCandidateRank === candidate.candidateRank} pinned={pinnedCandidates.some((item) => pinnedCandidateMatchesRadar(item, candidate))} provisional={radarGuards.needsScoreDisambiguation} onSelect={() => act({ type: "SELECT_CANDIDATE", rank: candidate.candidateRank })} onUnavailable={() => act({ type: "MARK_UNAVAILABLE", rank: candidate.candidateRank })} />)}{!loading && report.top5Candidates.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/75">No hay candidatos seleccionables.</p>}</div></section>}
 
@@ -274,9 +406,334 @@ export default function EbayMobileReviewPage() {
 
         {view === "blocked" && <section aria-labelledby="blocked-heading"><h2 id="blocked-heading" className="text-xl font-black">Bloqueados por stock</h2><p className="mt-1 text-sm text-white/75">Se muestran {Math.min(blockedVisible, report.stockHoldCandidates.length)} de {report.stockHoldCandidates.length}.</p><div className="mt-4 space-y-3">{report.stockHoldCandidates.slice(0, blockedVisible).map((candidate) => <article key={candidate.candidateId} className="rounded-2xl border border-rose-200/20 bg-rose-200/[0.06] p-4"><h3 className="font-black">{candidate.productTitle}</h3><p className="mt-2 text-sm text-white/75">{routeLabel(candidate.routeRecommendation)} · último scan {formatDate(candidate.lastSeenAt)}</p><details className="mt-2"><summary className="cursor-pointer text-sm font-bold">Ver identificación</summary><p className="mt-2 break-all text-xs">Radar: {candidate.marketRadarProductId}<br />SKU: {formatValue(candidate.supplierSku)}</p></details></article>)}</div>{blockedVisible < report.stockHoldCandidates.length && <button type="button" onClick={() => setBlockedVisible((value) => value + 20)} className="mt-4 min-h-12 w-full rounded-2xl border border-white/25 font-black">Mostrar 20 más</button>}</section>}
 
-        {view === "decision" && <section ref={confirmationRef} className="scroll-mt-32 space-y-4" aria-labelledby="decision-heading"><div><h2 id="decision-heading" className="text-xl font-black">Confirmar producto</h2><p className="mt-1 text-sm text-white/75">{decision.selectedCandidateName ?? "Selecciona un producto desde Top 5."}</p></div>{selectedRadarCandidate && <><div className="rounded-3xl border border-white/15 bg-white/[0.045] p-4"><p className="font-black">1. Identidad</p><p className="mt-1 text-sm text-white/75">Confirma que el producto, variante y referencia corresponden.</p><button type="button" onClick={() => act({ type: "CONFIRM_SAME_PRODUCT" })} className="mt-3 min-h-12 w-full rounded-2xl border border-white/25 font-black">{state.sameProductConfirmed ? "✓ Mismo producto confirmado" : "Confirmar mismo producto"}<span className="block text-[10px]">CONFIRM_SAME_PRODUCT</span></button></div><div className="rounded-3xl border border-white/15 bg-white/[0.045] p-4"><label htmlFor="stock-confirmed" className="font-black">2. Cantidad observada</label><p className="mt-1 text-sm text-white/75">Ingresa manualmente un número entero mayor que cero.</p><div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]"><input id="stock-confirmed" inputMode="numeric" pattern="[0-9]*" placeholder="Ej. 2" value={stockQuantity} onChange={(event) => setStockQuantity(event.target.value.replace(/\D/g, ""))} className="min-h-12 rounded-2xl border border-white/25 bg-black/30 px-4 text-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200" /><button type="button" disabled={!Number.isInteger(Number(stockQuantity)) || Number(stockQuantity) < 1} onClick={() => act({ type: "CONFIRM_STOCK_QTY", quantity: Number(stockQuantity) })} className="min-h-12 rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">Confirmar stock<span className="block text-[10px]">CONFIRM_STOCK_QTY</span></button></div></div><div className="rounded-3xl border border-white/15 bg-white/[0.045] p-4"><label htmlFor="luna-price-confirmed" className="font-black">3. Precio visto en Luna</label><p className="mt-1 text-sm text-white/75">Confirma el precio actual en USD; no se reutiliza el valor de otro producto.</p><div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]"><input id="luna-price-confirmed" inputMode="decimal" placeholder="Ej. 2.00" value={lunaPrice} onChange={(event) => { setLunaPrice(event.target.value); setLunaPriceConfirmed(false) }} className="min-h-12 rounded-2xl border border-white/25 bg-black/30 px-4 text-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200" /><button type="button" disabled={!(Number(lunaPrice) > 0)} onClick={() => { setLunaPriceConfirmed(true); setLastActionMessage(`Precio Luna confirmado: USD ${Number(lunaPrice).toFixed(2)}.`) }} className="min-h-12 rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">{lunaPriceConfirmed ? "✓ Precio confirmado" : "Confirmar precio"}<span className="block text-[10px]">CONFIRM_LUNA_PRICE:{lunaPrice}</span></button></div></div><div className="rounded-3xl border border-white/15 bg-white/[0.045] p-4"><p className="font-black">4. Imagen</p><p className="mt-1 text-sm text-white/75 break-all">Referencia: {formatValue(selectedRadarCandidate.imageReference)}</p><button type="button" onClick={() => act({ type: "CONFIRM_IMAGE_OK" })} className="mt-3 min-h-12 w-full rounded-2xl border border-white/25 font-black">{state.imageConfirmed ? "✓ Imagen confirmada" : "Confirmar imagen"}<span className="block text-[10px]">CONFIRM_IMAGE_OK</span></button></div>{marketValidation.productRestrictionRiskDetected && <aside role="alert" className="rounded-3xl border border-rose-200/35 bg-rose-200/[0.09] p-4"><p className="font-black">Revisión de restricciones requerida</p><p className="mt-2 text-sm leading-6 text-white/85">Este producto puede tener restricciones de envío o categoría. Requiere revisión antes de preparar listing.</p><dl className="mt-3 grid gap-2 text-sm"><div className="rounded-2xl bg-black/25 p-3"><dt className="text-white/60">Tipo de riesgo</dt><dd className="mt-1 break-words font-black text-rose-50">{marketValidation.restrictionRiskType}</dd></div><div className="rounded-2xl bg-black/25 p-3"><dt className="text-white/60">Guardas de restricción pendientes</dt><dd className="mt-1"><ul className="list-disc space-y-1 pl-5 font-bold">{marketValidation.restrictionGuards.map((guard) => <li key={guard}>{guard}</li>)}</ul></dd></div></dl><p className="mt-3 text-sm font-bold text-rose-50">B2-RUN bloqueado · canPublish false</p></aside>}<div className="rounded-3xl border border-amber-200/25 bg-amber-200/[0.07] p-4"><p className="font-black">Resultado de guardas</p><p className="mt-2 text-sm text-white/80">Siguiente paso: <strong>{routeLabel(effectiveDecision.nextRecommendedRoute)}</strong></p>{marketValidation.pendingGuards.length > 0 && <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-white/80">{marketValidation.pendingGuards.map((guard) => <li key={guard}>{guard}</li>)}</ul>}<button type="button" disabled className="mt-4 min-h-14 w-full rounded-2xl bg-emerald-200 px-4 font-black text-black opacity-40">B2-RUN no disponible<span className="block text-[10px]">APPROVE_B2_RUN_PREFLIGHT · canPublish false</span></button></div></>}{!selectedRadarCandidate && <button type="button" onClick={() => setView("top5")} className="min-h-12 w-full rounded-2xl bg-white font-black text-black">Ir al Top 5</button>}<details className="rounded-3xl border border-violet-200/20 bg-violet-200/[0.06] p-4" open={false}><summary className="cursor-pointer font-black">Decisión técnica copiable</summary><pre className="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-black/40 p-4 text-xs text-white/80">{summary}</pre><button type="button" onClick={async () => { try { await navigator.clipboard.writeText(summary); setCopied(true); setLastActionMessage("Resumen copiado.") } catch { setLastActionMessage("No se pudo copiar. Selecciona el JSON manualmente.") } }} className="mt-3 min-h-12 w-full rounded-2xl border border-violet-200/35 font-black">{copied ? "✓ Resumen copiado" : "Copiar resumen"}</button></details><div className="grid gap-2"><button type="button" onClick={() => act({ type: "REQUEST_LUNA_SCAN_REFRESH" })} className="min-h-12 rounded-2xl border border-amber-200/35 font-bold">Solicitar refresco de Radar<span className="block text-[10px]">REQUEST_LUNA_SCAN_REFRESH</span></button><button type="button" onClick={() => act({ type: "HOLD_FOR_REVIEW" })} className="min-h-12 rounded-2xl border border-amber-200/35 font-bold">Guardar para revisar después<span className="block text-[10px]">HOLD_FOR_REVIEW</span></button></div></section>}
+        {view === "decision" && (
+          <section
+            ref={confirmationRef}
+            className="scroll-mt-32 space-y-4"
+            aria-labelledby="decision-heading"
+          >
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 id="decision-heading" className="text-xl font-black">
+                  Candidato seleccionado
+                </h2>
+                {radarGuards.needsScoreDisambiguation && (
+                  <StatusPill tone="warning">No recomendado todavía</StatusPill>
+                )}
+              </div>
+              <p className="mt-1 text-sm text-white/75">
+                {decision.selectedCandidateName ?? "Selecciona un producto desde Top 5."}
+              </p>
+              {selectedRadarCandidate && (
+                <div className="mt-3 rounded-2xl border border-white/15 bg-black/25 p-3">
+                  <div className="flex items-center justify-between gap-3 text-xs font-bold">
+                    <span>Confirmaciones locales</span>
+                    <span>{localConfirmationCount} de 3</span>
+                  </div>
+                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-cyan-200 transition-all"
+                      style={{ width: `${(localConfirmationCount / 3) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
 
-        <footer className="pb-4 text-center text-xs leading-5 text-white/65">Estado local temporal · BROWSER_STATE_OR_LOCAL_STORAGE · officialApprovalRecord: false · canPublish: false.</footer>
+            {selectedRadarCandidate && (
+              <>
+                <div className="rounded-3xl border border-white/15 bg-white/[0.045] p-4">
+                  <p className="font-black">1. Comparar identidad Luna ↔ eBay</p>
+                  <p className="mt-1 text-sm leading-6 text-white/75">
+                    Compara el candidato de Luna Portex con un listing específico
+                    de referencia en eBay. La confirmación es humana y read-only;
+                    no consulta ni modifica eBay mediante API.
+                  </p>
+                  <dl className="mt-3 grid gap-2 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm">
+                    <div><dt className="text-white/55">Producto en Luna</dt><dd className="mt-1 font-black">{selectedRadarCandidate.productTitle}</dd></div>
+                    <div className="grid grid-cols-2 gap-2"><div><dt className="text-white/55">Variante</dt><dd className="font-bold">{formatValue(selectedRadarCandidate.variantTitle)}</dd></div><div><dt className="text-white/55">SKU</dt><dd className="break-all font-bold">{formatValue(selectedRadarCandidate.supplierSku)}</dd></div></div>
+                  </dl>
+                  <a
+                    href={ebayIdentitySearchUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-2xl border border-white/25 px-4 text-center font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200"
+                  >
+                    Buscar una referencia en eBay ↗
+                  </a>
+                  <label htmlFor="ebay-listing-reference" className="mt-4 block text-sm font-bold">URL del listing elegido</label>
+                  <input
+                    id="ebay-listing-reference"
+                    type="url"
+                    inputMode="url"
+                    placeholder="https://www.ebay.com/itm/..."
+                    value={ebayListingUrl}
+                    onChange={(event) => {
+                      setEbayListingUrl(event.target.value)
+                      setEbayReferenceOpened(false)
+                      resetIdentityConfirmation()
+                    }}
+                    className="mt-2 min-h-12 w-full rounded-2xl border border-white/25 bg-black/30 px-4 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200"
+                  />
+                  {identityComparison.ebayIdentity.listingUrl ? (
+                    <a
+                      href={identityComparison.ebayIdentity.listingUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => setEbayReferenceOpened(true)}
+                      className="mt-2 inline-flex min-h-12 w-full items-center justify-center rounded-2xl bg-white px-4 text-center font-black text-black"
+                    >
+                      Abrir listing de referencia en eBay ↗
+                    </a>
+                  ) : ebayListingUrl ? (
+                    <p className="mt-2 rounded-2xl border border-rose-200/25 bg-rose-200/[0.07] p-3 text-sm font-bold text-rose-50">Usa una URL HTTPS de un listing individual en ebay.com.</p>
+                  ) : null}
+                  <label htmlFor="ebay-observed-title" className="mt-4 block text-sm font-bold">Título observado en eBay</label>
+                  <input
+                    id="ebay-observed-title"
+                    type="text"
+                    placeholder="Copia el título visible del listing"
+                    value={ebayObservedTitle}
+                    onChange={(event) => {
+                      setEbayObservedTitle(event.target.value)
+                      resetIdentityConfirmation()
+                    }}
+                    className="mt-2 min-h-12 w-full rounded-2xl border border-white/25 bg-black/30 px-4 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200"
+                  />
+                  <fieldset className="mt-4 space-y-3">
+                    <legend className="text-sm font-black">Verifica los tres puntos</legend>
+                    <label className="flex min-h-12 items-start gap-3 rounded-2xl border border-white/15 p-3 text-sm"><input type="checkbox" checked={identityChecks.sameProductAndBrand} onChange={(event) => updateIdentityCheck("sameProductAndBrand", event.target.checked)} className="mt-1 size-5 shrink-0" /><span>Misma marca y mismo producto.</span></label>
+                    <label className="flex min-h-12 items-start gap-3 rounded-2xl border border-white/15 p-3 text-sm"><input type="checkbox" checked={identityChecks.sameVariantSizeOrPack} onChange={(event) => updateIdentityCheck("sameVariantSizeOrPack", event.target.checked)} className="mt-1 size-5 shrink-0" /><span>Misma variante, tamaño, cantidad o pack.</span></label>
+                    <label className="flex min-h-12 items-start gap-3 rounded-2xl border border-white/15 p-3 text-sm"><input type="checkbox" checked={identityChecks.compatibleReference} onChange={(event) => updateIdentityCheck("compatibleReference", event.target.checked)} className="mt-1 size-5 shrink-0" /><span>SKU, UPC, MPN o referencia no presentan contradicciones.</span></label>
+                  </fieldset>
+                  <button
+                    type="button"
+                    disabled={!identityComparison.canConfirmSameProduct}
+                    onClick={confirmIdentityComparison}
+                    className="mt-4 min-h-12 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40"
+                  >
+                    {identityComparison.identityComparisonComplete
+                      ? "✓ Identidad Luna ↔ eBay confirmada"
+                      : !identityComparison.ebayIdentity.referenceOpened
+                        ? "Abre el listing de eBay antes de confirmar"
+                        : "Confirmar misma identidad"}
+                  </button>
+                  {identityComparison.identityComparisonComplete && <p className="mt-2 text-xs font-bold text-emerald-100">Fuente: comparación humana Luna Portex ↔ eBay.</p>}
+                </div>
+
+                <div className="rounded-3xl border border-white/15 bg-white/[0.045] p-4">
+                  <label htmlFor="stock-confirmed" className="font-black">
+                    2. Cantidad observada
+                  </label>
+                  <p className="mt-1 text-sm text-white/75">
+                    Ingresa manualmente un número entero mayor que cero.
+                  </p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+                    <input
+                      id="stock-confirmed"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      placeholder="Ej. 2"
+                      value={stockQuantity}
+                      onChange={(event) =>
+                        resetStockConfirmation(
+                          event.target.value.replace(/\D/g, "")
+                        )
+                      }
+                      className="min-h-12 rounded-2xl border border-white/25 bg-black/30 px-4 text-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200"
+                    />
+                    <button
+                      type="button"
+                      disabled={
+                        !Number.isInteger(Number(stockQuantity)) ||
+                        Number(stockQuantity) < 1
+                      }
+                      onClick={() =>
+                        act({
+                          type: "CONFIRM_STOCK_QTY",
+                          quantity: Number(stockQuantity),
+                        })
+                      }
+                      className="min-h-12 rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40"
+                    >
+                      {state.stockQuantityConfirmed === Number(stockQuantity)
+                        ? `✓ Stock confirmado: ${stockQuantity}`
+                        : "Confirmar stock"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.06] p-4">
+                  <label htmlFor="luna-price-confirmed" className="font-black">
+                    3. Comparar precio e imagen en Luna
+                  </label>
+                  <p className="mt-1 text-sm leading-6 text-white/75">
+                    Abre el producto en Luna Portex, compara la imagen y escribe
+                    el precio actual en USD. Esta confirmación no valida el precio
+                    de mercado de eBay.
+                  </p>
+                  <div className="mt-3 overflow-hidden rounded-2xl border border-white/15 bg-white">
+                    {safeProductImageUrl ? (
+                      <img
+                        src={safeProductImageUrl}
+                        alt={`Imagen de ${selectedRadarCandidate.productTitle} registrada por Radar`}
+                        loading="lazy"
+                        decoding="async"
+                        referrerPolicy="no-referrer"
+                        className="max-h-72 w-full object-contain"
+                      />
+                    ) : (
+                      <div className="flex min-h-40 items-center justify-center bg-black/90 p-4 text-center text-sm font-bold text-white/70">
+                        Imagen no disponible o fuente no autorizada.
+                      </div>
+                    )}
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-white/60">
+                    Imagen observada por Radar. Compárala con la ficha que se abre en Luna Portex.
+                  </p>
+                  {lunaCatalogUrl ? (
+                    <a
+                      href={lunaCatalogUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => setCatalogCheckOpened(true)}
+                      className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-2xl border border-cyan-200/40 bg-black/30 px-4 text-center font-black text-cyan-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200"
+                    >
+                      Abrir producto en Luna Portex ↗
+                    </a>
+                  ) : (
+                    <p className="mt-3 rounded-2xl border border-rose-200/25 bg-rose-200/[0.07] p-3 text-sm font-bold text-rose-50">
+                      El producto no tiene una URL válida del catálogo de Luna.
+                    </p>
+                  )}
+                  <input
+                    id="luna-price-confirmed"
+                    inputMode="decimal"
+                    placeholder="Precio visto, ej. 4.00"
+                    value={lunaPrice}
+                    onChange={(event) =>
+                      resetLunaCatalogConfirmation(event.target.value)
+                    }
+                    className="mt-3 min-h-12 w-full rounded-2xl border border-white/25 bg-black/30 px-4 text-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200"
+                  />
+                  <button
+                    type="button"
+                    disabled={
+                      !catalogCheckOpened ||
+                      !lunaCatalogUrl ||
+                      !safeProductImageUrl ||
+                      !(Number(lunaPrice) > 0)
+                    }
+                    onClick={confirmLunaCatalogMatch}
+                    className="mt-2 min-h-12 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40"
+                  >
+                    {lunaPriceConfirmed && state.imageConfirmed
+                      ? `✓ Precio USD ${Number(lunaPrice).toFixed(2)} e imagen coinciden`
+                      : !safeProductImageUrl
+                        ? "Imagen no disponible para confirmar"
+                      : catalogCheckOpened
+                        ? "Confirmar que precio e imagen coinciden"
+                        : "Abre Luna antes de confirmar"}
+                  </button>
+                </div>
+
+                {marketValidation.productRestrictionRiskDetected && (
+                  <aside role="alert" className="rounded-3xl border border-rose-200/35 bg-rose-200/[0.09] p-4">
+                    <p className="font-black">Revisión de restricciones requerida</p>
+                    <p className="mt-2 text-sm leading-6 text-white/85">Este producto puede tener restricciones de envío o categoría. Requiere revisión antes de preparar listing.</p>
+                    <dl className="mt-3 grid gap-2 text-sm">
+                      <div className="rounded-2xl bg-black/25 p-3"><dt className="text-white/60">Tipo de riesgo</dt><dd className="mt-1 break-words font-black text-rose-50">{marketValidation.restrictionRiskType}</dd></div>
+                      <div className="rounded-2xl bg-black/25 p-3"><dt className="text-white/60">Guardas de restricción pendientes</dt><dd className="mt-1"><ul className="list-disc space-y-1 pl-5 font-bold">{marketValidation.restrictionGuards.map((guard) => <li key={guard}>{guard}</li>)}</ul></dd></div>
+                    </dl>
+                    <p className="mt-3 text-sm font-bold text-rose-50">B2-RUN bloqueado · canPublish false</p>
+                  </aside>
+                )}
+
+                <div className="rounded-3xl border border-amber-200/25 bg-amber-200/[0.07] p-4">
+                  <p className="font-black">Resultado de validaciones</p>
+                  <p className="mt-2 text-sm text-white/80">
+                    Siguiente paso: <strong>{routeLabel(effectiveDecision.nextRecommendedRoute)}</strong>
+                  </p>
+                  {marketValidation.pendingGuards.length > 0 && (
+                    <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-white/80">
+                      {marketValidation.pendingGuards.map((guard) => (
+                        <li key={guard}>{guardLabel(guard)}</li>
+                      ))}
+                    </ul>
+                  )}
+                  <button
+                    type="button"
+                    disabled
+                    className="mt-4 min-h-14 w-full rounded-2xl bg-emerald-200 px-4 font-black text-black opacity-40"
+                  >
+                    B2-RUN no disponible
+                  </button>
+                </div>
+              </>
+            )}
+
+            {!selectedRadarCandidate && (
+              <button
+                type="button"
+                onClick={() => setView("top5")}
+                className="min-h-12 w-full rounded-2xl bg-white font-black text-black"
+              >
+                Ir al Top 5
+              </button>
+            )}
+
+            <details className="rounded-3xl border border-violet-200/20 bg-violet-200/[0.06] p-4">
+              <summary className="cursor-pointer font-black">
+                Detalle técnico y resumen copiable
+              </summary>
+              <pre className="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-black/40 p-4 text-xs text-white/80">
+                {summary}
+              </pre>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(summary)
+                    setCopied(true)
+                    setLastActionMessage("Resumen copiado.")
+                  } catch {
+                    setLastActionMessage(
+                      "No se pudo copiar. Selecciona el JSON manualmente."
+                    )
+                  }
+                }}
+                className="mt-3 min-h-12 w-full rounded-2xl border border-violet-200/35 font-black"
+              >
+                {copied ? "✓ Resumen copiado" : "Copiar resumen"}
+              </button>
+            </details>
+
+            <div className="grid gap-2">
+              <button
+                type="button"
+                onClick={() => act({ type: "REQUEST_LUNA_SCAN_REFRESH" })}
+                className="min-h-12 rounded-2xl border border-amber-200/35 px-4 font-bold"
+              >
+                Marcar que Radar necesita refresco
+              </button>
+              <button
+                type="button"
+                onClick={() => act({ type: "HOLD_FOR_REVIEW" })}
+                className="min-h-12 rounded-2xl border border-amber-200/35 px-4 font-bold"
+              >
+                Pausar revisión en esta sesión
+              </button>
+            </div>
+          </section>
+        )}
+
+        <footer className="pb-4 text-center text-xs leading-5 text-white/65">
+          {localConfirmationsComplete
+            ? "Confirmaciones guardadas localmente en este navegador."
+            : "Borrador temporal de esta sesión; todavía no está guardado."}
+          <br />
+          Sin aprobación oficial · publicación desactivada.
+        </footer>
       </section>
       {selectedRadarCandidate && view !== "decision" && <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/15 bg-[#0b1018]/95 p-3 backdrop-blur"><div className="mx-auto flex max-w-xl items-center gap-3"><p className="min-w-0 flex-1 truncate text-sm font-bold">Seleccionado: {selectedRadarCandidate.productTitle}</p><button type="button" onClick={() => setView("decision")} className="min-h-12 rounded-2xl bg-emerald-200 px-4 font-black text-black">Continuar</button></div></div>}
     </main>
