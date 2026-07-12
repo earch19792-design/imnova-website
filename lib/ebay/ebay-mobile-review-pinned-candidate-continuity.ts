@@ -71,7 +71,7 @@ function humanConfirmation(candidate: PinnedCandidate): LastKnownHumanConfirmati
 
 function radarObservationFromCandidate(candidate: RealRadarCandidate): LatestRadarObservation {
   return {
-    latestAvailabilityStatus: candidate.inventoryStatus,
+    latestAvailabilityStatus: candidate.availabilityStatus,
     latestStockQuantity: candidate.stockQuantity,
     latestLunaPrice: candidate.lunaPrice,
     latestImageReference: candidate.imageReference,
@@ -189,7 +189,7 @@ export function canContinuePinnedEbayMarketValidation(
 export function applyPinnedCandidateAction(
   pinnedCandidates: PinnedCandidate[],
   action: PinnedCandidateAction,
-  currentTop5: RealRadarCandidate[] = []
+  radarCandidates: RealRadarCandidate[] = []
 ) {
   if (action.type === "UNPIN_CANDIDATE") {
     return pinnedCandidates.filter(
@@ -204,7 +204,7 @@ export function applyPinnedCandidateAction(
     if (action.type === "HOLD_PINNED_FOR_REVIEW") {
       return { ...candidate, status: "HOLD_FOR_REVIEW", nextRecommendedRoute: "EBAY-RESUME-HOLD" }
     }
-    const radarMatch = currentTop5.find((entry) => pinnedCandidateMatchesRadar(candidate, entry))
+    const radarMatch = radarCandidates.find((entry) => pinnedCandidateMatchesRadar(candidate, entry))
     const latestObservation = radarMatch
       ? radarObservationFromCandidate(radarMatch)
       : candidate.latestRadarObservation ?? null
@@ -234,11 +234,14 @@ export function applyPinnedCandidateAction(
 
 export function buildPinnedCandidateContinuityReport(
   currentTop5: RealRadarCandidate[],
-  pinnedCandidates: PinnedCandidate[]
+  pinnedCandidates: PinnedCandidate[],
+  allRadarCandidates: RealRadarCandidate[] = currentTop5
 ) {
   const decorated = pinnedCandidates.map((candidate) => {
-    const radarMatch = currentTop5.find((entry) => pinnedCandidateMatchesRadar(candidate, entry))
-    const inTop5 = Boolean(radarMatch)
+    const top5Match = currentTop5.find((entry) => pinnedCandidateMatchesRadar(candidate, entry))
+    const radarMatch = allRadarCandidates.find((entry) => pinnedCandidateMatchesRadar(candidate, entry))
+    const inTop5 = Boolean(top5Match)
+    const inRadar = Boolean(radarMatch)
     const latestObservation = radarMatch
       ? radarObservationFromCandidate(radarMatch)
       : candidate.latestRadarObservation ?? null
@@ -248,10 +251,13 @@ export function buildPinnedCandidateContinuityReport(
       status: supplierDrift.status,
       nextRecommendedRoute: supplierDrift.nextRecommendedRoute,
       supplierDrift,
+      canContinueEbayMarketValidation: canContinuePinnedEbayMarketValidation(candidate, latestObservation),
+      presentInRadar: inRadar,
+      presentInCurrentTop5: inTop5,
       dedupedWithTop5: inTop5,
       radarPresenceStatus: inTop5
         ? "PINNED_AND_IN_CURRENT_TOP5"
-        : candidate.radarPresenceStatus,
+        : inRadar ? "PRESENT_IN_RADAR_OUTSIDE_TOP5" : candidate.radarPresenceStatus,
     }
   })
   const first = decorated[0] ?? null
@@ -265,9 +271,7 @@ export function buildPinnedCandidateContinuityReport(
     dedupedWithTop5: first?.dedupedWithTop5 ?? false,
     humanConfirmationsPreserved: Boolean(first?.source === "HUMAN_MOBILE_CONFIRMED"),
     pinnedCandidateNextRoute: first?.nextRecommendedRoute ?? null,
-    canContinueEbayMarketValidation: first
-      ? canContinuePinnedEbayMarketValidation(first, first.supplierDrift.latestRadarObservation)
-      : false,
+    canContinueEbayMarketValidation: first?.canContinueEbayMarketValidation ?? false,
     supplierDriftDetected: first?.supplierDrift.supplierDriftDetected ?? false,
     stockChanged: first?.supplierDrift.stockChanged ?? false,
     priceChanged: first?.supplierDrift.priceChanged ?? false,

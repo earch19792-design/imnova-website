@@ -212,6 +212,7 @@ export function buildMobileReviewRealRadarConnector(
     candidatesNeededForTop5,
     fixtureUsed,
     dataSource,
+    allCandidates,
     top5Candidates,
     unavailableCandidates,
     stockHoldCandidates,
