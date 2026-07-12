@@ -393,8 +393,8 @@ export default function EbayMobileReviewPage() {
     } catch (error) {
       const code = error instanceof Error ? error.message : "EBAY_READONLY_MARKET_VALIDATION_FAILED"
       setSellerKeywordDemandError(
-        code === "EBAY_READONLY_CREDENTIALS_NOT_CONFIGURED"
-          ? "Las credenciales read-only de eBay todavía no están configuradas en este Preview."
+        code === "EBAY_READONLY_ENV_MISSING"
+          ? "EBAY_READONLY_ENV_MISSING · Las credenciales read-only de eBay todavía no están configuradas en este Preview."
           : code === "AUTH_REQUIRED"
             ? "La sesión admin expiró. Inicia sesión y vuelve a intentar."
             : "No se pudo consultar la evidencia de eBay. No se registró ninguna validación."
@@ -568,7 +568,7 @@ export default function EbayMobileReviewPage() {
                         </div>
                         <p className="mt-3 text-sm leading-6 text-white/80">{sellerKeywordDemand.evidenceDisclaimer}</p>
                         {sellerKeywordDemand.insightsAvailability !== "AVAILABLE" && (
-                          <p className="mt-2 text-xs leading-5 text-amber-100">El historial vendido completo de 90 días requiere acceso de eBay a Marketplace Insights. El análisis no lo simula ni lo reemplaza con scraping.</p>
+                          <p className="mt-2 text-xs leading-5 text-amber-100"><strong>{sellerKeywordDemand.marketplaceInsightsStatus}</strong> · El historial vendido completo de 90 días requiere acceso de eBay a Marketplace Insights. Se usa Browse como fallback estimado cuando eBay expone esa señal; el análisis no la presenta como venta verificada.</p>
                         )}
                       </div>
 

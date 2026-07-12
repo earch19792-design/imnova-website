@@ -3,13 +3,11 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 
 import {
+  assertEbaySellerKeywordReadonlyRequest,
   buildEbaySellerKeywordDemandValidation,
   buildEbaySellerKeywordSearchQuery,
-} from "../lib/ebay/ebay-seller-keyword-demand-validation.ts"
-import {
-  assertEbaySellerKeywordReadonlyRequest,
   getEbaySellerKeywordDemandGatewaySafety,
-} from "../lib/ebay/ebay-seller-keyword-demand-gateway.ts"
+} from "../lib/ebay/ebay-seller-keyword-demand-validation.ts"
 
 const fixture = JSON.parse(
   readFileSync(
@@ -69,6 +67,7 @@ test("does not call active-listing frequency a proven sales keyword", () => {
     insightsAvailability: "NOT_ENTITLED",
   })
   assert.equal(report.evidenceLevel, "ACTIVE_LISTINGS_ONLY")
+  assert.equal(report.marketplaceInsightsStatus, "MARKETPLACE_INSIGHTS_NOT_AUTHORIZED")
   assert.equal(report.keywordsBringingSales.length, 0)
   assert.equal(report.demandValidationPassed, false)
   assert.ok(report.pendingGuards.includes("NEED_EBAY_SALES_EVIDENCE"))
@@ -146,7 +145,19 @@ test("wires the read-only analysis into the phone menu without manual title or U
   assert.doesNotMatch(page, /URL del listing elegido/)
   assert.doesNotMatch(page, /Copia el título visible del listing/)
   assert.match(page, /guard !== "missingDemandValidation"/)
+  assert.match(page, /EBAY_READONLY_ENV_MISSING/)
+  assert.match(page, /marketplaceInsightsStatus/)
   assert.match(route, /validateAdminApiRequest/)
   assert.match(route, /runEbaySellerKeywordDemandValidation/)
   assert.doesNotMatch(route, /getSupabaseAdminClient/)
+  const gateway = readFileSync(
+    new URL("../lib/ebay/ebay-seller-keyword-demand-gateway.ts", import.meta.url),
+    "utf8"
+  )
+  assert.match(gateway, /EBAY_READONLY_ENV_MISSING/)
+  const validator = readFileSync(
+    new URL("../lib/ebay/ebay-seller-keyword-demand-validation.ts", import.meta.url),
+    "utf8"
+  )
+  assert.match(validator, /MARKETPLACE_INSIGHTS_NOT_AUTHORIZED/)
 })

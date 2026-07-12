@@ -88,3 +88,12 @@ vendidas, se retira `missingDemandValidation`. Si no, permanece
 Si Marketplace Insights no está autorizado, Browse continúa funcionando y la
 UI identifica con precisión si existe una estimación de ventas o sólo listings
 activos.
+
+## Estados runtime seguros
+
+- Sin `EBAY_CLIENT_ID` o `EBAY_CLIENT_SECRET`, la API responde 503 con
+  `EBAY_READONLY_ENV_MISSING` y la UI permanece operativa.
+- Sin autorización limitada de Marketplace Insights, la UI muestra
+  `MARKETPLACE_INSIGHTS_NOT_AUTHORIZED` y conserva Browse como fallback.
+- Una señal `estimatedSoldQuantity` de Browse siempre se etiqueta como
+  estimada; nunca se convierte en venta histórica verificada.

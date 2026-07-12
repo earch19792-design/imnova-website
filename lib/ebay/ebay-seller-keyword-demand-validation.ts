@@ -130,6 +130,20 @@ function safeEbayImageUrl(value: unknown) {
   }
 }
 
+export function assertEbaySellerKeywordReadonlyRequest(
+  urlValue: string,
+  method: string
+) {
+  const url = new URL(urlValue)
+  const allowedPath =
+    url.pathname === "/buy/browse/v1/item_summary/search" ||
+    url.pathname.startsWith("/buy/browse/v1/item/") ||
+    url.pathname === "/buy/marketplace-insights/v1_beta/item_sales/search"
+  if (method !== "GET" || url.origin !== "https://api.ebay.com" || !allowedPath) {
+    throw new Error("BLOCKED_NON_READONLY_EBAY_REQUEST")
+  }
+}
+
 function getFacts(value: unknown) {
   const source = normalize(value)
   const facts = new Map<string, string>()
@@ -336,13 +350,20 @@ export function buildEbaySellerKeywordDemandValidation(
       ? "NEED_EBAY_IDENTITY_REFERENCE"
       : "",
   ].filter(Boolean)
+  const insightsAvailability = input.insightsAvailability ?? "NOT_CONFIGURED"
+  const marketplaceInsightsStatus = insightsAvailability === "AVAILABLE"
+    ? "MARKETPLACE_INSIGHTS_AUTHORIZED"
+    : insightsAvailability === "REQUEST_FAILED"
+      ? "MARKETPLACE_INSIGHTS_REQUEST_FAILED"
+      : "MARKETPLACE_INSIGHTS_NOT_AUTHORIZED"
 
   return {
     validationVersion: EBAY_SELLER_KEYWORD_DEMAND_VALIDATION_VERSION,
     candidateName,
     searchQuery: buildEbaySellerKeywordSearchQuery(input.candidate),
     evidenceLevel,
-    insightsAvailability: input.insightsAvailability ?? "NOT_CONFIGURED",
+    insightsAvailability,
+    marketplaceInsightsStatus,
     soldHistoryIsLimitedRelease: true,
     listingsAnalyzed: comparables.length,
     eligibleComparableListings: eligible.length,
@@ -377,3 +398,21 @@ export function buildEbaySellerKeywordDemandValidation(
 export type EbaySellerKeywordDemandReport = ReturnType<
   typeof buildEbaySellerKeywordDemandValidation
 >
+
+export function getEbaySellerKeywordDemandGatewaySafety() {
+  return {
+    officialEbayReadOnlyGetOnly: true,
+    allowedEndpoints: [
+      "/buy/browse/v1/item_summary/search",
+      "/buy/browse/v1/item/{item_id}",
+      "/buy/marketplace-insights/v1_beta/item_sales/search",
+    ],
+    tokenStored: false,
+    tokenReturnedToBrowser: false,
+    exactCompetitorTitleCopied: false,
+    ebayImageCopied: false,
+    ebayWriteUsed: false,
+    supabaseWriteUsed: false,
+    canPublish: false,
+  }
+}

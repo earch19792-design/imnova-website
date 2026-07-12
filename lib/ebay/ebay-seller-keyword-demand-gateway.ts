@@ -1,10 +1,10 @@
-// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
 import {
+  assertEbaySellerKeywordReadonlyRequest,
   buildEbaySellerKeywordDemandValidation,
   buildEbaySellerKeywordSearchQuery,
   type EbaySellerComparableInput,
   type EbaySellerKeywordCandidate,
-} from "./ebay-seller-keyword-demand-validation.ts"
+} from "./ebay-seller-keyword-demand-validation"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const BROWSE_SEARCH_ENDPOINT =
@@ -55,25 +55,11 @@ function safeErrorCode(error: unknown) {
     : "EBAY_READONLY_MARKET_VALIDATION_FAILED"
 }
 
-export function assertEbaySellerKeywordReadonlyRequest(
-  urlValue: string,
-  method: string
-) {
-  const url = new URL(urlValue)
-  const allowedPath =
-    url.pathname === "/buy/browse/v1/item_summary/search" ||
-    url.pathname.startsWith("/buy/browse/v1/item/") ||
-    url.pathname === "/buy/marketplace-insights/v1_beta/item_sales/search"
-  if (method !== "GET" || url.origin !== "https://api.ebay.com" || !allowedPath) {
-    throw new Error("BLOCKED_NON_READONLY_EBAY_REQUEST")
-  }
-}
-
 async function getApplicationToken(scope: string) {
   const clientId = process.env.EBAY_CLIENT_ID?.trim() ?? ""
   const clientSecret = process.env.EBAY_CLIENT_SECRET?.trim() ?? ""
   if (!clientId || !clientSecret) {
-    throw new Error("EBAY_READONLY_CREDENTIALS_NOT_CONFIGURED")
+    throw new Error("EBAY_READONLY_ENV_MISSING")
   }
   const credentials = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")
   const response = await fetch(TOKEN_ENDPOINT, {
@@ -256,23 +242,5 @@ export async function runEbaySellerKeywordDemandValidation(
   } finally {
     browseToken = ""
     insightsToken = ""
-  }
-}
-
-export function getEbaySellerKeywordDemandGatewaySafety() {
-  return {
-    officialEbayReadOnlyGetOnly: true,
-    allowedEndpoints: [
-      "/buy/browse/v1/item_summary/search",
-      "/buy/browse/v1/item/{item_id}",
-      "/buy/marketplace-insights/v1_beta/item_sales/search",
-    ],
-    tokenStored: false,
-    tokenReturnedToBrowser: false,
-    exactCompetitorTitleCopied: false,
-    ebayImageCopied: false,
-    ebayWriteUsed: false,
-    supabaseWriteUsed: false,
-    canPublish: false,
   }
 }

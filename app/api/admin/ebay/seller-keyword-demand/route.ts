@@ -55,7 +55,7 @@ export async function POST(req: Request) {
     })
   } catch (error) {
     const code = safeErrorCode(error)
-    const status = code === "EBAY_READONLY_CREDENTIALS_NOT_CONFIGURED" ? 503 : 502
+    const status = code === "EBAY_READONLY_ENV_MISSING" ? 503 : 502
     return NextResponse.json(
       { success: false, error: code },
       { status }
