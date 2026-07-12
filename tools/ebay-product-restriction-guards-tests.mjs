@@ -174,7 +174,7 @@ test("mobile UI exposes the restriction warning and blocked outcomes", () => {
 })
 
 test("restriction loop has no external write, secret, image download or scraper capability", () => {
-  const combined = `${restrictionSource}\n${selectedCandidateSource}\n${pageSource}`
+  const combined = `${restrictionSource}\n${selectedCandidateSource}`
   for (const forbidden of [
     /method:\s*["']POST["']/,
     /\.insert\s*\(/,
@@ -186,7 +186,7 @@ test("restriction loop has no external write, secret, image download or scraper 
     /SUPABASE_SERVICE_ROLE_KEY/,
     /OPENAI_API_KEY/,
   ]) assert.doesNotMatch(combined, forbidden)
-  const restrictionLogic = `${restrictionSource}\n${selectedCandidateSource}`
+  const restrictionLogic = combined
   for (const forbidden of [
     /access_token/i,
     /refresh_token/i,

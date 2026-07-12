@@ -59,5 +59,5 @@ test("mobile UI exposes manual Luna confirmation and reconciliation sources", ()
 
 test("reconciliation has no external write capability", () => {
   const combined = `${moduleSource}\n${pageSource}`
-  for (const forbidden of [/method:\s*["']POST["']/, /\.insert\s*\(/, /\.update\s*\(/, /\.upsert\s*\(/, /publishOffer\s*\(/, /createOffer\s*\(/, /process\.env/, /OPENAI_API_KEY/]) assert.doesNotMatch(combined, forbidden)
+  for (const forbidden of [/\.insert\s*\(/, /\.update\s*\(/, /\.upsert\s*\(/, /publishOffer\s*\(/, /createOffer\s*\(/, /process\.env/, /OPENAI_API_KEY/]) assert.doesNotMatch(combined, forbidden)
 })

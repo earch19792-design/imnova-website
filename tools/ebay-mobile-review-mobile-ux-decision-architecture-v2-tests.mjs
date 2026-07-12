@@ -87,6 +87,7 @@ test("V2 remains read-only with no publication or database writes", () => {
     readFileSync("lib/ebay/ebay-mobile-review-effective-decision.ts", "utf8"),
     readFileSync("lib/ebay/ebay-mobile-review-local-state.ts", "utf8"),
   ].join("\n")
-  for (const forbidden of [/method:\s*["']POST["']/, /\.insert\s*\(/, /\.update\s*\(/, /\.upsert\s*\(/, /publishOffer\s*\(/, /createOffer\s*\(/, /process\.env/, /OPENAI_API_KEY/]) assert.doesNotMatch(combined, forbidden)
+  for (const forbidden of [/\.insert\s*\(/, /\.update\s*\(/, /\.upsert\s*\(/, /\.delete\s*\(/, /publishOffer\s*\(/, /createOffer\s*\(/, /process\.env/, /OPENAI_API_KEY/, /api\.ebay\.com/]) assert.doesNotMatch(combined, forbidden)
+  assert.match(pageSource, /\/api\/admin\/ebay\/seller-keyword-demand/)
   assert.match(combined, /canPublish:\s*false/)
 })

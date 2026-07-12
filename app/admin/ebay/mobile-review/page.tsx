@@ -30,6 +30,7 @@ import {
   buildEbayIdentitySearchUrl,
   buildLunaEbayIdentityComparison,
 } from "@/lib/ebay/ebay-luna-ebay-identity-comparison"
+import type { EbaySellerKeywordDemandReport } from "@/lib/ebay/ebay-seller-keyword-demand-validation"
 import {
   MOBILE_REVIEW_PINNED_STORAGE_KEY,
   parsePinnedCandidates,
@@ -70,6 +71,9 @@ const humanRouteLabels: Record<string, string> = {
   NEED_MARGIN_REVIEW: "Revisar margen",
   NEED_CATEGORY_RUNTIME_CONFIRMATION: "Confirmar categoría eBay",
   NEED_EBAY_DEMAND_VALIDATION: "Validar demanda eBay",
+  NEED_EBAY_SALES_EVIDENCE: "Obtener evidencia de ventas en eBay",
+  NEED_EBAY_COMPARABLE_LISTINGS: "Encontrar listings equivalentes en eBay",
+  NEED_HUMAN_EBAY_IDENTITY_CONFIRMATION: "Confirmar el comparable de eBay",
   NEED_IMAGE_REVIEW: "Revisar imagen",
   NEED_EBAY_IDENTITY_REFERENCE: "Comparar identidad Luna con un listing de eBay",
   NEED_SHIPPING_RESTRICTION_REVIEW: "Revisar restricciones de envío",
@@ -95,6 +99,8 @@ const humanGuardLabels: Record<string, string> = {
   missingMargin: "Falta revisar el margen estimado",
   missingCategoryId: "Falta confirmar la categoría de eBay",
   missingDemandValidation: "Falta validar la demanda en eBay",
+  NEED_EBAY_SALES_EVIDENCE: "Falta evidencia de ventas para comparables equivalentes",
+  NEED_EBAY_COMPARABLE_LISTINGS: "No se encontraron listings suficientemente equivalentes",
   missingImageValidation: "Falta comparar la imagen con Luna",
   riskHold: "El producto tiene una alerta de riesgo pendiente",
   outOfStock: "Radar reporta el producto sin stock",
@@ -193,6 +199,9 @@ export default function EbayMobileReviewPage() {
     sameVariantSizeOrPack: false,
     compatibleReference: false,
   })
+  const [sellerKeywordDemand, setSellerKeywordDemand] = useState<EbaySellerKeywordDemandReport | null>(null)
+  const [sellerKeywordDemandLoading, setSellerKeywordDemandLoading] = useState(false)
+  const [sellerKeywordDemandError, setSellerKeywordDemandError] = useState("")
   const [loading, setLoading] = useState(true)
   const [loadState, setLoadState] = useState("LOADING")
   const [loadMessage, setLoadMessage] = useState("Cargando Market Radar read-only…")
@@ -214,7 +223,7 @@ export default function EbayMobileReviewPage() {
         return loadMarketRadarReadonlyDashboard(`Bearer ${data.session.access_token}`)
       })()
       const nextReport = buildMobileReviewRealRadarConnector({ products, mode: demoRequested ? "DEMO_FIXTURE_ONLY" : "REAL_READONLY" })
-      setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false })
+      setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setSellerKeywordDemandError("")
       if (nextReport.realRadarCandidatesCount === 0) { setLoadState("RADAR_EMPTY"); setLoadMessage("Radar respondió, pero no devolvió productos. Ejecuta o revisa el scan antes de decidir.") }
       else { setLoadState("READY"); setLoadMessage(`${nextReport.top5Candidates.length} candidatos disponibles de ${nextReport.realRadarCandidatesCount} productos observados.`) }
     } catch (error) {
@@ -242,7 +251,7 @@ export default function EbayMobileReviewPage() {
   const lunaCatalogUrl = getLunaCatalogUrl(selectedRadarCandidate?.productUrl)
   const safeProductImageUrl = getSafeProductImageUrl(selectedRadarCandidate?.imageReference)
   const ebayIdentitySearchUrl = buildEbayIdentitySearchUrl(selectedRadarCandidate)
-  const identityComparison = useMemo(() => buildLunaEbayIdentityComparison({ lunaCandidate: selectedRadarCandidate, ebayListingUrl, ebayObservedTitle, ebayReferenceOpened, checklist: identityChecks, confirmationRecorded: state.sameProductConfirmed }), [selectedRadarCandidate, ebayListingUrl, ebayObservedTitle, ebayReferenceOpened, identityChecks, state.sameProductConfirmed])
+  const identityComparison = useMemo(() => buildLunaEbayIdentityComparison({ lunaCandidate: selectedRadarCandidate, ebayListingUrl, ebayObservedTitle, ebayReferenceOpened, checklist: identityChecks, confirmationRecorded: state.sameProductConfirmed, ebayApiUsed: Boolean(sellerKeywordDemand) }), [selectedRadarCandidate, ebayListingUrl, ebayObservedTitle, ebayReferenceOpened, identityChecks, state.sameProductConfirmed, sellerKeywordDemand])
   const pinnedContinuity = useMemo(() => buildPinnedCandidateContinuityReport(report.top5Candidates, pinnedCandidates, report.allCandidates), [report, pinnedCandidates])
   const localConfirmationsComplete = Boolean(identityComparison.identityComparisonComplete && state.stockQuantityConfirmed && state.imageConfirmed && lunaPriceConfirmed)
   const localConfirmationCount = [
@@ -251,9 +260,18 @@ export default function EbayMobileReviewPage() {
     Boolean(state.imageConfirmed && lunaPriceConfirmed),
   ].filter(Boolean).length
   const radarGuards = useMemo(() => buildMobileReviewRadarGuardEnforcement({ dataSource: report.dataSource, realRadarTop5Loaded: report.realRadarTop5Loaded, top5Candidates: report.top5Candidates, selectedCandidate: selectedRadarCandidate, localConfirmationsComplete, manualConfirmations: { sameProductConfirmed: identityComparison.identityComparisonComplete, stockConfirmed: (state.stockQuantityConfirmed ?? 0) > 0, stockQuantityConfirmed: state.stockQuantityConfirmed, imageConfirmed: state.imageConfirmed, lunaPriceConfirmed, lunaPrice: lunaPriceConfirmed ? Number(lunaPrice) : null } }), [report, selectedRadarCandidate, localConfirmationsComplete, identityComparison.identityComparisonComplete, state.stockQuantityConfirmed, state.imageConfirmed, lunaPriceConfirmed, lunaPrice])
-  const marketValidation = useMemo(() => buildEbayMarketValidationSelectedCandidate({ selectedCandidate: selectedRadarCandidate, humanConfirmationsComplete: localConfirmationsComplete, pendingGuards: [...radarGuards.pendingGuards, ...(selectedRadarCandidate && !identityComparison.identityComparisonComplete ? identityComparison.pendingGuards : [])] }), [selectedRadarCandidate, localConfirmationsComplete, radarGuards.pendingGuards, identityComparison.identityComparisonComplete, identityComparison.pendingGuards])
+  const demandAwareRadarGuards = useMemo(() => {
+    const guards = sellerKeywordDemand?.demandValidationPassed
+      ? radarGuards.pendingGuards.filter((guard) => guard !== "missingDemandValidation")
+      : radarGuards.pendingGuards
+    return [
+      ...guards,
+      ...(sellerKeywordDemand?.pendingGuards ?? []),
+    ]
+  }, [radarGuards.pendingGuards, sellerKeywordDemand])
+  const marketValidation = useMemo(() => buildEbayMarketValidationSelectedCandidate({ selectedCandidate: selectedRadarCandidate, humanConfirmationsComplete: localConfirmationsComplete, pendingGuards: [...demandAwareRadarGuards, ...(selectedRadarCandidate && !identityComparison.identityComparisonComplete ? identityComparison.pendingGuards : [])] }), [selectedRadarCandidate, localConfirmationsComplete, demandAwareRadarGuards, identityComparison.identityComparisonComplete, identityComparison.pendingGuards])
   const effectiveDecision = useMemo(() => buildMobileReviewEffectiveDecision({ dataSource: report.dataSource, selectedCandidateName: decision.selectedCandidateName, pendingGuards: marketValidation.pendingGuards, primaryBlockingReason: localConfirmationsComplete ? marketValidation.nextRecommendedRoute : radarGuards.primaryBlockingReason, localConfirmationsComplete, holdForReview: state.holdForReview, refreshRequested: state.refreshRequested }), [report.dataSource, decision.selectedCandidateName, marketValidation, radarGuards.primaryBlockingReason, localConfirmationsComplete, state.holdForReview, state.refreshRequested])
-  const summary = useMemo(() => JSON.stringify({ ...JSON.parse(buildMobileReviewCopyPasteSummary(state)), dataSource: report.dataSource, mobileDecisionPersistence: "BROWSER_STATE_ONLY", decisionPersistence: "BROWSER_STATE_OR_LOCAL_STORAGE", officialApprovalRecord: false, effectiveDecision, lunaEbayIdentityComparison: identityComparison, marketValidationSelectedCandidate: marketValidation, pendingGuards: selectedRadarCandidate ? marketValidation.pendingGuards : null, guardsEvaluated: Boolean(selectedRadarCandidate), manualConfirmationReconciliation: radarGuards.reconciliation, pinnedCandidateContinuity: pinnedContinuity, canPublish: false }, null, 2), [state, report.dataSource, effectiveDecision, identityComparison, marketValidation, selectedRadarCandidate, radarGuards.reconciliation, pinnedContinuity])
+  const summary = useMemo(() => JSON.stringify({ ...JSON.parse(buildMobileReviewCopyPasteSummary(state)), dataSource: report.dataSource, mobileDecisionPersistence: "BROWSER_STATE_ONLY", decisionPersistence: "BROWSER_STATE_OR_LOCAL_STORAGE", officialApprovalRecord: false, effectiveDecision, lunaEbayIdentityComparison: identityComparison, ebaySellerKeywordDemand: sellerKeywordDemand, marketValidationSelectedCandidate: marketValidation, pendingGuards: selectedRadarCandidate ? marketValidation.pendingGuards : null, guardsEvaluated: Boolean(selectedRadarCandidate), manualConfirmationReconciliation: radarGuards.reconciliation, pinnedCandidateContinuity: pinnedContinuity, canPublish: false }, null, 2), [state, report.dataSource, effectiveDecision, identityComparison, sellerKeywordDemand, marketValidation, selectedRadarCandidate, radarGuards.reconciliation, pinnedContinuity])
 
   useEffect(() => {
     if (!selectedRadarCandidate || !localConfirmationsComplete) return
@@ -308,7 +326,7 @@ export default function EbayMobileReviewPage() {
 
   const actPinned = (action: PinnedCandidateAction) => { setPinnedCandidates((current) => applyPinnedCandidateAction(current, action, report.allCandidates)); setLastActionMessage(`Acción de candidato en revisión: ${action.type}. Guardada solo en este navegador.`) }
   const act = (action: Parameters<typeof applyMobileReviewAction>[1]) => {
-    if (action.type === "SELECT_CANDIDATE" || action.type === "MARK_UNAVAILABLE") { setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }) }
+    if (action.type === "SELECT_CANDIDATE" || action.type === "MARK_UNAVAILABLE") { setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setSellerKeywordDemandError("") }
     if (action.type === "APPROVE_B2_RUN_PREFLIGHT") { setLastActionMessage(`B2-RUN continúa bloqueado. Próximo paso: ${routeLabel(effectiveDecision.nextRecommendedRoute)}.`); return }
     setState((current) => applyMobileReviewAction(current, action))
     const messages: Record<string, string> = { MARK_UNAVAILABLE: "Producto marcado no disponible en este navegador. Puedes deshacer recargando antes de persistir otro estado.", SELECT_CANDIDATE: "Producto seleccionado para evaluar; todavía no es una recomendación. Completa las tres confirmaciones.", CONFIRM_SAME_PRODUCT: "Identidad del producto confirmada localmente.", CONFIRM_STOCK_QTY: `Stock confirmado: ${stockQuantity} unidades.`, CONFIRM_IMAGE_OK: "Precio e imagen de Luna confirmados localmente.", REQUEST_LUNA_SCAN_REFRESH: "Se marcó localmente que Radar necesita un refresco; todavía no se envió una solicitud.", HOLD_FOR_REVIEW: "La revisión quedó pausada en esta sesión." }
@@ -324,16 +342,83 @@ export default function EbayMobileReviewPage() {
     )
   }
 
-  const updateIdentityCheck = (key: keyof typeof identityChecks, checked: boolean) => {
-    setIdentityChecks((current) => ({ ...current, [key]: checked }))
-    resetIdentityConfirmation()
-  }
-
   const confirmIdentityComparison = () => {
     if (!identityComparison.canConfirmSameProduct) return
     act({ type: "CONFIRM_SAME_PRODUCT" })
     setLastActionMessage(
-      "Identidad confirmada mediante comparación humana entre Luna Portex y el listing de referencia en eBay."
+      "Identidad confirmada contra el comparable elegido del análisis read-only de eBay."
+    )
+  }
+
+  const runSellerKeywordDemandValidation = async () => {
+    if (!selectedRadarCandidate || sellerKeywordDemandLoading) return
+    setSellerKeywordDemandLoading(true)
+    setSellerKeywordDemandError("")
+    setSellerKeywordDemand(null)
+    setEbayListingUrl("")
+    setEbayObservedTitle("")
+    setEbayReferenceOpened(false)
+    setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false })
+    resetIdentityConfirmation()
+    try {
+      const { data, error } = await supabase.auth.getSession()
+      if (error || !data.session) throw new Error("AUTH_REQUIRED")
+      const response = await fetch("/api/admin/ebay/seller-keyword-demand", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          productName: selectedRadarCandidate.productName,
+          productTitle: selectedRadarCandidate.productTitle,
+          variantTitle: selectedRadarCandidate.variantTitle,
+          supplierSku: selectedRadarCandidate.supplierSku,
+          categoryId: selectedRadarCandidate.categoryId,
+        }),
+      })
+      const payload = await response.json() as {
+        success?: boolean
+        error?: string
+        report?: EbaySellerKeywordDemandReport
+      }
+      if (!response.ok || !payload.success || !payload.report) {
+        throw new Error(payload.error || "EBAY_READONLY_MARKET_VALIDATION_FAILED")
+      }
+      setSellerKeywordDemand(payload.report)
+      setLastActionMessage(
+        `eBay analizado en modo read-only: ${payload.report.eligibleComparableListings} comparables y ${payload.report.sellersAnalyzed} vendedores.`
+      )
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "EBAY_READONLY_MARKET_VALIDATION_FAILED"
+      setSellerKeywordDemandError(
+        code === "EBAY_READONLY_CREDENTIALS_NOT_CONFIGURED"
+          ? "Las credenciales read-only de eBay todavía no están configuradas en este Preview."
+          : code === "AUTH_REQUIRED"
+            ? "La sesión admin expiró. Inicia sesión y vuelve a intentar."
+            : "No se pudo consultar la evidencia de eBay. No se registró ninguna validación."
+      )
+    } finally {
+      setSellerKeywordDemandLoading(false)
+    }
+  }
+
+  const chooseEbayComparable = (
+    comparable: EbaySellerKeywordDemandReport["topSellingListings"][number]
+  ) => {
+    if (!comparable.itemWebUrl || !comparable.eligibleComparable) return
+    setEbayListingUrl(comparable.itemWebUrl)
+    setEbayObservedTitle(comparable.title)
+    setEbayReferenceOpened(true)
+    setIdentityChecks({
+      sameProductAndBrand: true,
+      sameVariantSizeOrPack: true,
+      compatibleReference: true,
+    })
+    resetIdentityConfirmation()
+    setLastActionMessage(
+      `Comparable seleccionado: ${comparable.salesQuantity} ventas señaladas por eBay; falta tu confirmación final de identidad.`
     )
   }
 
@@ -443,82 +528,115 @@ export default function EbayMobileReviewPage() {
             {selectedRadarCandidate && (
               <>
                 <div className="rounded-3xl border border-white/15 bg-white/[0.045] p-4">
-                  <p className="font-black">1. Comparar identidad Luna ↔ eBay</p>
+                  <p className="font-black">1. Listings y keywords que están vendiendo</p>
                   <p className="mt-1 text-sm leading-6 text-white/75">
-                    Compara el candidato de Luna Portex con un listing específico
-                    de referencia en eBay. La confirmación es humana y read-only;
-                    no consulta ni modifica eBay mediante API.
+                    IMNOVA consulta eBay en modo read-only, descarta productos con
+                    tamaño, variante o pack contradictorios y pondera las palabras
+                    por ventas observadas. No copia títulos ni imágenes.
                   </p>
                   <dl className="mt-3 grid gap-2 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm">
                     <div><dt className="text-white/55">Producto en Luna</dt><dd className="mt-1 font-black">{selectedRadarCandidate.productTitle}</dd></div>
                     <div className="grid grid-cols-2 gap-2"><div><dt className="text-white/55">Variante</dt><dd className="font-bold">{formatValue(selectedRadarCandidate.variantTitle)}</dd></div><div><dt className="text-white/55">SKU</dt><dd className="break-all font-bold">{formatValue(selectedRadarCandidate.supplierSku)}</dd></div></div>
                   </dl>
-                  <a
-                    href={ebayIdentitySearchUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-2xl border border-white/25 px-4 text-center font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200"
-                  >
-                    Buscar una referencia en eBay ↗
-                  </a>
-                  <label htmlFor="ebay-listing-reference" className="mt-4 block text-sm font-bold">URL del listing elegido</label>
-                  <input
-                    id="ebay-listing-reference"
-                    type="url"
-                    inputMode="url"
-                    placeholder="https://www.ebay.com/itm/..."
-                    value={ebayListingUrl}
-                    onChange={(event) => {
-                      setEbayListingUrl(event.target.value)
-                      setEbayReferenceOpened(false)
-                      resetIdentityConfirmation()
-                    }}
-                    className="mt-2 min-h-12 w-full rounded-2xl border border-white/25 bg-black/30 px-4 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200"
-                  />
-                  {identityComparison.ebayIdentity.listingUrl ? (
-                    <a
-                      href={identityComparison.ebayIdentity.listingUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={() => setEbayReferenceOpened(true)}
-                      className="mt-2 inline-flex min-h-12 w-full items-center justify-center rounded-2xl bg-white px-4 text-center font-black text-black"
-                    >
-                      Abrir listing de referencia en eBay ↗
-                    </a>
-                  ) : ebayListingUrl ? (
-                    <p className="mt-2 rounded-2xl border border-rose-200/25 bg-rose-200/[0.07] p-3 text-sm font-bold text-rose-50">Usa una URL HTTPS de un listing individual en ebay.com.</p>
-                  ) : null}
-                  <label htmlFor="ebay-observed-title" className="mt-4 block text-sm font-bold">Título observado en eBay</label>
-                  <input
-                    id="ebay-observed-title"
-                    type="text"
-                    placeholder="Copia el título visible del listing"
-                    value={ebayObservedTitle}
-                    onChange={(event) => {
-                      setEbayObservedTitle(event.target.value)
-                      resetIdentityConfirmation()
-                    }}
-                    className="mt-2 min-h-12 w-full rounded-2xl border border-white/25 bg-black/30 px-4 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200"
-                  />
-                  <fieldset className="mt-4 space-y-3">
-                    <legend className="text-sm font-black">Verifica los tres puntos</legend>
-                    <label className="flex min-h-12 items-start gap-3 rounded-2xl border border-white/15 p-3 text-sm"><input type="checkbox" checked={identityChecks.sameProductAndBrand} onChange={(event) => updateIdentityCheck("sameProductAndBrand", event.target.checked)} className="mt-1 size-5 shrink-0" /><span>Misma marca y mismo producto.</span></label>
-                    <label className="flex min-h-12 items-start gap-3 rounded-2xl border border-white/15 p-3 text-sm"><input type="checkbox" checked={identityChecks.sameVariantSizeOrPack} onChange={(event) => updateIdentityCheck("sameVariantSizeOrPack", event.target.checked)} className="mt-1 size-5 shrink-0" /><span>Misma variante, tamaño, cantidad o pack.</span></label>
-                    <label className="flex min-h-12 items-start gap-3 rounded-2xl border border-white/15 p-3 text-sm"><input type="checkbox" checked={identityChecks.compatibleReference} onChange={(event) => updateIdentityCheck("compatibleReference", event.target.checked)} className="mt-1 size-5 shrink-0" /><span>SKU, UPC, MPN o referencia no presentan contradicciones.</span></label>
-                  </fieldset>
                   <button
                     type="button"
-                    disabled={!identityComparison.canConfirmSameProduct}
-                    onClick={confirmIdentityComparison}
-                    className="mt-4 min-h-12 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40"
+                    disabled={sellerKeywordDemandLoading}
+                    onClick={() => void runSellerKeywordDemandValidation()}
+                    className="mt-3 min-h-14 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-50"
                   >
-                    {identityComparison.identityComparisonComplete
-                      ? "✓ Identidad Luna ↔ eBay confirmada"
-                      : !identityComparison.ebayIdentity.referenceOpened
-                        ? "Abre el listing de eBay antes de confirmar"
-                        : "Confirmar misma identidad"}
+                    {sellerKeywordDemandLoading
+                      ? "Analizando vendedores y ventas…"
+                      : sellerKeywordDemand
+                        ? "↻ Actualizar análisis de eBay"
+                        : "Analizar listings y ventas en eBay"}
                   </button>
-                  {identityComparison.identityComparisonComplete && <p className="mt-2 text-xs font-bold text-emerald-100">Fuente: comparación humana Luna Portex ↔ eBay.</p>}
+
+                  {sellerKeywordDemandError && (
+                    <div role="alert" className="mt-3 rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50">
+                      <p className="font-bold">{sellerKeywordDemandError}</p>
+                      <a href={ebayIdentitySearchUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex min-h-11 items-center underline">Abrir búsqueda de respaldo en eBay ↗</a>
+                    </div>
+                  )}
+
+                  {sellerKeywordDemand && (
+                    <div className="mt-4 space-y-4">
+                      <div className="rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.07] p-3">
+                        <div className="flex flex-wrap gap-2">
+                          <StatusPill tone={sellerKeywordDemand.salesEvidenceAvailable ? "good" : "warning"}>{sellerKeywordDemand.evidenceLevel.replaceAll("_", " ")}</StatusPill>
+                          <StatusPill>{sellerKeywordDemand.eligibleComparableListings} comparables</StatusPill>
+                          <StatusPill>{sellerKeywordDemand.sellersAnalyzed} vendedores</StatusPill>
+                        </div>
+                        <p className="mt-3 text-sm leading-6 text-white/80">{sellerKeywordDemand.evidenceDisclaimer}</p>
+                        {sellerKeywordDemand.insightsAvailability !== "AVAILABLE" && (
+                          <p className="mt-2 text-xs leading-5 text-amber-100">El historial vendido completo de 90 días requiere acceso de eBay a Marketplace Insights. El análisis no lo simula ni lo reemplaza con scraping.</p>
+                        )}
+                      </div>
+
+                      <section aria-labelledby="sales-keywords-heading">
+                        <h3 id="sales-keywords-heading" className="font-black">Keywords respaldadas por ventas</h3>
+                        {sellerKeywordDemand.keywordsBringingSales.length ? (
+                          <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+                            {sellerKeywordDemand.keywordsBringingSales.slice(0, 8).map((keyword) => (
+                              <li key={keyword.term} className="rounded-2xl border border-white/15 bg-black/25 p-3">
+                                <p className="font-black text-cyan-50">{keyword.term}</p>
+                                <p className="mt-1 text-xs text-white/65">Señal: {keyword.salesQuantity} ventas · {keyword.sellerCount} vendedor{keyword.sellerCount === 1 ? "" : "es"}</p>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="mt-2 rounded-2xl border border-amber-200/25 bg-amber-200/[0.07] p-3 text-sm text-amber-50">Todavía no hay una señal de ventas verificable. Las palabras de listings activos no se marcarán como ganadoras.</p>
+                        )}
+                      </section>
+
+                      <section aria-labelledby="top-selling-heading">
+                        <h3 id="top-selling-heading" className="font-black">Listings comparables con mayor señal</h3>
+                        <div className="mt-2 grid gap-3">
+                          {sellerKeywordDemand.topSellingListings.map((comparable, index) => (
+                            <article key={comparable.comparableId} className={`rounded-2xl border p-3 ${ebayListingUrl === comparable.itemWebUrl ? "border-cyan-200/60 bg-cyan-200/[0.08]" : "border-white/15 bg-black/25"}`}>
+                              <div className="flex gap-3">
+                                {comparable.imageUrl ? (
+                                  <img src={comparable.imageUrl} alt="Imagen remota del listing de referencia en eBay" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="size-20 shrink-0 rounded-xl bg-white object-contain" />
+                                ) : (
+                                  <div className="flex size-20 shrink-0 items-center justify-center rounded-xl bg-white/10 text-center text-[10px] text-white/60">Sin imagen</div>
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-xs font-black text-cyan-100">#{index + 1} · match {comparable.identityMatchScore}%</p>
+                                  <p className="mt-1 text-sm font-bold leading-5">{comparable.title}</p>
+                                  <p className="mt-1 text-xs text-white/60">{comparable.sellerUsername} · ${comparable.price.toFixed(2)} {comparable.currency}</p>
+                                  <p className="mt-1 text-xs font-bold text-emerald-100">
+                                    {comparable.verifiedSoldQuantity > 0
+                                      ? `${comparable.verifiedSoldQuantity} ventas históricas verificadas`
+                                      : comparable.estimatedSoldQuantity > 0
+                                        ? `${comparable.estimatedSoldQuantity} ventas estimadas por eBay`
+                                        : "Listing activo; ventas no demostradas"}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                <a href={comparable.itemWebUrl ?? undefined} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center justify-center rounded-xl border border-white/20 px-3 text-center text-sm font-bold">Ver listing ↗</a>
+                                <button type="button" disabled={!comparable.itemWebUrl || !comparable.eligibleComparable} onClick={() => chooseEbayComparable(comparable)} className="min-h-11 rounded-xl bg-white px-3 text-sm font-black text-black disabled:opacity-40">
+                                  {ebayListingUrl === comparable.itemWebUrl ? "✓ Referencia elegida" : "Usar como referencia"}
+                                </button>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      </section>
+                    </div>
+                  )}
+
+                  {identityComparison.ebayIdentity.listingUrl && (
+                    <div className="mt-4 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
+                      <p className="text-sm font-black">Confirmación humana final</p>
+                      <p className="mt-1 text-xs leading-5 text-white/70">El sistema ya comparó marca/producto, variante, tamaño y pack. Confirma que la referencia elegida corresponde al producto de Luna.</p>
+                      <button type="button" disabled={!identityComparison.canConfirmSameProduct} onClick={confirmIdentityComparison} className="mt-3 min-h-12 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">
+                        {identityComparison.identityComparisonComplete
+                          ? "✓ Identidad Luna ↔ eBay confirmada"
+                          : "Confirmar comparable seleccionado"}
+                      </button>
+                    </div>
+                  )}
+                  {identityComparison.identityComparisonComplete && <p className="mt-2 text-xs font-bold text-emerald-100">Fuente: análisis oficial eBay read-only + confirmación humana final.</p>}
                 </div>
 
                 <div className="rounded-3xl border border-white/15 bg-white/[0.045] p-4">

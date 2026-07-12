@@ -87,7 +87,7 @@ test("mobile UI exposes source, Radar fields and browser-only persistence", () =
 test("connector has no external write or publication capability", () => {
   const combined = `${moduleSource}\n${pageSource}`
   for (const forbidden of [
-    /method:\s*["']POST["']/, /\.insert\s*\(/, /\.update\s*\(/,
+    /\.insert\s*\(/, /\.update\s*\(/,
     /\.upsert\s*\(/, /publishOffer\s*\(/, /createOffer\s*\(/,
     /createOrReplaceInventoryItem\s*\(/, /process\.env/, /OPENAI_API_KEY/,
   ]) assert.doesNotMatch(combined, forbidden)

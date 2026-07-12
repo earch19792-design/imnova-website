@@ -23,6 +23,7 @@ export type LunaEbayIdentityComparisonInput = {
   ebayReferenceOpened?: boolean
   checklist?: Partial<EbayIdentityChecklist>
   confirmationRecorded?: boolean
+  ebayApiUsed?: boolean
 }
 
 export function getSafeEbayListingUrl(value: string | null | undefined) {
@@ -73,7 +74,12 @@ export function buildLunaEbayIdentityComparison(
 
   return {
     identityComparisonVersion: EBAY_LUNA_IDENTITY_COMPARISON_VERSION,
-    comparisonSources: ["LUNA_PORTEX_CANDIDATE", "EBAY_LISTING_REFERENCE"],
+    comparisonSources: [
+      "LUNA_PORTEX_CANDIDATE",
+      input.ebayApiUsed
+        ? "OFFICIAL_EBAY_READONLY_MARKET_ANALYSIS"
+        : "EBAY_LISTING_REFERENCE",
+    ],
     lunaIdentity: lunaCandidate
       ? {
           productName:
@@ -95,14 +101,16 @@ export function buildLunaEbayIdentityComparison(
     confirmationRecorded: input.confirmationRecorded === true,
     identityComparisonComplete,
     confirmationSource: identityComparisonComplete
-      ? "HUMAN_LUNA_EBAY_COMPARISON"
+      ? input.ebayApiUsed
+        ? "EBAY_READONLY_ANALYSIS_PLUS_HUMAN_CONFIRMATION"
+        : "HUMAN_LUNA_EBAY_COMPARISON"
       : null,
     pendingGuards: identityComparisonComplete
       ? []
       : ["NEED_EBAY_IDENTITY_REFERENCE"],
     canProceedToB2RunPreflight: false,
     canPublish: false,
-    ebayApiUsed: false,
+    ebayApiUsed: input.ebayApiUsed === true,
     ebayWriteUsed: false,
   }
 }
