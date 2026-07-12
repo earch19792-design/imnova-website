@@ -246,7 +246,7 @@ export default function EbayMobileReviewPage() {
         <section className={`rounded-3xl border p-4 ${loadState === "READY" ? "border-emerald-200/25 bg-emerald-200/[0.07]" : "border-amber-200/25 bg-amber-200/[0.07]"}`}>
           <p className="font-black">{loadMessage}</p><p className="mt-2 text-sm text-white/75">Publicación desactivada · sin eBay write · sin Supabase write.</p>
           <p className="sr-only">Radar devolvió {report.realRadarCandidatesCount} productos; candidatesNeededForTop5: {report.candidatesNeededForTop5}. stock source y stock age disponibles en detalles. no eBay write.</p>
-          {loadState !== "READY" && <button type="button" onClick={() => void load()} className="mt-3 min-h-11 rounded-2xl bg-white px-4 py-2 font-black text-black">Reintentar lectura</button>}
+          {loadState === "AUTH_REQUIRED" ? <a href="/admin/login?returnTo=%2Fadmin%2Febay%2Fmobile-review" className="mt-3 inline-flex min-h-11 items-center rounded-2xl bg-white px-4 py-2 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200">Iniciar sesión</a> : loadState !== "READY" && <button type="button" onClick={() => void load()} className="mt-3 min-h-11 rounded-2xl bg-white px-4 py-2 font-black text-black">Reintentar lectura</button>}
         </section>
         {report.fixtureUsed && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4 text-sm"><p className="font-black">FIXTURE/DEMO · no usar para aprobación real</p><p className="mt-2 text-white/80">Fuente actual: fixture modelado · no es data viva. score modelado · Fixture · no precio runtime · Fixture · no Category ID.</p></aside>}
 

@@ -6,6 +6,9 @@ import { useRouter } from "next/navigation"
 import {
   signInAdmin,
 } from "@/lib/admin-auth"
+import {
+  getSafeAdminReturnPath,
+} from "@/lib/admin-auth-return"
 
 export default function AdminLoginPage() {
 
@@ -47,7 +50,14 @@ export default function AdminLoginPage() {
         return
       }
 
-      router.push("/admin")
+      const returnTo =
+        getSafeAdminReturnPath(
+          new URLSearchParams(
+            window.location.search
+          ).get("returnTo")
+        )
+
+      router.replace(returnTo)
     } catch (loginError) {
       console.error(
         "ADMIN LOGIN ERROR:",
