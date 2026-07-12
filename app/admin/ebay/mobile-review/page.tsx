@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 
 import { supabase } from "@/lib/supabase"
 import demoRadarJson from "@/tools/fixtures/ebay-mobile-review-real-radar-connector-v1.json"
+import pinnedFixtureJson from "@/tools/fixtures/ebay-mobile-review-pinned-candidate-continuity-v1.json"
 import {
   buildMobileReviewRealRadarConnector,
   loadMarketRadarReadonlyDashboard,
@@ -18,8 +19,17 @@ import {
   type MobileReviewFixture,
 } from "@/lib/ebay/ebay-mobile-review-page-mvp"
 import { buildMobileReviewRadarGuardEnforcement } from "@/lib/ebay/ebay-mobile-review-radar-guard-enforcement"
+import {
+  applyPinnedCandidateAction,
+  buildPinnedCandidateContinuityReport,
+  pinnedCandidateMatchesRadar,
+  type PinnedCandidate,
+  type PinnedCandidateAction,
+} from "@/lib/ebay/ebay-mobile-review-pinned-candidate-continuity"
 
 const emptyReport = buildMobileReviewRealRadarConnector({ products: [] })
+const PINNED_STORAGE_KEY = "imnova:ebay-mobile-review:pinned-candidates:v1"
+const initialPinnedCandidates = pinnedFixtureJson.pinnedCandidates as PinnedCandidate[]
 
 function toMobileFixture(candidates: RealRadarCandidate[]): MobileReviewFixture {
   const previousCandidate = candidates[0] ?? {
@@ -55,6 +65,7 @@ export default function EbayMobileReviewPage() {
   const [loading, setLoading] = useState(true)
   const [loadMessage, setLoadMessage] = useState("Cargando Market Radar read-only…")
   const [lastActionMessage, setLastActionMessage] = useState("Todavía no realizaste ninguna acción.")
+  const [pinnedCandidates, setPinnedCandidates] = useState<PinnedCandidate[]>(initialPinnedCandidates)
   const confirmationRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
@@ -94,10 +105,30 @@ export default function EbayMobileReviewPage() {
     return () => { active = false }
   }, [])
 
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(PINNED_STORAGE_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed)) setPinnedCandidates(parsed as PinnedCandidate[])
+      }
+    } catch {
+      setLastActionMessage("No se pudo restaurar pinned candidates; se usa el contexto modelado.")
+    }
+  }, [])
+
+  useEffect(() => {
+    window.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(pinnedCandidates))
+  }, [pinnedCandidates])
+
   const decision = useMemo(() => buildMobileReviewDecision(state), [state])
   const selectedRadarCandidate = report.top5Candidates.find(
     (candidate) => candidate.candidateRank === state.selectedCandidateRank
   ) ?? null
+  const pinnedContinuity = useMemo(
+    () => buildPinnedCandidateContinuityReport(report.top5Candidates, pinnedCandidates),
+    [report.top5Candidates, pinnedCandidates]
+  )
   const radarGuards = useMemo(() => buildMobileReviewRadarGuardEnforcement({
     dataSource: report.dataSource,
     realRadarTop5Loaded: report.realRadarTop5Loaded,
@@ -123,8 +154,16 @@ export default function EbayMobileReviewPage() {
     showScoreTieWarning: radarGuards.showScoreTieWarning,
     needsScoreDisambiguation: radarGuards.needsScoreDisambiguation,
     manualConfirmationReconciliation: radarGuards.reconciliation,
+    pinnedCandidateContinuity: pinnedContinuity,
     canPublish: false,
-  }, null, 2), [state, report.dataSource, radarGuards])
+  }, null, 2), [state, report.dataSource, radarGuards, pinnedContinuity])
+
+  const actPinned = (action: PinnedCandidateAction) => {
+    setPinnedCandidates((current) =>
+      applyPinnedCandidateAction(current, action, report.top5Candidates)
+    )
+    setLastActionMessage(`Pinned candidate: ${action.type}. Estado guardado solo en este navegador.`)
+  }
 
   const act = (action: Parameters<typeof applyMobileReviewAction>[1]) => {
     if (action.type === "SELECT_CANDIDATE" || action.type === "MARK_UNAVAILABLE") {
@@ -189,6 +228,7 @@ export default function EbayMobileReviewPage() {
           {!report.fixtureUsed && <p className="mt-2 text-xs font-black text-emerald-100">Fuente real esperada: MARKET_RADAR_READONLY</p>}
           {report.fixtureUsed && <p className="mt-2 text-sm font-black text-amber-100">DEMO_FIXTURE_ONLY · no usar para aprobación real. Fuente actual: fixture modelado · no es data viva. score modelado · Fixture · no precio runtime · Fixture · no Category ID.</p>}
           <p className="mt-2 text-xs text-white/45">decisionPersistence: BROWSER_STATE_ONLY · officialApprovalRecord: false · Supabase write: false</p>
+          <p className="mt-1 text-xs text-white/45">Pinned decisionPersistence: BROWSER_STATE_OR_LOCAL_STORAGE</p>
         </aside>
 
         {radarGuards.showScoreTieWarning && (
@@ -206,6 +246,9 @@ export default function EbayMobileReviewPage() {
           {report.top5Candidates.map((candidate) => {
             const selected = state.selectedCandidateRank === candidate.candidateRank
             const unavailable = candidate.routeRecommendation === "STOCK_HOLD"
+            const pinnedInTop5 = pinnedCandidates.some((pinned) =>
+              pinnedCandidateMatchesRadar(pinned, candidate)
+            )
             return (
               <article key={candidate.candidateId} className={`rounded-3xl border p-5 ${selected ? "border-emerald-300/40 bg-emerald-300/[0.08]" : "border-white/10 bg-white/[0.035]"}`}>
                 <div className="flex items-start justify-between gap-3">
@@ -213,6 +256,7 @@ export default function EbayMobileReviewPage() {
                     <p className="text-xs font-black uppercase tracking-widest text-white/40">Rank #{candidate.candidateRank}{candidate.candidateRank === 1 ? " · Recomendado" : ""}</p>
                     <h2 className="mt-2 text-xl font-black leading-6">{candidate.productTitle}</h2>
                     <p className="mt-1 text-xs text-cyan-100/60">{formatValue(candidate.variantTitle)} · SKU {formatValue(candidate.supplierSku)}</p>
+                    {pinnedInTop5 && <p className="mt-2 text-xs font-black text-violet-100">PINNED_AND_IN_CURRENT_TOP5</p>}
                   </div>
                   <span className="rounded-2xl bg-white/10 px-3 py-2 text-lg font-black">{candidate.opportunityScore.toFixed(2)}<span className="block text-[9px] text-white/35">Supplier Opportunity Score</span></span>
                 </div>
@@ -234,6 +278,29 @@ export default function EbayMobileReviewPage() {
             )
           })}
         </div>
+
+        <section className="rounded-3xl border border-violet-300/20 bg-violet-300/[0.06] p-5">
+          <p className="text-xs font-black uppercase tracking-widest text-violet-100/70">En revisión / Pinned Candidates</p>
+          <p className="mt-2 text-sm leading-6 text-white/60">Continuidad local para oportunidades inspeccionadas que salieron del Top 5. No es aprobación oficial.</p>
+          <div className="mt-4 space-y-4">
+            {pinnedContinuity.pinnedCandidatesOutsideTop5.length === 0 ? (
+              <p className="rounded-2xl bg-black/25 p-4 text-sm text-white/50">Los pinned activos ya aparecen en el Top 5 y están deduplicados.</p>
+            ) : pinnedContinuity.pinnedCandidatesOutsideTop5.map((candidate) => (
+              <article key={candidate.pinnedCandidateId} className="rounded-2xl border border-violet-200/15 bg-black/25 p-4">
+                <p className="text-xs font-black text-violet-100/65">{candidate.status}</p>
+                <h2 className="mt-2 text-lg font-black">{candidate.productName}</h2>
+                <p className="mt-3 text-xs leading-5 text-white/55">Radar: {candidate.radarPresenceStatus}<br />Última confirmación humana: {formatValue(candidate.lastHumanConfirmationAt)}<br />Mismo producto: {String(candidate.sameProductConfirmed)}<br />Stock: {candidate.stockQuantityConfirmed ?? "pendiente"} · {candidate.stockWarning ?? "sin warning"}<br />Precio Luna: USD {candidate.lunaPrice?.toFixed(2) ?? "pendiente"}<br />Imagen: {String(candidate.imageConfirmed)}<br />Source: {candidate.source}<br />Próximo paso: {candidate.nextRecommendedRoute}</p>
+                <div className="mt-4 grid gap-2">
+                  <button type="button" onClick={() => actPinned({ type: "RECHECK_PINNED_CANDIDATE", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl border border-cyan-200/25 px-4 py-3 text-sm font-black">Recheck<span className="block text-[10px]">RECHECK_PINNED_CANDIDATE</span></button>
+                  <button type="button" disabled={!pinnedContinuity.canContinueEbayMarketValidation} onClick={() => actPinned({ type: "CONTINUE_EBAY_MARKET_VALIDATION", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl bg-violet-200 px-4 py-3 text-sm font-black text-black disabled:opacity-30">Continuar validación eBay<span className="block text-[10px]">CONTINUE_EBAY_MARKET_VALIDATION</span></button>
+                  <button type="button" onClick={() => actPinned({ type: "MARK_PINNED_UNAVAILABLE", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl border border-rose-200/25 px-4 py-3 text-sm font-black text-rose-100">Marcar no disponible<span className="block text-[10px]">MARK_PINNED_UNAVAILABLE</span></button>
+                  <button type="button" onClick={() => actPinned({ type: "HOLD_PINNED_FOR_REVIEW", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl border border-amber-200/25 px-4 py-3 text-sm font-black text-amber-100">Hold<span className="block text-[10px]">HOLD_PINNED_FOR_REVIEW</span></button>
+                  <button type="button" onClick={() => actPinned({ type: "UNPIN_CANDIDATE", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl border border-white/15 px-4 py-3 text-sm font-black">Quitar de revisión<span className="block text-[10px]">UNPIN_CANDIDATE</span></button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
 
         {report.stockHoldCandidates.length > 0 && (
           <section className="rounded-3xl border border-rose-300/20 bg-rose-300/[0.06] p-5">
