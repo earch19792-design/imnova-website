@@ -43,11 +43,16 @@ export type RealRadarCandidate = {
   suggestedPrice: { value: number; currency: "USD" }
   suggestedCategory: string
   listingBlueprintSummary: string
+  marginPrecheckPassed: boolean
+  demandValidationPassed: boolean
+  imageValidationPassed: boolean
 }
 
 export type RadarProductInput = Partial<MarketRadarProductRow> & {
   ebay_price_source?: string | null
   ebay_category_id?: string | null
+  ebay_demand_validation_passed?: boolean | null
+  authorized_image_review_passed?: boolean | null
 }
 
 export type RealRadarConnectorInput = {
@@ -93,8 +98,13 @@ export function getRealRadarCandidateRoute(product: RadarProductInput) {
   ) return "STOCK_HOLD"
   if (product.stock_reconfirmation_required === true || (age !== null && age > 24))
     return "NEED_STOCK_RECONFIRMATION"
-  if (product.inventory_scope === "availability_only")
-    return "NEED_STOCK_CONFIRMATION"
+  if (
+    product.inventory_scope === "availability_only" ||
+    product.inventory_scope === "unknown" ||
+    !product.inventory_scope ||
+    ((product.inventory_quantity === null || product.inventory_quantity === undefined) &&
+      product.inventory_confidence === "low")
+  ) return "NEED_STOCK_CONFIRMATION"
   if (numberOrNull(product.estimated_sale_price) === null || !product.ebay_price_source)
     return "NEED_EBAY_MARKET_PRICE"
   if (product.margin_precheck_passed !== true) return "NEED_MARGIN_REVIEW"
@@ -153,6 +163,9 @@ export function mapMarketRadarProductToMobileCandidate(
     suggestedPrice: { value: ebayEstimatedPrice ?? lunaPrice ?? 0, currency: "USD" },
     suggestedCategory: product.ebay_category_id ?? "CATEGORY_PENDING",
     listingBlueprintSummary: `Radar read-only · ${routeRecommendation}`,
+    marginPrecheckPassed: product.margin_precheck_passed === true,
+    demandValidationPassed: product.ebay_demand_validation_passed === true,
+    imageValidationPassed: product.authorized_image_review_passed === true,
   }
 }
 

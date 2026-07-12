@@ -17,6 +17,7 @@ import {
   buildMobileReviewDecision,
   type MobileReviewFixture,
 } from "@/lib/ebay/ebay-mobile-review-page-mvp"
+import { buildMobileReviewRadarGuardEnforcement } from "@/lib/ebay/ebay-mobile-review-radar-guard-enforcement"
 
 const emptyReport = buildMobileReviewRealRadarConnector({ products: [] })
 
@@ -92,15 +93,43 @@ export default function EbayMobileReviewPage() {
   }, [])
 
   const decision = useMemo(() => buildMobileReviewDecision(state), [state])
+  const selectedRadarCandidate = report.top5Candidates.find(
+    (candidate) => candidate.candidateRank === state.selectedCandidateRank
+  ) ?? null
+  const radarGuards = useMemo(() => buildMobileReviewRadarGuardEnforcement({
+    dataSource: report.dataSource,
+    realRadarTop5Loaded: report.realRadarTop5Loaded,
+    top5Candidates: report.top5Candidates,
+    selectedCandidate: selectedRadarCandidate,
+    localConfirmationsComplete: Boolean(state.sameProductConfirmed && state.stockQuantityConfirmed && state.imageConfirmed),
+  }), [report, selectedRadarCandidate, state.sameProductConfirmed, state.stockQuantityConfirmed, state.imageConfirmed])
   const summary = useMemo(() => JSON.stringify({
     ...JSON.parse(buildMobileReviewCopyPasteSummary(state)),
     dataSource: report.dataSource,
     decisionPersistence: "BROWSER_STATE_ONLY",
     officialApprovalRecord: false,
+    pendingGuards: radarGuards.pendingGuards,
+    primaryBlockingReason: radarGuards.primaryBlockingReason,
+    showScoreTieWarning: radarGuards.showScoreTieWarning,
+    needsScoreDisambiguation: radarGuards.needsScoreDisambiguation,
     canPublish: false,
-  }, null, 2), [state, report.dataSource])
+  }, null, 2), [state, report.dataSource, radarGuards])
 
   const act = (action: Parameters<typeof applyMobileReviewAction>[1]) => {
+    if (action.type === "APPROVE_B2_RUN_PREFLIGHT") {
+      const attempted = buildMobileReviewRadarGuardEnforcement({
+        dataSource: report.dataSource,
+        realRadarTop5Loaded: report.realRadarTop5Loaded,
+        top5Candidates: report.top5Candidates,
+        selectedCandidate: selectedRadarCandidate,
+        approveAttempt: true,
+        localConfirmationsComplete: Boolean(state.sameProductConfirmed && state.stockQuantityConfirmed && state.imageConfirmed),
+      })
+      if (attempted.approveAttemptBlocked) {
+        setLastActionMessage(`No se puede aprobar B2-RUN todavía. Guardas pendientes: ${attempted.pendingGuards.join(", ") || attempted.approveBlockedReason}.`)
+        return
+      }
+    }
     setState((current) => applyMobileReviewAction(current, action))
     const messages: Record<string, string> = {
       MARK_UNAVAILABLE: "Producto removido solo en este navegador. B2-RUN quedó bloqueado.",
@@ -139,6 +168,13 @@ export default function EbayMobileReviewPage() {
           {report.fixtureUsed && <p className="mt-2 text-sm font-black text-amber-100">DEMO_FIXTURE_ONLY · no usar para aprobación real. Fuente actual: fixture modelado · no es data viva. score modelado · Fixture · no precio runtime · Fixture · no Category ID.</p>}
           <p className="mt-2 text-xs text-white/45">decisionPersistence: BROWSER_STATE_ONLY · officialApprovalRecord: false · Supabase write: false</p>
         </aside>
+
+        {radarGuards.showScoreTieWarning && (
+          <aside className="rounded-3xl border border-amber-300/25 bg-amber-300/[0.07] p-5 text-sm leading-6 text-amber-50">
+            <p className="font-black">Score provisional · PROVISIONAL_OR_UNDIFFERENTIATED</p>
+            <p>Los cinco candidatos tienen el mismo score. needsScoreDisambiguation: true. Este empate no se usa como ranking definitivo.</p>
+          </aside>
+        )}
 
         <div aria-live="polite" className="sticky top-2 z-20 rounded-2xl border border-emerald-300/25 bg-[#102019]/95 p-4 text-sm font-bold leading-5 text-emerald-50 shadow-xl backdrop-blur">
           {loading ? "Cargando…" : `Última acción: ${lastActionMessage}`}
@@ -197,6 +233,13 @@ export default function EbayMobileReviewPage() {
         <section ref={confirmationRef} className="scroll-mt-20 rounded-3xl border border-white/10 bg-white/[0.035] p-5">
           <h2 className="text-xl font-black">Confirmaciones del seleccionado</h2>
           <p className="mt-2 text-sm text-white/50">{decision.selectedCandidateName ?? "Selecciona primero un candidato del Top 5."}</p>
+          {state.selectedCandidateRank && radarGuards.pendingGuards.length > 0 && (
+            <div className="mt-4 rounded-2xl border border-rose-300/20 bg-rose-300/[0.07] p-4 text-sm leading-6 text-rose-50">
+              <p className="font-black">No se puede aprobar B2-RUN todavía.</p>
+              <p>Este candidato tiene guardas pendientes del Radar: {radarGuards.pendingGuards.join(", ")}.</p>
+              <p>Ruta prioritaria: {radarGuards.primaryBlockingReason}</p>
+            </div>
+          )}
           <div className="mt-4 space-y-3">
             <button type="button" disabled={!state.selectedCandidateRank} onClick={() => act({ type: "CONFIRM_SAME_PRODUCT" })} className="min-h-12 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black disabled:opacity-30">CONFIRM_SAME_PRODUCT {state.sameProductConfirmed ? "✓" : ""}</button>
             <div className="flex gap-2"><input aria-label="Cantidad de stock confirmada" inputMode="numeric" value={stockQuantity} onChange={(event) => setStockQuantity(event.target.value)} className="min-w-0 flex-1 rounded-2xl border border-white/15 bg-black/30 px-4 text-lg font-black" /><button type="button" disabled={!state.selectedCandidateRank} onClick={() => act({ type: "CONFIRM_STOCK_QTY", quantity: Number(stockQuantity) })} className="min-h-12 rounded-2xl bg-cyan-200 px-4 py-3 text-xs font-black text-black disabled:opacity-30">CONFIRM_STOCK_QTY</button></div>
