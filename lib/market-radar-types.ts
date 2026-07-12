@@ -46,6 +46,9 @@ export type MarketRadarProductRow = {
   supplier_variant_id: string | null
   variant_title: string | null
   sku: string | null
+  barcode?: string | null
+  weight?: number | string | null
+  weight_unit?: string | null
   price: number | string | null
   estimated_sale_price?: number | string | null
   compare_at_price: number | string | null

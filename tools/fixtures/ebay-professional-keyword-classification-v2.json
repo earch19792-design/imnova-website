@@ -1,0 +1,49 @@
+{
+  "candidate": {
+    "productName": "ConSandtrate Concrete Crack Filler Gray 3 lb Bottle",
+    "productTitle": "ConSandtrate Concrete Crack Filler Gray 3 lb Bottle",
+    "variantTitle": "Gray · 3 lb bottle",
+    "supplierSku": "LUNA-CONCRETE-GRAY-3LB",
+    "categoryId": "503"
+  },
+  "comparables": [
+    {
+      "itemId": "v1|200000000001|0",
+      "title": "Concrete Joint and Crack Filler - 3 lb. bottle - GRAY",
+      "itemWebUrl": "https://www.ebay.com/itm/200000000001",
+      "imageUrl": "https://i.ebayimg.com/images/g/concrete1/s-l500.jpg",
+      "price": 16.95,
+      "currency": "USD",
+      "categoryId": "503",
+      "sellerUsername": "daverco_us",
+      "sellerFeedbackScore": 5000,
+      "estimatedSoldQuantity": 192,
+      "source": "EBAY_BROWSE_ESTIMATED_SALES"
+    },
+    {
+      "itemId": "v1|200000000002|0",
+      "title": "ConSandtrate Concrete Crack Filler - Gray - 3 lb. Single Bottle for Filling Concrete",
+      "itemWebUrl": "https://www.ebay.com/itm/200000000002",
+      "imageUrl": "https://i.ebayimg.com/images/g/concrete2/s-l500.jpg",
+      "price": 38.32,
+      "currency": "USD",
+      "categoryId": "503",
+      "sellerUsername": "bjmc9057",
+      "sellerFeedbackScore": 1200,
+      "estimatedSoldQuantity": 8,
+      "source": "EBAY_BROWSE_ESTIMATED_SALES"
+    },
+    {
+      "itemId": "v1|200000000003|0",
+      "title": "Concrete Crack Filler - Tan - 3 lb. Single Bottle for Filling Concrete",
+      "itemWebUrl": "https://www.ebay.com/itm/200000000003",
+      "imageUrl": "https://i.ebayimg.com/images/g/concrete3/s-l500.jpg",
+      "price": 19.99,
+      "currency": "USD",
+      "categoryId": "503",
+      "sellerUsername": "ctglobaltrades",
+      "sellerFeedbackScore": 900,
+      "source": "EBAY_BROWSE_ACTIVE_LISTING"
+    }
+  ]
+}

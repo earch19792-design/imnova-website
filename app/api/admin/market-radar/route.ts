@@ -955,6 +955,9 @@ async function getLatestProductSnapshots(
     supplier_variant_id,
     variant_title,
     sku,
+    barcode,
+    weight,
+    weight_unit,
     price,
     compare_at_price,
     available,
@@ -1702,6 +1705,12 @@ async function getLatestMarketRadarProducts(
           snapshot?.variant_title || null,
         sku:
           snapshot?.sku || null,
+        barcode:
+          snapshot?.barcode || null,
+        weight:
+          snapshot?.weight ?? null,
+        weight_unit:
+          snapshot?.weight_unit || null,
         price:
           snapshot?.price || null,
         compare_at_price:
@@ -1816,6 +1825,9 @@ async function confirmMarketRadarStockQuantity({
         id,
         variant_title,
         sku,
+        barcode,
+        weight,
+        weight_unit,
         price,
         compare_at_price,
         collections,
@@ -1874,6 +1886,12 @@ async function confirmMarketRadarStockQuantity({
           latestSnapshot?.variant_title || null,
         sku:
           latestSnapshot?.sku || null,
+        barcode:
+          latestSnapshot?.barcode || null,
+        weight:
+          latestSnapshot?.weight ?? null,
+        weight_unit:
+          latestSnapshot?.weight_unit || null,
         price:
           latestSnapshot?.price ?? null,
         compare_at_price:
