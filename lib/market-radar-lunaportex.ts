@@ -29,6 +29,23 @@ const SHOPIFY_PAGE_DELAY_MS = 250
 const SHOPIFY_AUTH_PRODUCT_CONCURRENCY = 6
 const SHOPIFY_AUTH_PRODUCT_LIMIT = 300
 const POSTGREST_FILTER_CHUNK_SIZE = 100
+const PRODUCT_WRITE_BATCH_SIZE = 25
+const SNAPSHOT_WRITE_BATCH_SIZE = 50
+const EVENT_WRITE_BATCH_SIZE = 50
+const SCORE_WRITE_BATCH_SIZE = 50
+const MINIMUM_ADAPTIVE_BATCH_SIZE = 5
+
+type MarketRadarSyncStage =
+  | "PRODUCT_UPSERT"
+  | "SNAPSHOT_INSERT"
+  | "EVENT_UPSERT"
+  | "SCORE_UPSERT"
+
+type AdaptiveBatchTelemetry = {
+  adaptiveRetryCount: number
+  failedBatchCount: number
+  smallestSuccessfulBatchSize: number | null
+}
 
 function isStatementTimeoutError(
   error: unknown
@@ -47,6 +64,39 @@ function isStatementTimeoutError(
       "canceling statement due to statement timeout"
     )
   )
+}
+
+async function executeAdaptiveBatches<T>({ rows, batchSize, stage, telemetry, execute }: {
+  rows: T[]
+  batchSize: number
+  stage: MarketRadarSyncStage
+  telemetry: AdaptiveBatchTelemetry
+  execute: (batch: T[]) => Promise<void>
+}) {
+  const executeBatch = async (batch: T[]): Promise<void> => {
+    try {
+      await execute(batch)
+      telemetry.smallestSuccessfulBatchSize = telemetry.smallestSuccessfulBatchSize === null
+        ? batch.length
+        : Math.min(telemetry.smallestSuccessfulBatchSize, batch.length)
+    } catch (error) {
+      if (!isStatementTimeoutError(error)) {
+        throw new Error(`${stage}_FAILED: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      if (batch.length <= MINIMUM_ADAPTIVE_BATCH_SIZE) {
+        telemetry.failedBatchCount += 1
+        throw new Error(`${stage}_TIMEOUT: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      telemetry.adaptiveRetryCount += 1
+      const midpoint = Math.ceil(batch.length / 2)
+      await executeBatch(batch.slice(0, midpoint))
+      await executeBatch(batch.slice(midpoint))
+    }
+  }
+
+  for (const batch of chunkArray(rows, batchSize)) {
+    await executeBatch(batch)
+  }
 }
 
 type ShopifyVariant = {
@@ -1353,7 +1403,8 @@ async function upsertProducts(
   supabase: SupabaseClient,
   sourceId: string,
   products: AggregatedProduct[],
-  capturedAt: string
+  capturedAt: string,
+  telemetry: AdaptiveBatchTelemetry
 ) {
   const rows =
     products.map(product => {
@@ -1418,34 +1469,20 @@ async function upsertProducts(
   const savedProducts: MarketRadarProductRecord[] =
     []
 
-  for (const chunk of chunkArray(rows, 100)) {
-    const {
-      data,
-      error,
-    } =
-      await supabase
+  await executeAdaptiveBatches({
+    rows,
+    batchSize: PRODUCT_WRITE_BATCH_SIZE,
+    stage: "PRODUCT_UPSERT",
+    telemetry,
+    execute: async chunk => {
+      const { data, error } = await supabase
         .from("market_radar_products")
-        .upsert(
-          chunk,
-          {
-            onConflict:
-              "source_id,supplier_product_id",
-          }
-        )
+        .upsert(chunk, { onConflict: "source_id,supplier_product_id" })
         .select("id,supplier_product_id,handle")
-
-    if (error) {
-      throw new Error(
-        error.message
-      )
-    }
-
-    savedProducts.push(
-      ...(
-        data || []
-      ) as MarketRadarProductRecord[]
-    )
-  }
+      if (error) throw error
+      savedProducts.push(...(data || []) as MarketRadarProductRecord[])
+    },
+  })
 
   return savedProducts
 }
@@ -1858,37 +1895,32 @@ function buildSnapshotsAndEvents(
 
 async function insertSnapshots(
   supabase: SupabaseClient,
-  snapshotRows: SnapshotInsert[]
+  snapshotRows: SnapshotInsert[],
+  telemetry: AdaptiveBatchTelemetry
 ) {
   let insertedCount = 0
 
-  for (
-    const snapshotChunk of chunkArray(
-      snapshotRows,
-      250
-    )
-  ) {
-    const { error } =
-      await supabase
+  await executeAdaptiveBatches({
+    rows: snapshotRows,
+    batchSize: SNAPSHOT_WRITE_BATCH_SIZE,
+    stage: "SNAPSHOT_INSERT",
+    telemetry,
+    execute: async snapshotChunk => {
+      const { error } = await supabase
         .from("market_radar_snapshots")
         .insert(snapshotChunk)
-
-    if (error) {
-      throw new Error(
-        error.message
-      )
-    }
-
-    insertedCount +=
-      snapshotChunk.length
-  }
+      if (error) throw error
+      insertedCount += snapshotChunk.length
+    },
+  })
 
   return insertedCount
 }
 
 async function insertEvents(
   supabase: SupabaseClient,
-  eventRows: EventInsert[]
+  eventRows: EventInsert[],
+  telemetry: AdaptiveBatchTelemetry
 ) {
   if (eventRows.length === 0) {
     return 0
@@ -1896,38 +1928,20 @@ async function insertEvents(
 
   let insertedCount = 0
 
-  for (
-    const eventChunk of chunkArray(
-      eventRows,
-      250
-    )
-  ) {
-    const {
-      data,
-      error,
-    } =
-      await supabase
+  await executeAdaptiveBatches({
+    rows: eventRows,
+    batchSize: EVENT_WRITE_BATCH_SIZE,
+    stage: "EVENT_UPSERT",
+    telemetry,
+    execute: async eventChunk => {
+      const { data, error } = await supabase
         .from("market_radar_events")
-        .upsert(
-          eventChunk,
-          {
-            onConflict:
-              "idempotency_key",
-            ignoreDuplicates:
-              true,
-          }
-        )
+        .upsert(eventChunk, { onConflict: "idempotency_key", ignoreDuplicates: true })
         .select("id")
-
-    if (error) {
-      throw new Error(
-        error.message
-      )
-    }
-
-    insertedCount +=
-      (data || []).length
-  }
+      if (error) throw error
+      insertedCount += (data || []).length
+    },
+  })
 
   return insertedCount
 }
@@ -2185,7 +2199,8 @@ async function upsertScores(
   sourceId: string,
   productIds: string[],
   snapshotRows: SnapshotInsert[],
-  startedAt: string
+  startedAt: string,
+  telemetry: AdaptiveBatchTelemetry
 ) {
   const recentEvents =
     await getRecentEventsForProducts(
@@ -2272,32 +2287,19 @@ async function upsertScores(
 
   let scoredProducts = 0
 
-  for (
-    const scoreChunk of chunkArray(
-      scoreRows,
-      250
-    )
-  ) {
-    const { error } =
-      await supabase
+  await executeAdaptiveBatches({
+    rows: scoreRows,
+    batchSize: SCORE_WRITE_BATCH_SIZE,
+    stage: "SCORE_UPSERT",
+    telemetry,
+    execute: async scoreChunk => {
+      const { error } = await supabase
         .from("market_radar_scores")
-        .upsert(
-          scoreChunk,
-          {
-            onConflict:
-              "product_id",
-          }
-        )
-
-    if (error) {
-      throw new Error(
-        error.message
-      )
-    }
-
-    scoredProducts +=
-      scoreChunk.length
-  }
+        .upsert(scoreChunk, { onConflict: "product_id" })
+      if (error) throw error
+      scoredProducts += scoreChunk.length
+    },
+  })
 
   return scoredProducts
 }
@@ -2312,6 +2314,12 @@ export async function runLunaPortexMarketRadarSync(
     await ensureLunaPortexSource(
       supabase
     )
+
+  const batchTelemetry: AdaptiveBatchTelemetry = {
+    adaptiveRetryCount: 0,
+    failedBatchCount: 0,
+    smallestSuccessfulBatchSize: null,
+  }
 
   await supabase
     .from("market_radar_sources")
@@ -2338,7 +2346,8 @@ export async function runLunaPortexMarketRadarSync(
         supabase,
         source.id,
         products,
-        startedAt
+        startedAt,
+        batchTelemetry
       )
 
     const productIds =
@@ -2367,7 +2376,8 @@ export async function runLunaPortexMarketRadarSync(
     const snapshotsInserted =
       await insertSnapshots(
         supabase,
-        snapshotRows
+        snapshotRows,
+        batchTelemetry
       )
 
     const inventoryNumericVariants =
@@ -2409,7 +2419,8 @@ export async function runLunaPortexMarketRadarSync(
     const eventsInserted =
       await insertEvents(
         supabase,
-        eventRows
+        eventRows,
+        batchTelemetry
       )
 
     const scoredProducts =
@@ -2418,8 +2429,30 @@ export async function runLunaPortexMarketRadarSync(
         source.id,
         productIds,
         snapshotRows,
-        startedAt
+        startedAt,
+        batchTelemetry
       )
+
+    const productsWithSnapshots =
+      new Set(
+        snapshotRows.map(snapshot => snapshot.product_id)
+      ).size
+
+    const completedProducts = Math.min(
+      savedProducts.length,
+      productsWithSnapshots,
+      scoredProducts
+    )
+
+    const scanCompletenessPercent = products.length > 0
+      ? Number(((completedProducts / products.length) * 100).toFixed(2))
+      : 100
+
+    const scanStatus =
+      scanCompletenessPercent === 100 &&
+      batchTelemetry.failedBatchCount === 0
+        ? "COMPLETE" as const
+        : "PARTIAL" as const
 
     const finishedAt =
       new Date().toISOString()
@@ -2449,6 +2482,19 @@ export async function runLunaPortexMarketRadarSync(
       snapshotsInserted,
       eventsInserted,
       scoredProducts,
+      catalogProductsFetched:
+        products.length,
+      uniqueProductsFetched:
+        products.length,
+      productsUpserted:
+        savedProducts.length,
+      productsWithSnapshots,
+      failedBatchCount:
+        batchTelemetry.failedBatchCount,
+      adaptiveRetryCount:
+        batchTelemetry.adaptiveRetryCount,
+      scanCompletenessPercent,
+      scanStatus,
       inventoryNumericVariants,
       inventoryAvailabilityOnlyVariants,
       inventoryUnknownVariants,
@@ -2479,11 +2525,14 @@ export async function runLunaPortexMarketRadarSync(
         ? error.message
         : "market_radar_sync_failed"
 
+    const detailedMessage =
+      `${message} | adaptive_retries=${batchTelemetry.adaptiveRetryCount} | failed_batches=${batchTelemetry.failedBatchCount}`
+
     await supabase
       .from("market_radar_sources")
       .update({
         last_error:
-          message,
+          detailedMessage,
       })
       .eq(
         "id",

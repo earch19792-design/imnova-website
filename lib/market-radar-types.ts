@@ -239,6 +239,14 @@ export type MarketRadarSyncResult = {
   snapshotsInserted: number
   eventsInserted: number
   scoredProducts: number
+  catalogProductsFetched: number
+  uniqueProductsFetched: number
+  productsUpserted: number
+  productsWithSnapshots: number
+  failedBatchCount: number
+  adaptiveRetryCount: number
+  scanCompletenessPercent: number
+  scanStatus: "COMPLETE" | "PARTIAL" | "FAILED"
   inventoryNumericVariants?: number
   inventoryAvailabilityOnlyVariants?: number
   inventoryUnknownVariants?: number
