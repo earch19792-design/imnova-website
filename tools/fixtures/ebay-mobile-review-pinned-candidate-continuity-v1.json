@@ -1,0 +1,47 @@
+{
+  "version": "EBAY_MOBILE_REVIEW_PINNED_CANDIDATE_CONTINUITY_V1",
+  "pinnedCandidates": [
+    {
+      "pinnedCandidateId": "pinned-idesign-paper-towel-holder",
+      "marketRadarProductId": "50e12d9e-bef7-4aac-9e22-12d6007c0d23",
+      "supplierProductId": "9220818632928",
+      "productName": "iDesign Swivel Paper Towel Holder for Kitchen, Wall Mount, Under Cabinet, Bronze",
+      "handle": "idesign-swivel-paper-towel-holder-for-kitchen-wall-mount-under-cabinet-bronze",
+      "productUrl": "https://lunaportex.com/products/idesign-swivel-paper-towel-holder-for-kitchen-wall-mount-under-cabinet-bronze",
+      "status": "PINNED_CANDIDATE_UNDER_REVIEW",
+      "sameProductConfirmed": true,
+      "stockConfirmed": true,
+      "stockQuantityConfirmed": 2,
+      "stockWarning": "STOCK_LIMITED_WARNING",
+      "lunaPriceConfirmed": true,
+      "lunaPrice": 2,
+      "imageConfirmed": true,
+      "source": "HUMAN_MOBILE_CONFIRMED",
+      "lastHumanConfirmationAt": "2026-07-12T01:30:00.000Z",
+      "lastKnownRoute": "NEED_EBAY_MARKET_VALIDATION",
+      "radarPresenceStatus": "NOT_IN_CURRENT_TOP5",
+      "nextRecommendedRoute": "NEED_RADAR_RECHECK"
+      ,"lastKnownHumanConfirmation": {
+        "stockQuantityConfirmed": 2,
+        "lunaPrice": 2,
+        "availabilityStatus": "AVAILABLE",
+        "imageConfirmed": true,
+        "imageReference": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/1_2fc96892-d756-43d4-b41a-44e336920576.webp?v=1771623206",
+        "sameProductConfirmed": true,
+        "confirmedAt": "2026-07-12T01:30:00.000Z"
+      },
+      "latestRadarObservation": {
+        "latestAvailabilityStatus": "AVAILABLE",
+        "latestStockQuantity": 2,
+        "latestLunaPrice": 2,
+        "latestImageReference": "https://cdn.shopify.com/s/files/1/0798/2520/7520/files/1_2fc96892-d756-43d4-b41a-44e336920576.webp?v=1771623206",
+        "latestLastSeenAt": "2026-07-12T02:18:22.022Z",
+        "latestScanId": "scan-2026-07-12T02:18:22Z",
+        "sourceLastSuccessAt": "2026-07-12T02:18:22.100Z",
+        "latestProductUrlStatus": "VALID",
+        "isPresentInLatestScan": true,
+        "missingIntervals": 0
+      }
+    }
+  ]
+}
