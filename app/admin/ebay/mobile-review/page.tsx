@@ -6,6 +6,8 @@ import demoRadarJson from "@/tools/fixtures/ebay-mobile-review-real-radar-connec
 import {
   buildMobileReviewRealRadarConnector,
   loadMarketRadarReadonlyDashboard,
+  loadMarketRadarReadonlyProductById,
+  mapMarketRadarProductToMobileCandidate,
   type RadarProductInput,
   type RealRadarCandidate,
 } from "@/lib/ebay/ebay-mobile-review-real-radar-connector"
@@ -33,6 +35,11 @@ import {
 import type { EbaySellerKeywordDemandReport } from "@/lib/ebay/ebay-seller-keyword-demand-validation"
 import type { EbayLunaOpportunityAssessment } from "@/lib/ebay/ebay-luna-demand-opportunity-engine"
 import {
+  getMobileReviewPayloadError,
+  getMobileReviewRequestError,
+  readMobileReviewJson,
+} from "@/lib/ebay/ebay-mobile-review-http"
+import {
   MOBILE_REVIEW_PINNED_STORAGE_KEY,
   parsePinnedCandidates,
   serializePinnedCandidates,
@@ -56,6 +63,24 @@ type ServerReview = {
 type ServerAlerts = {
   activeListingRisks: Array<{ id: string; risk_priority: string; risk_type: string; risk_summary: string; recommended_action?: string }>
   outbox: Array<{ id: string; priority: string; alert_type: string; status: string; payload: Record<string, unknown>; created_at: string }>
+}
+
+type SellerWhatsAppStatus = {
+  configuration?: {
+    status: "READY" | "DISABLED" | "NOT_READY"
+    enabled: boolean
+    ready: boolean
+    recipientConfigured: boolean
+    immediateTemplateConfigured: boolean
+    digestTemplateConfigured: boolean
+  }
+  health?: { pending: number; failed: number; deadLetter: number }
+  previews?: Array<{
+    alertId: string
+    priority: string
+    deliveryClass: string
+    message: { title: string; summary: string; action: string }
+  }>
 }
 
 function toMobileFixture(candidates: RealRadarCandidate[]): MobileReviewFixture {
@@ -232,6 +257,7 @@ export default function EbayMobileReviewPage() {
   const [selectedQueueOpportunity, setSelectedQueueOpportunity] = useState<Opportunity | null>(null)
   const [serverReviews, setServerReviews] = useState<ServerReview[]>([])
   const [serverAlerts, setServerAlerts] = useState<ServerAlerts>({ activeListingRisks: [], outbox: [] })
+  const [whatsappStatus, setWhatsappStatus] = useState<SellerWhatsAppStatus>({})
   const [serverSaveState, setServerSaveState] = useState("Sin cambios pendientes")
   const [blockedVisible, setBlockedVisible] = useState(5)
   const [copied, setCopied] = useState(false)
@@ -250,12 +276,30 @@ export default function EbayMobileReviewPage() {
       setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setSelectedQueueCandidate(null); setSelectedQueueOpportunity(null); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError("")
       if (nextReport.realRadarCandidatesCount === 0) { setLoadState("RADAR_EMPTY"); setLoadMessage("Radar respondió, pero no devolvió productos. Ejecuta o revisa el scan antes de decidir.") }
       else { setLoadState("READY"); setLoadMessage(`${nextReport.top5Candidates.length} candidatos disponibles de ${nextReport.realRadarCandidatesCount} productos observados.`) }
+      return nextReport.allCandidates
     } catch (error) {
       setReport(emptyReport); setState(buildInitialMobileReviewState(toMobileFixture([])))
       const auth = error instanceof Error && error.message === "AUTH_REQUIRED"
       setLoadState(auth ? "AUTH_REQUIRED" : "RADAR_REQUEST_FAILED")
-      setLoadMessage(auth ? "La sesión admin expiró. Vuelve a iniciar sesión para leer Market Radar." : "No se pudo consultar Market Radar. Revisa la conexión e intenta nuevamente.")
+      setLoadMessage(auth
+        ? "La sesión admin expiró. Vuelve a iniciar sesión para leer Market Radar."
+        : getMobileReviewRequestError(error, "No se pudo consultar Market Radar. Revisa la conexión e intenta nuevamente."))
+      return []
     } finally { setLoading(false) }
+  }, [])
+
+  const lookupRadarCandidateByProductId = useCallback(async (
+    productId: string,
+  ) => {
+    const { data, error } = await supabase.auth.getSession()
+    if (error || !data.session) throw new Error("AUTH_REQUIRED")
+    const product = await loadMarketRadarReadonlyProductById(
+      `Bearer ${data.session.access_token}`,
+      productId,
+    )
+    return product
+      ? mapMarketRadarProductToMobileCandidate(product, 0)
+      : null
   }, [])
 
   useEffect(() => { void load() }, [load])
@@ -269,14 +313,35 @@ export default function EbayMobileReviewPage() {
       const { data, error } = await supabase.auth.getSession()
       if (error || !data.session) return
       const response = await fetch("/api/admin/ebay/command-center", { cache: "no-store", headers: { Authorization: `Bearer ${data.session.access_token}` } })
-      const payload = await response.json()
-      if (!response.ok || !payload.success) return
+      const payload = await readMobileReviewJson<{
+        success?: boolean
+        dashboard?: { queue?: Opportunity[] }
+        reviews?: ServerReview[]
+        alerts?: ServerAlerts
+      }>(response, "No se pudo cargar el estado guardado del Command Center")
+      if (!payload.success) return
       const queue = (payload.dashboard?.queue ?? []) as Opportunity[]
       setServerReviews((payload.reviews ?? []).map((review: ServerReview) => ({ ...review, opportunity: queue.find((row) => row.id === review.opportunity_id) })))
       setServerAlerts(payload.alerts ?? { activeListingRisks: [], outbox: [] })
     } catch { /* La cola principal muestra el error de sesión/conexión. */ }
   }, [])
   useEffect(() => { void loadServerReviews() }, [loadServerReviews])
+  const loadWhatsAppStatus = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.auth.getSession()
+      if (error || !data.session) return
+      const response = await fetch("/api/admin/ebay/seller-whatsapp-alerts", {
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${data.session.access_token}` },
+      })
+      const payload = await readMobileReviewJson<SellerWhatsAppStatus & { success?: boolean }>(
+        response,
+        "No se pudo cargar el estado de WhatsApp",
+      )
+      if (payload.success) setWhatsappStatus(payload)
+    } catch { /* WhatsApp no debe bloquear Radar ni la revisión móvil. */ }
+  }, [])
+  useEffect(() => { void loadWhatsAppStatus() }, [loadWhatsAppStatus])
   useEffect(() => {
     const restored = parsePinnedCandidates(window.localStorage.getItem(MOBILE_REVIEW_PINNED_STORAGE_KEY))
     setPinnedCandidates(restored.candidates); setStorageRestored(true)
@@ -378,10 +443,13 @@ export default function EbayMobileReviewPage() {
     if (action.type === "SELECT_CANDIDATE") { setView("decision"); window.setTimeout(() => confirmationRef.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 50) }
   }
 
-  const reviewOpportunityCandidate = (opportunity: Opportunity) => {
+  const reviewOpportunityCandidate = (
+    opportunity: Opportunity,
+    radarCandidates: RealRadarCandidate[] = report.allCandidates,
+  ) => {
     const marketRadarProductId = opportunity.market_radar_product_id
     if (!marketRadarProductId) return false
-    const candidate = report.allCandidates.find(
+    const candidate = radarCandidates.find(
       (entry) => entry.marketRadarProductId === marketRadarProductId,
     )
     if (!candidate) return false
@@ -474,9 +542,14 @@ export default function EbayMobileReviewPage() {
               },
             }),
           })
-          const payload = await response.json()
-          if (!response.ok || !payload.success) throw new Error(payload.error ?? "SAVE_FAILED")
-          setServerSaveState(`Guardado ${new Intl.DateTimeFormat("es", { timeStyle: "short" }).format(new Date(payload.savedAt))}`)
+          const payload = await readMobileReviewJson<{
+            success?: boolean
+            error?: string
+            savedAt?: string
+          }>(response, "No se pudo guardar la revisión")
+          if (!payload.success) throw new Error(getMobileReviewPayloadError(payload, "No se pudo guardar la revisión"))
+          const savedAt = payload.savedAt ? new Date(payload.savedAt) : new Date()
+          setServerSaveState(`Guardado ${new Intl.DateTimeFormat("es", { timeStyle: "short" }).format(savedAt)}`)
           void loadServerReviews()
         } catch {
           setServerSaveState("No se pudo guardar · reintenta con conexión")
@@ -547,14 +620,14 @@ export default function EbayMobileReviewPage() {
           restrictionGuards: marketValidation.restrictionGuards,
         }),
       })
-      const payload = await response.json() as {
+      const payload = await readMobileReviewJson<{
         success?: boolean
         error?: string
         report?: EbaySellerKeywordDemandReport
         opportunityAssessment?: EbayLunaOpportunityAssessment
-      }
-      if (!response.ok || !payload.success || !payload.report) {
-        throw new Error(payload.error || "EBAY_READONLY_MARKET_VALIDATION_FAILED")
+      }>(response, "No se pudo consultar la evidencia read-only de eBay")
+      if (!payload.success || !payload.report) {
+        throw new Error(getMobileReviewPayloadError(payload, "EBAY_READONLY_MARKET_VALIDATION_FAILED"))
       }
       setSellerKeywordDemand(payload.report)
       setOpportunityAssessment(payload.opportunityAssessment ?? null)
@@ -562,13 +635,13 @@ export default function EbayMobileReviewPage() {
         `eBay analizado en modo read-only: ${payload.report.eligibleComparableListings} comparables y ${payload.report.sellersAnalyzed} vendedores.`
       )
     } catch (error) {
-      const code = error instanceof Error ? error.message : "EBAY_READONLY_MARKET_VALIDATION_FAILED"
+      const code = getMobileReviewRequestError(error, "EBAY_READONLY_MARKET_VALIDATION_FAILED")
       setSellerKeywordDemandError(
         code === "EBAY_READONLY_ENV_MISSING"
           ? "EBAY_READONLY_ENV_MISSING · Las credenciales read-only de eBay todavía no están configuradas en este Preview."
           : code === "AUTH_REQUIRED"
             ? "La sesión admin expiró. Inicia sesión y vuelve a intentar."
-            : "No se pudo consultar la evidencia de eBay. No se registró ninguna validación."
+            : `No se pudo consultar la evidencia de eBay. No se registró ninguna validación. ${code}`
       )
     } finally {
       setSellerKeywordDemandLoading(false)
@@ -666,13 +739,13 @@ export default function EbayMobileReviewPage() {
         </nav>
         <p className="sr-only">{report.stockHoldCandidates.length} productos están bloqueados por stock. B2-RUN continúa desactivado hasta completar todas las validaciones.</p>
 
-        {view === "opportunities" && <OpportunityCommandCenter onReviewCandidate={reviewOpportunityCandidate} onRadarRefresh={load} />}
+        {view === "opportunities" && <OpportunityCommandCenter onReviewCandidate={reviewOpportunityCandidate} onRadarRefresh={load} onRadarLookup={lookupRadarCandidateByProductId} />}
 
         {view === "top5" && <section aria-labelledby="top5-heading"><h2 id="top5-heading" className="mb-3 text-xl font-black">Top 5 actual</h2><div className="space-y-4">{report.top5Candidates.map((candidate) => <CandidateCard key={candidate.candidateId} candidate={candidate} selected={!selectedQueueCandidate && state.selectedCandidateRank === candidate.candidateRank} pinned={pinnedCandidates.some((item) => pinnedCandidateMatchesRadar(item, candidate))} provisional={radarGuards.needsScoreDisambiguation} onSelect={() => { setSelectedQueueCandidate(null); setSelectedQueueOpportunity(null); act({ type: "SELECT_CANDIDATE", rank: candidate.candidateRank }) }} onUnavailable={() => act({ type: "MARK_UNAVAILABLE", rank: candidate.candidateRank })} />)}{!loading && report.top5Candidates.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/75">No hay candidatos seleccionables.</p>}</div></section>}
 
         {view === "pinned" && <section aria-labelledby="server-reviews-heading" className="space-y-3"><div><p className="text-xs font-black uppercase tracking-widest text-cyan-100/60">Guardado server-side</p><h2 id="server-reviews-heading" className="mt-1 text-xl font-black">Continuar donde quedé</h2></div>{serverReviews.map((review) => <article key={review.id} className="rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.05] p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase text-cyan-100">{routeLabel(review.current_step)}</p><h3 className="mt-2 font-black">{review.opportunity?.product_title ?? String(review.form_data.productTitle ?? "Producto en revisión")}</h3></div><StatusPill>{review.status.replaceAll("_", " ")}</StatusPill></div><p className="mt-2 text-xs text-white/55">Guardado {formatDate(review.updated_at)}</p>{review.opportunity ? <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" onClick={() => reviewOpportunityCandidate(review.opportunity!)} className="min-h-12 rounded-2xl bg-cyan-200 px-3 font-black text-black">Continuar validación</button><a href={`/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(review.opportunity_id)}&candidate=${encodeURIComponent(review.candidate_key)}`} className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-emerald-200/30 px-3 text-center font-black text-emerald-50">Workspace</a></div> : <p className="mt-3 text-sm text-amber-100">La oportunidad ya no está entre las primeras 100; sus datos siguen guardados.</p>}</article>)}{serverReviews.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/70">Todavía no hay revisiones guardadas en el servidor.</p>}<details className="rounded-2xl border border-white/10 p-3"><summary className="cursor-pointer text-sm font-bold">Revisiones locales anteriores</summary><p className="mt-2 text-xs text-white/60">En revisión / Pinned Candidates · {pinnedContinuity.pinnedCandidates.length} guardadas en este navegador.</p><span className="sr-only">RECHECK_PINNED_CANDIDATE CONTINUE_EBAY_MARKET_VALIDATION MARK_PINNED_UNAVAILABLE HOLD_PINNED_FOR_REVIEW UNPIN_CANDIDATE BROWSER_STATE_OR_LOCAL_STORAGE</span></details></section>}
 
-        {view === "blocked" && <section aria-labelledby="blocked-heading" className="space-y-4"><div><p className="text-xs font-black uppercase tracking-widest text-rose-100/60">Acción prioritaria</p><h2 id="blocked-heading" className="mt-1 text-xl font-black">Alertas Luna ↔ eBay</h2><p className="mt-1 text-sm text-white/65">Primero se muestran riesgos de listings activos; después, productos Luna detenidos por stock.</p></div>{serverAlerts.activeListingRisks.map((risk) => <article key={risk.id} className="rounded-3xl border border-rose-200/30 bg-rose-200/[0.08] p-4"><StatusPill tone="danger">{risk.risk_priority.toUpperCase()} · {risk.risk_type.replaceAll("_", " ")}</StatusPill><h3 className="mt-3 font-black">{risk.risk_summary}</h3>{risk.recommended_action && <p className="mt-2 text-sm leading-6 text-white/70">Siguiente acción: {risk.recommended_action}</p>}</article>)}{serverAlerts.outbox.filter((alert) => !serverAlerts.activeListingRisks.some((risk) => risk.id === String(alert.payload.riskId ?? ""))).slice(0, 10).map((alert) => <article key={alert.id} className="rounded-2xl border border-amber-200/20 bg-amber-200/[0.05] p-3"><p className="text-xs font-black uppercase text-amber-100">{alert.priority} · {alert.alert_type.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-white/55">Notificación {alert.status} · {formatDate(alert.created_at)}</p></article>)}{serverAlerts.activeListingRisks.length === 0 && <p className="rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.05] p-4 text-sm text-emerald-50">No hay riesgos abiertos en listings vinculados. Sincroniza tus listings activos desde Oportunidades para ampliar la cobertura.</p>}<details className="rounded-3xl border border-white/10 p-4" open={serverAlerts.activeListingRisks.length === 0}><summary className="cursor-pointer font-black">Bloqueados por stock Luna · {report.stockHoldCandidates.length}</summary><div className="mt-3 space-y-3">{report.stockHoldCandidates.slice(0, blockedVisible).map((candidate) => <article key={candidate.candidateId} className="rounded-2xl border border-rose-200/20 bg-rose-200/[0.06] p-4"><h3 className="font-black">{candidate.productTitle}</h3><p className="mt-2 text-sm text-white/75">{routeLabel(candidate.routeRecommendation)} · último scan {formatDate(candidate.lastSeenAt)}</p><p className="mt-2 break-all text-xs text-white/50">SKU: {formatValue(candidate.supplierSku)}</p></article>)}</div>{blockedVisible < report.stockHoldCandidates.length && <button type="button" onClick={() => setBlockedVisible((value) => value + 20)} className="mt-4 min-h-12 w-full rounded-2xl border border-white/25 font-black">Mostrar 20 más</button>}</details></section>}
+        {view === "blocked" && <section aria-labelledby="blocked-heading" className="space-y-4"><div><p className="text-xs font-black uppercase tracking-widest text-rose-100/60">Acción prioritaria</p><h2 id="blocked-heading" className="mt-1 text-xl font-black">Alertas Luna ↔ eBay</h2><p className="mt-1 text-sm text-white/65">Primero se muestran riesgos de listings activos; después, productos Luna detenidos por stock.</p></div><article className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.05] p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-widest text-emerald-100/60">Canal profesional</p><h3 className="mt-1 font-black">WhatsApp Seller Alerts</h3></div><StatusPill tone={whatsappStatus.configuration?.status === "READY" ? "good" : "warning"}>{whatsappStatus.configuration?.status ?? "CARGANDO"}</StatusPill></div><p className="mt-2 text-sm leading-6 text-white/65">Inmediatas: ganador verificado, listing sin stock, stock 1–3, costo +5%, vínculo roto y fallo de draft. Bajas de costo menores y reposiciones no urgentes van al resumen.</p><dl className="mt-3 grid grid-cols-3 gap-2 text-center text-xs"><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Pendientes</dt><dd className="mt-1 font-black">{whatsappStatus.health?.pending ?? 0}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Fallidos</dt><dd className="mt-1 font-black">{whatsappStatus.health?.failed ?? 0}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Dead letter</dt><dd className="mt-1 font-black">{whatsappStatus.health?.deadLetter ?? 0}</dd></div></dl>{whatsappStatus.configuration?.status !== "READY" && <p className="mt-3 rounded-2xl border border-amber-200/20 p-3 text-xs leading-5 text-amber-50">Envíos reales bloqueados hasta configurar destinatario server-side, dos templates aprobados y activar el feature flag.</p>}<button type="button" onClick={() => void loadWhatsAppStatus()} className="mt-3 min-h-11 w-full rounded-2xl border border-emerald-200/25 text-sm font-black">Actualizar estado</button></article>{serverAlerts.activeListingRisks.map((risk) => <article key={risk.id} className="rounded-3xl border border-rose-200/30 bg-rose-200/[0.08] p-4"><StatusPill tone="danger">{risk.risk_priority.toUpperCase()} · {risk.risk_type.replaceAll("_", " ")}</StatusPill><h3 className="mt-3 font-black">{risk.risk_summary}</h3>{risk.recommended_action && <p className="mt-2 text-sm leading-6 text-white/70">Siguiente acción: {risk.recommended_action}</p>}</article>)}{serverAlerts.outbox.filter((alert) => !serverAlerts.activeListingRisks.some((risk) => risk.id === String(alert.payload.riskId ?? ""))).slice(0, 10).map((alert) => <article key={alert.id} className="rounded-2xl border border-amber-200/20 bg-amber-200/[0.05] p-3"><p className="text-xs font-black uppercase text-amber-100">{alert.priority} · {alert.alert_type.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-white/55">Notificación {alert.status} · {formatDate(alert.created_at)}</p></article>)}{serverAlerts.activeListingRisks.length === 0 && <p className="rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.05] p-4 text-sm text-emerald-50">No hay riesgos abiertos en listings vinculados. Sincroniza tus listings activos desde Oportunidades para ampliar la cobertura.</p>}<details className="rounded-3xl border border-white/10 p-4" open={serverAlerts.activeListingRisks.length === 0}><summary className="cursor-pointer font-black">Bloqueados por stock Luna · {report.stockHoldCandidates.length}</summary><div className="mt-3 space-y-3">{report.stockHoldCandidates.slice(0, blockedVisible).map((candidate) => <article key={candidate.candidateId} className="rounded-2xl border border-rose-200/20 bg-rose-200/[0.06] p-4"><h3 className="font-black">{candidate.productTitle}</h3><p className="mt-2 text-sm text-white/75">{routeLabel(candidate.routeRecommendation)} · último scan {formatDate(candidate.lastSeenAt)}</p><p className="mt-2 break-all text-xs text-white/50">SKU: {formatValue(candidate.supplierSku)}</p></article>)}</div>{blockedVisible < report.stockHoldCandidates.length && <button type="button" onClick={() => setBlockedVisible((value) => value + 20)} className="mt-4 min-h-12 w-full rounded-2xl border border-white/25 font-black">Mostrar 20 más</button>}</details></section>}
 
         {view === "decision" && (
           <section

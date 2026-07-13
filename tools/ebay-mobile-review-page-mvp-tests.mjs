@@ -88,6 +88,23 @@ test("selection with same product, stock and image enables only preflight", () =
   assert.equal(decision.canPublish, false)
 })
 
+test("a directed product with candidateRank zero keeps every confirmation", () => {
+  const directedFixture = {
+    ...fixture,
+    top5Candidates: [{ ...fixture.top5Candidates[0], candidateRank: 0 }],
+  }
+  let state = buildInitialMobileReviewState(directedFixture)
+  state = applyMobileReviewAction(state, { type: "SELECT_CANDIDATE", rank: 0 })
+  state = applyMobileReviewAction(state, { type: "CONFIRM_SAME_PRODUCT" })
+  state = applyMobileReviewAction(state, { type: "CONFIRM_STOCK_QTY", quantity: 4 })
+  state = applyMobileReviewAction(state, { type: "CONFIRM_IMAGE_OK" })
+  state = applyMobileReviewAction(state, { type: "APPROVE_B2_RUN_PREFLIGHT" })
+  const decision = buildMobileReviewDecision(state)
+  assert.equal(decision.selectedCandidateRank, 0)
+  assert.equal(decision.imageConfirmed, true)
+  assert.equal(decision.canProceedToB2RunPreflight, true)
+})
+
 test("editing identity, stock or Luna evidence invalidates stale confirmations", () => {
   let state = buildInitialMobileReviewState(fixture)
   state = applyMobileReviewAction(state, { type: "SELECT_CANDIDATE", rank: 2 })

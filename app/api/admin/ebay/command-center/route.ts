@@ -201,7 +201,10 @@ export async function POST(req: Request) {
         .eq("opportunity_id", opportunityId)
         .maybeSingle()
       if (readError) throw new Error("COMMAND_CENTER_PACKAGE_READ_FAILED")
-      if (existing) return NextResponse.json({ success: true, listingPackage: existing, created: false })
+      if (existing) {
+        if (existing.created_by !== reviewer) throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
+        return NextResponse.json({ success: true, listingPackage: existing, created: false })
+      }
       const seed = buildInitialPackage(sourceOpportunity)
       const { data, error } = await supabase.from("ebay_listing_packages").insert({
         opportunity_id: opportunityId,
@@ -252,6 +255,7 @@ export async function POST(req: Request) {
           imageUrls: strings(form.imageUrls, 24),
           pricing: object(form.pricing),
           shipping: object(form.shipping),
+          draftConfiguration: object(form.draftConfiguration),
         },
         readiness,
         updated_at: new Date().toISOString(),
@@ -262,6 +266,7 @@ export async function POST(req: Request) {
         .eq("id", packageId)
         .eq("opportunity_id", opportunityId)
         .eq("candidate_key", candidateKey)
+        .eq("created_by", reviewer)
         .select("*")
         .single()
       if (error) throw new Error("COMMAND_CENTER_PACKAGE_SAVE_FAILED")

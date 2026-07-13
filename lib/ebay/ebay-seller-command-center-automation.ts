@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
+import {
+  enqueueSellerWhatsAppAlert,
+  resolveSellerWhatsAppAlert,
+} from "./ebay-seller-whatsapp-alerts"
+import type { SellerWhatsAppAlertType } from "./ebay-seller-whatsapp-alert-policy"
+
 export const SELLER_SCAN_LANES = ["protection", "event", "hot", "baseline", "coverage"] as const
 export type SellerScanLane = typeof SELLER_SCAN_LANES[number]
 
@@ -225,6 +231,41 @@ function riskCopy(type: string) {
   }
 }
 
+function whatsappRiskType(type: string): SellerWhatsAppAlertType | null {
+  if (type === "out_of_stock" || type === "low_stock" ||
+      type === "price_up" || type === "mapping_broken") return type
+  return null
+}
+
+function supplierCostChangePercent(
+  listing: ListingRow,
+  currentSupplierPrice: unknown,
+) {
+  const linked = numeric(
+    listing.supplier_cost_at_linking ??
+    listing.raw_payload?.supplierCostAtLinking ??
+    listing.raw_payload?.supplier_cost_at_linking,
+  )
+  const current = numeric(currentSupplierPrice)
+  return linked !== null && linked > 0 && current !== null
+    ? ((current - linked) / linked) * 100
+    : null
+}
+
+async function resolveProtectionWhatsAppAlert(
+  supabase: SupabaseClient,
+  listingId: string,
+  type: string,
+) {
+  const alertType = whatsappRiskType(type)
+  if (!alertType) return
+  await resolveSellerWhatsAppAlert(supabase, {
+    alertType,
+    entityType: "ebay_active_listing",
+    entityId: listingId,
+  }).catch(() => undefined)
+}
+
 async function upsertProtectionAlert(
   supabase: SupabaseClient,
   input: {
@@ -252,6 +293,31 @@ async function upsertProtectionAlert(
   } | null
   if (riskError || !risk?.risk_id) throw new Error("ACTIVE_LISTING_RISK_UPSERT_FAILED")
   const wasResolved = risk.was_resolved === true
+  const whatsappType = whatsappRiskType(input.type)
+  if (whatsappType) {
+    await enqueueSellerWhatsAppAlert(supabase, {
+      alertType: whatsappType,
+      entityType: "ebay_active_listing",
+      entityId: input.listing.id,
+      candidateKey: input.listing.supplier_sku,
+      title: input.listing.title || "Listing activo eBay",
+      summary: copy.summary,
+      mobileUrl: process.env.EBAY_SELLER_COMMAND_CENTER_URL,
+      facts: {
+        hasActiveListing: true,
+        supplierAvailable: input.evidence.available === true
+          ? true
+          : input.evidence.available === false
+            ? false
+            : null,
+        currentStock: numeric(input.evidence.inventoryQuantity),
+        costChangePct: supplierCostChangePercent(
+          input.listing,
+          input.evidence.supplierPrice,
+        ),
+      },
+    }).catch(() => undefined)
+  }
 
   const alertFingerprint = `risk:${riskFingerprint}`
   const { data: existingAlert, error: existingAlertError } = await supabase
@@ -352,6 +418,10 @@ export async function reconcileActiveListingProtectionRisks(
         .from("ebay_active_listings")
         .update({ last_radar_review_at: new Date().toISOString() })
         .eq("id", listing.id)
+      await Promise.all(
+        ["out_of_stock", "low_stock", "price_up", "mapping_broken"]
+          .map((type) => resolveProtectionWhatsAppAlert(supabase, listing.id, type)),
+      )
       continue
     }
 
@@ -381,6 +451,11 @@ export async function reconcileActiveListingProtectionRisks(
         .eq("active_listing_id", listing.id)
         .in("risk_type", resolvedTypes)
         .is("resolved_at", null)
+      await Promise.all(
+        resolvedTypes.map((type) =>
+          resolveProtectionWhatsAppAlert(supabase, listing.id, type)
+        ),
+      )
     }
     await supabase
       .from("ebay_active_listings")

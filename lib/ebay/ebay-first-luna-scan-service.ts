@@ -25,6 +25,12 @@ import {
   type SellerScanTask,
 } from "./ebay-seller-command-center-automation"
 import {
+  deliverSellerWhatsAppAlerts,
+  enqueueSellerWhatsAppAlert,
+  resolveSellerWhatsAppAlert,
+} from "./ebay-seller-whatsapp-alerts"
+import { getSellerWhatsAppGatewayConfiguration } from "./ebay-seller-whatsapp-gateway"
+import {
   buildBestSellingSignalKey,
   buildOpportunityChangeEvents,
   buildOpportunityQueueRow,
@@ -208,6 +214,8 @@ async function createActiveListingRisk(
   supplierVariantId: string | null,
   eventType: string,
   sourceSnapshotId: string | null,
+  oldValue?: unknown,
+  newValue?: unknown,
 ) {
   const riskType = eventType === "out_of_stock"
     ? "out_of_stock"
@@ -217,7 +225,7 @@ async function createActiveListingRisk(
   if (!marketRadarProductId || !riskType) return
   let query = supabase
     .from("ebay_active_listings")
-    .select("id")
+    .select("id,title,supplier_sku")
     .eq("market_radar_product_id", marketRadarProductId)
     .eq("listing_status", "active")
   if (supplierVariantId) query = query.eq("supplier_variant_id", supplierVariantId)
@@ -245,6 +253,26 @@ async function createActiveListingRisk(
     } | null
     if (riskError || !risk?.risk_id) throw new Error("ACTIVE_LISTING_RISK_UPSERT_FAILED")
     const wasResolved = risk.was_resolved === true
+    const oldCost = Number(oldValue)
+    const newCost = Number(newValue)
+    const costChangePct = Number.isFinite(oldCost) && oldCost > 0 && Number.isFinite(newCost)
+      ? ((newCost - oldCost) / oldCost) * 100
+      : null
+    await enqueueSellerWhatsAppAlert(supabase, {
+      alertType: riskType,
+      entityType: "ebay_active_listing",
+      entityId: listing.id,
+      candidateKey: listing.supplier_sku,
+      title: listing.title || "Listing activo eBay",
+      summary: riskSummary,
+      mobileUrl: process.env.EBAY_SELLER_COMMAND_CENTER_URL,
+      facts: {
+        hasActiveListing: true,
+        supplierAvailable: riskType === "out_of_stock" ? false : null,
+        currentStock: riskType === "out_of_stock" ? 0 : null,
+        costChangePct,
+      },
+    }).catch(() => undefined)
     const alertFingerprint = `risk:${riskFingerprint}`
     const { data: existingAlert, error: existingAlertError } = await supabase
       .from("ebay_seller_alert_outbox")
@@ -436,6 +464,8 @@ async function processClaimedCandidate(
       assessment.candidate.supplierVariantId,
       event.type,
       variant.snapshot_id,
+      event.oldValue,
+      event.newValue,
     )
   }
   if (
@@ -460,6 +490,67 @@ async function processClaimedCandidate(
       .eq("alert_fingerprint", `opportunity:${saved.id}:low_stock`)
       .neq("status", "cancelled")
     if (resolvedLowStockError) throw new Error("SELLER_LOW_STOCK_ALERT_RESOLVE_FAILED")
+  }
+  const winnerAlertInput = {
+    alertType: "winner_ready" as const,
+    entityType: "ebay_luna_opportunity",
+    entityId: saved.id,
+    candidateKey: assessment.candidate.candidateKey,
+    title: assessment.candidate.title,
+    summary: `Oportunidad ${Math.round(assessment.scores.potentialScore)}% potencial, ${Math.round(assessment.scores.confidenceScore)}% confianza y margen estimado ${Math.round(assessment.economics.estimatedNetMarginPercent ?? 0)}%.`,
+    mobileUrl: process.env.EBAY_SELLER_COMMAND_CENTER_URL,
+    facts: {
+      potentialScore: assessment.scores.potentialScore,
+      confidenceScore: assessment.scores.confidenceScore,
+      currentStock: assessment.candidate.inventoryQuantity,
+      estimatedMarginPct: assessment.economics.estimatedNetMarginPercent,
+      estimatedNetProfit: assessment.economics.estimatedNetProfit,
+      hasExactEvidence: assessment.identity.exactIdentityConfirmed &&
+        assessment.canProceedToListingPackage,
+    },
+  }
+  if (assessment.canProceedToListingPackage) {
+    await enqueueSellerWhatsAppAlert(supabase, winnerAlertInput).catch(() => undefined)
+  } else {
+    await resolveSellerWhatsAppAlert(supabase, winnerAlertInput).catch(() => undefined)
+  }
+  for (const event of events) {
+    if (event.type === "restocked") {
+      await enqueueSellerWhatsAppAlert(supabase, {
+        alertType: "luna_restock",
+        entityType: "ebay_luna_opportunity",
+        entityId: saved.id,
+        candidateKey: assessment.candidate.candidateKey,
+        title: assessment.candidate.title,
+        summary: `Luna confirmó reposición: ${assessment.candidate.inventoryQuantity ?? "cantidad pendiente"} unidades disponibles.`,
+        mobileUrl: process.env.EBAY_SELLER_COMMAND_CENTER_URL,
+        facts: {
+          previousStock: previous?.supplier_inventory_quantity ?? 0,
+          currentStock: assessment.candidate.inventoryQuantity,
+          potentialScore: assessment.scores.potentialScore,
+        },
+      }).catch(() => undefined)
+    }
+    if (event.type === "price_down") {
+      const oldCost = Number(event.oldValue)
+      const newCost = Number(event.newValue)
+      const costChangePct = Number.isFinite(oldCost) && oldCost > 0 && Number.isFinite(newCost)
+        ? ((newCost - oldCost) / oldCost) * 100
+        : null
+      await enqueueSellerWhatsAppAlert(supabase, {
+        alertType: "luna_cost_drop",
+        entityType: "ebay_luna_opportunity",
+        entityId: saved.id,
+        candidateKey: assessment.candidate.candidateKey,
+        title: assessment.candidate.title,
+        summary: `El costo Luna bajó de $${oldCost.toFixed(2)} a $${newCost.toFixed(2)}.`,
+        mobileUrl: process.env.EBAY_SELLER_COMMAND_CENTER_URL,
+        facts: {
+          costChangePct,
+          potentialScore: assessment.scores.potentialScore,
+        },
+      }).catch(() => undefined)
+    }
   }
   return {
     newSignalCount,
@@ -557,6 +648,13 @@ export async function processNextEbayFirstLunaBatch(
         metrics: { lastBatchSize: tasks.length, workerId },
       })
       .eq("id", run.automation_run_id)
+  }
+  if (getSellerWhatsAppGatewayConfiguration().realDeliveryPermitted) {
+    await deliverSellerWhatsAppAlerts(supabase, {
+      workerId: buildSellerWorkerId("seller-whatsapp"),
+      limit: 10,
+      dryRun: false,
+    }).catch(() => undefined)
   }
   return { run: updatedRun, processed: tasks.length, completed: false, results, failures }
 }

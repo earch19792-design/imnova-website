@@ -6,11 +6,14 @@ import { NextResponse } from "next/server"
 import { runLunaPortexMarketRadarSync } from "@/lib/market-radar-lunaportex"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 import {
+  buildSellerWorkerId,
   createSellerAutomationRun,
   finishSellerAutomationRun,
   reconcileActiveListingProtectionRisks,
   reconcileSellerScanTasks,
 } from "@/lib/ebay/ebay-seller-command-center-automation"
+import { deliverSellerWhatsAppAlerts } from "@/lib/ebay/ebay-seller-whatsapp-alerts"
+import { getSellerWhatsAppGatewayConfiguration } from "@/lib/ebay/ebay-seller-whatsapp-gateway"
 
 function authorized(req: Request) {
   const secret = process.env.CRON_SECRET?.trim() ?? ""
@@ -36,11 +39,20 @@ export async function GET(req: Request) {
       limit: 300,
     })
     const protection = await reconcileActiveListingProtectionRisks(supabase)
+    const whatsappConfiguration = getSellerWhatsAppGatewayConfiguration()
+    const whatsapp = whatsappConfiguration.realDeliveryPermitted
+      ? await deliverSellerWhatsAppAlerts(supabase, {
+          workerId: buildSellerWorkerId("seller-whatsapp-protection"),
+          limit: 20,
+          dryRun: false,
+        }).catch(() => ({ mode: "delivery_error" as const }))
+      : { mode: "disabled" as const, status: whatsappConfiguration.status }
     const metrics = {
       syncStatus: sync.scanStatus,
       scanCompletenessPercent: sync.scanCompletenessPercent,
       taskReconciliation,
       protection,
+      whatsapp,
       elapsedMs: Date.now() - startedAt,
     }
     await finishSellerAutomationRun(supabase, automationRunId, {
@@ -52,6 +64,7 @@ export async function GET(req: Request) {
       sync,
       taskReconciliation,
       protection,
+      whatsapp,
       automation: {
         stage: "LUNA_MARKET_RADAR_REFRESH",
         nextStage: "EBAY_LUNA_PRIORITY_SCAN",

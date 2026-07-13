@@ -3,6 +3,12 @@
 import { useEffect, useMemo, useState } from "react"
 
 import { supabase } from "@/lib/supabase"
+import {
+  getMobileReviewPayloadError,
+  getMobileReviewRequestError,
+  readMobileReviewJson,
+} from "@/lib/ebay/ebay-mobile-review-http"
+import type { RealRadarCandidate } from "@/lib/ebay/ebay-mobile-review-real-radar-connector"
 
 type Run = {
   id: string
@@ -125,9 +131,11 @@ function sellerLaneLabel(value: string) {
 export function OpportunityCommandCenter({
   onReviewCandidate,
   onRadarRefresh,
+  onRadarLookup,
 }: {
-  onReviewCandidate: (opportunity: Opportunity) => boolean
-  onRadarRefresh: () => Promise<void>
+  onReviewCandidate: (opportunity: Opportunity, radarCandidates?: RealRadarCandidate[]) => boolean
+  onRadarRefresh: () => Promise<RealRadarCandidate[]>
+  onRadarLookup: (productId: string) => Promise<RealRadarCandidate | null>
 }) {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
   const [busy, setBusy] = useState(false)
@@ -135,7 +143,19 @@ export function OpportunityCommandCenter({
   const [error, setError] = useState("")
   const [filter, setFilter] = useState("all")
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null)
+  const [missingRadarOpportunity, setMissingRadarOpportunity] = useState<Opportunity | null>(null)
+  const [missingRadarDetail, setMissingRadarDetail] = useState("")
   const currentRun = dashboard?.runs.find((run) => run.status === "running") ?? dashboard?.runs[0] ?? null
+
+  function showMessage(nextMessage: string) {
+    setError("")
+    setMessage(nextMessage)
+  }
+
+  function showError(nextError: string) {
+    setMessage("")
+    setError(nextError)
+  }
 
   async function request(body?: Record<string, unknown>) {
     const { data, error: sessionError } = await supabase.auth.getSession()
@@ -149,8 +169,11 @@ export function OpportunityCommandCenter({
       },
       body: body ? JSON.stringify(body) : undefined,
     })
-    const payload = await response.json()
-    if (!response.ok || !payload.success) throw new Error(payload.error ?? "No se pudo consultar la cola.")
+    const payload = await readMobileReviewJson<Record<string, any>>(
+      response,
+      "No se pudo consultar la cola de oportunidades",
+    )
+    if (!payload.success) throw new Error(getMobileReviewPayloadError(payload, "No se pudo consultar la cola."))
     return payload
   }
 
@@ -160,9 +183,9 @@ export function OpportunityCommandCenter({
       const payload = await request()
       setDashboard(payload.dashboard)
       setRefreshedAt(new Date().toISOString())
-      setMessage("")
+      showMessage("")
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "No se pudo consultar la cola.")
+      showError(getMobileReviewRequestError(requestError, "No se pudo consultar la cola."))
     }
   }
 
@@ -176,12 +199,15 @@ export function OpportunityCommandCenter({
         cache: "no-store",
         headers: { Authorization: `Bearer ${data.session.access_token}` },
       })
-      const payload = await response.json()
-      if (!response.ok || !payload.success) throw new Error(payload.error ?? "ACTIVE_LISTING_SYNC_FAILED")
+      const payload = await readMobileReviewJson<Record<string, any>>(
+        response,
+        "No se pudieron sincronizar los listings activos",
+      )
+      if (!payload.success) throw new Error(getMobileReviewPayloadError(payload, "ACTIVE_LISTING_SYNC_FAILED"))
       await load()
-      setMessage(`Listings sincronizados: ${payload.sync?.listingsStored ?? 0}; vinculados con Luna: ${payload.sync?.listingsMappedToLuna ?? 0}. La protección ya usa el estado más reciente.`)
+      showMessage(`Listings sincronizados: ${payload.sync?.listingsStored ?? 0}; vinculados con Luna: ${payload.sync?.listingsMappedToLuna ?? 0}. La protección ya usa el estado más reciente.`)
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "ACTIVE_LISTING_SYNC_FAILED")
+      showError(getMobileReviewRequestError(requestError, "ACTIVE_LISTING_SYNC_FAILED"))
     } finally { setBusy(false) }
   }
 
@@ -193,10 +219,10 @@ export function OpportunityCommandCenter({
     setBusy(true); setError(""); setMessage(restart ? "Reiniciando por potencial…" : "Iniciando scan prioritario…")
     try {
       await request({ action: restart ? "restart_priority" : "start", categoryIds: [] })
-      setMessage("Primer lote prioritario guardado. Los mejores candidatos se analizan primero.")
+      showMessage("Primer lote prioritario guardado. Los mejores candidatos se analizan primero.")
       await load()
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "SCAN_FAILED")
+      showError(getMobileReviewRequestError(requestError, "SCAN_FAILED"))
     } finally { setBusy(false) }
   }
 
@@ -214,12 +240,17 @@ export function OpportunityCommandCenter({
         },
         body: JSON.stringify({ action: "sync_lunaportex" }),
       })
-      const payload = await response.json()
-      if (!response.ok || !payload.success) throw new Error(payload.error ?? "MARKET_RADAR_SYNC_FAILED")
-      await Promise.all([onRadarRefresh(), load()])
-      setMessage("Luna quedó actualizada. Radar y Opportunity Queue ya pueden usar la evidencia más reciente.")
+      const payload = await readMobileReviewJson<Record<string, any>>(
+        response,
+        "No se pudo actualizar Market Radar desde Luna",
+      )
+      if (!payload.success) throw new Error(getMobileReviewPayloadError(payload, "MARKET_RADAR_SYNC_FAILED"))
+      const [radarCandidates] = await Promise.all([onRadarRefresh(), load()])
+      showMessage("Luna quedó actualizada. Radar y Opportunity Queue ya pueden usar la evidencia más reciente.")
+      return radarCandidates
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "MARKET_RADAR_SYNC_FAILED")
+      showError(getMobileReviewRequestError(requestError, "MARKET_RADAR_SYNC_FAILED"))
+      return null
     } finally { setBusy(false) }
   }
 
@@ -234,10 +265,10 @@ export function OpportunityCommandCenter({
         completedBatches += 1
         if (payload.batch?.completed) break
       }
-      setMessage(`${completedBatches} lotes procesados. El progreso quedó guardado y puedes cerrar el teléfono.`)
+      showMessage(`${completedBatches} lotes procesados. El progreso quedó guardado y puedes cerrar el teléfono.`)
       await load()
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "SCAN_FAILED")
+      showError(getMobileReviewRequestError(requestError, "SCAN_FAILED"))
       await load()
     } finally { setBusy(false) }
   }
@@ -252,6 +283,80 @@ export function OpportunityCommandCenter({
     .filter((row) => row.supplier_available !== false && row.ebay_candidate_count > 0)
     .sort((left, right) => right.seller_priority_score - left.seller_priority_score)
     .slice(0, 5), [dashboard])
+
+  async function openRadarReview(opportunity: Opportunity) {
+    if (onReviewCandidate(opportunity)) {
+      setMissingRadarOpportunity(null)
+      setMissingRadarDetail("")
+      showMessage("")
+      return
+    }
+
+    setError("")
+    setMessage("")
+    setMissingRadarOpportunity(opportunity)
+    if (!opportunity.market_radar_product_id) {
+      setMissingRadarDetail("La oportunidad no tiene un productId de Radar vinculado. Actualiza Luna para reconstruir la relación.")
+      return
+    }
+
+    setBusy(true)
+    setMissingRadarDetail("No está en el Top 50 cargado. Buscando el productId exacto en Radar…")
+    try {
+      const candidate = await onRadarLookup(opportunity.market_radar_product_id)
+      if (candidate && onReviewCandidate(opportunity, [candidate])) {
+        setMissingRadarOpportunity(null)
+        setMissingRadarDetail("")
+        showMessage("Producto encontrado por productId en Radar. Ya puedes continuar la revisión móvil.")
+        return
+      }
+      setMissingRadarDetail("Radar respondió a la búsqueda exacta, pero este productId no está disponible. Actualiza Luna y vuelve a intentar.")
+    } catch (requestError) {
+      setMissingRadarDetail(getMobileReviewRequestError(
+        requestError,
+        "No se pudo completar la búsqueda exacta por productId.",
+      ))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function refreshMissingRadarOpportunity() {
+    if (!missingRadarOpportunity || busy) return
+    const opportunity = missingRadarOpportunity
+    setMissingRadarDetail("Actualizando Luna y buscando el producto nuevamente en Radar…")
+    const radarCandidates = await refreshLunaRadar()
+    if (!radarCandidates) return
+
+    if (onReviewCandidate(opportunity, radarCandidates)) {
+      setMissingRadarOpportunity(null)
+      setMissingRadarDetail("")
+      showMessage("Producto encontrado en Radar. Ya puedes continuar la revisión móvil.")
+      return
+    }
+
+    if (opportunity.market_radar_product_id) {
+      try {
+        const candidate = await onRadarLookup(opportunity.market_radar_product_id)
+        if (candidate && onReviewCandidate(opportunity, [candidate])) {
+          setMissingRadarOpportunity(null)
+          setMissingRadarDetail("")
+          showMessage("Producto encontrado por productId después de actualizar Radar.")
+          return
+        }
+      } catch (requestError) {
+        setMissingRadarDetail(getMobileReviewRequestError(
+          requestError,
+          "Radar se actualizó, pero falló la búsqueda exacta por productId.",
+        ))
+        return
+      }
+    }
+
+    setError("")
+    setMessage("")
+    setMissingRadarDetail("Radar se actualizó correctamente, pero este producto aún no aparece. Procesa el siguiente lote prioritario y vuelve a intentar.")
+  }
 
   return <section aria-labelledby="opportunity-command-center-heading" className="space-y-4">
     <header className="rounded-3xl border border-violet-200/25 bg-gradient-to-br from-violet-200/[0.12] via-cyan-200/[0.05] to-black p-4">
@@ -270,6 +375,17 @@ export function OpportunityCommandCenter({
       {error && <p role="alert" className="mt-3 rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-3 text-sm text-rose-50">{error}</p>}
     </header>
 
+    {missingRadarOpportunity && <section role="status" className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4 text-amber-50">
+      <p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Sincronización pendiente</p>
+      <h3 className="mt-2 text-lg font-black">Este producto aún no está en Radar móvil</h3>
+      <p className="mt-1 font-bold">{missingRadarOpportunity.product_title}</p>
+      <p className="mt-2 text-sm leading-6 text-amber-50/75">{missingRadarDetail}</p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <button type="button" disabled={busy} onClick={() => void refreshMissingRadarOpportunity()} className="min-h-12 rounded-2xl bg-amber-100 px-4 font-black text-black disabled:opacity-50">Actualizar Radar y reintentar</button>
+        <button type="button" onClick={() => { setMissingRadarOpportunity(null); setMissingRadarDetail("") }} className="min-h-12 rounded-2xl border border-amber-100/30 px-4 font-bold">Cerrar aviso</button>
+      </div>
+    </section>}
+
     {dashboard && <>
       <div className="grid grid-cols-3 gap-2 text-center text-xs">
         <div className="rounded-2xl border border-white/10 p-3"><span className="text-white/50">Total</span><strong className="mt-1 block text-xl">{dashboard.summary.total}</strong></div>
@@ -287,7 +403,7 @@ export function OpportunityCommandCenter({
           {row.score_axes && <dl className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px]"><div className="rounded-xl bg-white/[0.06] p-2"><dt className="text-white/50">Potencial</dt><dd className="mt-1 font-black">{Math.round(row.score_axes.potential)}</dd></div><div className="rounded-xl bg-white/[0.06] p-2"><dt className="text-white/50">Confianza</dt><dd className="mt-1 font-black">{Math.round(row.score_axes.confidence)}</dd></div><div className="rounded-xl bg-white/[0.06] p-2"><dt className="text-white/50">Urgencia</dt><dd className="mt-1 font-black">{Math.round(row.score_axes.urgency)}</dd></div></dl>}
           <p className="mt-2 text-xs text-white/60">{row.ebay_candidate_count} candidatos eBay · {row.exact_comparable_count} comparables exactos</p>
           <p className="mt-2 text-xs leading-5 text-white/75">{row.next_seller_action}</p>
-          <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" disabled={!row.market_radar_product_id} onClick={() => { if (row.market_radar_product_id && !onReviewCandidate(row)) setMessage("Radar no tiene este producto cargado para revisión móvil todavía.") }} className="min-h-11 rounded-xl bg-cyan-200 px-3 text-xs font-black text-black disabled:opacity-40">Validar ahora</button><a href={`/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(row.id)}&candidate=${encodeURIComponent(row.candidate_key)}`} className="inline-flex min-h-11 items-center justify-center rounded-xl border border-emerald-200/35 px-3 text-center text-xs font-black text-emerald-50">Workspace</a></div>
+          <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" disabled={busy || !row.market_radar_product_id} onClick={() => { if (row.market_radar_product_id) void openRadarReview(row) }} className="min-h-11 rounded-xl bg-cyan-200 px-3 text-xs font-black text-black disabled:opacity-40">Validar ahora</button><a href={`/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(row.id)}&candidate=${encodeURIComponent(row.candidate_key)}`} className="inline-flex min-h-11 items-center justify-center rounded-xl border border-emerald-200/35 px-3 text-center text-xs font-black text-emerald-50">Workspace</a></div>
         </article>)}{!topPotential.length && <p className="text-sm text-white/55">Acelera el scan para construir el primer Top con evidencia eBay.</p>}</div>
       </section>
 
@@ -297,7 +413,7 @@ export function OpportunityCommandCenter({
         <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase">#{index + 1} · {label(row.queue_status)}</p><h3 className="mt-2 text-lg font-black">{row.product_title}</h3><p className="mt-1 text-xs text-white/55">{row.variant_title ?? "Variante general"} · {row.supplier_sku ?? "SKU pendiente"}</p></div><div className="rounded-2xl bg-white px-3 py-2 text-center text-black"><span className="block text-[9px] font-black uppercase">Prioridad</span><strong className="text-xl">{row.seller_priority_score}</strong></div></div>
         <dl className="mt-3 grid grid-cols-3 gap-2 text-xs"><div><dt className="text-white/50">Demanda</dt><dd className="font-black">{Math.round(Number(row.demand_score))}</dd></div><div><dt className="text-white/50">Economía</dt><dd className="font-black">{Math.round(Number(row.economics_score))}</dd></div><div><dt className="text-white/50">Identidad</dt><dd className="font-black">{Math.round(Number(row.identity_score))}</dd></div><div><dt className="text-white/50">Candidatos</dt><dd className="font-black">{row.ebay_candidate_count}</dd></div><div><dt className="text-white/50">Exactos</dt><dd className="font-black">{row.exact_comparable_count}</dd></div><div><dt className="text-white/50">Prioridad</dt><dd className="font-black">{row.seller_priority_score}</dd></div></dl>
         <details className="mt-3 rounded-2xl border border-white/15 p-3"><summary className="cursor-pointer text-sm font-black">Evidencia y estructura</summary><dl className="mt-3 grid gap-2 text-xs"><div><dt className="text-white/50">Siguiente acción</dt><dd className="mt-1 font-bold">{row.next_seller_action}</dd></div><div><dt className="text-white/50">Frase principal</dt><dd className="mt-1 font-bold">{row.winning_structure.primarySearchPhrase ?? "Pendiente de evidencia multi-vendedor"}</dd></div><div><dt className="text-white/50">Categoría</dt><dd className="mt-1 font-bold">{row.winning_structure.categoryName ?? row.winning_structure.categoryId ?? "Pendiente"}</dd></div></dl><div className="mt-3 space-y-2">{row.top_ebay_candidates.map((candidate, candidateIndex) => <div key={`${candidate.title}-${candidateIndex}`} className="rounded-xl bg-black/25 p-2 text-xs"><strong>Referencia {candidateIndex + 1}: {candidate.title}</strong><p className="mt-1 text-white/55">{candidate.price === null ? "Precio pendiente" : `${candidate.currency} ${candidate.price.toFixed(2)}`} · match {candidate.identityMatchScore}</p></div>)}</div></details>
-        <div className="mt-3 grid grid-cols-[1fr_auto] gap-2"><details className="rounded-2xl border border-white/15 p-3"><summary className="cursor-pointer text-sm font-black">Guardas</summary><ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{[...row.hard_gates, ...row.evidence_guards].map((guard) => <li key={guard}>{label(guard)}</li>)}</ul></details>{row.market_radar_product_id && <button onClick={() => { if (!onReviewCandidate(row)) setMessage("Radar no tiene este producto cargado para revisión móvil todavía.") }} className="min-h-12 rounded-2xl bg-emerald-200 px-3 text-xs font-black text-black">Revisar</button>}</div>
+        <div className="mt-3 grid grid-cols-[1fr_auto] gap-2"><details className="rounded-2xl border border-white/15 p-3"><summary className="cursor-pointer text-sm font-black">Guardas</summary><ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{[...row.hard_gates, ...row.evidence_guards].map((guard) => <li key={guard}>{label(guard)}</li>)}</ul></details>{row.market_radar_product_id && <button disabled={busy} onClick={() => void openRadarReview(row)} className="min-h-12 rounded-2xl bg-emerald-200 px-3 text-xs font-black text-black disabled:opacity-50">Revisar</button>}</div>
       </article>)}{!rows.length && <p className="rounded-2xl border border-white/10 p-5 text-sm text-white/55">Inicia el scan prioritario para construir la cola.</p>}</div>
 
       <details className="rounded-3xl border border-white/10 p-4"><summary className="cursor-pointer font-black">Monitoreo y riesgos</summary><p className="mt-3 text-sm text-white/65">{dashboard.events.length} cambios Luna recientes · {dashboard.activeListingRisks.length} riesgos abiertos de listings.</p><button type="button" disabled={busy} onClick={() => void syncActiveListings()} className="mt-3 min-h-12 w-full rounded-2xl border border-cyan-200/30 px-3 font-black text-cyan-50 disabled:opacity-50">Sincronizar listings activos</button>{dashboard.activeListingRisks.slice(0, 8).map((risk) => <div key={risk.id} className="mt-2 rounded-2xl border border-rose-200/15 p-3 text-xs"><strong>{risk.risk_priority.toUpperCase()} · {label(risk.risk_type)}</strong><p className="mt-1 text-white/65">{risk.risk_summary}</p></div>)}</details>

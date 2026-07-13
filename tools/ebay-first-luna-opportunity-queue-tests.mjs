@@ -140,7 +140,8 @@ test("mobile command center centralizes scan, queue and candidate review", () =>
   assert.match(commandCenter, /onReviewCandidate/)
   assert.match(commandCenter, /Monitoreo y riesgos/)
   assert.match(mobilePage, /scans y cola guardados en Supabase/)
-  assert.match(mobilePage, /report\.allCandidates\.find/)
+  assert.match(mobilePage, /radarCandidates\.find/)
+  assert.match(mobilePage, /loadMarketRadarReadonlyProductById/)
 })
 
 test("priority-first automation scans the strongest Radar signals before catalog coverage", () => {
@@ -167,8 +168,8 @@ test("priority-first automation scans the strongest Radar signals before catalog
   assert.match(radarCronRoute, /runLunaPortexMarketRadarSync/)
   assert.match(radarCronRoute, /CRON_SECRET/)
   assert.match(vercelConfig, /market-radar-luna-sync/)
-  assert.match(vercelConfig, /0 \*\/6 \* \* \*/)
-  assert.match(vercelConfig, /\*\/15 \* \* \* \*/)
+  assert.match(vercelConfig, /"schedule": "0 9 \* \* \*"/)
+  assert.match(vercelConfig, /"schedule": "17 9 \* \* \*"/)
 })
 
 test("latest Luna variants use a maintained current-snapshot pointer", () => {

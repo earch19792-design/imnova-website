@@ -44,14 +44,17 @@ test("review and package state are persisted only through the protected Admin AP
   assert.match(api, /safety: \{ ebayWriteUsed: false, canPublish: false \}/)
 })
 
-test("listing workspace is dynamic, resumable, and never writes to eBay", () => {
+test("listing workspace is resumable and gates one unpublished Sandbox draft", () => {
   for (const signal of [
     /selectedOpportunity/,
     /prepare_package/,
     /save_package/,
     /package_data/,
     /Item specifics/,
-    /No crea Inventory Item, Offer ni publicación en eBay/,
+    /Offer no publicado · Sandbox/,
+    /CREAR DRAFT NO PUBLICADO/,
+    /Publicar permanece prohibido/,
+    /Imágenes autorizadas/,
   ]) assert.match(workspace, signal)
   const combined = `${mobile}\n${queue}\n${workspace}\n${api}`
   for (const forbidden of [/publishOffer\s*\(/, /createOffer\s*\(/, /createOrReplaceInventoryItem\s*\(/]) {
