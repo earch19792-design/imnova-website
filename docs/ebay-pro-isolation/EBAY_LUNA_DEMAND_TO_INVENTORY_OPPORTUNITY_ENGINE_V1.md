@@ -178,6 +178,12 @@ new pass, providing the separated observations needed for velocity.
 The queue never creates drafts, offers or listings. `ready` means ready for
 human listing-package review, not authorized for publication.
 
+The primary phone workflow is centralized in `/admin/ebay/mobile-review` as
+Seller Command Center. Its `Oportunid.` tab can start or resume the complete
+scan, filter the durable queue, inspect guards and active-listing risks, and
+send a currently loaded Top 5 candidate directly into the existing Decision
+review. The standalone queue remains available as an advanced desktop view.
+
 ## Seller performance feedback
 
 `GET /api/admin/ebay/seller-performance` provides a read-only foundation for the seller's own Traffic Report:

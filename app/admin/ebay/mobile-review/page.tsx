@@ -37,9 +37,10 @@ import {
   parsePinnedCandidates,
   serializePinnedCandidates,
 } from "@/lib/ebay/ebay-mobile-review-local-state"
+import { OpportunityCommandCenter } from "./opportunity-command-center"
 
 const emptyReport = buildMobileReviewRealRadarConnector({ products: [] })
-type View = "top5" | "pinned" | "blocked" | "decision"
+type View = "opportunities" | "top5" | "pinned" | "blocked" | "decision"
 
 function toMobileFixture(candidates: RealRadarCandidate[]): MobileReviewFixture {
   return {
@@ -210,7 +211,7 @@ export default function EbayMobileReviewPage() {
   const [lastActionMessage, setLastActionMessage] = useState("Todavía no realizaste ninguna acción.")
   const [pinnedCandidates, setPinnedCandidates] = useState<PinnedCandidate[]>([])
   const [storageRestored, setStorageRestored] = useState(false)
-  const [view, setView] = useState<View>("top5")
+  const [view, setView] = useState<View>("opportunities")
   const [blockedVisible, setBlockedVisible] = useState(5)
   const [copied, setCopied] = useState(false)
   const confirmationRef = useRef<HTMLElement>(null)
@@ -334,6 +335,15 @@ export default function EbayMobileReviewPage() {
     const messages: Record<string, string> = { MARK_UNAVAILABLE: "Producto marcado no disponible en este navegador. Puedes deshacer recargando antes de persistir otro estado.", SELECT_CANDIDATE: "Producto seleccionado para evaluar; todavía no es una recomendación. Completa las tres confirmaciones.", CONFIRM_SAME_PRODUCT: "Identidad del producto confirmada localmente.", CONFIRM_STOCK_QTY: `Stock confirmado: ${stockQuantity} unidades.`, CONFIRM_IMAGE_OK: "Precio e imagen de Luna confirmados localmente.", REQUEST_LUNA_SCAN_REFRESH: "Se marcó localmente que Radar necesita un refresco; todavía no se envió una solicitud.", HOLD_FOR_REVIEW: "La revisión quedó pausada en esta sesión." }
     setLastActionMessage(messages[action.type] ?? "Acción local registrada.")
     if (action.type === "SELECT_CANDIDATE") { setView("decision"); window.setTimeout(() => confirmationRef.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 50) }
+  }
+
+  const reviewOpportunityCandidate = (marketRadarProductId: string) => {
+    const candidate = report.top5Candidates.find(
+      (entry) => entry.marketRadarProductId === marketRadarProductId,
+    )
+    if (!candidate) return false
+    act({ type: "SELECT_CANDIDATE", rank: candidate.candidateRank })
+    return true
   }
 
   const resetIdentityConfirmation = () => {
@@ -488,14 +498,14 @@ export default function EbayMobileReviewPage() {
   const professionalKeywordSignalsAreVerified = Boolean(
     sellerKeywordDemand?.keywordEvidenceGroups.verifiedHistoricalMultiSeller.length
   )
-  const tabs: { id: View; label: string; count?: number }[] = [{ id: "top5", label: "Top 5", count: report.top5Candidates.length }, { id: "pinned", label: "En revisión", count: pinnedCandidates.length }, { id: "blocked", label: "Bloqueados", count: report.stockHoldCandidates.length }, { id: "decision", label: "Decisión" }]
+  const tabs: { id: View; label: string; count?: number }[] = [{ id: "opportunities", label: "Oportunid." }, { id: "top5", label: "Top 5", count: report.top5Candidates.length }, { id: "pinned", label: "Revisión", count: pinnedCandidates.length }, { id: "blocked", label: "Bloqueos", count: report.stockHoldCandidates.length }, { id: "decision", label: "Decisión" }]
 
   return (
     <main className="min-h-screen bg-[#05070d] px-4 pb-28 pt-4 text-white sm:px-6">
       <section className="mx-auto flex max-w-xl flex-col gap-4">
         <header className="sticky top-0 z-30 -mx-4 border-b border-white/10 bg-[#05070d]/95 px-4 pb-3 pt-2 backdrop-blur">
           <div className="flex items-center justify-between gap-3"><a href="/admin/ebay-seller-os" className="min-h-11 rounded-full border border-white/20 px-4 py-3 text-sm font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200">← Seller OS</a><button type="button" onClick={() => void load()} disabled={loading} className="min-h-11 rounded-full border border-cyan-200/35 px-4 py-3 text-sm font-bold text-cyan-50 disabled:opacity-50">{loading ? "Cargando…" : "↻ Actualizar"}</button></div>
-          <div className="mt-3 flex items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-cyan-100">Revisión privada · read-only</p><h1 className="mt-1 text-2xl font-black">Top 5 móvil</h1></div><StatusPill tone={report.dataSource === "MARKET_RADAR_READONLY" ? "good" : report.fixtureUsed ? "warning" : "danger"}>{sourceLabel}</StatusPill></div>
+          <div className="mt-3 flex items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-cyan-100">Revisión privada · read-only</p><h1 className="mt-1 text-2xl font-black">Seller Command Center</h1></div><StatusPill tone={report.dataSource === "MARKET_RADAR_READONLY" ? "good" : report.fixtureUsed ? "warning" : "danger"}>{sourceLabel}</StatusPill></div>
         </header>
 
         <section className={`rounded-3xl border p-4 ${loadState === "READY" ? "border-emerald-200/25 bg-emerald-200/[0.07]" : "border-amber-200/25 bg-amber-200/[0.07]"}`}>
@@ -509,10 +519,12 @@ export default function EbayMobileReviewPage() {
         <div role="status" aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.07] p-3 text-sm text-cyan-50">{lastActionMessage}</div>
         {radarGuards.showScoreTieWarning && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4"><p className="font-black">Orden provisional</p><p className="mt-1 text-sm text-white/80">Los cinco scores son iguales. Ningún producto se considera recomendado hasta desempatar el ranking.</p></aside>}
 
-        <nav aria-label="Secciones de Mobile Review" className="grid grid-cols-4 gap-1 rounded-2xl border border-white/15 bg-black/40 p-1">
+        <nav aria-label="Secciones de Mobile Review" className="grid grid-cols-5 gap-1 rounded-2xl border border-white/15 bg-black/40 p-1">
           {tabs.map((tab) => <button key={tab.id} type="button" aria-current={view === tab.id ? "page" : undefined} onClick={() => setView(tab.id)} className={`min-h-12 rounded-xl px-1 py-2 text-[11px] font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${view === tab.id ? "bg-white text-black" : "text-white/75"}`}>{tab.label}{tab.count !== undefined && <span className="block">{tab.count}</span>}</button>)}
         </nav>
         <p className="sr-only">{report.stockHoldCandidates.length} productos están bloqueados por stock. B2-RUN continúa desactivado hasta completar todas las validaciones.</p>
+
+        {view === "opportunities" && <OpportunityCommandCenter onReviewCandidate={reviewOpportunityCandidate} />}
 
         {view === "top5" && <section aria-labelledby="top5-heading"><h2 id="top5-heading" className="mb-3 text-xl font-black">Top 5 actual</h2><div className="space-y-4">{report.top5Candidates.map((candidate) => <CandidateCard key={candidate.candidateId} candidate={candidate} selected={state.selectedCandidateRank === candidate.candidateRank} pinned={pinnedCandidates.some((item) => pinnedCandidateMatchesRadar(item, candidate))} provisional={radarGuards.needsScoreDisambiguation} onSelect={() => act({ type: "SELECT_CANDIDATE", rank: candidate.candidateRank })} onUnavailable={() => act({ type: "MARK_UNAVAILABLE", rank: candidate.candidateRank })} />)}{!loading && report.top5Candidates.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/75">No hay candidatos seleccionables.</p>}</div></section>}
 
