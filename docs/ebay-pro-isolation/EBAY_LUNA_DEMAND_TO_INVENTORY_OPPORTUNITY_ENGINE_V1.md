@@ -143,6 +143,41 @@ The batch route is:
 
 It processes at most five Luna candidates and three best-selling categories per request so a single Vercel request does not attempt a full catalog scan. Larger scans must use continuation batches or a future scheduled worker.
 
+## Automated eBay-first opportunity queue
+
+The authenticated Admin route `/admin/ebay/opportunity-queue` turns the batch
+foundation into a durable hybrid scan:
+
+1. `market_radar_latest_variants` enumerates every currently observed Luna
+   Portex variant, rather than only the dashboard Top 50.
+2. Each small continuation batch queries official eBay Browse comparables and
+   Taxonomy intelligence without exceeding one Vercel request budget.
+3. Optional Buy Marketing `BEST_SELLING` category signals are stored and
+   matched against the Luna catalog when the application is entitled.
+4. Each pass stores normalized listing observations, an explainable assessment,
+   the continuation cursor and a ranked opportunity queue.
+5. Later passes compare cumulative estimated quantities to build conservative
+   7/30-day velocity evidence. A single snapshot is never called recent sales.
+6. Luna price, inventory and availability changes produce durable queue events.
+   If the product is linked to an active eBay listing, out-of-stock and price-up
+   changes also create an open active-listing risk.
+
+The scan is resumable: an Admin can process five batches at a time and safely
+close the page. `/api/cron/ebay-luna-opportunity-scan` continues two batches per
+scheduled invocation. Vercel requires a server-only `CRON_SECRET`; optional
+comma-separated category seeds can be configured in
+`EBAY_LUNA_BEST_SELLING_CATEGORY_IDS`.
+
+The daily schedule is declared in `vercel.json`. Vercel registers Cron Jobs only
+from Production deployments, so Preview/Staging validates the protected route
+but uses the Admin continuation button. Completing a very large first
+catalog scan can still require multiple manual continuation clicks or multiple
+scheduled invocations. Once completed, the next scheduled invocation starts a
+new pass, providing the separated observations needed for velocity.
+
+The queue never creates drafts, offers or listings. `ready` means ready for
+human listing-package review, not authorized for publication.
+
 ## Seller performance feedback
 
 `GET /api/admin/ebay/seller-performance` provides a read-only foundation for the seller's own Traffic Report:
