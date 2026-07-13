@@ -178,6 +178,28 @@ new pass, providing the separated observations needed for velocity.
 The queue never creates drafts, offers or listings. `ready` means ready for
 human listing-package review, not authorized for publication.
 
+### Professional seller fast lane
+
+The Admin queue separates broad eBay market candidates from exact product
+comparables. Broad candidates can establish that a search market exists, but
+they never unlock pricing or listing preparation unless identity, supplier
+economics, stock and required product facts pass their own gates.
+
+The seller view ranks a Top 5 operational shortlist using the existing
+opportunity, demand, supply and listing-readiness evidence plus the number of
+qualified eBay references. Each shortlist entry exposes:
+
+- eBay candidates found versus exact comparables;
+- seller priority score, which orders work and is not a sales forecast;
+- the next blocking action;
+- primary phrase, secondary terms, title formula and suggested category;
+- up to three reference listings without copying competitor titles or images
+  into the final package.
+
+The `Prepare listing package` action is available only after the engine marks
+the candidate ready for human listing-package review. Publication remains a
+separate controlled workflow.
+
 ## Seller performance feedback
 
 `GET /api/admin/ebay/seller-performance` provides a read-only foundation for the seller's own Traffic Report:

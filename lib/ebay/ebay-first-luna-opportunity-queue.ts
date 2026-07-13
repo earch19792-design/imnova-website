@@ -37,6 +37,18 @@ export type ExistingOpportunityQueueRow = {
   queue_status: string
 }
 
+type ProfessionalQueueRow = Record<string, unknown> & {
+  active_comparables?: unknown
+  demand_score?: unknown
+  listing_readiness_score?: unknown
+  market_radar_product_id?: unknown
+  opportunity_score?: unknown
+  supplier_available?: unknown
+  supplier_inventory_quantity?: unknown
+  supplier_price?: unknown
+  assessment?: unknown
+}
+
 function numberOrNull(value: unknown) {
   if (value === null || value === undefined || value === "") return null
   const parsed = Number(value)
@@ -51,6 +63,109 @@ function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as JsonRecord
     : {}
+}
+
+function records(value: unknown) {
+  return Array.isArray(value) ? value.map(record) : []
+}
+
+function number(value: unknown) {
+  return numberOrNull(value) ?? 0
+}
+
+export function buildProfessionalSellerQueueView(row: ProfessionalQueueRow) {
+  const assessment = record(row.assessment)
+  const identity = record(assessment.identity)
+  const economics = record(assessment.economics)
+  const listingPackage = record(assessment.listingIntelligencePackage)
+  const titleStrategy = record(listingPackage.titleStrategy)
+  const category = record(listingPackage.categoryRecommendation)
+  const comparableCandidates = records(identity.comparables)
+  const candidateCount = comparableCandidates.length
+  const exactComparableCount = number(row.active_comparables)
+  const exactIdentityConfirmed = identity.exactIdentityConfirmed === true
+  const canProceedToListingPackage = assessment.canProceedToListingPackage === true
+  const supplierAvailable = row.supplier_available === true
+  const supplierInventory = numberOrNull(row.supplier_inventory_quantity)
+  const supplierCost = numberOrNull(row.supplier_price)
+  const opportunityScore = number(row.opportunity_score)
+  const demandScore = number(row.demand_score)
+  const listingReadinessScore = number(row.listing_readiness_score)
+  const supplyScore = number(record(assessment.scores).supplyScore)
+  const sellerPriorityScore = Math.min(100, Math.round(
+    opportunityScore * 0.45 +
+    demandScore * 0.15 +
+    listingReadinessScore * 0.15 +
+    supplyScore * 0.10 +
+    Math.min(candidateCount, 5) * 3 +
+    (exactIdentityConfirmed ? 10 : 0),
+  ))
+  const hardGates = Array.isArray(row.hard_gates)
+    ? row.hard_gates.filter((value): value is string => typeof value === "string")
+    : []
+  const evidenceGuards = Array.isArray(row.evidence_guards)
+    ? row.evidence_guards.filter((value): value is string => typeof value === "string")
+    : []
+
+  let sellerLane = "REFINE_EBAY_SEARCH"
+  let nextSellerAction = "Refina la frase de búsqueda o confirma la categoría antes de invertir tiempo en el listing."
+  if (!supplierAvailable || supplierInventory === 0) {
+    sellerLane = "SUPPLY_HOLD"
+    nextSellerAction = "Confirma stock real en Luna antes de preparar el listing."
+  } else if (canProceedToListingPackage) {
+    sellerLane = "LISTING_PACKAGE_READY"
+    nextSellerAction = "Prepara el paquete de listing y envíalo a revisión humana."
+  } else if (!exactIdentityConfirmed) {
+    sellerLane = candidateCount >= 3
+      ? "HIGH_POTENTIAL_NEEDS_IDENTITY"
+      : candidateCount > 0
+        ? "MARKET_SIGNAL_NEEDS_IDENTITY"
+        : "REFINE_EBAY_SEARCH"
+    nextSellerAction = candidateCount > 0
+      ? "Confirma GTIN o Brand + MPN. Los candidatos eBay son referencias de mercado, no el producto exacto todavía."
+      : nextSellerAction
+  } else if (supplierCost === null || economics.ready !== true) {
+    sellerLane = "FAST_TRACK_NEEDS_ECONOMICS"
+    nextSellerAction = "Confirma precio comparable exacto, costo y margen antes de preparar el listing."
+  } else if (hardGates.length || evidenceGuards.length) {
+    sellerLane = "FAST_TRACK_NEEDS_FACTS"
+    nextSellerAction = "Completa los datos obligatorios y las guardas visibles para desbloquear el paquete de listing."
+  }
+
+  return {
+    ...row,
+    assessment: undefined,
+    ebay_candidate_count: candidateCount,
+    exact_comparable_count: exactComparableCount,
+    seller_priority_score: sellerPriorityScore,
+    seller_lane: sellerLane,
+    next_seller_action: nextSellerAction,
+    can_prepare_listing_package: canProceedToListingPackage,
+    listing_intake_url: canProceedToListingPackage && typeof row.market_radar_product_id === "string"
+      ? `/admin/ebay-listing-package?source=opportunity-queue&productId=${encodeURIComponent(row.market_radar_product_id)}`
+      : null,
+    winning_structure: {
+      strategyConfidence: text(titleStrategy.strategyConfidence),
+      primarySearchPhrase: text(titleStrategy.primarySearchPhrase),
+      secondarySearchTerms: Array.isArray(titleStrategy.secondarySearchTerms)
+        ? titleStrategy.secondarySearchTerms.filter((value): value is string => typeof value === "string").slice(0, 5)
+        : [],
+      confirmedAttributes: Array.isArray(titleStrategy.confirmedAttributes)
+        ? titleStrategy.confirmedAttributes.filter((value): value is string => typeof value === "string").slice(0, 6)
+        : [],
+      titleFormula: text(titleStrategy.titleFormula),
+      categoryId: text(category.categoryId),
+      categoryName: text(category.categoryName),
+    },
+    top_ebay_candidates: comparableCandidates.slice(0, 3).map((candidate) => ({
+      title: text(candidate.title) ?? "Referencia eBay",
+      price: numberOrNull(candidate.price),
+      currency: text(candidate.currency) ?? "USD",
+      identityMatchScore: number(candidate.identityMatchScore),
+      identityMatchQuality: text(candidate.identityMatchQuality) ?? "REVIEW",
+      professionalReferenceScore: number(candidate.professionalReferenceScore),
+    })),
+  }
 }
 
 export function mapLatestVariantToLunaCandidate(

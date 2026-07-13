@@ -16,6 +16,7 @@ import {
   buildBestSellingSignalKey,
   buildOpportunityChangeEvents,
   buildOpportunityQueueRow,
+  buildProfessionalSellerQueueView,
   mapLatestVariantToLunaCandidate,
   type ExistingOpportunityQueueRow,
   type LunaLatestVariantRow,
@@ -346,7 +347,7 @@ export async function recordEbayFirstLunaScanFailure(
 export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
   const [runs, queue, events, activeRisks, total, ready, review, watchlist, holds] = await Promise.all([
     supabase.from("ebay_luna_scan_runs").select("*").order("started_at", { ascending: false }).limit(5),
-    supabase.from("ebay_luna_opportunity_queue").select("id,candidate_key,product_title,variant_title,supplier_sku,queue_status,decision,opportunity_score,demand_score,economics_score,identity_score,competition_score,supply_score,listing_readiness_score,active_comparables,sellers_with_movement,estimated_weekly_velocity,median_total_buyer_price,estimated_net_profit,supplier_price,supplier_available,supplier_inventory_quantity,best_selling_match_score,hard_gates,evidence_guards,last_scanned_at").order("opportunity_score", { ascending: false }).limit(QUEUE_LIMIT),
+    supabase.from("ebay_luna_opportunity_queue").select("id,candidate_key,market_radar_product_id,product_title,variant_title,supplier_sku,queue_status,decision,opportunity_score,demand_score,economics_score,identity_score,competition_score,supply_score,listing_readiness_score,active_comparables,sellers_with_movement,estimated_weekly_velocity,median_total_buyer_price,estimated_net_profit,supplier_price,supplier_available,supplier_inventory_quantity,best_selling_match_score,hard_gates,evidence_guards,assessment,last_scanned_at").order("opportunity_score", { ascending: false }).limit(QUEUE_LIMIT),
     supabase.from("ebay_luna_opportunity_queue_events").select("*,ebay_luna_opportunity_queue(product_title,supplier_sku)").order("created_at", { ascending: false }).limit(40),
     supabase.from("ebay_active_listing_risk_events").select("id,risk_type,risk_priority,risk_summary,recommended_action,created_at").is("resolved_at", null).order("created_at", { ascending: false }).limit(40),
     supabase.from("ebay_luna_opportunity_queue").select("id", { count: "exact", head: true }),
@@ -358,9 +359,15 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
   const firstError = runs.error ?? queue.error ?? events.error ?? activeRisks.error ?? total.error ?? ready.error ?? review.error ?? watchlist.error ?? holds.error
   if (firstError) throw new Error("EBAY_LUNA_QUEUE_DASHBOARD_READ_FAILED")
   const rows = queue.data ?? []
+  const professionalRows = rows
+    .map((row) => buildProfessionalSellerQueueView(row))
+    .sort((left, right) =>
+      right.seller_priority_score - left.seller_priority_score ||
+      Number(right.opportunity_score ?? 0) - Number(left.opportunity_score ?? 0),
+    )
   return {
     runs: runs.data ?? [],
-    queue: rows,
+    queue: professionalRows,
     events: events.data ?? [],
     activeListingRisks: activeRisks.data ?? [],
     summary: {
