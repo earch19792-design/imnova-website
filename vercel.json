@@ -3,11 +3,15 @@
   "crons": [
     {
       "path": "/api/cron/market-radar-luna-sync",
-      "schedule": "0 9 * * *"
+      "schedule": "0 */6 * * *"
     },
     {
       "path": "/api/cron/ebay-luna-opportunity-scan",
-      "schedule": "17 9 * * *"
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/admin/ebay/active-listings/sync",
+      "schedule": "5 */6 * * *"
     }
   ]
 }

@@ -13,6 +13,18 @@ import {
   type EbayBestSellingProductSignal,
 } from "./ebay-seller-keyword-demand-gateway"
 import {
+  buildSellerWorkerId,
+  claimSellerScanTasks,
+  completeSellerScanTask,
+  createSellerAutomationRun,
+  failSellerScanTask,
+  finishSellerAutomationRun,
+  getSellerAutomationHealth,
+  reconcileSellerScanTasks,
+  type SellerScanLane,
+  type SellerScanTask,
+} from "./ebay-seller-command-center-automation"
+import {
   buildBestSellingSignalKey,
   buildOpportunityChangeEvents,
   buildOpportunityQueueRow,
@@ -36,6 +48,7 @@ type ScanRun = {
   successful_candidates: number
   failed_candidates: number
   best_selling_signals_found: number
+  automation_run_id?: string | null
 }
 
 function safeMessage(error: unknown) {
@@ -63,6 +76,12 @@ async function countLunaVariants(supabase: SupabaseClient) {
 export async function startEbayFirstLunaScan(
   supabase: SupabaseClient,
   categoryIds: unknown,
+  options: {
+    forceDue?: boolean
+    triggerSource?: "schedule" | "mobile" | "admin" | "event" | "recovery"
+    lanes?: SellerScanLane[]
+    reconcileTasks?: boolean
+  } = {},
 ) {
   const { data: activeRun } = await supabase
     .from("ebay_luna_scan_runs")
@@ -73,6 +92,18 @@ export async function startEbayFirstLunaScan(
     .maybeSingle()
   if (activeRun) return activeRun as ScanRun
   const totalCandidates = await countLunaVariants(supabase)
+  const reconciliation = options.reconcileTasks === false
+    ? { insertedOrUpdated: 0, dueNow: 0, skipped: true }
+    : await reconcileSellerScanTasks(supabase, {
+        forceDue: options.forceDue !== false,
+        limit: Math.max(totalCandidates, 1),
+      })
+  const automationRun = await createSellerAutomationRun(supabase, {
+    runKind: options.triggerSource === "mobile" ? "manual_acceleration" : "ebay_scan",
+    triggerSource: options.triggerSource ?? "mobile",
+    lanes: options.lanes ?? [],
+    metrics: { reconciliation },
+  })
   const { data, error } = await supabase
     .from("ebay_luna_scan_runs")
     .insert({
@@ -80,10 +111,15 @@ export async function startEbayFirstLunaScan(
       scan_mode: "hybrid",
       category_ids: numericCategoryIds(categoryIds),
       total_candidates: totalCandidates,
+      automation_run_id: automationRun.id,
     })
     .select("*")
     .single()
   if (error || !data) throw new Error("EBAY_LUNA_SCAN_RUN_CREATE_FAILED")
+  await supabase
+    .from("ebay_seller_automation_runs")
+    .update({ scan_run_id: data.id })
+    .eq("id", automationRun.id)
   return data as ScanRun
 }
 
@@ -146,11 +182,32 @@ async function loadBestSellingSignals(supabase: SupabaseClient) {
   }))
 }
 
+async function bestSellingCategoriesDue(
+  supabase: SupabaseClient,
+  categoryIds: Array<string | null | undefined>,
+  limit = 3,
+) {
+  const normalized = [...new Set(categoryIds
+    .filter((value): value is string => typeof value === "string" && /^\d+$/.test(value)))]
+    .slice(0, Math.max(1, limit))
+  if (!normalized.length) return []
+  const freshnessCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const { data, error } = await supabase
+    .from("ebay_luna_best_selling_signals")
+    .select("category_id")
+    .in("category_id", normalized)
+    .gte("last_observed_at", freshnessCutoff)
+  if (error) throw new Error("EBAY_BEST_SELLING_FRESHNESS_READ_FAILED")
+  const fresh = new Set((data ?? []).map((row) => row.category_id))
+  return normalized.filter((categoryId) => !fresh.has(categoryId))
+}
+
 async function createActiveListingRisk(
   supabase: SupabaseClient,
   marketRadarProductId: string | null,
   supplierVariantId: string | null,
   eventType: string,
+  sourceSnapshotId: string | null,
 ) {
   const riskType = eventType === "out_of_stock"
     ? "out_of_stock"
@@ -166,45 +223,274 @@ async function createActiveListingRisk(
   if (supplierVariantId) query = query.eq("supplier_variant_id", supplierVariantId)
   const { data } = await query.limit(20)
   for (const listing of data ?? []) {
-    const { data: existing } = await supabase
-      .from("ebay_active_listing_risk_events")
-      .select("id")
-      .eq("active_listing_id", listing.id)
-      .eq("risk_type", riskType)
-      .is("resolved_at", null)
-      .limit(1)
-    if (existing?.length) continue
-    await supabase.from("ebay_active_listing_risk_events").insert({
-      active_listing_id: listing.id,
-      risk_type: riskType,
-      risk_priority: riskType === "out_of_stock" ? "critical" : "high",
-      risk_summary: riskType === "out_of_stock"
-        ? "Luna Portex reportó el producto sin stock."
-        : "Luna Portex reportó un aumento de costo.",
-      recommended_action: riskType === "out_of_stock"
-        ? "Pausar o revisar inmediatamente el listing en eBay."
-        : "Recalcular margen y revisar el precio del listing.",
+    const riskFingerprint = `active-listing:${listing.id}:${riskType}`
+    const riskSummary = riskType === "out_of_stock"
+      ? "Luna Portex reportó el producto sin stock."
+      : "Luna Portex reportó un aumento de costo."
+    const recommendedAction = riskType === "out_of_stock"
+      ? "Pausar o revisar inmediatamente el listing en eBay."
+      : "Recalcular margen y revisar el precio del listing."
+    const { data: riskData, error: riskError } = await supabase.rpc("upsert_ebay_active_listing_risk", {
+      p_active_listing_id: listing.id,
+      p_risk_type: riskType,
+      p_risk_priority: riskType === "out_of_stock" ? "critical" : "high",
+      p_risk_summary: riskSummary,
+      p_recommended_action: recommendedAction,
+      p_risk_fingerprint: riskFingerprint,
+      p_evidence: { sourceSnapshotId, eventType },
     })
+    const risk = (Array.isArray(riskData) ? riskData[0] : riskData) as {
+      risk_id?: string
+      was_resolved?: boolean
+    } | null
+    if (riskError || !risk?.risk_id) throw new Error("ACTIVE_LISTING_RISK_UPSERT_FAILED")
+    const wasResolved = risk.was_resolved === true
+    const alertFingerprint = `risk:${riskFingerprint}`
+    const { data: existingAlert, error: existingAlertError } = await supabase
+      .from("ebay_seller_alert_outbox")
+      .select("id")
+      .eq("alert_fingerprint", alertFingerprint)
+      .maybeSingle()
+    if (existingAlertError) throw new Error("SELLER_ALERT_OUTBOX_READ_FAILED")
+    if (existingAlert && !wasResolved) continue
+    const { error: alertError } = await supabase
+      .from("ebay_seller_alert_outbox")
+      .upsert({
+        alert_fingerprint: alertFingerprint,
+        alert_type: riskType,
+        priority: riskType === "out_of_stock" ? "critical" : "high",
+        entity_type: "ebay_active_listing_risk",
+        entity_id: risk.risk_id,
+        status: "pending",
+        channel: "in_app",
+        attempts: 0,
+        delivered_at: null,
+        last_error_code: null,
+        payload: {
+          marketRadarProductId,
+          supplierVariantId,
+          sourceSnapshotId,
+          eventType,
+        },
+      }, { onConflict: "alert_fingerprint" })
+    if (alertError) throw new Error("SELLER_ALERT_OUTBOX_UPSERT_FAILED")
+  }
+}
+
+async function createOpportunitySignalAlert(
+  supabase: SupabaseClient,
+  input: {
+    opportunityId: string
+    candidateKey: string
+    title: string
+    eventType: string
+    snapshotId: string
+    inventoryQuantity?: number | null
+    stateValue?: unknown
+  },
+) {
+  const supported = ["price_down", "restocked", "out_of_stock", "price_up", "low_stock"]
+  if (!supported.includes(input.eventType)) return
+  const priority = input.eventType === "out_of_stock"
+    ? "critical"
+    : input.eventType === "restocked" || input.eventType === "low_stock"
+      ? "high"
+      : "medium"
+  const stateFingerprint = input.eventType === "price_down" || input.eventType === "price_up"
+    ? `:${String(input.stateValue ?? "changed").replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 40)}`
+    : ""
+  const alertFingerprint = `opportunity:${input.opportunityId}:${input.eventType}${stateFingerprint}`
+  if (input.eventType === "low_stock") {
+    const { data: existing, error: readError } = await supabase
+      .from("ebay_seller_alert_outbox")
+      .select("id,status")
+      .eq("alert_fingerprint", alertFingerprint)
+      .maybeSingle()
+    if (readError) throw new Error("SELLER_OPPORTUNITY_ALERT_READ_FAILED")
+    if (existing && existing.status !== "cancelled") return
+  }
+  const { error } = await supabase.from("ebay_seller_alert_outbox").upsert({
+    alert_fingerprint: alertFingerprint,
+    alert_type: input.eventType,
+    priority,
+    entity_type: "ebay_luna_opportunity",
+    entity_id: input.opportunityId,
+    candidate_key: input.candidateKey,
+    channel: "in_app",
+    status: "pending",
+    attempts: 0,
+    delivered_at: null,
+    last_error_code: null,
+    payload: {
+      title: input.title,
+      eventType: input.eventType,
+      snapshotId: input.snapshotId,
+      inventoryQuantity: input.inventoryQuantity ?? null,
+    },
+    due_at: new Date().toISOString(),
+  }, { onConflict: "alert_fingerprint" })
+  if (error) throw new Error("SELLER_OPPORTUNITY_ALERT_UPSERT_FAILED")
+}
+
+async function loadVariantForTask(supabase: SupabaseClient, task: SellerScanTask) {
+  if (!task.market_radar_product_id) throw new Error("LUNA_CATALOG_TASK_PRODUCT_REQUIRED")
+  let query = supabase
+    .from("market_radar_latest_variants")
+    .select("*")
+    .eq("source_key", "lunaportex")
+    .eq("product_id", task.market_radar_product_id)
+  if (task.supplier_variant_id) query = query.eq("supplier_variant_id", task.supplier_variant_id)
+  else if (task.supplier_sku) query = query.eq("sku", task.supplier_sku)
+  const { data, error } = await query.limit(1).maybeSingle()
+  if (error) throw new Error("LUNA_CATALOG_TASK_READ_FAILED")
+  if (!data) throw new Error("LUNA_CATALOG_TASK_VARIANT_NOT_FOUND")
+  return data as LunaLatestVariantRow
+}
+
+async function processClaimedCandidate(
+  supabase: SupabaseClient,
+  run: ScanRun,
+  task: SellerScanTask,
+) {
+  const variant = await loadVariantForTask(supabase, task)
+  const candidate = mapLatestVariantToLunaCandidate(variant)
+  const since = new Date(Date.now() - 38 * 86_400_000).toISOString()
+  const history = candidate.candidateKey
+    ? await loadEbayListingObservationHistory(supabase, candidate.candidateKey, since)
+    : []
+  const inferredCategories = candidate.categoryId ? [candidate.categoryId] : []
+  const categoriesDue = await bestSellingCategoriesDue(
+    supabase,
+    [...(run.category_ids ?? []), ...inferredCategories],
+  )
+  const scan = await runEbayLunaOpportunityScan({
+    candidates: [candidate],
+    observationHistoryByCandidate: candidate.candidateKey
+      ? { [candidate.candidateKey]: history }
+      : {},
+    bestSellingCategoryIds: categoriesDue,
+  })
+  const discoveries: Array<{
+    categoryId: string
+    status: string
+    products: EbayBestSellingProductSignal[]
+  }> = scan.bestSellingDiscovery.map(({ categoryId, status, products }) => ({ categoryId, status, products }))
+  const discoveredCategoryIds = new Set(discoveries.map((entry) => entry.categoryId))
+  const assessedCategoryIds = scan.rankedOpportunities
+    .map((assessment) => assessment.listingIntelligencePackage.categoryRecommendation.categoryId)
+    .filter((value): value is string => typeof value === "string" && /^\d+$/.test(value))
+  const assessedCategoriesDue = await bestSellingCategoriesDue(supabase, assessedCategoryIds, 1)
+  for (const categoryId of assessedCategoriesDue) {
+    if (!discoveredCategoryIds.has(categoryId)) {
+      discoveries.push({ categoryId, ...(await discoverEbayBestSellingProducts(categoryId)) })
+    }
+  }
+  const newSignalCount = await storeBestSellingSignals(supabase, discoveries)
+  const bestSellingSignals = await loadBestSellingSignals(supabase)
+  const assessment = scan.rankedOpportunities[0]
+  if (!assessment) throw new Error("EBAY_LUNA_CANDIDATE_ASSESSMENT_EMPTY")
+  const matches = matchEbayBestSellingProductsToLuna(bestSellingSignals, [candidate])
+  const queueRow = buildOpportunityQueueRow(assessment, matches)
+  const { data: previousData } = await supabase
+    .from("ebay_luna_opportunity_queue")
+    .select("id,opportunity_score,supplier_price,supplier_available,supplier_inventory_quantity,queue_status")
+    .eq("candidate_key", assessment.candidate.candidateKey)
+    .maybeSingle()
+  const previous = previousData as ExistingOpportunityQueueRow | null
+  if (previous && ["listed", "archived"].includes(previous.queue_status)) queueRow.queue_status = previous.queue_status
+  const { data: saved, error: saveError } = await supabase
+    .from("ebay_luna_opportunity_queue")
+    .upsert(queueRow, { onConflict: "candidate_key" })
+    .select("id")
+    .single()
+  if (saveError || !saved) throw new Error("EBAY_LUNA_QUEUE_UPSERT_FAILED")
+  await persistEbayOpportunityObservation(
+    supabase,
+    assessment,
+    assessment.currentObservations,
+    true,
+    { trustedInternalQueueRun: true },
+  )
+  const events = buildOpportunityChangeEvents(previous, queueRow, variant.snapshot_id ?? "unknown")
+  for (const event of events) {
+    const { error: eventError } = await supabase.from("ebay_luna_opportunity_queue_events").upsert({
+      opportunity_id: saved.id,
+      event_type: event.type,
+      old_value: { value: event.oldValue },
+      new_value: { value: event.newValue },
+      idempotency_key: `${saved.id}:${event.snapshotId}:${event.type}`,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+    if (eventError) throw new Error("EBAY_LUNA_QUEUE_EVENT_UPSERT_FAILED")
+    await createOpportunitySignalAlert(supabase, {
+      opportunityId: saved.id,
+      candidateKey: assessment.candidate.candidateKey,
+      title: assessment.candidate.title,
+      eventType: event.type,
+      snapshotId: event.snapshotId,
+      inventoryQuantity: assessment.candidate.inventoryQuantity,
+      stateValue: event.newValue,
+    })
+    await createActiveListingRisk(
+      supabase,
+      assessment.candidate.marketRadarProductId,
+      assessment.candidate.supplierVariantId,
+      event.type,
+      variant.snapshot_id,
+    )
+  }
+  if (
+    assessment.candidate.available === true &&
+    assessment.candidate.inventoryQuantity !== null &&
+    assessment.candidate.inventoryQuantity !== undefined &&
+    assessment.candidate.inventoryQuantity > 0 &&
+    assessment.candidate.inventoryQuantity <= 3
+  ) {
+    await createOpportunitySignalAlert(supabase, {
+      opportunityId: saved.id,
+      candidateKey: assessment.candidate.candidateKey,
+      title: assessment.candidate.title,
+      eventType: "low_stock",
+      snapshotId: variant.snapshot_id ?? "unknown",
+      inventoryQuantity: assessment.candidate.inventoryQuantity,
+    })
+  } else {
+    const { error: resolvedLowStockError } = await supabase
+      .from("ebay_seller_alert_outbox")
+      .update({ status: "cancelled", updated_at: new Date().toISOString() })
+      .eq("alert_fingerprint", `opportunity:${saved.id}:low_stock`)
+      .neq("status", "cancelled")
+    if (resolvedLowStockError) throw new Error("SELLER_LOW_STOCK_ALERT_RESOLVE_FAILED")
+  }
+  return {
+    newSignalCount,
+    result: {
+      taskId: task.id,
+      lane: task.lane,
+      candidateKey: assessment.candidate.candidateKey,
+      title: assessment.candidate.title,
+      opportunityScore: assessment.scores.opportunityScore,
+      decision: assessment.decision,
+      queueStatus: queueRow.queue_status,
+    },
   }
 }
 
 export async function processNextEbayFirstLunaBatch(
   supabase: SupabaseClient,
   runId: string,
+  options: { batchSize?: number; workerId?: string; lanes?: SellerScanLane[] } = {},
 ) {
   const run = await getRun(supabase, runId)
-  if (run.status !== "running") return { run, processed: 0, completed: true, results: [] }
-  const { data, error } = await supabase
-    .from("market_radar_latest_variants")
-    .select("*")
-    .eq("source_key", "lunaportex")
-    .order("seller_scan_priority_score", { ascending: false, nullsFirst: false })
-    .order("product_id", { ascending: true })
-    .order("supplier_variant_id", { ascending: true })
-    .range(run.next_offset, run.next_offset + SCAN_BATCH_SIZE - 1)
-  if (error) throw new Error("LUNA_CATALOG_BATCH_READ_FAILED")
-  const variants = (data ?? []) as LunaLatestVariantRow[]
-  if (!variants.length) {
+  if (run.status !== "running") return { run, processed: 0, completed: true, results: [], failures: [] }
+  const workerId = options.workerId ?? buildSellerWorkerId("seller-command-center")
+  const tasks = await claimSellerScanTasks(supabase, {
+    workerId,
+    limit: options.batchSize ?? SCAN_BATCH_SIZE,
+    leaseSeconds: 300,
+    lanes: options.lanes,
+  })
+
+  if (!tasks.length) {
     const completedAt = new Date().toISOString()
     const { data: completedRun } = await supabase
       .from("ebay_luna_scan_runs")
@@ -212,123 +498,67 @@ export async function processNextEbayFirstLunaBatch(
       .eq("id", run.id)
       .select("*")
       .single()
-    return { run: completedRun ?? run, processed: 0, completed: true, results: [] }
+    if (run.automation_run_id) {
+      await finishSellerAutomationRun(supabase, run.automation_run_id, {
+        status: run.failed_candidates > 0 ? "partial" : "completed",
+        claimedTasks: run.processed_candidates,
+        successfulTasks: run.successful_candidates,
+        failedTasks: run.failed_candidates,
+        metrics: { scanRunId: run.id, exhaustedDueQueue: true },
+      }).catch(() => undefined)
+    }
+    return { run: completedRun ?? run, processed: 0, completed: true, results: [], failures: [] }
   }
 
-  const candidates = variants.map(mapLatestVariantToLunaCandidate)
-  const historyByCandidate: Record<string, Awaited<ReturnType<typeof loadEbayListingObservationHistory>>> = {}
-  const since = new Date(Date.now() - 38 * 86_400_000).toISOString()
-  for (const candidate of candidates) {
-    if (candidate.candidateKey) {
-      historyByCandidate[candidate.candidateKey] = await loadEbayListingObservationHistory(
-        supabase,
-        candidate.candidateKey,
-        since,
-      )
+  const results: Array<Record<string, unknown>> = []
+  const failures: Array<Record<string, unknown>> = []
+  let newSignalCount = 0
+  let deadLetterCount = 0
+  for (const task of tasks) {
+    try {
+      const processed = await processClaimedCandidate(supabase, run, task)
+      newSignalCount += processed.newSignalCount
+      results.push(processed.result)
+      await completeSellerScanTask(supabase, task.id, workerId, processed.result)
+    } catch (error) {
+      const failedTask = await failSellerScanTask(supabase, task, workerId, error)
+      if (failedTask?.status === "dead_letter") deadLetterCount += 1
+      failures.push({ taskId: task.id, candidateKey: task.candidate_key, error: safeMessage(error) })
     }
-  }
-  const inferredCategories = candidates
-    .map((candidate) => candidate.categoryId)
-    .filter((value): value is string => Boolean(value))
-  const scan = await runEbayLunaOpportunityScan({
-    candidates,
-    observationHistoryByCandidate: historyByCandidate,
-    bestSellingCategoryIds: [...new Set([...(run.category_ids ?? []), ...inferredCategories])].slice(0, 3),
-  })
-  const discoveries: Array<{
-    categoryId: string
-    status: string
-    products: EbayBestSellingProductSignal[]
-  }> = scan.bestSellingDiscovery.map(({ categoryId, status, products }) => ({
-    categoryId,
-    status,
-    products,
-  }))
-  const discoveredCategoryIds = new Set(discoveries.map((entry) => entry.categoryId))
-  const assessedCategoryIds = scan.rankedOpportunities
-    .map((assessment) => assessment.listingIntelligencePackage.categoryRecommendation.categoryId)
-    .filter((value): value is string => typeof value === "string" && /^\d+$/.test(value))
-  for (const categoryId of [...new Set(assessedCategoryIds)].slice(0, 3)) {
-    if (discoveredCategoryIds.has(categoryId)) continue
-    discoveries.push({ categoryId, ...(await discoverEbayBestSellingProducts(categoryId)) })
-  }
-  const newSignalCount = await storeBestSellingSignals(supabase, discoveries)
-  const bestSellingSignals = await loadBestSellingSignals(supabase)
-  const results = []
-
-  for (const assessment of scan.rankedOpportunities) {
-    const candidate = candidates.find((entry) => entry.candidateKey === assessment.candidate.candidateKey)
-    const variant = variants.find((entry) => entry.product_id === assessment.candidate.marketRadarProductId &&
-      entry.supplier_variant_id === assessment.candidate.supplierVariantId)
-    const matches = matchEbayBestSellingProductsToLuna(bestSellingSignals, candidate ? [candidate] : [])
-    const queueRow = buildOpportunityQueueRow(assessment, matches)
-    const { data: previousData } = await supabase
-      .from("ebay_luna_opportunity_queue")
-      .select("id,opportunity_score,supplier_price,supplier_available,supplier_inventory_quantity,queue_status")
-      .eq("candidate_key", assessment.candidate.candidateKey)
-      .maybeSingle()
-    const previous = previousData as ExistingOpportunityQueueRow | null
-    if (previous && ["listed", "archived"].includes(previous.queue_status)) {
-      queueRow.queue_status = previous.queue_status
-    }
-    const { data: saved, error: saveError } = await supabase
-      .from("ebay_luna_opportunity_queue")
-      .upsert(queueRow, { onConflict: "candidate_key" })
-      .select("id")
-      .single()
-    if (saveError || !saved) throw new Error("EBAY_LUNA_QUEUE_UPSERT_FAILED")
-    await persistEbayOpportunityObservation(
-      supabase,
-      assessment,
-      assessment.currentObservations,
-      true,
-      { trustedInternalQueueRun: true },
-    )
-    const events = buildOpportunityChangeEvents(previous, queueRow, variant?.snapshot_id ?? "unknown")
-    for (const event of events) {
-      await supabase.from("ebay_luna_opportunity_queue_events").upsert({
-        opportunity_id: saved.id,
-        event_type: event.type,
-        old_value: { value: event.oldValue },
-        new_value: { value: event.newValue },
-        idempotency_key: `${saved.id}:${event.snapshotId}:${event.type}`,
-      }, { onConflict: "idempotency_key", ignoreDuplicates: true })
-      await createActiveListingRisk(
-        supabase,
-        assessment.candidate.marketRadarProductId,
-        assessment.candidate.supplierVariantId,
-        event.type,
-      )
-    }
-    results.push({
-      candidateKey: assessment.candidate.candidateKey,
-      title: assessment.candidate.title,
-      opportunityScore: assessment.scores.opportunityScore,
-      decision: assessment.decision,
-      queueStatus: queueRow.queue_status,
-    })
   }
 
   const now = new Date().toISOString()
-  const nextOffset = run.next_offset + variants.length
-  const completed = nextOffset >= run.total_candidates
+  const nextOffset = run.next_offset + tasks.length
   const { data: updatedRun, error: updateError } = await supabase
     .from("ebay_luna_scan_runs")
     .update({
-      status: completed ? "completed" : "running",
+      status: "running",
       processed_candidates: Math.min(nextOffset, run.total_candidates),
       next_offset: nextOffset,
       successful_candidates: run.successful_candidates + results.length,
+      failed_candidates: run.failed_candidates + failures.length,
       best_selling_signals_found: run.best_selling_signals_found + newSignalCount,
       last_batch_at: now,
-      completed_at: completed ? now : null,
-      last_error: null,
+      last_error: failures.length ? String(failures[failures.length - 1]?.error ?? "EBAY_CANDIDATE_SCAN_FAILED") : null,
     })
     .eq("id", run.id)
     .select("*")
     .single()
   if (updateError) throw new Error("EBAY_LUNA_SCAN_RUN_UPDATE_FAILED")
-  return { run: updatedRun, processed: variants.length, completed, results }
+  if (run.automation_run_id) {
+    await supabase
+      .from("ebay_seller_automation_runs")
+      .update({
+        claimed_tasks: nextOffset,
+        successful_tasks: run.successful_candidates + results.length,
+        failed_tasks: run.failed_candidates + failures.length,
+        dead_letter_tasks: deadLetterCount,
+        heartbeat_at: now,
+        metrics: { lastBatchSize: tasks.length, workerId },
+      })
+      .eq("id", run.automation_run_id)
+  }
+  return { run: updatedRun, processed: tasks.length, completed: false, results, failures }
 }
 
 export async function recordEbayFirstLunaScanFailure(
@@ -360,6 +590,7 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
   ])
   const firstError = runs.error ?? queue.error ?? events.error ?? activeRisks.error ?? total.error ?? ready.error ?? review.error ?? watchlist.error ?? holds.error
   if (firstError) throw new Error("EBAY_LUNA_QUEUE_DASHBOARD_READ_FAILED")
+  const automationHealth = await getSellerAutomationHealth(supabase)
   const rows = queue.data ?? []
   const professionalRows = rows
     .map((row) => buildProfessionalSellerQueueView(row))
@@ -389,12 +620,14 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
     },
     automation: {
       strategy: EBAY_LUNA_SCAN_STRATEGY,
-      productionSchedule: "17 9 * * *",
-      productionScheduleLabel: "Luna 03:00 + eBay 03:17 · America/Managua",
+      productionSchedule: "*/15 * * * *",
+      productionScheduleLabel: "Luna cada 6 h + eBay cada 15 min · protección por prioridad",
       previewRunsCronAutomatically: false,
       productionRunsCronAutomatically: true,
       mobileAccelerationBatchCount: 10,
       variantsPerBatch: SCAN_BATCH_SIZE,
+      lanes: ["protection", "event", "hot", "baseline", "coverage"],
+      health: automationHealth,
     },
   }
 }

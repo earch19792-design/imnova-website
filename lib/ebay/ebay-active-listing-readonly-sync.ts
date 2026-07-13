@@ -1,0 +1,403 @@
+import type { SupabaseClient } from "@supabase/supabase-js"
+
+const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
+const INVENTORY_API_ORIGIN = "https://api.ebay.com"
+const INVENTORY_ITEMS_ENDPOINT =
+  `${INVENTORY_API_ORIGIN}/sell/inventory/v1/inventory_item?limit=100&offset=0`
+const OFFERS_ENDPOINT = `${INVENTORY_API_ORIGIN}/sell/inventory/v1/offer`
+const INVENTORY_READONLY_SCOPE = [
+  "https://api.ebay.com/oauth/api_scope",
+  "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
+].join(" ")
+const REQUEST_TIMEOUT_MS = 10_000
+const MAX_PAGES = 50
+const MAX_RETRIES = 3
+const OFFER_READ_CONCURRENCY = 6
+const CONNECTOR_SOURCE = "EBAY_SELL_INVENTORY_READONLY"
+const MARKETPLACE_ID = "EBAY_US"
+
+type JsonRecord = Record<string, unknown>
+
+type CachedToken = {
+  value: string
+  expiresAt: number
+}
+
+let cachedToken: CachedToken | null = null
+
+function record(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonRecord
+    : {}
+}
+
+function array(value: unknown) {
+  return Array.isArray(value) ? value : []
+}
+
+function text(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+function numberOrNull(value: unknown) {
+  if (value === null || value === undefined || value === "") return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function integerOrNull(value: unknown) {
+  const parsed = numberOrNull(value)
+  return parsed === null ? null : Math.max(0, Math.trunc(parsed))
+}
+
+function safeRetryDelay(response: Response, attempt: number) {
+  const retryAfter = Number(response.headers.get("retry-after"))
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return Math.min(retryAfter * 1_000, 8_000)
+  }
+  return Math.min(500 * (2 ** attempt), 4_000) + Math.floor(Math.random() * 250)
+}
+
+async function wait(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function ebayFetch(url: string, accessToken: string) {
+  const parsed = new URL(url)
+  const allowedPath = parsed.pathname === "/sell/inventory/v1/inventory_item" ||
+    parsed.pathname === "/sell/inventory/v1/offer"
+  if (parsed.origin !== INVENTORY_API_ORIGIN || !allowedPath) {
+    throw new Error("BLOCKED_NON_READONLY_EBAY_INVENTORY_REQUEST")
+  }
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(parsed, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+      if (response.ok) return record(await response.json())
+      if (![429, 500, 502, 503, 504].includes(response.status) || attempt === MAX_RETRIES - 1) {
+        throw new Error(`EBAY_ACTIVE_LISTING_READ_${response.status}`)
+      }
+      await wait(safeRetryDelay(response, attempt))
+    } catch (error) {
+      const code = error instanceof Error ? error.message : ""
+      if (code.startsWith("EBAY_ACTIVE_LISTING_READ_") || attempt === MAX_RETRIES - 1) throw error
+      await wait(Math.min(500 * (2 ** attempt), 4_000) + Math.floor(Math.random() * 250))
+    }
+  }
+  throw new Error("EBAY_ACTIVE_LISTING_READ_FAILED")
+}
+
+async function getSellerInventoryToken() {
+  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
+    return cachedToken.value
+  }
+  const clientId = process.env.EBAY_CLIENT_ID?.trim() ?? ""
+  const clientSecret = process.env.EBAY_CLIENT_SECRET?.trim() ?? ""
+  const refreshToken = process.env.EBAY_SELLER_REFRESH_TOKEN?.trim() ?? ""
+  if (!clientId || !clientSecret) throw new Error("EBAY_READONLY_ENV_MISSING")
+  if (!refreshToken) throw new Error("EBAY_SELLER_OAUTH_NOT_CONFIGURED")
+
+  const credentials = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(TOKEN_ENDPOINT, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${credentials}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          scope: INVENTORY_READONLY_SCOPE,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+      if (response.ok) {
+        const payload = record(await response.json())
+        const accessToken = text(payload.access_token)
+        if (!accessToken) throw new Error("EBAY_SELLER_INVENTORY_TOKEN_MISSING")
+        const expiresIn = Math.max(120, numberOrNull(payload.expires_in) ?? 7_200)
+        cachedToken = { value: accessToken, expiresAt: Date.now() + expiresIn * 1_000 }
+        return accessToken
+      }
+      if (![429, 500, 502, 503, 504].includes(response.status) || attempt === MAX_RETRIES - 1) {
+        throw new Error(`EBAY_SELLER_INVENTORY_OAUTH_${response.status}`)
+      }
+      await wait(safeRetryDelay(response, attempt))
+    } catch (error) {
+      const code = error instanceof Error ? error.message : ""
+      if (code.startsWith("EBAY_SELLER_INVENTORY_") || attempt === MAX_RETRIES - 1) throw error
+      await wait(Math.min(500 * (2 ** attempt), 4_000) + Math.floor(Math.random() * 250))
+    }
+  }
+  throw new Error("EBAY_SELLER_INVENTORY_OAUTH_FAILED")
+}
+
+async function loadAllPages(
+  initialUrl: string,
+  collectionKey: "inventoryItems" | "offers",
+  accessToken: string,
+) {
+  const rows: JsonRecord[] = []
+  let nextUrl: string | null = initialUrl
+  for (let page = 0; nextUrl && page < MAX_PAGES; page += 1) {
+    const payload = await ebayFetch(nextUrl, accessToken)
+    rows.push(...array(payload[collectionKey]).map(record))
+    const next = text(payload.next)
+    nextUrl = next ? new URL(next, INVENTORY_API_ORIGIN).href : null
+  }
+  if (nextUrl) throw new Error("EBAY_ACTIVE_LISTING_PAGE_LIMIT_REACHED")
+  return rows
+}
+
+function listingStatus(offer: JsonRecord) {
+  const listing = record(offer.listing)
+  const raw = (text(listing.listingStatus) ?? text(offer.status) ?? "").toUpperCase()
+  if (["ACTIVE", "PUBLISHED", "OUT_OF_STOCK"].includes(raw)) return "active"
+  if (["INACTIVE", "PAUSED", "SUSPENDED"].includes(raw)) return "paused"
+  if (["ENDED", "EBAY_ENDED", "WITHDRAWN"].includes(raw)) return "ended"
+  if (["NOT_LISTED", "UNPUBLISHED", "DRAFT"].includes(raw)) return "draft"
+  return "unknown"
+}
+
+function listingId(offer: JsonRecord) {
+  const listing = record(offer.listing)
+  return text(listing.listingId) ?? text(offer.listingId)
+}
+
+function inventoryQuantity(inventory: JsonRecord, offer: JsonRecord) {
+  const availability = record(inventory.availability)
+  const shipTo = record(availability.shipToLocationAvailability)
+  return integerOrNull(offer.availableQuantity) ?? integerOrNull(shipTo.quantity)
+}
+
+async function loadOpportunityMappings(supabase: SupabaseClient, skus: string[]) {
+  const mapping = new Map<string, {
+    productId: string | null
+    variantId: string | null
+    supplierPrice: number | null
+  }>()
+  for (let index = 0; index < skus.length; index += 200) {
+    const chunk = skus.slice(index, index + 200)
+    if (!chunk.length) continue
+    const { data, error } = await supabase
+      .from("ebay_luna_opportunity_queue")
+      .select("supplier_sku,market_radar_product_id,supplier_variant_id,supplier_price")
+      .in("supplier_sku", chunk)
+    if (error) throw new Error("EBAY_ACTIVE_LISTING_MAPPING_READ_FAILED")
+    for (const row of data ?? []) {
+      if (!row.supplier_sku || mapping.has(row.supplier_sku)) continue
+      mapping.set(row.supplier_sku, {
+        productId: row.market_radar_product_id ?? null,
+        variantId: row.supplier_variant_id ?? null,
+        supplierPrice: numberOrNull(row.supplier_price),
+      })
+    }
+  }
+  return mapping
+}
+
+type ExistingListing = {
+  id: string
+  sync_key: string
+  ebay_item_id: string
+  market_radar_product_id: string | null
+  supplier_variant_id: string | null
+  supplier_sku: string | null
+  supplier_cost_at_linking: number | string | null
+  raw_payload: JsonRecord | null
+}
+
+async function loadConnectorListings(
+  supabase: SupabaseClient,
+  accountKey: string,
+) {
+  const rows: ExistingListing[] = []
+  const pageSize = 500
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("ebay_active_listings")
+      .select("id,sync_key,ebay_item_id,market_radar_product_id,supplier_variant_id,supplier_sku,supplier_cost_at_linking,raw_payload")
+      .eq("source", CONNECTOR_SOURCE)
+      .eq("account_key", accountKey)
+      .range(from, from + pageSize - 1)
+    if (error) throw new Error("EBAY_ACTIVE_LISTING_RECONCILE_READ_FAILED")
+    rows.push(...((data ?? []) as ExistingListing[]))
+    if ((data ?? []).length < pageSize) break
+  }
+  return rows
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<R>,
+) {
+  const output = new Array<R>(values.length)
+  let cursor = 0
+  await Promise.all(Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (cursor < values.length) {
+        const index = cursor++
+        output[index] = await mapper(values[index])
+      }
+    },
+  ))
+  return output
+}
+
+async function loadOffersForSku(sku: string, accessToken: string) {
+  const url = new URL(OFFERS_ENDPOINT)
+  url.searchParams.set("sku", sku)
+  url.searchParams.set("limit", "100")
+  url.searchParams.set("offset", "0")
+  return loadAllPages(url.href, "offers", accessToken)
+}
+
+async function syncEbayActiveListingsWithToken(
+  supabase: SupabaseClient,
+  accessToken: string,
+) {
+  try {
+    const inventoryItems = await loadAllPages(
+      INVENTORY_ITEMS_ENDPOINT,
+      "inventoryItems",
+      accessToken,
+    )
+    const inventoryBySku = new Map(
+      inventoryItems
+        .map((item) => [text(item.sku), item] as const)
+        .filter((entry): entry is [string, JsonRecord] => Boolean(entry[0])),
+    )
+    const inventorySkus = [...inventoryBySku.keys()]
+    const offersBySku = await mapWithConcurrency(
+      inventorySkus,
+      OFFER_READ_CONCURRENCY,
+      (sku) => loadOffersForSku(sku, accessToken),
+    )
+    const offers = offersBySku.flat()
+    const publishedOffers = offers.filter((offer) => Boolean(listingId(offer)))
+    const skus = [...new Set(publishedOffers.map((offer) => text(offer.sku)).filter(Boolean))] as string[]
+    const mappings = await loadOpportunityMappings(supabase, skus)
+    const observedAt = new Date().toISOString()
+    const syncRunId = crypto.randomUUID()
+    const accountKey = process.env.EBAY_SELLER_ACCOUNT_KEY?.trim() || "default"
+    const existingListings = await loadConnectorListings(supabase, accountKey)
+    const existingBySyncKey = new Map(existingListings.map((row) => [row.sync_key, row]))
+    const rows = publishedOffers.flatMap((offer) => {
+      const ebayItemId = listingId(offer)
+      const sku = text(offer.sku)
+      if (!ebayItemId || !sku) return []
+      const offerId = text(offer.offerId)
+      const syncKey = `${CONNECTOR_SOURCE}:${accountKey}:${offerId || `${ebayItemId}:${sku}`}`
+      const previous = existingBySyncKey.get(syncKey)
+      const inventory = inventoryBySku.get(sku) ?? {}
+      const product = record(inventory.product)
+      const pricing = record(offer.pricingSummary)
+      const price = record(pricing.price)
+      const mapping = mappings.get(sku)
+      const previousRaw = record(previous?.raw_payload)
+      return [{
+        source: CONNECTOR_SOURCE,
+        account_key: accountKey,
+        sync_key: syncKey,
+        sync_run_id: syncRunId,
+        ebay_item_id: ebayItemId,
+        listing_status: listingStatus(offer),
+        title: text(product.title) ?? `eBay listing ${ebayItemId}`,
+        ebay_sku: sku,
+        ebay_quantity: inventoryQuantity(inventory, offer),
+        ebay_price: numberOrNull(price.value),
+        currency: text(price.currency) ?? "USD",
+        market_radar_product_id: mapping?.productId ?? previous?.market_radar_product_id ?? null,
+        supplier_variant_id: mapping?.variantId ?? previous?.supplier_variant_id ?? null,
+        supplier_sku: mapping ? sku : previous?.supplier_sku ?? null,
+        supplier_cost_at_linking: previous?.supplier_cost_at_linking ?? mapping?.supplierPrice ?? null,
+        last_ebay_sync_at: observedAt,
+        raw_payload: {
+          ...previousRaw,
+          source: CONNECTOR_SOURCE,
+          offerId,
+          marketplaceId: text(offer.marketplaceId),
+          categoryId: text(offer.categoryId),
+          offerStatus: text(offer.status),
+        },
+        updated_at: observedAt,
+      }]
+    })
+
+    if (rows.length) {
+      const { error } = await supabase
+        .from("ebay_active_listings")
+        .upsert(rows, { onConflict: "sync_key" })
+      if (error) throw new Error("EBAY_ACTIVE_LISTING_SYNC_WRITE_FAILED")
+    }
+
+    // Only this connector/account is reconciled, and only after every inventory
+    // and per-SKU offer request completed successfully.
+    const observedSyncKeys = new Set(rows.map((row) => row.sync_key))
+    const staleIds = existingListings
+      .filter((row) => !observedSyncKeys.has(row.sync_key))
+      .map((row) => row.id)
+    for (let index = 0; index < staleIds.length; index += 200) {
+      const { error: staleError } = await supabase
+        .from("ebay_active_listings")
+        .update({ listing_status: "ended", updated_at: observedAt })
+        .in("id", staleIds.slice(index, index + 200))
+      if (staleError) throw new Error("EBAY_ACTIVE_LISTING_RECONCILE_FAILED")
+    }
+
+    return {
+      status: "AVAILABLE" as const,
+      observedAt,
+      inventoryItemsRead: inventoryItems.length,
+      inventorySkusRead: inventorySkus.length,
+      offersRead: offers.length,
+      activeListingsStored: rows.filter((row) => row.listing_status === "active").length,
+      listingsStored: rows.length,
+      listingsMappedToLuna: rows.filter((row) => row.market_radar_product_id).length,
+      ebayWriteUsed: false as const,
+      tokensReturned: false as const,
+    }
+  } finally {
+    // Keep only the short-lived module cache; never return or persist the token.
+  }
+}
+
+export async function syncEbayActiveListingsReadonly(supabase: SupabaseClient) {
+  for (let authorizationAttempt = 0; authorizationAttempt < 2; authorizationAttempt += 1) {
+    const accessToken = await getSellerInventoryToken()
+    try {
+      return await syncEbayActiveListingsWithToken(supabase, accessToken)
+    } catch (error) {
+      const code = error instanceof Error ? error.message : ""
+      if (code !== "EBAY_ACTIVE_LISTING_READ_401" || authorizationAttempt > 0) throw error
+      cachedToken = null
+    }
+  }
+  throw new Error("EBAY_ACTIVE_LISTING_AUTH_REFRESH_FAILED")
+}
+
+export function getEbayActiveListingReadonlySyncConfiguration() {
+  return {
+    configured: Boolean(
+      process.env.EBAY_CLIENT_ID?.trim() &&
+      process.env.EBAY_CLIENT_SECRET?.trim() &&
+      process.env.EBAY_SELLER_REFRESH_TOKEN?.trim(),
+    ),
+    requiredScope: "sell.inventory.readonly",
+    ebayWriteUsed: false,
+    canPublish: false,
+  }
+}

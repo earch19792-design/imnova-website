@@ -1,6 +1,8 @@
 import type { EbayLunaOpportunityAssessment } from "./ebay-luna-demand-opportunity-engine"
 import type { EbayBestSellingProductSignal } from "./ebay-seller-keyword-demand-gateway"
 import type { LunaOpportunityCandidateInput } from "./ebay-luna-opportunity-types"
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+import { detectEbayProductRestrictionGuards } from "./ebay-product-restriction-guards.ts"
 
 type JsonRecord = Record<string, unknown>
 
@@ -81,7 +83,8 @@ export function buildProfessionalSellerQueueView(row: ProfessionalQueueRow) {
   const titleStrategy = record(listingPackage.titleStrategy)
   const category = record(listingPackage.categoryRecommendation)
   const comparableCandidates = records(identity.comparables)
-  const candidateCount = comparableCandidates.length
+  const market = record(assessment.market)
+  const candidateCount = numberOrNull(market.candidateListingsFound) ?? comparableCandidates.length
   const exactComparableCount = number(row.active_comparables)
   const exactIdentityConfirmed = identity.exactIdentityConfirmed === true
   const canProceedToListingPackage = assessment.canProceedToListingPackage === true
@@ -89,16 +92,14 @@ export function buildProfessionalSellerQueueView(row: ProfessionalQueueRow) {
   const supplierInventory = numberOrNull(row.supplier_inventory_quantity)
   const supplierCost = numberOrNull(row.supplier_price)
   const opportunityScore = number(row.opportunity_score)
-  const demandScore = number(row.demand_score)
-  const listingReadinessScore = number(row.listing_readiness_score)
-  const supplyScore = number(record(assessment.scores).supplyScore)
+  const assessmentScores = record(assessment.scores)
+  // V2 calculates this once in the canonical engine. Re-weighting demand,
+  // readiness and identity here counted the same evidence twice and could make
+  // the mobile ranking disagree with the persisted opportunity ranking.
   const sellerPriorityScore = Math.min(100, Math.round(
-    opportunityScore * 0.45 +
-    demandScore * 0.15 +
-    listingReadinessScore * 0.15 +
-    supplyScore * 0.10 +
-    Math.min(candidateCount, 5) * 3 +
-    (exactIdentityConfirmed ? 10 : 0),
+    numberOrNull(assessmentScores.sellerPriorityScore) ??
+    numberOrNull(row.seller_priority_score) ??
+    opportunityScore,
   ))
   const hardGates = Array.isArray(row.hard_gates)
     ? row.hard_gates.filter((value): value is string => typeof value === "string")
@@ -138,11 +139,16 @@ export function buildProfessionalSellerQueueView(row: ProfessionalQueueRow) {
     ebay_candidate_count: candidateCount,
     exact_comparable_count: exactComparableCount,
     seller_priority_score: sellerPriorityScore,
+    score_axes: {
+      potential: numberOrNull(assessmentScores.potentialScore) ?? opportunityScore,
+      confidence: numberOrNull(assessmentScores.confidenceScore) ?? 0,
+      urgency: numberOrNull(assessmentScores.urgencyScore) ?? 0,
+    },
     seller_lane: sellerLane,
     next_seller_action: nextSellerAction,
     can_prepare_listing_package: canProceedToListingPackage,
-    listing_intake_url: canProceedToListingPackage && typeof row.market_radar_product_id === "string"
-      ? `/admin/ebay-listing-package?source=opportunity-queue&productId=${encodeURIComponent(row.market_radar_product_id)}`
+    listing_intake_url: typeof row.id === "string"
+      ? `/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(row.id)}&candidate=${encodeURIComponent(text(row.candidate_key) ?? "")}`
       : null,
     winning_structure: {
       strategyConfidence: text(titleStrategy.strategyConfidence),
@@ -173,6 +179,24 @@ export function mapLatestVariantToLunaCandidate(
 ): LunaOpportunityCandidateInput {
   const metadata = record(row.metadata)
   const dimensions = record(metadata.dimensions)
+  const imageProvenance = record(metadata.imageProvenance ?? metadata.image_provenance)
+  const detectedRestrictions = detectEbayProductRestrictionGuards({
+    title: row.title,
+    productName: row.variant_title,
+    category: text(metadata.category),
+    categoryText: text(metadata.categoryText ?? metadata.category_text),
+    categoryName: text(metadata.categoryName ?? metadata.category_name),
+    handle: text(metadata.handle) ?? row.product_url,
+    productType: row.product_type,
+    description: text(metadata.description),
+    imageAlt: text(metadata.imageAlt ?? metadata.image_alt),
+    imageReference: row.featured_image_url,
+  })
+  const suppliedRestrictions = Array.isArray(metadata.restrictionGuards)
+    ? metadata.restrictionGuards.filter(
+        (value): value is string => typeof value === "string" && value.trim().length > 0,
+      )
+    : []
   return {
     candidateKey: `luna-portex:${row.supplier_product_id ?? row.product_id}:${row.supplier_variant_id ?? row.sku ?? "default"}`,
     marketRadarProductId: row.product_id,
@@ -181,7 +205,9 @@ export function mapLatestVariantToLunaCandidate(
     sku: row.sku,
     title: row.title,
     variantTitle: row.variant_title,
-    brand: row.vendor,
+    // Luna's vendor can be a distributor and is not automatically the product
+    // manufacturer. Only explicit catalog provenance may satisfy Brand + MPN.
+    brand: text(metadata.brand ?? metadata.manufacturerBrand ?? metadata.manufacturer_brand),
     mpn: text(metadata.mpn),
     gtin: row.barcode,
     color: text(metadata.color),
@@ -209,7 +235,15 @@ export function mapLatestVariantToLunaCandidate(
       : null,
     imageUrls: [row.featured_image_url, ...(row.image_urls ?? [])]
       .filter((value): value is string => Boolean(value)),
-    imageAuthorized: Boolean(row.featured_image_url || row.image_urls?.length),
+    // A reachable supplier URL proves availability, not reuse authorization.
+    // Authorization must be an explicit supplier/provenance fact and can later
+    // be confirmed by the human review workspace.
+    imageAuthorized: metadata.imageAuthorized === true ||
+      metadata.image_authorized === true || imageProvenance.authorized === true,
+    restrictionGuards: [...new Set([
+      ...suppliedRestrictions,
+      ...detectedRestrictions.pendingRestrictionGuards,
+    ])],
     metadata,
   }
 }

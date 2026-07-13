@@ -15,7 +15,7 @@ import type {
 import { buildEbayInventoryMappingPreviewReadiness } from "./ebay-inventory-mapping-preview-readiness.ts"
 
 export const EBAY_LUNA_DEMAND_OPPORTUNITY_ENGINE_VERSION =
-  "EBAY-LUNA-DEMAND-TO-INVENTORY-OPPORTUNITY-ENGINE-V1"
+  "EBAY-SELLER-COMMAND-CENTER-OPPORTUNITY-ENGINE-V2"
 
 const DEFAULTS = {
   stockFreshnessHours: 24,
@@ -96,6 +96,12 @@ function aspectValue(
   return text(match?.value) || null
 }
 
+function demandListings(input: EbayLunaCandidateMarketInput) {
+  return input.demandReport.comparableEvidence.length
+    ? input.demandReport.comparableEvidence
+    : input.demandReport.topSellingListings
+}
+
 function buildComparableIdentity(
   candidate: NormalizedLunaOpportunityCandidate,
   comparable: Record<string, unknown>
@@ -108,7 +114,7 @@ function buildComparableIdentity(
     normalizedIdentifier(aspectValue(comparable.localizedAspects as Array<{ name?: string; value?: string }>, ["mpn", "model"]))
   const candidateBrand = normalizedIdentifier(candidate.brand)
   const candidateMpn = normalizedIdentifier(candidate.mpn)
-  const conflicts: string[] = Array.isArray(comparable.identityConflicts)
+  let conflicts: string[] = Array.isArray(comparable.identityConflicts)
     ? comparable.identityConflicts.filter((entry): entry is string => typeof entry === "string")
     : []
 
@@ -121,6 +127,21 @@ function buildComparableIdentity(
     candidateBrand && listingBrand && candidateBrand === listingBrand &&
     candidateMpn && listingMpn && candidateMpn === listingMpn
   )
+  // An exact GTIN is the strongest identifier and wins over a soft supplier
+  // vendor/brand spelling disagreement. Variant, GTIN and MPN conflicts remain
+  // hard because they can indicate a genuinely different item.
+  const softIdentityConflicts = exactGtin
+    ? conflicts.filter((conflict) =>
+        conflict === "BRAND_CONFLICT" ||
+        conflict === "BRAND_CONFLICT_OVERRIDDEN_BY_EXACT_GTIN"
+      )
+    : []
+  if (exactGtin) {
+    conflicts = conflicts.filter((conflict) =>
+      conflict !== "BRAND_CONFLICT" &&
+      conflict !== "BRAND_CONFLICT_OVERRIDDEN_BY_EXACT_GTIN"
+    )
+  }
   const inheritedScore = numberOrNull(comparable.identityMatchScore) ?? 0
   const identityMatchScore = conflicts.length
     ? 0
@@ -142,6 +163,7 @@ function buildComparableIdentity(
     identityMatchScore,
     identityMatchType,
     identityConflicts: [...new Set(conflicts)],
+    softIdentityConflicts: [...new Set(softIdentityConflicts)],
     exactIdentityConfirmedByIdentifier: exactGtin || exactBrandMpn,
   }
 }
@@ -154,7 +176,7 @@ export function buildCurrentEbayListingObservations(
     ? observedAtValue.toISOString()
     : new Date(observedAtValue).toISOString()
   const candidate = normalizeLunaOpportunityCandidate(input.candidate, observedAt)
-  return input.demandReport.topSellingListings.map((listing) => {
+  return demandListings(input).map((listing) => {
     const identity = buildComparableIdentity(candidate, listing)
     return {
       candidateKey: candidate.candidateKey,
@@ -262,8 +284,12 @@ function buildMarketMetrics(
   current: EbayListingObservation[],
   rotations: EbayListingRotationSignal[]
 ) {
-  const exactCurrent = current.filter((entry) => entry.identityMatchScore >= 78)
+  const exactCurrent = current.filter((entry) =>
+    ["EXACT_GTIN", "EXACT_BRAND_MPN"].includes(entry.identityMatchType)
+  )
+  const exactObservationIds = new Set(exactCurrent.map((entry) => entry.itemId))
   const positiveRotations = rotations.filter((entry) =>
+    exactObservationIds.has(entry.itemId) &&
     entry.evidenceClass === "OBSERVED_ESTIMATED_SALES_DELTA" &&
     (entry.estimatedSoldDelta ?? 0) > 0
   )
@@ -279,27 +305,49 @@ function buildMarketMetrics(
     (sum, entry) => sum + (entry.estimatedSoldDelta30d ?? 0),
     0
   ) || null
-  const sellersWithPositiveMovement = new Set(positiveRotations.map((entry) => entry.sellerId)).size
-  const largestSellerVelocity = Math.max(0, ...positiveRotations.map((entry) => entry.estimatedWeeklyVelocity ?? 0))
+  const velocityBySeller = new Map<string, number>()
+  for (const rotation of positiveRotations) {
+    const sellerKey = normalizedIdentifier(rotation.sellerId) || "unknownseller"
+    velocityBySeller.set(
+      sellerKey,
+      (velocityBySeller.get(sellerKey) ?? 0) + (rotation.estimatedWeeklyVelocity ?? 0),
+    )
+  }
+  const sellersWithPositiveMovement = velocityBySeller.size
+  const largestSellerVelocity = Math.max(0, ...velocityBySeller.values())
   const sellerConcentrationPercent = totalEstimatedWeeklyVelocity > 0
     ? round((largestSellerVelocity / totalEstimatedWeeklyVelocity) * 100)
     : null
-  const totalBuyerPrices = input.demandReport.topSellingListings
+  const totalBuyerPrices = demandListings(input)
     .filter((listing) => exactCurrent.some((entry) => entry.itemId === listing.comparableId))
     .map((listing) => listing.price + (listing.shippingCost ?? 0))
     .filter((price) => price > 0)
   const priceP25 = percentile(totalBuyerPrices, 0.25)
   const priceP75 = percentile(totalBuyerPrices, 0.75)
-  const activeExactComparables = exactCurrent.length
+  const activeExactComparables = exactCurrent.filter((entry) =>
+    entry.evidenceSource !== "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
+  ).length
+  const recentSoldEvidence = input.demandReport.evidenceBuckets
+  const verifiedRecentSoldHistory =
+    recentSoldEvidence.identifierExactRecentSoldSellerCount >= 2 &&
+    recentSoldEvidence.identifierExactRecentSoldQuantity >= 3
   const demandToCompetitionRatio = activeExactComparables > 0
     ? round(totalEstimatedWeeklyVelocity / activeExactComparables)
     : null
   const rotationEvidenceStatus = positiveRotations.length >= 2 && sellersWithPositiveMovement >= 2
     ? "MULTI_SELLER_OBSERVED_ESTIMATED_ROTATION"
+    : verifiedRecentSoldHistory
+      ? "MULTI_SELLER_VERIFIED_RECENT_SOLD_HISTORY"
     : positiveRotations.length
       ? "CONCENTRATED_OR_SINGLE_SELLER_OBSERVED_ROTATION"
       : "ROTATION_BASELINE_REQUIRED"
   return {
+    candidateListingsFound: recentSoldEvidence.candidateFoundCount,
+    strongSimilarComparables: recentSoldEvidence.strongSimilarCount,
+    identifierExactActiveComparables: recentSoldEvidence.identifierExactActiveCount,
+    identifierExactRecentSoldComparables: recentSoldEvidence.identifierExactRecentSoldCount,
+    identifierExactRecentSoldSellers: recentSoldEvidence.identifierExactRecentSoldSellerCount,
+    identifierExactRecentSoldQuantity: recentSoldEvidence.identifierExactRecentSoldQuantity,
     activeExactComparables,
     totalEstimatedWeeklyVelocity,
     estimatedSoldDelta7d,
@@ -311,10 +359,17 @@ function buildMarketMetrics(
     sellerConcentrationPercent,
     demandToCompetitionRatio,
     medianTotalBuyerPrice: median(totalBuyerPrices),
+    conservativeTotalBuyerPrice: priceP25,
     priceInterquartileRange: priceP25 !== null && priceP75 !== null
       ? { low: priceP25, high: priceP75 }
       : null,
     rotationEvidenceStatus,
+    verifiedRecentSoldHistoryCanReplaceBrowseBaseline: verifiedRecentSoldHistory,
+    demandEvidenceRoute: rotationEvidenceStatus === "MULTI_SELLER_OBSERVED_ESTIMATED_ROTATION"
+      ? "EXACT_BROWSE_SNAPSHOT_DELTAS"
+      : verifiedRecentSoldHistory
+        ? "OFFICIAL_RECENT_EXACT_SOLD_HISTORY"
+        : "INSUFFICIENT_EXACT_MULTI_SELLER_EVIDENCE",
     observationWindowDays: Math.max(0, ...rotations.map((entry) => entry.observationDays)),
     marketplaceInsightsStatus: input.demandReport.marketplaceInsightsStatus,
     demandValidationBasis: input.demandReport.demandValidationBasis,
@@ -325,7 +380,8 @@ function buildMarketMetrics(
 function buildUnitEconomics(
   candidate: NormalizedLunaOpportunityCandidate,
   marketPrice: number | null,
-  options: OpportunityEngineOptions
+  options: OpportunityEngineOptions,
+  pricingBasis = "EXACT_COMPARABLE_TOTAL_BUYER_PRICE_P25"
 ) {
   const config = { ...DEFAULTS, ...options }
   const supplierCost = candidate.supplierCost
@@ -333,6 +389,8 @@ function buildUnitEconomics(
     return {
       ready: false,
       marketPrice,
+      pricingBasis,
+      conservativeEstimate: true,
       supplierCost,
       estimatedEbayFees: null,
       estimatedOutboundShipping: config.estimatedOutboundShipping,
@@ -363,6 +421,8 @@ function buildUnitEconomics(
   return {
     ready: true,
     marketPrice: round(marketPrice),
+    pricingBasis,
+    conservativeEstimate: true,
     supplierCost: round(supplierCost),
     estimatedEbayFees: round(estimatedEbayFees),
     estimatedOutboundShipping: round(config.estimatedOutboundShipping),
@@ -381,14 +441,25 @@ function buildOpportunityScores(
   market: ReturnType<typeof buildMarketMetrics>,
   economics: ReturnType<typeof buildUnitEconomics>,
   maxIdentityScore: number,
-  demandReport: EbayLunaCandidateMarketInput["demandReport"]
+  demandReport: EbayLunaCandidateMarketInput["demandReport"],
+  taxonomyConfidence: number,
+  dimensionsRequired: boolean,
 ) {
   const velocityScore = market.totalEstimatedWeeklyVelocity > 0
     ? clamp(market.totalEstimatedWeeklyVelocity * 8)
-    : demandReport.demandValidationPassed
-      ? 30
+    : market.verifiedRecentSoldHistoryCanReplaceBrowseBaseline
+      ? clamp(
+          45 + market.identifierExactRecentSoldSellers * 15 +
+          Math.log10(market.identifierExactRecentSoldQuantity + 1) * 10
+        )
+      : demandReport.demandValidationPassed
+        ? 25
       : 5
-  const breadthScore = clamp(market.sellersWithPositiveMovement * 30)
+  const demandSellerBreadth = Math.max(
+    market.sellersWithPositiveMovement,
+    market.identifierExactRecentSoldSellers,
+  )
+  const breadthScore = clamp(demandSellerBreadth * 30)
   const concentrationPenalty = market.sellerConcentrationPercent !== null &&
     market.sellerConcentrationPercent > 70
     ? Math.min(35, market.sellerConcentrationPercent - 60)
@@ -401,7 +472,7 @@ function buildOpportunityScores(
       )
     : 0
   const competitionScore = market.activeExactComparables === 0
-    ? 10
+    ? market.verifiedRecentSoldHistoryCanReplaceBrowseBaseline ? 45 : 10
     : market.activeExactComparables <= 5
       ? 80
       : market.activeExactComparables <= 20
@@ -419,32 +490,170 @@ function buildOpportunityScores(
         ? 50
         : 20
   const listingReadinessScore = clamp(
-    candidate.identityDataCompleteness * 0.35 +
-    (candidate.weight !== null ? 15 : 0) +
-    (candidate.dimensions ? 15 : 0) +
-    (candidate.imageAuthorized ? 20 : 0) +
-    (demandReport.recommendedListingKeywordStructure.primarySearchPhrase ? 15 : 0)
+    (candidate.weight !== null ? 25 : 0) +
+    (!dimensionsRequired || candidate.dimensions ? 15 : 0) +
+    (candidate.imageAuthorized ? 30 : 0) +
+    (demandReport.recommendedListingKeywordStructure.primarySearchPhrase ? 15 : 0) +
+    (candidate.sku ? 15 : 0)
   )
-  const opportunityScore = clamp(
-    demandScore * 0.25 + economicsScore * 0.25 + competitionScore * 0.15 +
-    identityScore * 0.15 + supplyScore * 0.10 + listingReadinessScore * 0.10
+  const trendScore = market.trendAcceleration === null
+    ? market.verifiedRecentSoldHistoryCanReplaceBrowseBaseline ? 60 : 45
+    : market.trendAcceleration >= 1.5
+      ? 100
+      : market.trendAcceleration >= 1
+        ? 75
+        : market.trendAcceleration >= 0.7
+          ? 50
+          : 25
+  const potentialScore = clamp(
+    demandScore * 0.30 + economicsScore * 0.25 + competitionScore * 0.15 +
+    supplyScore * 0.10 + listingReadinessScore * 0.10 + trendScore * 0.10
+  )
+  const demandEvidenceConfidence = market.demandEvidenceRoute === "EXACT_BROWSE_SNAPSHOT_DELTAS"
+    ? 100
+    : market.demandEvidenceRoute === "OFFICIAL_RECENT_EXACT_SOLD_HISTORY"
+      ? 95
+      : market.totalEstimatedWeeklyVelocity > 0
+        ? 40
+        : 10
+  const stockConfidence = candidate.stockAgeHours !== null &&
+    candidate.stockAgeHours <= DEFAULTS.stockFreshnessHours &&
+    candidate.inventoryQuantity !== null && candidate.inventoryQuantity > 0
+    ? 100
+    : candidate.available === true
+      ? 45
+      : 0
+  const confidenceScore = clamp(
+    identityScore * 0.35 + demandEvidenceConfidence * 0.30 +
+    taxonomyConfidence * 0.15 + stockConfidence * 0.10 +
+    (economics.ready ? 100 : 0) * 0.10
+  )
+  const stockUrgency = candidate.inventoryQuantity === null
+    ? 20
+    : candidate.inventoryQuantity <= 5
+      ? 90
+      : candidate.inventoryQuantity <= 20
+        ? 65
+        : 45
+  const evidenceUrgency = market.demandEvidenceRoute === "INSUFFICIENT_EXACT_MULTI_SELLER_EVIDENCE"
+    ? 20
+    : 80
+  const urgencyScore = clamp(trendScore * 0.50 + stockUrgency * 0.25 + evidenceUrgency * 0.25)
+  // Priority combines independent axes once. Confidence is a probability-like
+  // multiplier, while urgency can only adjust the result by 15%; raw demand,
+  // identity or readiness are never re-added downstream.
+  const sellerPriorityScore = clamp(
+    potentialScore * (confidenceScore / 100) * (0.85 + (urgencyScore / 100) * 0.15)
   )
   return {
-    opportunityScore,
+    opportunityScore: sellerPriorityScore,
+    potentialScore,
+    confidenceScore,
+    urgencyScore,
+    sellerPriorityScore,
     demandScore,
     economicsScore,
     competitionScore,
     identityScore,
     supplyScore,
     listingReadinessScore,
+    trendScore,
+    demandEvidenceConfidence,
+    taxonomyConfidence,
     scoreWeights: {
-      demand: 0.25,
+      demand: 0.30,
       economics: 0.25,
       competition: 0.15,
-      identity: 0.15,
       supply: 0.10,
       listingReadiness: 0.10,
+      trend: 0.10,
+      identityAffectsPotential: false,
+      priorityFormula: "potential × confidence × bounded urgency multiplier",
     },
+  }
+}
+
+function object(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function requiresPackageDimensions(input: EbayLunaCandidateMarketInput) {
+  const metadata = object(input.candidate.metadata)
+  const explicit = metadata.requiresPackageDimensions ??
+    metadata.packageDimensionsRequired ??
+    metadata.calculatedShipping
+  if (explicit === true) return true
+  return input.taxonomyIntelligence?.requiredAspects.some((aspect) =>
+    /(?:package|shipping).*(?:dimension|length|width|height)/i.test(aspect.name)
+  ) === true
+}
+
+function candidateAspectFacts(
+  candidate: NormalizedLunaOpportunityCandidate,
+  input: EbayLunaCandidateMarketInput,
+) {
+  const metadata = object(input.candidate.metadata)
+  const facts = new Map<string, unknown>()
+  const add = (name: string, value: unknown) => {
+    if (value !== null && value !== undefined && value !== "") {
+      facts.set(normalizedIdentifier(name), value)
+    }
+  }
+  add("Brand", candidate.brand)
+  add("MPN", candidate.mpn)
+  add("Model", candidate.mpn)
+  add("GTIN", candidate.gtin)
+  add("UPC", candidate.gtin)
+  add("EAN", candidate.gtin)
+  add("Color", candidate.color)
+  add("Size", candidate.size)
+  add("Type", candidate.productType)
+  add("Number in Pack", candidate.packQuantity)
+  add("Unit Quantity", candidate.packQuantity)
+  add("Package Dimensions", candidate.dimensions)
+  for (const [name, value] of Object.entries(metadata)) add(name, value)
+  return facts
+}
+
+function buildTaxonomyVerification(
+  candidate: NormalizedLunaOpportunityCandidate,
+  input: EbayLunaCandidateMarketInput,
+) {
+  const taxonomy = input.taxonomyIntelligence
+  if (!taxonomy) {
+    return {
+      status: "NOT_REQUESTED_LEGACY_COMPATIBILITY" as const,
+      categoryConfirmed: false,
+      missingRequiredAspects: [] as string[],
+      confidence: 50,
+      hardGuards: [] as string[],
+    }
+  }
+  if (taxonomy.status !== "AVAILABLE" || !taxonomy.categoryId) {
+    return {
+      status: "CATEGORY_NOT_CONFIRMED" as const,
+      categoryConfirmed: false,
+      missingRequiredAspects: taxonomy.requiredAspects.map((aspect) => aspect.name),
+      confidence: 0,
+      hardGuards: ["NEED_EBAY_TAXONOMY_CATEGORY"],
+    }
+  }
+  const facts = candidateAspectFacts(candidate, input)
+  const missingRequiredAspects = taxonomy.requiredAspects
+    .filter((aspect) => !facts.has(normalizedIdentifier(aspect.name)))
+    .map((aspect) => aspect.name)
+  return {
+    status: missingRequiredAspects.length
+      ? "REQUIRED_ASPECTS_MISSING" as const
+      : "CATEGORY_AND_REQUIRED_ASPECTS_CONFIRMED" as const,
+    categoryConfirmed: true,
+    missingRequiredAspects,
+    confidence: missingRequiredAspects.length ? 60 : 100,
+    hardGuards: missingRequiredAspects.length
+      ? ["NEED_REQUIRED_EBAY_ITEM_ASPECTS"]
+      : [],
   }
 }
 
@@ -452,9 +661,13 @@ function buildListingIntelligencePackage(
   candidate: NormalizedLunaOpportunityCandidate,
   input: EbayLunaCandidateMarketInput,
   market: ReturnType<typeof buildMarketMetrics>,
-  economics: ReturnType<typeof buildUnitEconomics>
+  economics: ReturnType<typeof buildUnitEconomics>,
+  taxonomyVerification: ReturnType<typeof buildTaxonomyVerification>,
+  dimensionsRequired: boolean,
 ) {
-  const bestReference = input.demandReport.topSellingListings[0] ?? null
+  const bestReference = demandListings(input).find((listing) =>
+    listing.identifierExact && listing.eligibleComparable
+  ) ?? input.demandReport.topSellingListings[0] ?? null
   const observedAspects = bestReference?.localizedAspects ?? []
   return {
     packageStatus: "PARTIAL_INTELLIGENCE_PACKAGE_HUMAN_REVIEW_REQUIRED",
@@ -475,6 +688,7 @@ function buildListingIntelligencePackage(
       taxonomyStatus: input.taxonomyIntelligence?.status ?? "NEED_EBAY_TAXONOMY_ASPECT_REQUIREMENTS",
       requiredAspects: input.taxonomyIntelligence?.requiredAspects ?? [],
       recommendedAspects: input.taxonomyIntelligence?.recommendedAspects ?? [],
+      verification: taxonomyVerification,
     },
     itemSpecifics: {
       supplierConfirmed: {
@@ -490,6 +704,7 @@ function buildListingIntelligencePackage(
     pricing: {
       ...economics,
       observedPriceRange: market.priceInterquartileRange,
+      conservativePriceSource: "P25 of identifier-exact total buyer prices",
     },
     offerPatterns: {
       referenceListingId: bestReference?.comparableId ?? null,
@@ -513,8 +728,17 @@ function buildListingIntelligencePackage(
     },
     compliance: {
       pendingRestrictionGuards: candidate.restrictionGuards,
+      taxonomyGuards: taxonomyVerification.hardGuards,
       claimsMustBeSupplierVerified: true,
       humanReviewRequired: true,
+    },
+    fulfillmentEvidence: {
+      weightConfirmed: candidate.weight !== null,
+      dimensionsRequired,
+      dimensionsConfirmed: candidate.dimensions !== null,
+      dimensionsPolicy: dimensionsRequired
+        ? "REQUIRED_BY_EXPLICIT_SHIPPING_OR_TAXONOMY_EVIDENCE"
+        : "NOT_A_UNIVERSAL_LISTING_GATE",
     },
     inventoryMappingPreview: {
       recommended: true,
@@ -538,10 +762,18 @@ export function buildEbayLunaOpportunityAssessment(
     current,
     input.observationHistory ?? []
   )
-  const enrichedListings = input.demandReport.topSellingListings.map((listing) => ({
-    ...listing,
-    ...buildComparableIdentity(candidate, listing),
-  }))
+  const enrichedListings = demandListings(input)
+    .map((listing) => ({
+      ...listing,
+      ...buildComparableIdentity(candidate, listing),
+    }))
+    .sort((left, right) =>
+      Number(right.exactIdentityConfirmedByIdentifier) - Number(left.exactIdentityConfirmedByIdentifier) ||
+      left.identityConflicts.length - right.identityConflicts.length ||
+      (numberOrNull((right as Record<string, unknown>).professionalReferenceScore) ?? 0) -
+        (numberOrNull((left as Record<string, unknown>).professionalReferenceScore) ?? 0) ||
+      right.identityMatchScore - left.identityMatchScore
+    )
   const eligibleIdentityListings = enrichedListings.filter((listing) =>
     listing.identityConflicts.length === 0 && listing.identityMatchScore >= 78
   )
@@ -550,15 +782,36 @@ export function buildEbayLunaOpportunityAssessment(
     (listing) => listing.exactIdentityConfirmedByIdentifier
   )
   const market = buildMarketMetrics(input, current, rotations)
-  const economics = buildUnitEconomics(candidate, market.medianTotalBuyerPrice, options)
+  const conservativePrice = market.conservativeTotalBuyerPrice ?? market.medianTotalBuyerPrice
+  const economics = buildUnitEconomics(
+    candidate,
+    conservativePrice,
+    options,
+    market.conservativeTotalBuyerPrice !== null
+      ? "EXACT_COMPARABLE_TOTAL_BUYER_PRICE_P25"
+      : "EXACT_COMPARABLE_TOTAL_BUYER_PRICE_MEDIAN_FALLBACK",
+  )
+  const dimensionsRequired = requiresPackageDimensions(input)
+  const taxonomyVerification = buildTaxonomyVerification(candidate, input)
   const scores = buildOpportunityScores(
     candidate,
     market,
     economics,
     maxIdentityScore,
-    input.demandReport
+    input.demandReport,
+    taxonomyVerification.confidence,
+    dimensionsRequired,
   )
   const config = { ...DEFAULTS, ...options }
+  const packageEvidenceGates = [
+    candidate.weight === null && !candidate.dimensions
+      ? "NEED_PACKAGE_WEIGHT_AND_DIMENSIONS"
+      : candidate.weight === null
+        ? "NEED_PACKAGE_WEIGHT"
+        : dimensionsRequired && !candidate.dimensions
+          ? "NEED_PACKAGE_DIMENSIONS"
+          : "",
+  ]
   const hardGates = [
     candidate.available === false ? "LUNA_OUT_OF_STOCK" : "",
     candidate.available !== false && (candidate.inventoryQuantity === null || candidate.inventoryQuantity <= 0)
@@ -567,8 +820,9 @@ export function buildEbayLunaOpportunityAssessment(
       ? "NEED_FRESH_LUNA_STOCK" : "",
     !exactIdentityConfirmed ? "NEED_EXACT_GTIN_OR_BRAND_MPN_MATCH" : "",
     candidate.supplierCost === null ? "NEED_CONFIRMED_SUPPLIER_COST" : "",
-    candidate.weight === null || !candidate.dimensions ? "NEED_PACKAGE_WEIGHT_AND_DIMENSIONS" : "",
+    ...packageEvidenceGates,
     !candidate.imageAuthorized ? "NEED_AUTHORIZED_PRODUCT_IMAGES" : "",
+    ...taxonomyVerification.hardGuards,
     ...candidate.restrictionGuards,
     economics.ready && !economics.passesProfitGate ? "UNIT_ECONOMICS_BELOW_MINIMUM" : "",
   ].filter(Boolean)
@@ -579,11 +833,20 @@ export function buildEbayLunaOpportunityAssessment(
       ? "SINGLE_SELLER_ROTATION_CONCENTRATION" : "",
     market.sellerConcentrationPercent !== null && market.sellerConcentrationPercent > 70
       ? "HIGH_SELLER_CONCENTRATION" : "",
-    !input.demandReport.demandValidationPassed ? "NEED_MULTI_SELLER_DEMAND_EVIDENCE" : "",
+    market.demandEvidenceRoute === "INSUFFICIENT_EXACT_MULTI_SELLER_EVIDENCE"
+      ? "NEED_MULTI_SELLER_DEMAND_EVIDENCE" : "",
   ].filter(Boolean)
-  const listingPackage = buildListingIntelligencePackage(candidate, input, market, economics)
+  const listingPackage = buildListingIntelligencePackage(
+    candidate,
+    input,
+    market,
+    economics,
+    taxonomyVerification,
+    dimensionsRequired,
+  )
   const canProceedToListingPackage = hardGates.length === 0 &&
-    evidenceGuards.length === 0 && scores.opportunityScore >= 70
+    evidenceGuards.length === 0 && scores.potentialScore >= 70 &&
+    scores.confidenceScore >= 70
   const decision = candidate.available === false || hardGates.includes("UNIT_ECONOMICS_BELOW_MINIMUM")
     ? "REJECT_OR_HOLD"
     : !exactIdentityConfirmed
@@ -605,6 +868,12 @@ export function buildEbayLunaOpportunityAssessment(
       matchingPriority: ["GTIN", "BRAND_MPN", "EPID", "ATTRIBUTES", "TITLE_HUMAN_REVIEW"],
     },
     market,
+    taxonomyVerification,
+    fulfillmentEvidence: {
+      weightConfirmed: candidate.weight !== null,
+      dimensionsRequired,
+      dimensionsConfirmed: candidate.dimensions !== null,
+    },
     currentObservations: current,
     rotations,
     economics,

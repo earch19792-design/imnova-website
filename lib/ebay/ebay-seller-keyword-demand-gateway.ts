@@ -22,8 +22,23 @@ const MARKETPLACE_ID = "EBAY_US"
 const DETAIL_SAMPLE_LIMIT = 20
 const DETAIL_CONCURRENCY = 5
 const EBAY_REQUEST_TIMEOUT_MS = 8_000
+const EBAY_MAX_RETRIES = 3
+const TAXONOMY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1_000
 
 type JsonRecord = Record<string, unknown>
+
+type TokenCacheEntry = {
+  token: string
+  expiresAt: number
+}
+
+type TaxonomyCacheEntry = {
+  value: EbayTaxonomyListingIntelligence
+  expiresAt: number
+}
+
+const tokenCache = new Map<string, TokenCacheEntry>()
+const taxonomyCache = new Map<string, TaxonomyCacheEntry>()
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -40,6 +55,7 @@ function text(value: unknown) {
 }
 
 function numberOrNull(value: unknown) {
+  if (value === null || value === undefined || value === "") return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
 }
@@ -91,45 +107,95 @@ function safeErrorCode(error: unknown) {
     : "EBAY_READONLY_MARKET_VALIDATION_FAILED"
 }
 
+async function wait(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function retryDelay(response: Response, attempt: number) {
+  const retryAfter = Number(response.headers.get("retry-after"))
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return Math.min(retryAfter * 1_000, 8_000)
+  }
+  return Math.min(400 * (2 ** attempt), 3_200) + Math.floor(Math.random() * 200)
+}
+
 async function getApplicationToken(scope: string) {
+  const cached = tokenCache.get(scope)
+  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token
   const clientId = process.env.EBAY_CLIENT_ID?.trim() ?? ""
   const clientSecret = process.env.EBAY_CLIENT_SECRET?.trim() ?? ""
   if (!clientId || !clientSecret) {
     throw new Error("EBAY_READONLY_ENV_MISSING")
   }
   const credentials = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")
-  const response = await fetch(TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${credentials}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({ grant_type: "client_credentials", scope }),
-    cache: "no-store",
-    signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
-  })
-  if (!response.ok) throw new Error(`EBAY_OAUTH_${response.status}`)
-  const payload = record(await response.json())
-  const accessToken = text(payload.access_token)
-  if (!accessToken) throw new Error("EBAY_OAUTH_TOKEN_MISSING")
-  return accessToken
+  for (let attempt = 0; attempt < EBAY_MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(TOKEN_ENDPOINT, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${credentials}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ grant_type: "client_credentials", scope }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
+      })
+      if (response.ok) {
+        const payload = record(await response.json())
+        const accessToken = text(payload.access_token)
+        if (!accessToken) throw new Error("EBAY_OAUTH_TOKEN_MISSING")
+        const expiresIn = Math.max(120, numberOrNull(payload.expires_in) ?? 7_200)
+        tokenCache.set(scope, {
+          token: accessToken,
+          expiresAt: Date.now() + expiresIn * 1_000,
+        })
+        return accessToken
+      }
+      if (![429, 500, 502, 503, 504].includes(response.status) || attempt === EBAY_MAX_RETRIES - 1) {
+        throw new Error(`EBAY_OAUTH_${response.status}`)
+      }
+      await wait(retryDelay(response, attempt))
+    } catch (error) {
+      const code = error instanceof Error ? error.message : ""
+      if (code.startsWith("EBAY_OAUTH_") || attempt === EBAY_MAX_RETRIES - 1) throw error
+      await wait(Math.min(400 * (2 ** attempt), 3_200) + Math.floor(Math.random() * 200))
+    }
+  }
+  throw new Error("EBAY_OAUTH_FAILED")
 }
 
 async function getEbayJson(url: URL, accessToken: string) {
   assertEbaySellerKeywordReadonlyRequest(url.href, "GET")
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-      "X-EBAY-C-ENDUSERCTX":
-        "contextualLocation=country%3DUS%2Czip%3D33487",
-    },
-    cache: "no-store",
-    signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
-  })
-  if (!response.ok) throw new Error(`EBAY_READONLY_GET_${response.status}`)
-  return record(await response.json())
+  for (let attempt = 0; attempt < EBAY_MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+          "X-EBAY-C-ENDUSERCTX":
+            "contextualLocation=country%3DUS%2Czip%3D33487",
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
+      })
+      if (response.ok) return record(await response.json())
+      if (response.status === 401) {
+        for (const [scope, cached] of tokenCache) {
+          if (cached.token === accessToken) tokenCache.delete(scope)
+        }
+      }
+      if (![429, 500, 502, 503, 504].includes(response.status) || attempt === EBAY_MAX_RETRIES - 1) {
+        throw new Error(`EBAY_READONLY_GET_${response.status}`)
+      }
+      await wait(retryDelay(response, attempt))
+    } catch (error) {
+      const code = error instanceof Error ? error.message : ""
+      if (code.startsWith("EBAY_READONLY_GET_") || attempt === EBAY_MAX_RETRIES - 1) throw error
+      await wait(Math.min(400 * (2 ** attempt), 3_200) + Math.floor(Math.random() * 200))
+    }
+  }
+  throw new Error("EBAY_READONLY_GET_FAILED")
 }
 
 function mapComparable(
@@ -296,7 +362,7 @@ export async function runEbaySellerKeywordDemandValidation(
         insightsAvailability = "AVAILABLE"
       } catch (error) {
         const code = safeErrorCode(error)
-        insightsAvailability = /403|401|OAUTH/.test(code)
+        insightsAvailability = /(?:OAUTH|READONLY_GET)_(?:401|403)$/.test(code)
           ? "NOT_ENTITLED"
           : "REQUEST_FAILED"
       }
@@ -310,6 +376,10 @@ export async function runEbaySellerKeywordDemandValidation(
     return buildEbaySellerKeywordDemandValidation({
       candidate,
       comparables: [...byId.values()],
+      candidateFoundCount:
+        numberOrNull(activeSearch.payload.total) ?? activeSearch.items.length,
+      returnedCandidateCount: activeSearch.items.length,
+      enrichedSampleCount: activeDetails.length,
       insightsAvailability,
     })
   } finally {
@@ -344,21 +414,7 @@ export async function discoverEbayBestSellingProducts(
     const url = new URL(BUY_MARKETING_ENDPOINT)
     url.searchParams.set("category_id", categoryId)
     url.searchParams.set("metric_name", "BEST_SELLING")
-    assertEbaySellerKeywordReadonlyRequest(url.href, "GET")
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-      },
-      cache: "no-store",
-      signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
-    })
-    if (response.status === 401 || response.status === 403) {
-      return { status: "NOT_AUTHORIZED", products: [] }
-    }
-    if (!response.ok) return { status: "REQUEST_FAILED", products: [] }
-    const payload = record(await response.json())
+    const payload = await getEbayJson(url, token)
     const products = array(payload.merchandisedProducts).map(record).map((product) => ({
       categoryId,
       epid: text(product.epid) || null,
@@ -370,6 +426,12 @@ export async function discoverEbayBestSellingProducts(
       evidenceClass: "EBAY_MARKETING_BEST_SELLING_PRODUCT" as const,
     })).filter((product) => product.title)
     return { status: "AVAILABLE", products }
+  } catch (error) {
+    const code = safeErrorCode(error)
+    if (/(?:OAUTH|READONLY_GET)_(?:401|403)$/.test(code)) {
+      return { status: "NOT_AUTHORIZED", products: [] }
+    }
+    return { status: "REQUEST_FAILED", products: [] }
   } finally {
     token = ""
   }
@@ -420,6 +482,14 @@ export async function getEbayTaxonomyListingIntelligence(
   knownCategoryId?: string | null
 ): Promise<EbayTaxonomyListingIntelligence> {
   let token = ""
+  const normalizedKnownCategory = /^\d+$/.test(text(knownCategoryId))
+    ? text(knownCategoryId)
+    : ""
+  const cacheKey = normalizedKnownCategory
+    ? `category:${normalizedKnownCategory}`
+    : `query:${query.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 160)}`
+  const cached = taxonomyCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
   const empty = (status: EbayTaxonomyListingIntelligence["status"]): EbayTaxonomyListingIntelligence => ({
     status,
     categoryTreeId: null,
@@ -437,7 +507,7 @@ export async function getEbayTaxonomyListingIntelligence(
     const categoryTreeId = text(treePayload.categoryTreeId)
     if (!categoryTreeId) return empty("REQUEST_FAILED")
 
-    let categoryId = /^\d+$/.test(text(knownCategoryId)) ? text(knownCategoryId) : ""
+    let categoryId = normalizedKnownCategory
     let categoryName = ""
     if (!categoryId) {
       const suggestionUrl = new URL(
@@ -459,7 +529,7 @@ export async function getEbayTaxonomyListingIntelligence(
     aspectsUrl.searchParams.set("category_id", categoryId)
     const aspectsPayload = await getEbayJson(aspectsUrl, token)
     const aspects = array(aspectsPayload.aspects).map(mapTaxonomyAspect).filter((aspect) => aspect.name)
-    return {
+    const value: EbayTaxonomyListingIntelligence = {
       status: "AVAILABLE",
       categoryTreeId,
       categoryId,
@@ -468,6 +538,11 @@ export async function getEbayTaxonomyListingIntelligence(
       recommendedAspects: aspects.filter((aspect) => !aspect.required && aspect.usage === "RECOMMENDED").map(({ required: _required, usage: _usage, ...aspect }) => aspect),
       source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
     }
+    taxonomyCache.set(cacheKey, {
+      value,
+      expiresAt: Date.now() + TAXONOMY_CACHE_TTL_MS,
+    })
+    return value
   } catch {
     return empty("REQUEST_FAILED")
   } finally {

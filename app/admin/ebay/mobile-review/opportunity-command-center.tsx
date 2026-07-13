@@ -17,8 +17,9 @@ type Run = {
   last_batch_at: string | null
 }
 
-type Opportunity = {
+export type Opportunity = {
   id: string
+  candidate_key: string
   market_radar_product_id: string | null
   product_title: string
   variant_title: string | null
@@ -39,6 +40,7 @@ type Opportunity = {
   ebay_candidate_count: number
   exact_comparable_count: number
   seller_priority_score: number
+  score_axes?: { potential: number; confidence: number; urgency: number }
   seller_lane: string
   next_seller_action: string
   can_prepare_listing_package: boolean
@@ -124,7 +126,7 @@ export function OpportunityCommandCenter({
   onReviewCandidate,
   onRadarRefresh,
 }: {
-  onReviewCandidate: (marketRadarProductId: string) => boolean
+  onReviewCandidate: (opportunity: Opportunity) => boolean
   onRadarRefresh: () => Promise<void>
 }) {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
@@ -132,6 +134,7 @@ export function OpportunityCommandCenter({
   const [message, setMessage] = useState("Cargando cola eBay-first…")
   const [error, setError] = useState("")
   const [filter, setFilter] = useState("all")
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null)
   const currentRun = dashboard?.runs.find((run) => run.status === "running") ?? dashboard?.runs[0] ?? null
 
   async function request(body?: Record<string, unknown>) {
@@ -156,10 +159,30 @@ export function OpportunityCommandCenter({
     try {
       const payload = await request()
       setDashboard(payload.dashboard)
+      setRefreshedAt(new Date().toISOString())
       setMessage("")
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "No se pudo consultar la cola.")
     }
+  }
+
+  async function syncActiveListings() {
+    setBusy(true); setError(""); setMessage("Sincronizando tus listings activos desde eBay…")
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError || !data.session) throw new Error("La sesión Admin expiró.")
+      const response = await fetch("/api/admin/ebay/active-listings/sync", {
+        method: "POST",
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${data.session.access_token}` },
+      })
+      const payload = await response.json()
+      if (!response.ok || !payload.success) throw new Error(payload.error ?? "ACTIVE_LISTING_SYNC_FAILED")
+      await load()
+      setMessage(`Listings sincronizados: ${payload.sync?.listingsStored ?? 0}; vinculados con Luna: ${payload.sync?.listingsMappedToLuna ?? 0}. La protección ya usa el estado más reciente.`)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "ACTIVE_LISTING_SYNC_FAILED")
+    } finally { setBusy(false) }
   }
 
   useEffect(() => { void load() }, [])
@@ -242,6 +265,7 @@ export function OpportunityCommandCenter({
       </div>
       {currentRun && <div className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-3"><div className="flex justify-between text-xs font-bold"><span>{currentRun.status.toUpperCase()} · {currentRun.processed_candidates}/{currentRun.total_candidates}</span><span>{progressLabel}</span></div><div className="mt-2 h-3 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-gradient-to-r from-violet-300 to-cyan-200" style={{ width: `${Math.max(progressValue > 0 ? 1 : 0, progressValue)}%` }} /></div><p className="mt-2 text-xs text-white/55">Exitosos {currentRun.successful_candidates} · Fallidos {currentRun.failed_candidates} · última ejecución {formatDate(currentRun.last_batch_at)}</p></div>}
       {dashboard?.automation && <div className="mt-3 rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.05] p-3 text-xs leading-5 text-emerald-50"><strong>Automatización:</strong> prioridad primero · {dashboard.automation.productionScheduleLabel}. El cron corre en Production; en este Preview usa “Acelerar 20 productos”.</div>}
+      {refreshedAt && <p className="mt-3 text-right text-[11px] font-bold text-white/45">Panel actualizado {formatDate(refreshedAt)}</p>}
       {message && <p aria-live="polite" className="mt-3 rounded-2xl border border-white/10 p-3 text-sm text-white/70">{message}</p>}
       {error && <p role="alert" className="mt-3 rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-3 text-sm text-rose-50">{error}</p>}
     </header>
@@ -257,25 +281,26 @@ export function OpportunityCommandCenter({
       </div>
 
       <section className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.045] p-4">
-        <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Fast lane</p><h3 className="mt-1 text-xl font-black">Top para trabajar ahora</h3></div><span className="rounded-xl bg-emerald-100 px-3 py-2 text-sm font-black text-black">Top {topPotential.length}</span></div>
+        <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Ranking canónico · una sola fuente</p><h3 className="mt-1 text-xl font-black">Top para trabajar ahora</h3></div><span className="rounded-xl bg-emerald-100 px-3 py-2 text-sm font-black text-black">Top {topPotential.length}</span></div>
         <div className="mt-4 space-y-3">{topPotential.map((row, index) => <article key={row.id} className="rounded-2xl border border-white/10 bg-black/25 p-3">
-          <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black text-emerald-100">#{index + 1} · {sellerLaneLabel(row.seller_lane)}</p><h4 className="mt-1 font-black leading-5">{row.product_title}</h4></div><strong className="rounded-xl bg-white px-2 py-1 text-black">{row.seller_priority_score}</strong></div>
+          <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black text-emerald-100">#{index + 1} · {sellerLaneLabel(row.seller_lane)}</p><h4 className="mt-1 font-black leading-5">{row.product_title}</h4></div><div className="rounded-xl bg-white px-2 py-1 text-center text-black"><span className="block text-[9px] font-black uppercase">Prioridad</span><strong>{row.seller_priority_score}</strong></div></div>
+          {row.score_axes && <dl className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px]"><div className="rounded-xl bg-white/[0.06] p-2"><dt className="text-white/50">Potencial</dt><dd className="mt-1 font-black">{Math.round(row.score_axes.potential)}</dd></div><div className="rounded-xl bg-white/[0.06] p-2"><dt className="text-white/50">Confianza</dt><dd className="mt-1 font-black">{Math.round(row.score_axes.confidence)}</dd></div><div className="rounded-xl bg-white/[0.06] p-2"><dt className="text-white/50">Urgencia</dt><dd className="mt-1 font-black">{Math.round(row.score_axes.urgency)}</dd></div></dl>}
           <p className="mt-2 text-xs text-white/60">{row.ebay_candidate_count} candidatos eBay · {row.exact_comparable_count} comparables exactos</p>
           <p className="mt-2 text-xs leading-5 text-white/75">{row.next_seller_action}</p>
-          <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" disabled={!row.market_radar_product_id} onClick={() => { if (row.market_radar_product_id && !onReviewCandidate(row.market_radar_product_id)) setMessage("Radar no tiene este producto cargado para revisión móvil todavía.") }} className="min-h-11 rounded-xl bg-cyan-200 px-3 text-xs font-black text-black disabled:opacity-40">Validar ahora</button>{row.listing_intake_url ? <a href={row.listing_intake_url} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-emerald-200 px-3 text-center text-xs font-black text-black">Preparar listing</a> : <span className="inline-flex min-h-11 items-center justify-center rounded-xl border border-white/15 px-3 text-center text-[11px] text-white/55">Listing aún bloqueado</span>}</div>
+          <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" disabled={!row.market_radar_product_id} onClick={() => { if (row.market_radar_product_id && !onReviewCandidate(row)) setMessage("Radar no tiene este producto cargado para revisión móvil todavía.") }} className="min-h-11 rounded-xl bg-cyan-200 px-3 text-xs font-black text-black disabled:opacity-40">Validar ahora</button><a href={`/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(row.id)}&candidate=${encodeURIComponent(row.candidate_key)}`} className="inline-flex min-h-11 items-center justify-center rounded-xl border border-emerald-200/35 px-3 text-center text-xs font-black text-emerald-50">Workspace</a></div>
         </article>)}{!topPotential.length && <p className="text-sm text-white/55">Acelera el scan para construir el primer Top con evidencia eBay.</p>}</div>
       </section>
 
       <nav className="flex gap-2 overflow-x-auto pb-1">{["all", "ready", "review", "watchlist", "hold"].map((value) => <button key={value} onClick={() => setFilter(value)} className={`min-h-11 shrink-0 rounded-full px-4 text-xs font-black uppercase ${filter === value ? "bg-white text-black" : "border border-white/15"}`}>{value === "all" ? "Todas" : label(value)}</button>)}</nav>
 
       <div className="space-y-3">{rows.map((row, index) => <article key={row.id} className={`rounded-3xl border p-4 ${cardTone(row.queue_status)}`}>
-        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase">#{index + 1} · {label(row.queue_status)}</p><h3 className="mt-2 text-lg font-black">{row.product_title}</h3><p className="mt-1 text-xs text-white/55">{row.variant_title ?? "Variante general"} · {row.supplier_sku ?? "SKU pendiente"}</p></div><span className="rounded-2xl bg-white px-3 py-2 text-xl font-black text-black">{Math.round(Number(row.opportunity_score))}</span></div>
+        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase">#{index + 1} · {label(row.queue_status)}</p><h3 className="mt-2 text-lg font-black">{row.product_title}</h3><p className="mt-1 text-xs text-white/55">{row.variant_title ?? "Variante general"} · {row.supplier_sku ?? "SKU pendiente"}</p></div><div className="rounded-2xl bg-white px-3 py-2 text-center text-black"><span className="block text-[9px] font-black uppercase">Prioridad</span><strong className="text-xl">{row.seller_priority_score}</strong></div></div>
         <dl className="mt-3 grid grid-cols-3 gap-2 text-xs"><div><dt className="text-white/50">Demanda</dt><dd className="font-black">{Math.round(Number(row.demand_score))}</dd></div><div><dt className="text-white/50">Economía</dt><dd className="font-black">{Math.round(Number(row.economics_score))}</dd></div><div><dt className="text-white/50">Identidad</dt><dd className="font-black">{Math.round(Number(row.identity_score))}</dd></div><div><dt className="text-white/50">Candidatos</dt><dd className="font-black">{row.ebay_candidate_count}</dd></div><div><dt className="text-white/50">Exactos</dt><dd className="font-black">{row.exact_comparable_count}</dd></div><div><dt className="text-white/50">Prioridad</dt><dd className="font-black">{row.seller_priority_score}</dd></div></dl>
         <details className="mt-3 rounded-2xl border border-white/15 p-3"><summary className="cursor-pointer text-sm font-black">Evidencia y estructura</summary><dl className="mt-3 grid gap-2 text-xs"><div><dt className="text-white/50">Siguiente acción</dt><dd className="mt-1 font-bold">{row.next_seller_action}</dd></div><div><dt className="text-white/50">Frase principal</dt><dd className="mt-1 font-bold">{row.winning_structure.primarySearchPhrase ?? "Pendiente de evidencia multi-vendedor"}</dd></div><div><dt className="text-white/50">Categoría</dt><dd className="mt-1 font-bold">{row.winning_structure.categoryName ?? row.winning_structure.categoryId ?? "Pendiente"}</dd></div></dl><div className="mt-3 space-y-2">{row.top_ebay_candidates.map((candidate, candidateIndex) => <div key={`${candidate.title}-${candidateIndex}`} className="rounded-xl bg-black/25 p-2 text-xs"><strong>Referencia {candidateIndex + 1}: {candidate.title}</strong><p className="mt-1 text-white/55">{candidate.price === null ? "Precio pendiente" : `${candidate.currency} ${candidate.price.toFixed(2)}`} · match {candidate.identityMatchScore}</p></div>)}</div></details>
-        <div className="mt-3 grid grid-cols-[1fr_auto] gap-2"><details className="rounded-2xl border border-white/15 p-3"><summary className="cursor-pointer text-sm font-black">Guardas</summary><ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{[...row.hard_gates, ...row.evidence_guards].map((guard) => <li key={guard}>{label(guard)}</li>)}</ul></details>{row.market_radar_product_id && <button onClick={() => { if (!onReviewCandidate(row.market_radar_product_id!)) setMessage("Radar no tiene este producto cargado para revisión móvil todavía.") }} className="min-h-12 rounded-2xl bg-emerald-200 px-3 text-xs font-black text-black">Revisar</button>}</div>
+        <div className="mt-3 grid grid-cols-[1fr_auto] gap-2"><details className="rounded-2xl border border-white/15 p-3"><summary className="cursor-pointer text-sm font-black">Guardas</summary><ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{[...row.hard_gates, ...row.evidence_guards].map((guard) => <li key={guard}>{label(guard)}</li>)}</ul></details>{row.market_radar_product_id && <button onClick={() => { if (!onReviewCandidate(row)) setMessage("Radar no tiene este producto cargado para revisión móvil todavía.") }} className="min-h-12 rounded-2xl bg-emerald-200 px-3 text-xs font-black text-black">Revisar</button>}</div>
       </article>)}{!rows.length && <p className="rounded-2xl border border-white/10 p-5 text-sm text-white/55">Inicia el scan prioritario para construir la cola.</p>}</div>
 
-      <details className="rounded-3xl border border-white/10 p-4"><summary className="cursor-pointer font-black">Monitoreo y riesgos</summary><p className="mt-3 text-sm text-white/65">{dashboard.events.length} cambios Luna recientes · {dashboard.activeListingRisks.length} riesgos abiertos de listings.</p>{dashboard.activeListingRisks.slice(0, 8).map((risk) => <div key={risk.id} className="mt-2 rounded-2xl border border-rose-200/15 p-3 text-xs"><strong>{risk.risk_priority.toUpperCase()} · {label(risk.risk_type)}</strong><p className="mt-1 text-white/65">{risk.risk_summary}</p></div>)}</details>
+      <details className="rounded-3xl border border-white/10 p-4"><summary className="cursor-pointer font-black">Monitoreo y riesgos</summary><p className="mt-3 text-sm text-white/65">{dashboard.events.length} cambios Luna recientes · {dashboard.activeListingRisks.length} riesgos abiertos de listings.</p><button type="button" disabled={busy} onClick={() => void syncActiveListings()} className="mt-3 min-h-12 w-full rounded-2xl border border-cyan-200/30 px-3 font-black text-cyan-50 disabled:opacity-50">Sincronizar listings activos</button>{dashboard.activeListingRisks.slice(0, 8).map((risk) => <div key={risk.id} className="mt-2 rounded-2xl border border-rose-200/15 p-3 text-xs"><strong>{risk.risk_priority.toUpperCase()} · {label(risk.risk_type)}</strong><p className="mt-1 text-white/65">{risk.risk_summary}</p></div>)}</details>
     </>}
   </section>
 }

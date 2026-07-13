@@ -57,6 +57,11 @@ export type EbaySellerKeywordCandidate = {
 export type EbaySellerKeywordDemandInput = {
   candidate: EbaySellerKeywordCandidate
   comparables?: EbaySellerComparableInput[] | null
+  candidateFoundCount?: number | null
+  returnedCandidateCount?: number | null
+  enrichedSampleCount?: number | null
+  asOf?: string | Date | null
+  soldRecencyDays?: number | null
   insightsAvailability?:
     | "AVAILABLE"
     | "NOT_CONFIGURED"
@@ -126,6 +131,34 @@ function cleanText(value: unknown) {
 function numberOrZero(value: unknown) {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
+function normalizedIdentifier(value: unknown) {
+  return cleanText(value).toLowerCase().replace(/[^a-z0-9]/g, "")
+}
+
+function comparableAspectValue(
+  aspects: EbaySellerComparableInput["localizedAspects"],
+  names: string[]
+) {
+  const expected = new Set(names.map(normalizedIdentifier))
+  return cleanText(aspects?.find((aspect) =>
+    expected.has(normalizedIdentifier(aspect?.name))
+  )?.value)
+}
+
+function normalizedSeller(value: unknown) {
+  // Missing seller identity must never manufacture cross-seller evidence.
+  return normalize(value) || "unknown-seller"
+}
+
+function isRecentDate(value: unknown, asOf: Date, recencyDays: number) {
+  const raw = cleanText(value)
+  if (!raw) return false
+  const observed = new Date(raw)
+  if (!Number.isFinite(observed.getTime())) return false
+  const ageDays = (asOf.getTime() - observed.getTime()) / 86_400_000
+  return ageDays >= -1 && ageDays <= recencyDays
 }
 
 function normalize(value: unknown) {
@@ -334,18 +367,56 @@ export function buildEbaySellerKeywordDemandValidation(
   const candidateText = [candidateName, input.candidate.variantTitle]
     .filter(Boolean)
     .join(" ")
+  const requestedAsOf = input.asOf ? new Date(input.asOf) : new Date()
+  const asOf = Number.isFinite(requestedAsOf.getTime()) ? requestedAsOf : new Date()
+  const soldRecencyDays = Math.max(1, numberOrZero(input.soldRecencyDays) || 90)
+  const candidateGtin = normalizedIdentifier(input.candidate.gtin)
+  const candidateBrand = normalizedIdentifier(input.candidate.brand)
+  const candidateMpn = normalizedIdentifier(input.candidate.mpn)
   const comparables = (input.comparables ?? []).map((entry, index) => {
     const title = cleanText(entry.title)
     const identity = buildIdentityAssessment(candidateText, title)
+    const listingGtin = normalizedIdentifier(entry.gtin)
+    const listingBrand = normalizedIdentifier(entry.brand) ||
+      normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["brand"]))
+    const listingMpn = normalizedIdentifier(entry.mpn) ||
+      normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["mpn", "model"]))
+    const exactGtin = Boolean(candidateGtin && listingGtin && candidateGtin === listingGtin)
+    const exactBrandMpn = Boolean(
+      candidateBrand && listingBrand && candidateBrand === listingBrand &&
+      candidateMpn && listingMpn && candidateMpn === listingMpn
+    )
+    const gtinConflict = Boolean(candidateGtin && listingGtin && candidateGtin !== listingGtin)
+    const softBrandConflict = Boolean(
+      exactGtin && candidateBrand && listingBrand && candidateBrand !== listingBrand
+    )
+    const identifierExact = !gtinConflict && (exactGtin || exactBrandMpn)
     const verifiedSoldQuantity =
       entry.source === "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
         ? numberOrZero(entry.totalSoldQuantity)
         : 0
+    const verifiedSoldRecent = verifiedSoldQuantity > 0 && isRecentDate(
+      entry.lastSoldDate ?? entry.itemEndDate,
+      asOf,
+      soldRecencyDays,
+    )
     const estimatedSoldQuantity =
       entry.source === "EBAY_BROWSE_ESTIMATED_SALES"
         ? numberOrZero(entry.estimatedSoldQuantity)
         : 0
-    const salesQuantity = verifiedSoldQuantity || estimatedSoldQuantity
+    const salesQuantity = (verifiedSoldRecent ? verifiedSoldQuantity : 0) || estimatedSoldQuantity
+    const eligibleComparable = Boolean(title) && !gtinConflict &&
+      identity.conflicts.length === 0 &&
+      (identifierExact || ["EXACT", "STRONG"].includes(identity.matchQuality))
+    const identityEvidenceClass = identifierExact
+      ? exactGtin
+        ? "IDENTIFIER_EXACT_GTIN"
+        : "IDENTIFIER_EXACT_BRAND_MPN"
+      : eligibleComparable
+        ? "STRONG_SIMILAR_NO_IDENTIFIER"
+        : gtinConflict || identity.conflicts.length
+          ? "IDENTITY_CONFLICT"
+          : "CANDIDATE_ONLY"
     return {
       comparableId: cleanText(entry.itemId) || `ebay-comparable-${index + 1}`,
       title,
@@ -359,6 +430,8 @@ export function buildEbaySellerKeywordDemandValidation(
       sellerFeedbackScore: numberOrZero(entry.sellerFeedbackScore),
       sellerFeedbackPercentage: numberOrZero(entry.sellerFeedbackPercentage),
       verifiedSoldQuantity,
+      verifiedSoldRecent,
+      soldEvidenceAgeLimitDays: soldRecencyDays,
       estimatedSoldQuantity,
       salesQuantity,
       lastSoldDate: cleanText(entry.lastSoldDate) || null,
@@ -381,20 +454,27 @@ export function buildEbaySellerKeywordDemandValidation(
       itemOriginDate: cleanText(entry.itemOriginDate) || null,
       itemEndDate: cleanText(entry.itemEndDate) || null,
       evidenceSource: entry.source,
-      identityMatchScore: identity.score,
-      identityMatchQuality: identity.matchQuality,
-      identityConflicts: identity.conflicts,
-      eligibleComparable:
-        Boolean(title) &&
-        identity.conflicts.length === 0 &&
-        ["EXACT", "STRONG"].includes(identity.matchQuality),
+      identityMatchScore: identifierExact ? 100 : identity.score,
+      identityMatchQuality: identifierExact ? "EXACT_IDENTIFIER" : identity.matchQuality,
+      identityEvidenceClass,
+      identifierMatchType: exactGtin ? "GTIN" : exactBrandMpn ? "BRAND_MPN" : null,
+      identifierExact,
+      softIdentityConflicts: softBrandConflict ? ["BRAND_CONFLICT_OVERRIDDEN_BY_EXACT_GTIN"] : [],
+      identityConflicts: [
+        ...identity.conflicts,
+        ...(gtinConflict ? ["GTIN_CONFLICT"] : []),
+      ],
+      eligibleComparable,
       exactTitleCopied: false,
       imageCopied: false,
     }
   })
 
   const eligible = comparables.filter((entry) => entry.eligibleComparable)
-  const soldEvidence = eligible.filter((entry) => entry.verifiedSoldQuantity > 0)
+  const soldEvidence = eligible.filter((entry) => entry.verifiedSoldRecent)
+  const staleSoldEvidence = eligible.filter((entry) =>
+    entry.verifiedSoldQuantity > 0 && !entry.verifiedSoldRecent
+  )
   const estimatedEvidence = eligible.filter((entry) => entry.estimatedSoldQuantity > 0)
   const evidenceLevel = soldEvidence.length
     ? "VERIFIED_SOLD_HISTORY"
@@ -431,18 +511,21 @@ export function buildEbaySellerKeywordDemandValidation(
         estimatedSellerIds: new Set<string>(),
         activeListings: 0,
       }
-      current.verifiedSoldQuantity += comparable.verifiedSoldQuantity
+      current.verifiedSoldQuantity += comparable.verifiedSoldRecent
+        ? comparable.verifiedSoldQuantity
+        : 0
       current.estimatedSoldQuantity += comparable.estimatedSoldQuantity
       current.comparableIds.add(comparable.comparableId)
-      current.sellerIds.add(comparable.sellerUsername)
+      const sellerKey = normalizedSeller(comparable.sellerUsername)
+      current.sellerIds.add(sellerKey)
       if (comparable.salesQuantity > 0) {
-        current.salesSellerIds.add(comparable.sellerUsername)
+        current.salesSellerIds.add(sellerKey)
       }
-      if (comparable.verifiedSoldQuantity > 0) {
-        current.verifiedSellerIds.add(comparable.sellerUsername)
+      if (comparable.verifiedSoldRecent) {
+        current.verifiedSellerIds.add(sellerKey)
       }
       if (comparable.estimatedSoldQuantity > 0) {
-        current.estimatedSellerIds.add(comparable.sellerUsername)
+        current.estimatedSellerIds.add(sellerKey)
       }
       current.activeListings += 1
       keywordMap.set(term, current)
@@ -558,8 +641,10 @@ export function buildEbaySellerKeywordDemandValidation(
       const salesSignalScore = maxSalesSignal > 0
         ? Math.round((entry.salesQuantity / maxSalesSignal) * 100)
         : 0
-      const evidenceQualityScore = entry.verifiedSoldQuantity > 0
+      const evidenceQualityScore = entry.verifiedSoldRecent
         ? 100
+        : entry.verifiedSoldQuantity > 0
+          ? 25
         : entry.estimatedSoldQuantity > 0
           ? 65
           : 15
@@ -572,7 +657,7 @@ export function buildEbaySellerKeywordDemandValidation(
         ...entry,
         professionalReferenceScore,
         salesSignalScore,
-        referenceRecommendation: entry.identityMatchQuality === "EXACT"
+        referenceRecommendation: ["EXACT", "EXACT_IDENTIFIER"].includes(entry.identityMatchQuality)
           ? "PREFERRED_IDENTITY_REFERENCE"
           : "POSSIBLE_REFERENCE_REQUIRES_HUMAN_CONFIRMATION",
       }
@@ -593,18 +678,26 @@ export function buildEbaySellerKeywordDemandValidation(
     (sum, entry) => sum + entry.estimatedSoldQuantity,
     0
   )
+  const verifiedSoldSellerCount = new Set(
+    soldEvidence.map((entry) => normalizedSeller(entry.sellerUsername))
+  ).size
+  const estimatedSoldSellerCount = new Set(
+    estimatedEvidence.map((entry) => normalizedSeller(entry.sellerUsername))
+  ).size
   const demandValidationPassed =
-    (soldEvidence.length >= 2 && totalVerifiedSoldQuantity >= 3) ||
-    (estimatedEvidence.length >= 2 && totalEstimatedSoldQuantity >= 3)
-  const demandValidationBasis = soldEvidence.length >= 2 && totalVerifiedSoldQuantity >= 3
+    (verifiedSoldSellerCount >= 2 && totalVerifiedSoldQuantity >= 3) ||
+    (estimatedSoldSellerCount >= 2 && totalEstimatedSoldQuantity >= 3)
+  const demandValidationBasis = verifiedSoldSellerCount >= 2 && totalVerifiedSoldQuantity >= 3
     ? "VERIFIED_HISTORICAL_MULTI_SELLER"
-    : estimatedEvidence.length >= 2 && totalEstimatedSoldQuantity >= 3
+    : estimatedSoldSellerCount >= 2 && totalEstimatedSoldQuantity >= 3
       ? "ESTIMATED_MULTI_SELLER_SIGNAL"
       : "INSUFFICIENT_EVIDENCE"
   const pendingGuards = [
     !eligible.length ? "NEED_EBAY_COMPARABLE_LISTINGS" : "",
     !demandValidationPassed ? "NEED_EBAY_SALES_EVIDENCE" : "",
-    !topSellingListings.some((entry) => entry.identityMatchQuality === "EXACT")
+    !topSellingListings.some((entry) =>
+      ["EXACT", "EXACT_IDENTIFIER"].includes(entry.identityMatchQuality)
+    )
       ? "NEED_EBAY_IDENTITY_REFERENCE"
       : "",
   ].filter(Boolean)
@@ -633,10 +726,57 @@ export function buildEbaySellerKeywordDemandValidation(
     marketplaceInsightsStatus,
     soldHistoryIsLimitedRelease: true,
     listingsAnalyzed: comparables.length,
+    evidenceAsOf: asOf.toISOString(),
+    soldRecencyDays,
     eligibleComparableListings: eligible.length,
-    sellersAnalyzed: new Set(eligible.map((entry) => entry.sellerUsername)).size,
+    sellersAnalyzed: new Set(eligible.map((entry) => normalizedSeller(entry.sellerUsername))).size,
     totalVerifiedSoldQuantity,
     totalEstimatedSoldQuantity,
+    verifiedSoldSellerCount,
+    estimatedSoldSellerCount,
+    staleVerifiedSoldListingCount: staleSoldEvidence.length,
+    freshestVerifiedSoldAt: soldEvidence
+      .map((entry) => entry.lastSoldDate ?? entry.itemEndDate)
+      .filter((value): value is string => Boolean(value))
+      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] ?? null,
+    evidenceBuckets: {
+      candidateFoundCount: Math.max(
+        0,
+        Math.trunc(input.candidateFoundCount === null || input.candidateFoundCount === undefined
+          ? comparables.length
+          : numberOrZero(input.candidateFoundCount)),
+      ),
+      returnedCandidateCount: Math.max(
+        0,
+        Math.trunc(input.returnedCandidateCount === null || input.returnedCandidateCount === undefined
+          ? comparables.length
+          : numberOrZero(input.returnedCandidateCount)),
+      ),
+      enrichedSampleCount: Math.max(
+        0,
+        Math.trunc(input.enrichedSampleCount === null || input.enrichedSampleCount === undefined
+          ? comparables.length
+          : numberOrZero(input.enrichedSampleCount)),
+      ),
+      strongSimilarCount: eligible.filter((entry) => !entry.identifierExact).length,
+      identifierExactActiveCount: eligible.filter((entry) =>
+        entry.identifierExact && entry.evidenceSource !== "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
+      ).length,
+      identifierExactRecentSoldCount: soldEvidence.filter((entry) => entry.identifierExact).length,
+      identifierExactRecentSoldQuantity: soldEvidence
+        .filter((entry) => entry.identifierExact)
+        .reduce((sum, entry) => sum + entry.verifiedSoldQuantity, 0),
+      identifierExactRecentSoldSellerCount: new Set(
+        soldEvidence
+          .filter((entry) => entry.identifierExact)
+          .map((entry) => normalizedSeller(entry.sellerUsername))
+      ).size,
+      identifierExactStaleSoldCount: staleSoldEvidence.filter((entry) => entry.identifierExact).length,
+      conflictingCount: comparables.filter((entry) =>
+        entry.identityEvidenceClass === "IDENTITY_CONFLICT"
+      ).length,
+    },
+    comparableEvidence: comparables,
     salesEvidenceAvailable: soldEvidence.length > 0 || estimatedEvidence.length > 0,
     demandValidationPassed,
     demandValidationBasis,

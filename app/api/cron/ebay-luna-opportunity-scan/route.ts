@@ -10,9 +10,13 @@ import {
   recordEbayFirstLunaScanFailure,
   startEbayFirstLunaScan,
 } from "@/lib/ebay/ebay-first-luna-scan-service"
+import {
+  buildSellerWorkerId,
+  reconcileSellerScanTasks,
+} from "@/lib/ebay/ebay-seller-command-center-automation"
 
-const CRON_MAX_BATCHES = 6
-const CRON_TIME_BUDGET_MS = 47_000
+const CRON_MAX_CANDIDATES = 5
+const CRON_TIME_BUDGET_MS = 45_000
 
 function authorized(req: Request) {
   const secret = process.env.CRON_SECRET?.trim() ?? ""
@@ -26,7 +30,12 @@ export async function GET(req: Request) {
   const supabase = getSupabaseAdminClient()
   let runId = ""
   const startedAt = Date.now()
+  const workerId = buildSellerWorkerId("vercel-cron")
   try {
+    const reconciliation = await reconcileSellerScanTasks(supabase, {
+      forceDue: false,
+      limit: 200,
+    })
     const { data: active } = await supabase
       .from("ebay_luna_scan_runs")
       .select("id")
@@ -40,12 +49,19 @@ export async function GET(req: Request) {
         .split(",")
         .map((value) => value.trim())
         .filter(Boolean)
-      runId = (await startEbayFirstLunaScan(supabase, categoryIds)).id
+      runId = (await startEbayFirstLunaScan(supabase, categoryIds, {
+        forceDue: false,
+        triggerSource: "schedule",
+        reconcileTasks: false,
+      })).id
     }
     const batches = []
-    for (let index = 0; index < CRON_MAX_BATCHES; index += 1) {
+    for (let index = 0; index < CRON_MAX_CANDIDATES; index += 1) {
       if (index > 0 && Date.now() - startedAt >= CRON_TIME_BUDGET_MS) break
-      const batch = await processNextEbayFirstLunaBatch(supabase, runId)
+      const batch = await processNextEbayFirstLunaBatch(supabase, runId, {
+        batchSize: 1,
+        workerId,
+      })
       batches.push(batch)
       if (batch.completed) break
     }
@@ -55,7 +71,9 @@ export async function GET(req: Request) {
       batches,
       automation: {
         strategy: EBAY_LUNA_SCAN_STRATEGY,
-        maxBatches: CRON_MAX_BATCHES,
+        workerId,
+        reconciliation,
+        maxCandidates: CRON_MAX_CANDIDATES,
         timeBudgetMs: CRON_TIME_BUDGET_MS,
         elapsedMs: Date.now() - startedAt,
       },
