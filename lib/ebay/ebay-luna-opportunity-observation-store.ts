@@ -57,9 +57,11 @@ export async function persistEbayOpportunityObservation(
   supabase: SupabaseClient,
   assessment: Assessment,
   observations: EbayListingObservation[],
-  explicitlyRequested: boolean
+  explicitlyRequested: boolean,
+  options: { trustedInternalQueueRun?: boolean } = {},
 ) {
-  if (!explicitlyRequested || !writesEnabled()) {
+  const persistenceAllowed = writesEnabled() || options.trustedInternalQueueRun === true
+  if (!explicitlyRequested || !persistenceAllowed) {
     return {
       persisted: false,
       state: writesEnabled()

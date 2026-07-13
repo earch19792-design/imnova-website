@@ -45,6 +45,29 @@ export default function EbaySellerOsHubPage() {
         </div>
 
         <a
+          href="/admin/ebay/opportunity-queue"
+          className="group rounded-3xl border border-violet-200/20 bg-violet-200/[0.07] p-6 transition hover:border-violet-200/40 hover:bg-violet-200/[0.10]"
+        >
+          <p className="text-xs font-black uppercase tracking-[0.24em] text-violet-100/55">
+            eBay-first × Luna Portex
+          </p>
+          <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-black text-white">
+                Cola automática de oportunidades
+              </h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">
+                Recorre todas las variantes Luna, cruza demanda y comparables de
+                eBay, acumula velocidad y vigila cambios de precio y stock.
+              </p>
+            </div>
+            <span className="rounded-full bg-violet-200 px-4 py-2 text-xs font-black uppercase tracking-wider text-black">
+              Abrir cola →
+            </span>
+          </div>
+        </a>
+
+        <a
           href="/admin/ebay/seller-performance"
           className="group rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.07] p-6 transition hover:border-cyan-200/40 hover:bg-cyan-200/[0.10]"
         >
