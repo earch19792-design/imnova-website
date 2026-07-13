@@ -125,6 +125,18 @@ test("scheduled and Admin routes remain authenticated and read-only toward eBay"
   assert.doesNotMatch(gateway, /method:\s*["'](?:POST|PUT|PATCH|DELETE)["']/)
 })
 
+test("mobile command center centralizes scan, queue and candidate review", () => {
+  const mobilePage = readFileSync(new URL("../app/admin/ebay/mobile-review/page.tsx", import.meta.url), "utf8")
+  const commandCenter = readFileSync(new URL("../app/admin/ebay/mobile-review/opportunity-command-center.tsx", import.meta.url), "utf8")
+  assert.match(mobilePage, /Seller Command Center/)
+  assert.match(mobilePage, /id: "opportunities"/)
+  assert.match(mobilePage, /OpportunityCommandCenter/)
+  assert.match(commandCenter, /Nuevo scan/)
+  assert.match(commandCenter, /Procesar 5 lotes/)
+  assert.match(commandCenter, /onReviewCandidate/)
+  assert.match(commandCenter, /Monitoreo y riesgos/)
+})
+
 test("best-selling signal keys are deterministic and contain no secrets", () => {
   const key = buildBestSellingSignalKey({
     categoryId: "11700",
