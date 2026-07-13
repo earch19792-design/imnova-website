@@ -2,6 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
     {
+      "path": "/api/cron/market-radar-luna-sync",
+      "schedule": "0 9 * * *"
+    },
+    {
       "path": "/api/cron/ebay-luna-opportunity-scan",
       "schedule": "17 9 * * *"
     }

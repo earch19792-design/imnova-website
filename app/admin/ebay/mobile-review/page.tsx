@@ -212,6 +212,7 @@ export default function EbayMobileReviewPage() {
   const [pinnedCandidates, setPinnedCandidates] = useState<PinnedCandidate[]>([])
   const [storageRestored, setStorageRestored] = useState(false)
   const [view, setView] = useState<View>("opportunities")
+  const [selectedQueueCandidate, setSelectedQueueCandidate] = useState<RealRadarCandidate | null>(null)
   const [blockedVisible, setBlockedVisible] = useState(5)
   const [copied, setCopied] = useState(false)
   const confirmationRef = useRef<HTMLElement>(null)
@@ -226,7 +227,7 @@ export default function EbayMobileReviewPage() {
         return loadMarketRadarReadonlyDashboard(`Bearer ${data.session.access_token}`)
       })()
       const nextReport = buildMobileReviewRealRadarConnector({ products, mode: demoRequested ? "DEMO_FIXTURE_ONLY" : "REAL_READONLY" })
-      setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError("")
+      setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setSelectedQueueCandidate(null); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError("")
       if (nextReport.realRadarCandidatesCount === 0) { setLoadState("RADAR_EMPTY"); setLoadMessage("Radar respondió, pero no devolvió productos. Ejecuta o revisa el scan antes de decidir.") }
       else { setLoadState("READY"); setLoadMessage(`${nextReport.top5Candidates.length} candidatos disponibles de ${nextReport.realRadarCandidatesCount} productos observados.`) }
     } catch (error) {
@@ -250,7 +251,9 @@ export default function EbayMobileReviewPage() {
   }, [pinnedCandidates, storageRestored])
 
   const decision = useMemo(() => buildMobileReviewDecision(state), [state])
-  const selectedRadarCandidate = report.top5Candidates.find((candidate) => candidate.candidateRank === state.selectedCandidateRank) ?? null
+  const selectedRadarCandidate = selectedQueueCandidate?.candidateRank === state.selectedCandidateRank
+    ? selectedQueueCandidate
+    : report.top5Candidates.find((candidate) => candidate.candidateRank === state.selectedCandidateRank) ?? null
   const lunaCatalogUrl = getLunaCatalogUrl(selectedRadarCandidate?.productUrl)
   const safeProductImageUrl = getSafeProductImageUrl(selectedRadarCandidate?.imageReference)
   const ebayIdentitySearchUrl = buildEbayIdentitySearchUrl(selectedRadarCandidate)
@@ -338,11 +341,17 @@ export default function EbayMobileReviewPage() {
   }
 
   const reviewOpportunityCandidate = (marketRadarProductId: string) => {
-    const candidate = report.top5Candidates.find(
+    const candidate = report.allCandidates.find(
       (entry) => entry.marketRadarProductId === marketRadarProductId,
     )
     if (!candidate) return false
-    act({ type: "SELECT_CANDIDATE", rank: candidate.candidateRank })
+    setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError("")
+    const initial = buildInitialMobileReviewState(toMobileFixture([candidate]))
+    setState(applyMobileReviewAction(initial, { type: "SELECT_CANDIDATE", rank: candidate.candidateRank }))
+    setSelectedQueueCandidate(candidate)
+    setLastActionMessage("Producto de Opportunity Queue abierto en la validación móvil. Confirma identidad, stock y catálogo antes de preparar el listing.")
+    setView("decision")
+    window.setTimeout(() => confirmationRef.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 50)
     return true
   }
 
@@ -498,7 +507,7 @@ export default function EbayMobileReviewPage() {
   const professionalKeywordSignalsAreVerified = Boolean(
     sellerKeywordDemand?.keywordEvidenceGroups.verifiedHistoricalMultiSeller.length
   )
-  const tabs: { id: View; label: string; count?: number }[] = [{ id: "opportunities", label: "Oportunid." }, { id: "top5", label: "Top 5", count: report.top5Candidates.length }, { id: "pinned", label: "Revisión", count: pinnedCandidates.length }, { id: "blocked", label: "Bloqueos", count: report.stockHoldCandidates.length }, { id: "decision", label: "Decisión" }]
+  const tabs: { id: View; label: string; count?: number }[] = [{ id: "opportunities", label: "1. Descubrir" }, { id: "top5", label: "2. Top Radar", count: report.top5Candidates.length }, { id: "pinned", label: "En revisión", count: pinnedCandidates.length }, { id: "decision", label: "3. Preparar" }, { id: "blocked", label: "Bloqueos", count: report.stockHoldCandidates.length }]
 
   return (
     <main className="min-h-screen bg-[#05070d] px-4 pb-28 pt-4 text-white sm:px-6">
@@ -509,24 +518,25 @@ export default function EbayMobileReviewPage() {
         </header>
 
         <section className={`rounded-3xl border p-4 ${loadState === "READY" ? "border-emerald-200/25 bg-emerald-200/[0.07]" : "border-amber-200/25 bg-amber-200/[0.07]"}`}>
-          <p className="font-black">{loadMessage}</p><p className="mt-2 text-sm text-white/75">Publicación desactivada · sin eBay write · sin Supabase write.</p>
+          <p className="font-black">{loadMessage}</p><p className="mt-2 text-sm text-white/75">eBay read-only · scans y cola guardados en Supabase · publicación separada y desactivada.</p>
           <p className="sr-only">Radar observó {report.realRadarCandidatesCount} productos y muestra {report.top5Candidates.length} candidatos seleccionables. La fuente y antigüedad del stock están disponibles en los detalles.</p>
           {loadState === "AUTH_REQUIRED" ? <a href="/admin/login?returnTo=%2Fadmin%2Febay%2Fmobile-review" className="mt-3 inline-flex min-h-11 items-center rounded-2xl bg-white px-4 py-2 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200">Iniciar sesión</a> : loadState !== "READY" && <button type="button" onClick={() => void load()} className="mt-3 min-h-11 rounded-2xl bg-white px-4 py-2 font-black text-black">Reintentar lectura</button>}
         </section>
         {loadState === "READY" && <dl className="grid grid-cols-3 gap-2 rounded-2xl border border-white/15 bg-black/30 p-2 text-center"><div className="rounded-xl bg-white/[0.04] px-2 py-3"><dt className="text-[10px] font-bold uppercase tracking-wide text-white/55">Observados</dt><dd className="mt-1 text-xl font-black">{report.realRadarCandidatesCount}</dd></div><div className="rounded-xl bg-emerald-200/[0.07] px-2 py-3"><dt className="text-[10px] font-bold uppercase tracking-wide text-emerald-50/70">Top 5</dt><dd className="mt-1 text-xl font-black">{report.top5Candidates.length}</dd></div><div className="rounded-xl bg-rose-200/[0.07] px-2 py-3"><dt className="text-[10px] font-bold uppercase tracking-wide text-rose-50/70">Bloqueados</dt><dd className="mt-1 text-xl font-black">{report.stockHoldCandidates.length}</dd></div></dl>}
+        <ol className="grid grid-cols-4 gap-1 rounded-2xl border border-white/10 bg-black/25 p-2 text-center text-[10px] font-black uppercase tracking-wide text-white/60"><li className={view === "opportunities" ? "rounded-xl bg-violet-200 px-1 py-2 text-black" : "px-1 py-2"}>1 Descubrir</li><li className={view === "top5" || view === "pinned" ? "rounded-xl bg-cyan-200 px-1 py-2 text-black" : "px-1 py-2"}>2 Validar</li><li className={view === "decision" ? "rounded-xl bg-emerald-200 px-1 py-2 text-black" : "px-1 py-2"}>3 Preparar</li><li className="px-1 py-2 text-white/35">4 Publicar</li></ol>
         {report.fixtureUsed && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4 text-sm"><p className="font-black">FIXTURE/DEMO · no usar para aprobación real</p><p className="mt-2 text-white/80">Fuente actual: fixture modelado · no es data viva. score modelado · Fixture · no precio runtime · Fixture · no Category ID.</p></aside>}
 
         <div role="status" aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.07] p-3 text-sm text-cyan-50">{lastActionMessage}</div>
         {radarGuards.showScoreTieWarning && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4"><p className="font-black">Orden provisional</p><p className="mt-1 text-sm text-white/80">Los cinco scores son iguales. Ningún producto se considera recomendado hasta desempatar el ranking.</p></aside>}
 
-        <nav aria-label="Secciones de Mobile Review" className="grid grid-cols-5 gap-1 rounded-2xl border border-white/15 bg-black/40 p-1">
-          {tabs.map((tab) => <button key={tab.id} type="button" aria-current={view === tab.id ? "page" : undefined} onClick={() => setView(tab.id)} className={`min-h-12 rounded-xl px-1 py-2 text-[11px] font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${view === tab.id ? "bg-white text-black" : "text-white/75"}`}>{tab.label}{tab.count !== undefined && <span className="block">{tab.count}</span>}</button>)}
+        <nav aria-label="Secciones de Mobile Review" className="flex gap-1 overflow-x-auto rounded-2xl border border-white/15 bg-black/40 p-1">
+          {tabs.map((tab) => <button key={tab.id} type="button" aria-current={view === tab.id ? "page" : undefined} onClick={() => setView(tab.id)} className={`min-h-12 shrink-0 rounded-xl px-3 py-2 text-[11px] font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${view === tab.id ? "bg-white text-black" : "text-white/75"}`}>{tab.label}{tab.count !== undefined && <span className="ml-1 rounded-full bg-black/20 px-1.5 py-0.5">{tab.count}</span>}</button>)}
         </nav>
         <p className="sr-only">{report.stockHoldCandidates.length} productos están bloqueados por stock. B2-RUN continúa desactivado hasta completar todas las validaciones.</p>
 
-        {view === "opportunities" && <OpportunityCommandCenter onReviewCandidate={reviewOpportunityCandidate} />}
+        {view === "opportunities" && <OpportunityCommandCenter onReviewCandidate={reviewOpportunityCandidate} onRadarRefresh={load} />}
 
-        {view === "top5" && <section aria-labelledby="top5-heading"><h2 id="top5-heading" className="mb-3 text-xl font-black">Top 5 actual</h2><div className="space-y-4">{report.top5Candidates.map((candidate) => <CandidateCard key={candidate.candidateId} candidate={candidate} selected={state.selectedCandidateRank === candidate.candidateRank} pinned={pinnedCandidates.some((item) => pinnedCandidateMatchesRadar(item, candidate))} provisional={radarGuards.needsScoreDisambiguation} onSelect={() => act({ type: "SELECT_CANDIDATE", rank: candidate.candidateRank })} onUnavailable={() => act({ type: "MARK_UNAVAILABLE", rank: candidate.candidateRank })} />)}{!loading && report.top5Candidates.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/75">No hay candidatos seleccionables.</p>}</div></section>}
+        {view === "top5" && <section aria-labelledby="top5-heading"><h2 id="top5-heading" className="mb-3 text-xl font-black">Top 5 actual</h2><div className="space-y-4">{report.top5Candidates.map((candidate) => <CandidateCard key={candidate.candidateId} candidate={candidate} selected={!selectedQueueCandidate && state.selectedCandidateRank === candidate.candidateRank} pinned={pinnedCandidates.some((item) => pinnedCandidateMatchesRadar(item, candidate))} provisional={radarGuards.needsScoreDisambiguation} onSelect={() => { setSelectedQueueCandidate(null); act({ type: "SELECT_CANDIDATE", rank: candidate.candidateRank }) }} onUnavailable={() => act({ type: "MARK_UNAVAILABLE", rank: candidate.candidateRank })} />)}{!loading && report.top5Candidates.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/75">No hay candidatos seleccionables.</p>}</div></section>}
 
         {view === "pinned" && <section aria-labelledby="pinned-heading"><h2 id="pinned-heading" className="text-xl font-black">En revisión / Pinned Candidates</h2><p className="mt-1 text-sm text-white/75">Continuidad local validada y con vencimiento. No es una aprobación oficial.</p><div className="mt-4 space-y-4">{pinnedContinuity.pinnedCandidates.map((candidate) => <article key={candidate.pinnedCandidateId} className="rounded-3xl border border-violet-200/25 bg-violet-200/[0.07] p-4"><StatusPill tone={candidate.supplierDrift.supplierDriftDetected ? "warning" : "good"}>{routeLabel(candidate.nextRecommendedRoute)}</StatusPill><h3 className="mt-3 text-lg font-black">{candidate.productName}</h3><dl className="mt-3 grid gap-2 text-sm"><div className="flex justify-between"><dt>Presencia Radar</dt><dd className="font-bold">{candidate.radarPresenceStatus}</dd></div><div className="flex justify-between"><dt>Stock humano</dt><dd className="font-bold">{formatValue(candidate.stockQuantityConfirmed)}</dd></div><div className="flex justify-between"><dt>Precio Luna</dt><dd className="font-bold">{candidate.lunaPrice ? `$${candidate.lunaPrice.toFixed(2)}` : "Pendiente"}</dd></div><div className="flex justify-between"><dt>Supplier drift</dt><dd className="font-bold">{candidate.supplierDrift.supplierDriftDetected ? "Detectado" : "Sin cambios"}</dd></div></dl><details className="mt-3 rounded-2xl border border-white/15 p-3"><summary className="cursor-pointer font-bold">Comparación y trazabilidad</summary><pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-xs text-white/80">{JSON.stringify(candidate.supplierDrift, null, 2)}</pre></details><div className="mt-4 grid gap-2"><button type="button" onClick={() => actPinned({ type: "RECHECK_PINNED_CANDIDATE", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl border border-cyan-200/35 font-bold">Revisar contra Radar<span className="block text-[10px]">RECHECK_PINNED_CANDIDATE</span></button><button type="button" disabled={!candidate.canContinueEbayMarketValidation} onClick={() => actPinned({ type: "CONTINUE_EBAY_MARKET_VALIDATION", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl bg-violet-200 px-3 font-black text-black disabled:opacity-40">Continuar validación eBay<span className="block text-[10px]">CONTINUE_EBAY_MARKET_VALIDATION</span></button><details className="rounded-2xl border border-white/15 p-3"><summary className="cursor-pointer font-bold">Más acciones</summary><div className="mt-3 grid gap-2"><button type="button" onClick={() => actPinned({ type: "MARK_PINNED_UNAVAILABLE", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl border border-rose-200/35">Marcar no disponible · MARK_PINNED_UNAVAILABLE</button><button type="button" onClick={() => actPinned({ type: "HOLD_PINNED_FOR_REVIEW", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl border border-amber-200/35">Poner en espera · HOLD_PINNED_FOR_REVIEW</button><button type="button" onClick={() => actPinned({ type: "UNPIN_CANDIDATE", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl border border-white/25">Quitar de revisión · UNPIN_CANDIDATE</button></div></details></div></article>)}{pinnedCandidates.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/75">No hay productos guardados en revisión.</p>}</div></section>}
 
@@ -548,7 +558,7 @@ export default function EbayMobileReviewPage() {
                 )}
               </div>
               <p className="mt-1 text-sm text-white/75">
-                {decision.selectedCandidateName ?? "Selecciona un producto desde Top 5."}
+                {selectedRadarCandidate?.productTitle ?? decision.selectedCandidateName ?? "Selecciona un producto desde Top 5."}
               </p>
               {selectedRadarCandidate && (
                 <div className="mt-3 rounded-2xl border border-white/15 bg-black/25 p-3">

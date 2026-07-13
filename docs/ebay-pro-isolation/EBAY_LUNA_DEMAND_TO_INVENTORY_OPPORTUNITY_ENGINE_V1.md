@@ -162,27 +162,40 @@ foundation into a durable hybrid scan:
    If the product is linked to an active eBay listing, out-of-stock and price-up
    changes also create an open active-listing risk.
 
-The scan is resumable: an Admin can process five batches at a time and safely
-close the page. `/api/cron/ebay-luna-opportunity-scan` continues two batches per
-scheduled invocation. Vercel requires a server-only `CRON_SECRET`; optional
+The scan is resumable: an Admin can accelerate ten batches at a time from the
+phone and safely close the page after the action finishes.
+`/api/cron/ebay-luna-opportunity-scan` continues up to six batches per scheduled
+invocation while respecting a 47-second application budget. Vercel requires a
+server-only `CRON_SECRET`; optional
 comma-separated category seeds can be configured in
 `EBAY_LUNA_BEST_SELLING_CATEGORY_IDS`.
 
-The daily schedule is declared in `vercel.json`. Vercel registers Cron Jobs only
-from Production deployments, so Preview/Staging validates the protected route
-but uses the Admin continuation button. Completing a very large first
+The daily schedule is declared in `vercel.json`: Luna/Market Radar refreshes at
+09:00 UTC and the prioritized eBay scan continues at 09:17 UTC. Vercel registers
+Cron Jobs only from Production deployments, so Preview/Staging validates the
+protected routes but uses the phone controls `Actualizar Luna` and
+`Acelerar 20 productos`. Completing a very large first
 catalog scan can still require multiple manual continuation clicks or multiple
 scheduled invocations. Once completed, the next scheduled invocation starts a
 new pass, providing the separated observations needed for velocity.
+
+Every new hybrid run is `priority_first`: the latest Luna variants are ordered
+by the existing Market Radar opportunity score before the stable product and
+variant identifiers. This deliberately optimizes time-to-first-winner rather
+than time-to-full-catalog. An Admin may pause the current run and restart from
+the strongest Radar signals without deleting any already persisted queue rows.
 
 The queue never creates drafts, offers or listings. `ready` means ready for
 human listing-package review, not authorized for publication.
 
 The primary phone workflow is centralized in `/admin/ebay/mobile-review` as
-Seller Command Center. Its `Oportunid.` tab can start or resume the complete
-scan, filter the durable queue, inspect guards and active-listing risks, and
-send a currently loaded Top 5 candidate directly into the existing Decision
-review. The standalone queue remains available as an advanced desktop view.
+Seller Command Center. Its `1. Descubrir` tab can start or restart a prioritized
+scan, accelerate the next 20 variants, inspect the professional Top 5, filter
+the durable queue, inspect guards and active-listing risks, and send any current
+Radar candidate—not only the old Top 5—into the existing mobile preparation
+review. The four-step route is explicit: discover, validate, prepare and publish.
+Publish stays locked behind the separate controlled workflow. The standalone
+queue remains available as an advanced desktop view.
 
 ### Professional seller fast lane
 

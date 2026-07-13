@@ -29,7 +29,7 @@ test("mobile review page loads exactly the Top 5 and recommends rank 1", () => {
   assert.equal(input.top5Visible, true)
   assert.equal(report.top5Visible, true)
   assert.equal(report.recommendedCandidateRank, 1)
-  assert.match(pageSource, /Top 5 móvil/)
+  assert.match(pageSource, /Top 5 actual/)
   assert.match(pageSource, /Fuente actual: fixture modelado · no es data viva/)
   assert.match(pageSource, /score modelado/)
   assert.match(pageSource, /Fixture · no precio runtime/)
@@ -117,12 +117,9 @@ test("an unavailable candidate does not prevent reviewing another Top 5 candidat
   assert.equal(decision.canProceedToB2RunPreflight, true)
 })
 
-test("MVP remains local-only and contains no external or write capability", () => {
+test("mobile decisions remain local and contain no direct marketplace write capability", () => {
   const combined = `${moduleSource}\n${pageSource}`
   for (const forbidden of [
-    /fetch\s*\(/,
-    /createClient\s*\(/,
-    /\.from\s*\(/,
     /\.insert\s*\(/,
     /\.update\s*\(/,
     /\.upsert\s*\(/,

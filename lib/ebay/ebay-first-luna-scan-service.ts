@@ -24,6 +24,7 @@ import {
 
 const SCAN_BATCH_SIZE = 2
 const QUEUE_LIMIT = 100
+export const EBAY_LUNA_SCAN_STRATEGY = "priority_first"
 
 type ScanRun = {
   id: string
@@ -197,6 +198,7 @@ export async function processNextEbayFirstLunaBatch(
     .from("market_radar_latest_variants")
     .select("*")
     .eq("source_key", "lunaportex")
+    .order("seller_scan_priority_score", { ascending: false, nullsFirst: false })
     .order("product_id", { ascending: true })
     .order("supplier_variant_id", { ascending: true })
     .range(run.next_offset, run.next_offset + SCAN_BATCH_SIZE - 1)
@@ -384,6 +386,15 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
       noOffers: true,
       noPublishing: true,
       humanApprovalRequired: true,
+    },
+    automation: {
+      strategy: EBAY_LUNA_SCAN_STRATEGY,
+      productionSchedule: "17 9 * * *",
+      productionScheduleLabel: "Luna 03:00 + eBay 03:17 · America/Managua",
+      previewRunsCronAutomatically: false,
+      productionRunsCronAutomatically: true,
+      mobileAccelerationBatchCount: 10,
+      variantsPerBatch: SCAN_BATCH_SIZE,
     },
   }
 }
