@@ -6,6 +6,7 @@ import {
   buildBestSellingSignalKey,
   buildOpportunityChangeEvents,
   buildOpportunityQueueRow,
+  buildProfessionalSellerQueueView,
   mapLatestVariantToLunaCandidate,
 } from "../lib/ebay/ebay-first-luna-opportunity-queue.ts"
 
@@ -147,6 +148,59 @@ test("latest Luna variants use a maintained current-snapshot pointer", () => {
   assert.match(migration, /from public\.market_radar_current_variant_snapshots latest/)
   const optimizedView = migration.slice(migration.indexOf("create or replace view public.market_radar_latest_variants"))
   assert.doesNotMatch(optimizedView, /select distinct on/)
+})
+
+test("separates eBay candidates from exact comparables and builds a seller fast lane", () => {
+  const row = buildProfessionalSellerQueueView({
+    id: "queue-1",
+    market_radar_product_id: "00000000-0000-0000-0000-000000000001",
+    opportunity_score: 42,
+    demand_score: 50,
+    listing_readiness_score: 45,
+    active_comparables: 0,
+    supplier_available: true,
+    supplier_inventory_quantity: 20,
+    supplier_price: 4,
+    hard_gates: ["NEED_EXACT_GTIN_OR_BRAND_MPN_MATCH"],
+    evidence_guards: ["NEED_7D_OR_30D_ROTATION_BASELINE"],
+    assessment: {
+      identity: {
+        exactIdentityConfirmed: false,
+        comparables: [
+          { title: "Reference A", price: 18, identityMatchScore: 70 },
+          { title: "Reference B", price: 19, identityMatchScore: 66 },
+          { title: "Reference C", price: 17, identityMatchScore: 62 },
+        ],
+      },
+      economics: { ready: false },
+      scores: { supplyScore: 100 },
+      canProceedToListingPackage: false,
+      listingIntelligencePackage: {
+        titleStrategy: {
+          primarySearchPhrase: "cable organizer",
+          secondarySearchTerms: ["desk cable holder"],
+          titleFormula: "Marca + frase principal + variante",
+        },
+        categoryRecommendation: { categoryId: "123", categoryName: "Cable Management" },
+      },
+    },
+  })
+  assert.equal(row.ebay_candidate_count, 3)
+  assert.equal(row.exact_comparable_count, 0)
+  assert.equal(row.seller_lane, "HIGH_POTENTIAL_NEEDS_IDENTITY")
+  assert.equal(row.can_prepare_listing_package, false)
+  assert.equal(row.winning_structure.primarySearchPhrase, "cable organizer")
+  assert.equal(row.top_ebay_candidates.length, 3)
+  assert.equal(row.assessment, undefined)
+  assert.ok(row.seller_priority_score > 0)
+})
+
+test("opportunity queue explains professional seller evidence in the UI", () => {
+  const page = readFileSync(new URL("../app/admin/ebay/opportunity-queue/page.tsx", import.meta.url), "utf8")
+  assert.match(page, /Top potencial para preparar listing/)
+  assert.match(page, /Candidatos encontrados en eBay/)
+  assert.match(page, /Comparables exactos/)
+  assert.match(page, /El paquete se desbloquea al confirmar identidad, margen, stock y datos obligatorios/)
 })
 
 test("best-selling signal keys are deterministic and contain no secrets", () => {
