@@ -54,6 +54,39 @@ for (const name of migrationNames) {
   timestamps.set(timestamp, name)
 }
 
+// supabase_admin default privileges are managed by Supabase and cannot be
+// changed by the project migration role. Future Seller OS tables must close
+// client table ACLs explicitly in the migration that creates them.
+const sellerOsAclEnforcementStart = "20260713100000"
+for (const name of migrationNames) {
+  const timestamp = name.match(/^(\d{12}|\d{14})_/)?.[1]
+  const source = readFileSync(join(migrationDirectory, name), "utf8")
+
+  if (/alter\s+default\s+privileges\s+for\s+role\s+supabase_admin/i.test(source)) {
+    failures.push(`MANAGED_SUPABASE_ADMIN_DEFAULT_PRIVILEGES_FORBIDDEN:${name}`)
+  }
+  if (/set\s+role\s+supabase_admin/i.test(source)) {
+    failures.push(`MANAGED_SUPABASE_ADMIN_SET_ROLE_FORBIDDEN:${name}`)
+  }
+
+  if (!timestamp || timestamp <= sellerOsAclEnforcementStart) continue
+
+  const createdSellerOsTables = [...source.matchAll(
+    /create\s+table(?:\s+if\s+not\s+exists)?\s+public\.(ebay_[a-z0-9_]+)/gi,
+  )].map((match) => match[1])
+
+  for (const table of createdSellerOsTables) {
+    const escapedTable = table.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    const explicitRevoke = new RegExp(
+      `revoke\\s+all\\s+on\\s+table\\s+public\\.${escapedTable}\\s+from\\s+anon\\s*,\\s*authenticated\\s*;`,
+      "i",
+    )
+    if (!explicitRevoke.test(source)) {
+      failures.push(`SELLER_OS_TABLE_ACL_REVOKE_MISSING:${name}:${table}`)
+    }
+  }
+}
+
 function stripCommentsAndStrings(source) {
   let output = ""
   let index = 0

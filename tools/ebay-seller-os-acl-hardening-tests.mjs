@@ -6,6 +6,7 @@ import test from "node:test"
 const migrationPath =
   "supabase/migrations/20260713100000_revoke_unsafe_ebay_table_privileges.sql"
 const migration = readFileSync(migrationPath, "utf8")
+const ciGuard = readFileSync("tools/ebay-seller-os-ci-guards.mjs", "utf8")
 
 const sellerOsTables = [
   "ebay_active_listing_risk_events",
@@ -84,12 +85,17 @@ test("service_role remains the server-side operational channel", () => {
   assert.doesNotMatch(migration, /grant\s+/i)
 })
 
-test("table default privileges are closed for both migration owner roles", () => {
+test("postgres defaults are closed without attempting managed supabase_admin", () => {
   assert.match(migration, /alter default privileges for role postgres in schema public/i)
-  assert.match(migration, /alter default privileges for role supabase_admin in schema public/i)
-  assert.equal((migration.match(/revoke all on tables from anon, authenticated/gi) ?? []).length, 2)
+  assert.doesNotMatch(migration, /alter default privileges for role supabase_admin/i)
+  assert.doesNotMatch(migration, /set role supabase_admin/i)
+  assert.equal((migration.match(/revoke all on tables from anon, authenticated/gi) ?? []).length, 1)
   assert.match(migration, /from pg_default_acl d/)
-  assert.match(migration, /SELLER_OS_ACL_UNSAFE_TABLE_DEFAULT_PRIVILEGES_REMAIN/)
+  assert.match(migration, /owner_role\.rolname = 'postgres'/)
+  assert.match(migration, /SELLER_OS_ACL_UNSAFE_POSTGRES_TABLE_DEFAULT_PRIVILEGES_REMAIN/)
+  assert.match(migration, /Supabase manages the supabase_admin role/)
+  assert.match(migration, /Every future Seller OS migration that\s+-- creates a table must therefore revoke ALL/s)
+  assert.match(migration, /Seller OS CI enforces that fail-closed rule/)
 })
 
 test("ACL migration changes no owners, RLS state, rows or existing grants", () => {
@@ -97,6 +103,16 @@ test("ACL migration changes no owners, RLS state, rows or existing grants", () =
   assert.doesNotMatch(migration, /disable\s+row\s+level\s+security/i)
   assert.doesNotMatch(migration, /\b(?:insert\s+into|update\s+public\.|delete\s+from|truncate\s+table)\b/i)
   assert.doesNotMatch(migration, /grant\s+/i)
+  assert.doesNotMatch(migration, /exception\s+when\s+others/i)
+})
+
+test("CI forbids managed-role changes and requires explicit future table revokes", () => {
+  assert.match(ciGuard, /MANAGED_SUPABASE_ADMIN_DEFAULT_PRIVILEGES_FORBIDDEN/)
+  assert.match(ciGuard, /MANAGED_SUPABASE_ADMIN_SET_ROLE_FORBIDDEN/)
+  assert.match(ciGuard, /sellerOsAclEnforcementStart = "20260713100000"/)
+  assert.match(ciGuard, /create\\s\+table/)
+  assert.ok(ciGuard.includes("`revoke\\\\s+all"))
+  assert.match(ciGuard, /SELLER_OS_TABLE_ACL_REVOKE_MISSING/)
 })
 
 test("all previously applied Seller OS migrations remain byte-for-byte immutable", () => {

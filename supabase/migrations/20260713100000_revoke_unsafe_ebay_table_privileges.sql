@@ -2,11 +2,14 @@
 -- Keep only the existing authenticated admin reads that are protected by RLS.
 -- PostgreSQL default privileges are role/schema scoped, not table-name scoped,
 -- so future public tables must opt in to client access explicitly.
+--
+-- Supabase manages the supabase_admin role and its default privileges. The
+-- project migration executor is not a member of that role and must not attempt
+-- to change its defaults or SET ROLE. Every future Seller OS migration that
+-- creates a table must therefore revoke ALL table privileges from anon and
+-- authenticated explicitly. Seller OS CI enforces that fail-closed rule.
 
 alter default privileges for role postgres in schema public
-  revoke all on tables from anon, authenticated;
-
-alter default privileges for role supabase_admin in schema public
   revoke all on tables from anon, authenticated;
 
 do $$
@@ -165,12 +168,12 @@ begin
     join pg_namespace n on n.oid = d.defaclnamespace
     cross join lateral aclexplode(coalesce(d.defaclacl, acldefault('r', d.defaclrole))) acl
     join pg_roles grantee_role on grantee_role.oid = acl.grantee
-    where owner_role.rolname in ('postgres', 'supabase_admin')
+    where owner_role.rolname = 'postgres'
       and n.nspname = 'public'
       and d.defaclobjtype = 'r'
       and grantee_role.rolname in ('anon', 'authenticated')
   ) then
-    raise exception 'SELLER_OS_ACL_UNSAFE_TABLE_DEFAULT_PRIVILEGES_REMAIN';
+    raise exception 'SELLER_OS_ACL_UNSAFE_POSTGRES_TABLE_DEFAULT_PRIVILEGES_REMAIN';
   end if;
 end
 $$;
