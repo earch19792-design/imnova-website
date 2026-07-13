@@ -125,6 +125,18 @@ test("scheduled and Admin routes remain authenticated and read-only toward eBay"
   assert.doesNotMatch(gateway, /method:\s*["'](?:POST|PUT|PATCH|DELETE)["']/)
 })
 
+test("latest Luna variants use a maintained current-snapshot pointer", () => {
+  const migration = readFileSync(
+    new URL("../supabase/migrations/20260713012000_optimize_ebay_luna_latest_variants.sql", import.meta.url),
+    "utf8",
+  )
+  assert.match(migration, /create table if not exists public\.market_radar_current_variant_snapshots/)
+  assert.match(migration, /after insert on public\.market_radar_snapshots/)
+  assert.match(migration, /from public\.market_radar_current_variant_snapshots latest/)
+  const optimizedView = migration.slice(migration.indexOf("create or replace view public.market_radar_latest_variants"))
+  assert.doesNotMatch(optimizedView, /select distinct on/)
+})
+
 test("best-selling signal keys are deterministic and contain no secrets", () => {
   const key = buildBestSellingSignalKey({
     categoryId: "11700",
