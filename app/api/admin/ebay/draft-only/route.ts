@@ -27,6 +27,10 @@ import {
   type EbayDraftOnlyTarget,
   type JsonRecord,
 } from "@/lib/ebay/ebay-draft-only-readiness"
+import {
+  getEbayTaxonomyListingIntelligence,
+  type EbayTaxonomyListingIntelligence,
+} from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import { enqueueSellerWhatsAppAlert } from "@/lib/ebay/ebay-seller-whatsapp-alerts"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
@@ -38,6 +42,14 @@ function record(value: unknown): JsonRecord {
 
 function text(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
+}
+
+function evidenceTimestamp(...values: unknown[]) {
+  for (const value of values) {
+    const candidate = text(value)
+    if (Number.isFinite(Date.parse(candidate))) return new Date(candidate).toISOString()
+  }
+  return ""
 }
 
 function uuid(value: unknown) {
@@ -109,12 +121,45 @@ async function loadPackageContext(
     .maybeSingle()
   if (opportunityError || !opportunity) throw new Error("EBAY_DRAFT_ONLY_OPPORTUNITY_NOT_FOUND")
   const collisionSku = expectedEbayDraftOnlySku(listingPackage as JsonRecord)
+  const candidateKey = text(listingPackage.candidate_key)
+  const supplierSku = text(opportunity.supplier_sku)
+  const supplierVariantId = text(opportunity.supplier_variant_id)
+  const marketRadarProductId = uuid(opportunity.market_radar_product_id)
+  const gtin = text(opportunity.gtin)
+  const emptyCollision = () => Promise.resolve({ data: [] as Array<{ id: string }>, error: null })
   const ebaySkuQuery = collisionSku
     ? supabase.from("ebay_active_listings").select("id").eq("ebay_sku", collisionSku).neq("listing_status", "ended").limit(1)
-    : Promise.resolve({ data: [], error: null })
-  const supplierSkuQuery = collisionSku
-    ? supabase.from("ebay_active_listings").select("id").eq("supplier_sku", collisionSku).neq("listing_status", "ended").limit(1)
-    : Promise.resolve({ data: [], error: null })
+    : emptyCollision()
+  const supplierSkuQuery = supplierSku
+    ? supabase.from("ebay_active_listings").select("id").eq("supplier_sku", supplierSku).neq("listing_status", "ended").limit(1)
+    : emptyCollision()
+  const supplierVariantQuery = supplierVariantId
+    ? supabase.from("ebay_active_listings").select("id").eq("supplier_variant_id", supplierVariantId).neq("listing_status", "ended").limit(1)
+    : emptyCollision()
+  let marketRadarQuery = marketRadarProductId
+    ? supabase.from("ebay_active_listings").select("id").eq("market_radar_product_id", marketRadarProductId).neq("listing_status", "ended")
+    : null
+  if (marketRadarQuery && supplierVariantId) {
+    marketRadarQuery = marketRadarQuery.eq("supplier_variant_id", supplierVariantId)
+  }
+  const candidatePackageQuery = candidateKey
+    ? supabase.from("ebay_listing_packages").select("id").eq("candidate_key", candidateKey).neq("id", packageId).in("status", ["draft", "ready_for_review", "approved"]).limit(1)
+    : emptyCollision()
+  let candidateApprovalQuery = candidateKey
+    ? supabase.from("ebay_draft_only_approvals").select("id").eq("candidate_key", candidateKey).eq("target", target).in("status", ["approved", "consumed"]).neq("listing_package_id", packageId).limit(1)
+    : null
+  if (candidateApprovalQuery) {
+    candidateApprovalQuery = candidateApprovalQuery.or(`account_fingerprint.eq.${accountFingerprint || "__unconfigured__"},account_fingerprint.is.null`)
+  }
+  let gtinApprovalQuery = gtin
+    ? supabase.from("ebay_draft_only_approvals").select("id").eq("target", target).in("status", ["approved", "consumed"]).neq("listing_package_id", packageId).contains("approved_payload", { sourceEvidence: { gtin } }).limit(1)
+    : null
+  if (gtinApprovalQuery) {
+    gtinApprovalQuery = gtinApprovalQuery.or(`account_fingerprint.eq.${accountFingerprint || "__unconfigured__"},account_fingerprint.is.null`)
+  }
+  const gtinOpportunityQuery = gtin
+    ? supabase.from("ebay_luna_opportunity_queue").select("id").eq("gtin", gtin).neq("id", text(opportunity.id)).limit(20)
+    : emptyCollision()
   let ledgerQuery = supabase
     .from("ebay_draft_only_execution_ledger")
     .select("id")
@@ -124,17 +169,54 @@ async function loadPackageContext(
     .neq("phase", "terminal_failure")
     .limit(1)
   if (excludeApprovalId) ledgerQuery = ledgerQuery.neq("approval_id", excludeApprovalId)
-  const [ebaySkuResult, supplierSkuResult, ledgerResult] = await Promise.all([
+  const [
+    ebaySkuResult,
+    supplierSkuResult,
+    supplierVariantResult,
+    marketRadarResult,
+    candidatePackageResult,
+    candidateApprovalResult,
+    gtinApprovalResult,
+    gtinOpportunityResult,
+    ledgerResult,
+  ] = await Promise.all([
     ebaySkuQuery,
     supplierSkuQuery,
+    supplierVariantQuery,
+    marketRadarQuery ?? emptyCollision(),
+    candidatePackageQuery,
+    candidateApprovalQuery ?? emptyCollision(),
+    gtinApprovalQuery ?? emptyCollision(),
+    gtinOpportunityQuery,
     ledgerQuery,
   ])
-  if (ebaySkuResult.error || supplierSkuResult.error || ledgerResult.error) throw new Error("EBAY_DRAFT_ONLY_COLLISION_READ_FAILED")
+  const duplicateOpportunityIds = (gtinOpportunityResult.data ?? [])
+    .map((row) => text(row.id))
+    .filter(Boolean)
+  const gtinPackageResult = duplicateOpportunityIds.length
+    ? await supabase.from("ebay_listing_packages").select("id").in("opportunity_id", duplicateOpportunityIds).in("status", ["draft", "ready_for_review", "approved"]).limit(1)
+    : { data: [] as Array<{ id: string }>, error: null }
+  if (
+    ebaySkuResult.error || supplierSkuResult.error || supplierVariantResult.error ||
+    marketRadarResult.error || candidatePackageResult.error || candidateApprovalResult.error ||
+    gtinApprovalResult.error || gtinOpportunityResult.error || gtinPackageResult.error ||
+    ledgerResult.error
+  ) throw new Error("EBAY_DRAFT_ONLY_COLLISION_READ_FAILED")
+  const identityCollisionReasons = [
+    supplierSkuResult.data?.length ? "ACTIVE_SUPPLIER_SKU" : "",
+    supplierVariantResult.data?.length ? "ACTIVE_SUPPLIER_VARIANT" : "",
+    marketRadarResult.data?.length ? "ACTIVE_MARKET_RADAR_PRODUCT_VARIANT" : "",
+    candidatePackageResult.data?.length ? "LISTING_PACKAGE_CANDIDATE_KEY" : "",
+    candidateApprovalResult.data?.length ? "DRAFT_APPROVAL_CANDIDATE_KEY" : "",
+    gtinApprovalResult.data?.length ? "DRAFT_APPROVAL_GTIN" : "",
+    gtinPackageResult.data?.length ? "LISTING_PACKAGE_GTIN" : "",
+  ].filter(Boolean)
   return {
     listingPackage: listingPackage as JsonRecord,
     opportunity: opportunity as JsonRecord,
-    activeSkuCollision: Boolean(ebaySkuResult.data?.length || supplierSkuResult.data?.length),
+    activeSkuCollision: Boolean(ebaySkuResult.data?.length),
     ledgerSkuCollision: Boolean(ledgerResult.data?.length),
+    identityCollisionReasons,
   }
 }
 
@@ -145,21 +227,54 @@ function serverApprovedConfiguration(
   actor: string,
   now: Date,
   imagesConfirmed: boolean,
+  liveTaxonomy?: EbayTaxonomyListingIntelligence,
 ) {
   const packageData = record(listingPackage.package_data)
   const images = Array.isArray(packageData.imageUrls)
     ? packageData.imageUrls.filter((item): item is string => typeof item === "string")
     : []
+  const approvedImageManifest = Array.isArray(packageData.imageAssetManifest)
+    ? packageData.imageAssetManifest.map(record).filter((asset) =>
+        text(asset.url) && text(asset.humanApprovedAt) &&
+        /^[0-9a-f]{64}$/.test(text(asset.sha256))
+      )
+    : []
+  const approvedManifestUrls = approvedImageManifest
+    .map((asset) => text(asset.url))
+    .filter(Boolean)
+  const imageManifestConfirmed = images.length > 0
+    && images.every((url) => approvedManifestUrls.includes(url))
   const assessment = record(opportunity.assessment)
   const intelligence = record(assessment.listingIntelligencePackage)
   const category = record(intelligence.categoryRecommendation)
-  const requiredAspects = Array.isArray(category.requiredAspects)
-    ? category.requiredAspects.map((item) => text(record(item).name)).filter(Boolean)
+  const liveTaxonomyAvailable = liveTaxonomy?.status === "AVAILABLE"
+  const liveAspectConstraints = liveTaxonomyAvailable
+    ? liveTaxonomy.aspects ?? []
     : []
+  const taxonomyConstraintsCaptured = liveTaxonomyAvailable
+    && Boolean(text(liveTaxonomy.categoryTreeId))
+    && Boolean(text(liveTaxonomy.categoryTreeVersion))
+  const requiredAspects = liveTaxonomyAvailable
+    ? liveTaxonomy.requiredAspects.map((item) => text(item.name)).filter(Boolean)
+    : Array.isArray(category.requiredAspects)
+      ? category.requiredAspects.map((item) => text(record(item).name)).filter(Boolean)
+      : []
   const requestedAuthorization = record(raw.imageAuthorization)
   const packageCategoryId = text(packageData.categoryId)
-  const taxonomyConfirmed = text(category.categoryId) === packageCategoryId
-    && text(category.taxonomyStatus) === "AVAILABLE"
+  const taxonomyConfirmed = liveTaxonomyAvailable
+    ? text(liveTaxonomy.categoryId) === packageCategoryId
+    : text(category.categoryId) === packageCategoryId
+      && text(category.taxonomyStatus) === "AVAILABLE"
+  const taxonomyObservedAt = liveTaxonomyAvailable
+    ? evidenceTimestamp(liveTaxonomy.observedAt)
+    : evidenceTimestamp(
+      category.observedAt,
+      category.fetchedAt,
+      category.validatedAt,
+      assessment.assessedAt,
+      opportunity.last_scanned_at,
+      listingPackage.source_observed_at,
+    )
   return {
     sku: expectedEbayDraftOnlySku(listingPackage),
     quantity: raw.quantity,
@@ -168,19 +283,29 @@ function serverApprovedConfiguration(
     businessPolicies: raw.businessPolicies,
     packageWeightAndSize: raw.packageWeightAndSize,
     imageAuthorization: {
-      approved: imagesConfirmed,
-      approvedAt: now.toISOString(),
-      approvedBy: actor,
-      approvedImageUrls: images,
+      approved: imagesConfirmed && imageManifestConfirmed,
+      approvedAt: imagesConfirmed && imageManifestConfirmed
+        ? now.toISOString()
+        : null,
+      approvedBy: imagesConfirmed && imageManifestConfirmed ? actor : null,
+      approvedImageUrls: imageManifestConfirmed ? images : [],
+      protectedManifestVerified: imageManifestConfirmed,
+      protectedManifestAssetCount: approvedImageManifest.length,
       rightsBasis: requestedAuthorization.rightsBasis,
       source: requestedAuthorization.source,
     },
     aspectValidation: {
-      validated: taxonomyConfirmed,
-      validatedAt: now.toISOString(),
+      validated: taxonomyConfirmed && Boolean(taxonomyObservedAt),
+      validatedAt: taxonomyObservedAt,
       categoryId: packageCategoryId,
+      categoryTreeId: liveTaxonomyAvailable ? liveTaxonomy.categoryTreeId : null,
+      categoryTreeVersion: liveTaxonomyAvailable ? liveTaxonomy.categoryTreeVersion : null,
       requiredAspects,
-      source: "opportunity.assessment.listingIntelligencePackage.categoryRecommendation",
+      aspectConstraints: liveAspectConstraints,
+      constraintSnapshotStatus: taxonomyConstraintsCaptured ? "AVAILABLE" : "UNAVAILABLE",
+      source: liveTaxonomyAvailable
+        ? liveTaxonomy.source
+        : "opportunity.assessment.listingIntelligencePackage.categoryRecommendation",
     },
     skuCollisionCheck: {
       sku: expectedEbayDraftOnlySku(listingPackage),
@@ -188,6 +313,13 @@ function serverApprovedConfiguration(
     },
     ebayPreflightSnapshot: text(raw.ebayPreflightSnapshot).slice(0, 4_096),
   }
+}
+
+async function loadLivePackageTaxonomy(listingPackage: JsonRecord) {
+  const packageData = record(listingPackage.package_data)
+  const title = text(packageData.title).slice(0, 350)
+  const categoryId = text(packageData.categoryId)
+  return getEbayTaxonomyListingIntelligence(title, categoryId || null)
 }
 
 function jsonError(error: unknown, status = 502, blockers?: string[]) {
@@ -308,7 +440,7 @@ export async function GET(req: Request) {
         serverDerivedEvidence: [
           "image approval actor and timestamp",
           "approved URLs from the saved package",
-          "category and required aspects from the opportunity taxonomy snapshot",
+          "category tree version and aspect constraints from live eBay Taxonomy",
           "live eBay SKU absence immediately before the first PUT",
         ],
       },
@@ -416,6 +548,7 @@ async function previewDraft(body: JsonRecord, actor: string) {
     fingerprint,
   )
   const now = new Date()
+  const liveTaxonomy = await loadLivePackageTaxonomy(context.listingPackage)
   const draftConfiguration = serverApprovedConfiguration(
     requestedConfiguration,
     context.listingPackage,
@@ -423,6 +556,7 @@ async function previewDraft(body: JsonRecord, actor: string) {
     actor,
     now,
     body.confirmImagesAuthorized === true,
+    liveTaxonomy,
   )
   const readiness = evaluateEbayDraftOnlyReadiness({
     ...context,
@@ -433,6 +567,7 @@ async function previewDraft(body: JsonRecord, actor: string) {
   return NextResponse.json({
     success: true,
     readiness,
+    taxonomy: liveTaxonomy,
     runtime,
     approvalRequirements: {
       exactPhrase: ebayDraftOnlyApprovalPhrase(target),
@@ -469,6 +604,7 @@ async function approveDraft(body: JsonRecord, actor: string) {
     fingerprint,
   )
   const now = new Date()
+  const liveTaxonomy = await loadLivePackageTaxonomy(context.listingPackage)
   const draftConfiguration = serverApprovedConfiguration(
     requestedConfiguration,
     context.listingPackage,
@@ -476,6 +612,7 @@ async function approveDraft(body: JsonRecord, actor: string) {
     actor,
     now,
     true,
+    liveTaxonomy,
   )
   const readiness = evaluateEbayDraftOnlyReadiness({
     ...context,

@@ -50,6 +50,9 @@ type QueueRow = {
   seller_lane: string
   next_seller_action: string
   can_prepare_listing_package: boolean
+  can_open_listing_workspace: boolean
+  listing_workspace_blockers: string[]
+  listing_workspace_resolvable_gates: string[]
   listing_intake_url: string | null
   winning_structure: {
     strategyConfidence: string | null

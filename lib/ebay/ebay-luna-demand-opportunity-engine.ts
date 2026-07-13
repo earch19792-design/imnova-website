@@ -13,20 +13,25 @@ import type {
 } from "./ebay-luna-opportunity-types.ts"
 // @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
 import { buildEbayInventoryMappingPreviewReadiness } from "./ebay-inventory-mapping-preview-readiness.ts"
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+import { calculateEbayUnitEconomics, DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG } from "./ebay-unit-economics.ts"
 
 export const EBAY_LUNA_DEMAND_OPPORTUNITY_ENGINE_VERSION =
-  "EBAY-SELLER-COMMAND-CENTER-OPPORTUNITY-ENGINE-V2"
+  "EBAY-SELLER-COMMAND-CENTER-OPPORTUNITY-ENGINE-V3"
+
+const TRUSTED_CATEGORY_LEARNING_MODEL_VERSION =
+  "EBAY-CATEGORY-PERFORMANCE-CALIBRATION-V2"
+const TRUSTED_CATEGORY_LEARNING_SOURCE = "EBAY_SELL_ANALYTICS_READONLY"
+const CATEGORY_LEARNING_MINIMUMS = {
+  linkedListings: 10,
+  observationDays: 14,
+  totalImpressions: 500,
+  maximumAbsoluteAdjustmentPoints: 5,
+} as const
 
 const DEFAULTS = {
   stockFreshnessHours: 24,
-  estimatedEbayFeeRate: 0.15,
-  fixedOrderFee: 0.30,
-  estimatedOutboundShipping: 6.99,
-  returnsReserveRate: 0.04,
-  promotedListingsReserveRate: 0.05,
-  minimumNetProfit: 5,
-  minimumNetMarginPercent: 20,
-  minimumRoiPercent: 30,
+  ...DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,
 }
 
 function numberOrNull(value: unknown) {
@@ -45,6 +50,99 @@ function clamp(value: number) {
 
 function round(value: number) {
   return Math.round(value * 100) / 100
+}
+
+function applyCategoryLearningAdjustment(
+  baseSellerPriorityScore: number,
+  categoryIdValue: unknown,
+  adjustment: OpportunityEngineOptions["categoryLearningAdjustment"],
+) {
+  const categoryId = text(categoryIdValue)
+  const requestedAdjustmentPoints = numberOrNull(adjustment?.adjustmentPoints)
+  const rejectionReasons = [
+    !adjustment ? "NO_ELIGIBLE_CATEGORY_ADJUSTMENT" : "",
+    adjustment && adjustment.categoryId !== categoryId ? "CATEGORY_MISMATCH" : "",
+    adjustment && adjustment.marketplaceId !== "EBAY_US" ? "MARKETPLACE_MISMATCH" : "",
+    adjustment && adjustment.source !== TRUSTED_CATEGORY_LEARNING_SOURCE
+      ? "UNTRUSTED_PERFORMANCE_SOURCE" : "",
+    adjustment && adjustment.modelVersion !== TRUSTED_CATEGORY_LEARNING_MODEL_VERSION
+      ? "UNSUPPORTED_LEARNING_MODEL" : "",
+    adjustment && adjustment.predictionEngineVersion !==
+      EBAY_LUNA_DEMAND_OPPORTUNITY_ENGINE_VERSION
+      ? "PREDICTION_ENGINE_VERSION_MISMATCH" : "",
+    adjustment && (adjustment.status !== "ELIGIBLE_APPLIED" || adjustment.eligible !== true)
+      ? "LEARNING_STATUS_NOT_ELIGIBLE" : "",
+    adjustment && adjustment.sampleListingCount < CATEGORY_LEARNING_MINIMUMS.linkedListings
+      ? "INSUFFICIENT_LINKED_LISTINGS" : "",
+    adjustment && adjustment.minimumObservationDays < CATEGORY_LEARNING_MINIMUMS.observationDays
+      ? "INSUFFICIENT_OBSERVATION_DAYS" : "",
+    adjustment && adjustment.totalImpressions < CATEGORY_LEARNING_MINIMUMS.totalImpressions
+      ? "INSUFFICIENT_IMPRESSIONS" : "",
+    adjustment && requestedAdjustmentPoints === null
+      ? "INVALID_ADJUSTMENT_POINTS" : "",
+  ].filter(Boolean)
+  const boundedAdjustmentPoints = rejectionReasons.length === 0 &&
+    requestedAdjustmentPoints !== null
+    ? Math.max(
+        -CATEGORY_LEARNING_MINIMUMS.maximumAbsoluteAdjustmentPoints,
+        Math.min(
+          CATEGORY_LEARNING_MINIMUMS.maximumAbsoluteAdjustmentPoints,
+          requestedAdjustmentPoints,
+        ),
+      )
+    : 0
+  const adjustedSellerPriorityScore = clamp(
+    baseSellerPriorityScore + boundedAdjustmentPoints,
+  )
+  const appliedAdjustmentPoints = round(
+    adjustedSellerPriorityScore - baseSellerPriorityScore,
+  )
+  return {
+    adjustedSellerPriorityScore,
+    audit: {
+      modelVersion: adjustment?.modelVersion ?? TRUSTED_CATEGORY_LEARNING_MODEL_VERSION,
+      predictionEngineVersion: adjustment?.predictionEngineVersion ?? null,
+      categoryId: categoryId || null,
+      status: rejectionReasons.length === 0 ? "ELIGIBLE_APPLIED" : "NOT_APPLIED",
+      source: adjustment?.source ?? null,
+      computedAt: adjustment?.computedAt ?? null,
+      sampleListingCount: adjustment?.sampleListingCount ?? 0,
+      totalImpressions: adjustment?.totalImpressions ?? 0,
+      minimumObservationDays: adjustment?.minimumObservationDays ?? 0,
+      baseSellerPriorityScore,
+      requestedAdjustmentPoints,
+      boundedAdjustmentPoints: round(boundedAdjustmentPoints),
+      appliedAdjustmentPoints,
+      adjustedSellerPriorityScore,
+      rejectionReasons,
+      minimums: CATEGORY_LEARNING_MINIMUMS,
+      policyRequiresOwnSellerPerformance: true,
+      ownSellerPerformanceOnly: rejectionReasons.length === 0,
+      competitorPerformanceUsed: false,
+      safetyGatesChanged: false,
+    },
+  }
+}
+
+const VALID_WEIGHT_UNITS = new Set([
+  "g", "gram", "grams", "kg", "kilogram", "kilograms",
+  "oz", "ounce", "ounces", "lb", "lbs", "pound", "pounds",
+])
+
+function hasConfirmedPackageWeight(candidate: NormalizedLunaOpportunityCandidate) {
+  return candidate.weight !== null && candidate.weight > 0 &&
+    VALID_WEIGHT_UNITS.has((candidate.weightUnit ?? "").trim().toLowerCase())
+}
+
+function hasAuthorizedSourceImage(candidate: NormalizedLunaOpportunityCandidate) {
+  if (!candidate.imageAuthorized) return false
+  return candidate.imageUrls.some((value) => {
+    try {
+      return new URL(value).protocol === "https:"
+    } catch {
+      return false
+    }
+  })
 }
 
 function median(values: number[]) {
@@ -385,54 +483,15 @@ function buildUnitEconomics(
 ) {
   const config = { ...DEFAULTS, ...options }
   const supplierCost = candidate.supplierCost
-  if (marketPrice === null || supplierCost === null) {
-    return {
-      ready: false,
-      marketPrice,
-      pricingBasis,
-      conservativeEstimate: true,
-      supplierCost,
-      estimatedEbayFees: null,
-      estimatedOutboundShipping: config.estimatedOutboundShipping,
-      returnsReserve: null,
-      promotedListingsReserve: null,
-      estimatedNetProfit: null,
-      estimatedNetMarginPercent: null,
-      estimatedRoiPercent: null,
-      minimumProfitablePrice: null,
-      passesProfitGate: false,
-    }
-  }
-  const estimatedEbayFees = marketPrice * config.estimatedEbayFeeRate + config.fixedOrderFee
-  const returnsReserve = marketPrice * config.returnsReserveRate
-  const promotedListingsReserve = marketPrice * config.promotedListingsReserveRate
-  const estimatedNetProfit = marketPrice - supplierCost - config.estimatedOutboundShipping -
-    estimatedEbayFees - returnsReserve - promotedListingsReserve
-  const estimatedNetMarginPercent = marketPrice > 0 ? (estimatedNetProfit / marketPrice) * 100 : 0
-  const estimatedRoiPercent = supplierCost > 0 ? (estimatedNetProfit / supplierCost) * 100 : 0
-  const variableRate = config.estimatedEbayFeeRate + config.returnsReserveRate +
-    config.promotedListingsReserveRate
-  const minimumProfitablePrice = (
-    supplierCost + config.estimatedOutboundShipping + config.fixedOrderFee + config.minimumNetProfit
-  ) / Math.max(0.01, 1 - variableRate)
-  const passesProfitGate = estimatedNetProfit >= config.minimumNetProfit &&
-    estimatedNetMarginPercent >= config.minimumNetMarginPercent &&
-    estimatedRoiPercent >= config.minimumRoiPercent
+  const canonical = calculateEbayUnitEconomics({
+    salePrice: marketPrice,
+    supplierCost,
+  }, config)
   return {
-    ready: true,
-    marketPrice: round(marketPrice),
+    ...canonical,
+    marketPrice: canonical.salePrice,
     pricingBasis,
     conservativeEstimate: true,
-    supplierCost: round(supplierCost),
-    estimatedEbayFees: round(estimatedEbayFees),
-    estimatedOutboundShipping: round(config.estimatedOutboundShipping),
-    returnsReserve: round(returnsReserve),
-    promotedListingsReserve: round(promotedListingsReserve),
-    estimatedNetProfit: round(estimatedNetProfit),
-    estimatedNetMarginPercent: round(estimatedNetMarginPercent),
-    estimatedRoiPercent: round(estimatedRoiPercent),
-    minimumProfitablePrice: round(minimumProfitablePrice),
-    passesProfitGate,
   }
 }
 
@@ -444,6 +503,7 @@ function buildOpportunityScores(
   demandReport: EbayLunaCandidateMarketInput["demandReport"],
   taxonomyConfidence: number,
   dimensionsRequired: boolean,
+  stockFreshnessHours: number,
 ) {
   const velocityScore = market.totalEstimatedWeeklyVelocity > 0
     ? clamp(market.totalEstimatedWeeklyVelocity * 8)
@@ -481,18 +541,28 @@ function buildOpportunityScores(
           ? 45
           : 20
   const identityScore = clamp(maxIdentityScore)
-  const supplyScore = candidate.available === false
+  const freshStock = candidate.stockAgeHours !== null &&
+    candidate.stockAgeHours <= stockFreshnessHours
+  const confirmedStock = candidate.inventoryQuantity ?? 0
+  const supplyScore = candidate.available === false || confirmedStock <= 0
     ? 0
-    : candidate.inventoryQuantity !== null && candidate.inventoryQuantity > 0 &&
-        candidate.stockAgeHours !== null && candidate.stockAgeHours <= DEFAULTS.stockFreshnessHours
-      ? 100
-      : candidate.available === true
-        ? 50
-        : 20
+    : !freshStock
+      ? 20
+      : confirmedStock >= 25
+        ? 100
+        : confirmedStock >= 10
+          ? 85
+          : confirmedStock >= 5
+            ? 65
+            : confirmedStock >= 2
+              ? 40
+              : 20
+  const sourceImageConfirmed = hasAuthorizedSourceImage(candidate)
+  const weightConfirmed = hasConfirmedPackageWeight(candidate)
   const listingReadinessScore = clamp(
-    (candidate.weight !== null ? 25 : 0) +
+    (weightConfirmed ? 25 : 0) +
     (!dimensionsRequired || candidate.dimensions ? 15 : 0) +
-    (candidate.imageAuthorized ? 30 : 0) +
+    (sourceImageConfirmed ? 30 : 0) +
     (demandReport.recommendedListingKeywordStructure.primarySearchPhrase ? 15 : 0) +
     (candidate.sku ? 15 : 0)
   )
@@ -516,12 +586,10 @@ function buildOpportunityScores(
       : market.totalEstimatedWeeklyVelocity > 0
         ? 40
         : 10
-  const stockConfidence = candidate.stockAgeHours !== null &&
-    candidate.stockAgeHours <= DEFAULTS.stockFreshnessHours &&
-    candidate.inventoryQuantity !== null && candidate.inventoryQuantity > 0
-    ? 100
+  const stockConfidence = freshStock && confirmedStock > 0
+    ? supplyScore
     : candidate.available === true
-      ? 45
+      ? 25
       : 0
   const confidenceScore = clamp(
     identityScore * 0.35 + demandEvidenceConfidence * 0.30 +
@@ -529,12 +597,14 @@ function buildOpportunityScores(
     (economics.ready ? 100 : 0) * 0.10
   )
   const stockUrgency = candidate.inventoryQuantity === null
-    ? 20
-    : candidate.inventoryQuantity <= 5
-      ? 90
-      : candidate.inventoryQuantity <= 20
-        ? 65
-        : 45
+    ? 10
+    : candidate.inventoryQuantity <= 1
+      ? 5
+      : candidate.inventoryQuantity <= 5
+        ? 25
+        : candidate.inventoryQuantity <= 20
+          ? 65
+          : 85
   const evidenceUrgency = market.demandEvidenceRoute === "INSUFFICIENT_EXACT_MULTI_SELLER_EVIDENCE"
     ? 20
     : 80
@@ -560,6 +630,7 @@ function buildOpportunityScores(
     trendScore,
     demandEvidenceConfidence,
     taxonomyConfidence,
+    stockFreshnessHours,
     scoreWeights: {
       demand: 0.30,
       economics: 0.25,
@@ -715,7 +786,7 @@ function buildListingIntelligencePackage(
       competitorImagesCopied: false,
     },
     imagePlan: {
-      authorizedLunaImagesAvailable: candidate.imageAuthorized && candidate.imageUrls.length > 0,
+      authorizedLunaImagesAvailable: hasAuthorizedSourceImage(candidate),
       sourceImageCount: candidate.imageUrls.length,
       mainImage: "Authorized exact product on a clean background",
       secondaryImages: [
@@ -733,7 +804,7 @@ function buildListingIntelligencePackage(
       humanReviewRequired: true,
     },
     fulfillmentEvidence: {
-      weightConfirmed: candidate.weight !== null,
+      weightConfirmed: hasConfirmedPackageWeight(candidate),
       dimensionsRequired,
       dimensionsConfirmed: candidate.dimensions !== null,
       dimensionsPolicy: dimensionsRequired
@@ -793,7 +864,12 @@ export function buildEbayLunaOpportunityAssessment(
   )
   const dimensionsRequired = requiresPackageDimensions(input)
   const taxonomyVerification = buildTaxonomyVerification(candidate, input)
-  const scores = buildOpportunityScores(
+  const stockFreshnessHours = Math.max(
+    1,
+    Math.min(168, numberOrNull(options.stockFreshnessHours) ?? DEFAULTS.stockFreshnessHours),
+  )
+  const config = { ...DEFAULTS, ...options, stockFreshnessHours }
+  const baseScores = buildOpportunityScores(
     candidate,
     market,
     economics,
@@ -801,12 +877,14 @@ export function buildEbayLunaOpportunityAssessment(
     input.demandReport,
     taxonomyVerification.confidence,
     dimensionsRequired,
+    config.stockFreshnessHours,
   )
-  const config = { ...DEFAULTS, ...options }
+  const weightConfirmed = hasConfirmedPackageWeight(candidate)
+  const imageEvidenceConfirmed = hasAuthorizedSourceImage(candidate)
   const packageEvidenceGates = [
-    candidate.weight === null && !candidate.dimensions
+    !weightConfirmed && !candidate.dimensions
       ? "NEED_PACKAGE_WEIGHT_AND_DIMENSIONS"
-      : candidate.weight === null
+      : !weightConfirmed
         ? "NEED_PACKAGE_WEIGHT"
         : dimensionsRequired && !candidate.dimensions
           ? "NEED_PACKAGE_DIMENSIONS"
@@ -821,7 +899,7 @@ export function buildEbayLunaOpportunityAssessment(
     !exactIdentityConfirmed ? "NEED_EXACT_GTIN_OR_BRAND_MPN_MATCH" : "",
     candidate.supplierCost === null ? "NEED_CONFIRMED_SUPPLIER_COST" : "",
     ...packageEvidenceGates,
-    !candidate.imageAuthorized ? "NEED_AUTHORIZED_PRODUCT_IMAGES" : "",
+    !imageEvidenceConfirmed ? "NEED_AUTHORIZED_PRODUCT_IMAGES" : "",
     ...taxonomyVerification.hardGuards,
     ...candidate.restrictionGuards,
     economics.ready && !economics.passesProfitGate ? "UNIT_ECONOMICS_BELOW_MINIMUM" : "",
@@ -844,6 +922,17 @@ export function buildEbayLunaOpportunityAssessment(
     taxonomyVerification,
     dimensionsRequired,
   )
+  const categoryLearning = applyCategoryLearningAdjustment(
+    baseScores.sellerPriorityScore,
+    listingPackage.categoryRecommendation.categoryId,
+    options.categoryLearningAdjustment,
+  )
+  const scores = {
+    ...baseScores,
+    opportunityScore: categoryLearning.adjustedSellerPriorityScore,
+    sellerPriorityScore: categoryLearning.adjustedSellerPriorityScore,
+    categoryLearning: categoryLearning.audit,
+  }
   const canProceedToListingPackage = hardGates.length === 0 &&
     evidenceGuards.length === 0 && scores.potentialScore >= 70 &&
     scores.confidenceScore >= 70
@@ -870,7 +959,7 @@ export function buildEbayLunaOpportunityAssessment(
     market,
     taxonomyVerification,
     fulfillmentEvidence: {
-      weightConfirmed: candidate.weight !== null,
+      weightConfirmed,
       dimensionsRequired,
       dimensionsConfirmed: candidate.dimensions !== null,
     },

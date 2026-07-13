@@ -51,6 +51,17 @@ type ProfessionalQueueRow = Record<string, unknown> & {
   assessment?: unknown
 }
 
+// These facts can only be completed and reviewed inside the listing workspace.
+// They may open preparation, but they never bypass draft-only readiness.
+const LISTING_WORKSPACE_RESOLVABLE_HARD_GATES = new Set([
+  "NEED_AUTHORIZED_PRODUCT_IMAGES",
+  "NEED_PACKAGE_WEIGHT",
+  "NEED_PACKAGE_DIMENSIONS",
+  "NEED_PACKAGE_WEIGHT_AND_DIMENSIONS",
+  "NEED_EBAY_TAXONOMY_CATEGORY",
+  "NEED_REQUIRED_EBAY_ITEM_ASPECTS",
+])
+
 function numberOrNull(value: unknown) {
   if (value === null || value === undefined || value === "") return null
   const parsed = Number(value)
@@ -73,6 +84,49 @@ function records(value: unknown) {
 
 function number(value: unknown) {
   return numberOrNull(value) ?? 0
+}
+
+export function evaluateEbayListingWorkspaceEligibility(row: ProfessionalQueueRow) {
+  const assessment = record(row.assessment)
+  const identity = record(assessment.identity)
+  const economics = record(assessment.economics)
+  const scores = record(assessment.scores)
+  const hardGates = Array.isArray(row.hard_gates)
+    ? row.hard_gates.filter((value): value is string => typeof value === "string")
+    : []
+  const evidenceGuards = Array.isArray(row.evidence_guards)
+    ? row.evidence_guards.filter((value): value is string => typeof value === "string")
+    : []
+  const supplierInventory = numberOrNull(row.supplier_inventory_quantity)
+  const supplierCost = numberOrNull(row.supplier_price)
+  const potentialScore = numberOrNull(scores.potentialScore)
+    ?? numberOrNull(row.opportunity_score)
+    ?? 0
+  const confidenceScore = numberOrNull(scores.confidenceScore)
+    ?? numberOrNull(row.identity_score)
+    ?? 0
+  const blockers = [
+    ...(identity.exactIdentityConfirmed === true ? [] : ["EXACT_IDENTITY_REQUIRED"]),
+    ...(economics.ready === true ? [] : ["UNIT_ECONOMICS_REQUIRED"]),
+    ...(row.supplier_available === true && supplierInventory !== null && supplierInventory > 0
+      ? []
+      : ["LUNA_STOCK_UNAVAILABLE"]),
+    ...(supplierCost !== null && supplierCost > 0 ? [] : ["LUNA_COST_REQUIRED"]),
+    ...(potentialScore >= 70 ? [] : ["POTENTIAL_SCORE_BELOW_70"]),
+    ...(confidenceScore >= 70 ? [] : ["CONFIDENCE_SCORE_BELOW_70"]),
+    ...hardGates
+      .filter((gate) => !LISTING_WORKSPACE_RESOLVABLE_HARD_GATES.has(gate))
+      .map((gate) => `HARD_GATE:${gate}`),
+    ...evidenceGuards.map((guard) => `EVIDENCE_GUARD:${guard}`),
+    ...(["hold", "rejected", "listed", "archived"].includes(text(row.queue_status) ?? "")
+      ? ["OPPORTUNITY_STATUS_BLOCKED"]
+      : []),
+  ]
+  return {
+    allowed: blockers.length === 0,
+    blockers: [...new Set(blockers)],
+    resolvableHardGates: hardGates.filter((gate) => LISTING_WORKSPACE_RESOLVABLE_HARD_GATES.has(gate)),
+  }
 }
 
 export function buildProfessionalSellerQueueView(row: ProfessionalQueueRow) {
@@ -107,6 +161,7 @@ export function buildProfessionalSellerQueueView(row: ProfessionalQueueRow) {
   const evidenceGuards = Array.isArray(row.evidence_guards)
     ? row.evidence_guards.filter((value): value is string => typeof value === "string")
     : []
+  const workspaceEligibility = evaluateEbayListingWorkspaceEligibility(row)
 
   let sellerLane = "REFINE_EBAY_SEARCH"
   let nextSellerAction = "Refina la frase de búsqueda o confirma la categoría antes de invertir tiempo en el listing."
@@ -116,6 +171,9 @@ export function buildProfessionalSellerQueueView(row: ProfessionalQueueRow) {
   } else if (canProceedToListingPackage) {
     sellerLane = "LISTING_PACKAGE_READY"
     nextSellerAction = "Prepara el paquete de listing y envíalo a revisión humana."
+  } else if (workspaceEligibility.allowed) {
+    sellerLane = "LISTING_PACKAGE_INTAKE_READY"
+    nextSellerAction = "Abre el Workspace para completar fotos, peso, dimensiones o aspectos; la aprobación final seguirá bloqueada hasta validarlos."
   } else if (!exactIdentityConfirmed) {
     sellerLane = candidateCount >= 3
       ? "HIGH_POTENTIAL_NEEDS_IDENTITY"
@@ -147,7 +205,10 @@ export function buildProfessionalSellerQueueView(row: ProfessionalQueueRow) {
     seller_lane: sellerLane,
     next_seller_action: nextSellerAction,
     can_prepare_listing_package: canProceedToListingPackage,
-    listing_intake_url: typeof row.id === "string"
+    can_open_listing_workspace: workspaceEligibility.allowed,
+    listing_workspace_blockers: workspaceEligibility.blockers,
+    listing_workspace_resolvable_gates: workspaceEligibility.resolvableHardGates,
+    listing_intake_url: typeof row.id === "string" && workspaceEligibility.allowed
       ? `/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(row.id)}&candidate=${encodeURIComponent(text(row.candidate_key) ?? "")}`
       : null,
     winning_structure: {

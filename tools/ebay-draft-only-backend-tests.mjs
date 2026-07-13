@@ -7,12 +7,17 @@ const snapshotSource = readFileSync(
   new URL("../lib/ebay/ebay-draft-only-preflight-snapshot.ts", import.meta.url),
   "utf8",
 )
+const economicsSource = readFileSync(
+  new URL("../lib/ebay/ebay-unit-economics.ts", import.meta.url),
+  "utf8",
+)
 
 function embedSnapshotModule(source) {
   const withoutImport = source
     .replace('import { verifyEbayDraftOnlyPreflightSnapshot } from "./ebay-draft-only-preflight-snapshot"\n', "")
+    .replace(/import \{\n  calculateEbayUnitEconomics,\n  DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,\n  normalizeEbayUnitEconomicsConfig,\n  type EbayUnitEconomicsConfig,\n\} from "\.\/ebay-unit-economics"\n/, "")
     .replace(/import \{\n  issueEbayDraftOnlyPreflightSnapshot,\n  verifyEbayDraftOnlyPreflightSnapshot,\n\} from "\.\/ebay-draft-only-preflight-snapshot"\n/, "")
-  return `${snapshotSource}\n${withoutImport}`
+  return `${snapshotSource}\n${economicsSource}\n${withoutImport}`
 }
 
 const readinessSource = embedSnapshotModule(readFileSync(
@@ -25,6 +30,14 @@ const gatewaySource = embedSnapshotModule(readFileSync(
 ))
 const routeSource = readFileSync(
   new URL("../app/api/admin/ebay/draft-only/route.ts", import.meta.url),
+  "utf8",
+)
+const taxonomyGatewaySource = readFileSync(
+  new URL("../lib/ebay/ebay-seller-keyword-demand-gateway.ts", import.meta.url),
+  "utf8",
+)
+const workspaceSource = readFileSync(
+  new URL("../app/admin/ebay/listing-workspace/page.tsx", import.meta.url),
   "utf8",
 )
 const migrationSource = readFileSync(
@@ -87,7 +100,7 @@ function validInput(now = new Date("2026-07-13T05:00:00.000Z")) {
         aspects: { Brand: ["Acme"] },
         description: "Accurate supplier-backed product description.",
         imageUrls: [image],
-        pricing: { targetPrice: 25, estimatedNetProfit: 6 },
+        pricing: { targetPrice: 30, estimatedNetProfit: 999_999 },
       },
     },
     opportunity: {
@@ -140,7 +153,25 @@ function validInput(now = new Date("2026-07-13T05:00:00.000Z")) {
         validated: true,
         validatedAt: timestamp,
         categoryId: "11700",
+        categoryTreeId: "0",
+        categoryTreeVersion: "2026-07-01",
         requiredAspects: ["Brand"],
+        source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
+        constraintSnapshotStatus: "AVAILABLE",
+        aspectConstraints: [{
+          name: "Brand",
+          mode: "FREE_TEXT",
+          cardinality: "SINGLE",
+          maxLength: 65,
+          dataType: "STRING",
+          format: null,
+          advancedDataType: null,
+          expectedRequiredByDate: null,
+          suggestedValues: [],
+          values: [],
+          valuesComplete: true,
+          constraintsComplete: true,
+        }],
       },
       skuCollisionCheck: { sku: RESERVED_SKU, serverPreflightRequiredAtExecution: true },
       ebayPreflightSnapshot: signedSnapshot({ now }),
@@ -235,6 +266,217 @@ test("readiness binds all required evidence to one deterministic approval hash",
   assert.equal(result.payload.safety.publishOfferPresent, false)
   assert.deepEqual(result.payload.safety.permittedOperations, ["createOrReplaceInventoryItem", "createOffer"])
   assert.equal(module.hashEbayDraftOnlyPayload(result.payload), result.payloadHash)
+})
+
+test("taxonomy constraint validation fails closed on selection, cardinality, length and dependencies", async () => {
+  const module = await importTypeScript(readinessSource)
+  const base = {
+    source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
+    constraintSnapshotStatus: "AVAILABLE",
+    categoryTreeId: "0",
+    categoryTreeVersion: "2026-07-01",
+    aspectConstraints: [{
+      name: "Color",
+      mode: "SELECTION_ONLY",
+      cardinality: "SINGLE",
+      maxLength: 5,
+      dataType: "STRING",
+      format: null,
+      advancedDataType: null,
+      valuesComplete: true,
+      constraintsComplete: true,
+      values: [{
+        value: "Red",
+        valueConstraints: [{
+          applicableForAspectName: "Size",
+          applicableForAspectValues: ["Small"],
+        }],
+      }],
+    }, {
+      name: "Size",
+      mode: "FREE_TEXT",
+      cardinality: "SINGLE",
+      maxLength: 5,
+      dataType: "STRING",
+      format: null,
+      advancedDataType: null,
+      valuesComplete: true,
+      constraintsComplete: true,
+      values: [],
+    }],
+  }
+  const invalid = module.validateEbayTaxonomyAspectValues({
+    Color: ["Blue", "Red"],
+    Size: ["Large"],
+  }, base)
+  assert.ok(invalid.includes("ASPECT_SINGLE_VALUE_REQUIRED:COLOR"))
+  assert.ok(invalid.includes("ASPECT_SELECTION_VALUE_INVALID:COLOR"))
+  assert.ok(invalid.includes("ASPECT_VALUE_CONSTRAINT_NOT_MET:COLOR"))
+
+  const tooLong = module.validateEbayTaxonomyAspectValues({
+    Color: ["Red"],
+    Size: ["Medium"],
+  }, base)
+  assert.ok(tooLong.includes("ASPECT_MAX_LENGTH_EXCEEDED:SIZE"))
+
+  const unavailable = module.validateEbayTaxonomyAspectValues({ Color: ["Red"] }, {
+    ...base,
+    categoryTreeVersion: null,
+  })
+  assert.deepEqual(unavailable, ["ASPECT_CONSTRAINTS_UNVERIFIABLE"])
+
+  assert.deepEqual(module.validateEbayTaxonomyAspectValues({}, {
+    source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
+    constraintSnapshotStatus: "AVAILABLE",
+    categoryTreeId: "0",
+    categoryTreeVersion: "2026-07-01",
+    aspectConstraints: [],
+  }), [])
+})
+
+test("una categoría oficial sin aspectos puede estar lista sin inventar campos", async () => {
+  const module = await importTypeScript(readinessSource)
+  const input = validInput()
+  input.listingPackage.package_data.aspects = {}
+  input.opportunity.assessment.listingIntelligencePackage.categoryRecommendation.requiredAspects = []
+  input.draftConfiguration.aspectValidation.requiredAspects = []
+  input.draftConfiguration.aspectValidation.aspectConstraints = []
+  const result = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(result.ready, true)
+  assert.equal(result.blockers.includes("ASPECTS_REQUIRED"), false)
+})
+
+test("taxonomy typed values support official eBay formats and reject unsupported metadata", async () => {
+  const module = await importTypeScript(readinessSource)
+  const validation = {
+    source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
+    constraintSnapshotStatus: "AVAILABLE",
+    categoryTreeId: "0",
+    categoryTreeVersion: "2026-07-01",
+    aspectConstraints: [
+      ["Year", "DATE", "YYYY", null],
+      ["Count", "NUMBER", "int32", null],
+      ["Device Charging Range", "NUMBER", "double", "NUMERIC_RANGE"],
+    ].map(([name, dataType, format, advancedDataType]) => ({
+      name,
+      mode: "FREE_TEXT",
+      cardinality: "SINGLE",
+      maxLength: 40,
+      dataType,
+      format,
+      advancedDataType,
+      values: [],
+      valuesComplete: true,
+      constraintsComplete: true,
+    })),
+  }
+  assert.deepEqual(module.validateEbayTaxonomyAspectValues({
+    Year: ["2026"],
+    Count: ["12"],
+    "Device Charging Range": ["10-20.5"],
+  }, validation), [])
+
+  const invalid = module.validateEbayTaxonomyAspectValues({
+    Year: ["202613"],
+    Count: ["1.2"],
+    "Device Charging Range": ["20-10"],
+  }, validation)
+  assert.ok(invalid.includes("ASPECT_VALUE_FORMAT_INVALID:YEAR"))
+  assert.ok(invalid.includes("ASPECT_VALUE_FORMAT_INVALID:COUNT"))
+  assert.ok(invalid.includes("ASPECT_VALUE_FORMAT_INVALID:DEVICE_CHARGING_RANGE"))
+
+  validation.aspectConstraints[0].format = "RFC3339"
+  assert.ok(module.validateEbayTaxonomyAspectValues({ Year: ["2026"] }, validation)
+    .includes("ASPECT_TYPE_FORMAT_UNVERIFIABLE:YEAR"))
+})
+
+test("taxonomy adapter, server snapshot and workspace retain and enforce official constraints", () => {
+  for (const field of [
+    "categoryTreeVersion",
+    "aspectMode",
+    "itemToAspectCardinality",
+    "aspectMaxLength",
+    "aspectDataType",
+    "aspectFormat",
+    "aspectAdvancedDataType",
+    "expectedRequiredByDate",
+    "valueConstraints",
+  ]) assert.match(taxonomyGatewaySource, new RegExp(field))
+  assert.match(routeSource, /aspectConstraints: liveAspectConstraints/)
+  assert.match(routeSource, /constraintSnapshotStatus/)
+  assert.match(workspaceSource, /selectionOnly/)
+  assert.match(workspaceSource, /maxLength=\{taxonomyAspect\?\.maxLength/)
+  assert.match(workspaceSource, /no se puede borrar/)
+})
+
+test("readiness recalculates profit on the server and ignores client profit claims", async () => {
+  const module = await importTypeScript(readinessSource)
+  const baseline = validInput()
+  const result = module.evaluateEbayDraftOnlyReadiness(baseline)
+  assert.equal(result.ready, true)
+  assert.equal(result.economics.estimatedNetProfit, 8.51)
+  assert.equal(result.economics.marginPercent, 28.37)
+  assert.equal(result.economics.calculationSource, "SERVER_CANONICAL_EBAY_UNIT_ECONOMICS_V1")
+  assert.equal(result.payload.listingPackage.packageData.pricing.estimatedNetProfit, 8.51)
+  assert.notEqual(result.payload.listingPackage.packageData.pricing.estimatedNetProfit, 999_999)
+
+  const tamperedProfit = validInput()
+  tamperedProfit.listingPackage.package_data.pricing.estimatedNetProfit = -999_999
+  const tamperedResult = module.evaluateEbayDraftOnlyReadiness(tamperedProfit)
+  assert.equal(tamperedResult.payloadHash, result.payloadHash)
+
+  const repriced = validInput()
+  repriced.listingPackage.package_data.pricing.targetPrice = 20
+  repriced.listingPackage.package_data.pricing.estimatedNetProfit = 1_000_000
+  const repricedResult = module.evaluateEbayDraftOnlyReadiness(repriced)
+  assert.equal(repricedResult.economics.estimatedNetProfit, 0.91)
+  assert.equal(repricedResult.ready, false)
+  assert.ok(repricedResult.blockers.includes("MINIMUM_NET_MARGIN_NOT_MET"))
+
+  const costlyShipping = module.evaluateEbayDraftOnlyReadiness({
+    ...validInput(),
+    economicsConfig: { estimatedOutboundShipping: 20 },
+  })
+  assert.equal(costlyShipping.economics.estimatedOutboundShipping, 20)
+  assert.equal(costlyShipping.ready, false)
+
+  const missingSupplierCost = validInput()
+  missingSupplierCost.opportunity.supplier_price = null
+  const missingSupplierCostResult = module.evaluateEbayDraftOnlyReadiness(missingSupplierCost)
+  assert.equal(missingSupplierCostResult.economics.estimatedNetProfit, null)
+  assert.ok(missingSupplierCostResult.blockers.includes("LUNA_COST_REQUIRED"))
+})
+
+test("readiness requires a real authorized image, explicit weight unit and collision-free identity", async () => {
+  const module = await importTypeScript(readinessSource)
+  const input = validInput()
+  input.listingPackage.package_data.imageUrls = []
+  input.draftConfiguration.imageAuthorization.approvedImageUrls = []
+  input.draftConfiguration.packageWeightAndSize.weight.unit = ""
+  input.identityCollisionReasons = ["ACTIVE_SUPPLIER_SKU", "LISTING_PACKAGE_GTIN"]
+  const result = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(result.ready, false)
+  assert.ok(result.blockers.includes("HTTPS_IMAGES_REQUIRED"))
+  assert.ok(result.blockers.includes("IMAGE_AUTHORIZATION_WITHOUT_SOURCE_IMAGE"))
+  assert.ok(result.blockers.includes("PACKAGE_WEIGHT_UNIT_REQUIRED"))
+  assert.ok(result.blockers.includes("PRODUCT_IDENTITY_COLLISION"))
+  assert.ok(result.blockers.includes("PRODUCT_IDENTITY_COLLISION:ACTIVE_SUPPLIER_SKU"))
+  assert.ok(result.blockers.includes("PRODUCT_IDENTITY_COLLISION:LISTING_PACKAGE_GTIN"))
+})
+
+test("route checks canonical product identities and preserves taxonomy evidence time", () => {
+  for (const field of [
+    "candidate_key",
+    "supplier_sku",
+    "supplier_variant_id",
+    "market_radar_product_id",
+    "gtin",
+  ]) assert.match(routeSource, new RegExp(field))
+  assert.match(routeSource, /DRAFT_APPROVAL_CANDIDATE_KEY/)
+  assert.match(routeSource, /LISTING_PACKAGE_GTIN/)
+  assert.match(routeSource, /opportunity\.last_scanned_at/)
+  assert.match(routeSource, /validatedAt: taxonomyObservedAt/)
+  assert.doesNotMatch(routeSource, /validatedAt: now\.toISOString\(\)/)
 })
 
 test("readiness fails closed on evidence, freshness, rights, margin, policies and SKU collisions", async () => {
@@ -620,6 +862,9 @@ test("route requires a human Admin, exact approval, fresh revalidation and unkno
   assert.ok(executeSource.indexOf("preflightEbayDraftSkuCollision") < executeSource.indexOf("createOrReplaceEbayDraftInventoryItem"))
   assert.match(executeSource, /preflight\.collision \? "terminal_failure" : "claimed"/)
   assert.match(routeSource, /serverApprovedConfiguration/)
+  assert.match(routeSource, /imageAssetManifest/)
+  assert.match(routeSource, /imageManifestConfirmed/)
+  assert.match(routeSource, /protectedManifestVerified/)
   assert.match(routeSource, /const claimToken = randomUUID\(\)/)
   assert.match(routeSource, /p_claim_token: claimToken/)
   assert.match(routeSource, /offer_create_in_flight/)

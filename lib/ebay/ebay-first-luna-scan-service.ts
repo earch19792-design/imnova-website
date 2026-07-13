@@ -1,9 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import {
+  EBAY_LUNA_DEMAND_OPPORTUNITY_ENGINE_VERSION,
   matchEbayBestSellingProductsToLuna,
 } from "./ebay-luna-demand-opportunity-engine"
 import { runEbayLunaOpportunityScan } from "./ebay-luna-demand-opportunity-gateway"
+import {
+  loadEbayCategoryLearningAdjustments,
+} from "./ebay-category-performance-learning"
+import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
 import {
   loadEbayListingObservationHistory,
   persistEbayOpportunityObservation,
@@ -223,9 +228,12 @@ async function createActiveListingRisk(
       ? "price_up"
       : null
   if (!marketRadarProductId || !riskType) return
+  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!accountKey) return
   let query = supabase
     .from("ebay_active_listings")
     .select("id,title,supplier_sku")
+    .eq("account_key", accountKey)
     .eq("market_radar_product_id", marketRadarProductId)
     .eq("listing_status", "active")
   if (supplierVariantId) query = query.eq("supplier_variant_id", supplierVariantId)
@@ -295,6 +303,7 @@ async function createActiveListingRisk(
         delivered_at: null,
         last_error_code: null,
         payload: {
+          accountKey,
           marketRadarProductId,
           supplierVariantId,
           sourceSnapshotId,
@@ -317,6 +326,8 @@ async function createOpportunitySignalAlert(
     stateValue?: unknown
   },
 ) {
+  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!accountKey) return
   const supported = ["price_down", "restocked", "out_of_stock", "price_up", "low_stock"]
   if (!supported.includes(input.eventType)) return
   const priority = input.eventType === "out_of_stock"
@@ -327,7 +338,7 @@ async function createOpportunitySignalAlert(
   const stateFingerprint = input.eventType === "price_down" || input.eventType === "price_up"
     ? `:${String(input.stateValue ?? "changed").replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 40)}`
     : ""
-  const alertFingerprint = `opportunity:${input.opportunityId}:${input.eventType}${stateFingerprint}`
+  const alertFingerprint = `opportunity:${input.opportunityId}:${input.eventType}${stateFingerprint}:account:${accountKey}`
   if (input.eventType === "low_stock") {
     const { data: existing, error: readError } = await supabase
       .from("ebay_seller_alert_outbox")
@@ -350,6 +361,7 @@ async function createOpportunitySignalAlert(
     delivered_at: null,
     last_error_code: null,
     payload: {
+      accountKey,
       title: input.title,
       eventType: input.eventType,
       snapshotId: input.snapshotId,
@@ -391,12 +403,17 @@ async function processClaimedCandidate(
     supabase,
     [...(run.category_ids ?? []), ...inferredCategories],
   )
+  const categoryLearningAdjustments = await loadEbayCategoryLearningAdjustments(
+    supabase,
+    EBAY_LUNA_DEMAND_OPPORTUNITY_ENGINE_VERSION,
+  ).catch(() => ({}))
   const scan = await runEbayLunaOpportunityScan({
     candidates: [candidate],
     observationHistoryByCandidate: candidate.candidateKey
       ? { [candidate.candidateKey]: history }
       : {},
     bestSellingCategoryIds: categoriesDue,
+    categoryLearningAdjustmentsByCategory: categoryLearningAdjustments,
   })
   const discoveries: Array<{
     categoryId: string
@@ -484,10 +501,11 @@ async function processClaimedCandidate(
       inventoryQuantity: assessment.candidate.inventoryQuantity,
     })
   } else {
+    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
     const { error: resolvedLowStockError } = await supabase
       .from("ebay_seller_alert_outbox")
       .update({ status: "cancelled", updated_at: new Date().toISOString() })
-      .eq("alert_fingerprint", `opportunity:${saved.id}:low_stock`)
+      .eq("alert_fingerprint", `opportunity:${saved.id}:low_stock:account:${accountKey ?? "unconfigured"}`)
       .neq("status", "cancelled")
     if (resolvedLowStockError) throw new Error("SELLER_LOW_STOCK_ALERT_RESOLVE_FAILED")
   }
@@ -675,11 +693,21 @@ export async function recordEbayFirstLunaScanFailure(
 }
 
 export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
+  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  const activeRisksQuery = accountKey
+    ? supabase
+      .from("ebay_active_listing_risk_events")
+      .select("id,risk_type,risk_priority,risk_summary,recommended_action,created_at,active_listing:ebay_active_listings!inner(account_key)")
+      .eq("active_listing.account_key", accountKey)
+      .is("resolved_at", null)
+      .order("created_at", { ascending: false })
+      .limit(40)
+    : Promise.resolve({ data: [], error: null })
   const [runs, queue, events, activeRisks, total, ready, review, watchlist, holds] = await Promise.all([
     supabase.from("ebay_luna_scan_runs").select("*").order("started_at", { ascending: false }).limit(5),
     supabase.from("ebay_luna_opportunity_queue").select("id,candidate_key,market_radar_product_id,product_title,variant_title,supplier_sku,queue_status,decision,opportunity_score,demand_score,economics_score,identity_score,competition_score,supply_score,listing_readiness_score,active_comparables,sellers_with_movement,estimated_weekly_velocity,median_total_buyer_price,estimated_net_profit,supplier_price,supplier_available,supplier_inventory_quantity,best_selling_match_score,hard_gates,evidence_guards,assessment,last_scanned_at").order("opportunity_score", { ascending: false }).limit(QUEUE_LIMIT),
     supabase.from("ebay_luna_opportunity_queue_events").select("*,ebay_luna_opportunity_queue(product_title,supplier_sku)").order("created_at", { ascending: false }).limit(40),
-    supabase.from("ebay_active_listing_risk_events").select("id,risk_type,risk_priority,risk_summary,recommended_action,created_at").is("resolved_at", null).order("created_at", { ascending: false }).limit(40),
+    activeRisksQuery,
     supabase.from("ebay_luna_opportunity_queue").select("id", { count: "exact", head: true }),
     supabase.from("ebay_luna_opportunity_queue").select("id", { count: "exact", head: true }).eq("queue_status", "ready"),
     supabase.from("ebay_luna_opportunity_queue").select("id", { count: "exact", head: true }).eq("queue_status", "review"),
@@ -696,18 +724,22 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
       right.seller_priority_score - left.seller_priority_score ||
       Number(right.opportunity_score ?? 0) - Number(left.opportunity_score ?? 0),
     )
+  const scopedActiveRisks = (activeRisks.data ?? []).map((risk) => {
+    const { active_listing: _activeListing, ...publicRisk } = risk
+    return publicRisk
+  })
   return {
     runs: runs.data ?? [],
     queue: professionalRows,
     events: events.data ?? [],
-    activeListingRisks: activeRisks.data ?? [],
+    activeListingRisks: scopedActiveRisks,
     summary: {
       total: total.count ?? rows.length,
       ready: ready.count ?? rows.filter((row) => row.queue_status === "ready").length,
       review: review.count ?? rows.filter((row) => row.queue_status === "review").length,
       watchlist: watchlist.count ?? rows.filter((row) => row.queue_status === "watchlist").length,
       supplierHolds: holds.count ?? rows.filter((row) => row.queue_status === "hold" || row.queue_status === "rejected").length,
-      activeListingRisks: activeRisks.data?.length ?? 0,
+      activeListingRisks: scopedActiveRisks.length,
     },
     safety: {
       ebayReadOnly: true,
@@ -718,8 +750,9 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
     },
     automation: {
       strategy: EBAY_LUNA_SCAN_STRATEGY,
-      productionSchedule: "*/15 * * * *",
-      productionScheduleLabel: "Luna cada 6 h + eBay cada 15 min · protección por prioridad",
+      productionSchedule: "17 9 * * *",
+      lunaProductionSchedule: "0 9 * * *",
+      productionScheduleLabel: "Luna diario 09:00 UTC + eBay diario 09:17 UTC · protección por prioridad",
       previewRunsCronAutomatically: false,
       productionRunsCronAutomatically: true,
       mobileAccelerationBatchCount: 10,

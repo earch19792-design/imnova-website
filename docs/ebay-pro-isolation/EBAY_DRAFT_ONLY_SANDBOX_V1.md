@@ -60,6 +60,9 @@ La aprobación se puede cancelar desde el teléfono antes de ejecutar.
 - `UNPUBLISHED` se presenta como verificación puntual al momento de crear; no se
   afirma como estado actual permanente sin volver a consultar eBay.
 - Ninguna imagen se autoriza por inferencia: el Admin debe confirmar derechos.
+- Categoría e item specifics se vuelven a validar con Taxonomy oficial. El hash
+  conserva versión del árbol, restricciones y dependencias de valores; metadata
+  ausente, truncada o con formato no soportado bloquea el readiness.
 
 ## Configuración de Preview
 
@@ -88,7 +91,19 @@ La aprobación se puede cancelar desde el teléfono antes de ejecutar.
   de Vercel Production queda bloqueado aunque heredara los demás valores.
 - El refresh token requiere `sell.inventory`, `sell.account.readonly` y
   `commerce.identity.readonly`.
-- Opcional: `EBAY_DRAFT_ONLY_MIN_MARGIN_PERCENT=15`
+- La economía se recalcula en el servidor cada vez que cambia el precio. Valores
+  configurables (los valores indicados son los defaults):
+  - `EBAY_DRAFT_ONLY_ESTIMATED_EBAY_FEE_RATE=0.15`
+  - `EBAY_DRAFT_ONLY_FIXED_ORDER_FEE=0.30`
+  - `EBAY_DRAFT_ONLY_ESTIMATED_OUTBOUND_SHIPPING=6.99`
+  - `EBAY_DRAFT_ONLY_RETURNS_RESERVE_RATE=0.04`
+  - `EBAY_DRAFT_ONLY_PROMOTED_LISTINGS_RESERVE_RATE=0.05`
+  - `EBAY_DRAFT_ONLY_MIN_NET_PROFIT=5`
+  - `EBAY_DRAFT_ONLY_MIN_MARGIN_PERCENT=20`
+  - `EBAY_DRAFT_ONLY_MIN_ROI_PERCENT=30`
+
+`estimatedNetProfit` recibido desde el navegador nunca decide la aprobación; el
+hash aprobado contiene la economía canónica calculada por el servidor.
 
 El preflight read-only permanece disponible con ambos flags de escritura en
 `false`. El botón de ejecución sí permanece bloqueado mientras falten

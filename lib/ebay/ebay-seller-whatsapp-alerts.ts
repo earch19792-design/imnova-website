@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto"
+
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import {
@@ -15,8 +17,14 @@ import {
   sendSellerWhatsAppApprovedTemplate,
   type SellerWhatsAppTemplateMessage,
 } from "@/lib/ebay/ebay-seller-whatsapp-gateway"
+import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 
 type FetchLike = typeof fetch
+
+// A single real delivery can consume up to 20 seconds. Every current caller
+// runs inside a 60-second serverless request that may already have performed
+// other work, so claiming more than one message would make the lease dishonest.
+const SELLER_WHATSAPP_MAX_CLAIM_PER_INVOCATION = 1
 
 type AlertOutboxRow = {
   id: string
@@ -81,9 +89,32 @@ function safeFacts(facts: SellerWhatsAppAlertFacts) {
     costChangePct: numeric(facts.costChangePct),
     hasExactEvidence: facts.hasExactEvidence === true,
     hasActiveListing: facts.hasActiveListing === true,
+    supplierAvailable: facts.supplierAvailable === true
+      ? true
+      : facts.supplierAvailable === false
+        ? false
+        : null,
     terminalFailure: facts.terminalFailure === true,
     hoursUntilExpiration: numeric(facts.hoursUntilExpiration),
   }
+}
+
+function sellerWhatsAppDedupeKey(
+  accountKey: string,
+  input: Pick<EnqueueSellerWhatsAppAlertInput,
+    "alertType" | "entityType" | "entityId">,
+) {
+  // candidateKey is metadata and may change when a supplier mapping is fixed.
+  // The entity ID is the stable identity used both to enqueue and resolve.
+  const stableIdentity = JSON.stringify([
+    input.alertType,
+    text(input.entityType, 80),
+    text(input.entityId, 200),
+  ])
+  const identityHash = createHash("sha256")
+    .update(stableIdentity)
+    .digest("hex")
+  return `seller-whatsapp-v2:${accountKey}:${identityHash}`
 }
 
 function digestHourUtc() {
@@ -107,23 +138,31 @@ export async function enqueueSellerWhatsAppAlert(
       decision,
     }
   }
+  const accountScope = getEbaySellerAccountScopeConfiguration()
+  if (!accountScope.accountKey) {
+    return {
+      enqueued: false,
+      alertId: null,
+      reason: "account_scope_not_configured",
+      decision,
+    }
+  }
 
   const entityType = text(input.entityType, 80)
   const entityId = text(input.entityId, 200)
   if (!entityType || !entityId) throw new Error("SELLER_WHATSAPP_ENTITY_REQUIRED")
   const candidateKey = text(input.candidateKey, 300) || null
-  const dedupeKey = [
-    "seller-whatsapp-v1",
-    input.alertType,
+  const dedupeKey = sellerWhatsAppDedupeKey(accountScope.accountKey, {
+    alertType: input.alertType,
     entityType,
     entityId,
-    candidateKey ?? "none",
-  ].join(":")
+  })
   const dueAt = decision.deliveryClass === "digest"
     ? nextSellerWhatsAppDigestAt(new Date(), digestHourUtc()).toISOString()
     : new Date().toISOString()
   const payload = {
     policyVersion: "EBAY_SELLER_WHATSAPP_ALERT_POLICY_V1",
+    accountKey: accountScope.accountKey,
     title: text(input.title, 120),
     summary: text(input.summary, 360),
     recommendedAction: text(decision.recommendedAction, 300),
@@ -164,15 +203,11 @@ export async function enqueueSellerWhatsAppAlert(
 export async function resolveSellerWhatsAppAlert(
   supabase: SupabaseClient,
   input: Pick<EnqueueSellerWhatsAppAlertInput,
-    "alertType" | "entityType" | "entityId" | "candidateKey">
+    "alertType" | "entityType" | "entityId">
 ) {
-  const dedupeKey = [
-    "seller-whatsapp-v1",
-    input.alertType,
-    text(input.entityType, 80),
-    text(input.entityId, 200),
-    text(input.candidateKey, 300) || "none",
-  ].join(":")
+  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!accountKey) return false
+  const dedupeKey = sellerWhatsAppDedupeKey(accountKey, input)
   const { data, error } = await supabase.rpc(
     "resolve_ebay_seller_whatsapp_alert",
     { p_dedupe_key: dedupeKey },
@@ -231,10 +266,13 @@ export async function previewSellerWhatsAppAlerts(
   supabase: SupabaseClient,
   limit = 20,
 ) {
+  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!accountKey) return []
   const { data, error } = await supabase
     .from("ebay_seller_alert_outbox")
     .select("id,alert_type,priority,entity_type,entity_id,candidate_key,status,payload,due_at,attempts,delivery_class,dedupe_key,created_at")
     .eq("channel", "whatsapp")
+    .eq("payload->>accountKey", accountKey)
     .in("status", ["pending", "failed"])
     .order("due_at", { ascending: true })
     .limit(50)
@@ -296,6 +334,17 @@ export async function deliverSellerWhatsAppAlerts(
   },
 ) {
   const configuration = getSellerWhatsAppGatewayConfiguration()
+  const accountScope = getEbaySellerAccountScopeConfiguration()
+  if (!accountScope.accountKey) {
+    return {
+      mode: "blocked" as const,
+      configuration,
+      accountScopeReason: accountScope.reason,
+      claimed: 0,
+      delivered: 0,
+      failed: 0,
+    }
+  }
   if (options.dryRun !== false || !configuration.deliveryAttemptAllowed) {
     return {
       mode: "preview" as const,
@@ -323,7 +372,11 @@ export async function deliverSellerWhatsAppAlerts(
 
   const { data, error } = await supabase.rpc("claim_ebay_seller_whatsapp_alerts", {
     p_worker_id: text(options.workerId, 120),
-    p_limit: Math.max(1, Math.min(options.limit ?? 20, 50)),
+    p_account_key: accountScope.accountKey,
+    p_limit: Math.max(1, Math.min(
+      options.limit ?? SELLER_WHATSAPP_MAX_CLAIM_PER_INVOCATION,
+      SELLER_WHATSAPP_MAX_CLAIM_PER_INVOCATION,
+    )),
     p_lease_seconds: 120,
   })
   if (error) throw new Error("SELLER_WHATSAPP_CLAIM_FAILED")

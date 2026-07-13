@@ -16,23 +16,23 @@ const cards = [
   {
     title: "eBay Listing",
     detail:
-      "Preparacion de listing, revision y gates.",
-    href: "/admin/ebay-listing",
-    status: "staging/lab",
+      "Registra el primer listing manual y verifica que pertenece a la cuenta OAuth.",
+    href: "/admin/ebay/listings/register",
+    status: "operativo · read-only",
   },
   {
     title: "Listing Package",
     detail:
-      "Paquete interno, dry run y revision humana.",
-    href: "/admin/ebay-listing-package",
-    status: "dry-run",
+      "Cola real, paquete editable, revisión humana y Offer no publicado con aprobación.",
+    href: "/admin/ebay/mobile-review",
+    status: "operativo · gated",
   },
   {
     title: "Imagenes eBay",
     detail:
-      "Workflow visual futuro con catalog source.",
+      "Fondo blanco 1600×1600 desde fuente autorizada, hash y aprobación humana.",
     href: "/admin/ebay-image-generator",
-    status: "dry-run",
+    status: "optimizador operativo",
   },
 ]
 
@@ -40,12 +40,12 @@ const disabledCards = [
   {
     title: "WhatsApp Seller Alerts",
     detail:
-      "Canal compartido futuro, dry-run por defecto para alertas internas.",
+      "Canal implementado; envíos reales esperan aprobación de templates por Meta.",
   },
   {
     title: "Sandbox futuro",
     detail:
-      "No OAuth, no tokens, no draft real.",
+      "Conector draft-only disponible cuando OAuth, cuenta y feature flags estén configurados.",
   },
   {
     title: "VM Lab futuro",
@@ -66,9 +66,9 @@ export default function EbayProPage() {
             eBay Professional Seller Suite
           </h1>
           <p className="mt-4 max-w-3xl text-sm leading-6 text-white/60">
-            Modulo profesional staging/lab-only para operacion eBay.
-            Este modulo esta bloqueado en produccion y habilitado para
-            staging/lab.
+            Centro profesional para investigar, preparar y revisar listings.
+            La publicación automática permanece prohibida; cualquier Offer no
+            publicado exige configuración, preflight y aprobación de un solo uso.
           </p>
         </section>
 

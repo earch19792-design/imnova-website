@@ -9,6 +9,12 @@ import {
   runEbayLunaOpportunityScan,
 } from "@/lib/ebay/ebay-luna-demand-opportunity-gateway"
 import {
+  EBAY_LUNA_DEMAND_OPPORTUNITY_ENGINE_VERSION,
+} from "@/lib/ebay/ebay-luna-demand-opportunity-engine"
+import {
+  loadEbayCategoryLearningAdjustments,
+} from "@/lib/ebay/ebay-category-performance-learning"
+import {
   getEbayObservationPersistenceState,
   loadEbayListingObservationHistory,
   persistEbayOpportunityObservation,
@@ -83,10 +89,21 @@ export async function POST(req: Request) {
           )
       }
     }
+    const categoryLearningAdjustments = await (async () => {
+      try {
+        return await loadEbayCategoryLearningAdjustments(
+          supabase ?? getSupabaseAdminClient(),
+          EBAY_LUNA_DEMAND_OPPORTUNITY_ENGINE_VERSION,
+        )
+      } catch {
+        return {}
+      }
+    })()
     const scan = await runEbayLunaOpportunityScan({
       candidates,
       observationHistoryByCandidate: historyByCandidate,
       bestSellingCategoryIds: safeCategoryIds(body.bestSellingCategoryIds),
+      categoryLearningAdjustmentsByCategory: categoryLearningAdjustments,
     })
     const persistenceResults = []
     for (const assessment of scan.rankedOpportunities) {

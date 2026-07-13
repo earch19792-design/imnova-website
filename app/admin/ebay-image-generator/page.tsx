@@ -131,13 +131,13 @@ export default function EbayImageGeneratorPage() {
           <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.32em] text-cyan-100/60">
-                Safe Preview
+                Servicio operativo + archivo de diseño generativo
               </p>
               <h1 className="mt-4 text-4xl font-black tracking-[-0.03em] text-white md:text-5xl">
-                Image Generator
+                Image Generator / optimizador eBay
               </h1>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-white/60">
-                OpenAI is not connected. No image is generated. Internal review only. Human review required.
+                El optimizador determinista ya está operativo dentro del Workspace: normaliza a fondo blanco las fuentes que ya tienen borde claro, entrega 1600×1600, conserva el original privado, hashes y aprobación humana. Rechaza fondos complejos; no es un eliminador universal. OpenAI is not connected y la generación generativa histórica de esta página continúa desactivada.
               </p>
             </div>
 
@@ -152,6 +152,17 @@ export default function EbayImageGeneratorPage() {
               ))}
             </div>
           </div>
+        </section>
+
+        <section className="rounded-3xl border border-emerald-300/25 bg-emerald-300/[0.06] p-6">
+          <p className="text-xs font-black uppercase tracking-[0.28em] text-emerald-100/70">EBAY_MAIN_IMAGE_SAFE_WHITE_V1 · listo</p>
+          <h2 className="mt-3 text-2xl font-black">Optimización segura disponible</h2>
+          <p className="mt-3 max-w-4xl text-sm leading-7 text-white/70">Acepta fotografía propia o URL autorizada de Luna/proveedor, guarda la fuente privada y prepara un derivado blanco sin inventar piezas. Si el fondo no puede limpiarse de forma conservadora, solicita otra toma. Ninguna imagen se adjunta al paquete hasta que el vendedor compare producto, variante, color y contenido.</p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <a href="/admin/ebay/mobile-review" className="inline-flex min-h-12 items-center justify-center rounded-2xl bg-emerald-200 px-4 text-center font-black text-black">Elegir oportunidad y abrir Workspace</a>
+            <a href="/admin/ebay/listings/register" className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-emerald-200/30 px-4 text-center font-black text-emerald-50">Registrar primer listing manual</a>
+          </div>
+          <p className="mt-4 text-xs leading-5 text-white/55">No usa imágenes de competidores, no crea el producto con IA, no llama a publicar y no elimina la revisión humana.</p>
         </section>
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

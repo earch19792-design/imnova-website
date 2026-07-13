@@ -362,5 +362,6 @@ test("mobile queue consumes the canonical V2 priority without re-weighting evide
     },
   })
   assert.equal(blocked.can_prepare_listing_package, false)
-  assert.equal(blocked.listing_intake_url, "/admin/ebay/listing-workspace?opportunity=queue-blocked&candidate=luna-portex%3Ap1%3Av1")
+  assert.equal(blocked.can_open_listing_workspace, false)
+  assert.equal(blocked.listing_intake_url, null)
 })

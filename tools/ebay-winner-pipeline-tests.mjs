@@ -204,6 +204,9 @@ const baseActionableRadarProduct = {
     "variant_level",
 }
 
+const TEST_EBAY_ACCOUNT_KEY =
+  `official:${"a".repeat(64)}`
+
 function createActiveListingRiskSupabaseMock(rows = []) {
   const calls = []
   const forbiddenWrites = []
@@ -17228,7 +17231,7 @@ test("ebay listing package admin MVP: sidebar incluye ruta segura", () => {
   )
   assert.match(
     source,
-    /Radar → Pipeline → Listing → Review/
+    /Inicio → Oportunidades → En curso → Operación/
   )
   assert.match(
     source,
@@ -17236,15 +17239,15 @@ test("ebay listing package admin MVP: sidebar incluye ruta segura", () => {
   )
   assert.match(
     source,
-    /eBay real bloqueado/
+    /publicación automática bloqueada/
   )
   assert.match(
     source,
-    /PromptPlan \+ safety check/
+    /Fondo blanco 1600×1600/
   )
   assert.match(
     source,
-    /No image generated/
+    /QA y aprobación humana/
   )
 })
 
@@ -17364,7 +17367,7 @@ test("ebay admin lightweight hubs: existen, son humanos y no cargan paneles pesa
   )
   assert.ok(
     hubSources[1].includes(
-      "Sin stock → Proteger → Revisar stock → Margen → Bloqueados → Vender ahora → Monitorear"
+      "Del primer listing manual a drafts reutilizables"
     )
   )
   assert.ok(
@@ -17473,8 +17476,8 @@ test("ebay admin flow: muestra Seller OS humano y puente winner to listing", () 
     "eBay Seller OS",
     "Radar, Pipeline, Listing y Review.",
     "Centro de venta",
-    "Radar → Pipeline → Listing → Review",
-    "eBay real bloqueado",
+    "Inicio → Oportunidades → En curso → Operación",
+    "publicación automática bloqueada",
   ]) {
     assert.ok(
       sidebarSource.includes(expectedText),
@@ -19155,6 +19158,8 @@ test("active listing risk read service: lee riesgos abiertos con limite seguro",
   const risks =
     await getOpenActiveListingRisks({
       supabase,
+      accountKey:
+        TEST_EBAY_ACCOUNT_KEY,
     })
 
   assert.equal(
@@ -19181,6 +19186,13 @@ test("active listing risk read service: lee riesgos abiertos con limite seguro",
   )
   assert.ok(
     calls.some(call =>
+      call[0] === "eq" &&
+      call[1] === "active_listing.account_key" &&
+      call[2] === TEST_EBAY_ACCOUNT_KEY
+    )
+  )
+  assert.ok(
+    calls.some(call =>
       call[0] === "limit" &&
       call[1] === 25
     )
@@ -19188,6 +19200,22 @@ test("active listing risk read service: lee riesgos abiertos con limite seguro",
   assert.deepEqual(
     forbiddenWrites,
     []
+  )
+})
+
+test("active listing risk read service: falla cerrado sin cuenta oficial", async () => {
+  const {
+    supabase,
+  } =
+    createActiveListingRiskSupabaseMock(
+      activeListingRiskRows
+    )
+
+  await assert.rejects(
+    getOpenActiveListingRisks({
+      supabase,
+    }),
+    /active_listing_account_scope_required/
   )
 })
 
@@ -19200,6 +19228,8 @@ test("active listing risk read service: filtra por ebay sku y supplier sku", asy
   await getRisksByEbaySku({
     supabase:
       ebaySkuMock.supabase,
+    accountKey:
+      TEST_EBAY_ACCOUNT_KEY,
     sku:
       " TEST-EBAY-SKU-1 ",
     limit:
@@ -19228,6 +19258,8 @@ test("active listing risk read service: filtra por ebay sku y supplier sku", asy
   await getRisksBySupplierSku({
     supabase:
       supplierSkuMock.supabase,
+    accountKey:
+      TEST_EBAY_ACCOUNT_KEY,
     supplierSku:
       "TEST-SUPPLIER-SKU-1",
   })
@@ -19285,6 +19317,8 @@ test("active listing risk read service: summary cuenta prioridades y tipos", asy
   const summary =
     await getActiveListingRiskSummary({
       supabase,
+      accountKey:
+        TEST_EBAY_ACCOUNT_KEY,
     })
 
   assert.equal(
@@ -19306,6 +19340,13 @@ test("active listing risk read service: summary cuenta prioridades y tipos", asy
   assert.equal(
     summary.by_type.price_up,
     1
+  )
+  assert.ok(
+    calls.some(call =>
+      call[0] === "eq" &&
+      call[1] === "active_listing.account_key" &&
+      call[2] === TEST_EBAY_ACCOUNT_KEY
+    )
   )
   assert.ok(
     calls.some(call =>
@@ -19359,6 +19400,14 @@ test("active listing risk admin api: protege lectura y usa servicio read-only", 
   assert.match(
     source,
     /getRisksBySupplierSku/
+  )
+  assert.match(
+    source,
+    /getEbaySellerAccountScopeConfiguration/
+  )
+  assert.match(
+    source,
+    /if \(!accountScope\.accountKey\)/
   )
   assert.match(
     source,

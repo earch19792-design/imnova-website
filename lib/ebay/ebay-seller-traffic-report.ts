@@ -76,9 +76,10 @@ export function buildEbaySellerTrafficReportUrl(
     (new Date(`${input.dateTo}T00:00:00Z`).getTime() -
       new Date(`${input.dateFrom}T00:00:00Z`).getTime()) / 86_400_000,
   )
-  if (days < 0 || days > 90) throw new Error("EBAY_ANALYTICS_DATE_RANGE_INVALID")
+  // eBay's 90-day maximum is inclusive of both endpoints.
+  if (days < 0 || days > 89) throw new Error("EBAY_ANALYTICS_DATE_RANGE_INVALID")
   const listingIds = [...new Set((input.listingIds ?? [])
-    .filter((entry) => /^\d+$/.test(entry)))]
+    .filter((entry) => /^\d{9,20}$/.test(entry)))]
     .slice(0, 200)
   const url = new URL(TRAFFIC_REPORT_ENDPOINT)
   url.searchParams.set("dimension", listingIds.length ? "LISTING" : "DAY")

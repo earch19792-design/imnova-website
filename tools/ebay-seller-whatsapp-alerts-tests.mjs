@@ -236,6 +236,9 @@ test("outbox delivery is idempotent, leased, cooled down, and audited", async ()
   const migration = await source(
     "supabase/migrations/20260713051000_add_ebay_seller_whatsapp_alert_delivery.sql",
   )
+  const accountScopeMigration = await source(
+    "supabase/migrations/20260713073000_scope_ebay_seller_whatsapp_claims.sql",
+  )
   assert.match(migration, /create table if not exists public\.ebay_seller_whatsapp_alert_state/)
   assert.match(migration, /create or replace function public\.enqueue_ebay_seller_whatsapp_alert/)
   assert.match(migration, /for update;/i)
@@ -251,13 +254,35 @@ test("outbox delivery is idempotent, leased, cooled down, and audited", async ()
   assert.match(migration, /'dead_letter'/)
   assert.match(migration, /revoke all on function public\.enqueue_ebay_seller_whatsapp_alert/)
   assert.doesNotMatch(migration, /WHATSAPP_ACCESS_TOKEN|EBAY_SELLER_WHATSAPP_RECIPIENT/)
+  assert.match(accountScopeMigration, /alter column account_key drop default/)
+  assert.match(accountScopeMigration, /account_key <> 'default'/)
+  assert.match(accountScopeMigration, /payload ->> 'accountKey' = p_account_key/)
+  assert.match(accountScopeMigration, /drop function if exists public\.claim_ebay_seller_whatsapp_alerts\(text, integer, integer\)/)
+  assert.match(accountScopeMigration, /for update skip locked/i)
+  assert.match(accountScopeMigration, /LEGACY_ACCOUNT_SCOPE_QUARANTINED/)
+  assert.match(accountScopeMigration, /alert\.status in \('pending', 'failed', 'leased'\)/)
+  assert.match(accountScopeMigration, /from quarantined_legacy_alerts[\s\S]*attempt\.status = 'started'/)
+  assert.match(accountScopeMigration, /DELIVERY_LEASE_EXPIRED_MAX_ATTEMPTS/)
+  assert.match(accountScopeMigration, /attempt\.status = 'started'/)
+  assert.match(accountScopeMigration, /limit greatest\(1, least\(coalesce\(p_limit, 1\), 1\)\)/)
+  assert.match(accountScopeMigration, /META_DELIVERY_OUTCOME_UNKNOWN_MANUAL_REVIEW/)
+  assert.match(accountScopeMigration, /when v_indeterminate[\s\S]*then 'dead_letter'/)
 })
 
 test("delivery defaults to preview and never exposes recipient or secrets", async () => {
   const alerts = await source("lib/ebay/ebay-seller-whatsapp-alerts.ts")
   const route = await source("app/api/admin/ebay/seller-whatsapp-alerts/route.ts")
+  const commandCenter = await source("app/api/admin/ebay/command-center/route.ts")
   assert.match(alerts, /options\.dryRun !== false \|\| !configuration\.deliveryAttemptAllowed/)
   assert.match(alerts, /preflightSellerWhatsAppGateway/)
+  assert.match(alerts, /getEbaySellerAccountScopeConfiguration/)
+  assert.match(alerts, /seller-whatsapp-v2/)
+  assert.match(alerts, /"alertType" \| "entityType" \| "entityId"/)
+  assert.match(alerts, /supplierAvailable: facts\.supplierAvailable === true/)
+  assert.doesNotMatch(alerts, /text\(input\.candidateKey, 300\) \|\| "none"/)
+  assert.match(alerts, /p_account_key: accountScope\.accountKey/)
+  assert.match(alerts, /\.eq\("payload->>accountKey", accountKey\)/)
+  assert.match(alerts, /SELLER_WHATSAPP_MAX_CLAIM_PER_INVOCATION = 1/)
   assert.match(alerts, /channel", "whatsapp"/)
   assert.match(alerts, /renderDigest/)
   assert.match(route, /validateAdminApiRequest/)
@@ -269,6 +294,10 @@ test("delivery defaults to preview and never exposes recipient or secrets", asyn
   assert.match(route, /templateContentReturned: false/)
   assert.match(route, /approvedTemplatesOnly: true/)
   assert.match(route, /secretsReturned: false/)
+  assert.match(
+    commandCenter,
+    /from\("ebay_seller_alert_outbox"\)[\s\S]*\.eq\("payload->>accountKey", accountKey \?\? "__unconfigured__"\)[\s\S]*\.limit\(50\)/,
+  )
   assert.doesNotMatch(route, /WHATSAPP_ACCESS_TOKEN|EBAY_SELLER_WHATSAPP_RECIPIENT/)
 })
 

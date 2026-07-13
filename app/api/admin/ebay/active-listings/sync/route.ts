@@ -66,7 +66,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: true, sync, protection })
   } catch (error) {
     const code = safeError(error)
-    const status = /NOT_CONFIGURED|ENV_MISSING|OAUTH_40[013]/.test(code) ? 503 : 502
+    const status = /NOT_CONFIGURED|ENV_MISSING|OAUTH_40[013]|ACCOUNT_SCOPE/.test(code)
+      ? 503
+      : code === "EBAY_ACTIVE_LISTING_ACCOUNT_IDENTITY_MISMATCH" ? 409 : 502
     return NextResponse.json({ success: false, error: code }, { status })
   }
 }

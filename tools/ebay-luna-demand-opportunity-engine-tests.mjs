@@ -118,6 +118,138 @@ test("missing identifiers, dimensions and authorized images remain hard gates", 
   assert.equal(assessment.canProceedToListingPackage, false)
 })
 
+test("authorized-image and package-weight gates require usable evidence, not booleans or defaults", () => {
+  const assessment = buildEbayLunaOpportunityAssessment(buildInput({
+    candidate: {
+      imageAuthorized: true,
+      imageUrls: [],
+      weight: 3.2,
+      weightUnit: null,
+    },
+  }), { now: fixture.now })
+  assert.ok(assessment.hardGates.includes("NEED_AUTHORIZED_PRODUCT_IMAGES"))
+  assert.ok(assessment.hardGates.includes("NEED_PACKAGE_WEIGHT"))
+  assert.equal(assessment.fulfillmentEvidence.weightConfirmed, false)
+  assert.equal(assessment.listingIntelligencePackage.imagePlan.authorizedLunaImagesAvailable, false)
+})
+
+test("low stock reduces supply and urgency instead of boosting seller priority", () => {
+  const low = buildEbayLunaOpportunityAssessment(buildInput({
+    candidate: { inventoryQuantity: 1 },
+  }), { now: fixture.now, estimatedOutboundShipping: 4 })
+  const healthy = buildEbayLunaOpportunityAssessment(buildInput({
+    candidate: { inventoryQuantity: 30 },
+  }), { now: fixture.now, estimatedOutboundShipping: 4 })
+  assert.ok(low.scores.supplyScore < healthy.scores.supplyScore)
+  assert.ok(low.scores.urgencyScore < healthy.scores.urgencyScore)
+  assert.ok(low.scores.sellerPriorityScore < healthy.scores.sellerPriorityScore)
+})
+
+test("eligible own-account category learning adjusts ranking only and is capped at five points", () => {
+  const base = buildEbayLunaOpportunityAssessment(buildInput(), {
+    now: fixture.now,
+    estimatedOutboundShipping: 4,
+  })
+  const learned = buildEbayLunaOpportunityAssessment(buildInput(), {
+    now: fixture.now,
+    estimatedOutboundShipping: 4,
+    categoryLearningAdjustment: {
+      accountKey: `official-seller-account:${"a".repeat(64)}`,
+      marketplaceId: "EBAY_US",
+      categoryId: "50335",
+      modelVersion: "EBAY-CATEGORY-PERFORMANCE-CALIBRATION-V2",
+      predictionEngineVersion:
+        "EBAY-SELLER-COMMAND-CENTER-OPPORTUNITY-ENGINE-V3",
+      status: "ELIGIBLE_APPLIED",
+      eligible: true,
+      adjustmentPoints: 99,
+      sampleListingCount: 20,
+      totalImpressions: 2_000,
+      minimumObservationDays: 28,
+      source: "EBAY_SELL_ANALYTICS_READONLY",
+      computedAt: "2026-07-12T00:00:00.000Z",
+    },
+  })
+  assert.equal(
+    learned.scores.opportunityScore,
+    Math.min(100, base.scores.opportunityScore + 5),
+  )
+  assert.equal(learned.scores.categoryLearning.boundedAdjustmentPoints, 5)
+  assert.equal(learned.scores.categoryLearning.safetyGatesChanged, false)
+  assert.equal(learned.scores.potentialScore, base.scores.potentialScore)
+  assert.equal(learned.scores.confidenceScore, base.scores.confidenceScore)
+  assert.deepEqual(learned.hardGates, base.hardGates)
+  assert.deepEqual(learned.evidenceGuards, base.evidenceGuards)
+  assert.equal(
+    learned.canProceedToListingPackage,
+    base.canProceedToListingPackage,
+  )
+})
+
+test("a single listing, competitor source or stale prediction-engine cohort cannot influence ranking", () => {
+  const baseOptions = { now: fixture.now, estimatedOutboundShipping: 4 }
+  const base = buildEbayLunaOpportunityAssessment(buildInput(), baseOptions)
+  for (const invalid of [
+    {
+      sampleListingCount: 1,
+      source: "EBAY_SELL_ANALYTICS_READONLY",
+      predictionEngineVersion:
+        "EBAY-SELLER-COMMAND-CENTER-OPPORTUNITY-ENGINE-V3",
+    },
+    {
+      sampleListingCount: 20,
+      source: "COMPETITOR_OBSERVATION",
+      predictionEngineVersion:
+        "EBAY-SELLER-COMMAND-CENTER-OPPORTUNITY-ENGINE-V3",
+    },
+    {
+      sampleListingCount: 20,
+      source: "EBAY_SELL_ANALYTICS_READONLY",
+      predictionEngineVersion:
+        "EBAY-SELLER-COMMAND-CENTER-OPPORTUNITY-ENGINE-V2",
+    },
+  ]) {
+    const assessment = buildEbayLunaOpportunityAssessment(buildInput(), {
+      ...baseOptions,
+      categoryLearningAdjustment: {
+        accountKey: `official-seller-account:${"a".repeat(64)}`,
+        marketplaceId: "EBAY_US",
+        categoryId: "50335",
+        modelVersion: "EBAY-CATEGORY-PERFORMANCE-CALIBRATION-V2",
+        predictionEngineVersion: invalid.predictionEngineVersion,
+        status: "ELIGIBLE_APPLIED",
+        eligible: true,
+        adjustmentPoints: 5,
+        sampleListingCount: invalid.sampleListingCount,
+        totalImpressions: 2_000,
+        minimumObservationDays: 28,
+        source: invalid.source,
+        computedAt: "2026-07-12T00:00:00.000Z",
+      },
+    })
+    assert.equal(assessment.scores.opportunityScore, base.scores.opportunityScore)
+    assert.equal(assessment.scores.categoryLearning.status, "NOT_APPLIED")
+  }
+})
+
+test("custom stock freshness is applied consistently to gates and scoring", () => {
+  const staleAtFourHours = buildEbayLunaOpportunityAssessment(buildInput(), {
+    now: fixture.now,
+    stockFreshnessHours: 4,
+    estimatedOutboundShipping: 4,
+  })
+  const freshAtTwelveHours = buildEbayLunaOpportunityAssessment(buildInput(), {
+    now: fixture.now,
+    stockFreshnessHours: 12,
+    estimatedOutboundShipping: 4,
+  })
+  assert.ok(staleAtFourHours.hardGates.includes("NEED_FRESH_LUNA_STOCK"))
+  assert.equal(freshAtTwelveHours.hardGates.includes("NEED_FRESH_LUNA_STOCK"), false)
+  assert.equal(staleAtFourHours.scores.stockFreshnessHours, 4)
+  assert.equal(freshAtTwelveHours.scores.stockFreshnessHours, 12)
+  assert.ok(staleAtFourHours.scores.supplyScore < freshAtTwelveHours.scores.supplyScore)
+})
+
 test("single seller movement is explicitly concentrated and does not prove market demand", () => {
   const input = buildInput({
     comparables: [fixture.comparables[0]],

@@ -23,7 +23,7 @@ const DETAIL_SAMPLE_LIMIT = 20
 const DETAIL_CONCURRENCY = 5
 const EBAY_REQUEST_TIMEOUT_MS = 8_000
 const EBAY_MAX_RETRIES = 3
-const TAXONOMY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1_000
+const TAXONOMY_CACHE_TTL_MS = 6 * 60 * 60 * 1_000
 
 type JsonRecord = Record<string, unknown>
 
@@ -437,43 +437,91 @@ export async function discoverEbayBestSellingProducts(
   }
 }
 
+export type EbayTaxonomyAspectValueIntelligence = {
+  value: string
+  valueConstraints: Array<{
+    applicableForAspectName: string
+    applicableForAspectValues: string[]
+  }>
+}
+
+export type EbayTaxonomyAspectIntelligence = {
+  name: string
+  mode: string | null
+  cardinality: string | null
+  maxLength: number | null
+  dataType: string | null
+  format: string | null
+  advancedDataType: string | null
+  expectedRequiredByDate: string | null
+  suggestedValues: string[]
+  values: EbayTaxonomyAspectValueIntelligence[]
+  valuesComplete: boolean
+  constraintsComplete: boolean
+}
+
 export type EbayTaxonomyListingIntelligence = {
   status: "AVAILABLE" | "CATEGORY_NOT_RESOLVED" | "REQUEST_FAILED"
   categoryTreeId: string | null
+  categoryTreeVersion: string | null
   categoryId: string | null
   categoryName: string | null
-  requiredAspects: Array<{
-    name: string
-    mode: string | null
-    cardinality: string | null
-    expectedRequiredByDate: string | null
-    suggestedValues: string[]
-  }>
-  recommendedAspects: Array<{
-    name: string
-    mode: string | null
-    cardinality: string | null
-    expectedRequiredByDate: string | null
-    suggestedValues: string[]
-  }>
+  observedAt: string | null
+  /** Complete aspect metadata used for server-side validation. */
+  aspects: EbayTaxonomyAspectIntelligence[]
+  requiredAspects: EbayTaxonomyAspectIntelligence[]
+  recommendedAspects: EbayTaxonomyAspectIntelligence[]
   source: "EBAY_TAXONOMY_OFFICIAL_READONLY"
 }
 
 function mapTaxonomyAspect(value: unknown) {
   const aspect = record(value)
   const constraint = record(aspect.aspectConstraint)
+  const rawValues = array(aspect.aspectValues)
+  const mappedValues = rawValues.map((rawValue) => {
+    const aspectValue = record(rawValue)
+    const rawValueConstraints = array(aspectValue.valueConstraints)
+    const valueConstraints = rawValueConstraints.map((rawConstraint) => {
+      const valueConstraint = record(rawConstraint)
+      return {
+        applicableForAspectName: text(valueConstraint.applicableForLocalizedAspectName),
+        applicableForAspectValues: array(valueConstraint.applicableForLocalizedAspectValues)
+          .map(text)
+          .filter(Boolean),
+      }
+    })
+    return {
+      value: text(aspectValue.localizedValue),
+      valueConstraints,
+      constraintsComplete: valueConstraints.length === rawValueConstraints.length
+        && valueConstraints.every((entry) =>
+          Boolean(entry.applicableForAspectName)
+          && entry.applicableForAspectValues.length > 0
+        ),
+    }
+  })
+  const values = mappedValues
+    .filter((entry) => entry.value)
+    .map(({ constraintsComplete: _complete, ...entry }) => entry)
+  const parsedMaxLength = numberOrNull(constraint.aspectMaxLength)
   return {
     name: text(aspect.localizedAspectName),
     mode: text(constraint.aspectMode) || null,
     cardinality: text(constraint.itemToAspectCardinality) || null,
+    maxLength: parsedMaxLength !== null && Number.isInteger(parsedMaxLength) && parsedMaxLength > 0
+      ? parsedMaxLength
+      : null,
+    dataType: text(constraint.aspectDataType) || null,
+    format: text(constraint.aspectFormat) || null,
+    advancedDataType: text(constraint.aspectAdvancedDataType) || null,
     expectedRequiredByDate: text(constraint.expectedRequiredByDate) || null,
     required: constraint.aspectRequired === true,
     usage: text(constraint.aspectUsage),
-    suggestedValues: array(aspect.aspectValues)
-      .map(record)
-      .map((entry) => text(entry.localizedValue))
-      .filter(Boolean)
-      .slice(0, 25),
+    suggestedValues: values.map((entry) => entry.value).slice(0, 25),
+    values,
+    valuesComplete: values.length === rawValues.length,
+    constraintsComplete: mappedValues.length === rawValues.length
+      && mappedValues.every((entry) => entry.constraintsComplete),
   }
 }
 
@@ -493,8 +541,11 @@ export async function getEbayTaxonomyListingIntelligence(
   const empty = (status: EbayTaxonomyListingIntelligence["status"]): EbayTaxonomyListingIntelligence => ({
     status,
     categoryTreeId: null,
+    categoryTreeVersion: null,
     categoryId: null,
     categoryName: null,
+    observedAt: null,
+    aspects: [],
     requiredAspects: [],
     recommendedAspects: [],
     source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
@@ -505,6 +556,7 @@ export async function getEbayTaxonomyListingIntelligence(
     treeUrl.searchParams.set("marketplace_id", MARKETPLACE_ID)
     const treePayload = await getEbayJson(treeUrl, token)
     const categoryTreeId = text(treePayload.categoryTreeId)
+    const categoryTreeVersion = text(treePayload.categoryTreeVersion) || null
     if (!categoryTreeId) return empty("REQUEST_FAILED")
 
     let categoryId = normalizedKnownCategory
@@ -521,7 +573,7 @@ export async function getEbayTaxonomyListingIntelligence(
       categoryName = text(category.categoryName)
     }
     if (!categoryId) {
-      return { ...empty("CATEGORY_NOT_RESOLVED"), categoryTreeId }
+      return { ...empty("CATEGORY_NOT_RESOLVED"), categoryTreeId, categoryTreeVersion }
     }
     const aspectsUrl = new URL(
       `${TAXONOMY_ENDPOINT}/category_tree/${encodeURIComponent(categoryTreeId)}/get_item_aspects_for_category`
@@ -532,8 +584,11 @@ export async function getEbayTaxonomyListingIntelligence(
     const value: EbayTaxonomyListingIntelligence = {
       status: "AVAILABLE",
       categoryTreeId,
+      categoryTreeVersion,
       categoryId,
       categoryName: categoryName || null,
+      observedAt: new Date().toISOString(),
+      aspects: aspects.map(({ required: _required, usage: _usage, ...aspect }) => aspect),
       requiredAspects: aspects.filter((aspect) => aspect.required).map(({ required: _required, usage: _usage, ...aspect }) => aspect),
       recommendedAspects: aspects.filter((aspect) => !aspect.required && aspect.usage === "RECOMMENDED").map(({ required: _required, usage: _usage, ...aspect }) => aspect),
       source: "EBAY_TAXONOMY_OFFICIAL_READONLY",

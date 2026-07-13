@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto"
 
 import { verifyEbayDraftOnlyPreflightSnapshot } from "./ebay-draft-only-preflight-snapshot"
+import {
+  calculateEbayUnitEconomics,
+  DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,
+  normalizeEbayUnitEconomicsConfig,
+  type EbayUnitEconomicsConfig,
+} from "./ebay-unit-economics"
 
 export type EbayDraftOnlyTarget = "SANDBOX" | "PRODUCTION"
 
@@ -19,6 +25,8 @@ export type DraftOnlyReadinessInput = {
   draftConfiguration: JsonRecord
   activeSkuCollision?: boolean
   ledgerSkuCollision?: boolean
+  identityCollisionReasons?: string[]
+  economicsConfig?: Partial<EbayUnitEconomicsConfig>
   target?: EbayDraftOnlyTarget
   accountFingerprint?: string | null
   now?: Date
@@ -66,6 +74,74 @@ function configuredMinutes(name: string, fallback: number, maximum: number) {
     : fallback
 }
 
+function configuredNumber(
+  name: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+) {
+  const value = Number(process.env[name])
+  return Number.isFinite(value)
+    ? Math.max(minimum, Math.min(maximum, value))
+    : fallback
+}
+
+export function ebayDraftOnlyEconomicsConfig(
+  overrides: Partial<EbayUnitEconomicsConfig> = {},
+) {
+  return normalizeEbayUnitEconomicsConfig({
+    estimatedEbayFeeRate: configuredNumber(
+      "EBAY_DRAFT_ONLY_ESTIMATED_EBAY_FEE_RATE",
+      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.estimatedEbayFeeRate,
+      0,
+      0.50,
+    ),
+    fixedOrderFee: configuredNumber(
+      "EBAY_DRAFT_ONLY_FIXED_ORDER_FEE",
+      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.fixedOrderFee,
+      0,
+      25,
+    ),
+    estimatedOutboundShipping: configuredNumber(
+      "EBAY_DRAFT_ONLY_ESTIMATED_OUTBOUND_SHIPPING",
+      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.estimatedOutboundShipping,
+      0,
+      500,
+    ),
+    returnsReserveRate: configuredNumber(
+      "EBAY_DRAFT_ONLY_RETURNS_RESERVE_RATE",
+      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.returnsReserveRate,
+      0,
+      0.50,
+    ),
+    promotedListingsReserveRate: configuredNumber(
+      "EBAY_DRAFT_ONLY_PROMOTED_LISTINGS_RESERVE_RATE",
+      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.promotedListingsReserveRate,
+      0,
+      0.50,
+    ),
+    minimumNetProfit: configuredNumber(
+      "EBAY_DRAFT_ONLY_MIN_NET_PROFIT",
+      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.minimumNetProfit,
+      0,
+      10_000,
+    ),
+    minimumNetMarginPercent: configuredNumber(
+      "EBAY_DRAFT_ONLY_MIN_MARGIN_PERCENT",
+      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.minimumNetMarginPercent,
+      0,
+      95,
+    ),
+    minimumRoiPercent: configuredNumber(
+      "EBAY_DRAFT_ONLY_MIN_ROI_PERCENT",
+      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.minimumRoiPercent,
+      0,
+      10_000,
+    ),
+    ...overrides,
+  })
+}
+
 function unique(values: string[]) {
   return [...new Set(values)]
 }
@@ -105,9 +181,188 @@ function normalizeAspects(value: unknown) {
     const values = Array.isArray(raw)
       ? raw.map((item) => text(item)).filter(Boolean)
       : [text(raw)].filter(Boolean)
-    if (key && values.length) output[key] = unique(values).slice(0, 30)
+    if (key && values.length) output[key] = unique(values)
   }
   return output
+}
+
+function taxonomyBlockerName(value: unknown) {
+  return text(value)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80) || "UNKNOWN"
+}
+
+function validCalendarDate(value: string, format: string) {
+  if (format === "YYYY") return /^\d{4}$/.test(value)
+  const match = format === "YYYYMM"
+    ? /^(\d{4})(\d{2})$/.exec(value)
+    : format === "YYYYMMDD"
+      ? /^(\d{4})(\d{2})(\d{2})$/.exec(value)
+      : null
+  if (!match) return false
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = format === "YYYYMMDD" ? Number(match[3]) : 1
+  if (month < 1 || month > 12) return false
+  const date = new Date(Date.UTC(year, month - 1, day))
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day
+}
+
+function validDouble(value: string) {
+  return /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)
+    && Number.isFinite(Number(value))
+}
+
+function validateTaxonomyTypedValue(
+  value: string,
+  dataType: string,
+  format: string,
+  advancedDataType: string,
+) {
+  if (advancedDataType) {
+    if (advancedDataType !== "NUMERIC_RANGE" || dataType !== "NUMBER") {
+      return "UNSUPPORTED"
+    }
+    if (format && format !== "double") return "UNSUPPORTED"
+    const range = /^(\d{1,3}(?:\.\d)?)-(\d{1,3}(?:\.\d)?)$/.exec(value)
+    return range && Number(range[1]) <= Number(range[2]) ? "VALID" : "INVALID"
+  }
+  if (dataType === "STRING") return format ? "UNSUPPORTED" : "VALID"
+  if (dataType === "NUMBER") {
+    if (!format || format === "double") return validDouble(value) ? "VALID" : "INVALID"
+    if (format === "int32") {
+      if (!/^[+-]?\d+$/.test(value)) return "INVALID"
+      const parsed = Number(value)
+      return Number.isSafeInteger(parsed)
+        && parsed >= -2_147_483_648
+        && parsed <= 2_147_483_647
+        ? "VALID"
+        : "INVALID"
+    }
+    return "UNSUPPORTED"
+  }
+  if (dataType === "DATE") {
+    if (!["YYYY", "YYYYMM", "YYYYMMDD"].includes(format)) return "UNSUPPORTED"
+    return validCalendarDate(value, format) ? "VALID" : "INVALID"
+  }
+  return "UNSUPPORTED"
+}
+
+export function validateEbayTaxonomyAspectValues(
+  aspects: Record<string, string[]>,
+  aspectValidation: JsonRecord,
+) {
+  const blockers: string[] = []
+  const constraints = Array.isArray(aspectValidation.aspectConstraints)
+    ? aspectValidation.aspectConstraints.map(record)
+    : []
+  const officialSnapshotReady = text(aspectValidation.source) === "EBAY_TAXONOMY_OFFICIAL_READONLY"
+    && text(aspectValidation.constraintSnapshotStatus) === "AVAILABLE"
+    && Boolean(text(aspectValidation.categoryTreeId))
+    && Boolean(text(aspectValidation.categoryTreeVersion))
+  if (!officialSnapshotReady) return ["ASPECT_CONSTRAINTS_UNVERIFIABLE"]
+
+  const byName = new Map<string, JsonRecord>()
+  for (const constraint of constraints) {
+    const name = text(constraint.name)
+    if (!name || byName.has(name)) {
+      blockers.push("ASPECT_CONSTRAINTS_UNVERIFIABLE")
+      continue
+    }
+    byName.set(name, constraint)
+  }
+
+  for (const [name, selectedValues] of Object.entries(aspects)) {
+    const blockerName = taxonomyBlockerName(name)
+    const constraint = byName.get(name)
+    if (!constraint) {
+      blockers.push(`ASPECT_CONSTRAINT_UNAVAILABLE:${blockerName}`)
+      continue
+    }
+    const mode = text(constraint.mode).toUpperCase()
+    const cardinality = text(constraint.cardinality).toUpperCase()
+    const dataType = text(constraint.dataType).toUpperCase()
+    const format = text(constraint.format)
+    const advancedDataType = text(constraint.advancedDataType).toUpperCase()
+    const maxLength = numberOrNull(constraint.maxLength)
+    const valuesComplete = constraint.valuesComplete === true
+    const constraintsComplete = constraint.constraintsComplete === true
+    const allowedValues = Array.isArray(constraint.values)
+      ? constraint.values.map(record)
+      : []
+
+    if (!["FREE_TEXT", "SELECTION_ONLY"].includes(mode)) {
+      blockers.push(`ASPECT_MODE_UNSUPPORTED:${blockerName}`)
+    }
+    if (!["SINGLE", "MULTI"].includes(cardinality)) {
+      blockers.push(`ASPECT_CARDINALITY_UNSUPPORTED:${blockerName}`)
+    } else if (cardinality === "SINGLE" && selectedValues.length !== 1) {
+      blockers.push(`ASPECT_SINGLE_VALUE_REQUIRED:${blockerName}`)
+    } else if (cardinality === "MULTI" && selectedValues.length > 30) {
+      blockers.push(`ASPECT_VALUE_LIMIT_EXCEEDED:${blockerName}`)
+    }
+    if (!constraintsComplete) {
+      blockers.push(`ASPECT_VALUE_CONSTRAINTS_UNVERIFIABLE:${blockerName}`)
+    }
+    if (mode === "SELECTION_ONLY" && (!valuesComplete || !allowedValues.length)) {
+      blockers.push(`ASPECT_SELECTION_VALUES_UNVERIFIABLE:${blockerName}`)
+    }
+
+    for (const selectedValue of selectedValues) {
+      if (maxLength !== null && (
+        !Number.isInteger(maxLength)
+        || maxLength <= 0
+        || Array.from(selectedValue).length > maxLength
+      )) blockers.push(`ASPECT_MAX_LENGTH_EXCEEDED:${blockerName}`)
+
+      const typedValueStatus = validateTaxonomyTypedValue(
+        selectedValue,
+        dataType,
+        format,
+        advancedDataType,
+      )
+      if (typedValueStatus === "UNSUPPORTED") {
+        blockers.push(`ASPECT_TYPE_FORMAT_UNVERIFIABLE:${blockerName}`)
+      } else if (typedValueStatus === "INVALID") {
+        blockers.push(`ASPECT_VALUE_FORMAT_INVALID:${blockerName}`)
+      }
+
+      const selectedDefinition = allowedValues.find((entry) => text(entry.value) === selectedValue)
+      if (mode === "SELECTION_ONLY" && !selectedDefinition) {
+        blockers.push(`ASPECT_SELECTION_VALUE_INVALID:${blockerName}`)
+        continue
+      }
+      if (!selectedDefinition) continue
+      const dependencies = Array.isArray(selectedDefinition.valueConstraints)
+        ? selectedDefinition.valueConstraints.map(record)
+        : []
+      const dependencyValues = new Map<string, Set<string>>()
+      for (const dependency of dependencies) {
+        const controlName = text(dependency.applicableForAspectName)
+        const controlValues = Array.isArray(dependency.applicableForAspectValues)
+          ? dependency.applicableForAspectValues.map(text).filter(Boolean)
+          : []
+        if (!controlName || !controlValues.length) {
+          blockers.push(`ASPECT_VALUE_CONSTRAINTS_UNVERIFIABLE:${blockerName}`)
+          continue
+        }
+        const accepted = dependencyValues.get(controlName) ?? new Set<string>()
+        for (const controlValue of controlValues) accepted.add(controlValue)
+        dependencyValues.set(controlName, accepted)
+      }
+      for (const [controlName, accepted] of dependencyValues) {
+        const actual = aspects[controlName] ?? []
+        if (!actual.some((entry) => accepted.has(entry))) {
+          blockers.push(`ASPECT_VALUE_CONSTRAINT_NOT_MET:${blockerName}`)
+        }
+      }
+    }
+  }
+  return unique(blockers)
 }
 
 function normalizeImageUrls(value: unknown) {
@@ -130,6 +385,10 @@ function sourceEvidence(opportunity: JsonRecord) {
     supplierAvailable: opportunity.supplier_available === true,
     supplierInventoryQuantity: numberOrNull(opportunity.supplier_inventory_quantity),
     supplierPrice: numberOrNull(opportunity.supplier_price),
+    supplierSku: text(opportunity.supplier_sku),
+    supplierVariantId: text(opportunity.supplier_variant_id),
+    marketRadarProductId: text(opportunity.market_radar_product_id),
+    gtin: text(opportunity.gtin),
     supplierSnapshotAt: text(opportunity.supplier_snapshot_at),
     lastScannedAt: text(opportunity.last_scanned_at),
     identityScore: numberOrNull(opportunity.identity_score),
@@ -143,6 +402,7 @@ export function buildEbayDraftOnlyPayload(
   draftConfiguration: JsonRecord,
   target: EbayDraftOnlyTarget = "SANDBOX",
   accountFingerprint = "",
+  economicsConfig: Partial<EbayUnitEconomicsConfig> = {},
 ) {
   const packageData = record(listingPackage.package_data)
   const pricing = record(packageData.pricing)
@@ -155,6 +415,29 @@ export function buildEbayDraftOnlyPayload(
   const condition = text(draftConfiguration.condition).toUpperCase()
   const imageUrls = normalizeImageUrls(packageData.imageUrls)
   const price = numberOrNull(pricing.targetPrice)
+  const economics = calculateEbayUnitEconomics({
+    salePrice: price,
+    supplierCost: opportunity.supplier_price,
+  }, ebayDraftOnlyEconomicsConfig(economicsConfig))
+  const canonicalPackageData = {
+    ...packageData,
+    pricing: {
+      ...pricing,
+      targetPrice: price,
+      supplierCost: economics.supplierCost,
+      estimatedEbayFees: economics.estimatedEbayFees,
+      estimatedOutboundShipping: economics.estimatedOutboundShipping,
+      returnsReserve: economics.returnsReserve,
+      promotedListingsReserve: economics.promotedListingsReserve,
+      estimatedNetProfit: economics.estimatedNetProfit,
+      estimatedNetMarginPercent: economics.estimatedNetMarginPercent,
+      estimatedRoiPercent: economics.estimatedRoiPercent,
+      minimumProfitablePrice: economics.minimumProfitablePrice,
+      passesProfitGate: economics.passesProfitGate,
+      calculationSource: economics.calculationSource,
+      costAssumptions: economics.config,
+    },
+  }
   const aspects = normalizeAspects(packageData.aspects)
   const categoryId = text(packageData.categoryId)
 
@@ -202,7 +485,7 @@ export function buildEbayDraftOnlyPayload(
       id: text(listingPackage.id),
       candidateKey: text(listingPackage.candidate_key),
       sourceObservedAt: text(listingPackage.source_observed_at),
-      packageData,
+      packageData: canonicalPackageData,
     },
     sourceEvidence: sourceEvidence(opportunity),
     compliance: {
@@ -248,10 +531,11 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   const supplierPrice = numberOrNull(opportunity.supplier_price)
   const supplierStock = numberOrNull(opportunity.supplier_inventory_quantity)
   const price = numberOrNull(pricing.targetPrice)
-  const estimatedProfit = numberOrNull(pricing.estimatedNetProfit)
-    ?? numberOrNull(opportunity.estimated_net_profit)
-  const marginPercent = price && estimatedProfit !== null ? (estimatedProfit / price) * 100 : null
-  const minimumMargin = configuredMinutes("EBAY_DRAFT_ONLY_MIN_MARGIN_PERCENT", 15, 80)
+  const economicsConfig = ebayDraftOnlyEconomicsConfig(input.economicsConfig)
+  const economics = calculateEbayUnitEconomics({
+    salePrice: price,
+    supplierCost: supplierPrice,
+  }, economicsConfig)
   const sourceMaxAge = configuredMinutes(
     "EBAY_DRAFT_ONLY_SOURCE_MAX_AGE_MINUTES",
     EBAY_DRAFT_ONLY_SOURCE_MAX_AGE_MINUTES,
@@ -267,6 +551,8 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   const quantity = Math.trunc(numberOrNull(configuration.quantity) ?? 0)
   const categoryId = text(packageData.categoryId)
   const condition = text(configuration.condition).toUpperCase()
+  const weightUnit = text(weight.unit).toUpperCase()
+  const validWeightUnit = ['POUND', 'KILOGRAM', 'OUNCE', 'GRAM'].includes(weightUnit)
   const rightsBasis = text(authorization.rightsBasis).toLowerCase()
   const imageSource = text(authorization.source).toLowerCase()
   const assessment = record(opportunity.assessment)
@@ -280,19 +566,21 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     && images.every((url) => authorizedImages.includes(url))
     && ['supplier_authorized', 'owned', 'licensed'].includes(rightsBasis)
     && ['luna', 'supplier', 'owned', 'licensed_asset'].includes(imageSource)
+  const aspectConstraintBlockers = validateEbayTaxonomyAspectValues(aspects, taxonomy)
   const taxonomyEvidenceReady = taxonomy.validated === true
     && text(taxonomy.categoryId) === categoryId
     && requiredAspects.every((name) => Boolean(aspects[name]?.length))
+    && aspectConstraintBlockers.length === 0
   const dimensionsEvidenceReady = numberOrNull(dimensions.height)! > 0
     && numberOrNull(dimensions.length)! > 0
     && numberOrNull(dimensions.width)! > 0
-  const weightEvidenceReady = numberOrNull(weight.value)! > 0
+  const weightEvidenceReady = numberOrNull(weight.value)! > 0 && validWeightUnit
   const resolvablePackageGates = new Set([
     ...(imageEvidenceReady ? ["NEED_AUTHORIZED_PRODUCT_IMAGES"] : []),
     ...(weightEvidenceReady ? ["NEED_PACKAGE_WEIGHT"] : []),
     ...(dimensionsEvidenceReady ? ["NEED_PACKAGE_DIMENSIONS"] : []),
     ...(weightEvidenceReady && dimensionsEvidenceReady ? ["NEED_PACKAGE_WEIGHT_AND_DIMENSIONS"] : []),
-    ...(taxonomyEvidenceReady ? ["NEED_REQUIRED_EBAY_ITEM_ASPECTS"] : []),
+    ...(taxonomyEvidenceReady ? ["NEED_EBAY_TAXONOMY_CATEGORY", "NEED_REQUIRED_EBAY_ITEM_ASPECTS"] : []),
   ])
   const remainingHardGates = hardGates.filter((gate) => !resolvablePackageGates.has(gate))
   const blockers: string[] = []
@@ -314,11 +602,15 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   if (!text(packageData.title) || text(packageData.title).length > 80) blockers.push("TITLE_INVALID")
   if (!/^\d{1,12}$/.test(categoryId)) blockers.push("CATEGORY_ID_REQUIRED")
   if (!text(packageData.description)) blockers.push("DESCRIPTION_REQUIRED")
-  if (!Object.keys(aspects).length) blockers.push("ASPECTS_REQUIRED")
+  if (requiredAspects.length > 0 && !Object.keys(aspects).length) {
+    blockers.push("ASPECTS_REQUIRED")
+  }
   if (taxonomy.validated !== true || text(taxonomy.categoryId) !== categoryId || !recent(taxonomy.validatedAt, taxonomyMaxAge, now)) blockers.push("CATEGORY_ASPECTS_NOT_VALIDATED")
+  blockers.push(...aspectConstraintBlockers)
   for (const name of requiredAspects) if (!aspects[name]?.length) blockers.push(`REQUIRED_ASPECT_MISSING:${name}`)
   if (!images.length || images.length !== strings(packageData.imageUrls, 24).length) blockers.push("HTTPS_IMAGES_REQUIRED")
   if (authorization.approved !== true || !recent(authorization.approvedAt, sourceMaxAge, now)) blockers.push("IMAGE_AUTHORIZATION_REQUIRED")
+  if (authorization.approved === true && !images.length) blockers.push("IMAGE_AUTHORIZATION_WITHOUT_SOURCE_IMAGE")
   if (!['supplier_authorized', 'owned', 'licensed'].includes(rightsBasis)) blockers.push("IMAGE_RIGHTS_BASIS_INVALID")
   if (!['luna', 'supplier', 'owned', 'licensed_asset'].includes(imageSource)) blockers.push("IMAGE_SOURCE_INVALID")
   if (images.some((url) => !authorizedImages.includes(url))) blockers.push("IMAGE_NOT_AUTHORIZED")
@@ -326,14 +618,24 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     blockers.push("SKU_NAMESPACE_OR_OWNERSHIP_INVALID")
   }
   if (input.activeSkuCollision || input.ledgerSkuCollision) blockers.push("SKU_COLLISION")
+  const identityCollisionReasons = unique(
+    strings(input.identityCollisionReasons, 20).map((value) =>
+      value.toUpperCase().replace(/[^A-Z0-9_]/g, "_").slice(0, 80)
+    ).filter(Boolean),
+  )
+  if (identityCollisionReasons.length) {
+    blockers.push("PRODUCT_IDENTITY_COLLISION")
+    blockers.push(...identityCollisionReasons.map((reason) => `PRODUCT_IDENTITY_COLLISION:${reason}`))
+  }
   if (!Number.isInteger(quantity) || quantity < 1 || supplierStock === null || quantity > supplierStock) blockers.push("QUANTITY_EXCEEDS_FRESH_STOCK")
   if (target === "PRODUCTION" && quantity !== 1) blockers.push("PRODUCTION_QUANTITY_MUST_EQUAL_ONE")
   if (!['NEW', 'NEW_OTHER', 'NEW_WITH_DEFECTS', 'USED_EXCELLENT', 'USED_GOOD', 'USED_ACCEPTABLE'].includes(condition)) blockers.push("CONDITION_INVALID")
   if (price === null || price <= 0) blockers.push("PRICE_REQUIRED")
-  if (estimatedProfit === null || estimatedProfit <= 0 || marginPercent === null || marginPercent < minimumMargin) blockers.push("MINIMUM_NET_MARGIN_NOT_MET")
+  if (!economics.ready || !economics.passesProfitGate) blockers.push("MINIMUM_NET_MARGIN_NOT_MET")
   if (!(numberOrNull(dimensions.height)! > 0 && numberOrNull(dimensions.length)! > 0 && numberOrNull(dimensions.width)! > 0)) blockers.push("PACKAGE_DIMENSIONS_REQUIRED")
   if (!['INCH', 'CENTIMETER'].includes(text(dimensions.unit).toUpperCase())) blockers.push("PACKAGE_DIMENSION_UNIT_INVALID")
-  if (!(numberOrNull(weight.value)! > 0) || !['POUND', 'KILOGRAM', 'OUNCE', 'GRAM'].includes(text(weight.unit).toUpperCase())) blockers.push("PACKAGE_WEIGHT_REQUIRED")
+  if (!(numberOrNull(weight.value)! > 0)) blockers.push("PACKAGE_WEIGHT_REQUIRED")
+  if (!validWeightUnit) blockers.push("PACKAGE_WEIGHT_UNIT_REQUIRED")
   for (const [key, value] of Object.entries({
     FULFILLMENT_POLICY_REQUIRED: policies.fulfillmentPolicyId,
     PAYMENT_POLICY_REQUIRED: policies.paymentPolicyId,
@@ -363,6 +665,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     configuration,
     target,
     accountFingerprint,
+    economicsConfig,
   )
   const uniqueBlockers = unique(blockers)
   return {
@@ -375,7 +678,23 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
       "EBAY_SKU_PREFLIGHT_RUNS_AT_EXECUTION",
       "EBAY_PREFLIGHT_SNAPSHOT_EXPIRES_IN_5_MINUTES",
     ],
-    economics: { targetPrice: price, supplierPrice, estimatedNetProfit: estimatedProfit, marginPercent, minimumMarginPercent: minimumMargin },
+    economics: {
+      targetPrice: price,
+      supplierPrice,
+      estimatedEbayFees: economics.estimatedEbayFees,
+      estimatedOutboundShipping: economics.estimatedOutboundShipping,
+      returnsReserve: economics.returnsReserve,
+      promotedListingsReserve: economics.promotedListingsReserve,
+      estimatedNetProfit: economics.estimatedNetProfit,
+      marginPercent: economics.estimatedNetMarginPercent,
+      roiPercent: economics.estimatedRoiPercent,
+      minimumProfitablePrice: economics.minimumProfitablePrice,
+      minimumNetProfit: economicsConfig.minimumNetProfit,
+      minimumMarginPercent: economicsConfig.minimumNetMarginPercent,
+      minimumRoiPercent: economicsConfig.minimumRoiPercent,
+      passesProfitGate: economics.passesProfitGate,
+      calculationSource: economics.calculationSource,
+    },
     payloadHash: hashEbayDraftOnlyPayload(payload),
     requiredSku,
     payload,

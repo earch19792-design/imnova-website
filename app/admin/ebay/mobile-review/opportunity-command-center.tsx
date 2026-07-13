@@ -50,6 +50,9 @@ export type Opportunity = {
   seller_lane: string
   next_seller_action: string
   can_prepare_listing_package: boolean
+  can_open_listing_workspace: boolean
+  listing_workspace_blockers: string[]
+  listing_workspace_resolvable_gates: string[]
   listing_intake_url: string | null
   winning_structure: {
     strategyConfidence: string | null
@@ -118,6 +121,7 @@ function cardTone(status: string) {
 function sellerLaneLabel(value: string) {
   const labels: Record<string, string> = {
     LISTING_PACKAGE_READY: "Listo para preparar listing",
+    LISTING_PACKAGE_INTAKE_READY: "Listo para completar paquete",
     FAST_TRACK_NEEDS_ECONOMICS: "Validar margen",
     FAST_TRACK_NEEDS_FACTS: "Completar datos",
     HIGH_POTENTIAL_NEEDS_IDENTITY: "Alto potencial · validar identidad",
@@ -132,10 +136,14 @@ export function OpportunityCommandCenter({
   onReviewCandidate,
   onRadarRefresh,
   onRadarLookup,
+  confirmDestructiveRefresh,
+  preferredMarketRadarProductId,
 }: {
   onReviewCandidate: (opportunity: Opportunity, radarCandidates?: RealRadarCandidate[]) => boolean
   onRadarRefresh: () => Promise<RealRadarCandidate[]>
   onRadarLookup: (productId: string) => Promise<RealRadarCandidate | null>
+  confirmDestructiveRefresh?: () => boolean
+  preferredMarketRadarProductId?: string | null
 }) {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
   const [busy, setBusy] = useState(false)
@@ -227,6 +235,7 @@ export function OpportunityCommandCenter({
   }
 
   async function refreshLunaRadar() {
+    if (confirmDestructiveRefresh && !confirmDestructiveRefresh()) return null
     setBusy(true); setError(""); setMessage("Actualizando catálogo, stock y precios desde Luna…")
     try {
       const { data, error: sessionError } = await supabase.auth.getSession()
@@ -283,6 +292,12 @@ export function OpportunityCommandCenter({
     .filter((row) => row.supplier_available !== false && row.ebay_candidate_count > 0)
     .sort((left, right) => right.seller_priority_score - left.seller_priority_score)
     .slice(0, 5), [dashboard])
+  const preferredOpportunity = useMemo(
+    () => preferredMarketRadarProductId
+      ? dashboard?.queue.find((row) => row.market_radar_product_id === preferredMarketRadarProductId) ?? null
+      : null,
+    [dashboard, preferredMarketRadarProductId],
+  )
 
   async function openRadarReview(opportunity: Opportunity) {
     if (onReviewCandidate(opportunity)) {
@@ -387,9 +402,16 @@ export function OpportunityCommandCenter({
     </section>}
 
     {dashboard && <>
+      {preferredMarketRadarProductId && <section className="rounded-3xl border border-emerald-200/30 bg-emerald-200/[0.08] p-4">
+        <p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Continuar producto del Top 5</p>
+        {preferredOpportunity
+          ? <><h3 className="mt-2 font-black">{preferredOpportunity.product_title}</h3><p className="mt-1 text-sm text-white/65">La oportunidad canónica está disponible. Vincúlala para conservar las confirmaciones locales y activar el guardado en servidor.</p><button type="button" disabled={busy} onClick={() => void openRadarReview(preferredOpportunity)} className="mt-3 min-h-12 w-full rounded-2xl bg-emerald-200 px-4 font-black text-black disabled:opacity-50">Continuar este mismo producto</button></>
+          : <><h3 className="mt-2 font-black">Todavía no está en la cola canónica</h3><p className="mt-1 text-sm text-white/65">Inicia o acelera el scan prioritario. El OS mostrará aquí el botón para vincularlo en cuanto aparezca, sin pedirte otro producto.</p></>}
+      </section>}
+
       <div className="grid grid-cols-3 gap-2 text-center text-xs">
         <div className="rounded-2xl border border-white/10 p-3"><span className="text-white/50">Total</span><strong className="mt-1 block text-xl">{dashboard.summary.total}</strong></div>
-        <div className="rounded-2xl border border-emerald-200/20 p-3"><span className="text-white/50">Listas</span><strong className="mt-1 block text-xl">{dashboard.summary.ready}</strong></div>
+        <div className="rounded-2xl border border-emerald-200/20 p-3"><span className="text-white/50">Para draft</span><strong className="mt-1 block text-xl">{dashboard.summary.ready}</strong></div>
         <div className="rounded-2xl border border-cyan-200/20 p-3"><span className="text-white/50">Revisar</span><strong className="mt-1 block text-xl">{dashboard.summary.review}</strong></div>
         <div className="rounded-2xl border border-amber-200/20 p-3"><span className="text-white/50">Baseline</span><strong className="mt-1 block text-xl">{dashboard.summary.watchlist}</strong></div>
         <div className="rounded-2xl border border-rose-200/20 p-3"><span className="text-white/50">Hold</span><strong className="mt-1 block text-xl">{dashboard.summary.supplierHolds}</strong></div>
@@ -403,11 +425,11 @@ export function OpportunityCommandCenter({
           {row.score_axes && <dl className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px]"><div className="rounded-xl bg-white/[0.06] p-2"><dt className="text-white/50">Potencial</dt><dd className="mt-1 font-black">{Math.round(row.score_axes.potential)}</dd></div><div className="rounded-xl bg-white/[0.06] p-2"><dt className="text-white/50">Confianza</dt><dd className="mt-1 font-black">{Math.round(row.score_axes.confidence)}</dd></div><div className="rounded-xl bg-white/[0.06] p-2"><dt className="text-white/50">Urgencia</dt><dd className="mt-1 font-black">{Math.round(row.score_axes.urgency)}</dd></div></dl>}
           <p className="mt-2 text-xs text-white/60">{row.ebay_candidate_count} candidatos eBay · {row.exact_comparable_count} comparables exactos</p>
           <p className="mt-2 text-xs leading-5 text-white/75">{row.next_seller_action}</p>
-          <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" disabled={busy || !row.market_radar_product_id} onClick={() => { if (row.market_radar_product_id) void openRadarReview(row) }} className="min-h-11 rounded-xl bg-cyan-200 px-3 text-xs font-black text-black disabled:opacity-40">Validar ahora</button><a href={`/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(row.id)}&candidate=${encodeURIComponent(row.candidate_key)}`} className="inline-flex min-h-11 items-center justify-center rounded-xl border border-emerald-200/35 px-3 text-center text-xs font-black text-emerald-50">Workspace</a></div>
+          <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" disabled={busy || !row.market_radar_product_id} onClick={() => { if (row.market_radar_product_id) void openRadarReview(row) }} className="min-h-11 rounded-xl bg-cyan-200 px-3 text-xs font-black text-black disabled:opacity-40">Validar ahora</button>{row.can_open_listing_workspace ? <a href={`/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(row.id)}&candidate=${encodeURIComponent(row.candidate_key)}`} className="inline-flex min-h-11 items-center justify-center rounded-xl border border-emerald-200/35 px-3 text-center text-xs font-black text-emerald-50">{row.can_prepare_listing_package ? "Preparar draft" : "Completar paquete"}</a> : <button type="button" disabled aria-disabled="true" className="min-h-11 rounded-xl border border-white/10 px-3 text-xs font-black text-white/40">Guardas de mercado</button>}</div>
         </article>)}{!topPotential.length && <p className="text-sm text-white/55">Acelera el scan para construir el primer Top con evidencia eBay.</p>}</div>
       </section>
 
-      <nav className="flex gap-2 overflow-x-auto pb-1">{["all", "ready", "review", "watchlist", "hold"].map((value) => <button key={value} onClick={() => setFilter(value)} className={`min-h-11 shrink-0 rounded-full px-4 text-xs font-black uppercase ${filter === value ? "bg-white text-black" : "border border-white/15"}`}>{value === "all" ? "Todas" : label(value)}</button>)}</nav>
+      <nav aria-label="Filtrar oportunidades" className="flex gap-2 overflow-x-auto pb-1">{["all", "ready", "review", "watchlist", "hold"].map((value) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} className={`min-h-11 shrink-0 rounded-full px-4 text-xs font-black uppercase ${filter === value ? "bg-white text-black" : "border border-white/15"}`}>{value === "all" ? "Todas" : label(value)}</button>)}</nav>
 
       <div className="space-y-3">{rows.map((row, index) => <article key={row.id} className={`rounded-3xl border p-4 ${cardTone(row.queue_status)}`}>
         <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase">#{index + 1} · {label(row.queue_status)}</p><h3 className="mt-2 text-lg font-black">{row.product_title}</h3><p className="mt-1 text-xs text-white/55">{row.variant_title ?? "Variante general"} · {row.supplier_sku ?? "SKU pendiente"}</p></div><div className="rounded-2xl bg-white px-3 py-2 text-center text-black"><span className="block text-[9px] font-black uppercase">Prioridad</span><strong className="text-xl">{row.seller_priority_score}</strong></div></div>
@@ -416,7 +438,7 @@ export function OpportunityCommandCenter({
         <div className="mt-3 grid grid-cols-[1fr_auto] gap-2"><details className="rounded-2xl border border-white/15 p-3"><summary className="cursor-pointer text-sm font-black">Guardas</summary><ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{[...row.hard_gates, ...row.evidence_guards].map((guard) => <li key={guard}>{label(guard)}</li>)}</ul></details>{row.market_radar_product_id && <button disabled={busy} onClick={() => void openRadarReview(row)} className="min-h-12 rounded-2xl bg-emerald-200 px-3 text-xs font-black text-black disabled:opacity-50">Revisar</button>}</div>
       </article>)}{!rows.length && <p className="rounded-2xl border border-white/10 p-5 text-sm text-white/55">Inicia el scan prioritario para construir la cola.</p>}</div>
 
-      <details className="rounded-3xl border border-white/10 p-4"><summary className="cursor-pointer font-black">Monitoreo y riesgos</summary><p className="mt-3 text-sm text-white/65">{dashboard.events.length} cambios Luna recientes · {dashboard.activeListingRisks.length} riesgos abiertos de listings.</p><button type="button" disabled={busy} onClick={() => void syncActiveListings()} className="mt-3 min-h-12 w-full rounded-2xl border border-cyan-200/30 px-3 font-black text-cyan-50 disabled:opacity-50">Sincronizar listings activos</button>{dashboard.activeListingRisks.slice(0, 8).map((risk) => <div key={risk.id} className="mt-2 rounded-2xl border border-rose-200/15 p-3 text-xs"><strong>{risk.risk_priority.toUpperCase()} · {label(risk.risk_type)}</strong><p className="mt-1 text-white/65">{risk.risk_summary}</p></div>)}</details>
+      <details className="rounded-3xl border border-white/10 p-4"><summary className="cursor-pointer font-black">Operación y riesgos de listings</summary><p className="mt-3 text-sm text-white/65">{dashboard.events.length} cambios Luna recientes · {dashboard.activeListingRisks.length} riesgos abiertos de listings.</p><div className="mt-3 grid gap-2 sm:grid-cols-2"><button type="button" disabled={busy} onClick={() => void syncActiveListings()} className="min-h-12 rounded-2xl border border-cyan-200/30 px-3 font-black text-cyan-50 disabled:opacity-50">Sincronizar listings activos</button><a href="/admin/ebay/listings/register" className="inline-flex min-h-12 items-center justify-center rounded-2xl bg-cyan-200 px-3 text-center font-black text-black">Registrar listing manual</a></div>{dashboard.activeListingRisks.slice(0, 8).map((risk) => <div key={risk.id} className="mt-2 rounded-2xl border border-rose-200/15 p-3 text-xs"><strong>{risk.risk_priority.toUpperCase()} · {label(risk.risk_type)}</strong><p className="mt-1 text-white/65">{risk.risk_summary}</p></div>)}</details>
     </>}
   </section>
 }

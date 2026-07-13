@@ -15,6 +15,7 @@ import {
   getSellerWhatsAppPreflightSnapshot,
   preflightSellerWhatsAppGateway,
 } from "@/lib/ebay/ebay-seller-whatsapp-gateway"
+import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
@@ -76,21 +77,26 @@ export async function GET(req: Request) {
 
   try {
     const supabase = getSupabaseAdminClient()
+    const accountScope = getEbaySellerAccountScopeConfiguration()
+    const scopedAccountKey = accountScope.accountKey ?? "__unconfigured__"
     const [pending, failed, deadLetter, previews] = await Promise.all([
       supabase
         .from("ebay_seller_alert_outbox")
         .select("id", { count: "exact", head: true })
         .eq("channel", "whatsapp")
+        .eq("payload->>accountKey", scopedAccountKey)
         .eq("status", "pending"),
       supabase
         .from("ebay_seller_alert_outbox")
         .select("id", { count: "exact", head: true })
         .eq("channel", "whatsapp")
+        .eq("payload->>accountKey", scopedAccountKey)
         .eq("status", "failed"),
       supabase
         .from("ebay_seller_alert_outbox")
         .select("id", { count: "exact", head: true })
         .eq("channel", "whatsapp")
+        .eq("payload->>accountKey", scopedAccountKey)
         .eq("status", "dead_letter"),
       previewSellerWhatsAppAlerts(supabase, 10),
     ])
@@ -99,6 +105,11 @@ export async function GET(req: Request) {
     return NextResponse.json({
       success: true,
       configuration: getSellerWhatsAppGatewayConfiguration(),
+      accountScope: {
+        configured: accountScope.configured,
+        reason: accountScope.reason,
+        accountAlias: accountScope.accountAlias,
+      },
       health: {
         pending: pending.count ?? 0,
         failed: failed.count ?? 0,

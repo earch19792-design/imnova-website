@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
@@ -7,6 +7,11 @@ import {
   resolveSellerWhatsAppAlert,
 } from "./ebay-seller-whatsapp-alerts"
 import type { SellerWhatsAppAlertType } from "./ebay-seller-whatsapp-alert-policy"
+import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
+import {
+  canonicalizeActiveListingProtectionRows,
+  type CanonicalActiveListingProtectionGroup,
+} from "./ebay-active-listing-protection-domain"
 
 export const SELLER_SCAN_LANES = ["protection", "event", "hot", "baseline", "coverage"] as const
 export type SellerScanLane = typeof SELLER_SCAN_LANES[number]
@@ -177,14 +182,21 @@ export async function failSellerScanTask(
 
 type ListingRow = {
   id: string
+  account_key: string
+  source: string
   ebay_item_id: string
+  ebay_sku: string | null
+  listing_status: string
   title: string
   market_radar_product_id: string | null
   supplier_variant_id: string | null
   supplier_sku: string | null
   supplier_cost_at_linking: number | string | null
+  last_ebay_sync_at: string | null
   raw_payload: Record<string, unknown> | null
 }
+
+type CanonicalListingGroup = CanonicalActiveListingProtectionGroup<ListingRow>
 
 type LatestSupplyRow = {
   product_id: string
@@ -252,9 +264,24 @@ function supplierCostChangePercent(
     : null
 }
 
+function canonicalListingIdentityHash(canonicalKey: string) {
+  return createHash("sha256").update(canonicalKey).digest("hex")
+}
+
+function canonicalRiskFingerprint(
+  listingIdentityHash: string,
+  riskType: string,
+) {
+  return `active-listing-v2:${listingIdentityHash}:${riskType}`
+}
+
+function canonicalWhatsAppEntityId(listingIdentityHash: string) {
+  return `canonical:${listingIdentityHash}`
+}
+
 async function resolveProtectionWhatsAppAlert(
   supabase: SupabaseClient,
-  listingId: string,
+  entityId: string,
   type: string,
 ) {
   const alertType = whatsappRiskType(type)
@@ -262,20 +289,80 @@ async function resolveProtectionWhatsAppAlert(
   await resolveSellerWhatsAppAlert(supabase, {
     alertType,
     entityType: "ebay_active_listing",
-    entityId: listingId,
+    entityId,
   }).catch(() => undefined)
+}
+
+async function resolveProtectionRisks(
+  supabase: SupabaseClient,
+  input: {
+    listingIds: string[]
+    riskTypes: string[]
+    keepRiskId?: string | null
+  },
+) {
+  if (!input.listingIds.length || !input.riskTypes.length) return []
+  const now = new Date().toISOString()
+  let query = supabase
+    .from("ebay_active_listing_risk_events")
+    .update({ resolved_at: now, last_detected_at: now })
+    .in("active_listing_id", input.listingIds)
+    .in("risk_type", input.riskTypes)
+    .is("resolved_at", null)
+  if (input.keepRiskId) query = query.neq("id", input.keepRiskId)
+  const { data, error } = await query.select("id")
+  if (error) throw new Error("ACTIVE_LISTING_RISK_RESOLVE_FAILED")
+  const resolvedRiskIds = (data ?? [])
+    .map((row) => typeof row.id === "string" ? row.id : null)
+    .filter((id): id is string => Boolean(id))
+  if (!resolvedRiskIds.length) return resolvedRiskIds
+
+  // An unresolved duplicate must not remain visible in the in-app queue after
+  // its canonical risk has been selected. Delivered rows remain immutable
+  // audit evidence.
+  const { error: alertError } = await supabase
+    .from("ebay_seller_alert_outbox")
+    .update({
+      status: "cancelled",
+      last_error_code: "CANONICAL_LISTING_DEDUPED",
+      updated_at: now,
+    })
+    .eq("channel", "in_app")
+    .eq("entity_type", "ebay_active_listing_risk")
+    .in("entity_id", resolvedRiskIds)
+    .in("status", ["pending", "failed"])
+  if (alertError) throw new Error("SELLER_ALERT_OUTBOX_RESOLVE_FAILED")
+  return resolvedRiskIds
+}
+
+async function resolveProtectionAlertIdentities(
+  supabase: SupabaseClient,
+  group: CanonicalListingGroup,
+  listingIdentityHash: string,
+  riskTypes: string[],
+) {
+  const entityIds = [
+    canonicalWhatsAppEntityId(listingIdentityHash),
+    ...group.memberListingIds,
+  ]
+  await Promise.all(entityIds.flatMap((entityId) =>
+    riskTypes.map((riskType) =>
+      resolveProtectionWhatsAppAlert(supabase, entityId, riskType)
+    )
+  ))
 }
 
 async function upsertProtectionAlert(
   supabase: SupabaseClient,
   input: {
     listing: ListingRow
+    accountKey: string
     type: string
     evidence: Record<string, unknown>
-    snapshotId: string | null
+    riskFingerprint: string
+    whatsappEntityId: string
   },
 ) {
-  const riskFingerprint = `active-listing:${input.listing.id}:${input.type}`
   const copy = riskCopy(input.type)
   const { data: riskData, error: riskError } = await supabase.rpc("upsert_ebay_active_listing_risk", {
     p_active_listing_id: input.listing.id,
@@ -283,7 +370,7 @@ async function upsertProtectionAlert(
     p_risk_priority: riskPriority(input.type),
     p_risk_summary: copy.summary,
     p_recommended_action: copy.action,
-    p_risk_fingerprint: riskFingerprint,
+    p_risk_fingerprint: input.riskFingerprint,
     p_evidence: input.evidence,
   })
   const risk = (Array.isArray(riskData) ? riskData[0] : riskData) as {
@@ -298,7 +385,7 @@ async function upsertProtectionAlert(
     await enqueueSellerWhatsAppAlert(supabase, {
       alertType: whatsappType,
       entityType: "ebay_active_listing",
-      entityId: input.listing.id,
+      entityId: input.whatsappEntityId,
       candidateKey: input.listing.supplier_sku,
       title: input.listing.title || "Listing activo eBay",
       summary: copy.summary,
@@ -319,7 +406,7 @@ async function upsertProtectionAlert(
     }).catch(() => undefined)
   }
 
-  const alertFingerprint = `risk:${riskFingerprint}`
+  const alertFingerprint = `risk:${input.riskFingerprint}`
   const { data: existingAlert, error: existingAlertError } = await supabase
     .from("ebay_seller_alert_outbox")
     .select("id,status")
@@ -341,6 +428,7 @@ async function upsertProtectionAlert(
       delivered_at: null,
       last_error_code: null,
       payload: {
+        accountKey: input.accountKey,
         riskId: risk.risk_id,
         listingId: input.listing.id,
         ebayItemId: input.listing.ebay_item_id,
@@ -363,21 +451,61 @@ export async function reconcileActiveListingProtectionRisks(
   const startedAt = Date.now()
   const limit = Math.max(1, Math.min(options.limit ?? 100, 500))
   const timeBudgetMs = Math.max(1_000, Math.min(options.timeBudgetMs ?? 8_000, 30_000))
+  const accountScope = getEbaySellerAccountScopeConfiguration()
+  if (!accountScope.accountKey) {
+    return {
+      status: "ACCOUNT_SCOPE_NOT_CONFIGURED" as const,
+      accountScopeReason: accountScope.reason,
+      activeListingsSelected: 0,
+      activeListingRowsSelected: 0,
+      duplicateListingRowsCollapsed: 0,
+      listingsEvaluated: 0,
+      listingsDeferred: 0,
+      listingsHealthy: 0,
+      risksDetected: 0,
+      elapsedMs: Date.now() - startedAt,
+    }
+  }
   const { data: listingData, error: listingError } = await supabase
     .from("ebay_active_listings")
-    .select("id,ebay_item_id,title,market_radar_product_id,supplier_variant_id,supplier_sku,supplier_cost_at_linking,raw_payload")
+    .select("id,account_key,source,ebay_item_id,ebay_sku,listing_status,title,market_radar_product_id,supplier_variant_id,supplier_sku,supplier_cost_at_linking,last_ebay_sync_at,raw_payload")
+    .eq("account_key", accountScope.accountKey)
     .eq("listing_status", "active")
     .order("last_radar_review_at", { ascending: true, nullsFirst: true })
-    .limit(limit)
+    .order("ebay_item_id", { ascending: true })
+    .order("ebay_sku", { ascending: true, nullsFirst: true })
+    .order("source", { ascending: true })
+    .order("id", { ascending: true })
+    // Read a bounded duplicate-aware window. The evaluation limit below is
+    // applied after canonicalization, not to connector rows.
+    .limit(Math.min(1_000, limit * 3))
   if (listingError) throw new Error("ACTIVE_LISTING_PROTECTION_READ_FAILED")
-  const listings = (listingData ?? []) as ListingRow[]
+  const listingRows = (listingData ?? []) as ListingRow[]
+  const listings = canonicalizeActiveListingProtectionRows(listingRows)
+    .slice(0, limit)
+  const activeListingRowsSelected = listings.reduce(
+    (count, group) => count + group.memberListingIds.length,
+    0,
+  )
   let risksDetected = 0
   let listingsHealthy = 0
   let listingsEvaluated = 0
 
-  for (const listing of listings) {
+  for (const group of listings) {
     if (listingsEvaluated > 0 && Date.now() - startedAt >= timeBudgetMs) break
     listingsEvaluated += 1
+    const listing = group.listing
+    const listingIdentityHash = canonicalListingIdentityHash(group.canonicalKey)
+    const listingIdentityEvidence = {
+      version: "EBAY_ACTIVE_LISTING_CANONICAL_IDENTITY_V2",
+      accountKey: group.accountKey,
+      ebayItemId: group.ebayItemId,
+      ebaySku: group.ebaySku,
+      canonicalListingId: listing.id,
+      canonicalSource: listing.source,
+      canonicalListingStatus: listing.listing_status,
+      observations: group.observations,
+    }
     let latest: LatestSupplyRow | null = null
     if (listing.market_radar_product_id) {
       let query = supabase
@@ -409,62 +537,86 @@ export async function reconcileActiveListingProtectionRisks(
 
     if (!detected.length) {
       listingsHealthy += 1
-      await supabase
-        .from("ebay_active_listing_risk_events")
-        .update({ resolved_at: new Date().toISOString(), last_detected_at: new Date().toISOString() })
-        .eq("active_listing_id", listing.id)
-        .is("resolved_at", null)
+      const allRiskTypes = [
+        "out_of_stock",
+        "stock_unknown",
+        "low_stock",
+        "price_up",
+        "mapping_broken",
+      ]
+      await resolveProtectionRisks(supabase, {
+        listingIds: group.memberListingIds,
+        riskTypes: allRiskTypes,
+      })
       await supabase
         .from("ebay_active_listings")
         .update({ last_radar_review_at: new Date().toISOString() })
-        .eq("id", listing.id)
-      await Promise.all(
-        ["out_of_stock", "low_stock", "price_up", "mapping_broken"]
-          .map((type) => resolveProtectionWhatsAppAlert(supabase, listing.id, type)),
+        .in("id", group.memberListingIds)
+      await resolveProtectionAlertIdentities(
+        supabase,
+        group,
+        listingIdentityHash,
+        allRiskTypes,
       )
       continue
     }
 
     for (const type of detected) {
-      await upsertProtectionAlert(supabase, {
+      const riskId = await upsertProtectionAlert(supabase, {
         listing,
+        accountKey: accountScope.accountKey,
         type,
-        snapshotId: latest?.snapshot_id ?? null,
+        riskFingerprint: canonicalRiskFingerprint(listingIdentityHash, type),
+        whatsappEntityId: canonicalWhatsAppEntityId(listingIdentityHash),
         evidence: {
+          listingIdentity: listingIdentityEvidence,
           supplierVariantId: latest?.supplier_variant_id ?? listing.supplier_variant_id,
           supplierSku: latest?.sku ?? listing.supplier_sku,
           available: latest?.available ?? null,
           inventoryQuantity: latest?.inventory_quantity ?? null,
           supplierPrice: latest?.price ?? null,
           capturedAt: latest?.captured_at ?? null,
+          snapshotId: latest?.snapshot_id ?? null,
         },
       })
+      await resolveProtectionRisks(supabase, {
+        listingIds: group.memberListingIds,
+        riskTypes: [type],
+        keepRiskId: riskId,
+      })
+      // Resolve pre-V2 per-row WhatsApp identities while keeping the canonical
+      // account + item + SKU identity active.
+      await Promise.all(group.memberListingIds.map((listingId) =>
+        resolveProtectionWhatsAppAlert(supabase, listingId, type)
+      ))
       risksDetected += 1
     }
 
     const resolvedTypes = ["out_of_stock", "stock_unknown", "low_stock", "price_up", "mapping_broken"]
       .filter((type) => !detected.includes(type))
     if (resolvedTypes.length) {
-      await supabase
-        .from("ebay_active_listing_risk_events")
-        .update({ resolved_at: new Date().toISOString() })
-        .eq("active_listing_id", listing.id)
-        .in("risk_type", resolvedTypes)
-        .is("resolved_at", null)
-      await Promise.all(
-        resolvedTypes.map((type) =>
-          resolveProtectionWhatsAppAlert(supabase, listing.id, type)
-        ),
+      await resolveProtectionRisks(supabase, {
+        listingIds: group.memberListingIds,
+        riskTypes: resolvedTypes,
+      })
+      await resolveProtectionAlertIdentities(
+        supabase,
+        group,
+        listingIdentityHash,
+        resolvedTypes,
       )
     }
     await supabase
       .from("ebay_active_listings")
       .update({ last_radar_review_at: new Date().toISOString() })
-      .eq("id", listing.id)
+      .in("id", group.memberListingIds)
   }
 
   return {
     activeListingsSelected: listings.length,
+    activeListingRowsSelected,
+    duplicateListingRowsCollapsed:
+      Math.max(0, activeListingRowsSelected - listings.length),
     listingsEvaluated,
     listingsDeferred: Math.max(0, listings.length - listingsEvaluated),
     listingsHealthy,
@@ -475,12 +627,13 @@ export async function reconcileActiveListingProtectionRisks(
 
 export async function getSellerAutomationHealth(supabase: SupabaseClient) {
   const now = new Date().toISOString()
+  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey ?? "__unconfigured__"
   const [due, leased, retries, dead, pendingAlerts, latestRuns] = await Promise.all([
     supabase.from("ebay_seller_scan_tasks").select("id", { count: "exact", head: true }).in("status", ["queued", "retry"]).lte("due_at", now),
     supabase.from("ebay_seller_scan_tasks").select("id", { count: "exact", head: true }).eq("status", "leased"),
     supabase.from("ebay_seller_scan_tasks").select("id", { count: "exact", head: true }).eq("status", "retry"),
     supabase.from("ebay_seller_scan_tasks").select("id", { count: "exact", head: true }).eq("status", "dead_letter"),
-    supabase.from("ebay_seller_alert_outbox").select("id", { count: "exact", head: true }).in("status", ["pending", "failed"]),
+    supabase.from("ebay_seller_alert_outbox").select("id", { count: "exact", head: true }).eq("payload->>accountKey", accountKey).in("status", ["pending", "failed"]),
     supabase.from("ebay_seller_automation_runs").select("id,run_kind,status,started_at,completed_at,last_error_code,metrics").order("started_at", { ascending: false }).limit(8),
   ])
   const firstError = due.error ?? leased.error ?? retries.error ?? dead.error ?? pendingAlerts.error ?? latestRuns.error

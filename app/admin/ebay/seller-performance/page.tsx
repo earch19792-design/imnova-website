@@ -18,6 +18,7 @@ import {
   type EbaySellerTrafficDashboard,
   type EbaySellerTrafficRow,
 } from "@/lib/ebay/ebay-seller-traffic-report"
+import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 
 type ApiPayload = {
   success?: boolean
@@ -30,6 +31,38 @@ type ApiPayload = {
     refreshTokenLogged?: boolean
     ebayWriteUsed?: boolean
   }
+  learning?: {
+    status?: string
+    error?: string
+    persistencePerformed?: boolean
+    trainingTriggered?: boolean
+    automaticCollectionOnly?: boolean
+    reportCoverage?: {
+      requestedDateFrom: string
+      requestedDateTo: string
+      reportDateFrom: string
+      reportDateTo: string
+      lastUpdatedDate: string | null
+      complete: boolean
+    }
+    categoryLearning?: Array<{
+      categoryId: string
+      status: "COLLECTING" | "ELIGIBLE_APPLIED"
+      adjustmentPoints: number
+      sampleListingCount: number
+      totalImpressions: number
+      minimumObservationDays: number
+      remainingRequirements: {
+        linkedListings: number
+        observationDays: number
+        totalImpressions: number
+      }
+    }>
+  }
+  listingSelection?: {
+    mode?: "EXPLICIT" | "VERIFIED_OWN_LINKS"
+    count?: number
+  }
 }
 
 const numberFormatter = new Intl.NumberFormat("es-US", {
@@ -41,7 +74,7 @@ function isoDay(date: Date) {
 }
 
 function initialDateRange() {
-  const end = new Date()
+  const end = new Date(Date.now() - 86_400_000)
   const start = new Date(end)
   start.setUTCDate(start.getUTCDate() - 29)
   return { dateFrom: isoDay(start), dateTo: isoDay(end) }
@@ -49,11 +82,17 @@ function initialDateRange() {
 
 function metric(row: EbaySellerTrafficRow, key: string) {
   const value = row.metrics[key]
-  return row.applicability[key] && typeof value === "number" ? value : 0
+  return row.applicability[key] && typeof value === "number" ? value : null
 }
 
-function rate(numerator: number, denominator: number) {
-  return denominator > 0 ? (numerator / denominator) * 100 : null
+function rate(numerator: number | null, denominator: number | null) {
+  return numerator !== null && denominator !== null && denominator > 0
+    ? (numerator / denominator) * 100
+    : null
+}
+
+function formatMetric(value: number | null) {
+  return value === null ? "—" : numberFormatter.format(value)
 }
 
 function rowClickThroughRate(row: EbaySellerTrafficRow) {
@@ -115,6 +154,14 @@ function humanError(code: string) {
       "eBay rechazó el rango o los listing IDs solicitados.",
     EBAY_ANALYTICS_READ_403:
       "La autorización no incluye sell.analytics.readonly o la cuenta no tiene acceso.",
+    EBAY_CATEGORY_LEARNING_ACCOUNT_SCOPE_REQUIRED:
+      "Falta configurar el alias y la identidad vinculada de la cuenta Seller oficial.",
+    EBAY_CATEGORY_LEARNING_ACCOUNT_SCOPE_INVALID:
+      "El alias o la identidad vinculada de la cuenta Seller oficial no es válido.",
+    EBAY_VERIFIED_LISTING_REQUIRED:
+      "Todavía no hay un listing propio verificado. Registra el primer Item ID antes de consultar rendimiento por listing.",
+    EBAY_VERIFIED_LISTING_LINKS_READ_FAILED:
+      "No se pudieron leer los listings propios verificados. Revisa Supabase e intenta nuevamente.",
   }
   return messages[code] ?? "No se pudo consultar Seller Analytics. Intenta nuevamente."
 }
@@ -146,9 +193,12 @@ export default function EbaySellerPerformancePage() {
   const [listingIds, setListingIds] = useState("")
   const [dashboard, setDashboard] =
     useState<EbaySellerTrafficDashboard | null>(null)
+  const [learning, setLearning] = useState<ApiPayload["learning"] | null>(null)
+  const [listingSelection, setListingSelection] = useState<ApiPayload["listingSelection"] | null>(null)
   const [configurationReady, setConfigurationReady] = useState<boolean | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [errorCode, setErrorCode] = useState("")
 
   const chartRows = useMemo(() => {
     if (!dashboard) return []
@@ -164,15 +214,17 @@ export default function EbaySellerPerformancePage() {
   async function loadReport() {
     if (loading) return
     setError("")
+    setErrorCode("")
     setDashboard(null)
+    setLearning(null)
 
     const rawIds = listingIds
       .split(/[\s,]+/)
       .map((entry) => entry.trim())
       .filter(Boolean)
-    const invalidIds = rawIds.filter((entry) => !/^\d+$/.test(entry))
+    const invalidIds = rawIds.filter((entry) => !/^\d{9,20}$/.test(entry))
     if (invalidIds.length || rawIds.length > 200) {
-      setError("Usa hasta 200 listing IDs numéricos, separados por coma o espacio.")
+      setError("Usa hasta 200 listing IDs de 9–20 dígitos, separados por coma o espacio.")
       return
     }
 
@@ -200,8 +252,11 @@ export default function EbaySellerPerformancePage() {
         throw new Error(payload.error || "EBAY_SELLER_ANALYTICS_READ_FAILED")
       }
       setDashboard(normalizeEbaySellerTrafficReport(payload.report))
+      setLearning(payload.learning ?? null)
+      setListingSelection(payload.listingSelection ?? null)
     } catch (requestError) {
       const code = requestError instanceof Error ? requestError.message : ""
+      setErrorCode(code)
       setError(humanError(code))
     } finally {
       setLoading(false)
@@ -209,7 +264,7 @@ export default function EbaySellerPerformancePage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#05070d] px-4 py-8 text-white sm:px-6 md:px-10">
+    <main className="min-h-screen bg-[#05070d] px-4 pb-28 pt-8 text-white sm:px-6 md:px-10">
       <section className="mx-auto flex max-w-7xl flex-col gap-6">
         <nav className="flex flex-wrap gap-3 text-xs font-black uppercase tracking-[0.18em]">
           <a className="rounded-full border border-white/10 px-4 py-2 text-white/65" href="/admin/ebay-seller-os">
@@ -284,6 +339,9 @@ export default function EbaySellerPerformancePage() {
             <span className="rounded-full border border-white/10 px-3 py-1.5 text-white/50">
               Hasta 200 listings
             </span>
+            <span className="rounded-full border border-white/10 px-3 py-1.5 text-white/50">
+              Vacío = sólo listings propios verificados
+            </span>
             {configurationReady !== null && (
               <span className={`rounded-full border px-3 py-1.5 ${configurationReady ? "border-emerald-200/30 text-emerald-100" : "border-rose-200/30 text-rose-100"}`}>
                 OAuth Seller {configurationReady ? "configurado" : "pendiente"}
@@ -298,9 +356,21 @@ export default function EbaySellerPerformancePage() {
                   Iniciar sesión
                 </a>
               )}
+              {errorCode === "EBAY_VERIFIED_LISTING_REQUIRED" && (
+                <a className="mt-3 flex min-h-11 w-fit items-center rounded-xl bg-white px-4 font-black text-black" href="/admin/ebay/listings/register">
+                  Registrar primer listing
+                </a>
+              )}
             </div>
           )}
         </section>
+
+        {learning && <section className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.06] p-5 md:p-7">
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-[0.22em] text-emerald-100/60">Aprendizaje prudente del OS</p><h2 className="mt-2 text-2xl font-black">{learning.status === "STORED_ELIGIBLE_ADJUSTMENTS" ? "Calibración por categoría activa" : learning.status === "STORED_COLLECTING" ? "Recopilando evidencia propia" : "Sin aprendizaje almacenado todavía"}</h2></div><span className="rounded-full border border-emerald-200/25 px-3 py-1 text-xs font-black">Consulta visual · {listingSelection?.count ?? 0} listings · no entrena</span></div>
+          <p className="mt-3 max-w-4xl text-sm leading-6 text-white/65">Esta pantalla sólo lee el reporte y el estado de aprendizaje ya almacenado. La automatización recopila períodos canónicos de 14 días completos y únicamente datos posteriores a la verificación. El ajuste puede afectar el orden —máximo ±5 puntos— después de 10 listings de la misma categoría/versión y 500 impresiones; identidad, stock, margen y restricciones nunca se relajan.</p>
+          {learning.error && <p className="mt-4 rounded-2xl border border-amber-200/20 p-3 text-sm text-amber-50">No se pudo leer el estado almacenado: {learning.error.replaceAll("_", " ")}. Esta consulta no guardó evidencia ni cambió el ranking.</p>}
+          <div className="mt-4 grid gap-3 md:grid-cols-2">{(learning.categoryLearning ?? []).map((category) => <article key={category.categoryId} className="rounded-2xl border border-white/10 bg-black/20 p-4"><div className="flex items-center justify-between gap-3"><strong>Categoría {category.categoryId}</strong><span className="text-xs font-black text-emerald-100">{category.status === "ELIGIBLE_APPLIED" ? `${category.adjustmentPoints >= 0 ? "+" : ""}${category.adjustmentPoints} pts` : "0 pts"}</span></div><p className="mt-2 text-xs leading-5 text-white/55">Muestra: {category.sampleListingCount} listings · {category.minimumObservationDays} días · {numberFormatter.format(category.totalImpressions)} impresiones.</p>{category.status === "COLLECTING" && <p className="mt-2 text-xs text-amber-100">Faltan {category.remainingRequirements.linkedListings} listings, {category.remainingRequirements.observationDays} días y {numberFormatter.format(category.remainingRequirements.totalImpressions)} impresiones.</p>}</article>)}</div>
+        </section>}
 
         {dashboard && (
           <>
@@ -372,10 +442,10 @@ export default function EbaySellerPerformancePage() {
                     {dashboard.rows.map((row) => (
                       <tr key={row.dimension} className="border-t border-white/[0.07]">
                         <td className="whitespace-nowrap px-5 py-4 font-bold text-cyan-100">{dimensionLabel(row.dimension, dashboard.dimension)}</td>
-                        <td className="px-5 py-4">{numberFormatter.format(metric(row, "TOTAL_IMPRESSION_TOTAL"))}</td>
-                        <td className="px-5 py-4">{numberFormatter.format(metric(row, "LISTING_VIEWS_TOTAL"))}</td>
+                        <td className="px-5 py-4">{formatMetric(metric(row, "TOTAL_IMPRESSION_TOTAL"))}</td>
+                        <td className="px-5 py-4">{formatMetric(metric(row, "LISTING_VIEWS_TOTAL"))}</td>
                         <td className="px-5 py-4">{formatPercent(rowClickThroughRate(row))}</td>
-                        <td className="px-5 py-4">{numberFormatter.format(metric(row, "TRANSACTION"))}</td>
+                        <td className="px-5 py-4">{formatMetric(metric(row, "TRANSACTION"))}</td>
                         <td className="px-5 py-4">{formatPercent(rowSalesConversionRate(row))}</td>
                       </tr>
                     ))}
@@ -401,6 +471,7 @@ export default function EbaySellerPerformancePage() {
           servidor, sin drafts, ofertas, publicaciones ni datos de competidores.
         </footer>
       </section>
+      <SellerOsMobileNav active="operation" />
     </main>
   )
 }

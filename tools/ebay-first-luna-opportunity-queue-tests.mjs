@@ -7,6 +7,7 @@ import {
   buildOpportunityChangeEvents,
   buildOpportunityQueueRow,
   buildProfessionalSellerQueueView,
+  evaluateEbayListingWorkspaceEligibility,
   mapLatestVariantToLunaCandidate,
 } from "../lib/ebay/ebay-first-luna-opportunity-queue.ts"
 
@@ -130,7 +131,7 @@ test("mobile command center centralizes scan, queue and candidate review", () =>
   const mobilePage = readFileSync(new URL("../app/admin/ebay/mobile-review/page.tsx", import.meta.url), "utf8")
   const commandCenter = readFileSync(new URL("../app/admin/ebay/mobile-review/opportunity-command-center.tsx", import.meta.url), "utf8")
   assert.match(mobilePage, /Seller Command Center/)
-  assert.match(mobilePage, /id: "opportunities"/)
+  assert.match(mobilePage, /SellerOsMobileNav/)
   assert.match(mobilePage, /OpportunityCommandCenter/)
   assert.match(commandCenter, /Iniciar scan prioritario/)
   assert.match(commandCenter, /Acelerar 20 productos/)
@@ -138,7 +139,7 @@ test("mobile command center centralizes scan, queue and candidate review", () =>
   assert.match(commandCenter, /Top para trabajar ahora/)
   assert.match(commandCenter, /comparables exactos/)
   assert.match(commandCenter, /onReviewCandidate/)
-  assert.match(commandCenter, /Monitoreo y riesgos/)
+  assert.match(commandCenter, /Operación y riesgos de listings/)
   assert.match(mobilePage, /scans y cola guardados en Supabase/)
   assert.match(mobilePage, /radarCandidates\.find/)
   assert.match(mobilePage, /loadMarketRadarReadonlyProductById/)
@@ -227,6 +228,45 @@ test("separates eBay candidates from exact comparables and builds a seller fast 
   assert.equal(row.top_ebay_candidates.length, 3)
   assert.equal(row.assessment, undefined)
   assert.ok(row.seller_priority_score > 0)
+})
+
+test("opens preparation only for package-resolvable facts and keeps market guards closed", () => {
+  const resolvable = evaluateEbayListingWorkspaceEligibility({
+    opportunity_score: 82,
+    identity_score: 80,
+    supplier_available: true,
+    supplier_inventory_quantity: 20,
+    supplier_price: 4,
+    hard_gates: ["NEED_AUTHORIZED_PRODUCT_IMAGES", "NEED_PACKAGE_WEIGHT"],
+    evidence_guards: [],
+    assessment: {
+      identity: { exactIdentityConfirmed: true },
+      economics: { ready: true },
+      scores: { potentialScore: 82, confidenceScore: 80 },
+    },
+  })
+  assert.equal(resolvable.allowed, true)
+  assert.deepEqual(resolvable.resolvableHardGates, [
+    "NEED_AUTHORIZED_PRODUCT_IMAGES",
+    "NEED_PACKAGE_WEIGHT",
+  ])
+
+  const marketBlocked = evaluateEbayListingWorkspaceEligibility({
+    opportunity_score: 82,
+    identity_score: 80,
+    supplier_available: true,
+    supplier_inventory_quantity: 20,
+    supplier_price: 4,
+    hard_gates: ["NEED_AUTHORIZED_PRODUCT_IMAGES"],
+    evidence_guards: ["NEED_MULTI_SELLER_DEMAND_EVIDENCE"],
+    assessment: {
+      identity: { exactIdentityConfirmed: true },
+      economics: { ready: true },
+      scores: { potentialScore: 82, confidenceScore: 80 },
+    },
+  })
+  assert.equal(marketBlocked.allowed, false)
+  assert.ok(marketBlocked.blockers.includes("EVIDENCE_GUARD:NEED_MULTI_SELLER_DEMAND_EVIDENCE"))
 })
 
 test("opportunity queue explains professional seller evidence in the UI", () => {

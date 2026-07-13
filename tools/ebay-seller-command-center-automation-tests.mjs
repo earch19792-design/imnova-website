@@ -6,8 +6,16 @@ const migration = readFileSync(
   new URL("../supabase/migrations/20260713040000_create_ebay_seller_command_center_v2.sql", import.meta.url),
   "utf8",
 )
+const accountScopeMigration = readFileSync(
+  new URL("../supabase/migrations/20260713073000_scope_ebay_seller_whatsapp_claims.sql", import.meta.url),
+  "utf8",
+)
 const service = readFileSync(
   new URL("../lib/ebay/ebay-seller-command-center-automation.ts", import.meta.url),
+  "utf8",
+)
+const protectionDomain = readFileSync(
+  new URL("../lib/ebay/ebay-active-listing-protection-domain.ts", import.meta.url),
   "utf8",
 )
 const scanService = readFileSync(
@@ -66,7 +74,7 @@ test("candidate failures are isolated and acknowledged independently", () => {
   assert.match(scanService, /24 \* 60 \* 60 \* 1000/)
 })
 
-test("active listing protection emits idempotent risks and outbox alerts", () => {
+test("active listing protection emits one canonical risk and alert per account + item + SKU", () => {
   assert.match(migration, /risk_fingerprint text/)
   assert.match(migration, /ebay_active_listing_risk_fingerprint_uidx/)
   assert.match(migration, /create table if not exists public\.ebay_seller_alert_outbox/)
@@ -77,7 +85,14 @@ test("active listing protection emits idempotent risks and outbox alerts", () =>
   assert.match(service, /mapping_broken/)
   assert.match(migration, /occurrence_count = public\.ebay_active_listing_risk_events\.occurrence_count \+ 1/)
   assert.match(service, /upsert_ebay_active_listing_risk/)
-  assert.match(service, /const alertFingerprint = `risk:\$\{riskFingerprint\}`/)
+  assert.match(service, /canonicalizeActiveListingProtectionRows\(listingRows\)/)
+  assert.match(protectionDomain, /source === EBAY_INVENTORY_READONLY_SOURCE/)
+  assert.match(protectionDomain, /itemSkus\?\.size === 1/)
+  assert.match(protectionDomain, /canonicalListingStatus:|listingStatus:/)
+  assert.match(service, /active-listing-v2:\$\{listingIdentityHash\}:\$\{riskType\}/)
+  assert.match(service, /const alertFingerprint = `risk:\$\{input\.riskFingerprint\}`/)
+  assert.match(service, /listingIds: group\.memberListingIds/)
+  assert.match(service, /CANONICAL_LISTING_DEDUPED/)
   assert.doesNotMatch(service, /const alertFingerprint = `\$\{riskFingerprint\}:\$\{input\.snapshotId/)
   assert.match(lunaCron, /reconcileActiveListingProtectionRisks/)
 })
@@ -90,6 +105,12 @@ test("active listing identity is offer and account aware, not item-id unique", (
   assert.match(migration, /add column if not exists supplier_cost_at_linking numeric\(12,2\) null/)
   assert.match(migration, /drop constraint if exists ebay_active_listings_item_unique/)
   assert.match(migration, /ebay_active_listings_sync_key_uidx\s+on public\.ebay_active_listings\(sync_key\)/)
+  assert.match(accountScopeMigration, /alter column account_key drop default/)
+  assert.match(accountScopeMigration, /account_key <> 'default'/)
+  assert.match(service, /getEbaySellerAccountScopeConfiguration/)
+  assert.match(service, /\.eq\("account_key", accountScope\.accountKey\)/)
+  assert.match(service, /accountKey: input\.accountKey/)
+  assert.match(scanService, /accountKey,/)
 })
 
 test("cron cadence preserves priority while respecting the serverless budget", () => {
@@ -105,6 +126,9 @@ test("cron cadence preserves priority while respecting the serverless budget", (
     { path: "/api/cron/market-radar-luna-sync", schedule: "0 9 * * *" },
     { path: "/api/cron/ebay-luna-opportunity-scan", schedule: "17 9 * * *" },
   ])
+  assert.match(scanService, /productionSchedule: "17 9 \* \* \*"/)
+  assert.match(scanService, /lunaProductionSchedule: "0 9 \* \* \*"/)
+  assert.doesNotMatch(scanService, /productionSchedule: "\*\/15 \* \* \* \*"/)
 })
 
 test("dashboard exposes operational health instead of reporting an empty queue as healthy", () => {
