@@ -11,6 +11,7 @@ import {
 } from "@/lib/ebay/ebay-seller-whatsapp-alert-policy"
 import {
   getSellerWhatsAppGatewayConfiguration,
+  preflightSellerWhatsAppGateway,
   sendSellerWhatsAppApprovedTemplate,
   type SellerWhatsAppTemplateMessage,
 } from "@/lib/ebay/ebay-seller-whatsapp-gateway"
@@ -295,7 +296,7 @@ export async function deliverSellerWhatsAppAlerts(
   },
 ) {
   const configuration = getSellerWhatsAppGatewayConfiguration()
-  if (options.dryRun !== false || !configuration.realDeliveryPermitted) {
+  if (options.dryRun !== false || !configuration.deliveryAttemptAllowed) {
     return {
       mode: "preview" as const,
       configuration,
@@ -303,6 +304,20 @@ export async function deliverSellerWhatsAppAlerts(
       delivered: 0,
       failed: 0,
       previews: await previewSellerWhatsAppAlerts(supabase, options.limit),
+    }
+  }
+
+  const preflight = await preflightSellerWhatsAppGateway({
+    fetchImpl: options.fetchImpl,
+  })
+  if (!preflight.success) {
+    return {
+      mode: "blocked" as const,
+      configuration: getSellerWhatsAppGatewayConfiguration(),
+      preflight,
+      claimed: 0,
+      delivered: 0,
+      failed: 0,
     }
   }
 

@@ -8,6 +8,7 @@ import {
   createEbayUnpublishedOffer,
   createOrReplaceEbayDraftInventoryItem,
   ebayDraftOnlyRuntimeStatus,
+  preflightEbayDraftDependencies,
   preflightEbayDraftSkuCollision,
   sanitizeEbayOfferId,
 } from "@/lib/ebay/ebay-draft-only-gateway"
@@ -467,6 +468,21 @@ async function executeDraft(body: JsonRecord, actor: string) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_RUNTIME_DISABLED"), 409)
   }
 
+  const businessPolicies = record(draftConfiguration.businessPolicies)
+  const dependencyPreflight = await preflightEbayDraftDependencies({
+    merchantLocationKey: text(draftConfiguration.merchantLocationKey),
+    fulfillmentPolicyId: text(businessPolicies.fulfillmentPolicyId),
+    paymentPolicyId: text(businessPolicies.paymentPolicyId),
+    returnPolicyId: text(businessPolicies.returnPolicyId),
+  })
+  if (!dependencyPreflight.safe) {
+    const unavailable = dependencyPreflight.blocker === "EBAY_DRAFT_DEPENDENCIES_PREFLIGHT_UNAVAILABLE"
+    return jsonError(
+      new Error(dependencyPreflight.blocker ?? "EBAY_DRAFT_DEPENDENCIES_PREFLIGHT_UNAVAILABLE"),
+      unavailable ? 503 : 409,
+    )
+  }
+
   const { data: claimedLedger, error: claimError } = await supabase
     .rpc("claim_ebay_draft_only_execution", {
       p_approval_id: approvalId,
@@ -503,7 +519,10 @@ async function executeDraft(body: JsonRecord, actor: string) {
         lease_expires_at: null,
         updated_at: new Date().toISOString(),
       }).eq("id", ledgerId).eq("phase", "claimed")
-      return jsonError(new Error(preflight.blocker ?? "EBAY_SKU_PREFLIGHT_UNAVAILABLE"), preflight.collision ? 409 : 503)
+      return jsonError(
+        new Error(preflight.blocker ?? "EBAY_SKU_PREFLIGHT_UNAVAILABLE"),
+        preflight.collision ? 409 : 503,
+      )
     }
   }
 

@@ -135,7 +135,7 @@ test("readiness fails closed on evidence, freshness, rights, margin, policies an
   assert.ok(result.blockers.includes("SKU_COLLISION"))
 })
 
-test("gateway uses a separate write token, SANDBOX, collision GETs and only two write operations", async () => {
+test("gateway uses Sandbox GETs to verify policies, enabled location and SKU before PUT", async () => {
   const module = await importTypeScript(gatewaySource)
   const original = { ...process.env }
   Object.assign(process.env, {
@@ -154,21 +154,116 @@ test("gateway uses a separate write token, SANDBOX, collision GETs and only two 
     }
     if (init.method === "GET" && parsed.pathname.includes("/inventory_item/")) return new Response("{}", { status: 404 })
     if (init.method === "GET" && parsed.pathname.endsWith("/offer")) return new Response(JSON.stringify({ offers: [] }), { status: 200 })
+    if (init.method === "GET" && parsed.pathname.includes("/fulfillment_policy/")) {
+      return new Response(JSON.stringify({ fulfillmentPolicyId: "fulfillment_1", marketplaceId: "EBAY_US" }), { status: 200 })
+    }
+    if (init.method === "GET" && parsed.pathname.includes("/payment_policy/")) {
+      return new Response(JSON.stringify({ paymentPolicyId: "payment_1", marketplaceId: "EBAY_US" }), { status: 200 })
+    }
+    if (init.method === "GET" && parsed.pathname.includes("/return_policy/")) {
+      return new Response(JSON.stringify({ returnPolicyId: "return_1", marketplaceId: "EBAY_US" }), { status: 200 })
+    }
+    if (init.method === "GET" && parsed.pathname.includes("/location/")) {
+      return new Response(JSON.stringify({ merchantLocationKey: "LUNA_PORTEX_US", merchantLocationStatus: "ENABLED" }), { status: 200 })
+    }
     if (init.method === "PUT") return new Response(null, { status: 204 })
     if (init.method === "POST" && parsed.pathname.endsWith("/offer")) return new Response(JSON.stringify({ offerId: "123456" }), { status: 201 })
     throw new Error("unexpected request")
   }
   try {
-    const preflight = await module.preflightEbayDraftSkuCollision("IMNOVA-ITEM-1", fetchImpl)
-    assert.equal(preflight.safe, true)
+    const dependencies = await module.preflightEbayDraftDependencies({
+      fulfillmentPolicyId: "fulfillment_1",
+      paymentPolicyId: "payment_1",
+      returnPolicyId: "return_1",
+      merchantLocationKey: "LUNA_PORTEX_US",
+    }, fetchImpl)
+    assert.equal(dependencies.safe, true)
+    assert.equal(dependencies.checks.fulfillmentPolicy.valid, true)
+    assert.equal(dependencies.checks.paymentPolicy.valid, true)
+    assert.equal(dependencies.checks.returnPolicy.valid, true)
+    assert.equal(dependencies.checks.merchantLocation.enabled, true)
+    const collision = await module.preflightEbayDraftSkuCollision("IMNOVA-ITEM-1", fetchImpl)
+    assert.equal(collision.safe, true)
     const inventory = await module.createOrReplaceEbayDraftInventoryItem("IMNOVA-ITEM-1", { product: {} }, fetchImpl)
     const offer = await module.createEbayUnpublishedOffer({ sku: "IMNOVA-ITEM-1" }, fetchImpl)
     assert.equal(inventory.ok, true)
     assert.equal(offer.ok, true)
-    const ebayCalls = calls.filter((call) => call.url.pathname.startsWith("/sell/inventory/"))
-    assert.deepEqual(ebayCalls.map((call) => call.method), ["GET", "GET", "PUT", "POST"])
+    const tokenCalls = calls.filter((call) => call.url.pathname.endsWith("/oauth2/token"))
+    assert.ok(tokenCalls.every((call) => String(call.body).includes("sell.account")))
+    const ebayCalls = calls.filter((call) => call.url.pathname.startsWith("/sell/"))
+    assert.deepEqual(ebayCalls.map((call) => call.method), ["GET", "GET", "GET", "GET", "GET", "GET", "PUT", "POST"])
     assert.ok(ebayCalls.every((call) => call.url.origin === "https://api.sandbox.ebay.com"))
     assert.ok(ebayCalls.every((call) => !call.url.pathname.includes("publish_offer")))
+    assert.deepEqual(
+      ebayCalls.filter((call) => call.method === "GET").map((call) => call.url.pathname),
+      [
+        "/sell/account/v1/fulfillment_policy/fulfillment_1",
+        "/sell/account/v1/payment_policy/payment_1",
+        "/sell/account/v1/return_policy/return_1",
+        "/sell/inventory/v1/location/LUNA_PORTEX_US",
+        "/sell/inventory/v1/inventory_item/IMNOVA-ITEM-1",
+        "/sell/inventory/v1/offer",
+      ],
+    )
+  } finally {
+    process.env = original
+  }
+})
+
+test("dependency preflight fails closed for a missing policy or disabled merchant location", async () => {
+  const module = await importTypeScript(gatewaySource)
+  const original = { ...process.env }
+  Object.assign(process.env, {
+    EBAY_DRAFT_ONLY_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_TARGET: "SANDBOX",
+    EBAY_DRAFT_ONLY_CLIENT_ID: "client",
+    EBAY_DRAFT_ONLY_CLIENT_SECRET: "secret",
+    EBAY_DRAFT_ONLY_REFRESH_TOKEN: "separate-write-refresh-token",
+  })
+  const input = {
+    fulfillmentPolicyId: "fulfillment_1",
+    paymentPolicyId: "payment_1",
+    returnPolicyId: "return_1",
+    merchantLocationKey: "LUNA_PORTEX_US",
+  }
+  const dependencyCalls = []
+  const responseFor = (parsed, locationStatus, missingFulfillment) => {
+    if (parsed.pathname.endsWith("/oauth2/token")) return { access_token: "access" }
+    if (parsed.pathname.includes("/fulfillment_policy/")) {
+      return missingFulfillment ? null : { fulfillmentPolicyId: "fulfillment_1", marketplaceId: "EBAY_US" }
+    }
+    if (parsed.pathname.includes("/payment_policy/")) return { paymentPolicyId: "payment_1", marketplaceId: "EBAY_US" }
+    if (parsed.pathname.includes("/return_policy/")) return { returnPolicyId: "return_1", marketplaceId: "EBAY_US" }
+    if (parsed.pathname.includes("/location/")) {
+      return { merchantLocationKey: "LUNA_PORTEX_US", merchantLocationStatus: locationStatus }
+    }
+    throw new Error("unexpected request")
+  }
+  try {
+    const disabled = await module.preflightEbayDraftDependencies(input, async (url, init = {}) => {
+      const parsed = new URL(url)
+      dependencyCalls.push({ parsed, method: init.method })
+      const body = responseFor(parsed, "DISABLED", false)
+      return new Response(JSON.stringify(body), { status: 200 })
+    })
+    assert.equal(disabled.safe, false)
+    assert.equal(disabled.terminal, false)
+    assert.equal(disabled.blocker, "EBAY_MERCHANT_LOCATION_DISABLED")
+
+    const missingPolicy = await module.preflightEbayDraftDependencies(input, async (url, init = {}) => {
+      const parsed = new URL(url)
+      dependencyCalls.push({ parsed, method: init.method })
+      const body = responseFor(parsed, "ENABLED", true)
+      return body === null
+        ? new Response(JSON.stringify({ errors: [] }), { status: 404 })
+        : new Response(JSON.stringify(body), { status: 200 })
+    })
+    assert.equal(missingPolicy.safe, false)
+    assert.equal(missingPolicy.terminal, false)
+    assert.equal(missingPolicy.blocker, "EBAY_FULFILLMENT_POLICY_INVALID")
+    assert.ok(dependencyCalls
+      .filter((call) => call.parsed.pathname.startsWith("/sell/"))
+      .every((call) => call.method === "GET"))
   } finally {
     process.env = original
   }
@@ -182,7 +277,12 @@ test("route requires a human Admin, exact approval, fresh revalidation and unkno
   assert.match(routeSource, /confirmNoPublish/)
   assert.match(routeSource, /evaluateEbayDraftOnlyReadiness/)
   assert.match(routeSource, /APPROVED_PAYLOAD_CHANGED/)
+  assert.match(routeSource, /preflightEbayDraftDependencies/)
   assert.match(routeSource, /preflightEbayDraftSkuCollision/)
+  const executeSource = routeSource.slice(routeSource.indexOf("async function executeDraft"))
+  assert.ok(executeSource.indexOf("preflightEbayDraftDependencies") < executeSource.indexOf("claim_ebay_draft_only_execution"))
+  assert.ok(executeSource.indexOf("preflightEbayDraftSkuCollision") < executeSource.indexOf("createOrReplaceEbayDraftInventoryItem"))
+  assert.match(executeSource, /preflight\.collision \? "terminal_failure" : "claimed"/)
   assert.match(routeSource, /serverApprovedConfiguration/)
   assert.match(routeSource, /p_claim_token: randomUUID\(\)/)
   assert.match(routeSource, /offer_create_in_flight/)

@@ -40,7 +40,7 @@ export async function GET(req: Request) {
     })
     const protection = await reconcileActiveListingProtectionRisks(supabase)
     const whatsappConfiguration = getSellerWhatsAppGatewayConfiguration()
-    const whatsapp = whatsappConfiguration.realDeliveryPermitted
+    const whatsapp = whatsappConfiguration.deliveryAttemptAllowed
       ? await deliverSellerWhatsAppAlerts(supabase, {
           workerId: buildSellerWorkerId("seller-whatsapp-protection"),
           limit: 20,

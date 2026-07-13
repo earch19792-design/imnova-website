@@ -649,7 +649,7 @@ export async function processNextEbayFirstLunaBatch(
       })
       .eq("id", run.automation_run_id)
   }
-  if (getSellerWhatsAppGatewayConfiguration().realDeliveryPermitted) {
+  if (getSellerWhatsAppGatewayConfiguration().deliveryAttemptAllowed) {
     await deliverSellerWhatsAppAlerts(supabase, {
       workerId: buildSellerWorkerId("seller-whatsapp"),
       limit: 10,

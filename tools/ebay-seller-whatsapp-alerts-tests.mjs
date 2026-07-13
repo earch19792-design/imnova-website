@@ -93,13 +93,143 @@ test("gateway requires seller-specific recipient and approved Meta templates", a
   assert.match(gateway, /EBAY_SELLER_WHATSAPP_RECIPIENT/)
   assert.match(gateway, /EBAY_SELLER_WHATSAPP_TEMPLATE_NAME/)
   assert.match(gateway, /EBAY_SELLER_WHATSAPP_DIGEST_TEMPLATE_NAME/)
-  assert.match(gateway, /status: !ready \? "NOT_READY" : !enabled \? "DISABLED" : "READY"/)
+  assert.match(gateway, /businessAccountIdConfigured/)
+  assert.match(gateway, /preflightSellerWhatsAppGateway/)
+  assert.match(gateway, /template\.status === "APPROVED"/)
+  assert.match(gateway, /bodyParametersValid/)
+  assert.match(gateway, /META_GRAPH_VERSION/)
   assert.match(gateway, /type: "template"/)
   assert.match(gateway, /WHATSAPP_ACCESS_TOKEN/)
   assert.match(gateway, /WHATSAPP_PHONE_NUMBER_ID/)
   assert.doesNotMatch(gateway, /fallbackRecipientPhones/)
   assert.doesNotMatch(gateway, /50558199840/)
   assert.doesNotMatch(gateway, /console\.(log|error)/)
+})
+
+test("Meta preflight validates phone access, exact language and four BODY parameters without leaking configuration", async () => {
+  const gateway = await importTypeScript("lib/ebay/ebay-seller-whatsapp-gateway.ts")
+  const previous = {}
+  const configured = {
+    EBAY_SELLER_WHATSAPP_ENABLED: "true",
+    EBAY_SELLER_WHATSAPP_RECIPIENT: "+505 8888 9999",
+    WHATSAPP_ACCESS_TOKEN: "meta-secret-token",
+    WHATSAPP_PHONE_NUMBER_ID: "phone-123",
+    WHATSAPP_BUSINESS_ACCOUNT_ID: "waba-123",
+    EBAY_SELLER_WHATSAPP_TEMPLATE_NAME: "seller_alert_v1",
+    EBAY_SELLER_WHATSAPP_DIGEST_TEMPLATE_NAME: "seller_digest_v1",
+    EBAY_SELLER_WHATSAPP_TEMPLATE_LANGUAGE: "es",
+  }
+  for (const [key, value] of Object.entries(configured)) {
+    previous[key] = process.env[key]
+    process.env[key] = value
+  }
+  let calls = 0
+  const fetchImpl = async (input) => {
+    calls += 1
+    const url = new URL(String(input))
+    if (url.pathname.endsWith("/phone-123")) {
+      return new Response(JSON.stringify({ id: "phone-123" }), { status: 200 })
+    }
+    const name = url.searchParams.get("name")
+    return new Response(JSON.stringify({
+      data: [{
+        name,
+        status: "APPROVED",
+        language: "es",
+        components: [{
+          type: "BODY",
+          text: "{{1}} | {{2}} | {{3}} | {{4}}",
+        }],
+      }],
+    }), { status: 200 })
+  }
+  try {
+    const result = await gateway.preflightSellerWhatsAppGateway({
+      fetchImpl,
+      force: true,
+    })
+    assert.equal(result.success, true)
+    assert.equal(result.phoneNumberAccessible, true)
+    assert.equal(result.templates.immediate.compatible, true)
+    assert.equal(result.templates.digest.compatible, true)
+    assert.equal(calls, 3)
+    const serialized = JSON.stringify(result)
+    for (const secret of [
+      configured.EBAY_SELLER_WHATSAPP_RECIPIENT,
+      configured.WHATSAPP_ACCESS_TOKEN,
+      configured.WHATSAPP_PHONE_NUMBER_ID,
+      configured.WHATSAPP_BUSINESS_ACCOUNT_ID,
+      configured.EBAY_SELLER_WHATSAPP_TEMPLATE_NAME,
+      configured.EBAY_SELLER_WHATSAPP_DIGEST_TEMPLATE_NAME,
+    ]) {
+      assert.equal(serialized.includes(secret), false)
+    }
+    const cached = await gateway.preflightSellerWhatsAppGateway({
+      fetchImpl: async () => { throw new Error("cache was not used") },
+    })
+    assert.equal(cached.success, true)
+    assert.equal(cached.cached, true)
+    assert.equal(gateway.getSellerWhatsAppGatewayConfiguration().status, "READY")
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+})
+
+test("Meta preflight blocks unapproved or structurally incompatible templates", async () => {
+  const gateway = await importTypeScript("lib/ebay/ebay-seller-whatsapp-gateway.ts")
+  const previous = {}
+  const configured = {
+    EBAY_SELLER_WHATSAPP_ENABLED: "true",
+    EBAY_SELLER_WHATSAPP_RECIPIENT: "50588889999",
+    WHATSAPP_ACCESS_TOKEN: "another-secret-token",
+    WHATSAPP_PHONE_NUMBER_ID: "phone-456",
+    WHATSAPP_BUSINESS_ACCOUNT_ID: "waba-456",
+    EBAY_SELLER_WHATSAPP_TEMPLATE_NAME: "seller_alert_invalid_v1",
+    EBAY_SELLER_WHATSAPP_DIGEST_TEMPLATE_NAME: "seller_digest_invalid_v1",
+    EBAY_SELLER_WHATSAPP_TEMPLATE_LANGUAGE: "es",
+  }
+  for (const [key, value] of Object.entries(configured)) {
+    previous[key] = process.env[key]
+    process.env[key] = value
+  }
+  const fetchImpl = async (input) => {
+    const url = new URL(String(input))
+    if (url.pathname.endsWith("/phone-456")) {
+      return new Response(JSON.stringify({ id: "phone-456" }), { status: 200 })
+    }
+    const name = url.searchParams.get("name")
+    const digest = name?.includes("digest")
+    return new Response(JSON.stringify({
+      data: [{
+        name,
+        status: digest ? "PENDING" : "APPROVED",
+        language: "es",
+        components: [{ type: "BODY", text: "{{1}} | {{2}}" }],
+      }],
+    }), { status: 200 })
+  }
+  try {
+    const result = await gateway.preflightSellerWhatsAppGateway({
+      fetchImpl,
+      force: true,
+    })
+    assert.equal(result.success, false)
+    assert.equal(result.templates.immediate.bodyParametersValid, false)
+    assert.equal(result.templates.digest.approved, false)
+    assert.ok(result.errorCodes.includes("SELLER_WHATSAPP_TEMPLATE_BODY_PARAMETERS_INVALID"))
+    assert.ok(result.errorCodes.includes("SELLER_WHATSAPP_TEMPLATE_NOT_APPROVED"))
+    const configuration = gateway.getSellerWhatsAppGatewayConfiguration()
+    assert.equal(configuration.preflightStatus, "FAILED")
+    assert.equal(configuration.realDeliveryPermitted, false)
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
 })
 
 test("outbox delivery is idempotent, leased, cooled down, and audited", async () => {
@@ -126,13 +256,17 @@ test("outbox delivery is idempotent, leased, cooled down, and audited", async ()
 test("delivery defaults to preview and never exposes recipient or secrets", async () => {
   const alerts = await source("lib/ebay/ebay-seller-whatsapp-alerts.ts")
   const route = await source("app/api/admin/ebay/seller-whatsapp-alerts/route.ts")
-  assert.match(alerts, /options\.dryRun !== false \|\| !configuration\.realDeliveryPermitted/)
+  assert.match(alerts, /options\.dryRun !== false \|\| !configuration\.deliveryAttemptAllowed/)
+  assert.match(alerts, /preflightSellerWhatsAppGateway/)
   assert.match(alerts, /channel", "whatsapp"/)
   assert.match(alerts, /renderDigest/)
   assert.match(route, /validateAdminApiRequest/)
   assert.match(route, /CRON_SECRET/)
   assert.match(route, /SELLER_WHATSAPP_INVALID_JSON/)
   assert.match(route, /body\.dryRun !== false/)
+  assert.match(route, /body\.action === "preflight"/)
+  assert.match(route, /providerWriteUsed: false/)
+  assert.match(route, /templateContentReturned: false/)
   assert.match(route, /approvedTemplatesOnly: true/)
   assert.match(route, /secretsReturned: false/)
   assert.doesNotMatch(route, /WHATSAPP_ACCESS_TOKEN|EBAY_SELLER_WHATSAPP_RECIPIENT/)
@@ -145,9 +279,9 @@ test("scan, protection and cron wire producers and delivery behind the feature f
   assert.match(scan, /alertType: "winner_ready"/)
   assert.match(scan, /alertType: "luna_restock"/)
   assert.match(scan, /alertType: "luna_cost_drop"/)
-  assert.match(scan, /realDeliveryPermitted/)
+  assert.match(scan, /deliveryAttemptAllowed/)
   assert.match(automation, /entityType: "ebay_active_listing"/)
   assert.match(automation, /resolveProtectionWhatsAppAlert/)
-  assert.match(cron, /realDeliveryPermitted/)
+  assert.match(cron, /deliveryAttemptAllowed/)
   assert.match(cron, /dryRun: false/)
 })

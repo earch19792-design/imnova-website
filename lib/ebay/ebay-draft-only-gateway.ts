@@ -1,8 +1,9 @@
 import type { JsonRecord } from "./ebay-draft-only-readiness"
 
-const INVENTORY_SCOPE = [
+const DRAFT_ONLY_SCOPE = [
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
+  "https://api.ebay.com/oauth/api_scope/sell.account",
 ].join(" ")
 const REQUEST_TIMEOUT_MS = 12_000
 const TRANSIENT_STATUSES = new Set([429, 500, 502, 503, 504])
@@ -26,6 +27,31 @@ type GatewayResult = {
   body: JsonRecord
   outcomeKnown: boolean
   retryable: boolean
+}
+
+export type EbayDraftOnlyDependencyInput = {
+  fulfillmentPolicyId: string
+  paymentPolicyId: string
+  returnPolicyId: string
+  merchantLocationKey: string
+}
+
+type ReadResult = {
+  ok: boolean
+  status: number
+  body: JsonRecord
+}
+
+type DependencyCheck = {
+  valid: boolean
+  httpStatus: number
+}
+
+type DependencyChecks = {
+  fulfillmentPolicy: DependencyCheck
+  paymentPolicy: DependencyCheck
+  returnPolicy: DependencyCheck
+  merchantLocation: DependencyCheck & { enabled: boolean }
 }
 
 function record(value: unknown): JsonRecord {
@@ -81,7 +107,7 @@ async function accessToken(config: GatewayConfig, fetchImpl: typeof fetch) {
     body: new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: config.refreshToken,
-      scope: INVENTORY_SCOPE,
+      scope: DRAFT_ONLY_SCOPE,
     }),
     cache: "no-store",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -104,16 +130,30 @@ function assertAllowedInventoryWrite(config: GatewayConfig, url: URL, method: st
   }
 }
 
-function assertAllowedCollisionRead(config: GatewayConfig, url: URL, method: string) {
+function assertAllowedPreflightRead(config: GatewayConfig, url: URL, method: string) {
   const inventoryItem = method === "GET" && /^\/sell\/inventory\/v1\/inventory_item\/[^/]+$/.test(url.pathname)
-  const offers = method === "GET" && url.pathname === "/sell/inventory/v1/offer" && Boolean(url.searchParams.get("sku"))
-  if (url.origin !== config.apiOrigin || (!inventoryItem && !offers)) {
+  const offers = method === "GET"
+    && url.pathname === "/sell/inventory/v1/offer"
+    && Boolean(url.searchParams.get("sku"))
+    && [...url.searchParams.keys()].every((key) => key === "sku" || key === "limit")
+  const businessPolicy = method === "GET"
+    && /^\/sell\/account\/v1\/(fulfillment_policy|payment_policy|return_policy)\/[^/]+$/.test(url.pathname)
+    && url.search === ""
+  const merchantLocation = method === "GET"
+    && /^\/sell\/inventory\/v1\/location\/[^/]+$/.test(url.pathname)
+    && url.search === ""
+  if (url.origin !== config.apiOrigin || (!inventoryItem && !offers && !businessPolicy && !merchantLocation)) {
     throw new Error("EBAY_DRAFT_ONLY_PREFLIGHT_ENDPOINT_BLOCKED")
   }
 }
 
-async function collisionRead(config: GatewayConfig, token: string, url: URL, fetchImpl: typeof fetch) {
-  assertAllowedCollisionRead(config, url, "GET")
+async function preflightRead(
+  config: GatewayConfig,
+  token: string,
+  url: URL,
+  fetchImpl: typeof fetch,
+): Promise<ReadResult> {
+  assertAllowedPreflightRead(config, url, "GET")
   try {
     const response = await fetchImpl(url, {
       method: "GET",
@@ -135,19 +175,41 @@ async function collisionRead(config: GatewayConfig, token: string, url: URL, fet
   }
 }
 
-export async function preflightEbayDraftSkuCollision(
+function blankDependencyChecks(): DependencyChecks {
+  return {
+    fulfillmentPolicy: { valid: false, httpStatus: 0 },
+    paymentPolicy: { valid: false, httpStatus: 0 },
+    returnPolicy: { valid: false, httpStatus: 0 },
+    merchantLocation: { valid: false, enabled: false, httpStatus: 0 },
+  }
+}
+
+function unavailableRead(result: ReadResult) {
+  return result.status === 0
+    || result.status === 401
+    || result.status === 403
+    || result.status === 429
+    || result.status >= 500
+}
+
+function normalizedDependency(value: string, maximumLength: number) {
+  const normalized = typeof value === "string" ? value.trim() : ""
+  return normalized.length > 0 && normalized.length <= maximumLength ? normalized : null
+}
+
+async function preflightSkuCollisionWithToken(
+  config: GatewayConfig,
+  token: string,
   sku: string,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch,
 ) {
-  const config = getEbayDraftOnlyGatewayConfig()
-  const token = await accessToken(config, fetchImpl)
   const inventoryUrl = new URL(`/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, config.apiOrigin)
   const offerUrl = new URL("/sell/inventory/v1/offer", config.apiOrigin)
   offerUrl.searchParams.set("sku", sku)
   offerUrl.searchParams.set("limit", "100")
   const [inventory, offers] = await Promise.all([
-    collisionRead(config, token, inventoryUrl, fetchImpl),
-    collisionRead(config, token, offerUrl, fetchImpl),
+    preflightRead(config, token, inventoryUrl, fetchImpl),
+    preflightRead(config, token, offerUrl, fetchImpl),
   ])
   const inventoryAbsent = inventory.status === 404
   const offersKnown = offers.ok && Array.isArray(offers.body.offers)
@@ -160,6 +222,155 @@ export async function preflightEbayDraftSkuCollision(
     collision: inventory.ok || offerCount > 0,
     blocker: inventory.ok || offerCount > 0 ? "EBAY_SKU_ALREADY_EXISTS" : null,
   }
+}
+
+async function preflightDependenciesWithToken(
+  config: GatewayConfig,
+  token: string,
+  input: EbayDraftOnlyDependencyInput,
+  fetchImpl: typeof fetch,
+) {
+  const fulfillmentPolicyId = normalizedDependency(input.fulfillmentPolicyId, 100)
+  const paymentPolicyId = normalizedDependency(input.paymentPolicyId, 100)
+  const returnPolicyId = normalizedDependency(input.returnPolicyId, 100)
+  const merchantLocationKey = normalizedDependency(input.merchantLocationKey, 36)
+  const invalidInput = [
+    [fulfillmentPolicyId, "EBAY_FULFILLMENT_POLICY_INVALID"],
+    [paymentPolicyId, "EBAY_PAYMENT_POLICY_INVALID"],
+    [returnPolicyId, "EBAY_RETURN_POLICY_INVALID"],
+    [merchantLocationKey, "EBAY_MERCHANT_LOCATION_INVALID"],
+  ].find(([value]) => !value)
+  if (invalidInput) {
+    return {
+      safe: false,
+      terminal: false,
+      blocker: invalidInput[1] as string,
+      checks: blankDependencyChecks(),
+    }
+  }
+
+  const policySpecs = [
+    {
+      name: "fulfillmentPolicy" as const,
+      resource: "fulfillment_policy",
+      id: fulfillmentPolicyId as string,
+      idField: "fulfillmentPolicyId",
+      blocker: "EBAY_FULFILLMENT_POLICY_INVALID",
+    },
+    {
+      name: "paymentPolicy" as const,
+      resource: "payment_policy",
+      id: paymentPolicyId as string,
+      idField: "paymentPolicyId",
+      blocker: "EBAY_PAYMENT_POLICY_INVALID",
+    },
+    {
+      name: "returnPolicy" as const,
+      resource: "return_policy",
+      id: returnPolicyId as string,
+      idField: "returnPolicyId",
+      blocker: "EBAY_RETURN_POLICY_INVALID",
+    },
+  ]
+  const locationUrl = new URL(
+    `/sell/inventory/v1/location/${encodeURIComponent(merchantLocationKey as string)}`,
+    config.apiOrigin,
+  )
+  const [policyResults, locationResult] = await Promise.all([
+    Promise.all(policySpecs.map((policy) => preflightRead(
+      config,
+      token,
+      new URL(`/sell/account/v1/${policy.resource}/${encodeURIComponent(policy.id)}`, config.apiOrigin),
+      fetchImpl,
+    ))),
+    preflightRead(config, token, locationUrl, fetchImpl),
+  ])
+  const checks = blankDependencyChecks()
+  policySpecs.forEach((policy, index) => {
+    checks[policy.name] = { valid: false, httpStatus: policyResults[index].status }
+  })
+  checks.merchantLocation.httpStatus = locationResult.status
+
+  if ([...policyResults, locationResult].some(unavailableRead)) {
+    return {
+      safe: false,
+      terminal: false,
+      blocker: "EBAY_DRAFT_DEPENDENCIES_PREFLIGHT_UNAVAILABLE",
+      checks,
+    }
+  }
+
+  for (let index = 0; index < policySpecs.length; index += 1) {
+    const policy = policySpecs[index]
+    const result = policyResults[index]
+    if (!result.ok) {
+      return { safe: false, terminal: false, blocker: policy.blocker, checks }
+    }
+    const rawReturnedId = result.body[policy.idField]
+    const returnedId = typeof rawReturnedId === "string"
+      ? rawReturnedId.trim()
+      : ""
+    const marketplaceId = typeof result.body.marketplaceId === "string"
+      ? result.body.marketplaceId.trim()
+      : ""
+    if (!returnedId || !marketplaceId) {
+      return {
+        safe: false,
+        terminal: false,
+        blocker: "EBAY_DRAFT_DEPENDENCIES_PREFLIGHT_UNAVAILABLE",
+        checks,
+      }
+    }
+    if (returnedId !== policy.id || marketplaceId !== "EBAY_US") {
+      return { safe: false, terminal: false, blocker: policy.blocker, checks }
+    }
+    checks[policy.name].valid = true
+  }
+
+  if (!locationResult.ok) {
+    return { safe: false, terminal: false, blocker: "EBAY_MERCHANT_LOCATION_INVALID", checks }
+  }
+  const returnedLocationKey = typeof locationResult.body.merchantLocationKey === "string"
+    ? locationResult.body.merchantLocationKey.trim()
+    : ""
+  const locationStatus = typeof locationResult.body.merchantLocationStatus === "string"
+    ? locationResult.body.merchantLocationStatus.trim().toUpperCase()
+    : ""
+  if (!returnedLocationKey || !locationStatus) {
+    return {
+      safe: false,
+      terminal: false,
+      blocker: "EBAY_DRAFT_DEPENDENCIES_PREFLIGHT_UNAVAILABLE",
+      checks,
+    }
+  }
+  if (returnedLocationKey !== merchantLocationKey) {
+    return { safe: false, terminal: false, blocker: "EBAY_MERCHANT_LOCATION_INVALID", checks }
+  }
+  if (locationStatus !== "ENABLED") {
+    return { safe: false, terminal: false, blocker: "EBAY_MERCHANT_LOCATION_DISABLED", checks }
+  }
+  checks.merchantLocation.valid = true
+  checks.merchantLocation.enabled = true
+  return { safe: true, terminal: false, blocker: null, checks }
+}
+
+export async function preflightEbayDraftSkuCollision(
+  sku: string,
+  fetchImpl: typeof fetch = fetch,
+) {
+  const config = getEbayDraftOnlyGatewayConfig()
+  const token = await accessToken(config, fetchImpl)
+  return preflightSkuCollisionWithToken(config, token, sku, fetchImpl)
+}
+
+export async function preflightEbayDraftDependencies(
+  input: EbayDraftOnlyDependencyInput,
+  fetchImpl: typeof fetch = fetch,
+) {
+  const config = getEbayDraftOnlyGatewayConfig()
+  const token = await accessToken(config, fetchImpl)
+  return preflightDependenciesWithToken(config, token, input, fetchImpl)
 }
 
 async function write(
@@ -236,6 +447,12 @@ export function ebayDraftOnlyRuntimeStatus() {
     enabled: config.enabled,
     configured: config.configured,
     target: config.target,
+    requiredOAuthScopes: ["sell.inventory", "sell.account"],
+    requiredReadOperations: [
+      "GET SKU and offers collision preflight",
+      "GET fulfillment/payment/return policies by ID",
+      "GET merchant location and require ENABLED",
+    ],
     allowedWriteOperations: ["PUT createOrReplaceInventoryItem", "POST createOffer (UNPUBLISHED)"],
     forbiddenOperation: "publishOffer",
     canPublish: false,

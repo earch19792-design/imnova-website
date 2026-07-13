@@ -21,6 +21,9 @@ test("mobile command center centralizes the four seller destinations", () => {
   assert.ok(mobile.indexOf("2. eBay:") < mobile.indexOf("3. Economía"))
   assert.match(mobile, /SERVER_AUTOSAVE/)
   assert.match(mobile, /Completa Luna antes de analizar eBay/)
+  assert.match(mobile, /runWhatsAppPreflight/)
+  assert.match(mobile, /Validar Meta/)
+  assert.match(mobile, /action: "preflight"/)
 })
 
 test("opportunity UI uses the canonical queue and real listing workspace", () => {

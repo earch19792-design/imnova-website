@@ -10,7 +10,11 @@ import {
   deliverSellerWhatsAppAlerts,
   previewSellerWhatsAppAlerts,
 } from "@/lib/ebay/ebay-seller-whatsapp-alerts"
-import { getSellerWhatsAppGatewayConfiguration } from "@/lib/ebay/ebay-seller-whatsapp-gateway"
+import {
+  getSellerWhatsAppGatewayConfiguration,
+  getSellerWhatsAppPreflightSnapshot,
+  preflightSellerWhatsAppGateway,
+} from "@/lib/ebay/ebay-seller-whatsapp-gateway"
 import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
@@ -101,6 +105,7 @@ export async function GET(req: Request) {
         deadLetter: deadLetter.count ?? 0,
       },
       previews,
+      preflight: getSellerWhatsAppPreflightSnapshot(),
       safety: {
         recipientServerSideOnly: true,
         approvedTemplatesOnly: true,
@@ -130,7 +135,11 @@ export async function POST(req: Request) {
       { status: 400 },
     )
   }
-  const action = body.action === "deliver" ? "deliver" : "preview"
+  const action = body.action === "deliver"
+    ? "deliver"
+    : body.action === "preflight"
+      ? "preflight"
+      : "preview"
   const limitValue = Number(body.limit)
   const limit = Number.isFinite(limitValue)
     ? Math.max(1, Math.min(Math.trunc(limitValue), 50))
@@ -138,6 +147,23 @@ export async function POST(req: Request) {
 
   try {
     const supabase = getSupabaseAdminClient()
+    if (action === "preflight") {
+      const preflight = await preflightSellerWhatsAppGateway({
+        force: body.force !== false,
+      })
+      return NextResponse.json({
+        success: preflight.success,
+        mode: "preflight",
+        configuration: getSellerWhatsAppGatewayConfiguration(),
+        preflight,
+        safety: {
+          realMessageSent: false,
+          providerWriteUsed: false,
+          secretsReturned: false,
+          templateContentReturned: false,
+        },
+      })
+    }
     if (action === "preview") {
       return NextResponse.json({
         success: true,
