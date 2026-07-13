@@ -12,6 +12,11 @@ const immutableMigrations = new Map([
   ["supabase/migrations/20260713072000_create_ebay_post_listing_learning.sql", "a55a0d3a8251b6de5367129232c62eda7a08765d0a1e4d35e9dfed90f44067ef"],
   ["supabase/migrations/20260713073000_scope_ebay_seller_whatsapp_claims.sql", "9c584bd4a1ccbea6e77ded738fc9f5fc600d9f4807ff9b0bf92a8f398e415ff0"],
   ["supabase/migrations/20260713074000_harden_ebay_active_listing_sync.sql", "243cca4256a32cda4423a0b641a50607f2078cb99c36eb1591fdac8f99ee964c"],
+  ["supabase/migrations/20260713075000_scope_ebay_listing_images_by_account.sql", "c72bd1f0b77d33b63ccd03c9378a4c258bfbd66d9d8fe44a8c841e6038c34589"],
+  ["supabase/migrations/20260713076000_limit_ebay_reusable_listing_defaults.sql", "3cf5289ed823e79297d7574d79f291769ad82a6b8c2774e1ceda13f9cab56373"],
+  ["supabase/migrations/20260713077000_create_ebay_image_storage_cleanup_reconciliation.sql", "dc5d1c6dcf8626d5068392f9609143e3d309ca0657bd31f4bc0a9b4b675263c7"],
+  ["supabase/migrations/20260713078000_validate_ebay_active_listing_constraints.sql", "35521aec11379f954862e795e764be5a728cc3420735d5aff22a1241a9422b35"],
+  ["supabase/migrations/20260713079000_add_ebay_active_listing_sync_lease.sql", "fe908b46b96afb3de606f12d06390e60a9b02128a9e9b96cf7e10b897ae9030c"],
 ])
 
 function walk(directory) {
