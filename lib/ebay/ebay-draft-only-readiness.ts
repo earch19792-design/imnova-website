@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto"
 
+import { verifyEbayDraftOnlyPreflightSnapshot } from "./ebay-draft-only-preflight-snapshot"
+
+export type EbayDraftOnlyTarget = "SANDBOX" | "PRODUCTION"
+
 export const EBAY_DRAFT_ONLY_APPROVAL_PHRASE = "CREAR DRAFT NO PUBLICADO"
+export const EBAY_DRAFT_ONLY_PRODUCTION_APPROVAL_PHRASE =
+  "CREAR DRAFT NO PUBLICADO EN PRODUCCIÓN"
 export const EBAY_DRAFT_ONLY_APPROVAL_TTL_MINUTES = 15
 export const EBAY_DRAFT_ONLY_SOURCE_MAX_AGE_MINUTES = 360
 export const EBAY_DRAFT_ONLY_TAXONOMY_MAX_AGE_MINUTES = 1_440
@@ -13,7 +19,15 @@ export type DraftOnlyReadinessInput = {
   draftConfiguration: JsonRecord
   activeSkuCollision?: boolean
   ledgerSkuCollision?: boolean
+  target?: EbayDraftOnlyTarget
+  accountFingerprint?: string | null
   now?: Date
+}
+
+export function ebayDraftOnlyApprovalPhrase(target: EbayDraftOnlyTarget) {
+  return target === "PRODUCTION"
+    ? EBAY_DRAFT_ONLY_PRODUCTION_APPROVAL_PHRASE
+    : EBAY_DRAFT_ONLY_APPROVAL_PHRASE
 }
 
 function record(value: unknown): JsonRecord {
@@ -56,6 +70,12 @@ function unique(values: string[]) {
   return [...new Set(values)]
 }
 
+function preflightSnapshotSecret(target: EbayDraftOnlyTarget) {
+  return target === "PRODUCTION"
+    ? process.env.EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET?.trim() || ""
+    : process.env.EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_SNAPSHOT_SECRET?.trim() || ""
+}
+
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize)
   if (!value || typeof value !== "object") return value
@@ -70,6 +90,11 @@ export function hashEbayDraftOnlyPayload(value: unknown) {
   return createHash("sha256")
     .update(JSON.stringify(canonicalize(value)))
     .digest("hex")
+}
+
+export function expectedEbayDraftOnlySku(listingPackage: JsonRecord) {
+  const packageId = text(listingPackage.id).replace(/[^A-Za-z0-9]/g, "").toUpperCase()
+  return packageId.length >= 16 ? `IMNOVA-${packageId.slice(0, 32)}` : ""
 }
 
 function normalizeAspects(value: unknown) {
@@ -116,6 +141,8 @@ export function buildEbayDraftOnlyPayload(
   listingPackage: JsonRecord,
   opportunity: JsonRecord,
   draftConfiguration: JsonRecord,
+  target: EbayDraftOnlyTarget = "SANDBOX",
+  accountFingerprint = "",
 ) {
   const packageData = record(listingPackage.package_data)
   const pricing = record(packageData.pricing)
@@ -182,12 +209,14 @@ export function buildEbayDraftOnlyPayload(
       imageAuthorization: record(draftConfiguration.imageAuthorization),
       aspectValidation: record(draftConfiguration.aspectValidation),
       skuCollisionCheck: record(draftConfiguration.skuCollisionCheck),
+      ebayPreflightSnapshot: text(draftConfiguration.ebayPreflightSnapshot).slice(0, 4_096),
     },
     sku,
     inventoryItemPayload,
     offerPayload,
     safety: {
-      target: "SANDBOX",
+      target,
+      accountFingerprint,
       unpublishedOnly: true,
       publishOfferPresent: false,
       permittedOperations: ["createOrReplaceInventoryItem", "createOffer"],
@@ -197,12 +226,15 @@ export function buildEbayDraftOnlyPayload(
 
 export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   const now = input.now ?? new Date()
+  const target = input.target ?? "SANDBOX"
+  const accountFingerprint = text(input.accountFingerprint)
   const listingPackage = input.listingPackage
   const opportunity = input.opportunity
   const configuration = input.draftConfiguration
   const packageData = record(listingPackage.package_data)
   const pricing = record(packageData.pricing)
   const policies = record(configuration.businessPolicies)
+  const preflightSnapshot = text(configuration.ebayPreflightSnapshot)
   const authorization = record(configuration.imageAuthorization)
   const taxonomy = record(configuration.aspectValidation)
   const dimensions = record(record(configuration.packageWeightAndSize).dimensions)
@@ -231,6 +263,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     10_080,
   )
   const sku = text(configuration.sku)
+  const requiredSku = expectedEbayDraftOnlySku(listingPackage)
   const quantity = Math.trunc(numberOrNull(configuration.quantity) ?? 0)
   const categoryId = text(packageData.categoryId)
   const condition = text(configuration.condition).toUpperCase()
@@ -264,6 +297,8 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   const remainingHardGates = hardGates.filter((gate) => !resolvablePackageGates.has(gate))
   const blockers: string[] = []
 
+  if (!/^[0-9a-f]{64}$/.test(accountFingerprint)) blockers.push("EBAY_ACCOUNT_FINGERPRINT_REQUIRED")
+
   if (!text(listingPackage.id) || text(listingPackage.candidate_key) !== text(opportunity.candidate_key)) blockers.push("PACKAGE_OPPORTUNITY_MISMATCH")
   if (!['draft', 'ready_for_review', 'approved'].includes(text(listingPackage.status))) blockers.push("PACKAGE_NOT_READY_FOR_APPROVAL")
   if (['hold', 'rejected', 'listed', 'archived'].includes(text(opportunity.queue_status))) blockers.push("OPPORTUNITY_STATUS_BLOCKED")
@@ -287,9 +322,12 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   if (!['supplier_authorized', 'owned', 'licensed'].includes(rightsBasis)) blockers.push("IMAGE_RIGHTS_BASIS_INVALID")
   if (!['luna', 'supplier', 'owned', 'licensed_asset'].includes(imageSource)) blockers.push("IMAGE_SOURCE_INVALID")
   if (images.some((url) => !authorizedImages.includes(url))) blockers.push("IMAGE_NOT_AUTHORIZED")
-  if (!/^[A-Za-z0-9._-]{1,50}$/.test(sku)) blockers.push("SKU_INVALID")
+  if (!requiredSku || sku !== requiredSku || !/^IMNOVA-[A-Z0-9]{16,32}$/.test(sku)) {
+    blockers.push("SKU_NAMESPACE_OR_OWNERSHIP_INVALID")
+  }
   if (input.activeSkuCollision || input.ledgerSkuCollision) blockers.push("SKU_COLLISION")
   if (!Number.isInteger(quantity) || quantity < 1 || supplierStock === null || quantity > supplierStock) blockers.push("QUANTITY_EXCEEDS_FRESH_STOCK")
+  if (target === "PRODUCTION" && quantity !== 1) blockers.push("PRODUCTION_QUANTITY_MUST_EQUAL_ONE")
   if (!['NEW', 'NEW_OTHER', 'NEW_WITH_DEFECTS', 'USED_EXCELLENT', 'USED_GOOD', 'USED_ACCEPTABLE'].includes(condition)) blockers.push("CONDITION_INVALID")
   if (price === null || price <= 0) blockers.push("PRICE_REQUIRED")
   if (estimatedProfit === null || estimatedProfit <= 0 || marginPercent === null || marginPercent < minimumMargin) blockers.push("MINIMUM_NET_MARGIN_NOT_MET")
@@ -303,16 +341,50 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     MERCHANT_LOCATION_REQUIRED: configuration.merchantLocationKey,
   })) if (!/^[A-Za-z0-9_-]{1,80}$/.test(text(value))) blockers.push(key)
 
-  const payload = buildEbayDraftOnlyPayload(listingPackage, opportunity, configuration)
+  const snapshotVerification = verifyEbayDraftOnlyPreflightSnapshot(
+    preflightSnapshot,
+    {
+      target,
+      accountFingerprint,
+      marketplaceId: "EBAY_US",
+      fulfillmentPolicyId: text(policies.fulfillmentPolicyId),
+      paymentPolicyId: text(policies.paymentPolicyId),
+      returnPolicyId: text(policies.returnPolicyId),
+      merchantLocationKey: text(configuration.merchantLocationKey),
+    },
+    preflightSnapshotSecret(target),
+    now,
+  )
+  if (!snapshotVerification.valid) blockers.push(snapshotVerification.blocker)
+
+  const payload = buildEbayDraftOnlyPayload(
+    listingPackage,
+    opportunity,
+    configuration,
+    target,
+    accountFingerprint,
+  )
   const uniqueBlockers = unique(blockers)
   return {
     ready: uniqueBlockers.length === 0,
     blockers: uniqueBlockers,
-    warnings: ["SANDBOX_ONLY", "OFFER_REMAINS_UNPUBLISHED", "HUMAN_APPROVAL_EXPIRES_AND_IS_ONE_TIME", "EBAY_SKU_PREFLIGHT_RUNS_AT_EXECUTION"],
+    warnings: [
+      target === "PRODUCTION" ? "PRODUCTION_SELLER_ACCOUNT_WRITE" : "SANDBOX_ONLY",
+      "OFFER_REMAINS_UNPUBLISHED",
+      "HUMAN_APPROVAL_EXPIRES_AND_IS_ONE_TIME",
+      "EBAY_SKU_PREFLIGHT_RUNS_AT_EXECUTION",
+      "EBAY_PREFLIGHT_SNAPSHOT_EXPIRES_IN_5_MINUTES",
+    ],
     economics: { targetPrice: price, supplierPrice, estimatedNetProfit: estimatedProfit, marginPercent, minimumMarginPercent: minimumMargin },
     payloadHash: hashEbayDraftOnlyPayload(payload),
+    requiredSku,
     payload,
-    safety: { canCreateUnpublishedDraft: uniqueBlockers.length === 0, canPublish: false, target: "SANDBOX" },
+    safety: {
+      canCreateUnpublishedDraft: uniqueBlockers.length === 0,
+      canPublish: false,
+      target,
+      accountFingerprint: accountFingerprint || null,
+    },
   }
 }
 

@@ -65,13 +65,68 @@ type DraftConfiguration = {
   weightUnit: string
   imageRightsBasis: string
   imageSource: string
+  ebayPreflightSnapshot: string
+}
+
+type PreflightOption = { id: string; name: string; usable: boolean; status?: string }
+
+type EbayMobilePreflight = {
+  mode: "GET_ONLY"
+  target: "SANDBOX" | "PRODUCTION"
+  marketplaceId: "EBAY_US"
+  identity: {
+    status: "BOUND" | "IDENTITY_UNBOUND" | "IDENTITY_MISMATCH"
+    accountFingerprint: string
+    expectedIdentityConfigured: boolean
+    accountType: string
+    registrationMarketplaceId: string
+  }
+  privilege: {
+    sellerRegistrationCompleted: boolean
+    sellingLimitPresent: boolean
+    sellingLimitZero: boolean
+    usable: boolean
+  }
+  options: {
+    fulfillmentPolicies: PreflightOption[]
+    paymentPolicies: PreflightOption[]
+    returnPolicies: PreflightOption[]
+    merchantLocations: PreflightOption[]
+  }
+  selection: {
+    fulfillmentPolicyId: string
+    paymentPolicyId: string
+    returnPolicyId: string
+    merchantLocationKey: string
+  }
+  selectionComplete: boolean
+  snapshot: string
+  snapshotExpiresAt: string | null
+  snapshotStatus: string
+  warnings: string[]
 }
 
 type DraftState = {
-  readiness?: { ready: boolean; blockers: string[]; payloadHash?: string }
+  readiness?: { ready: boolean; blockers: string[]; payloadHash?: string; requiredSku?: string }
   approval?: { id: string; status: string; expires_at: string } | null
-  execution?: { phase: string; offer_id?: string | null; last_error_code?: string | null } | null
-  runtime?: { enabled: boolean; configured: boolean; target: string; canPublish: false }
+  execution?: { phase: string; offer_id?: string | null; last_error_code?: string | null; completed_at?: string | null } | null
+  runtime?: {
+    enabled: boolean
+    configured: boolean
+    oauthConfigured?: boolean
+    identityBound?: boolean
+    snapshotConfigured?: boolean
+    environmentAllowed?: boolean
+    target: "SANDBOX" | "PRODUCTION"
+    accountFingerprint?: string | null
+    canPublish: false
+  }
+  approvalRequirements?: {
+    exactPhrase: string
+    target: "SANDBOX" | "PRODUCTION"
+    productionAccountConfirmationRequired?: boolean
+  }
+  preflight?: EbayMobilePreflight
 }
 
 const emptyForm: FormState = {
@@ -101,6 +156,7 @@ const emptyDraftConfiguration: DraftConfiguration = {
   weightUnit: "POUND",
   imageRightsBasis: "supplier_authorized",
   imageSource: "luna",
+  ebayPreflightSnapshot: "",
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -120,6 +176,11 @@ function safeSku(value: unknown) {
     .replace(/[^A-Z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 50)
+}
+
+function reservedDraftSku(packageId: string) {
+  const normalized = packageId.replace(/[^A-Za-z0-9]/g, "").toUpperCase()
+  return normalized.length >= 16 ? `IMNOVA-${normalized.slice(0, 32)}` : ""
 }
 
 function initialDraftConfiguration(opportunity: Opportunity): DraftConfiguration {
@@ -167,6 +228,7 @@ function draftConfigurationFromPackage(
     weightUnit: String(weight.unit ?? fallback.weightUnit).toUpperCase(),
     imageRightsBasis: String(object(saved.imageAuthorization).rightsBasis ?? fallback.imageRightsBasis),
     imageSource: String(object(saved.imageAuthorization).source ?? fallback.imageSource),
+    ebayPreflightSnapshot: String(saved.ebayPreflightSnapshot ?? fallback.ebayPreflightSnapshot),
   }
 }
 
@@ -216,6 +278,7 @@ export default function EbayListingWorkspacePage() {
   const [approvalPhrase, setApprovalPhrase] = useState("")
   const [confirmUnpublishedOnly, setConfirmUnpublishedOnly] = useState(false)
   const [confirmNoPublish, setConfirmNoPublish] = useState(false)
+  const [confirmProductionAccount, setConfirmProductionAccount] = useState(false)
 
   const request = useCallback(async (body?: Record<string, unknown>, opportunityId?: string) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
@@ -285,7 +348,10 @@ export default function EbayListingWorkspacePage() {
         setOpportunity(selected)
         setListingPackage(nextPackage)
         setForm(fromPackage(object(nextPackage.package_data)))
-        setDraftConfiguration(draftConfigurationFromPackage(object(nextPackage.package_data), selected))
+        setDraftConfiguration({
+          ...draftConfigurationFromPackage(object(nextPackage.package_data), selected),
+          sku: reservedDraftSku(nextPackage.id),
+        })
         try {
           const draft = await draftRequest(undefined, nextPackage.id)
           setDraftState(draft)
@@ -309,6 +375,16 @@ export default function EbayListingWorkspacePage() {
     ...(opportunity?.hard_gates ?? []),
     ...(opportunity?.evidence_guards ?? []),
   ], [form, opportunity])
+  const draftTarget = draftState.runtime?.target ?? "SANDBOX"
+  const productionTarget = draftTarget === "PRODUCTION"
+  const expectedApprovalPhrase = draftState.approvalRequirements?.exactPhrase
+    ?? (productionTarget
+      ? "CREAR DRAFT NO PUBLICADO EN PRODUCCIÓN"
+      : "CREAR DRAFT NO PUBLICADO")
+  const executionCompleted = draftState.execution?.phase === "completed"
+  const approvalActive = draftState.approval?.status === "approved"
+    && Date.parse(draftState.approval.expires_at) > Date.now()
+  const effectiveDraftQuantity = productionTarget ? 1 : draftConfiguration.quantity
 
   async function save(markReady = false) {
     if (!opportunity || !listingPackage) return
@@ -336,7 +412,7 @@ export default function EbayListingWorkspacePage() {
   function draftConfigurationPayload() {
     return {
       sku: draftConfiguration.sku,
-      quantity: draftConfiguration.quantity,
+      quantity: effectiveDraftQuantity,
       condition: draftConfiguration.condition,
       merchantLocationKey: draftConfiguration.merchantLocationKey,
       businessPolicies: {
@@ -360,6 +436,7 @@ export default function EbayListingWorkspacePage() {
         rightsBasis: draftConfiguration.imageRightsBasis,
         source: draftConfiguration.imageSource,
       },
+      ebayPreflightSnapshot: draftConfiguration.ebayPreflightSnapshot,
     }
   }
 
@@ -383,6 +460,51 @@ export default function EbayListingWorkspacePage() {
     setListingPackage(payload.listingPackage)
   }
 
+  async function runEbayPreflight() {
+    if (!listingPackage) return
+    setDraftBusy(true); setError(""); setMessage("Consultando eBay en modo sólo lectura…")
+    try {
+      const payload = await draftRequest({
+        action: "preflight",
+        packageId: listingPackage.id,
+        selection: {
+          fulfillmentPolicyId: draftConfiguration.fulfillmentPolicyId,
+          paymentPolicyId: draftConfiguration.paymentPolicyId,
+          returnPolicyId: draftConfiguration.returnPolicyId,
+          merchantLocationKey: draftConfiguration.merchantLocationKey,
+        },
+      })
+      const preflight = payload.preflight as EbayMobilePreflight
+      setDraftState((current) => ({ ...current, ...payload, preflight }))
+      setDraftConfiguration((current) => ({
+        ...current,
+        fulfillmentPolicyId: preflight.selection.fulfillmentPolicyId,
+        paymentPolicyId: preflight.selection.paymentPolicyId,
+        returnPolicyId: preflight.selection.returnPolicyId,
+        merchantLocationKey: preflight.selection.merchantLocationKey,
+        ebayPreflightSnapshot: preflight.snapshot,
+      }))
+      setMessage(preflight.snapshotStatus === "READY"
+        ? "Preflight eBay listo por 5 minutos. No se realizó ninguna escritura."
+        : preflight.identity.status === "IDENTITY_UNBOUND"
+          ? "OAuth respondió. Copia el fingerprint mostrado y configúralo como EXPECTED_ACCOUNT_FINGERPRINT de esta rama antes de aprobar."
+          : `Preflight read-only pendiente: ${preflight.snapshotStatus.replaceAll("_", " ")}.`)
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(requestError, "No se pudo consultar la configuración eBay.")); setMessage("")
+    } finally { setDraftBusy(false) }
+  }
+
+  function updatePreflightSelection(
+    field: "fulfillmentPolicyId" | "paymentPolicyId" | "returnPolicyId" | "merchantLocationKey",
+    value: string,
+  ) {
+    setDraftConfiguration((current) => ({
+      ...current,
+      [field]: value,
+      ebayPreflightSnapshot: "",
+    }))
+  }
+
   async function validateDraft() {
     if (!listingPackage) return
     setDraftBusy(true); setError(""); setMessage("Validando draft seguro…")
@@ -396,7 +518,7 @@ export default function EbayListingWorkspacePage() {
       })
       setDraftState((current) => ({ ...current, ...payload }))
       setMessage(payload.readiness?.ready
-        ? "Draft listo para tu aprobación. Validaremos todo otra vez antes de tocar eBay Sandbox."
+        ? `Draft listo para tu aprobación. Validaremos todo otra vez antes de tocar eBay ${payload.runtime?.target ?? draftTarget}.`
         : `Faltan ${payload.readiness?.blockers?.length ?? 0} validaciones para autorizar.`)
     } catch (requestError) {
       const blockers = (requestError as Error & { blockers?: string[] }).blockers ?? []
@@ -415,14 +537,16 @@ export default function EbayListingWorkspacePage() {
         packageId: listingPackage.id,
         idempotencyKey: `approval:${listingPackage.id}:${crypto.randomUUID()}`,
         confirmation: approvalPhrase,
+        confirmTarget: draftTarget,
         confirmUnpublishedOnly,
         confirmNoPublish,
+        confirmProductionAccount: productionTarget ? confirmProductionAccount : false,
         confirmImagesAuthorized: imagesAuthorized,
         draftConfiguration: draftConfigurationPayload(),
       })
       setDraftState((current) => ({ ...current, ...payload }))
       setListingPackage((current) => current ? { ...current, status: "approved" } : current)
-      setMessage("Aprobación registrada por 15 minutos. Aún no se escribió nada en eBay.")
+      setMessage("Aprobación registrada por 15 minutos. La ejecución requiere el siguiente paso.")
     } catch (requestError) {
       const blockers = (requestError as Error & { blockers?: string[] }).blockers ?? []
       if (blockers.length) setDraftState((current) => ({ ...current, readiness: { ready: false, blockers } }))
@@ -440,7 +564,10 @@ export default function EbayListingWorkspacePage() {
         idempotencyKey: `execution:${draftState.approval.id}`,
       })
       setDraftState((current) => ({ ...current, ...payload, execution: payload.execution }))
-      setMessage(`Draft creado en ${payload.draft?.target ?? "SANDBOX"}: ${payload.draft?.status ?? "UNPUBLISHED"}. No está visible para compradores.`)
+      const verification = String(
+        payload.draft?.verification ?? payload.draft?.status ?? "UNPUBLISHED_VERIFIED_AT_CREATE",
+      ).replaceAll("_", " ")
+      setMessage(`Draft registrado en ${payload.draft?.target ?? "SANDBOX"}: ${verification}. No se llamó a publicar; la ausencia de listing se verificó en ese momento.`)
     } catch (requestError) {
       setError(getMobileReviewRequestError(requestError, "No se pudo crear el draft no publicado.")); setMessage("")
     } finally { setDraftBusy(false) }
@@ -455,7 +582,7 @@ export default function EbayListingWorkspacePage() {
         approvalId: draftState.approval.id,
       })
       setDraftState((current) => ({ ...current, approval: payload.approval }))
-      setMessage("Aprobación cancelada. No se escribió nada en eBay.")
+      setMessage("Aprobación cancelada. Se bloquearon nuevos intentos; una ejecución ya iniciada debe reconciliarse.")
     } catch (requestError) {
       setError(getMobileReviewRequestError(requestError, "No se pudo cancelar la aprobación.")); setMessage("")
     } finally { setDraftBusy(false) }
@@ -505,33 +632,42 @@ export default function EbayListingWorkspacePage() {
           <section className="space-y-4 rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.05] p-4">
             <div>
               <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Draft eBay controlado</p>
-              <h2 className="mt-1 text-xl font-black">Offer no publicado · Sandbox</h2>
+              <h2 className="mt-1 text-xl font-black">Offer API no publicado · {draftTarget}</h2>
               <p className="mt-2 text-sm leading-6 text-white/65">Primero validas, después autorizas por 15 minutos y finalmente ejecutas. Ningún paso puede publicar el listing.</p>
+              <p className="mt-2 rounded-xl border border-white/15 p-2 text-xs leading-5 text-white/60">Esto crea Inventory Item + Offer con estado UNPUBLISHED mediante la API. No garantiza que eBay lo muestre como un “draft” editable dentro de Seller Hub.</p>
             </div>
-            <div className={`rounded-2xl border p-3 text-sm ${draftState.runtime?.enabled && draftState.runtime?.configured ? "border-emerald-200/25 bg-emerald-200/[0.06] text-emerald-50" : "border-amber-200/25 bg-amber-200/[0.06] text-amber-50"}`}>
-              <strong>{draftState.runtime?.enabled && draftState.runtime?.configured ? "Conector Sandbox listo" : "Conector Sandbox bloqueado por configuración"}</strong>
-              <p className="mt-1 text-xs opacity-75">Target: {draftState.runtime?.target ?? "SANDBOX"} · publicación: desactivada</p>
+            <div className={`rounded-2xl border p-3 text-sm ${productionTarget ? "border-rose-200/40 bg-rose-200/[0.09] text-rose-50" : draftState.runtime?.enabled && draftState.runtime?.configured ? "border-emerald-200/25 bg-emerald-200/[0.06] text-emerald-50" : "border-amber-200/25 bg-amber-200/[0.06] text-amber-50"}`}>
+              <strong>{draftState.runtime?.enabled && draftState.runtime?.configured ? `Conector ${draftTarget} listo` : `Conector ${draftTarget} bloqueado por configuración`}</strong>
+              <p className="mt-1 text-xs opacity-75">Target: {draftTarget} · publicación: desactivada · la ejecución exige coincidencia exacta de cuenta</p>
+              {productionTarget && <p className="mt-2 text-xs font-black">ATENCIÓN: Inventory Item y Offer se crearán dentro de tu cuenta real de vendedor eBay, aunque permanecerán sin publicar.</p>}
+              {productionTarget && draftState.runtime?.environmentAllowed === false && <p className="mt-2 text-xs font-black">Producción draft-only sólo se permite en el Preview y la rama autorizada.</p>}
+            </div>
+            <div className="rounded-2xl border border-sky-200/25 bg-sky-200/[0.05] p-3 text-sm">
+              <div className="flex items-center justify-between gap-3"><strong>Preflight eBay · recursos sólo GET</strong><span className="rounded-full border border-white/15 px-2 py-1 text-[10px] font-black">{draftState.preflight?.snapshotStatus ?? "NO EJECUTADO"}</span></div>
+              {draftState.preflight && <><p className="mt-2 text-xs">Identidad: {draftState.preflight.identity.status} · privilegios: {draftState.preflight.privilege.usable ? "OK" : "BLOQUEADOS"}</p><p className="mt-1 text-xs text-white/65">Cuenta: {draftState.preflight.identity.accountType || "tipo no informado"} · registro: {draftState.preflight.identity.registrationMarketplaceId || "marketplace no informado"}</p><p className="mt-1 break-all text-[10px] text-white/55">Fingerprint: {draftState.preflight.identity.accountFingerprint}</p>{draftState.preflight.privilege.sellingLimitZero && <p className="mt-2 text-xs font-black text-amber-100">eBay reporta límite de venta en cero. El draft puede prepararse, pero no se considera publicable.</p>}{draftState.preflight.snapshotExpiresAt && <p className="mt-1 text-xs text-emerald-100">Snapshot válido hasta {new Date(draftState.preflight.snapshotExpiresAt).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</p>}</>}
+              <button type="button" disabled={draftBusy || !draftState.runtime?.oauthConfigured} onClick={() => void runEbayPreflight()} className="mt-3 min-h-12 w-full rounded-xl border border-sky-200/35 px-3 font-black text-sky-50 disabled:opacity-40">{draftBusy ? "Consultando…" : "Cargar y validar configuración eBay"}</button>
+              {draftState.runtime?.oauthConfigured === false && <p className="mt-2 text-xs text-amber-50">Faltan credenciales OAuth dedicadas. Los flags de escritura pueden permanecer apagados.</p>}
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <label><span className="text-sm font-black">SKU del draft</span><input value={draftConfiguration.sku} onChange={(event) => setDraftConfiguration((current) => ({ ...current, sku: safeSku(event.target.value) }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /></label>
-              <label><span className="text-sm font-black">Cantidad</span><input inputMode="numeric" value={draftConfiguration.quantity} onChange={(event) => setDraftConfiguration((current) => ({ ...current, quantity: Math.max(0, Math.trunc(Number(event.target.value) || 0)) }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /></label>
+              <label><span className="text-sm font-black">SKU reservado del draft</span><input value={draftConfiguration.sku} readOnly className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/20 px-4 text-white/70" /></label>
+              <label><span className="text-sm font-black">Cantidad</span><input inputMode="numeric" value={effectiveDraftQuantity} readOnly={productionTarget} onChange={(event) => setDraftConfiguration((current) => ({ ...current, quantity: Math.max(0, Math.trunc(Number(event.target.value) || 0)) }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4 read-only:bg-white/[0.04] read-only:text-white/65" />{productionTarget && <span className="mt-1 block text-xs text-white/50">Piloto Production bloqueado en 1 unidad.</span>}</label>
               <label><span className="text-sm font-black">Condición</span><select value={draftConfiguration.condition} onChange={(event) => setDraftConfiguration((current) => ({ ...current, condition: event.target.value }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4"><option value="NEW">Nuevo</option><option value="NEW_OTHER">Nuevo, otro</option><option value="NEW_WITH_DEFECTS">Nuevo con defectos</option><option value="USED_EXCELLENT">Usado excelente</option><option value="USED_GOOD">Usado bueno</option><option value="USED_ACCEPTABLE">Usado aceptable</option></select></label>
-              <label><span className="text-sm font-black">Merchant location</span><input value={draftConfiguration.merchantLocationKey} onChange={(event) => setDraftConfiguration((current) => ({ ...current, merchantLocationKey: event.target.value.trim() }))} placeholder="Warehouse eBay" className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /></label>
-              <label><span className="text-sm font-black">Fulfillment policy ID</span><input value={draftConfiguration.fulfillmentPolicyId} onChange={(event) => setDraftConfiguration((current) => ({ ...current, fulfillmentPolicyId: event.target.value.trim() }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /></label>
-              <label><span className="text-sm font-black">Payment policy ID</span><input value={draftConfiguration.paymentPolicyId} onChange={(event) => setDraftConfiguration((current) => ({ ...current, paymentPolicyId: event.target.value.trim() }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /></label>
-              <label><span className="text-sm font-black">Return policy ID</span><input value={draftConfiguration.returnPolicyId} onChange={(event) => setDraftConfiguration((current) => ({ ...current, returnPolicyId: event.target.value.trim() }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /></label>
+              <label><span className="text-sm font-black">Merchant location</span><select value={draftConfiguration.merchantLocationKey} onChange={(event) => updatePreflightSelection("merchantLocationKey", event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-3"><option value="">Seleccionar location</option>{draftConfiguration.merchantLocationKey && !draftState.preflight?.options.merchantLocations.some((option) => option.id === draftConfiguration.merchantLocationKey) && <option value={draftConfiguration.merchantLocationKey}>{draftConfiguration.merchantLocationKey} · revalidar</option>}{draftState.preflight?.options.merchantLocations.map((option) => <option key={option.id} value={option.id} disabled={!option.usable}>{option.name} · {option.id}{option.usable ? "" : " · disabled"}</option>)}</select></label>
+              <label><span className="text-sm font-black">Fulfillment policy</span><select value={draftConfiguration.fulfillmentPolicyId} onChange={(event) => updatePreflightSelection("fulfillmentPolicyId", event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-3"><option value="">Seleccionar fulfillment</option>{draftConfiguration.fulfillmentPolicyId && !draftState.preflight?.options.fulfillmentPolicies.some((option) => option.id === draftConfiguration.fulfillmentPolicyId) && <option value={draftConfiguration.fulfillmentPolicyId}>{draftConfiguration.fulfillmentPolicyId} · revalidar</option>}{draftState.preflight?.options.fulfillmentPolicies.map((option) => <option key={option.id} value={option.id} disabled={!option.usable}>{option.name} · {option.id}{option.usable ? "" : " · no apta"}</option>)}</select></label>
+              <label><span className="text-sm font-black">Payment policy</span><select value={draftConfiguration.paymentPolicyId} onChange={(event) => updatePreflightSelection("paymentPolicyId", event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-3"><option value="">Seleccionar payment</option>{draftConfiguration.paymentPolicyId && !draftState.preflight?.options.paymentPolicies.some((option) => option.id === draftConfiguration.paymentPolicyId) && <option value={draftConfiguration.paymentPolicyId}>{draftConfiguration.paymentPolicyId} · revalidar</option>}{draftState.preflight?.options.paymentPolicies.map((option) => <option key={option.id} value={option.id} disabled={!option.usable}>{option.name} · {option.id}{option.usable ? " · pago inmediato" : " · no apta"}</option>)}</select></label>
+              <label><span className="text-sm font-black">Return policy</span><select value={draftConfiguration.returnPolicyId} onChange={(event) => updatePreflightSelection("returnPolicyId", event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-3"><option value="">Seleccionar returns</option>{draftConfiguration.returnPolicyId && !draftState.preflight?.options.returnPolicies.some((option) => option.id === draftConfiguration.returnPolicyId) && <option value={draftConfiguration.returnPolicyId}>{draftConfiguration.returnPolicyId} · revalidar</option>}{draftState.preflight?.options.returnPolicies.map((option) => <option key={option.id} value={option.id} disabled={!option.usable}>{option.name} · {option.id}{option.usable ? "" : " · no apta"}</option>)}</select></label>
               <label><span className="text-sm font-black">Peso</span><div className="mt-2 grid grid-cols-[1fr_auto] gap-2"><input inputMode="decimal" value={draftConfiguration.weight ?? ""} onChange={(event) => setDraftConfiguration((current) => ({ ...current, weight: numberOrNull(event.target.value) }))} className="min-h-12 min-w-0 rounded-2xl border border-white/20 bg-black/30 px-4" /><select value={draftConfiguration.weightUnit} onChange={(event) => setDraftConfiguration((current) => ({ ...current, weightUnit: event.target.value }))} className="rounded-2xl border border-white/20 bg-black/30 px-2"><option value="POUND">lb</option><option value="OUNCE">oz</option><option value="KILOGRAM">kg</option><option value="GRAM">g</option></select></div></label>
             </div>
             <div><span className="text-sm font-black">Dimensiones del paquete</span><div className="mt-2 grid grid-cols-4 gap-2">{(["length", "width", "height"] as const).map((field) => <input key={field} aria-label={field} inputMode="decimal" placeholder={field === "length" ? "Largo" : field === "width" ? "Ancho" : "Alto"} value={draftConfiguration[field] ?? ""} onChange={(event) => setDraftConfiguration((current) => ({ ...current, [field]: numberOrNull(event.target.value) }))} className="min-h-12 min-w-0 rounded-xl border border-white/20 bg-black/30 px-2" />)}<select value={draftConfiguration.dimensionUnit} onChange={(event) => setDraftConfiguration((current) => ({ ...current, dimensionUnit: event.target.value }))} className="min-h-12 rounded-xl border border-white/20 bg-black/30 px-1"><option value="INCH">in</option><option value="CENTIMETER">cm</option></select></div></div>
             <label className="flex min-h-14 items-start gap-3 rounded-2xl border border-white/15 p-3"><input type="checkbox" checked={imagesAuthorized} onChange={(event) => setImagesAuthorized(event.target.checked)} className="mt-1 size-5" /><span className="text-sm"><strong className="block">Confirmo derechos sobre todas las imágenes</strong><span className="text-white/55">Provienen de Luna/proveedor y están autorizadas; no fueron copiadas de eBay ni de competidores.</span></span></label>
             <button type="button" disabled={draftBusy} onClick={() => void validateDraft()} className="min-h-13 w-full rounded-2xl border border-cyan-200/35 px-4 font-black text-cyan-50 disabled:opacity-50">{draftBusy ? "Validando…" : "Validar draft seguro"}</button>
             {draftState.readiness && <div className={`rounded-2xl border p-3 ${draftState.readiness.ready ? "border-emerald-200/30 bg-emerald-200/[0.06]" : "border-amber-200/30 bg-amber-200/[0.06]"}`}><strong>{draftState.readiness.ready ? "Listo para tu aprobación" : `${draftState.readiness.blockers.length} bloqueos pendientes`}</strong>{!draftState.readiness.ready && <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-50">{draftState.readiness.blockers.map((blocker) => <li key={blocker}>{blocker.replaceAll("_", " ")}</li>)}</ul>}</div>}
-            {draftState.readiness?.ready && !draftState.approval && <div className="space-y-3 rounded-2xl border border-emerald-200/25 p-3"><label className="block"><span className="text-sm font-black">Escribe exactamente: CREAR DRAFT NO PUBLICADO</span><input value={approvalPhrase} onChange={(event) => setApprovalPhrase(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmUnpublishedOnly} onChange={(event) => setConfirmUnpublishedOnly(event.target.checked)} />Entiendo que sólo autoriza un Offer no publicado.</label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmNoPublish} onChange={(event) => setConfirmNoPublish(event.target.checked)} />Confirmo que publicar permanece prohibido.</label><button type="button" disabled={draftBusy || approvalPhrase !== "CREAR DRAFT NO PUBLICADO" || !confirmUnpublishedOnly || !confirmNoPublish || !imagesAuthorized} onClick={() => void approveDraft()} className="min-h-13 w-full rounded-2xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">Aprobar por 15 minutos</button></div>}
-            {draftState.approval?.status === "approved" && draftState.execution?.phase !== "completed" && <div className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.06] p-3"><strong>Aprobación activa hasta {new Date(draftState.approval.expires_at).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}</strong><p className="mt-2 text-sm text-white/65">El siguiente botón es el único que puede escribir y sólo crea Inventory Item + Offer UNPUBLISHED en Sandbox.</p><button type="button" disabled={draftBusy || !draftState.runtime?.enabled || !draftState.runtime?.configured} onClick={() => void executeDraft()} className="mt-3 min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Crear draft no publicado</button><button type="button" disabled={draftBusy} onClick={() => void revokeDraftApproval()} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 px-4 font-black disabled:opacity-40">Cancelar aprobación</button></div>}
-            {draftState.execution?.phase === "completed" && <div className="rounded-2xl border border-emerald-200/30 bg-emerald-200/[0.07] p-3 text-emerald-50"><strong>Draft creado · UNPUBLISHED</strong><p className="mt-1 break-all text-xs">Offer ID: {draftState.execution.offer_id ?? "guardado"}</p></div>}
+            {draftState.readiness?.ready && !approvalActive && !executionCompleted && <div className="space-y-3 rounded-2xl border border-emerald-200/25 p-3"><label className="block"><span className="text-sm font-black">Escribe exactamente: {expectedApprovalPhrase}</span><input value={approvalPhrase} onChange={(event) => setApprovalPhrase(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmUnpublishedOnly} onChange={(event) => setConfirmUnpublishedOnly(event.target.checked)} />Entiendo que sólo autoriza un Offer no publicado.</label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmNoPublish} onChange={(event) => setConfirmNoPublish(event.target.checked)} />Confirmo que publicar permanece prohibido.</label>{productionTarget && <label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmProductionAccount} onChange={(event) => setConfirmProductionAccount(event.target.checked)} />Confirmo que {draftTarget} es mi cuenta real: autorizo crear Inventory Item + Offer API UNPUBLISHED, sin publicarlo.</label>}<button type="button" disabled={draftBusy || approvalPhrase !== expectedApprovalPhrase || !confirmUnpublishedOnly || !confirmNoPublish || !imagesAuthorized || (productionTarget && !confirmProductionAccount)} onClick={() => void approveDraft()} className="min-h-13 w-full rounded-2xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">Aprobar {draftTarget} por 15 minutos</button></div>}
+            {approvalActive && !executionCompleted && draftState.approval && <div className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.06] p-3"><strong>Aprobación {draftTarget} activa hasta {new Date(draftState.approval.expires_at).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}</strong><p className="mt-2 text-sm text-white/65">El siguiente botón es el único que puede escribir y sólo crea Inventory Item + Offer API UNPUBLISHED en {draftTarget}.</p><button type="button" disabled={draftBusy || !draftState.runtime?.enabled || !draftState.runtime?.configured} onClick={() => void executeDraft()} className="mt-3 min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Crear Offer no publicado en {draftTarget}</button><button type="button" disabled={draftBusy} onClick={() => void revokeDraftApproval()} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 px-4 font-black disabled:opacity-40">Cancelar aprobación</button></div>}
+            {executionCompleted && <div className="rounded-2xl border border-emerald-200/30 bg-emerald-200/[0.07] p-3 text-emerald-50"><strong>UNPUBLISHED verificado al crear {draftState.execution?.completed_at ? new Date(draftState.execution.completed_at).toLocaleString("es") : "en la ejecución registrada"}</strong><p className="mt-1 text-xs">Este estado describe la verificación realizada en ese momento; vuelve a consultar eBay antes de asumir que sigue igual.</p><p className="mt-1 break-all text-xs">Offer ID: {draftState.execution?.offer_id ?? "guardado"}</p></div>}
           </section>
 
-          <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4"><div className="flex justify-between gap-3"><h2 className="font-black">Readiness</h2><strong>{listingPackage.readiness}%</strong></div>{blockers.length ? <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-50">{blockers.map((blocker) => <li key={blocker}>{blocker.replaceAll("_", " ")}</li>)}</ul> : <p className="mt-2 text-sm text-emerald-100">Sin bloqueos. Puedes enviarlo a revisión humana.</p>}<p className="mt-3 text-xs leading-5 text-white/50">Guardar y validar sólo modifican datos internos. Únicamente “Crear draft no publicado”, después de tu aprobación, puede crear Inventory Item + Offer UNPUBLISHED en eBay Sandbox. Publicar permanece prohibido.</p></section>
+          <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4"><div className="flex justify-between gap-3"><h2 className="font-black">Readiness</h2><strong>{listingPackage.readiness}%</strong></div>{blockers.length ? <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-50">{blockers.map((blocker) => <li key={blocker}>{blocker.replaceAll("_", " ")}</li>)}</ul> : <p className="mt-2 text-sm text-emerald-100">Sin bloqueos. Puedes enviarlo a revisión humana.</p>}<p className="mt-3 text-xs leading-5 text-white/50">Guardar y validar sólo modifican datos internos. Únicamente “Crear Offer no publicado”, después de tu aprobación, puede crear Inventory Item + Offer API UNPUBLISHED en eBay {draftTarget}. Publicar permanece prohibido.</p></section>
         </>}
       </section>
 
