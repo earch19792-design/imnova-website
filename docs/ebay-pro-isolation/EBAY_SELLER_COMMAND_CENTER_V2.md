@@ -122,8 +122,9 @@ evalúa:
 Cada riesgo tiene fingerprint idempotente, evidencia, acción recomendada y
 resolución. Las alertas in-app usan un outbox idempotente. WhatsApp y email
 permanecen desactivados hasta incorporar y validar un worker de entrega.
-En Production, un cron read-only actualiza Inventory y ejecuta el monitor; en
-Preview la misma operación se dispara manualmente desde el teléfono.
+En Preview, Inventory y el monitor se disparan manualmente desde el teléfono.
+La ruta queda protegida para un scheduler, pero no se agenda en Vercel Hobby:
+ese plan admite sólo dos cron diarios y se reservan para Luna y la cola eBay.
 
 ## Flujo móvil
 
@@ -179,5 +180,7 @@ explicables y versionadas, no se presentan como machine learning.
 - variables WhatsApp sólo si la entrega de alertas está habilitada
 
 Preview conserva controles manuales porque Vercel no ejecuta crons en Preview.
-La programación automática y la entrega externa de alertas se activan únicamente
-después de promover código y configuración aprobados a Production.
+El plan Hobby conserva dos ejecuciones diarias como fallback. La cadencia por
+carril y la sincronización programada de Inventory requieren un scheduler con
+mayor frecuencia o un upgrade aprobado. La entrega externa de alertas permanece
+desactivada hasta contar con ese worker y una autorización separada.

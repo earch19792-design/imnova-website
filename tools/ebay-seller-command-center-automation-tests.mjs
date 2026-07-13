@@ -102,9 +102,8 @@ test("cron cadence preserves priority while respecting the serverless budget", (
   assert.match(lunaCron, /limit: 300/)
   assert.match(lunaCron, /finishSellerAutomationRun/)
   assert.deepEqual(vercel.crons, [
-    { path: "/api/cron/market-radar-luna-sync", schedule: "0 */6 * * *" },
-    { path: "/api/cron/ebay-luna-opportunity-scan", schedule: "*/15 * * * *" },
-    { path: "/api/admin/ebay/active-listings/sync", schedule: "5 */6 * * *" },
+    { path: "/api/cron/market-radar-luna-sync", schedule: "0 9 * * *" },
+    { path: "/api/cron/ebay-luna-opportunity-scan", schedule: "17 9 * * *" },
   ])
 })
 
