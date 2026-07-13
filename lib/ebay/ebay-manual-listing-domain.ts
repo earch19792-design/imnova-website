@@ -7,16 +7,11 @@ export const EBAY_MANUAL_LISTING_TRADING_CONNECTOR =
   "EBAY_TRADING_GET_ITEM_READONLY" as const
 
 export const reusableListingDefaultFields = [
+  "categoryId",
+  "conditionId",
   "fulfillmentPolicyId",
   "paymentPolicyId",
   "returnPolicyId",
-  "merchantLocationKey",
-  "condition",
-  "conditionId",
-  "categoryId",
-  "categorySchemaVersion",
-  "dimensionUnit",
-  "weightUnit",
 ] as const
 
 export type ReusableListingDefaultField =
@@ -88,36 +83,6 @@ export function evaluateManualListingProductSkuIdentity(
     reason: "PRODUCT_SKU_IDENTITY_CONFIRMED" as const,
   }
 }
-
-const CONDITION_CODES = new Set([
-  "NEW",
-  "LIKE_NEW",
-  "NEW_OTHER",
-  "NEW_WITH_DEFECTS",
-  "MANUFACTURER_REFURBISHED",
-  "CERTIFIED_REFURBISHED",
-  "EXCELLENT_REFURBISHED",
-  "VERY_GOOD_REFURBISHED",
-  "GOOD_REFURBISHED",
-  "SELLER_REFURBISHED",
-  "USED_EXCELLENT",
-  "USED_VERY_GOOD",
-  "USED_GOOD",
-  "USED_ACCEPTABLE",
-  "FOR_PARTS_OR_NOT_WORKING",
-])
-
-const DIMENSION_UNITS = new Set([
-  "INCH",
-  "CENTIMETER",
-])
-
-const WEIGHT_UNITS = new Set([
-  "POUND",
-  "OUNCE",
-  "KILOGRAM",
-  "GRAM",
-])
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -222,17 +187,6 @@ function safeIdentifier(
   return normalized
 }
 
-function optionalUppercaseEnum(
-  value: unknown,
-  allowed: Set<string>,
-  errorCode: string,
-) {
-  const normalized = stringValue(value).toUpperCase()
-  if (!normalized) return null
-  if (!allowed.has(normalized)) throw new Error(errorCode)
-  return normalized
-}
-
 export function parseSafeListingDefaults(value: unknown): SafeListingDefaults {
   const input = record(value)
   const allowed = new Set<string>(reusableListingDefaultFields)
@@ -249,34 +203,11 @@ export function parseSafeListingDefaults(value: unknown): SafeListingDefaults {
     ["fulfillmentPolicyId", "MANUAL_LISTING_FULFILLMENT_POLICY_INVALID"],
     ["paymentPolicyId", "MANUAL_LISTING_PAYMENT_POLICY_INVALID"],
     ["returnPolicyId", "MANUAL_LISTING_RETURN_POLICY_INVALID"],
-    ["merchantLocationKey", "MANUAL_LISTING_LOCATION_KEY_INVALID", 36],
-    ["categorySchemaVersion", "MANUAL_LISTING_CATEGORY_SCHEMA_INVALID", 64],
   ]
   for (const [key, errorCode, maximumLength] of identifiers) {
     const normalized = safeIdentifier(input[key], errorCode, maximumLength)
     if (normalized) output[key] = normalized
   }
-
-  const condition = optionalUppercaseEnum(
-    input.condition,
-    CONDITION_CODES,
-    "MANUAL_LISTING_CONDITION_INVALID",
-  )
-  if (condition) output.condition = condition
-
-  const dimensionUnit = optionalUppercaseEnum(
-    input.dimensionUnit,
-    DIMENSION_UNITS,
-    "MANUAL_LISTING_DIMENSION_UNIT_INVALID",
-  )
-  if (dimensionUnit) output.dimensionUnit = dimensionUnit
-
-  const weightUnit = optionalUppercaseEnum(
-    input.weightUnit,
-    WEIGHT_UNITS,
-    "MANUAL_LISTING_WEIGHT_UNIT_INVALID",
-  )
-  if (weightUnit) output.weightUnit = weightUnit
 
   const conditionId = stringValue(input.conditionId)
   if (conditionId) {
@@ -414,30 +345,31 @@ export function safeDefaultsTemplateKey(
   return [
     "EBAY_US",
     safeDefaults.categoryId || "all-categories",
-    safeDefaults.condition || "all-conditions",
+    safeDefaults.conditionId || "all-conditions",
   ].join(":")
 }
 
 export function safeDefaultsTemplatePriorityKeys(
   categoryId: unknown,
-  condition: unknown = "NEW",
+  conditionId?: unknown,
 ) {
   const normalized = parseSafeListingDefaults({
     categoryId,
-    condition,
+    conditionId,
   })
   if (!normalized.categoryId) {
     throw new Error("MANUAL_LISTING_CATEGORY_ID_REQUIRED")
   }
-  if (!normalized.condition) {
-    throw new Error("MANUAL_LISTING_CONDITION_REQUIRED")
-  }
-  return [
-    `EBAY_US:${normalized.categoryId}:${normalized.condition}`,
+  return [...new Set([
+    ...(normalized.conditionId
+      ? [`EBAY_US:${normalized.categoryId}:${normalized.conditionId}`]
+      : []),
     `EBAY_US:${normalized.categoryId}:all-conditions`,
-    `EBAY_US:all-categories:${normalized.condition}`,
+    ...(normalized.conditionId
+      ? [`EBAY_US:all-categories:${normalized.conditionId}`]
+      : []),
     "EBAY_US:all-categories:all-conditions",
-  ]
+  ])]
 }
 
 export function hasReusableListingDefaults(

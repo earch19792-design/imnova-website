@@ -1,3 +1,5 @@
+import { getEbayProRuntimeBoundary } from "./environment-boundaries"
+
 type FetchLike = typeof fetch
 
 export type SellerWhatsAppGatewayConfiguration = {
@@ -114,6 +116,10 @@ export function getSellerWhatsAppPreflightSnapshot() {
 }
 
 export function getSellerWhatsAppGatewayConfiguration(): SellerWhatsAppGatewayConfiguration {
+  const environmentBoundary = getEbayProRuntimeBoundary({
+    pathname: "/api/admin/ebay/seller-whatsapp-alerts",
+    method: "POST",
+  })
   const enabled = env("EBAY_SELLER_WHATSAPP_ENABLED").toLowerCase() === "true"
   const recipientConfigured = Boolean(
     normalizeSellerRecipient(env("EBAY_SELLER_WHATSAPP_RECIPIENT")),
@@ -161,8 +167,9 @@ export function getSellerWhatsAppGatewayConfiguration(): SellerWhatsAppGatewayCo
     preflightStatus,
     preflightCheckedAt: preflightCache?.result.checkedAt ?? null,
     preflightExpiresAt: preflightCache?.result.expiresAt ?? null,
-    deliveryAttemptAllowed: enabled && configurationComplete,
-    realDeliveryPermitted: enabled && ready,
+    deliveryAttemptAllowed: enabled && configurationComplete
+      && !environmentBoundary.blocked,
+    realDeliveryPermitted: enabled && ready && !environmentBoundary.blocked,
   }
 }
 
@@ -430,6 +437,18 @@ export async function sendSellerWhatsAppApprovedTemplate(
   options: { fetchImpl?: FetchLike; timeoutMs?: number } = {},
 ): Promise<SellerWhatsAppGatewayResult> {
   const configuration = getSellerWhatsAppGatewayConfiguration()
+  const environmentBoundary = getEbayProRuntimeBoundary({
+    pathname: "/api/admin/ebay/seller-whatsapp-alerts",
+    method: "POST",
+  })
+  if (environmentBoundary.blocked) {
+    return {
+      success: false,
+      statusCode: null,
+      providerMessageId: null,
+      errorCode: "SELLER_WHATSAPP_ENVIRONMENT_BLOCKED",
+    }
+  }
   if (!configuration.enabled) {
     return {
       success: false,

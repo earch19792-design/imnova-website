@@ -11,13 +11,18 @@ const economicsSource = readFileSync(
   new URL("../lib/ebay/ebay-unit-economics.ts", import.meta.url),
   "utf8",
 )
+const environmentBoundarySource = readFileSync(
+  new URL("../lib/ebay/environment-boundaries.ts", import.meta.url),
+  "utf8",
+)
 
 function embedSnapshotModule(source) {
   const withoutImport = source
     .replace('import { verifyEbayDraftOnlyPreflightSnapshot } from "./ebay-draft-only-preflight-snapshot"\n', "")
     .replace(/import \{\n  calculateEbayUnitEconomics,\n  DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,\n  normalizeEbayUnitEconomicsConfig,\n  type EbayUnitEconomicsConfig,\n\} from "\.\/ebay-unit-economics"\n/, "")
     .replace(/import \{\n  issueEbayDraftOnlyPreflightSnapshot,\n  verifyEbayDraftOnlyPreflightSnapshot,\n\} from "\.\/ebay-draft-only-preflight-snapshot"\n/, "")
-  return `${snapshotSource}\n${economicsSource}\n${withoutImport}`
+    .replace('import { getEbayDraftWriteEnvironmentBoundary } from "./environment-boundaries"\n', "")
+  return `${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${withoutImport}`
 }
 
 const readinessSource = embedSnapshotModule(readFileSync(

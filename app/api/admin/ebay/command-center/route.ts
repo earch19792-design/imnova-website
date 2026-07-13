@@ -187,37 +187,26 @@ function applySafeSellerDefaults(
   const defaults = selected.defaults
   const currentDraft = object(packageData.draftConfiguration)
   const currentPolicies = object(currentDraft.businessPolicies)
-  const currentPackageSize = object(currentDraft.packageWeightAndSize)
-  const currentDimensions = object(currentPackageSize.dimensions)
-  const currentWeight = object(currentPackageSize.weight)
   const withDefault = (current: unknown, fallback: unknown) => current || fallback || ""
   const canApply = (current: unknown, fallback: unknown) =>
     (current === null || current === undefined || String(current).trim() === "") &&
     Boolean(fallback)
   const appliedFields = [
-    ...(canApply(currentDraft.condition, defaults.condition) ? ["condition"] : []),
-    ...(canApply(currentDraft.merchantLocationKey, defaults.merchantLocationKey)
-      ? ["merchantLocationKey"] : []),
+    ...(canApply(packageData.categoryId, defaults.categoryId) ? ["categoryId"] : []),
+    ...(canApply(packageData.conditionId, defaults.conditionId) ? ["conditionId"] : []),
     ...(canApply(currentPolicies.fulfillmentPolicyId, defaults.fulfillmentPolicyId)
       ? ["fulfillmentPolicyId"] : []),
     ...(canApply(currentPolicies.paymentPolicyId, defaults.paymentPolicyId)
       ? ["paymentPolicyId"] : []),
     ...(canApply(currentPolicies.returnPolicyId, defaults.returnPolicyId)
       ? ["returnPolicyId"] : []),
-    ...(canApply(currentDimensions.unit, defaults.dimensionUnit)
-      ? ["dimensionUnit"] : []),
-    ...(canApply(currentWeight.unit, defaults.weightUnit)
-      ? ["weightUnit"] : []),
   ]
   return {
     ...packageData,
+    categoryId: withDefault(packageData.categoryId, defaults.categoryId),
+    conditionId: withDefault(packageData.conditionId, defaults.conditionId),
     draftConfiguration: {
       ...currentDraft,
-      condition: withDefault(currentDraft.condition, defaults.condition),
-      merchantLocationKey: withDefault(
-        currentDraft.merchantLocationKey,
-        defaults.merchantLocationKey,
-      ),
       businessPolicies: {
         ...currentPolicies,
         fulfillmentPolicyId: withDefault(
@@ -232,17 +221,6 @@ function applySafeSellerDefaults(
           currentPolicies.returnPolicyId,
           defaults.returnPolicyId,
         ),
-      },
-      packageWeightAndSize: {
-        ...currentPackageSize,
-        dimensions: {
-          ...currentDimensions,
-          unit: withDefault(currentDimensions.unit, defaults.dimensionUnit),
-        },
-        weight: {
-          ...currentWeight,
-          unit: withDefault(currentWeight.unit, defaults.weightUnit),
-        },
       },
     },
     safeDefaults: {
@@ -266,7 +244,7 @@ async function applicableSafeDefaults(
   // The eBay preflight will revalidate every policy/location before approval.
   return selectApplicableSafeListingDefaults(supabase, {
     categoryId,
-    condition: "NEW",
+    conditionId: typeof seed.conditionId === "string" ? seed.conditionId : undefined,
   }).catch(() => null)
 }
 
@@ -299,6 +277,7 @@ export async function GET(req: Request) {
         .from("ebay_listing_packages")
         .select("*")
         .eq("created_by", reviewer)
+        .eq("account_key", accountKey ?? "__unconfigured__")
         .order("updated_at", { ascending: false })
         .limit(50),
       supabase
@@ -350,6 +329,13 @@ export async function POST(req: Request) {
     }
     const supabase = getSupabaseAdminClient()
     const reviewer = validation.userId
+    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    if (!accountKey) {
+      return NextResponse.json({
+        success: false,
+        error: "COMMAND_CENTER_ACCOUNT_SCOPE_REQUIRED",
+      }, { status: 503 })
+    }
     const sourceOpportunity = await opportunity(supabase, opportunityId)
     if (sourceOpportunity.candidate_key !== candidateKey) {
       return NextResponse.json(
@@ -407,6 +393,9 @@ export async function POST(req: Request) {
       if (readError) throw new Error("COMMAND_CENTER_PACKAGE_READ_FAILED")
       if (existing) {
         if (existing.created_by !== reviewer) throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
+        if (existing.account_key !== accountKey) {
+          throw new Error("COMMAND_CENTER_PACKAGE_ACCOUNT_SCOPE_REQUIRED")
+        }
         const currentPackageData = object(existing.package_data)
         const currentPricing = object(currentPackageData.pricing)
         const seedPricing = object(seed.pricing)
@@ -427,6 +416,7 @@ export async function POST(req: Request) {
           "ebay_save_listing_package_guarded",
           {
             p_package_id: existing.id,
+            p_account_key: accountKey,
             p_actor: reviewer,
             p_opportunity_id: opportunityId,
             p_candidate_key: candidateKey,
@@ -466,6 +456,7 @@ export async function POST(req: Request) {
       }
       const packageSeed = applySafeSellerDefaults(seed, selectedSafeDefaults)
       const { data, error } = await supabase.from("ebay_listing_packages").insert({
+        account_key: accountKey,
         opportunity_id: opportunityId,
         candidate_key: candidateKey,
         status: "draft",
@@ -497,6 +488,7 @@ export async function POST(req: Request) {
         .eq("opportunity_id", opportunityId)
         .eq("candidate_key", candidateKey)
         .eq("created_by", reviewer)
+        .eq("account_key", accountKey)
         .maybeSingle()
       if (currentPackageError || !currentPackage) throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
       const currentPackageData = object(currentPackage.package_data)
@@ -540,6 +532,7 @@ export async function POST(req: Request) {
         package_data: {
           title,
           categoryId: form.categoryId || null,
+          conditionId: form.conditionId || currentPackageData.conditionId || null,
           categoryName: form.categoryName || null,
           aspects: object(form.aspects),
           description: String(form.description ?? "").slice(0, 100_000),
@@ -557,6 +550,7 @@ export async function POST(req: Request) {
         "ebay_save_listing_package_guarded",
         {
           p_package_id: packageId,
+          p_account_key: accountKey,
           p_actor: reviewer,
           p_opportunity_id: opportunityId,
           p_candidate_key: candidateKey,

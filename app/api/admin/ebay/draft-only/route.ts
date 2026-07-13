@@ -32,6 +32,7 @@ import {
   type EbayTaxonomyListingIntelligence,
 } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import { enqueueSellerWhatsAppAlert } from "@/lib/ebay/ebay-seller-whatsapp-alerts"
+import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
 function record(value: unknown): JsonRecord {
@@ -104,6 +105,8 @@ async function loadPackageContext(
   accountFingerprint: string,
   excludeApprovalId?: string,
 ) {
+  const sellerAccountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!sellerAccountKey) throw new Error("EBAY_DRAFT_ONLY_PACKAGE_ACCOUNT_SCOPE_REQUIRED")
   if (sku && !/^[A-Za-z0-9._-]{1,50}$/.test(sku)) {
     throw new Error("EBAY_DRAFT_ONLY_SKU_INVALID")
   }
@@ -112,6 +115,7 @@ async function loadPackageContext(
     .select("*")
     .eq("id", packageId)
     .eq("created_by", actorUserId)
+    .eq("account_key", sellerAccountKey)
     .maybeSingle()
   if (packageError || !listingPackage) throw new Error("EBAY_DRAFT_ONLY_PACKAGE_NOT_FOUND")
   const { data: opportunity, error: opportunityError } = await supabase
@@ -143,7 +147,7 @@ async function loadPackageContext(
     marketRadarQuery = marketRadarQuery.eq("supplier_variant_id", supplierVariantId)
   }
   const candidatePackageQuery = candidateKey
-    ? supabase.from("ebay_listing_packages").select("id").eq("candidate_key", candidateKey).neq("id", packageId).in("status", ["draft", "ready_for_review", "approved"]).limit(1)
+    ? supabase.from("ebay_listing_packages").select("id").eq("account_key", sellerAccountKey).eq("candidate_key", candidateKey).neq("id", packageId).in("status", ["draft", "ready_for_review", "approved"]).limit(1)
     : emptyCollision()
   let candidateApprovalQuery = candidateKey
     ? supabase.from("ebay_draft_only_approvals").select("id").eq("candidate_key", candidateKey).eq("target", target).in("status", ["approved", "consumed"]).neq("listing_package_id", packageId).limit(1)
@@ -194,7 +198,7 @@ async function loadPackageContext(
     .map((row) => text(row.id))
     .filter(Boolean)
   const gtinPackageResult = duplicateOpportunityIds.length
-    ? await supabase.from("ebay_listing_packages").select("id").in("opportunity_id", duplicateOpportunityIds).in("status", ["draft", "ready_for_review", "approved"]).limit(1)
+    ? await supabase.from("ebay_listing_packages").select("id").eq("account_key", sellerAccountKey).in("opportunity_id", duplicateOpportunityIds).in("status", ["draft", "ready_for_review", "approved"]).limit(1)
     : { data: [] as Array<{ id: string }>, error: null }
   if (
     ebaySkuResult.error || supplierSkuResult.error || supplierVariantResult.error ||
@@ -477,11 +481,16 @@ async function preflightDraft(body: JsonRecord, actor: string) {
   const packageId = uuid(body.packageId)
   if (!packageId) return jsonError(new Error("EBAY_DRAFT_ONLY_PACKAGE_REQUIRED"), 400)
   const supabase = getSupabaseAdminClient()
+  const sellerAccountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!sellerAccountKey) {
+    return jsonError(new Error("EBAY_DRAFT_ONLY_PACKAGE_ACCOUNT_SCOPE_REQUIRED"), 503)
+  }
   const { data: listingPackage, error } = await supabase
     .from("ebay_listing_packages")
     .select("id")
     .eq("id", packageId)
     .eq("created_by", actor)
+    .eq("account_key", sellerAccountKey)
     .maybeSingle()
   if (error || !listingPackage) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_PACKAGE_NOT_FOUND"), 404)

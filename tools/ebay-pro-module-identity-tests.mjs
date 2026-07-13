@@ -257,7 +257,7 @@ test("eBay Pro hub is lightweight and does not read data", () => {
     true,
   );
   assert.equal(
-    content.includes("bloqueado en produccion"),
+    content.includes("La publicación automática permanece prohibida"),
     true,
   );
   assert.equal(

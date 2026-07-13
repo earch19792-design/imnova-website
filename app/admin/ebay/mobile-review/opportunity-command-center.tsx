@@ -95,6 +95,15 @@ type Dashboard = {
   }
 }
 
+type ActiveListingSyncStatus = {
+  latest_started_at: string | null
+  last_success_at: string | null
+  last_error_at: string | null
+  last_error_code: string | null
+  active_run_started_at: string | null
+  active_run_lease_expires_at: string | null
+}
+
 const ACCELERATION_BATCHES = 10
 
 function label(value: string) {
@@ -153,6 +162,8 @@ export function OpportunityCommandCenter({
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null)
   const [missingRadarOpportunity, setMissingRadarOpportunity] = useState<Opportunity | null>(null)
   const [missingRadarDetail, setMissingRadarDetail] = useState("")
+  const [activeListingSyncStatus, setActiveListingSyncStatus] =
+    useState<ActiveListingSyncStatus | null>(null)
   const currentRun = dashboard?.runs.find((run) => run.status === "running") ?? dashboard?.runs[0] ?? null
 
   function showMessage(nextMessage: string) {
@@ -212,14 +223,33 @@ export function OpportunityCommandCenter({
         "No se pudieron sincronizar los listings activos",
       )
       if (!payload.success) throw new Error(getMobileReviewPayloadError(payload, "ACTIVE_LISTING_SYNC_FAILED"))
+      await loadActiveListingSyncStatus()
       await load()
       showMessage(`Listings sincronizados: ${payload.sync?.listingsStored ?? 0}; vinculados con Luna: ${payload.sync?.listingsMappedToLuna ?? 0}. La protección ya usa el estado más reciente.`)
     } catch (requestError) {
+      await loadActiveListingSyncStatus().catch(() => undefined)
       showError(getMobileReviewRequestError(requestError, "ACTIVE_LISTING_SYNC_FAILED"))
     } finally { setBusy(false) }
   }
 
-  useEffect(() => { void load() }, [])
+  async function loadActiveListingSyncStatus() {
+    const { data, error: sessionError } = await supabase.auth.getSession()
+    if (sessionError || !data.session) return
+    const response = await fetch("/api/admin/ebay/active-listings/sync", {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${data.session.access_token}` },
+    })
+    const payload = await readMobileReviewJson<Record<string, any>>(
+      response,
+      "No se pudo consultar la última sincronización",
+    )
+    if (payload.success) setActiveListingSyncStatus(payload.state ?? null)
+  }
+
+  useEffect(() => {
+    void load()
+    void loadActiveListingSyncStatus()
+  }, [])
 
   async function startPriorityScan() {
     const restart = Boolean(currentRun?.status === "running" && currentRun.processed_candidates > 0)
@@ -438,7 +468,7 @@ export function OpportunityCommandCenter({
         <div className="mt-3 grid grid-cols-[1fr_auto] gap-2"><details className="rounded-2xl border border-white/15 p-3"><summary className="cursor-pointer text-sm font-black">Guardas</summary><ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{[...row.hard_gates, ...row.evidence_guards].map((guard) => <li key={guard}>{label(guard)}</li>)}</ul></details>{row.market_radar_product_id && <button disabled={busy} onClick={() => void openRadarReview(row)} className="min-h-12 rounded-2xl bg-emerald-200 px-3 text-xs font-black text-black disabled:opacity-50">Revisar</button>}</div>
       </article>)}{!rows.length && <p className="rounded-2xl border border-white/10 p-5 text-sm text-white/55">Inicia el scan prioritario para construir la cola.</p>}</div>
 
-      <details className="rounded-3xl border border-white/10 p-4"><summary className="cursor-pointer font-black">Operación y riesgos de listings</summary><p className="mt-3 text-sm text-white/65">{dashboard.events.length} cambios Luna recientes · {dashboard.activeListingRisks.length} riesgos abiertos de listings.</p><div className="mt-3 grid gap-2 sm:grid-cols-2"><button type="button" disabled={busy} onClick={() => void syncActiveListings()} className="min-h-12 rounded-2xl border border-cyan-200/30 px-3 font-black text-cyan-50 disabled:opacity-50">Sincronizar listings activos</button><a href="/admin/ebay/listings/register" className="inline-flex min-h-12 items-center justify-center rounded-2xl bg-cyan-200 px-3 text-center font-black text-black">Registrar listing manual</a></div>{dashboard.activeListingRisks.slice(0, 8).map((risk) => <div key={risk.id} className="mt-2 rounded-2xl border border-rose-200/15 p-3 text-xs"><strong>{risk.risk_priority.toUpperCase()} · {label(risk.risk_type)}</strong><p className="mt-1 text-white/65">{risk.risk_summary}</p></div>)}</details>
+      <details className="rounded-3xl border border-white/10 p-4"><summary className="cursor-pointer font-black">Operación y riesgos de listings</summary><p className="mt-3 text-sm text-white/65">{dashboard.events.length} cambios Luna recientes · {dashboard.activeListingRisks.length} riesgos abiertos de listings.</p><div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div className="rounded-xl bg-white/[0.05] p-2"><span className="text-white/45">Última ejecución</span><strong className="mt-1 block">{formatDate(activeListingSyncStatus?.latest_started_at ?? null)}</strong></div><div className="rounded-xl bg-white/[0.05] p-2"><span className="text-white/45">Último éxito</span><strong className="mt-1 block">{formatDate(activeListingSyncStatus?.last_success_at ?? null)}</strong></div></div>{activeListingSyncStatus?.last_error_at && <p role="alert" className="mt-2 rounded-xl border border-rose-200/20 p-2 text-xs text-rose-50">Último error {formatDate(activeListingSyncStatus.last_error_at)} · {activeListingSyncStatus.last_error_code ?? "ACTIVE_LISTING_SYNC_FAILED"}</p>}<p className="mt-3 text-xs leading-5 text-cyan-50/70">Piloto manual: ejecuta esta sincronización inmediatamente después de registrar el Item ID y antes de cada revisión operativa.</p><div className="mt-3 grid gap-2 sm:grid-cols-2"><button type="button" disabled={busy || Boolean(activeListingSyncStatus?.active_run_started_at && activeListingSyncStatus?.active_run_lease_expires_at && Date.parse(activeListingSyncStatus.active_run_lease_expires_at) > Date.now())} onClick={() => void syncActiveListings()} className="min-h-12 rounded-2xl border border-cyan-200/30 px-3 font-black text-cyan-50 disabled:opacity-50">Sincronizar listings activos</button><a href="/admin/ebay/listings/register" className="inline-flex min-h-12 items-center justify-center rounded-2xl bg-cyan-200 px-3 text-center font-black text-black">Registrar listing manual</a></div>{dashboard.activeListingRisks.slice(0, 8).map((risk) => <div key={risk.id} className="mt-2 rounded-2xl border border-rose-200/15 p-3 text-xs"><strong>{risk.risk_priority.toUpperCase()} · {label(risk.risk_type)}</strong><p className="mt-1 text-white/65">{risk.risk_summary}</p></div>)}</details>
     </>}
   </section>
 }

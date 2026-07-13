@@ -6,16 +6,11 @@ import { supabase } from "@/lib/supabase"
 import { SellerOsMobileNav } from "../../components/seller-os-mobile-nav"
 
 type SafeDefaults = {
+  categoryId?: string
+  conditionId?: string
   fulfillmentPolicyId?: string
   paymentPolicyId?: string
   returnPolicyId?: string
-  merchantLocationKey?: string
-  condition?: string
-  conditionId?: string
-  categoryId?: string
-  categorySchemaVersion?: string
-  dimensionUnit?: string
-  weightUnit?: string
 }
 
 type Registration = {
@@ -43,13 +38,8 @@ type ListingTemplate = {
   fulfillment_policy_id: string | null
   payment_policy_id: string | null
   return_policy_id: string | null
-  merchant_location_key: string | null
-  condition_code: string | null
   condition_id: string | null
   category_id: string | null
-  category_schema_version: string | null
-  dimension_unit: string | null
-  weight_unit: string | null
   verified_source_at: string
   updated_at: string
 }
@@ -191,13 +181,10 @@ function errorLabel(code: string) {
 function templateFacts(template: ListingTemplate) {
   return [
     ["Categoría", template.category_id],
-    ["Condición", template.condition_code],
+    ["Condición", template.condition_id],
     ["Envío", template.fulfillment_policy_id],
     ["Pago", template.payment_policy_id],
     ["Devolución", template.return_policy_id],
-    ["Ubicación", template.merchant_location_key],
-    ["Dimensiones", template.dimension_unit],
-    ["Peso", template.weight_unit],
   ].filter((entry): entry is [string, string] => Boolean(entry[1]))
 }
 

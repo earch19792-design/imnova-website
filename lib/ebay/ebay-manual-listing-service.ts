@@ -94,6 +94,7 @@ export function getManualListingRegistrationConfiguration() {
 async function loadOpportunityIdentity(
   supabase: SupabaseClient,
   input: ManualListingRegistrationInput,
+  accountKey: string,
 ) {
   let query = supabase
     .from("ebay_luna_opportunity_queue")
@@ -135,6 +136,7 @@ async function loadOpportunityIdentity(
     .from("ebay_listing_packages")
     .select("id,candidate_key")
     .eq("opportunity_id", opportunity.id)
+    .eq("account_key", accountKey)
     .maybeSingle()
   if (listingPackageError) {
     throw new Error("MANUAL_LISTING_PACKAGE_READ_FAILED")
@@ -277,7 +279,7 @@ export async function registerManualEbayListing(
   actorUserId: string | null,
 ) {
   const accountKey = getManualListingAccountKey()
-  const opportunity = await loadOpportunityIdentity(supabase, input)
+  const opportunity = await loadOpportunityIdentity(supabase, input, accountKey)
   const verification = await verifyManualListingOwnershipReadonly(
     input.ebayItemId,
     opportunity,
@@ -397,7 +399,7 @@ export async function listManualEbayListingRegistrations(
       .limit(limit),
     supabase
       .from("ebay_seller_listing_templates")
-      .select("id,account_key,marketplace_id,template_key,source_link_id,fulfillment_policy_id,payment_policy_id,return_policy_id,merchant_location_key,condition_code,condition_id,category_id,category_schema_version,dimension_unit,weight_unit,status,verified_source_at,created_at,updated_at")
+      .select("id,account_key,marketplace_id,template_key,source_link_id,fulfillment_policy_id,payment_policy_id,return_policy_id,condition_id,category_id,status,verified_source_at,created_at,updated_at")
       .eq("account_key", accountKey)
       .eq("status", "active")
       .order("updated_at", { ascending: false })
@@ -498,13 +500,13 @@ export async function selectApplicableSafeListingDefaults(
   supabase: SupabaseClient,
   input: {
     categoryId: string
-    condition?: string
+    conditionId?: string
   },
 ) {
   const accountKey = getManualListingAccountKey()
   const priorityKeys = safeDefaultsTemplatePriorityKeys(
     input.categoryId,
-    input.condition ?? "NEW",
+    input.conditionId,
   )
   const freshnessCutoff = new Date(
     Date.now() -
@@ -512,7 +514,7 @@ export async function selectApplicableSafeListingDefaults(
   ).toISOString()
   const { data, error } = await supabase
     .from("ebay_seller_listing_templates")
-    .select("id,template_key,fulfillment_policy_id,payment_policy_id,return_policy_id,merchant_location_key,condition_code,condition_id,category_id,category_schema_version,dimension_unit,weight_unit,verified_source_at,source_link:ebay_manual_listing_links!inner(verification_status,account_key,marketplace_id,last_verification_at)")
+    .select("id,template_key,fulfillment_policy_id,payment_policy_id,return_policy_id,condition_id,category_id,verified_source_at,source_link:ebay_manual_listing_links!inner(verification_status,account_key,marketplace_id,last_verification_at)")
     .eq("account_key", accountKey)
     .eq("marketplace_id", "EBAY_US")
     .eq("status", "active")
@@ -542,13 +544,8 @@ export async function selectApplicableSafeListingDefaults(
     fulfillmentPolicyId: selected.fulfillment_policy_id,
     paymentPolicyId: selected.payment_policy_id,
     returnPolicyId: selected.return_policy_id,
-    merchantLocationKey: selected.merchant_location_key,
-    condition: selected.condition_code,
     conditionId: selected.condition_id,
     categoryId: selected.category_id,
-    categorySchemaVersion: selected.category_schema_version,
-    dimensionUnit: selected.dimension_unit,
-    weightUnit: selected.weight_unit,
   })
 
   return {

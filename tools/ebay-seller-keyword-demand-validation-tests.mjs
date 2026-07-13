@@ -139,7 +139,7 @@ test("wires the read-only analysis into the phone menu without manual title or U
     new URL("../app/api/admin/ebay/seller-keyword-demand/route.ts", import.meta.url),
     "utf8"
   )
-  assert.match(page, /Analizar listings y ventas en eBay/)
+  assert.match(page, /Analizar comparables y demanda en eBay/)
   assert.match(page, /keywordEvidenceHeading/)
   assert.match(page, /Usar como referencia/)
   assert.doesNotMatch(page, /URL del listing elegido/)

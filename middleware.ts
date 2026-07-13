@@ -16,6 +16,7 @@ export function middleware(
   const boundary =
     getEbayProRuntimeBoundary({
       pathname,
+      method: request.method,
     })
 
   if (!boundary.blocked) {
@@ -49,6 +50,7 @@ export function middleware(
 export const config = {
   matcher: [
     "/admin/ebay-pro/:path*",
+    "/admin/ebay/:path*",
     "/admin/market-radar/:path*",
     "/admin/ebay-seller-os/:path*",
     "/admin/ebay-listing/:path*",
@@ -59,5 +61,6 @@ export const config = {
     "/api/admin/ebay-winner-pipeline/:path*",
     "/api/admin/active-listing-risks/:path*",
     "/api/admin/ebay/oauth/:path*",
+    "/api/admin/ebay/:path*",
   ],
 }

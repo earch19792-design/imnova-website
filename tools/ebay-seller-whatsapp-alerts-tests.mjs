@@ -11,7 +11,13 @@ async function source(path) {
 
 async function importTypeScript(path) {
   const typescript = await source(path)
-  const javascript = ts.transpileModule(typescript, {
+  const withEmbeddedDependencies = path === "lib/ebay/ebay-seller-whatsapp-gateway.ts"
+    ? `${await source("lib/ebay/environment-boundaries.ts")}\n${typescript.replace(
+      'import { getEbayProRuntimeBoundary } from "./environment-boundaries"\n',
+      "",
+    )}`
+    : typescript
+  const javascript = ts.transpileModule(withEmbeddedDependencies, {
     compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
   }).outputText
   return import(`data:text/javascript;base64,${Buffer.from(javascript).toString("base64")}`)

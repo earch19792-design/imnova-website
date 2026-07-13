@@ -5,6 +5,7 @@ import {
   issueEbayDraftOnlyPreflightSnapshot,
   verifyEbayDraftOnlyPreflightSnapshot,
 } from "./ebay-draft-only-preflight-snapshot"
+import { getEbayDraftWriteEnvironmentBoundary } from "./environment-boundaries"
 
 const DRAFT_ONLY_SCOPE = [
   "https://api.ebay.com/oauth/api_scope",
@@ -161,11 +162,17 @@ export function getEbayDraftOnlyGatewayConfig(): GatewayConfig {
     ? process.env.EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID?.trim() || ""
     : process.env.EBAY_DRAFT_ONLY_SANDBOX_EXPECTED_USER_ID?.trim() || ""
   const expectedAccountFingerprint = normalizedFingerprint(target === "PRODUCTION"
-    ? process.env.EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_ACCOUNT_FINGERPRINT
-    : process.env.EBAY_DRAFT_ONLY_SANDBOX_EXPECTED_ACCOUNT_FINGERPRINT)
+    ? process.env.EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_CREDENTIAL_FINGERPRINT
+      || process.env.EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_ACCOUNT_FINGERPRINT
+    : process.env.EBAY_DRAFT_ONLY_SANDBOX_EXPECTED_CREDENTIAL_FINGERPRINT
+      || process.env.EBAY_DRAFT_ONLY_SANDBOX_EXPECTED_ACCOUNT_FINGERPRINT)
   const snapshotSecret = target === "PRODUCTION"
-    ? process.env.EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET?.trim() || ""
-    : process.env.EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_SNAPSHOT_SECRET?.trim() || ""
+    ? process.env.EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_HMAC_SECRET?.trim()
+      || process.env.EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET?.trim()
+      || ""
+    : process.env.EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_HMAC_SECRET?.trim()
+      || process.env.EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_SNAPSHOT_SECRET?.trim()
+      || ""
   const oauthConfigured = Boolean(clientId && clientSecret && refreshToken)
   const derivedExpectedFingerprint = accountFingerprint(target, expectedUserId)
   const boundAccountFingerprint = expectedAccountFingerprint || derivedExpectedFingerprint
@@ -176,18 +183,12 @@ export function getEbayDraftOnlyGatewayConfig(): GatewayConfig {
   )
   const identityBound = Boolean(boundAccountFingerprint) && identityConfigurationConsistent
   const snapshotConfigured = snapshotSecret.length >= 32
-  const masterEnabled = process.env.EBAY_DRAFT_ONLY_WRITES_ENABLED === "true"
-  const allowedProductionBranch = process.env.EBAY_DRAFT_ONLY_PRODUCTION_ALLOWED_GIT_BRANCH?.trim() || ""
-  const environmentAllowed = target === "SANDBOX" || (
-    process.env.VERCEL_ENV === "preview"
-    && Boolean(allowedProductionBranch)
-    && process.env.VERCEL_GIT_COMMIT_REF === allowedProductionBranch
-  )
-  const targetEnabled = target === "SANDBOX"
-    || (
-      process.env.EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED === "true"
-      && environmentAllowed
-    )
+  const environmentBoundary = getEbayDraftWriteEnvironmentBoundary({
+    draftTarget: target,
+  })
+  const masterEnabled = environmentBoundary.masterEnabled
+  const environmentAllowed = environmentBoundary.environmentAllowed
+  const targetEnabled = environmentBoundary.targetEnabled
   const apiOrigin = target === "PRODUCTION"
     ? "https://api.ebay.com"
     : "https://api.sandbox.ebay.com"

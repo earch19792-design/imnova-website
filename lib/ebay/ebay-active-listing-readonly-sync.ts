@@ -264,7 +264,11 @@ function inventoryQuantity(inventory: JsonRecord, offer: JsonRecord) {
   return integerOrNull(offer.availableQuantity) ?? integerOrNull(shipTo.quantity)
 }
 
-async function loadOpportunityMappings(supabase: SupabaseClient, skus: string[]) {
+async function loadOpportunityMappings(
+  supabase: SupabaseClient,
+  skus: string[],
+  accountKey: string,
+) {
   type Mapping = {
     productId: string | null
     variantId: string | null
@@ -315,6 +319,7 @@ async function loadOpportunityMappings(supabase: SupabaseClient, skus: string[])
     const { data, error } = await supabase
       .from("ebay_listing_packages")
       .select("id,opportunity_id,candidate_key")
+      .eq("account_key", accountKey)
       .in("id", chunk)
     if (error) throw new Error("EBAY_ACTIVE_LISTING_PACKAGE_MAPPING_READ_FAILED")
     packageRows.push(...((data ?? []) as typeof packageRows))
@@ -486,9 +491,10 @@ async function syncEbayActiveListingsWithToken(
   supabase: SupabaseClient,
   accessToken: string,
   accountKey: string,
+  requestedSyncRunId?: string,
 ) {
   try {
-    const syncRunId = crypto.randomUUID()
+    const syncRunId = requestedSyncRunId || crypto.randomUUID()
     const { data: generationData, error: generationError } = await supabase.rpc(
       "begin_ebay_active_listing_sync_generation",
       {
@@ -526,7 +532,7 @@ async function syncEbayActiveListingsWithToken(
     const offers = offersBySku.flat()
     const publishedOffers = offers.filter((offer) => Boolean(listingId(offer)))
     const skus = [...new Set(publishedOffers.map((offer) => text(offer.sku)).filter(Boolean))] as string[]
-    const mappings = await loadOpportunityMappings(supabase, skus)
+    const mappings = await loadOpportunityMappings(supabase, skus, accountKey)
     const observedAt = new Date().toISOString()
     const existingListings = await loadConnectorListings(supabase, accountKey)
     const existingBySyncKey = new Map(existingListings.map((row) => [row.sync_key, row]))
@@ -635,7 +641,10 @@ async function syncEbayActiveListingsWithToken(
   }
 }
 
-export async function syncEbayActiveListingsReadonly(supabase: SupabaseClient) {
+export async function syncEbayActiveListingsReadonly(
+  supabase: SupabaseClient,
+  options: { syncRunId?: string } = {},
+) {
   const accountKey = getEbayActiveListingAccountKey()
   for (let authorizationAttempt = 0; authorizationAttempt < 2; authorizationAttempt += 1) {
     const accessToken = await getSellerInventoryToken()
@@ -645,6 +654,7 @@ export async function syncEbayActiveListingsReadonly(supabase: SupabaseClient) {
         supabase,
         accessToken,
         accountKey,
+        options.syncRunId,
       )
     } catch (error) {
       const code = error instanceof Error ? error.message : ""

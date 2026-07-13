@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:seller-os": "node --test lib/ebay/*.test.mjs tools/ebay-*-tests.mjs",
+    "audit:seller-os": "node tools/ebay-seller-os-ci-guards.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",

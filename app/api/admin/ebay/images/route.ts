@@ -12,13 +12,20 @@ import {
   validateImageRightsEvidence,
 } from "@/lib/ebay/ebay-image-optimization-service"
 import {
+  EBAY_IMAGE_SOURCE_BUCKET,
+  EBAY_IMAGE_STAGING_BUCKET,
+  enqueueEbayImageStorageCleanup,
+} from "@/lib/ebay/ebay-image-storage-cleanup"
+import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
+import { assertEbayImageAccountScope } from "@/lib/ebay/ebay-image-account-scope"
+import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
 } from "@/lib/supabase-admin"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
-const SOURCE_BUCKET = "ebay-listing-image-sources"
-const STAGING_BUCKET = "ebay-listing-image-staging"
+const SOURCE_BUCKET = EBAY_IMAGE_SOURCE_BUCKET
+const STAGING_BUCKET = EBAY_IMAGE_STAGING_BUCKET
 const MAX_OUTPUT_BYTES = 12 * 1024 * 1024
 
 type JsonRecord = Record<string, unknown>
@@ -84,14 +91,17 @@ async function packageForActor(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   packageId: string,
   actor: string,
+  accountKey: string,
 ) {
   const { data, error } = await supabase
     .from("ebay_listing_packages")
     .select("*")
     .eq("id", packageId)
     .eq("created_by", actor)
+    .eq("account_key", accountKey)
     .maybeSingle()
   if (error || !data) throw new Error("EBAY_IMAGE_PACKAGE_NOT_FOUND")
+  assertEbayImageAccountScope(accountKey, data.account_key)
   return data as JsonRecord
 }
 
@@ -104,6 +114,13 @@ export async function GET(req: Request) {
     )
   }
   try {
+    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    if (!accountKey) {
+      return NextResponse.json(
+        { success: false, error: "EBAY_IMAGE_ACCOUNT_SCOPE_REQUIRED" },
+        { status: 503 },
+      )
+    }
     const url = new URL(req.url)
     const packageId = uuid(url.searchParams.get("packageId"))
     const candidateKey = text(url.searchParams.get("candidateKey"), 300)
@@ -112,6 +129,7 @@ export async function GET(req: Request) {
       .from("ebay_listing_image_assets")
       .select("*")
       .eq("created_by", validation.userId)
+      .eq("account_key", accountKey)
       .order("position", { ascending: true })
       .order("created_at", { ascending: true })
       .limit(50)
@@ -169,6 +187,13 @@ export async function POST(req: Request) {
   }
   const actor = validation.userId
   try {
+    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    if (!accountKey) {
+      return NextResponse.json(
+        { success: false, error: "EBAY_IMAGE_ACCOUNT_SCOPE_REQUIRED" },
+        { status: 503 },
+      )
+    }
     const body = await parseBody(req)
     const action = text(body.action, 40)
     const supabase = getSupabaseAdminClient()
@@ -189,7 +214,12 @@ export async function POST(req: Request) {
       const rights = validateImageRightsEvidence(body)
       const assetRole = ["main", "detail", "packaging", "label", "lifestyle"]
         .includes(text(body.assetRole, 30)) ? text(body.assetRole, 30) : "main"
-      const packageRow = await packageForActor(supabase, packageId, actor)
+      const packageRow = await packageForActor(
+        supabase,
+        packageId,
+        actor,
+        accountKey,
+      )
       if (text(packageRow.candidate_key, 300) !== candidateKey) {
         throw new Error("EBAY_IMAGE_PACKAGE_CANDIDATE_MISMATCH")
       }
@@ -225,6 +255,7 @@ export async function POST(req: Request) {
       const duplicateQuery = supabase
         .from("ebay_listing_image_assets")
         .select("*")
+        .eq("account_key", accountKey)
         .eq("created_by", actor)
         .eq("candidate_key", candidateKey)
         .eq("output_sha256", optimized.outputSha256)
@@ -254,6 +285,7 @@ export async function POST(req: Request) {
         "ebay_create_pending_listing_image",
         {
           p_package_id: packageId,
+          p_account_key: accountKey,
           p_actor: actor,
           p_opportunity_id: packageOpportunityId,
           p_candidate_key: candidateKey,
@@ -287,6 +319,7 @@ export async function POST(req: Request) {
         const { data: concurrentDuplicate } = await supabase
           .from("ebay_listing_image_assets")
           .select("*")
+          .eq("account_key", accountKey)
           .eq("created_by", actor)
           .eq("candidate_key", candidateKey)
           .eq("output_sha256", optimized.outputSha256)
@@ -326,6 +359,7 @@ export async function POST(req: Request) {
         .select("*")
         .eq("id", assetId)
         .eq("listing_package_id", packageId)
+        .eq("account_key", accountKey)
         .eq("created_by", actor)
         .eq("status", "pending_review")
         .maybeSingle()
@@ -392,6 +426,7 @@ export async function POST(req: Request) {
         "ebay_review_listing_image_and_attach",
         {
           p_package_id: packageId,
+          p_account_key: accountKey,
           p_asset_id: assetId,
           p_actor: actor,
           p_decision: action,
@@ -406,6 +441,7 @@ export async function POST(req: Request) {
           .select("*")
           .eq("id", assetId)
           .eq("listing_package_id", packageId)
+          .eq("account_key", accountKey)
           .eq("created_by", actor)
           .maybeSingle()
         const reviewCommitted = action === "approve"
@@ -414,7 +450,12 @@ export async function POST(req: Request) {
             && reconciledAsset.public_url === publicUrl
           : reconciledAsset?.status === "rejected"
         if (reviewCommitted && reconciledAsset) {
-          const reconciledPackage = await packageForActor(supabase, packageId, actor)
+          const reconciledPackage = await packageForActor(
+            supabase,
+            packageId,
+            actor,
+            accountKey,
+          )
           resolvedReviewData = {
             asset: reconciledAsset,
             package: {
@@ -439,6 +480,7 @@ export async function POST(req: Request) {
         }
       }
       let cleanupPending = false
+      let cleanupTracked = true
       if (action === "approve") {
         const cleanupPaths = [text(reviewAsset.output_storage_path, 1_000)]
           .filter(Boolean)
@@ -446,6 +488,22 @@ export async function POST(req: Request) {
           .from(STAGING_BUCKET)
           .remove(cleanupPaths)
         cleanupPending = Boolean(cleanupError)
+        if (cleanupError && cleanupPaths[0]) {
+          try {
+            await enqueueEbayImageStorageCleanup(supabase, {
+              accountKey,
+              assetId,
+              packageId,
+              cleanupKind: "approved_staging",
+              bucketId: STAGING_BUCKET,
+              storageKey: cleanupPaths[0],
+              expectedSha256: text(reviewAsset.output_sha256, 64),
+              requestedBy: actor,
+            })
+          } catch {
+            cleanupTracked = false
+          }
+        }
       } else {
         const stagingPath = text(reviewAsset.output_storage_path, 1_000)
         const sourcePath = text(reviewAsset.source_storage_path, 1_000)
@@ -458,6 +516,33 @@ export async function POST(req: Request) {
             : Promise.resolve({ error: null }),
         ])
         cleanupPending = Boolean(stagingCleanup.error || sourceCleanup.error)
+        const cleanupRequests = [
+          ...(stagingCleanup.error && stagingPath ? [{
+            cleanupKind: "rejected_staging" as const,
+            bucketId: STAGING_BUCKET,
+            storageKey: stagingPath,
+            expectedSha256: text(reviewAsset.output_sha256, 64),
+          }] : []),
+          ...(sourceCleanup.error && sourcePath ? [{
+            cleanupKind: "rejected_source" as const,
+            bucketId: SOURCE_BUCKET,
+            storageKey: sourcePath,
+            expectedSha256: text(reviewAsset.source_sha256, 64),
+          }] : []),
+        ]
+        for (const cleanup of cleanupRequests) {
+          try {
+            await enqueueEbayImageStorageCleanup(supabase, {
+              accountKey,
+              assetId,
+              packageId,
+              requestedBy: actor,
+              ...cleanup,
+            })
+          } catch {
+            cleanupTracked = false
+          }
+        }
       }
       const result = record(resolvedReviewData)
       const packageResult = record(result.package)
@@ -471,6 +556,7 @@ export async function POST(req: Request) {
         asset: record(result.asset),
         imageUrls,
         storageCleanupPending: cleanupPending,
+        storageCleanupTracked: cleanupPending ? cleanupTracked : true,
       })
     }
 
@@ -489,6 +575,7 @@ export async function POST(req: Request) {
         "ebay_reorder_listing_images_and_attach",
         {
           p_package_id: packageId,
+          p_account_key: accountKey,
           p_actor: actor,
           p_ordered_asset_ids: orderedAssetIds,
         },

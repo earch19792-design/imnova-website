@@ -1,0 +1,48 @@
+name: Seller OS safety
+
+on:
+  pull_request:
+    branches:
+      - staging/ebay-pro-seller-os
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  seller-os:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Reproducible install
+        run: npm ci
+
+      - name: TypeScript
+        run: npx tsc --noEmit --incremental false
+
+      - name: Seller OS suites
+        run: npm run test:seller-os
+
+      - name: Security and migration guards
+        run: npm run audit:seller-os
+
+      - name: Whitespace
+        run: git diff --check "origin/${{ github.base_ref }}...HEAD"
+
+      - name: Production build
+        env:
+          EBAY_DRAFT_ONLY_WRITES_ENABLED: "false"
+          EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED: "false"
+          EBAY_SELLER_WHATSAPP_ENABLED: "false"
+        run: npm run build
