@@ -54,6 +54,12 @@ const safeEnvironment = {
   EBAY_DRAFT_ONLY_TARGET: "SANDBOX",
 }
 
+const unboundIdentityEnvironment = {
+  EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_CREDENTIAL_FINGERPRINT: undefined,
+  EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_ACCOUNT_FINGERPRINT: undefined,
+  EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID: undefined,
+}
+
 async function withEnvironment(values, callback) {
   const prior = new Map()
   for (const [name, next] of Object.entries(values)) {
@@ -161,6 +167,7 @@ test("bootstrap fails closed on every unsafe runtime flag", async () => {
 
 test("identity probe fails closed when Production read-only credentials are absent", async () => {
   await withEnvironment({
+    ...unboundIdentityEnvironment,
     EBAY_CLIENT_ID: undefined,
     EBAY_CLIENT_SECRET: undefined,
     EBAY_SELLER_REFRESH_TOKEN: undefined,
@@ -179,6 +186,7 @@ test("identity probe fails closed when Production read-only credentials are abse
 
 test("identity probe rejects OAuth safely without exposing the eBay response", async () => {
   await withEnvironment({
+    ...unboundIdentityEnvironment,
     EBAY_CLIENT_ID: "client-id-sensitive",
     EBAY_CLIENT_SECRET: "client-secret-sensitive",
     EBAY_SELLER_REFRESH_TOKEN: "refresh-token-sensitive",
@@ -198,6 +206,7 @@ test("identity probe calls only Production OAuth and Trading GetUser", async () 
   const accessToken = "access-token-sensitive"
   const calls = []
   await withEnvironment({
+    ...unboundIdentityEnvironment,
     EBAY_CLIENT_ID: "client-id-sensitive",
     EBAY_CLIENT_SECRET: "client-secret-sensitive",
     EBAY_SELLER_REFRESH_TOKEN: "refresh-token-sensitive",
@@ -230,6 +239,9 @@ test("identity probe calls only Production OAuth and Trading GetUser", async () 
       maskedUserId: "ab******zy",
       fingerprint: expectedFingerprint,
       fingerprintFormatValid: true,
+      configuredFingerprintPresent: false,
+      configuredFingerprintMatches: false,
+      identityBindingStatus: "UNBOUND",
       scopesVerified: true,
       ebayWriteUsed: false,
       canPublish: false,
@@ -262,8 +274,133 @@ test("identity probe calls only Production OAuth and Trading GetUser", async () 
   })
 })
 
+test("configured Production fingerprint matches in constant-time probe output", async () => {
+  const fullUserId = "shopOfficialSellerMart"
+  const expectedFingerprint = createHash("sha256")
+    .update(`PRODUCTION:${fullUserId}`)
+    .digest("hex")
+  const accessToken = "access-token-sensitive"
+  const clientSecret = "client-secret-sensitive"
+  const refreshToken = "refresh-token-sensitive"
+  const calls = []
+
+  await withEnvironment({
+    ...unboundIdentityEnvironment,
+    EBAY_CLIENT_ID: "client-id-sensitive",
+    EBAY_CLIENT_SECRET: clientSecret,
+    EBAY_SELLER_REFRESH_TOKEN: refreshToken,
+    EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_CREDENTIAL_FINGERPRINT:
+      expectedFingerprint,
+  }, async () => {
+    const fetchMock = async (input, init = {}) => {
+      const url = String(input)
+      calls.push({ url, init })
+      if (url === "https://api.ebay.com/identity/v1/oauth2/token") {
+        return new Response(JSON.stringify({
+          access_token: accessToken,
+          expires_in: 7200,
+        }), { status: 200 })
+      }
+      if (url === "https://api.ebay.com/ws/api.dll") {
+        return new Response(acceptedGetUserXml(fullUserId), { status: 200 })
+      }
+      throw new Error(`unexpected endpoint: ${url}`)
+    }
+
+    const result = await probeEbayProductionIdentityReadOnly(fetchMock)
+    assert.deepEqual(result, {
+      oauthValid: true,
+      accessTokenReceived: true,
+      getUserValid: true,
+      environment: "PRODUCTION",
+      maskedUserId: "sh******rt",
+      fingerprintFormatValid: true,
+      configuredFingerprintPresent: true,
+      configuredFingerprintMatches: true,
+      identityBindingStatus: "BOUND_MATCH",
+      scopesVerified: true,
+      ebayWriteUsed: false,
+      canPublish: false,
+    })
+    assert.equal(Object.hasOwn(result, "fingerprint"), false)
+
+    const response = await handleEbayProductionIdentityBootstrapRequest(
+      request({ confirmation: EBAY_IDENTITY_BOOTSTRAP_CONFIRMATION }),
+      {
+        validateAdminApiRequest: async () => ({ ok: true, status: 200 }),
+        environment: safeEnvironment,
+        probe: async () => result,
+      },
+    )
+    assert.equal(response.status, 200)
+    const serialized = JSON.stringify(await response.json())
+    for (const sensitive of [
+      expectedFingerprint,
+      fullUserId,
+      accessToken,
+      clientSecret,
+      refreshToken,
+    ]) assert.equal(serialized.includes(sensitive), false)
+
+    assert.deepEqual(calls.map(({ url }) => url), [
+      "https://api.ebay.com/identity/v1/oauth2/token",
+      "https://api.ebay.com/ws/api.dll",
+    ])
+    const outbound = calls.map(({ init }) =>
+      `${String(init.body ?? "")}\n${JSON.stringify(init.headers ?? {})}`
+    ).join("\n")
+    assert.doesNotMatch(outbound, /GetItem|Inventory|createOffer/)
+  })
+})
+
+test("configured fingerprint mismatch and malformed values fail closed", async () => {
+  const fullUserId = "shopOfficialSellerMart"
+  const credentials = {
+    EBAY_CLIENT_ID: "client-id-sensitive",
+    EBAY_CLIENT_SECRET: "client-secret-sensitive",
+    EBAY_SELLER_REFRESH_TOKEN: "refresh-token-sensitive",
+  }
+  const fetchMock = async (input) => String(input).includes("oauth2/token")
+    ? new Response(JSON.stringify({
+      access_token: "access-token-sensitive",
+      expires_in: 7200,
+    }), { status: 200 })
+    : new Response(acceptedGetUserXml(fullUserId), { status: 200 })
+
+  for (const configuredFingerprint of ["0".repeat(64), "malformed"]) {
+    await withEnvironment({
+      ...unboundIdentityEnvironment,
+      ...credentials,
+      EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_CREDENTIAL_FINGERPRINT:
+        configuredFingerprint,
+    }, async () => {
+      await assert.rejects(
+        probeEbayProductionIdentityReadOnly(fetchMock),
+        (error) => error instanceof Error &&
+          error.message === "EBAY_TRADING_CONFIGURED_FINGERPRINT_MISMATCH",
+      )
+    })
+  }
+
+  const response = await handleEbayProductionIdentityBootstrapRequest(
+    request({ confirmation: EBAY_IDENTITY_BOOTSTRAP_CONFIRMATION }),
+    {
+      validateAdminApiRequest: async () => ({ ok: true, status: 200 }),
+      environment: safeEnvironment,
+      probe: async () => {
+        throw new Error("EBAY_TRADING_CONFIGURED_FINGERPRINT_MISMATCH")
+      },
+    },
+  )
+  assert.equal(response.status, 502)
+  assert.deepEqual(await response.json(), {
+    error: "EBAY_TRADING_CONFIGURED_FINGERPRINT_MISMATCH",
+  })
+})
+
 test("identity probe rejects failed GetUser and an empty UserID safely", async () => {
   await withEnvironment({
+    ...unboundIdentityEnvironment,
     EBAY_CLIENT_ID: "client-id-sensitive",
     EBAY_CLIENT_SECRET: "client-secret-sensitive",
     EBAY_SELLER_REFRESH_TOKEN: "refresh-token-sensitive",

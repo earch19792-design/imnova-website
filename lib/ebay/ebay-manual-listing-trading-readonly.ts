@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { timingSafeEqual } from "node:crypto"
 
 import type { SafeListingDefaults } from "./ebay-manual-listing-domain"
 import {
@@ -33,18 +33,34 @@ export type TradingManualListingResult = {
   observedAt: string
 }
 
-export type EbayProductionIdentityReadOnlyProbeResult = {
+type EbayProductionIdentityReadOnlyProbeBaseResult = {
   oauthValid: true
   accessTokenReceived: true
   getUserValid: true
   environment: "PRODUCTION"
   maskedUserId: string
-  fingerprint: string
   fingerprintFormatValid: true
+  configuredFingerprintPresent: boolean
+  configuredFingerprintMatches: boolean
+  identityBindingStatus: "UNBOUND" | "BOUND_MATCH"
   scopesVerified: true
   ebayWriteUsed: false
   canPublish: false
 }
+
+export type EbayProductionIdentityReadOnlyProbeResult =
+  | EbayProductionIdentityReadOnlyProbeBaseResult & {
+    fingerprint: string
+    configuredFingerprintPresent: false
+    configuredFingerprintMatches: false
+    identityBindingStatus: "UNBOUND"
+  }
+  | EbayProductionIdentityReadOnlyProbeBaseResult & {
+    fingerprint?: never
+    configuredFingerprintPresent: true
+    configuredFingerprintMatches: true
+    identityBindingStatus: "BOUND_MATCH"
+  }
 
 let cachedToken: CachedToken | null = null
 
@@ -366,24 +382,53 @@ export async function probeEbayProductionIdentityReadOnly(
     throw new Error("EBAY_TRADING_GETUSER_IDENTITY_MISSING")
   }
 
-  const fingerprint = createHash("sha256")
-    .update(`PRODUCTION:${userId}`, "utf8")
-    .digest("hex")
+  const fingerprint = ebayProductionAccountFingerprint(userId)
   if (!/^[0-9a-f]{64}$/.test(fingerprint)) {
     throw new Error("EBAY_TRADING_GETUSER_IDENTITY_MISSING")
   }
 
-  return {
+  const identity = getEbayProductionIdentityBindingConfiguration()
+  if (!identity.configuredFingerprintValid || !identity.consistent) {
+    throw new Error("EBAY_TRADING_CONFIGURED_FINGERPRINT_MISMATCH")
+  }
+  const configuredFingerprint = normalizedFingerprint(
+    identity.expectedAccountFingerprint,
+  )
+  const baseResult = {
     oauthValid: true,
     accessTokenReceived: true,
     getUserValid: true,
     environment: "PRODUCTION",
     maskedUserId: maskEbayUserId(userId),
-    fingerprint,
     fingerprintFormatValid: true,
     scopesVerified: true,
     ebayWriteUsed: false,
     canPublish: false,
+  } as const
+
+  if (!configuredFingerprint) {
+    return {
+      ...baseResult,
+      fingerprint,
+      configuredFingerprintPresent: false,
+      configuredFingerprintMatches: false,
+      identityBindingStatus: "UNBOUND",
+    }
+  }
+
+  const configuredFingerprintMatches = timingSafeEqual(
+    Buffer.from(fingerprint, "hex"),
+    Buffer.from(configuredFingerprint, "hex"),
+  )
+  if (!configuredFingerprintMatches) {
+    throw new Error("EBAY_TRADING_CONFIGURED_FINGERPRINT_MISMATCH")
+  }
+
+  return {
+    ...baseResult,
+    configuredFingerprintPresent: true,
+    configuredFingerprintMatches: true,
+    identityBindingStatus: "BOUND_MATCH",
   }
 }
 

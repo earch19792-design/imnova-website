@@ -58,6 +58,7 @@ export function getEbayIdentityBootstrapSafetyError(
 
 function safeProbeError(error: unknown) {
   const code = error instanceof Error ? error.message : ""
+  if (code === "EBAY_TRADING_CONFIGURED_FINGERPRINT_MISMATCH") return code
   if (code === "EBAY_TRADING_READONLY_NOT_CONFIGURED") return code
   if (code === "EBAY_TRADING_GETUSER_IDENTITY_MISSING") return code
   if (/^EBAY_TRADING_OAUTH_[0-9]{3}$/.test(code)) return code
