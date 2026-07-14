@@ -21,6 +21,7 @@ export const EBAY_SELLER_OS_API_PATHS = [
   "/api/admin/ebay/active-listings/sync",
   "/api/admin/ebay/command-center",
   "/api/admin/ebay/configuration",
+  "/api/admin/ebay/identity/bootstrap",
   "/api/admin/ebay/seller-performance",
   "/api/admin/ebay/seller-keyword-demand",
   "/api/admin/ebay/seller-whatsapp-alerts",

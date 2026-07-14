@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto"
+
 import type { SafeListingDefaults } from "./ebay-manual-listing-domain"
 import {
   ebayProductionAccountFingerprint,
@@ -29,6 +31,19 @@ export type TradingManualListingResult = {
   ebaySku: string | null
   safeDefaults: SafeListingDefaults
   observedAt: string
+}
+
+export type EbayProductionIdentityReadOnlyProbeResult = {
+  oauthValid: true
+  accessTokenReceived: true
+  getUserValid: true
+  environment: "PRODUCTION"
+  maskedUserId: string
+  fingerprint: string
+  fingerprintFormatValid: true
+  scopesVerified: true
+  ebayWriteUsed: false
+  canPublish: false
 }
 
 let cachedToken: CachedToken | null = null
@@ -183,8 +198,11 @@ async function wait(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function getTradingAccessToken(fetchImpl: FetchLike) {
-  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
+async function getTradingAccessToken(
+  fetchImpl: FetchLike,
+  useCache = true,
+) {
+  if (useCache && cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
     return cachedToken.value
   }
   const clientId = process.env.EBAY_CLIENT_ID?.trim() ?? ""
@@ -215,15 +233,22 @@ async function getTradingAccessToken(fetchImpl: FetchLike) {
   if (!response.ok) {
     throw new Error(`EBAY_TRADING_OAUTH_${response.status}`)
   }
-  const payload = await response.json() as Record<string, unknown>
+  let payload: Record<string, unknown>
+  try {
+    payload = await response.json() as Record<string, unknown>
+  } catch {
+    throw new Error(`EBAY_TRADING_OAUTH_${response.status}`)
+  }
   const accessToken = typeof payload.access_token === "string"
     ? payload.access_token.trim()
     : ""
-  if (!accessToken) throw new Error("EBAY_TRADING_ACCESS_TOKEN_MISSING")
+  if (!accessToken) throw new Error(`EBAY_TRADING_OAUTH_${response.status}`)
   const expiresIn = Math.max(120, Number(payload.expires_in) || 7_200)
-  cachedToken = {
-    value: accessToken,
-    expiresAt: Date.now() + expiresIn * 1_000,
+  if (useCache) {
+    cachedToken = {
+      value: accessToken,
+      expiresAt: Date.now() + expiresIn * 1_000,
+    }
   }
   return accessToken
 }
@@ -317,6 +342,48 @@ export function getTradingManualListingReadonlyConfiguration() {
     connector: EBAY_MANUAL_LISTING_TRADING_CONNECTOR,
     ebayWriteUsed: false as const,
     canPublish: false as const,
+  }
+}
+
+function maskEbayUserId(userId: string) {
+  if (userId.length <= 4) return "********"
+  return `${userId.slice(0, 2)}******${userId.slice(-2)}`
+}
+
+export async function probeEbayProductionIdentityReadOnly(
+  fetchImpl: FetchLike = fetch,
+): Promise<EbayProductionIdentityReadOnlyProbeResult> {
+  // The identity probe intentionally bypasses the process token cache so each
+  // invocation validates the currently configured Preview refresh token.
+  const accessToken = await getTradingAccessToken(fetchImpl, false)
+
+  const getUserXml = await tradingRead("GetUser", accessToken, fetchImpl)
+  const userId = tradingXmlTagValue(
+    tradingXmlContainer(getUserXml, "User"),
+    "UserID",
+  )
+  if (!userId) {
+    throw new Error("EBAY_TRADING_GETUSER_IDENTITY_MISSING")
+  }
+
+  const fingerprint = createHash("sha256")
+    .update(`PRODUCTION:${userId}`, "utf8")
+    .digest("hex")
+  if (!/^[0-9a-f]{64}$/.test(fingerprint)) {
+    throw new Error("EBAY_TRADING_GETUSER_IDENTITY_MISSING")
+  }
+
+  return {
+    oauthValid: true,
+    accessTokenReceived: true,
+    getUserValid: true,
+    environment: "PRODUCTION",
+    maskedUserId: maskEbayUserId(userId),
+    fingerprint,
+    fingerprintFormatValid: true,
+    scopesVerified: true,
+    ebayWriteUsed: false,
+    canPublish: false,
   }
 }
 
