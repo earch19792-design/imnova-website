@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "test:seller-os": "node --test lib/ebay/*.test.mjs tools/ebay-*-tests.mjs",
-    "audit:seller-os": "node tools/ebay-seller-os-ci-guards.mjs"
+    "audit:seller-os": "node tools/ebay-seller-os-ci-guards.mjs",
+    "market-intelligence:ebay": "node tools/ebay-market-intelligence-loop.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
