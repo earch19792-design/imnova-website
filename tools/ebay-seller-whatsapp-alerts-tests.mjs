@@ -268,6 +268,9 @@ test("outbox delivery is idempotent, leased, cooled down, and audited", async ()
   const accountScopeMigration = await source(
     "supabase/migrations/20260713073000_scope_ebay_seller_whatsapp_claims.sql",
   )
+  const digestFixMigration = await source(
+    "supabase/migrations/20260715103000_fix_ebay_seller_whatsapp_enqueue_digest.sql",
+  )
   assert.match(migration, /create table if not exists public\.ebay_seller_whatsapp_alert_state/)
   assert.match(migration, /create or replace function public\.enqueue_ebay_seller_whatsapp_alert/)
   assert.match(migration, /for update;/i)
@@ -296,6 +299,12 @@ test("outbox delivery is idempotent, leased, cooled down, and audited", async ()
   assert.match(accountScopeMigration, /limit greatest\(1, least\(coalesce\(p_limit, 1\), 1\)\)/)
   assert.match(accountScopeMigration, /META_DELIVERY_OUTCOME_UNKNOWN_MANUAL_REVIEW/)
   assert.match(accountScopeMigration, /when v_indeterminate[\s\S]*then 'dead_letter'/)
+  assert.match(digestFixMigration, /extensions\.digest\(/)
+  assert.match(digestFixMigration, /set search_path = public, pg_temp/)
+  assert.match(digestFixMigration, /EBAY_SELLER_WHATSAPP_PGCRYPTO_DIGEST_MISSING/)
+  assert.match(digestFixMigration, /revoke all on function public\.enqueue_ebay_seller_whatsapp_alert/)
+  assert.match(digestFixMigration, /grant execute on function public\.enqueue_ebay_seller_whatsapp_alert[\s\S]*to service_role/)
+  assert.doesNotMatch(digestFixMigration, /\bdigest\(left\(/)
 })
 
 test("delivery defaults to preview and never exposes recipient or secrets", async () => {
