@@ -46,6 +46,7 @@ import {
 } from "@/lib/ebay/ebay-mobile-review-local-state"
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 import { OpportunityCommandCenter, type Opportunity } from "./opportunity-command-center"
+import { CommercialMonitorPanel } from "./commercial-monitor-panel"
 
 const emptyReport = buildMobileReviewRealRadarConnector({ products: [] })
 type View = "opportunities" | "top5" | "pinned" | "blocked" | "decision"
@@ -835,7 +836,10 @@ export default function EbayMobileReviewPage() {
 
         {serverReviewsLoadState === "ERROR" && <div role="alert" className="rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-3 text-sm text-rose-50"><strong>No pudimos cargar En curso y Operación.</strong><span className="mt-1 block">{serverReviewsError}</span><button type="button" onClick={() => void loadServerReviews()} className="mt-3 min-h-11 rounded-xl border border-rose-100/30 px-3 font-black">Reintentar</button></div>}
 
-        {view === "opportunities" && <OpportunityCommandCenter onReviewCandidate={reviewOpportunityCandidate} onRadarRefresh={load} onRadarLookup={lookupRadarCandidateByProductId} confirmDestructiveRefresh={confirmReviewReset} preferredMarketRadarProductId={!selectedQueueOpportunity ? selectedRadarCandidate?.marketRadarProductId ?? null : null} />}
+        {view === "opportunities" && <>
+          <CommercialMonitorPanel />
+          <OpportunityCommandCenter onReviewCandidate={reviewOpportunityCandidate} onRadarRefresh={load} onRadarLookup={lookupRadarCandidateByProductId} confirmDestructiveRefresh={confirmReviewReset} preferredMarketRadarProductId={!selectedQueueOpportunity ? selectedRadarCandidate?.marketRadarProductId ?? null : null} />
+        </>}
 
         {view === "top5" && <section aria-labelledby="top5-heading"><h2 id="top5-heading" className="mb-3 text-xl font-black">Top 5 actual</h2><div className="space-y-4">{report.top5Candidates.map((candidate) => <CandidateCard key={candidate.candidateId} candidate={candidate} selected={!selectedQueueCandidate && state.selectedCandidateRank === candidate.candidateRank} pinned={pinnedCandidates.some((item) => pinnedCandidateMatchesRadar(item, candidate))} provisional={radarGuards.needsScoreDisambiguation} onSelect={() => { setSelectedQueueCandidate(null); setSelectedQueueOpportunity(null); act({ type: "SELECT_CANDIDATE", rank: candidate.candidateRank }) }} onUnavailable={() => act({ type: "MARK_UNAVAILABLE", rank: candidate.candidateRank })} />)}{!loading && report.top5Candidates.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/75">No hay candidatos seleccionables.</p>}</div></section>}
 

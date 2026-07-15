@@ -20,9 +20,10 @@ Status enums: `PRESENT`, `MISSING`, `INVALID_FORMAT`, `IDENTITY_UNBOUND`,
 | `EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_CREDENTIAL_FINGERPRINT` | Preferred 64-hex expected identity fingerprint | Sensitive | Server | Missing falls back to account fingerprint alias or User ID derivation | Takes precedence over `...EXPECTED_ACCOUNT_FINGERPRINT` |
 | `EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_ACCOUNT_FINGERPRINT` | Compatibility alias for expected fingerprint | Sensitive | Server | Missing is safe if preferred name/User ID binds identity | Lower precedence; avoid defining both differently |
 
-The generic refresh token is reused for Trading, Inventory read-only and
-Analytics. Scope and account identity must both be verified; presence alone is
-not proof of authorization.
+The generic refresh token is reused for Trading, Inventory read-only,
+Fulfillment read-only and Analytics. Commercial monitoring additionally
+requires `sell.fulfillment.readonly`. Scope and account identity must both be
+verified; presence alone is not proof of authorization.
 
 ## Draft Sandbox
 
@@ -71,11 +72,19 @@ Vercel Preview. A Vercel Production deployment is always blocked.
 
 | Variable | Purpose | Secret | Environment / scope | Safe default | Consumers / risk |
 |---|---|---:|---|---|---|
-| `CRON_SECRET` | Bearer protection for scheduled routes | Yes | Production server; at least 16 chars | Missing denies cron | Shared by the two existing cron routes |
+| `CRON_SECRET` | Bearer protection for scheduled routes | Yes | Server; at least 16 chars | Missing denies cron | Shared by scheduled routes; commercial routes still require Preview |
 | `EBAY_PRO_RUNTIME` | Explicit environment isolation | No | All server deployments | Inferred fail-closed in Production | `production`/`production_core` block Seller OS |
 | `EBAY_MARKETPLACE_INSIGHTS_ENABLED` | Enable marketplace read intelligence | No | Server | `false` | Read subsystem only |
 | `EBAY_MARKET_OBSERVATION_WRITES_ENABLED` | Persist market observations | No | Server | `false` | Database writes, never eBay writes |
 | `EBAY_LUNA_BEST_SELLING_CATEGORY_IDS` | Category allowlist | No | Server | Empty | Comma-separated numeric category IDs |
+| `EBAY_COMMERCIAL_MONITOR_ENABLED` | Commercial scheduler kill switch | No | Preview only | `false` | Manual refresh remains available; Production is always blocked |
+| `EBAY_COMMERCIAL_ORDERS_INTERVAL_MINUTES` | Minimum order-reader interval | No | Preview server | `5` | Clamped to 5–1440 minutes |
+| `EBAY_COMMERCIAL_ANALYTICS_INTERVAL_MINUTES` | Minimum Analytics interval | No | Preview server | `360` | Clamped to 60–1440 minutes |
+| `EBAY_COMMERCIAL_WATCHERS_INTERVAL_MINUTES` | Minimum WatchCount interval | No | Preview server | `240` | Clamped to 15–1440 minutes |
+| `EBAY_COMMERCIAL_DISPATCHER_INTERVAL_MINUTES` | WhatsApp worker target interval | No | Preview server | `5` | Independent outbox worker |
+| `EBAY_COMMERCIAL_DAILY_SUMMARY_HOUR_UTC` | Daily summary hour | No | Preview server | `14` | Integer 0–23 |
+| `EBAY_COMMERCIAL_ANALYTICS_WINDOW_DAYS` | Comparable Traffic Report window | No | Preview server | `7` | Clamped to 1–30 complete days |
+| `EBAY_COMMERCIAL_ORDER_LOOKBACK_HOURS` | Initial order catch-up window | No | Preview server | `168` | Clamped to 1–2160 hours and then advances with overlap |
 
 ## Images
 

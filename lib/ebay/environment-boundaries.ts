@@ -26,6 +26,7 @@ export const EBAY_SELLER_OS_API_PATHS = [
   "/api/admin/ebay/seller-performance",
   "/api/admin/ebay/seller-keyword-demand",
   "/api/admin/ebay/seller-whatsapp-alerts",
+  "/api/admin/ebay/commercial-monitor",
   "/api/admin/ebay/luna-opportunities",
   "/api/admin/ebay/luna-opportunity-queue",
   "/api/admin/ebay/luna-product-import",

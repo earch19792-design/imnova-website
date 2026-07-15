@@ -1,0 +1,409 @@
+import {
+  getEbaySellerTrafficPerformance,
+} from "./ebay-seller-analytics-readonly-gateway"
+import {
+  normalizeEbaySellerTrafficReport,
+} from "./ebay-seller-traffic-report"
+import {
+  ebayProductionAccountFingerprint,
+  getEbayProductionIdentityBindingConfiguration,
+  getEbaySellerAccountScopeConfiguration,
+} from "./ebay-seller-account-scope"
+import {
+  normalizeCompletedEbayOrders,
+  type SafeMarketplaceOrder,
+} from "../marketplace/commercial-monitor-domain"
+
+const EBAY_API_ORIGIN = "https://api.ebay.com"
+const TOKEN_ENDPOINT = `${EBAY_API_ORIGIN}/identity/v1/oauth2/token`
+const ORDERS_ENDPOINT = `${EBAY_API_ORIGIN}/sell/fulfillment/v1/order`
+const TRADING_ENDPOINT = `${EBAY_API_ORIGIN}/ws/api.dll`
+const TRADING_COMPATIBILITY_LEVEL = "1423"
+const MARKETPLACE_ID = "EBAY_US"
+const REQUEST_TIMEOUT_MS = 12_000
+const MAX_RETRIES = 3
+const MAX_ORDER_PAGES = 20
+const WATCHER_CONCURRENCY = 4
+const FULFILLMENT_SCOPE = [
+  "https://api.ebay.com/oauth/api_scope",
+  "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
+].join(" ")
+
+type JsonRecord = Record<string, unknown>
+type FetchLike = typeof fetch
+
+type CachedToken = { value: string; expiresAt: number }
+let cachedFulfillmentToken: CachedToken | null = null
+
+function record(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonRecord
+    : {}
+}
+
+function array(value: unknown) {
+  return Array.isArray(value) ? value : []
+}
+
+function text(value: unknown) {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function numeric(value: unknown) {
+  if (value === null || value === undefined || value === "") return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function escapedXml(value: string) {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+}
+
+function xmlValue(xml: string, tag: string) {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const match = xml.match(new RegExp(
+    `<(?:[A-Za-z0-9_-]+:)?${escaped}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:[A-Za-z0-9_-]+:)?${escaped}>`,
+    "i",
+  ))
+  return match?.[1]
+    ?.replace(/<[^>]*>/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim() || null
+}
+
+function retryable(status: number) {
+  return [429, 500, 502, 503, 504].includes(status)
+}
+
+async function wait(attempt: number) {
+  await new Promise((resolve) => setTimeout(
+    resolve,
+    Math.min(400 * (2 ** attempt), 3_000) + Math.floor(Math.random() * 150),
+  ))
+}
+
+async function getFulfillmentToken(fetchImpl: FetchLike = fetch) {
+  if (cachedFulfillmentToken && cachedFulfillmentToken.expiresAt > Date.now() + 60_000) {
+    return cachedFulfillmentToken.value
+  }
+  const clientId = process.env.EBAY_CLIENT_ID?.trim() ?? ""
+  const clientSecret = process.env.EBAY_CLIENT_SECRET?.trim() ?? ""
+  const refreshToken = process.env.EBAY_SELLER_REFRESH_TOKEN?.trim() ?? ""
+  if (!clientId || !clientSecret) throw new Error("EBAY_READONLY_ENV_MISSING")
+  if (!refreshToken) throw new Error("EBAY_SELLER_OAUTH_NOT_CONFIGURED")
+  const credentials = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
+    const response = await fetchImpl(TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        scope: FULFILLMENT_SCOPE,
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    if (response.ok) {
+      const payload = record(await response.json())
+      const accessToken = text(payload.access_token)
+      if (!accessToken) throw new Error("EBAY_FULFILLMENT_TOKEN_MISSING")
+      const expiresIn = Math.max(120, numeric(payload.expires_in) ?? 7_200)
+      cachedFulfillmentToken = {
+        value: accessToken,
+        expiresAt: Date.now() + expiresIn * 1_000,
+      }
+      return accessToken
+    }
+    if (!retryable(response.status) || attempt === MAX_RETRIES - 1) {
+      throw new Error(`EBAY_FULFILLMENT_OAUTH_${response.status}`)
+    }
+    await wait(attempt)
+  }
+  throw new Error("EBAY_FULFILLMENT_OAUTH_FAILED")
+}
+
+async function assertOfficialAccount(accessToken: string, fetchImpl: FetchLike) {
+  const identity = getEbayProductionIdentityBindingConfiguration()
+  if (!identity.bound) throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_REQUIRED")
+  const response = await fetchImpl(TRADING_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/xml",
+      "X-EBAY-API-CALL-NAME": "GetUser",
+      "X-EBAY-API-COMPATIBILITY-LEVEL": TRADING_COMPATIBILITY_LEVEL,
+      "X-EBAY-API-SITEID": "0",
+      "X-EBAY-API-IAF-TOKEN": accessToken,
+    },
+    body: "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+      "<GetUserRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
+      "<OutputSelector>User.UserID</OutputSelector>" +
+      "</GetUserRequest>",
+    cache: "no-store",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  })
+  const xml = await response.text()
+  const ack = xmlValue(xml, "Ack")?.toLowerCase()
+  const userId = xmlValue(xml, "UserID")
+  if (!response.ok || !["success", "warning"].includes(ack ?? "") || !userId) {
+    throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_UNAVAILABLE")
+  }
+  const userMatches = !identity.expectedUserId ||
+    identity.expectedUserId.toLocaleLowerCase("en-US") === userId.toLocaleLowerCase("en-US")
+  const fingerprintMatches = ebayProductionAccountFingerprint(userId) === identity.expectedAccountFingerprint
+  if (!userMatches || !fingerprintMatches) {
+    throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_MISMATCH")
+  }
+}
+
+async function ordersPage(url: URL, token: string, fetchImpl: FetchLike) {
+  if (url.origin !== EBAY_API_ORIGIN || url.pathname !== "/sell/fulfillment/v1/order") {
+    throw new Error("BLOCKED_NON_READONLY_EBAY_ORDER_REQUEST")
+  }
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
+    const response = await fetchImpl(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    if (response.ok) return record(await response.json())
+    if (response.status === 401) cachedFulfillmentToken = null
+    if (!retryable(response.status) || attempt === MAX_RETRIES - 1) {
+      throw new Error(`EBAY_ORDERS_READ_${response.status}`)
+    }
+    await wait(attempt)
+  }
+  throw new Error("EBAY_ORDERS_READ_FAILED")
+}
+
+export async function getEbayCompletedCheckoutOrders(input: {
+  modifiedFrom: string
+  modifiedTo?: string
+  fetchImpl?: FetchLike
+}): Promise<{
+  status: "AVAILABLE"
+  source: "EBAY_SELL_FULFILLMENT_GET_ORDERS"
+  orders: SafeMarketplaceOrder[]
+  observedAt: string
+  pagesRead: number
+  rawOrdersDiscardedAfterSanitization: number
+}> {
+  const modifiedFrom = new Date(input.modifiedFrom)
+  const modifiedTo = input.modifiedTo ? new Date(input.modifiedTo) : new Date()
+  if (!Number.isFinite(modifiedFrom.getTime()) || !Number.isFinite(modifiedTo.getTime()) || modifiedFrom >= modifiedTo) {
+    throw new Error("EBAY_ORDERS_DATE_RANGE_INVALID")
+  }
+  const fetchImpl = input.fetchImpl ?? fetch
+  const token = await getFulfillmentToken(fetchImpl)
+  await assertOfficialAccount(token, fetchImpl)
+  const initial = new URL(ORDERS_ENDPOINT)
+  initial.searchParams.set(
+    "filter",
+    `lastmodifieddate:[${modifiedFrom.toISOString()}..${modifiedTo.toISOString()}]`,
+  )
+  initial.searchParams.set("limit", "50")
+  initial.searchParams.set("offset", "0")
+  const orders: SafeMarketplaceOrder[] = []
+  let rawOrderCount = 0
+  let next: URL | null = initial
+  let pagesRead = 0
+  while (next && pagesRead < MAX_ORDER_PAGES) {
+    const payload = await ordersPage(next, token, fetchImpl)
+    const rawOrders = array(payload.orders)
+    rawOrderCount += rawOrders.length
+    orders.push(...normalizeCompletedEbayOrders(payload))
+    pagesRead += 1
+    const nextUrl = text(payload.next)
+    next = nextUrl ? new URL(nextUrl, EBAY_API_ORIGIN) : null
+  }
+  if (next) throw new Error("EBAY_ORDERS_PAGE_LIMIT_REACHED")
+  return {
+    status: "AVAILABLE",
+    source: "EBAY_SELL_FULFILLMENT_GET_ORDERS",
+    orders,
+    observedAt: new Date().toISOString(),
+    pagesRead,
+    rawOrdersDiscardedAfterSanitization: Math.max(0, rawOrderCount - orders.length),
+  }
+}
+
+async function watcherRead(
+  listingId: string,
+  accessToken: string,
+  fetchImpl: FetchLike,
+) {
+  if (!/^\d{9,20}$/.test(listingId)) throw new Error("EBAY_WATCHERS_LISTING_ID_INVALID")
+  const body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+    "<GetItemRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
+    `<ItemID>${escapedXml(listingId)}</ItemID>` +
+    "<IncludeWatchCount>true</IncludeWatchCount>" +
+    "<OutputSelector>Item.ItemID</OutputSelector>" +
+    "<OutputSelector>Item.WatchCount</OutputSelector>" +
+    "</GetItemRequest>"
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
+    const response = await fetchImpl(TRADING_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/xml",
+        "X-EBAY-API-CALL-NAME": "GetItem",
+        "X-EBAY-API-COMPATIBILITY-LEVEL": TRADING_COMPATIBILITY_LEVEL,
+        "X-EBAY-API-SITEID": "0",
+        "X-EBAY-API-IAF-TOKEN": accessToken,
+      },
+      body,
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    const xml = await response.text()
+    const ack = xmlValue(xml, "Ack")?.toLowerCase()
+    if (response.ok && ["success", "warning"].includes(ack ?? "")) {
+      const returnedItemId = xmlValue(xml, "ItemID")
+      const count = numeric(xmlValue(xml, "WatchCount"))
+      if (returnedItemId !== listingId) throw new Error("EBAY_WATCHERS_ITEM_ID_MISMATCH")
+      return {
+        listingId,
+        currentWatchers: count === null ? 0 : Math.max(0, Math.trunc(count)),
+        source: "EBAY_TRADING_GET_ITEM_WATCHCOUNT" as const,
+        observedAt: new Date().toISOString(),
+      }
+    }
+    if (!retryable(response.status) || attempt === MAX_RETRIES - 1) {
+      throw new Error(`EBAY_WATCHERS_READ_${response.status}`)
+    }
+    await wait(attempt)
+  }
+  throw new Error("EBAY_WATCHERS_READ_FAILED")
+}
+
+export async function getEbayListingWatchers(input: {
+  listingIds: string[]
+  fetchImpl?: FetchLike
+}) {
+  const listingIds = [...new Set(input.listingIds.filter((id) => /^\d{9,20}$/.test(id)))].slice(0, 200)
+  const fetchImpl = input.fetchImpl ?? fetch
+  if (!listingIds.length) return {
+    status: "UNAVAILABLE" as const,
+    source: "EBAY_TRADING_GET_ITEM_WATCHCOUNT" as const,
+    observations: [],
+    errors: [],
+  }
+  const token = await getFulfillmentToken(fetchImpl)
+  await assertOfficialAccount(token, fetchImpl)
+  const observations: Awaited<ReturnType<typeof watcherRead>>[] = []
+  const errors: Array<{ listingId: string; code: string }> = []
+  let cursor = 0
+  await Promise.all(Array.from({ length: Math.min(WATCHER_CONCURRENCY, listingIds.length) }, async () => {
+    while (cursor < listingIds.length) {
+      const listingId = listingIds[cursor++]
+      try {
+        observations.push(await watcherRead(listingId, token, fetchImpl))
+      } catch (error) {
+        const code = error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
+          ? error.message
+          : "EBAY_WATCHERS_READ_FAILED"
+        errors.push({ listingId, code })
+      }
+    }
+  }))
+  return {
+    status: observations.length === listingIds.length
+      ? "AVAILABLE" as const
+      : observations.length
+        ? "PARTIAL" as const
+        : "UNAVAILABLE" as const,
+    source: "EBAY_TRADING_GET_ITEM_WATCHCOUNT" as const,
+    observations,
+    errors,
+  }
+}
+
+function metric(row: ReturnType<typeof normalizeEbaySellerTrafficReport>["rows"][number], key: string) {
+  const value = row.metrics[key]
+  return row.applicability[key] !== false && typeof value === "number" ? value : null
+}
+
+function derivedRate(numerator: number | null, denominator: number | null) {
+  return numerator !== null && denominator !== null && denominator > 0
+    ? Number(((numerator / denominator) * 100).toFixed(2))
+    : null
+}
+
+export async function getComparableEbayTrafficAnalytics(input: {
+  listingIds: string[]
+  dateFrom: string
+  dateTo: string
+}) {
+  const report = await getEbaySellerTrafficPerformance(input)
+  const normalized = normalizeEbaySellerTrafficReport(report)
+  const reportStartDay = normalized.startDate?.slice(0, 10) ?? null
+  const reportEndDay = normalized.endDate?.slice(0, 10) ?? null
+  const updatedDay = normalized.lastUpdatedDate?.slice(0, 10) ?? null
+  const complete = Boolean(
+    reportStartDay && reportEndDay && updatedDay &&
+    reportStartDay <= input.dateFrom && reportEndDay >= input.dateTo && updatedDay >= input.dateTo &&
+    normalized.warnings.length === 0
+  )
+  return {
+    status: complete ? "AVAILABLE" as const : "INCOMPLETE" as const,
+    source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT" as const,
+    observedAt: new Date().toISOString(),
+    windowStart: input.dateFrom,
+    windowEnd: input.dateTo,
+    completenessStatus: complete ? "complete" as const : "incomplete" as const,
+    reportCoverage: {
+      reportStartDay,
+      reportEndDay,
+      lastUpdatedDay: updatedDay,
+      warnings: normalized.warnings,
+    },
+    observations: normalized.rows.map((row) => {
+      const impressions = metric(row, "TOTAL_IMPRESSION_TOTAL")
+      const searchImpressions = metric(row, "LISTING_IMPRESSION_SEARCH_RESULTS_PAGE")
+      const searchViews = metric(row, "LISTING_VIEWS_SOURCE_SEARCH_RESULTS_PAGE")
+      const views = metric(row, "LISTING_VIEWS_TOTAL")
+      const transactions = metric(row, "TRANSACTION")
+      return {
+        listingId: row.dimension,
+        impressions,
+        views,
+        ctr: metric(row, "CLICK_THROUGH_RATE") ?? derivedRate(searchViews, searchImpressions),
+        transactions,
+        salesConversionRate: metric(row, "SALES_CONVERSION_RATE") ?? derivedRate(transactions, views),
+        revenue: null,
+      }
+    }),
+  }
+}
+
+export function getEbayCommercialReadersConfiguration() {
+  const account = getEbaySellerAccountScopeConfiguration()
+  return {
+    configured: Boolean(
+      process.env.EBAY_CLIENT_ID?.trim() &&
+      process.env.EBAY_CLIENT_SECRET?.trim() &&
+      process.env.EBAY_SELLER_REFRESH_TOKEN?.trim() &&
+      account.configured
+    ),
+    accountScopeConfigured: account.configured,
+    accountScopeReason: account.reason,
+    orderScope: "sell.fulfillment.readonly",
+    analyticsScope: "sell.analytics.readonly",
+    watchersSource: "Trading GetItem IncludeWatchCount",
+    officialReadMethods: ["Fulfillment getOrders", "Analytics getTrafficReport", "Trading GetItem"],
+    ebayWriteUsed: false,
+    canPublish: false,
+  }
+}
