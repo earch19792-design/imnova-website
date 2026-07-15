@@ -2,6 +2,7 @@ export const EBAY_SELLER_WHATSAPP_ALERT_POLICY_VERSION =
   "EBAY_SELLER_WHATSAPP_ALERT_POLICY_V1"
 
 export const SELLER_WHATSAPP_ALERT_TYPES = [
+  "system_test",
   "winner_ready",
   "luna_restock",
   "luna_cost_drop",
@@ -101,6 +102,18 @@ export function classifySellerWhatsAppAlert(
   alertType: SellerWhatsAppAlertType,
   facts: SellerWhatsAppAlertFacts = {},
 ): SellerWhatsAppAlertDecision {
+  if (alertType === "system_test") {
+    return {
+      eligible: true,
+      reason: "controlled_preview_delivery_test",
+      priority: "low",
+      deliveryClass: "immediate",
+      cooldownSeconds: 5 * 60,
+      recommendedAction:
+        "Confirmar la recepción del mensaje de prueba en el teléfono configurado.",
+    }
+  }
+
   if (alertType === "winner_ready") return winnerDecision(facts)
 
   if (alertType === "out_of_stock") {

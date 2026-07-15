@@ -8,6 +8,7 @@ import { NextResponse } from "next/server"
 
 import {
   deliverSellerWhatsAppAlerts,
+  enqueueSellerWhatsAppAlert,
   previewSellerWhatsAppAlerts,
 } from "@/lib/ebay/ebay-seller-whatsapp-alerts"
 import {
@@ -64,6 +65,96 @@ function safeError(error: unknown) {
   return /^[A-Z0-9_]+$/.test(value)
     ? value
     : "SELLER_WHATSAPP_REQUEST_FAILED"
+}
+
+const SELLER_WHATSAPP_TEST_CONFIRMATION =
+  "SEND_ONE_SELLER_WHATSAPP_TEST_TO_CONFIGURED_RECIPIENT"
+
+async function deliverControlledPreviewTest(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  authorizationMode: "admin" | "cron",
+  confirmation: unknown,
+) {
+  if (process.env.VERCEL_ENV !== "preview") {
+    throw new Error("SELLER_WHATSAPP_TEST_PREVIEW_ONLY")
+  }
+  if (confirmation !== SELLER_WHATSAPP_TEST_CONFIRMATION) {
+    throw new Error("SELLER_WHATSAPP_TEST_CONFIRMATION_REQUIRED")
+  }
+  const configuration = getSellerWhatsAppGatewayConfiguration()
+  if (!configuration.enabled) {
+    throw new Error("SELLER_WHATSAPP_DISABLED")
+  }
+  if (!configuration.configurationComplete) {
+    throw new Error("SELLER_WHATSAPP_NOT_READY")
+  }
+
+  const accountScope = getEbaySellerAccountScopeConfiguration()
+  if (!accountScope.accountKey) {
+    throw new Error("SELLER_WHATSAPP_ACCOUNT_SCOPE_REQUIRED")
+  }
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1_000).toISOString()
+  const [pending, recentTests] = await Promise.all([
+    supabase
+      .from("ebay_seller_alert_outbox")
+      .select("id", { count: "exact", head: true })
+      .eq("channel", "whatsapp")
+      .eq("payload->>accountKey", accountScope.accountKey)
+      .in("status", ["pending", "failed", "leased"]),
+    supabase
+      .from("ebay_seller_alert_outbox")
+      .select("id", { count: "exact", head: true })
+      .eq("channel", "whatsapp")
+      .eq("payload->>accountKey", accountScope.accountKey)
+      .eq("alert_type", "system_test")
+      .gte("created_at", fiveMinutesAgo),
+  ])
+  if (pending.error || recentTests.error) {
+    throw new Error("SELLER_WHATSAPP_TEST_PREFLIGHT_READ_FAILED")
+  }
+  if ((pending.count ?? 0) > 0) {
+    throw new Error("SELLER_WHATSAPP_TEST_QUEUE_NOT_EMPTY")
+  }
+  if ((recentTests.count ?? 0) > 0) {
+    throw new Error("SELLER_WHATSAPP_TEST_RATE_LIMITED")
+  }
+
+  const enqueued = await enqueueSellerWhatsAppAlert(supabase, {
+    alertType: "system_test",
+    entityType: "seller_whatsapp_configuration",
+    entityId: `preview-test:${randomUUID()}`,
+    title: "Prueba controlada Seller Command Center",
+    summary:
+      "La API oficial de WhatsApp quedó conectada al flujo de alertas de Seller OS.",
+    mobileUrl: process.env.EBAY_SELLER_COMMAND_CENTER_URL,
+  })
+  if (!enqueued.enqueued) {
+    throw new Error("SELLER_WHATSAPP_TEST_ENQUEUE_FAILED")
+  }
+
+  const delivered = await deliverSellerWhatsAppAlerts(supabase, {
+    workerId: `seller-whatsapp-test:${authorizationMode}:${randomUUID()}`,
+    limit: 1,
+    dryRun: false,
+  })
+  if (delivered.mode !== "delivery" || delivered.delivered !== 1) {
+    throw new Error("SELLER_WHATSAPP_TEST_DELIVERY_FAILED")
+  }
+  return {
+    success: true,
+    mode: "test_delivery" as const,
+    enqueued: true,
+    delivered: 1,
+    failed: delivered.failed,
+    safety: {
+      configuredRecipientOnly: true,
+      approvedTemplateOnly: true,
+      outboxAuditUsed: true,
+      previewOnly: true,
+      ebayWriteUsed: false,
+      secretsReturned: false,
+    },
+  }
 }
 
 export async function GET(req: Request) {
@@ -148,6 +239,8 @@ export async function POST(req: Request) {
   }
   const action = body.action === "deliver"
     ? "deliver"
+    : body.action === "test"
+      ? "test"
     : body.action === "preflight"
       ? "preflight"
       : "preview"
@@ -158,6 +251,13 @@ export async function POST(req: Request) {
 
   try {
     const supabase = getSupabaseAdminClient()
+    if (action === "test") {
+      return NextResponse.json(await deliverControlledPreviewTest(
+        supabase,
+        authorization.mode,
+        body.confirmation,
+      ))
+    }
     if (action === "preflight") {
       const preflight = await preflightSellerWhatsAppGateway({
         force: body.force !== false,
