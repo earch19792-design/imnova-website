@@ -1081,6 +1081,8 @@ export async function runEbayCommercialMonitor(
         alertsEnqueued: 0,
         fulfillmentTasksCreated: 0,
         whatsappDelivered: 0,
+        ebayWrites: 0,
+        buyerPiiReturned: false,
         thresholdConfigVersion: thresholds.version,
       }
       const status = errors.length ? "partial" as const : "completed" as const
