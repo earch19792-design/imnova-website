@@ -8,6 +8,7 @@ export const EBAY_SELLER_OS_UI_PATHS = [
   "/admin/ebay/mobile-review",
   "/admin/ebay/opportunity-queue",
   "/admin/ebay/listing-workspace",
+  "/admin/ebay/listing-optimization",
   "/admin/ebay/listings/register",
   "/admin/ebay-image-generator",
   "/admin/ebay/seller-performance",
@@ -28,6 +29,7 @@ export const EBAY_SELLER_OS_API_PATHS = [
   "/api/admin/ebay/luna-opportunities",
   "/api/admin/ebay/luna-opportunity-queue",
   "/api/admin/ebay/luna-product-import",
+  "/api/admin/ebay/listing-optimization",
 ] as const
 
 const LEGACY_EBAY_PRO_PATHS = [

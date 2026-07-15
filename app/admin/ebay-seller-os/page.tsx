@@ -21,6 +21,12 @@ const actions = [
 
 const operationLinks = [
   {
+    href: "/admin/ebay/listing-optimization",
+    title: "Optimizar listing",
+    copy: "Convierte un reporte de mercado y hechos verificados en título, descripción, briefs, score e iteraciones auditables.",
+    cta: "Abrir Optimization Loop →",
+  },
+  {
     href: "/admin/ebay/listings/register",
     title: "Vincular listing activo",
     copy: "El asistente te ayuda a elegir el producto, confirmar su SKU y verificar el Item ID sin perderte entre pantallas.",
