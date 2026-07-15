@@ -45,14 +45,17 @@ export function buildEbayCommercialOrdersConsentUrl(input: {
   if (!input.clientId || !input.runame || !/^[A-Za-z0-9_-]{43}$/.test(input.state)) {
     throw new Error("EBAY_COMMERCIAL_ORDERS_OAUTH_START_INVALID")
   }
-  const url = new URL(EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_ENDPOINT)
-  url.searchParams.set("client_id", input.clientId)
-  url.searchParams.set("redirect_uri", input.runame)
-  url.searchParams.set("response_type", "code")
-  url.searchParams.set("scope", EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES.join(" "))
-  url.searchParams.set("state", input.state)
-  url.searchParams.set("prompt", "login")
-  return url.toString()
+  const parameters = [
+    ["client_id", input.clientId],
+    ["redirect_uri", input.runame],
+    ["response_type", "code"],
+    ["scope", EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES.join(" ")],
+    ["state", input.state],
+    ["prompt", "login"],
+  ]
+  return `${EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_ENDPOINT}?${parameters
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .join("&")}`
 }
 
 export function encryptEbayCommercialRefreshToken(
