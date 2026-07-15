@@ -184,7 +184,12 @@ export async function enqueueSellerWhatsAppAlert(
       p_cooldown_seconds: decision.cooldownSeconds,
     },
   )
-  if (error) throw new Error("SELLER_WHATSAPP_ENQUEUE_FAILED")
+  if (error) {
+    const safeCode = /^[A-Z0-9_]+$/i.test(error.code ?? "")
+      ? error.code.toUpperCase()
+      : "UNKNOWN"
+    throw new Error(`SELLER_WHATSAPP_ENQUEUE_${safeCode}`)
+  }
   const result = (Array.isArray(data) ? data[0] : data) as {
     alert_id?: string | null
     enqueued?: boolean

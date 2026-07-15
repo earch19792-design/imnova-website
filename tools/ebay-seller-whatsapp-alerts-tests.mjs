@@ -310,6 +310,8 @@ test("delivery defaults to preview and never exposes recipient or secrets", asyn
   assert.match(alerts, /supplierAvailable: facts\.supplierAvailable === true/)
   assert.doesNotMatch(alerts, /text\(input\.candidateKey, 300\) \|\| "none"/)
   assert.match(alerts, /p_account_key: accountScope\.accountKey/)
+  assert.match(alerts, /SELLER_WHATSAPP_ENQUEUE_\$\{safeCode\}/)
+  assert.doesNotMatch(alerts, /error\.message/)
   assert.match(alerts, /\.eq\("payload->>accountKey", accountKey\)/)
   assert.match(alerts, /SELLER_WHATSAPP_MAX_CLAIM_PER_INVOCATION = 1/)
   assert.match(alerts, /channel", "whatsapp"/)
