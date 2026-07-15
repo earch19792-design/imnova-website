@@ -105,6 +105,7 @@ test("controlled WhatsApp test uses the real audited pipeline and fails closed",
   assert.match(route, /SELLER_WHATSAPP_TEST_CONFIRMATION_REQUIRED/)
   assert.match(route, /SELLER_WHATSAPP_TEST_QUEUE_NOT_EMPTY/)
   assert.match(route, /SELLER_WHATSAPP_TEST_RATE_LIMITED/)
+  assert.match(route, /previewSellerWhatsAppAlerts\(supabase, 1\)/)
   assert.match(route, /alertType: "system_test"/)
   assert.match(route, /enqueueSellerWhatsAppAlert/)
   assert.match(route, /deliverSellerWhatsAppAlerts/)

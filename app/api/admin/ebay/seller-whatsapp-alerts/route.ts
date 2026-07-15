@@ -94,28 +94,22 @@ async function deliverControlledPreviewTest(
     throw new Error("SELLER_WHATSAPP_ACCOUNT_SCOPE_REQUIRED")
   }
   const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1_000).toISOString()
-  const [pending, recentTests] = await Promise.all([
-    supabase
-      .from("ebay_seller_alert_outbox")
-      .select("id", { count: "exact", head: true })
-      .eq("channel", "whatsapp")
-      .eq("payload->>accountKey", accountScope.accountKey)
-      .in("status", ["pending", "failed", "leased"]),
-    supabase
-      .from("ebay_seller_alert_outbox")
-      .select("id", { count: "exact", head: true })
-      .eq("channel", "whatsapp")
-      .eq("payload->>accountKey", accountScope.accountKey)
-      .eq("alert_type", "system_test")
-      .gte("created_at", fiveMinutesAgo),
-  ])
-  if (pending.error || recentTests.error) {
+  const pending = await previewSellerWhatsAppAlerts(supabase, 1)
+  const recentTests = await supabase
+    .from("ebay_seller_alert_outbox")
+    .select("id")
+    .eq("channel", "whatsapp")
+    .eq("payload->>accountKey", accountScope.accountKey)
+    .eq("alert_type", "system_test")
+    .gte("created_at", fiveMinutesAgo)
+    .limit(1)
+  if (recentTests.error) {
     throw new Error("SELLER_WHATSAPP_TEST_PREFLIGHT_READ_FAILED")
   }
-  if ((pending.count ?? 0) > 0) {
+  if (pending.length > 0) {
     throw new Error("SELLER_WHATSAPP_TEST_QUEUE_NOT_EMPTY")
   }
-  if ((recentTests.count ?? 0) > 0) {
+  if ((recentTests.data?.length ?? 0) > 0) {
     throw new Error("SELLER_WHATSAPP_TEST_RATE_LIMITED")
   }
 
