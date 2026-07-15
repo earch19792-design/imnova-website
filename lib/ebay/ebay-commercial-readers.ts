@@ -87,7 +87,10 @@ async function wait(attempt: number) {
   ))
 }
 
-async function assertOfficialAccount(accessToken: string, fetchImpl: FetchLike) {
+export async function verifyEbayCommercialOfficialAccount(
+  accessToken: string,
+  fetchImpl: FetchLike = fetch,
+) {
   const identity = getEbayProductionIdentityBindingConfiguration()
   if (!identity.bound) throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_REQUIRED")
   const response = await fetchImpl(TRADING_ENDPOINT, {
@@ -117,6 +120,11 @@ async function assertOfficialAccount(accessToken: string, fetchImpl: FetchLike) 
   const fingerprintMatches = ebayProductionAccountFingerprint(userId) === identity.expectedAccountFingerprint
   if (!userMatches || !fingerprintMatches) {
     throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_MISMATCH")
+  }
+  return {
+    identityMatch: true as const,
+    fingerprintMatches: true as const,
+    userIdReturned: false as const,
   }
 }
 
@@ -163,7 +171,7 @@ export async function getEbayCompletedCheckoutOrders(input: {
   }
   const fetchImpl = input.fetchImpl ?? fetch
   const token = await getEbayCommercialOrdersAccessToken(fetchImpl)
-  await assertOfficialAccount(token, fetchImpl)
+  await verifyEbayCommercialOfficialAccount(token, fetchImpl)
   const initial = new URL(ORDERS_ENDPOINT)
   initial.searchParams.set(
     "filter",
@@ -256,7 +264,7 @@ export async function getEbayListingWatchers(input: {
     errors: [],
   }
   const token = await getEbayTradingReadOnlyAccessToken(fetchImpl)
-  await assertOfficialAccount(token, fetchImpl)
+  await verifyEbayCommercialOfficialAccount(token, fetchImpl)
   const observations: Awaited<ReturnType<typeof watcherRead>>[] = []
   const errors: Array<{ listingId: string; code: string }> = []
   let cursor = 0
