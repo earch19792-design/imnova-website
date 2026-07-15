@@ -1,5 +1,7 @@
 import "server-only"
 
+import { createHash } from "node:crypto"
+
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import {
@@ -40,7 +42,39 @@ type OAuthCredentials = {
   clientSecret: string
   runame: string
   pairComplete: boolean
+  clientSource: "EBAY_COMMERCIAL_ORDERS_CLIENT_ID" | "EBAY_CLIENT_ID"
+  clientSecretSource:
+    | "EBAY_COMMERCIAL_ORDERS_CLIENT_SECRET"
+    | "EBAY_CLIENT_SECRET"
+  runameSource:
+    | "EBAY_COMMERCIAL_ORDERS_RUNAME"
+    | "EBAY_RUNAME"
+    | "EBAY_RU_NAME"
+    | "EBAY_RuName"
+    | "NONE"
 }
+
+const CLIENT_ID_VARIABLES = [
+  "EBAY_COMMERCIAL_ORDERS_CLIENT_ID",
+  "EBAY_CLIENT_ID",
+] as const
+const CLIENT_SECRET_VARIABLES = [
+  "EBAY_COMMERCIAL_ORDERS_CLIENT_SECRET",
+  "EBAY_CLIENT_SECRET",
+] as const
+const RUNAME_VARIABLES = [
+  "EBAY_COMMERCIAL_ORDERS_RUNAME",
+  "EBAY_RUNAME",
+  "EBAY_RU_NAME",
+  "EBAY_RuName",
+] as const
+const AUDITED_OAUTH_VARIABLES = [
+  ...CLIENT_ID_VARIABLES,
+  ...CLIENT_SECRET_VARIABLES,
+  ...RUNAME_VARIABLES,
+] as const
+const OAUTH_INVISIBLE_CHARACTER_PATTERN =
+  /[\u0000-\u001f\u007f\u00a0\u200b-\u200f\u2028-\u202f\u2060\ufeff]/u
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -59,6 +93,24 @@ function safeCode(error: unknown) {
     : "EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_FAILED"
 }
 
+function fingerprint(value: string) {
+  return value
+    ? `sha256:${createHash("sha256").update(value, "utf8").digest("hex").slice(0, 16)}`
+    : null
+}
+
+function variableState(environment: NodeJS.ProcessEnv, name: string) {
+  if (!(name in environment)) return "MISSING" as const
+  return environment[name]?.trim() ? "PRESENT" as const : "EMPTY" as const
+}
+
+function presentVariables(
+  environment: NodeJS.ProcessEnv,
+  names: readonly string[],
+) {
+  return names.filter((name) => Boolean(environment[name]?.trim()))
+}
+
 function authorizationError(category: EbayCommercialOAuthCategory) {
   return new Error(`EBAY_COMMERCIAL_ORDERS_OAUTH_${category}`)
 }
@@ -70,17 +122,77 @@ function getCredentials(environment: NodeJS.ProcessEnv): OAuthCredentials {
   const genericClientSecret = environment.EBAY_CLIENT_SECRET?.trim() ?? ""
   const partialDedicatedPair = Boolean(dedicatedClientId) !== Boolean(dedicatedClientSecret)
   const useDedicatedPair = Boolean(dedicatedClientId && dedicatedClientSecret)
-  const runame = environment.EBAY_COMMERCIAL_ORDERS_RUNAME?.trim()
-    || environment.EBAY_RUNAME?.trim()
-    || environment.EBAY_RU_NAME?.trim()
-    || environment.EBAY_RuName?.trim()
-    || ""
+  const runameSource = RUNAME_VARIABLES.find(
+    (name) => Boolean(environment[name]?.trim()),
+  ) ?? "NONE"
+  const runame = runameSource === "NONE"
+    ? ""
+    : environment[runameSource]?.trim() ?? ""
 
   return {
     clientId: useDedicatedPair ? dedicatedClientId : genericClientId,
     clientSecret: useDedicatedPair ? dedicatedClientSecret : genericClientSecret,
     runame,
     pairComplete: !partialDedicatedPair,
+    clientSource: useDedicatedPair
+      ? "EBAY_COMMERCIAL_ORDERS_CLIENT_ID"
+      : "EBAY_CLIENT_ID",
+    clientSecretSource: useDedicatedPair
+      ? "EBAY_COMMERCIAL_ORDERS_CLIENT_SECRET"
+      : "EBAY_CLIENT_SECRET",
+    runameSource,
+  }
+}
+
+export function getEbayCommercialOrdersAuthorizationAudit(
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  const credentials = getCredentials(environment)
+  const dedicatedClientId = environment.EBAY_COMMERCIAL_ORDERS_CLIENT_ID?.trim() ?? ""
+  const dedicatedClientSecret =
+    environment.EBAY_COMMERCIAL_ORDERS_CLIENT_SECRET?.trim() ?? ""
+  const variableStates = Object.fromEntries(
+    AUDITED_OAUTH_VARIABLES.map((name) => [
+      name,
+      variableState(environment, name),
+    ]),
+  )
+  const leadingOrTrailingWhitespace = AUDITED_OAUTH_VARIABLES.filter((name) => {
+    const raw = environment[name]
+    return typeof raw === "string" && raw !== raw.trim()
+  })
+  const controlOrInvisibleCharacters = AUDITED_OAUTH_VARIABLES.filter((name) =>
+    OAUTH_INVISIBLE_CHARACTER_PATTERN.test(environment[name] ?? "")
+  )
+  const percentEncodedValues = AUDITED_OAUTH_VARIABLES.filter((name) =>
+    /%[0-9a-f]{2}/i.test(environment[name]?.trim() ?? "")
+  )
+
+  return {
+    effectiveClientIdFingerprint: fingerprint(credentials.clientId),
+    effectiveRuNameFingerprint: fingerprint(credentials.runame),
+    dedicatedClientPairPresent: Boolean(
+      dedicatedClientId && dedicatedClientSecret,
+    ),
+    dedicatedClientPairPartial:
+      Boolean(dedicatedClientId) !== Boolean(dedicatedClientSecret),
+    clientSource: credentials.clientSource,
+    clientSecretSource: credentials.clientSecretSource,
+    runameSource: credentials.runameSource,
+    variableStates,
+    clientIdVariablesPresent: presentVariables(
+      environment,
+      CLIENT_ID_VARIABLES,
+    ),
+    clientSecretVariablesPresent: presentVariables(
+      environment,
+      CLIENT_SECRET_VARIABLES,
+    ),
+    runameVariablesPresent: presentVariables(environment, RUNAME_VARIABLES),
+    leadingOrTrailingWhitespace,
+    controlOrInvisibleCharacters,
+    percentEncodedValues,
+    secretsReturned: false as const,
   }
 }
 
@@ -105,6 +217,7 @@ export function getEbayCommercialOrdersAuthorizationConfiguration(
     runame: credentials.runame ? "PRESENT" as const : "MISSING" as const,
     identityBinding: identity.bound ? "READY" as const : "MISSING" as const,
     scopes: [...EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES],
+    audit: getEbayCommercialOrdersAuthorizationAudit(environment),
     secretsReturned: false as const,
   }
 }
@@ -192,6 +305,8 @@ export async function diagnoseEbayCommercialOrdersConsentRequest(
     doubleEncodingDetected: false as const,
     plusSeparatorDetected: false as const,
     redirectUriUsesExactRuname: true as const,
+    configurationAudit:
+      getEbayCommercialOrdersAuthorizationAudit(environment),
     handoffCreated: false as const,
     secretsReturned: false as const,
     authorizationUrlReturned: false as const,
