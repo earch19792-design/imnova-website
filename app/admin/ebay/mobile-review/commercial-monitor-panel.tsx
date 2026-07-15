@@ -31,6 +31,14 @@ type MonitorMetrics = Record<string, unknown> & {
   ebayWrites?: number
   buyerPiiReturned?: boolean
   commercialDataPersistencePerformed?: boolean
+  authentication?: {
+    ordersOAuth?: string
+    watchersAuth?: string
+    analyticsAuth?: string
+    fulfillmentScopeConfirmed?: boolean
+    officialIdentityMatch?: boolean | null
+    actionRequired?: string
+  }
   analytics?: {
     impressions?: number
     views?: number
@@ -86,6 +94,11 @@ function statusTone(status: string | undefined) {
 
 function value(input: unknown) {
   return typeof input === "number" ? new Intl.NumberFormat("es-US").format(input) : "0"
+}
+
+function authLabel(status: string | undefined) {
+  if (status === "CLIENT_CREDENTIAL_MISMATCH") return "CLIENT_MISMATCH"
+  return status ?? "PENDIENTE"
 }
 
 export function CommercialMonitorPanel() {
@@ -203,6 +216,7 @@ export function CommercialMonitorPanel() {
   const displayedDryRun = dryRunResult ?? (run?.metrics?.dryRun === true ? run : null)
   const dryRunMetrics = displayedDryRun?.metrics
   const dryRunReaders: Record<string, CommercialMonitorReaderView> = displayedDryRun?.readers ?? {}
+  const dryRunAuthentication = dryRunMetrics?.authentication
   const dryRunSatisfactory = gateNow > 0
     && isSatisfactoryCommercialDryRun(displayedDryRun, gateNow)
   const dryRunValue = (input: unknown) => displayedDryRun ? value(input) : "—"
@@ -282,9 +296,32 @@ export function CommercialMonitorPanel() {
           })}
         </div>
 
+        <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-5">
+          <div className="rounded-xl border border-white/10 p-2">
+            <dt className="text-white/45">Orders OAuth</dt>
+            <dd className="mt-1 break-words font-black text-cyan-50">{authLabel(dryRunReaders.orders?.auth?.status ?? dryRunAuthentication?.ordersOAuth)}</dd>
+          </div>
+          <div className="rounded-xl border border-white/10 p-2">
+            <dt className="text-white/45">Watchers auth</dt>
+            <dd className="mt-1 break-words font-black text-cyan-50">{authLabel(dryRunReaders.watchers?.auth?.status ?? dryRunAuthentication?.watchersAuth)}</dd>
+          </div>
+          <div className="rounded-xl border border-white/10 p-2">
+            <dt className="text-white/45">Analytics auth</dt>
+            <dd className="mt-1 break-words font-black text-cyan-50">{authLabel(dryRunReaders.analytics?.auth?.status ?? dryRunAuthentication?.analyticsAuth)}</dd>
+          </div>
+          <div className="rounded-xl border border-white/10 p-2">
+            <dt className="text-white/45">Scope fulfillment confirmado</dt>
+            <dd className="mt-1 font-black text-cyan-50">{dryRunAuthentication ? (dryRunAuthentication.fulfillmentScopeConfirmed ? "SÍ" : "NO") : "PENDIENTE"}</dd>
+          </div>
+          <div className="rounded-xl border border-white/10 p-2">
+            <dt className="text-white/45">Identidad oficial</dt>
+            <dd className="mt-1 font-black text-cyan-50">{dryRunAuthentication?.officialIdentityMatch === true ? "MATCH" : dryRunAuthentication?.officialIdentityMatch === false ? "NO MATCH" : "PENDIENTE"}</dd>
+          </div>
+        </dl>
+
         <div className="mt-3 rounded-xl bg-black/25 p-3 text-sm">
           <span className="text-white/45">Próxima acción</span>
-          <p className="mt-1 font-bold text-cyan-50">{displayedDryRun?.nextAction ?? displayedDryRun?.next_action ?? "Ejecutar el dry run seguro."}</p>
+          <p className="mt-1 font-bold text-cyan-50">{dryRunAuthentication?.actionRequired ?? displayedDryRun?.nextAction ?? displayedDryRun?.next_action ?? "Ejecutar el dry run seguro."}</p>
         </div>
       </section>
 

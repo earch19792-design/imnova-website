@@ -27,6 +27,10 @@ import {
   getEbayCompletedCheckoutOrders,
   getEbayListingWatchers,
 } from "./ebay-commercial-readers"
+import {
+  getEbayCommercialReaderAuthState,
+  settleEbayCommercialReaderPromises,
+} from "./ebay-commercial-oauth-domain"
 import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
 
 const MARKETPLACE = "EBAY_US"
@@ -77,6 +81,7 @@ type ReaderState = {
   observedAt: string | null
   metrics?: Record<string, unknown>
   error?: string
+  auth?: ReturnType<typeof getEbayCommercialReaderAuthState>
 }
 
 type RunError = { reader: string; code: string; retryable: boolean }
@@ -1001,9 +1006,15 @@ export async function runEbayCommercialMonitor(
     const watchersPromise = lanes.includes("watchers")
       ? getEbayListingWatchers({ listingIds: listings.map((row) => row.ebay_item_id) })
       : Promise.resolve(null)
-    const [orderResult, analyticsResult, watchersResult] = await Promise.allSettled([
-      orderPromise, analyticsPromise, watchersPromise,
-    ])
+    const {
+      orders: orderResult,
+      analytics: analyticsResult,
+      watchers: watchersResult,
+    } = await settleEbayCommercialReaderPromises({
+      orders: orderPromise,
+      analytics: analyticsPromise,
+      watchers: watchersPromise,
+    })
 
     let orders: SafeMarketplaceOrder[] = []
     let analytics: Awaited<ReturnType<typeof getComparableEbayTrafficAnalytics>> | null = null
@@ -1015,10 +1026,17 @@ export async function runEbayCommercialMonitor(
         source: orderResult.value.source,
         observedAt: orderResult.value.observedAt,
         metrics: { orders: orders.length, pagesRead: orderResult.value.pagesRead },
+        auth: getEbayCommercialReaderAuthState("orders"),
       }
     } else if (lanes.includes("orders")) {
       const code = safeCode(orderResult.status === "rejected" ? orderResult.reason : null, "EBAY_ORDERS_READ_FAILED")
-      readers.orders = { status: "unavailable", source: "EBAY_SELL_FULFILLMENT_GET_ORDERS", observedAt, error: code }
+      readers.orders = {
+        status: "unavailable",
+        source: "EBAY_SELL_FULFILLMENT_GET_ORDERS",
+        observedAt,
+        error: code,
+        auth: getEbayCommercialReaderAuthState("orders", code),
+      }
       errors.push({ reader: "orders", code, retryable: true })
     } else readers.orders = { status: "skipped", source: "schedule", observedAt: null }
 
@@ -1034,13 +1052,20 @@ export async function runEbayCommercialMonitor(
           windowEnd: analytics.windowEnd,
           completenessStatus: analytics.completenessStatus,
         },
+        auth: getEbayCommercialReaderAuthState("analytics"),
       }
       if (analytics.status !== "AVAILABLE") {
         errors.push({ reader: "analytics", code: "EBAY_ANALYTICS_WINDOW_INCOMPLETE", retryable: true })
       }
     } else if (lanes.includes("analytics")) {
       const code = safeCode(analyticsResult.status === "rejected" ? analyticsResult.reason : null, "EBAY_ANALYTICS_READ_FAILED")
-      readers.analytics = { status: "unavailable", source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT", observedAt, error: code }
+      readers.analytics = {
+        status: "unavailable",
+        source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT",
+        observedAt,
+        error: code,
+        auth: getEbayCommercialReaderAuthState("analytics", code),
+      }
       errors.push({ reader: "analytics", code, retryable: true })
     } else readers.analytics = { status: "skipped", source: "schedule", observedAt: null }
 
@@ -1051,13 +1076,20 @@ export async function runEbayCommercialMonitor(
         source: watchers.source,
         observedAt,
         metrics: { listings: watchers.observations.length, errors: watchers.errors.length },
+        auth: getEbayCommercialReaderAuthState("watchers"),
       }
       for (const error of watchers.errors) {
         errors.push({ reader: "watchers", code: error.code, retryable: true })
       }
     } else if (lanes.includes("watchers")) {
       const code = safeCode(watchersResult.status === "rejected" ? watchersResult.reason : null, "EBAY_WATCHERS_READ_FAILED")
-      readers.watchers = { status: "unavailable", source: "EBAY_TRADING_GET_ITEM_WATCHCOUNT", observedAt, error: code }
+      readers.watchers = {
+        status: "unavailable",
+        source: "EBAY_TRADING_GET_ITEM_WATCHCOUNT",
+        observedAt,
+        error: code,
+        auth: getEbayCommercialReaderAuthState("watchers", code),
+      }
       errors.push({ reader: "watchers", code, retryable: true })
     } else readers.watchers = { status: "skipped", source: "schedule", observedAt: null }
 
@@ -1066,6 +1098,21 @@ export async function runEbayCommercialMonitor(
         status: "skipped",
         source: "DRY_RUN_NO_OUTBOX_CLAIM",
         observedAt: null,
+      }
+      const authentication = {
+        ordersOAuth: readers.orders.auth?.status ?? "NOT_RUN",
+        watchersAuth: readers.watchers.auth?.status ?? "NOT_RUN",
+        analyticsAuth: readers.analytics.auth?.status ?? "NOT_RUN",
+        fulfillmentScopeConfirmed: readers.orders.auth?.scopeConfirmed === true,
+        officialIdentityMatch: Object.values(readers)
+          .some((reader) => reader.auth?.identityMatch === false)
+          ? false
+          : Object.values(readers).some((reader) => reader.auth?.identityMatch === true)
+            ? true
+            : null,
+        actionRequired: [readers.orders, readers.watchers, readers.analytics]
+          .find((reader) => reader.auth?.status && reader.auth.status !== "READY")
+          ?.auth?.actionRequired ?? "Sin acción de autenticación; continuar con el dry run read-only.",
       }
       const metrics = {
         dryRun: true,
@@ -1083,11 +1130,12 @@ export async function runEbayCommercialMonitor(
         whatsappDelivered: 0,
         ebayWrites: 0,
         buyerPiiReturned: false,
+        authentication,
         thresholdConfigVersion: thresholds.version,
       }
       const status = errors.length ? "partial" as const : "completed" as const
       const nextAction = errors.length
-        ? "Corregir los lectores fallidos antes de una actualización persistente."
+        ? authentication.actionRequired
         : "Dry run correcto; ejecutar una actualización manual controlada para persistir snapshots."
       await finishRun(supabase, runId, workerId, status, readers, metrics, errors, nextAction)
       return {

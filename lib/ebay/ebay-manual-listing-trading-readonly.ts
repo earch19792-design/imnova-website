@@ -269,6 +269,13 @@ async function getTradingAccessToken(
   return accessToken
 }
 
+/** Shared, validated Trading OAuth provider for server-side read-only calls. */
+export async function getEbayTradingReadOnlyAccessToken(
+  fetchImpl: FetchLike = fetch,
+) {
+  return getTradingAccessToken(fetchImpl)
+}
+
 function requestXml(callName: "GetUser" | "GetItem", ebayItemId?: string) {
   if (callName === "GetUser") {
     return "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +

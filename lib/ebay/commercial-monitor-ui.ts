@@ -6,6 +6,14 @@ export type CommercialMonitorReaderView = {
   observedAt?: string | null
   error?: string
   metrics?: Record<string, unknown>
+  auth?: {
+    status?: string
+    requiredScope?: string
+    scopeConfirmed?: boolean
+    identityMatch?: boolean | null
+    actionRequired?: string
+    rawOAuthDescriptionExposed?: boolean
+  }
 }
 
 export type CommercialMonitorRunView = {
@@ -65,6 +73,13 @@ export function isSatisfactoryCommercialDryRun(
   if (errors.some(({ code }) => /IDENTITY|ACCOUNT/i.test(code ?? ""))) return false
   if (errors.some(({ reader, code }) =>
     reader === "orders" && /AUTH|OAUTH|TOKEN|SCOPE|_401$|_403$/i.test(code ?? "")
+  )) return false
+  if (
+    run.readers?.orders?.auth?.status &&
+    run.readers.orders.auth.status !== "READY"
+  ) return false
+  if (Object.values(run.readers ?? {}).some((reader) =>
+    reader.auth?.rawOAuthDescriptionExposed === true
   )) return false
 
   const buyerPiiReturned = run.safety?.buyerPiiReturned ?? metrics.buyerPiiReturned

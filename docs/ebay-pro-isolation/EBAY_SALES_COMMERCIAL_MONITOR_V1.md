@@ -80,7 +80,10 @@ listing y se emite una sola vez.
 ## APIs
 
 - `GET /api/admin/ebay/commercial-monitor`: dashboard sanitario sin PII.
-- `POST /api/admin/ebay/commercial-monitor`: actualización manual completa.
+- `POST /api/admin/ebay/commercial-monitor` con `action=run`: dry run o
+  actualización manual explícita.
+- `POST ... {"action":"oauth_preflight"}`: valida OAuth/identidad read-only y
+  devuelve únicamente categorías sanitizadas; no llama `getOrders`/`GetItem`.
 - `POST ... {"action":"update_thresholds", ...}`: nueva versión activa de
   umbrales.
 - `GET /api/cron/ebay-commercial-monitor`: ejecuta sólo los readers vencidos.
@@ -107,8 +110,9 @@ en `vercel.json` y todos los feature flags nuevos tienen default `false`.
 
 ## Activación controlada
 
-Antes de GO se requiere aplicar la migración en staging, confirmar que el
-refresh token incluye `sell.fulfillment.readonly`, desplegar Preview, ejecutar
-un dry run, pulsar **Actualizar rendimiento** una vez para el listing piloto y
-revisar que WhatsApp apunte al único destinatario autorizado. Sólo después se
+Antes de GO se requiere aplicar la migración en staging, autorizar manualmente
+`EBAY_COMMERCIAL_ORDERS_REFRESH_TOKEN` con `sell.fulfillment.readonly`,
+desplegar Preview, ejecutar un dry run, pulsar **Actualizar rendimiento** una
+vez para el listing piloto y revisar que WhatsApp apunte al único destinatario
+autorizado. El token general validado no se sustituye. Sólo después se
 habilitan el flag de Vercel Preview y la variable del workflow.

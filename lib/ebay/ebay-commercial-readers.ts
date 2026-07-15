@@ -13,9 +13,16 @@ import {
   normalizeCompletedEbayOrders,
   type SafeMarketplaceOrder,
 } from "../marketplace/commercial-monitor-domain"
+import {
+  clearEbayCommercialOrdersAccessToken,
+  getEbayCommercialOrdersAccessToken,
+  getEbayCommercialOrdersOAuthConfiguration,
+} from "./ebay-commercial-oauth"
+import {
+  getEbayTradingReadOnlyAccessToken,
+} from "./ebay-manual-listing-trading-readonly"
 
 const EBAY_API_ORIGIN = "https://api.ebay.com"
-const TOKEN_ENDPOINT = `${EBAY_API_ORIGIN}/identity/v1/oauth2/token`
 const ORDERS_ENDPOINT = `${EBAY_API_ORIGIN}/sell/fulfillment/v1/order`
 const TRADING_ENDPOINT = `${EBAY_API_ORIGIN}/ws/api.dll`
 const TRADING_COMPATIBILITY_LEVEL = "1423"
@@ -24,16 +31,9 @@ const REQUEST_TIMEOUT_MS = 12_000
 const MAX_RETRIES = 3
 const MAX_ORDER_PAGES = 20
 const WATCHER_CONCURRENCY = 4
-const FULFILLMENT_SCOPE = [
-  "https://api.ebay.com/oauth/api_scope",
-  "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
-].join(" ")
 
 type JsonRecord = Record<string, unknown>
 type FetchLike = typeof fetch
-
-type CachedToken = { value: string; expiresAt: number }
-let cachedFulfillmentToken: CachedToken | null = null
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -87,51 +87,6 @@ async function wait(attempt: number) {
   ))
 }
 
-async function getFulfillmentToken(fetchImpl: FetchLike = fetch) {
-  if (cachedFulfillmentToken && cachedFulfillmentToken.expiresAt > Date.now() + 60_000) {
-    return cachedFulfillmentToken.value
-  }
-  const clientId = process.env.EBAY_CLIENT_ID?.trim() ?? ""
-  const clientSecret = process.env.EBAY_CLIENT_SECRET?.trim() ?? ""
-  const refreshToken = process.env.EBAY_SELLER_REFRESH_TOKEN?.trim() ?? ""
-  if (!clientId || !clientSecret) throw new Error("EBAY_READONLY_ENV_MISSING")
-  if (!refreshToken) throw new Error("EBAY_SELLER_OAUTH_NOT_CONFIGURED")
-  const credentials = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")
-
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
-    const response = await fetchImpl(TOKEN_ENDPOINT, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${credentials}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-        scope: FULFILLMENT_SCOPE,
-      }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
-    if (response.ok) {
-      const payload = record(await response.json())
-      const accessToken = text(payload.access_token)
-      if (!accessToken) throw new Error("EBAY_FULFILLMENT_TOKEN_MISSING")
-      const expiresIn = Math.max(120, numeric(payload.expires_in) ?? 7_200)
-      cachedFulfillmentToken = {
-        value: accessToken,
-        expiresAt: Date.now() + expiresIn * 1_000,
-      }
-      return accessToken
-    }
-    if (!retryable(response.status) || attempt === MAX_RETRIES - 1) {
-      throw new Error(`EBAY_FULFILLMENT_OAUTH_${response.status}`)
-    }
-    await wait(attempt)
-  }
-  throw new Error("EBAY_FULFILLMENT_OAUTH_FAILED")
-}
-
 async function assertOfficialAccount(accessToken: string, fetchImpl: FetchLike) {
   const identity = getEbayProductionIdentityBindingConfiguration()
   if (!identity.bound) throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_REQUIRED")
@@ -180,7 +135,7 @@ async function ordersPage(url: URL, token: string, fetchImpl: FetchLike) {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
     if (response.ok) return record(await response.json())
-    if (response.status === 401) cachedFulfillmentToken = null
+    if (response.status === 401) clearEbayCommercialOrdersAccessToken()
     if (!retryable(response.status) || attempt === MAX_RETRIES - 1) {
       throw new Error(`EBAY_ORDERS_READ_${response.status}`)
     }
@@ -207,7 +162,7 @@ export async function getEbayCompletedCheckoutOrders(input: {
     throw new Error("EBAY_ORDERS_DATE_RANGE_INVALID")
   }
   const fetchImpl = input.fetchImpl ?? fetch
-  const token = await getFulfillmentToken(fetchImpl)
+  const token = await getEbayCommercialOrdersAccessToken(fetchImpl)
   await assertOfficialAccount(token, fetchImpl)
   const initial = new URL(ORDERS_ENDPOINT)
   initial.searchParams.set(
@@ -300,7 +255,7 @@ export async function getEbayListingWatchers(input: {
     observations: [],
     errors: [],
   }
-  const token = await getFulfillmentToken(fetchImpl)
+  const token = await getEbayTradingReadOnlyAccessToken(fetchImpl)
   await assertOfficialAccount(token, fetchImpl)
   const observations: Awaited<ReturnType<typeof watcherRead>>[] = []
   const errors: Array<{ listingId: string; code: string }> = []
@@ -390,8 +345,19 @@ export async function getComparableEbayTrafficAnalytics(input: {
 
 export function getEbayCommercialReadersConfiguration() {
   const account = getEbaySellerAccountScopeConfiguration()
+  const orders = getEbayCommercialOrdersOAuthConfiguration()
   return {
     configured: Boolean(
+      process.env.EBAY_CLIENT_ID?.trim() &&
+      process.env.EBAY_CLIENT_SECRET?.trim() &&
+      process.env.EBAY_SELLER_REFRESH_TOKEN?.trim() &&
+      orders.configured &&
+      account.configured
+    ),
+    ordersConfigured: orders.configured,
+    ordersRefreshTokenSource: orders.refreshTokenSource,
+    ordersGeneralRefreshTokenFallbackAllowed: false,
+    watchersConfigured: Boolean(
       process.env.EBAY_CLIENT_ID?.trim() &&
       process.env.EBAY_CLIENT_SECRET?.trim() &&
       process.env.EBAY_SELLER_REFRESH_TOKEN?.trim() &&

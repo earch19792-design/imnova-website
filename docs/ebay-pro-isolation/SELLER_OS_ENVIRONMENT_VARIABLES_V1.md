@@ -14,16 +14,20 @@ Status enums: `PRESENT`, `MISSING`, `INVALID_FORMAT`, `IDENTITY_UNBOUND`,
 |---|---|---:|---|---|---|
 | `EBAY_CLIENT_ID` | OAuth client for seller reads | No | Preview/Production; official eBay app | Missing blocks | Trading, Inventory read-only and Analytics share it |
 | `EBAY_CLIENT_SECRET` | OAuth client secret | Yes | Server only | Missing blocks | Shared by all generic seller-read gateways |
-| `EBAY_SELLER_REFRESH_TOKEN` | Official seller authorization | Yes | Server only; must include each required read scope | Missing blocks; preflight reports `SCOPE_NOT_VERIFIED` | A token from another account must never be inherited |
+| `EBAY_SELLER_REFRESH_TOKEN` | Official seller authorization for Trading and Analytics reads | Yes | Server only; existing validated consent | Missing blocks Trading/Analytics | Never replaced automatically and never inherited by Orders |
+| `EBAY_COMMERCIAL_ORDERS_REFRESH_TOKEN` | Dedicated Orders authorization | Yes | Preview server only; must include `sell.fulfillment.readonly` | Missing blocks Orders only | Never falls back to `EBAY_SELLER_REFRESH_TOKEN` |
+| `EBAY_COMMERCIAL_ORDERS_CLIENT_ID` | Optional dedicated Orders OAuth client | No | Preview server; define only with matching secret | Missing uses the general Client ID with the dedicated refresh token | Partial pair is rejected |
+| `EBAY_COMMERCIAL_ORDERS_CLIENT_SECRET` | Optional dedicated Orders OAuth secret | Yes | Preview server; define only with matching Client ID | Missing uses the general Client Secret with the dedicated refresh token | Partial pair is rejected |
 | `EBAY_SELLER_ACCOUNT_KEY` | Human-readable account alias | No | Server; `A-Za-z0-9._-`, max 80 | Missing blocks account-scoped workflows | Combined with the verified identity fingerprint |
 | `EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID` | Expected official seller identity | Sensitive | Server/Preview and read-only verification | Missing requires a valid fingerprint | Shared identity binding for manual listing, sync and Production target |
 | `EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_CREDENTIAL_FINGERPRINT` | Preferred 64-hex expected identity fingerprint | Sensitive | Server | Missing falls back to account fingerprint alias or User ID derivation | Takes precedence over `...EXPECTED_ACCOUNT_FINGERPRINT` |
 | `EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_ACCOUNT_FINGERPRINT` | Compatibility alias for expected fingerprint | Sensitive | Server | Missing is safe if preferred name/User ID binds identity | Lower precedence; avoid defining both differently |
 
-The generic refresh token is reused for Trading, Inventory read-only,
-Fulfillment read-only and Analytics. Commercial monitoring additionally
-requires `sell.fulfillment.readonly`. Scope and account identity must both be
-verified; presence alone is not proof of authorization.
+The generic refresh token remains the validated Trading/Analytics identity.
+Fulfillment Orders uses a dedicated refresh token and never falls back to the
+generic token. Commercial monitoring requires `sell.fulfillment.readonly` on
+that dedicated consent. Scope and account identity must both be verified;
+presence alone is not proof of authorization.
 
 ## Draft Sandbox
 
@@ -114,11 +118,13 @@ credential is accepted from the client.
 
 1. Sandbox never inherits Production or generic credentials.
 2. Production draft credentials never inherit the generic read-only token.
-3. `...EXPECTED_CREDENTIAL_FINGERPRINT` wins over the compatibility
+3. Commercial Orders never inherits `EBAY_SELLER_REFRESH_TOKEN`; a missing
+   dedicated refresh token blocks only Orders, not Watchers or Analytics.
+4. `...EXPECTED_CREDENTIAL_FINGERPRINT` wins over the compatibility
    `...EXPECTED_ACCOUNT_FINGERPRINT` alias.
-4. `...PREFLIGHT_HMAC_SECRET` wins over the compatibility
+5. `...PREFLIGHT_HMAC_SECRET` wins over the compatibility
    `...PREFLIGHT_SNAPSHOT_SECRET` alias.
-5. Defining both an alias and its preferred name with different values is an
+6. Defining both an alias and its preferred name with different values is an
    invalid operational configuration even though only the preferred value is
    consumed.
-6. Flags default to false. Presence of credentials never enables a write.
+7. Flags default to false. Presence of credentials never enables a write.

@@ -14,6 +14,7 @@ import {
   type CommercialMonitorLane,
 } from "@/lib/ebay/ebay-commercial-monitor-service"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
+import { getEbayCommercialOAuthPreflight } from "@/lib/ebay/ebay-commercial-oauth"
 import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
@@ -98,6 +99,19 @@ export async function POST(req: Request) {
         userId: validation.userId,
       })
       return NextResponse.json({ success: true, action: "update_thresholds", thresholds })
+    }
+    if (input.action === "oauth_preflight") {
+      return NextResponse.json({
+        success: true,
+        action: "oauth_preflight",
+        preflight: await getEbayCommercialOAuthPreflight(),
+      })
+    }
+    if (input.action !== "run") {
+      return NextResponse.json(
+        { success: false, error: "COMMERCIAL_MONITOR_ACTION_INVALID" },
+        { status: 400 },
+      )
     }
     const result = await runEbayCommercialMonitor(supabase, {
       triggerSource: input.dryRun === true ? "dry_run" : "manual",
