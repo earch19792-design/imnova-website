@@ -22,9 +22,9 @@ const actions = [
 const operationLinks = [
   {
     href: "/admin/ebay/listings/register",
-    title: "Registrar listing manual",
-    copy: "Vincula el primer Item ID de eBay con su SKU Luna y reutiliza sus campos confirmados.",
-    cta: "Registrar primer listing →",
+    title: "Vincular listing activo",
+    copy: "El asistente te ayuda a elegir el producto, confirmar su SKU y verificar el Item ID sin perderte entre pantallas.",
+    cta: "Abrir asistente guiado →",
   },
   {
     href: "/admin/ebay/mobile-review?section=in-progress",

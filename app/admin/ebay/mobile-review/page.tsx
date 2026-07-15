@@ -866,7 +866,7 @@ export default function EbayMobileReviewPage() {
               </article>
             ))}
             {serverReviewsLoadState === "READY" && serverReviews.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/70">Todavía no hay revisiones guardadas en el servidor.</p>}
-            <a href="/admin/ebay/listings/register" className="inline-flex min-h-12 w-full items-center justify-center rounded-2xl border border-cyan-200/30 px-3 text-center font-black text-cyan-50">Registrar listing manual</a>
+            <a href="/admin/ebay/listings/register" className="inline-flex min-h-12 w-full items-center justify-center rounded-2xl border border-cyan-200/30 px-3 text-center font-black text-cyan-50">Abrir asistente para vincular listing</a>
             <details className="rounded-2xl border border-white/10 p-3"><summary className="cursor-pointer text-sm font-bold">Revisiones locales anteriores</summary><p className="mt-2 text-xs text-white/60">En revisión / Pinned Candidates · {pinnedContinuity.pinnedCandidates.length} guardadas en este navegador.</p><span className="sr-only">RECHECK_PINNED_CANDIDATE CONTINUE_EBAY_MARKET_VALIDATION MARK_PINNED_UNAVAILABLE HOLD_PINNED_FOR_REVIEW UNPIN_CANDIDATE BROWSER_STATE_OR_LOCAL_STORAGE</span></details>
           </section>
         )}

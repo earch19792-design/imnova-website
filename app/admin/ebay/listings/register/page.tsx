@@ -44,6 +44,19 @@ type ListingTemplate = {
   updated_at: string
 }
 
+type ProductOption = {
+  id: string
+  candidate_key: string
+  product_title: string
+  variant_title: string | null
+  supplier_sku: string | null
+  can_open_listing_workspace: boolean
+  can_prepare_listing_package: boolean
+  listing_intake_url: string | null
+  listing_workspace_blockers: string[]
+  listing_workspace_resolvable_gates: string[]
+}
+
 type ApiPayload = {
   success?: boolean
   error?: string
@@ -61,6 +74,14 @@ type ApiPayload = {
     accountScopeConfigured?: boolean
     accountScopeReason?: string | null
     readonlyConnectorConfigured?: boolean
+  }
+}
+
+type CommandCenterPayload = {
+  success?: boolean
+  error?: string
+  dashboard?: {
+    queue?: ProductOption[]
   }
 }
 
@@ -188,6 +209,26 @@ function templateFacts(template: ListingTemplate) {
   ].filter((entry): entry is [string, string] => Boolean(entry[1]))
 }
 
+function workspaceUrl(product: ProductOption) {
+  if (product.listing_intake_url) return product.listing_intake_url
+  if (product.can_open_listing_workspace) {
+    return "/admin/ebay/listing-workspace" +
+      `?opportunity=${encodeURIComponent(product.id)}` +
+      `&candidate=${encodeURIComponent(product.candidate_key)}`
+  }
+  return `/admin/ebay/opportunity-queue#opportunity-${encodeURIComponent(product.id)}`
+}
+
+function helperBlocker(product: ProductOption) {
+  const blocker = [
+    ...product.listing_workspace_resolvable_gates,
+    ...product.listing_workspace_blockers,
+  ][0]
+  return blocker
+    ? blocker.replaceAll("_", " ").toLocaleLowerCase("es")
+    : "completar la validación del producto"
+}
+
 export default function RegisterManualEbayListingPage() {
   const [form, setForm] = useState<FormState>(emptyForm)
   const [registrations, setRegistrations] = useState<Registration[]>([])
@@ -199,6 +240,10 @@ export default function RegisterManualEbayListingPage() {
   const [connectorConfigured, setConnectorConfigured] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [helperProducts, setHelperProducts] = useState<ProductOption[]>([])
+  const [helperLoading, setHelperLoading] = useState(true)
+  const [helperError, setHelperError] = useState("")
+  const [productSearch, setProductSearch] = useState("")
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
 
@@ -207,6 +252,21 @@ export default function RegisterManualEbayListingPage() {
     [registrations],
   )
   const hasProductContext = Boolean(form.opportunityId || form.candidateKey)
+  const visibleHelperProducts = useMemo(() => {
+    const search = productSearch.trim().toLocaleLowerCase("es")
+    return [...helperProducts]
+      .filter((product) => !search || [
+        product.product_title,
+        product.variant_title,
+        product.supplier_sku,
+        product.candidate_key,
+      ].some((value) => value?.toLocaleLowerCase("es").includes(search)))
+      .sort((left, right) =>
+        Number(right.can_open_listing_workspace) -
+          Number(left.can_open_listing_workspace) ||
+        left.product_title.localeCompare(right.product_title, "es"))
+      .slice(0, 8)
+  }, [helperProducts, productSearch])
 
   const apiRequest = useCallback(async (
     method: "GET" | "POST",
@@ -256,6 +316,32 @@ export default function RegisterManualEbayListingPage() {
     }
   }, [apiRequest])
 
+  const loadHelperProducts = useCallback(async () => {
+    setHelperLoading(true)
+    setHelperError("")
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError || !data.session) throw new Error("admin_token_required")
+      const response = await fetch("/api/admin/ebay/command-center", {
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+        },
+      })
+      const payload = await response.json() as CommandCenterPayload
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.error || "COMMAND_CENTER_STATE_READ_FAILED")
+      }
+      setHelperProducts(payload.dashboard?.queue ?? [])
+    } catch {
+      setHelperError(
+        "No pudimos cargar los productos. Actualiza la sesión o abre la cola técnica.",
+      )
+    } finally {
+      setHelperLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     const search = new URLSearchParams(window.location.search)
     setForm((current) => ({
@@ -268,7 +354,8 @@ export default function RegisterManualEbayListingPage() {
     }))
     setExpectedSellerSku(search.get("expectedSku") ?? "")
     void loadRegistrations()
-  }, [loadRegistrations])
+    void loadHelperProducts()
+  }, [loadHelperProducts, loadRegistrations])
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }))
@@ -470,11 +557,50 @@ export default function RegisterManualEbayListingPage() {
                 ? "Configura la cuenta oficial para continuar"
                 : "Vincular y verificar en eBay"}
           </button>
-        </form> : <section className="rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.06] p-6 text-center">
-          <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/60">Falta seleccionar el producto</p>
-          <h2 className="mt-2 text-2xl font-black">Abre el listing desde su Workspace</h2>
-          <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-white/60">Así el OS completa Opportunity, candidato, variante y SKU reservado sin pedirte IDs técnicos ni confiar en datos copiados a mano.</p>
-          <a href="/admin/ebay/mobile-review?section=in-progress" className="mt-5 inline-flex min-h-12 items-center justify-center rounded-2xl bg-cyan-200 px-5 font-black text-black">Elegir producto en curso</a>
+        </form> : <section className="rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.06] p-5 md:p-7">
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/60">Asistente para vincular tu listing activo</p>
+          <h2 className="mt-2 text-2xl font-black">Te guiamos sin salir de este flujo</h2>
+          <p className="mt-3 text-sm leading-6 text-white/65">Primero selecciona el producto que publicaste. El OS abrirá su Workspace, preparará el paquete y regresará aquí con Opportunity, variante y SKU completos.</p>
+
+          <ol aria-label="Progreso para vincular listing" className="mt-5 grid grid-cols-3 gap-2 text-center text-xs font-black">
+            <li aria-current="step" className="rounded-2xl bg-cyan-200 px-2 py-3 text-black"><span className="block text-lg">1</span>Elegir producto</li>
+            <li className="rounded-2xl border border-white/15 px-2 py-3 text-white/55"><span className="block text-lg">2</span>Confirmar paquete y SKU</li>
+            <li className="rounded-2xl border border-white/15 px-2 py-3 text-white/55"><span className="block text-lg">3</span>Pegar Item ID</li>
+          </ol>
+
+          <div className="mt-5 rounded-2xl border border-white/10 bg-black/25 p-4">
+            <label className="grid gap-2 text-sm font-black text-white/80">
+              Busca el producto que ya publicaste
+              <input
+                type="search"
+                value={productSearch}
+                onChange={(event) => setProductSearch(event.target.value)}
+                className={inputClass}
+                placeholder="Ejemplo: ITEM5126, SKU o nombre"
+                autoComplete="off"
+              />
+            </label>
+            <p className="mt-2 text-xs leading-5 text-white/45">No ingreses todavía el Item ID. Primero debemos reservar y verificar el Custom label/SKU correcto.</p>
+          </div>
+
+          {helperLoading ? <p role="status" className="mt-4 rounded-2xl border border-white/10 p-4 text-sm text-white/60">Buscando productos disponibles…</p> : null}
+          {helperError ? <div role="alert" className="mt-4 rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-4 text-sm text-rose-50"><p>{helperError}</p><div className="mt-3 grid grid-cols-2 gap-2"><button type="button" onClick={() => void loadHelperProducts()} className="min-h-11 rounded-xl bg-white px-3 font-black text-black">Reintentar</button><a href="/admin/ebay/opportunity-queue" className="inline-flex min-h-11 items-center justify-center rounded-xl border border-rose-100/25 px-3 text-center font-black">Abrir cola</a></div></div> : null}
+
+          {!helperLoading && !helperError ? <div className="mt-4 grid gap-3">
+            {visibleHelperProducts.map((product) => {
+              const workspaceReady = product.can_open_listing_workspace || Boolean(product.listing_intake_url)
+              return <article key={product.id} className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0"><h3 className="font-black leading-5">{product.product_title}</h3><p className="mt-1 text-xs leading-5 text-white/50">{product.variant_title || "Variante general"}</p></div>
+                  <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-black ${workspaceReady ? "bg-emerald-200/15 text-emerald-100" : "bg-amber-200/15 text-amber-100"}`}>{workspaceReady ? "SIGUIENTE PASO LISTO" : "FALTAN DATOS"}</span>
+                </div>
+                <p className="mt-2 break-all text-xs text-white/55">SKU Luna: {product.supplier_sku || "Pendiente"}</p>
+                {!workspaceReady ? <p className="mt-2 text-xs leading-5 text-amber-50/75">Antes del paquete falta {helperBlocker(product)}.</p> : <p className="mt-2 text-xs leading-5 text-emerald-50/75">Abre el Workspace. Allí pulsa “Ya está publicado · registrar Item ID”.</p>}
+                <a href={workspaceUrl(product)} className={`mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-2xl px-4 text-center text-sm font-black ${workspaceReady ? "bg-emerald-200 text-black" : "border border-amber-100/25 text-amber-50"}`}>{workspaceReady ? "Continuar con este producto →" : "Completar datos de este producto →"}</a>
+              </article>
+            })}
+            {!visibleHelperProducts.length ? <div className="rounded-2xl border border-dashed border-white/15 p-5 text-center"><p className="text-sm text-white/60">No encontramos un producto con esa búsqueda.</p><a href="/admin/ebay/opportunity-queue" className="mt-3 inline-flex min-h-11 items-center rounded-xl border border-white/15 px-4 text-sm font-black">Ver todos los productos</a></div> : null}
+          </div> : null}
         </section>}
 
         <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5 md:p-7">
