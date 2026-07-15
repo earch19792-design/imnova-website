@@ -12,6 +12,11 @@ export const EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES = [
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
 ] as const
 
+export const EBAY_COMMERCIAL_ORDERS_BASE_SCOPE =
+  EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES[0]
+export const EBAY_COMMERCIAL_ORDERS_FULFILLMENT_READONLY_SCOPE =
+  EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES[1]
+
 export const EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_ENDPOINT =
   "https://auth.ebay.com/oauth2/authorize"
 
@@ -42,16 +47,35 @@ export function buildEbayCommercialOrdersConsentUrl(input: {
   runame: string
   state: string
 }) {
-  if (!input.clientId || !input.runame || !/^[A-Za-z0-9_-]{43}$/.test(input.state)) {
+  return buildEbayCommercialOrdersDiagnosticConsentUrl({
+    ...input,
+    phase: "base_with_state_and_fulfillment",
+  })
+}
+
+export function buildEbayCommercialOrdersDiagnosticConsentUrl(input: {
+  clientId: string
+  runame: string
+  state?: string
+  phase: "base_only" | "base_with_state" | "base_with_state_and_fulfillment"
+}) {
+  const stateRequired = input.phase !== "base_only"
+  if (
+    !input.clientId || !input.runame ||
+    (stateRequired && !/^[A-Za-z0-9_-]{43}$/.test(input.state ?? "")) ||
+    (!stateRequired && input.state)
+  ) {
     throw new Error("EBAY_COMMERCIAL_ORDERS_OAUTH_START_INVALID")
   }
+  const scopes = input.phase === "base_with_state_and_fulfillment"
+    ? EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES
+    : [EBAY_COMMERCIAL_ORDERS_BASE_SCOPE]
   const parameters = [
     ["client_id", input.clientId],
-    ["redirect_uri", input.runame],
     ["response_type", "code"],
-    ["scope", EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES.join(" ")],
-    ["state", input.state],
-    ["prompt", "login"],
+    ["redirect_uri", input.runame],
+    ["scope", scopes.join(" ")],
+    ...(stateRequired ? [["state", input.state ?? ""]] : []),
   ]
   return `${EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_ENDPOINT}?${parameters
     .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)

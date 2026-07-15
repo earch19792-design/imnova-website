@@ -8,6 +8,7 @@ import {
 } from "./ebay-commercial-oauth-domain"
 import {
   buildEbayCommercialOrdersConsentUrl,
+  buildEbayCommercialOrdersDiagnosticConsentUrl,
   createEbayCommercialOAuthState,
   EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES,
   encryptEbayCommercialRefreshToken,
@@ -21,6 +22,15 @@ const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const AUTHORIZED_PREVIEW_BRANCH = "feature/centralize-ebay-mobile-command-center"
 const HANDOFF_TTL_MS = 30 * 60 * 1_000
 const REQUEST_TIMEOUT_MS = 12_000
+
+export const EBAY_COMMERCIAL_ORDERS_DIAGNOSTIC_PHASES = [
+  "base_only",
+  "base_with_state",
+  "base_with_state_and_fulfillment",
+] as const
+
+export type EbayCommercialOrdersDiagnosticPhase =
+  typeof EBAY_COMMERCIAL_ORDERS_DIAGNOSTIC_PHASES[number]
 
 type FetchLike = typeof fetch
 type JsonRecord = Record<string, unknown>
@@ -111,6 +121,82 @@ function assertAuthorizationConfiguration(environment: NodeJS.ProcessEnv) {
     throw new Error("EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_NOT_CONFIGURED")
   }
   return getCredentials(environment)
+}
+
+export async function diagnoseEbayCommercialOrdersConsentRequest(
+  phase: EbayCommercialOrdersDiagnosticPhase,
+  fetchImpl: FetchLike = fetch,
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  if (!EBAY_COMMERCIAL_ORDERS_DIAGNOSTIC_PHASES.includes(phase)) {
+    throw new Error("EBAY_COMMERCIAL_ORDERS_DIAGNOSTIC_PHASE_INVALID")
+  }
+  const credentials = assertAuthorizationConfiguration(environment)
+  const state = phase === "base_only" ? undefined : createEbayCommercialOAuthState()
+  const authorizationUrl = buildEbayCommercialOrdersDiagnosticConsentUrl({
+    clientId: credentials.clientId,
+    runame: credentials.runame,
+    phase,
+    state,
+  })
+  if (
+    authorizationUrl.includes("prompt=") ||
+    authorizationUrl.includes("+") ||
+    authorizationUrl.includes("%252F")
+  ) {
+    throw new Error("EBAY_COMMERCIAL_ORDERS_DIAGNOSTIC_ENCODING_INVALID")
+  }
+
+  let response: Response
+  try {
+    response = await fetchImpl(authorizationUrl, {
+      redirect: "follow",
+      cache: "no-store",
+      headers: { Accept: "text/html,application/json" },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+  } catch {
+    throw new Error("EBAY_COMMERCIAL_ORDERS_DIAGNOSTIC_ENDPOINT_UNAVAILABLE")
+  }
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
+  let invalidRequest = false
+  if (contentType.includes("json")) {
+    try {
+      invalidRequest = text(record(await response.json()).error_id).toLowerCase() ===
+        "invalid_request"
+    } catch {
+      invalidRequest = false
+    }
+  }
+  return {
+    phase,
+    result: invalidRequest
+      ? "INVALID_REQUEST" as const
+      : response.ok
+        ? "ACCEPTED" as const
+        : "UNKNOWN_REJECTION" as const,
+    stateIncluded: Boolean(state),
+    stateFormatValid: state ? /^[A-Za-z0-9_-]{43}$/.test(state) : null,
+    scopes: phase === "base_with_state_and_fulfillment"
+      ? "BASE_AND_FULFILLMENT_READONLY" as const
+      : "BASE_ONLY" as const,
+    parameterNames: [
+      "client_id",
+      "response_type",
+      "redirect_uri",
+      "scope",
+      ...(state ? ["state"] : []),
+    ],
+    promptIncluded: false as const,
+    percent20ScopeSeparator: phase === "base_with_state_and_fulfillment",
+    doubleEncodingDetected: false as const,
+    plusSeparatorDetected: false as const,
+    redirectUriUsesExactRuname: true as const,
+    handoffCreated: false as const,
+    secretsReturned: false as const,
+    authorizationUrlReturned: false as const,
+    ebayWriteUsed: false as const,
+  }
 }
 
 export async function startEbayCommercialOrdersAuthorization(
