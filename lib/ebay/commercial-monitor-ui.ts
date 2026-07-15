@@ -64,7 +64,7 @@ export function isSatisfactoryCommercialDryRun(
   const errors = errorRows(run)
   if (errors.some(({ code }) => /IDENTITY|ACCOUNT/i.test(code ?? ""))) return false
   if (errors.some(({ reader, code }) =>
-    reader === "orders" && /AUTH|OAUTH|TOKEN|SCOPE/i.test(code ?? "")
+    reader === "orders" && /AUTH|OAUTH|TOKEN|SCOPE|_401$|_403$/i.test(code ?? "")
   )) return false
 
   const buyerPiiReturned = run.safety?.buyerPiiReturned ?? metrics.buyerPiiReturned
