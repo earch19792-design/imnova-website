@@ -270,12 +270,20 @@ create unique index if not exists commercial_monitor_runs_one_active_uidx
   on public.commercial_monitor_runs(marketplace_account_key, marketplace)
   where status = 'running';
 
-alter table public.listing_commercial_snapshots
-  drop constraint if exists listing_commercial_snapshots_monitor_run_id_fkey;
-alter table public.listing_commercial_snapshots
-  add constraint listing_commercial_snapshots_monitor_run_id_fkey
-  foreign key (monitor_run_id) references public.commercial_monitor_runs(id)
-  on delete set null;
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.listing_commercial_snapshots'::regclass
+      and conname = 'listing_commercial_snapshots_monitor_run_id_fkey'
+  ) then
+    alter table public.listing_commercial_snapshots
+      add constraint listing_commercial_snapshots_monitor_run_id_fkey
+      foreign key (monitor_run_id) references public.commercial_monitor_runs(id)
+      on delete set null;
+  end if;
+end $$;
 
 create table if not exists public.commercial_daily_summaries (
   id uuid primary key default gen_random_uuid(),
