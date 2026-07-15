@@ -2,6 +2,8 @@ import type { EbayLunaOpportunityAssessment } from "./ebay-luna-demand-opportuni
 import type { EbayBestSellingProductSignal } from "./ebay-seller-keyword-demand-gateway"
 import type { LunaOpportunityCandidateInput } from "./ebay-luna-opportunity-types"
 // @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+import { isDirectedLunaManualPackAssessment } from "./ebay-luna-directed-product-import.ts"
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
 import { detectEbayProductRestrictionGuards } from "./ebay-product-restriction-guards.ts"
 
 type JsonRecord = Record<string, unknown>
@@ -60,6 +62,9 @@ const LISTING_WORKSPACE_RESOLVABLE_HARD_GATES = new Set([
   "NEED_PACKAGE_WEIGHT_AND_DIMENSIONS",
   "NEED_EBAY_TAXONOMY_CATEGORY",
   "NEED_REQUIRED_EBAY_ITEM_ASPECTS",
+  "NEED_EXACT_PACK_INVENTORY_CONFIRMATION",
+  "NEED_EBAY_EXACT_IDENTITY_CONFIRMATION",
+  "NEED_UNIT_ECONOMICS_VALIDATION",
 ])
 
 function numberOrNull(value: unknown) {
@@ -105,15 +110,16 @@ export function evaluateEbayListingWorkspaceEligibility(row: ProfessionalQueueRo
   const confidenceScore = numberOrNull(scores.confidenceScore)
     ?? numberOrNull(row.identity_score)
     ?? 0
+  const directedPackIntake = isDirectedLunaManualPackAssessment(row.assessment)
   const blockers = [
-    ...(identity.exactIdentityConfirmed === true ? [] : ["EXACT_IDENTITY_REQUIRED"]),
-    ...(economics.ready === true ? [] : ["UNIT_ECONOMICS_REQUIRED"]),
-    ...(row.supplier_available === true && supplierInventory !== null && supplierInventory > 0
+    ...(identity.exactIdentityConfirmed === true || directedPackIntake ? [] : ["EXACT_IDENTITY_REQUIRED"]),
+    ...(economics.ready === true || directedPackIntake ? [] : ["UNIT_ECONOMICS_REQUIRED"]),
+    ...(row.supplier_available === true && (directedPackIntake || (supplierInventory !== null && supplierInventory > 0))
       ? []
       : ["LUNA_STOCK_UNAVAILABLE"]),
     ...(supplierCost !== null && supplierCost > 0 ? [] : ["LUNA_COST_REQUIRED"]),
-    ...(potentialScore >= 70 ? [] : ["POTENTIAL_SCORE_BELOW_70"]),
-    ...(confidenceScore >= 70 ? [] : ["CONFIDENCE_SCORE_BELOW_70"]),
+    ...(potentialScore >= 70 || directedPackIntake ? [] : ["POTENTIAL_SCORE_BELOW_70"]),
+    ...(confidenceScore >= 70 || directedPackIntake ? [] : ["CONFIDENCE_SCORE_BELOW_70"]),
     ...hardGates
       .filter((gate) => !LISTING_WORKSPACE_RESOLVABLE_HARD_GATES.has(gate))
       .map((gate) => `HARD_GATE:${gate}`),

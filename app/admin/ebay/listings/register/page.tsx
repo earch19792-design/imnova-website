@@ -85,6 +85,27 @@ type CommandCenterPayload = {
   }
 }
 
+type DirectedLunaPreview = {
+  productId: string
+  title: string
+  canonicalUrl: string
+  vendor: string | null
+  variants: Array<{
+    id: string
+    title: string
+    sku: string
+    sourceUnitPrice: number
+    available: boolean
+  }>
+}
+
+type DirectedImportPayload = {
+  success?: boolean
+  error?: string
+  product?: DirectedLunaPreview
+  imported?: ProductOption[]
+}
+
 type FormState = {
   ebayItemId: string
   ebayUrl: string
@@ -195,6 +216,18 @@ function errorLabel(code: string) {
       "Falta configurar la identidad o fingerprint de la cuenta oficial de eBay.",
     MANUAL_LISTING_OFFICIAL_ACCOUNT_IDENTITY_INCONSISTENT:
       "El User ID esperado y el fingerprint configurado no corresponden a la misma cuenta.",
+    LUNA_DIRECTED_IMPORT_URL_INVALID:
+      "Pega una URL HTTPS de producto válida de lunaportex.com.",
+    LUNA_DIRECTED_IMPORT_PRODUCT_INVALID:
+      "Luna respondió, pero la identidad del producto no coincide con la URL.",
+    LUNA_DIRECTED_IMPORT_VARIANT_REQUIRED:
+      "El producto no tiene una variante utilizable con SKU y precio.",
+    LUNA_DIRECTED_IMPORT_SOURCE_UNAVAILABLE:
+      "Luna marca esta variante como no disponible; no se crearon candidatos.",
+    LUNA_DIRECTED_IMPORT_FETCH_404:
+      "Luna no encontró ese producto.",
+    LUNA_DIRECTED_IMPORT_PERSIST_FAILED:
+      "El producto fue validado, pero no se pudo guardar en la cola Seller OS.",
   }
   return labels[code] ?? "No se pudo completar la operación. Intenta nuevamente."
 }
@@ -244,6 +277,11 @@ export default function RegisterManualEbayListingPage() {
   const [helperLoading, setHelperLoading] = useState(true)
   const [helperError, setHelperError] = useState("")
   const [productSearch, setProductSearch] = useState("")
+  const [lunaProductUrl, setLunaProductUrl] = useState("")
+  const [lunaPreview, setLunaPreview] = useState<DirectedLunaPreview | null>(null)
+  const [lunaImporting, setLunaImporting] = useState(false)
+  const [lunaImportError, setLunaImportError] = useState("")
+  const [lunaImportMessage, setLunaImportMessage] = useState("")
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
 
@@ -341,6 +379,73 @@ export default function RegisterManualEbayListingPage() {
       setHelperLoading(false)
     }
   }, [])
+
+  const directedImportRequest = useCallback(async (body: Record<string, unknown>) => {
+    const { data, error: sessionError } = await supabase.auth.getSession()
+    if (sessionError || !data.session) throw new Error("admin_token_required")
+    const response = await fetch("/api/admin/ebay/luna-product-import", {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${data.session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    })
+    const payload = await response.json() as DirectedImportPayload
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.error || "LUNA_DIRECTED_IMPORT_FAILED")
+    }
+    return payload
+  }, [])
+
+  async function previewLunaProduct() {
+    if (lunaImporting) return
+    setLunaImporting(true)
+    setLunaImportError("")
+    setLunaImportMessage("")
+    setLunaPreview(null)
+    try {
+      const payload = await directedImportRequest({
+        action: "preview",
+        productUrl: lunaProductUrl,
+        packSizes: [3, 6, 12],
+      })
+      setLunaPreview(payload.product ?? null)
+      setLunaImportMessage("Producto oficial leído. Revisa la variante y confirma los tres packs.")
+    } catch (requestError) {
+      const code = requestError instanceof Error ? requestError.message : ""
+      setLunaImportError(errorLabel(code))
+    } finally {
+      setLunaImporting(false)
+    }
+  }
+
+  async function importLunaPacks() {
+    const variant = lunaPreview?.variants.find((item) => item.available)
+    if (!variant || lunaImporting) return
+    setLunaImporting(true)
+    setLunaImportError("")
+    setLunaImportMessage("")
+    try {
+      await directedImportRequest({
+        action: "import",
+        productUrl: lunaProductUrl,
+        sourceVariantId: variant.id,
+        packSizes: [3, 6, 12],
+        humanConfirmedCommercialPacks: true,
+        confirmation: "IMPORTAR_PACKS_LUNA_3_6_12",
+      })
+      setProductSearch(lunaPreview?.title ?? "")
+      setLunaImportMessage("Packs 3, 6 y 12 creados. Ya puedes elegir el pack de 3 y continuar al Workspace.")
+      await loadHelperProducts()
+    } catch (requestError) {
+      const code = requestError instanceof Error ? requestError.message : ""
+      setLunaImportError(errorLabel(code))
+    } finally {
+      setLunaImporting(false)
+    }
+  }
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search)
@@ -599,8 +704,50 @@ export default function RegisterManualEbayListingPage() {
                 <a href={workspaceUrl(product)} className={`mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-2xl px-4 text-center text-sm font-black ${workspaceReady ? "bg-emerald-200 text-black" : "border border-amber-100/25 text-amber-50"}`}>{workspaceReady ? "Continuar con este producto →" : "Completar datos de este producto →"}</a>
               </article>
             })}
-            {!visibleHelperProducts.length ? <div className="rounded-2xl border border-dashed border-white/15 p-5 text-center"><p className="text-sm text-white/60">No encontramos un producto con esa búsqueda.</p><a href="/admin/ebay/opportunity-queue" className="mt-3 inline-flex min-h-11 items-center rounded-xl border border-white/15 px-4 text-sm font-black">Ver todos los productos</a></div> : null}
+            {!visibleHelperProducts.length ? <div className="rounded-2xl border border-dashed border-white/15 p-5 text-center"><p className="text-sm text-white/60">No encontramos un producto con esa búsqueda.</p><p className="mt-2 text-xs leading-5 text-white/40">Si lo publicaste directamente desde Luna, impórtalo abajo sin salir del asistente.</p></div> : null}
           </div> : null}
+
+          <section className="mt-5 rounded-3xl border border-violet-200/20 bg-violet-200/[0.06] p-5">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-100/65">Producto ausente · ingreso dirigido</p>
+            <h3 className="mt-2 text-xl font-black">Crear opciones comerciales 3, 6 y 12</h3>
+            <p className="mt-2 text-xs leading-5 text-white/55">
+              Lee el producto oficial de Luna y crea tres candidatos separados. No inventa demanda ni stock, no usa el UPC de una unidad como UPC del pack y no publica en eBay.
+            </p>
+            <label className="mt-4 grid gap-2 text-sm font-black text-white/80">
+              URL del producto Luna Portex
+              <input
+                type="url"
+                value={lunaProductUrl}
+                onChange={(event) => {
+                  setLunaProductUrl(event.target.value)
+                  setLunaPreview(null)
+                  setLunaImportMessage("")
+                }}
+                className={inputClass}
+                placeholder="https://lunaportex.com/products/..."
+              />
+            </label>
+            <button type="button" disabled={lunaImporting || !lunaProductUrl.trim()} onClick={() => void previewLunaProduct()} className="mt-3 min-h-12 w-full rounded-2xl border border-violet-100/25 px-4 text-sm font-black text-violet-50 disabled:opacity-40">
+              {lunaImporting ? "Validando…" : "Validar producto oficial"}
+            </button>
+
+            {lunaPreview ? <div className="mt-4 rounded-2xl border border-emerald-200/20 bg-black/25 p-4">
+              <p className="font-black text-emerald-100">{lunaPreview.title}</p>
+              {lunaPreview.variants.map((variant) => <div key={variant.id} className="mt-2 text-xs leading-5 text-white/60">
+                <p>SKU fuente: <strong className="text-white/85">{variant.sku}</strong> · unidad ${variant.sourceUnitPrice.toFixed(2)}</p>
+                <p>Costos fuente: 3 = ${(variant.sourceUnitPrice * 3).toFixed(2)} · 6 = ${(variant.sourceUnitPrice * 6).toFixed(2)} · 12 = ${(variant.sourceUnitPrice * 12).toFixed(2)}</p>
+                <p className={variant.available ? "text-emerald-100" : "text-rose-100"}>{variant.available ? "Disponible públicamente; cantidad exacta pendiente" : "No disponible"}</p>
+              </div>)}
+              <div className="mt-3 rounded-xl border border-amber-100/15 bg-amber-100/[0.05] p-3 text-xs leading-5 text-amber-50/75">
+                Confirmo que este producto fuente corresponde al artículo comercial que venderemos en packs. Las fotos, peso, dimensiones, categoría y datos obligatorios se revisarán en cada Workspace.
+              </div>
+              <button type="button" disabled={lunaImporting || !lunaPreview.variants.some((variant) => variant.available)} onClick={() => void importLunaPacks()} className="mt-3 min-h-12 w-full rounded-2xl bg-violet-200 px-4 text-sm font-black text-black disabled:opacity-40">
+                Confirmar y crear packs 3, 6 y 12
+              </button>
+            </div> : null}
+            {lunaImportError ? <p role="alert" className="mt-3 rounded-xl border border-rose-200/20 bg-rose-200/[0.07] p-3 text-xs font-bold text-rose-50">{lunaImportError}</p> : null}
+            {lunaImportMessage ? <p role="status" className="mt-3 rounded-xl border border-emerald-200/20 bg-emerald-200/[0.07] p-3 text-xs font-bold text-emerald-50">{lunaImportMessage}</p> : null}
+          </section>
         </section>}
 
         <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5 md:p-7">

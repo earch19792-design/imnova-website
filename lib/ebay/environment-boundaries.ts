@@ -27,6 +27,7 @@ export const EBAY_SELLER_OS_API_PATHS = [
   "/api/admin/ebay/seller-whatsapp-alerts",
   "/api/admin/ebay/luna-opportunities",
   "/api/admin/ebay/luna-opportunity-queue",
+  "/api/admin/ebay/luna-product-import",
 ] as const
 
 const LEGACY_EBAY_PRO_PATHS = [
