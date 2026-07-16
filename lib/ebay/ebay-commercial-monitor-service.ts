@@ -8,6 +8,7 @@ import {
   DEFAULT_COMMERCIAL_THRESHOLDS,
   evaluateCommercialRules,
   extractPackQuantity,
+  mergePreviousCommercialSnapshot,
   renderDailyCommercialSummary,
   renderSaleDetectedMessage,
   stableCommercialKey,
@@ -630,8 +631,7 @@ async function loadPreviousSnapshots(
   const result = new Map<string, CommercialSnapshot>()
   for (const row of data ?? []) {
     const key = `${row.listing_id}:${row.sku ?? ""}`
-    if (result.has(key)) continue
-    result.set(key, {
+    const candidate: CommercialSnapshot = {
       marketplaceAccountKey: row.marketplace_account_key,
       listingId: row.listing_id,
       sku: row.sku,
@@ -650,7 +650,8 @@ async function loadPreviousSnapshots(
       windowStart: row.window_start,
       windowEnd: row.window_end,
       completenessStatus: row.completeness_status,
-    })
+    }
+    result.set(key, mergePreviousCommercialSnapshot(result.get(key), candidate))
   }
   return result
 }

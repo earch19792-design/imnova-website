@@ -49,6 +49,17 @@ export type CommercialSnapshot = {
   completenessStatus: "complete" | "incomplete" | "unavailable"
 }
 
+export function mergePreviousCommercialSnapshot(
+  latest: CommercialSnapshot | undefined,
+  older: CommercialSnapshot,
+) {
+  if (!latest) return older
+  if (latest.currentWatchers === null && older.currentWatchers !== null) {
+    return { ...latest, currentWatchers: older.currentWatchers }
+  }
+  return latest
+}
+
 export type CommercialEvent = {
   eventType: string
   severity: CommercialSeverity
