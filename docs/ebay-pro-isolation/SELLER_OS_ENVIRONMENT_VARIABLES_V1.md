@@ -18,6 +18,7 @@ Status enums: `PRESENT`, `MISSING`, `INVALID_FORMAT`, `IDENTITY_UNBOUND`,
 | `EBAY_COMMERCIAL_ORDERS_REFRESH_TOKEN` | Dedicated Orders authorization | Yes | Preview server only; must include `sell.fulfillment.readonly` | Missing blocks Orders only | Never falls back to `EBAY_SELLER_REFRESH_TOKEN` |
 | `EBAY_COMMERCIAL_ORDERS_CLIENT_ID` | Optional dedicated Orders OAuth client | No | Preview server; define only with matching secret | Missing uses the general Client ID with the dedicated refresh token | Partial pair is rejected |
 | `EBAY_COMMERCIAL_ORDERS_CLIENT_SECRET` | Optional dedicated Orders OAuth secret | Yes | Preview server; define only with matching Client ID | Missing uses the general Client Secret with the dedicated refresh token | Partial pair is rejected |
+| `EBAY_COMMERCIAL_ORDERS_RUNAME` | Canonical RuName for Orders consent | Sensitive configuration | Preview branch only | Missing blocks assisted authorization | Must map exactly to `/api/admin/ebay/commercial-orders-oauth/callback`; takes precedence over legacy RuName aliases |
 | `EBAY_SELLER_ACCOUNT_KEY` | Human-readable account alias | No | Server; `A-Za-z0-9._-`, max 80 | Missing blocks account-scoped workflows | Combined with the verified identity fingerprint |
 | `EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID` | Expected official seller identity | Sensitive | Server/Preview and read-only verification | Missing requires a valid fingerprint | Shared identity binding for manual listing, sync and Production target |
 | `EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_CREDENTIAL_FINGERPRINT` | Preferred 64-hex expected identity fingerprint | Sensitive | Server | Missing falls back to account fingerprint alias or User ID derivation | Takes precedence over `...EXPECTED_ACCOUNT_FINGERPRINT` |
@@ -28,6 +29,15 @@ Fulfillment Orders uses a dedicated refresh token and never falls back to the
 generic token. Commercial monitoring requires `sell.fulfillment.readonly` on
 that dedicated consent. Scope and account identity must both be verified;
 presence alone is not proof of authorization.
+
+The canonical Auth Accepted URL for this dedicated consent is:
+
+```text
+https://imnova-website-z1qh-git-featur-438554-earch19792-6888s-projects.vercel.app/api/admin/ebay/commercial-orders-oauth/callback
+```
+
+`/api/admin/ebay/oauth/callback` remains the blocked legacy scaffold and must
+not be configured for Commercial Orders.
 
 ## Draft Sandbox
 

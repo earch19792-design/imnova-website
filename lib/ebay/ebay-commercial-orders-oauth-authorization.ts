@@ -14,7 +14,10 @@ import {
   createEbayCommercialOAuthState,
   EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES,
   encryptEbayCommercialRefreshToken,
+  getEbayCommercialOrdersCallbackConfiguration,
   hashEbayCommercialOAuthState,
+  isValidEbayCommercialAuthorizationCode,
+  isValidEbayCommercialOAuthState,
   validateEbayCommercialOAuthPublicKey,
 } from "./ebay-commercial-orders-oauth-domain"
 import { verifyEbayCommercialOfficialAccount } from "./ebay-commercial-readers"
@@ -217,6 +220,7 @@ export function getEbayCommercialOrdersAuthorizationConfiguration(
     runame: credentials.runame ? "PRESENT" as const : "MISSING" as const,
     identityBinding: identity.bound ? "READY" as const : "MISSING" as const,
     scopes: [...EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES],
+    callback: getEbayCommercialOrdersCallbackConfiguration(environment),
     audit: getEbayCommercialOrdersAuthorizationAudit(environment),
     secretsReturned: false as const,
   }
@@ -289,7 +293,7 @@ export async function diagnoseEbayCommercialOrdersConsentRequest(
         ? "ACCEPTED" as const
         : "UNKNOWN_REJECTION" as const,
     stateIncluded: Boolean(state),
-    stateFormatValid: state ? /^[A-Za-z0-9_-]{43}$/.test(state) : null,
+    stateFormatValid: state ? isValidEbayCommercialOAuthState(state) : null,
     scopes: phase === "base_with_state_and_fulfillment"
       ? "BASE_AND_FULFILLMENT_READONLY" as const
       : "BASE_ONLY" as const,
@@ -422,8 +426,8 @@ export async function completeEbayCommercialOrdersAuthorization(
 ) {
   const credentials = assertAuthorizationConfiguration(environment)
   if (
-    !/^[A-Za-z0-9_-]{43}$/.test(input.state) ||
-    !input.code || input.code.length > 2_048
+    !isValidEbayCommercialOAuthState(input.state) ||
+    !isValidEbayCommercialAuthorizationCode(input.code)
   ) {
     throw new Error("EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_CALLBACK_INVALID")
   }

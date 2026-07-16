@@ -10,6 +10,9 @@ import {
   type EbayCommercialOAuthCategory,
   type EbayCommercialOAuthStatus,
 } from "./ebay-commercial-oauth-domain"
+import {
+  getEbayCommercialOrdersCallbackConfiguration,
+} from "./ebay-commercial-orders-oauth-domain"
 
 export {
   classifyEbayCommercialOAuthFailure,
@@ -300,6 +303,7 @@ export async function getEbayCommercialOAuthPreflight(
     legacyGenericOrdersProbe: legacyOrders,
     dedicatedOrders,
     officialIdentity: identityResult,
+    callback: getEbayCommercialOrdersCallbackConfiguration(),
     safety: {
       tokenEndpointOnly: true,
       getUserReadOnlyUsed: true,

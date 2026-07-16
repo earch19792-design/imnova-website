@@ -20,8 +20,44 @@ export const EBAY_COMMERCIAL_ORDERS_FULFILLMENT_READONLY_SCOPE =
 export const EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_ENDPOINT =
   "https://auth.ebay.com/oauth2/authorize"
 
+export const EBAY_COMMERCIAL_ORDERS_CANONICAL_CALLBACK_PATH =
+  "/api/admin/ebay/commercial-orders-oauth/callback"
+export const EBAY_COMMERCIAL_ORDERS_LEGACY_CALLBACK_PATH =
+  "/api/admin/ebay/oauth/callback"
+export const EBAY_COMMERCIAL_ORDERS_PREVIEW_BRANCH_HOST =
+  "imnova-website-z1qh-git-featur-438554-earch19792-6888s-projects.vercel.app"
+export const EBAY_COMMERCIAL_ORDERS_CANONICAL_CALLBACK_URL =
+  `https://${EBAY_COMMERCIAL_ORDERS_PREVIEW_BRANCH_HOST}${EBAY_COMMERCIAL_ORDERS_CANONICAL_CALLBACK_PATH}`
+
+export function getEbayCommercialOrdersCallbackConfiguration(
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  const deployedBranchHost = (environment.VERCEL_BRANCH_URL ?? "")
+    .trim()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "")
+  return {
+    canonicalPath: EBAY_COMMERCIAL_ORDERS_CANONICAL_CALLBACK_PATH,
+    canonicalUrl: EBAY_COMMERCIAL_ORDERS_CANONICAL_CALLBACK_URL,
+    legacyPath: EBAY_COMMERCIAL_ORDERS_LEGACY_CALLBACK_PATH,
+    legacyCallbackBlocked: true as const,
+    deployedBranchHostStatus: !deployedBranchHost
+      ? "UNAVAILABLE" as const
+      : deployedBranchHost === EBAY_COMMERCIAL_ORDERS_PREVIEW_BRANCH_HOST
+        ? "MATCH" as const
+        : "MISMATCH" as const,
+    secretsReturned: false as const,
+  }
+}
+
 export function createEbayCommercialOAuthState() {
   return randomBytes(32).toString("base64url")
+}
+export function isValidEbayCommercialOAuthState(state: string) {
+  return /^[A-Za-z0-9_-]{43}$/.test(state)
+}
+export function isValidEbayCommercialAuthorizationCode(code: string) {
+  return Boolean(code) && code.length <= 2_048
 }
 export function hashEbayCommercialOAuthState(state: string) {
   return createHash("sha256").update(state, "utf8").digest("hex")
@@ -62,7 +98,7 @@ export function buildEbayCommercialOrdersDiagnosticConsentUrl(input: {
   const stateRequired = input.phase !== "base_only"
   if (
     !input.clientId || !input.runame ||
-    (stateRequired && !/^[A-Za-z0-9_-]{43}$/.test(input.state ?? "")) ||
+    (stateRequired && !isValidEbayCommercialOAuthState(input.state ?? "")) ||
     (!stateRequired && input.state)
   ) {
     throw new Error("EBAY_COMMERCIAL_ORDERS_OAUTH_START_INVALID")

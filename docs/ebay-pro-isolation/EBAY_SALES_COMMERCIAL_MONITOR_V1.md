@@ -93,6 +93,26 @@ Admin Auth protege el endpoint manual; `CRON_SECRET` protege los endpoints de
 scheduler. Los tres endpoints devuelven bloqueo o estado desactivado si
 `VERCEL_ENV` no es `preview` cuando hay riesgo de automatización o entrega.
 
+## OAuth dedicado de Commercial Orders
+
+El único callback canónico del consentimiento Fulfillment es:
+
+```text
+https://imnova-website-z1qh-git-featur-438554-earch19792-6888s-projects.vercel.app/api/admin/ebay/commercial-orders-oauth/callback
+```
+
+La ruta legacy `/api/admin/ebay/oauth/callback` permanece bloqueada y nunca
+delega Commercial Orders. La ruta dedicada exige `code` y un `state` base64url
+de 43 caracteres. El `state` se reclama atómicamente sólo si el handoff está
+`pending` y no expiró; un state ausente, vencido o reutilizado termina en una
+redirección sanitizada al Seller Command Center. El authorization code y los
+tokens nunca se incluyen en esa redirección ni se almacenan en la tabla de
+handoffs. El intercambio y la verificación de identidad ocurren server-side.
+
+El Auth Accepted URL del RuName OAuth Enabled debe coincidir exactamente con
+el callback canónico anterior. `EBAY_COMMERCIAL_ORDERS_RUNAME` es la fuente
+canónica del RuName en Preview; los aliases legacy no cambian este contrato.
+
 ## Automatización de Preview
 
 El workflow `ebay-commercial-preview-monitor.yml` llama ambos workers cada

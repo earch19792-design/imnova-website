@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic"
 import { NextResponse } from "next/server"
 
 import { getEbaySellerOsEnvironmentPreflight } from "@/lib/ebay/ebay-seller-os-env-preflight"
+import { getEbayCommercialOrdersAuthorizationConfiguration } from "@/lib/ebay/ebay-commercial-orders-oauth-authorization"
 import { validateAdminApiRequest } from "@/lib/supabase-admin"
 
 export async function GET(req: Request) {
@@ -16,5 +17,7 @@ export async function GET(req: Request) {
   }
   return NextResponse.json({
     variables: getEbaySellerOsEnvironmentPreflight(),
+    commercialOrdersOAuth:
+      getEbayCommercialOrdersAuthorizationConfiguration(),
   })
 }
