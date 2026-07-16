@@ -44,6 +44,7 @@ import {
 import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
 import { isSatisfactoryCommercialDryRun } from "./commercial-monitor-ui"
 import {
+  commercialAnalyticsDivergenceRecheckDue,
   commercialScheduleLaneDue,
   currentCommercialPreviewPilotConfiguration,
   summarizeCommercialPilotRuns,
@@ -51,6 +52,7 @@ import {
 
 const MARKETPLACE = "EBAY_US"
 const MONITOR_LEASE_SECONDS = 300
+const READER_HISTORY_LIMIT = 500
 const PILOT_LISTING_ID = "366543596425"
 const PILOT_SUPPLIER_SKU = "ITEM3995"
 
@@ -1941,22 +1943,44 @@ export async function getDueCommercialMonitorLanes(
     .eq("marketplace", MARKETPLACE)
     .in("status", ["completed", "partial"])
     .order("started_at", { ascending: false })
-    .limit(100)
+    .limit(READER_HISTORY_LIMIT)
   if (error) throw new Error("COMMERCIAL_MONITOR_SCHEDULE_READ_FAILED")
   const lastByReader = new Map<string, string>()
+  const lastAttemptByReader = new Map<string, string>()
   for (const run of data ?? []) {
     const readers = run.readers && typeof run.readers === "object"
       ? run.readers as Record<string, { status?: string }>
       : {}
     for (const name of ["orders", "analytics", "watchers"]) {
+      if (
+        !lastAttemptByReader.has(name) &&
+        readers[name]?.status && readers[name]?.status !== "skipped"
+      ) lastAttemptByReader.set(name, run.started_at)
       if (!lastByReader.has(name) && ["available", "partial", "incomplete"].includes(readers[name]?.status ?? "")) {
         lastByReader.set(name, run.started_at)
       }
     }
   }
+  const { data: openDivergences, error: divergenceError } = await supabase
+    .from("listing_analytics_source_divergences")
+    .select("next_check_at")
+    .eq("marketplace_account_key", accountKey)
+    .eq("marketplace", MARKETPLACE)
+    .eq("status", "open")
+    .limit(500)
+  if (divergenceError) throw new Error("COMMERCIAL_ANALYTICS_DIVERGENCE_SCHEDULE_READ_FAILED")
   const lanes: CommercialMonitorLane[] = []
   if (commercialScheduleLaneDue(lastByReader.get("orders"), schedule.orderIntervalMinutes, now)) lanes.push("orders", "rules")
-  if (commercialScheduleLaneDue(lastByReader.get("analytics"), schedule.analyticsIntervalMinutes, now)) lanes.push("analytics", "rules")
+  const analyticsDue = commercialScheduleLaneDue(
+    lastByReader.get("analytics"),
+    schedule.analyticsIntervalMinutes,
+    now,
+  ) || commercialAnalyticsDivergenceRecheckDue({
+    nextCheckAt: (openDivergences ?? []).map((row) => row.next_check_at),
+    lastAnalyticsAttemptAt: lastAttemptByReader.get("analytics"),
+    now,
+  })
+  if (analyticsDue) lanes.push("analytics", "rules")
   if (commercialScheduleLaneDue(lastByReader.get("watchers"), schedule.watchersIntervalMinutes, now)) lanes.push("watchers", "rules")
   const { data: todaySummary } = await supabase
     .from("commercial_daily_summaries")
@@ -2009,7 +2033,7 @@ export async function getEbayCommercialMonitorDashboard(
       .order("started_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("commercial_monitor_runs").select("started_at,readers")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
-      .in("status", ["completed", "partial"]).order("started_at", { ascending: false }).limit(50),
+      .in("status", ["completed", "partial"]).order("started_at", { ascending: false }).limit(READER_HISTORY_LIMIT),
     supabase.from("fulfillment_tasks").select("id,status,listing_id,sku,product_title,quantity,ship_by_at,estimated_profit,stock_available,created_at")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
       .order("created_at", { ascending: false }).limit(20),

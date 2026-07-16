@@ -94,6 +94,26 @@ export function commercialScheduleLaneDue(
     now.getTime() + SCHEDULE_TICK_TOLERANCE_MS
 }
 
+export function commercialAnalyticsDivergenceRecheckDue(input: {
+  nextCheckAt: Array<string | null | undefined>
+  lastAnalyticsAttemptAt?: string | null
+  now?: Date
+  retryBackoffMinutes?: number
+}) {
+  const now = input.now ?? new Date()
+  const hasDueDivergence = input.nextCheckAt.some((value) => {
+    if (!value) return true
+    const parsed = Date.parse(value)
+    return !Number.isFinite(parsed) || parsed <= now.getTime()
+  })
+  if (!hasDueDivergence) return false
+  return commercialScheduleLaneDue(
+    input.lastAnalyticsAttemptAt,
+    input.retryBackoffMinutes ?? 60,
+    now,
+  )
+}
+
 export function summarizeCommercialPilotRuns(input: {
   runs: Array<{ status?: string | null; metrics?: Record<string, unknown> | null }>
   deliveryAttempts: Array<{ status?: string | null; attempt_number?: number | null }>
