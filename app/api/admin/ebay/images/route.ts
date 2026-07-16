@@ -3,6 +3,7 @@ export const maxDuration = 60
 
 import { createHash } from "node:crypto"
 import { NextResponse } from "next/server"
+import sharp from "sharp"
 
 import {
   EBAY_IMAGE_MAX_SOURCE_BYTES,
@@ -11,6 +12,11 @@ import {
   optimizeAuthorizedEbayMainImage,
   validateImageRightsEvidence,
 } from "@/lib/ebay/ebay-image-optimization-service"
+import {
+  composeAuthorizedEbayListingImageSet,
+  EBAY_LISTING_IMAGE_SET_VERSION,
+  getListingImageFactoryConfiguration,
+} from "@/lib/ebay/ebay-listing-image-factory"
 import {
   EBAY_IMAGE_SOURCE_BUCKET,
   EBAY_IMAGE_STAGING_BUCKET,
@@ -77,6 +83,7 @@ async function parseBody(req: Request) {
       candidateKey: text(form.get("candidateKey"), 300),
       opportunityId: text(form.get("opportunityId"), 40),
       listingPackageId: text(form.get("listingPackageId"), 40),
+      generationId: text(form.get("generationId"), 40),
       assetRole: text(form.get("assetRole"), 30),
       rightsBasis: text(form.get("rightsBasis"), 40),
       authorizationReference: text(form.get("authorizationReference"), 500),
@@ -103,6 +110,70 @@ async function packageForActor(
   if (error || !data) throw new Error("EBAY_IMAGE_PACKAGE_NOT_FOUND")
   assertEbayImageAccountScope(accountKey, data.account_key)
   return data as JsonRecord
+}
+
+async function approvedGenerationForPackage(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  generationId: string,
+  packageRow: JsonRecord,
+  accountKey: string,
+) {
+  const { data: generation, error: generationError } = await supabase
+    .from("marketplace_listing_generations")
+    .select("id,decision_package_id,decision_package_hash,identity_fingerprint,generation_output,output_hash,status")
+    .eq("id", generationId)
+    .eq("marketplace_account_key", accountKey)
+    .eq("marketplace", "EBAY_US")
+    .eq("status", "APPROVED")
+    .maybeSingle()
+  if (generationError || !generation) {
+    throw new Error("EBAY_IMAGE_GENERATION_APPROVAL_REQUIRED")
+  }
+  const { data: decision, error: decisionError } = await supabase
+    .from("marketplace_listing_decision_packages")
+    .select("id,package_hash,product_identity_fingerprint,supplier_sku,status,package_payload")
+    .eq("id", generation.decision_package_id)
+    .eq("marketplace_account_key", accountKey)
+    .eq("marketplace", "EBAY_US")
+    .eq("status", "APPROVED")
+    .maybeSingle()
+  if (decisionError || !decision) throw new Error("EBAY_IMAGE_DECISION_APPROVAL_REQUIRED")
+  const packageOpportunityId = uuid(packageRow.opportunity_id)
+  if (!packageOpportunityId) throw new Error("EBAY_IMAGE_PACKAGE_OPPORTUNITY_INVALID")
+  const { data: opportunity, error: opportunityError } = await supabase
+    .from("ebay_luna_opportunity_queue")
+    .select("id,supplier_sku,candidate_key")
+    .eq("id", packageOpportunityId)
+    .maybeSingle()
+  if (opportunityError || !opportunity) throw new Error("EBAY_IMAGE_OPPORTUNITY_NOT_FOUND")
+  if (
+    text(opportunity.candidate_key, 300) !== text(packageRow.candidate_key, 300) ||
+    !text(opportunity.supplier_sku, 100) ||
+    text(opportunity.supplier_sku, 100) !== text(decision.supplier_sku, 100) ||
+    generation.decision_package_hash !== decision.package_hash ||
+    generation.identity_fingerprint !== decision.product_identity_fingerprint
+  ) throw new Error("EBAY_IMAGE_PRODUCT_IDENTITY_MISMATCH")
+  const output = record(generation.generation_output)
+  const facts = record(output.factAssertions)
+  const briefs = Array.isArray(output.imageBriefs) ? output.imageBriefs : []
+  return {
+    generation,
+    factoryInput: {
+      identityFingerprint: generation.identity_fingerprint,
+      facts: {
+        manufacturerBrand: text(facts.manufacturerBrand, 120) || null,
+        normalizedProductName: text(facts.normalizedProductName, 300),
+        packCount: facts.packCount ?? null,
+        unitCount: facts.unitCount ?? null,
+        size: text(facts.size, 100) || null,
+        color: text(facts.color, 100) || null,
+        scent: text(facts.scent, 100) || null,
+        variant: text(facts.variant, 100) || null,
+        condition: text(facts.condition, 100) || null,
+      },
+      briefs,
+    },
+  }
 }
 
 export async function GET(req: Request) {
@@ -169,6 +240,9 @@ export async function GET(req: Request) {
         humanApprovalRequired: true,
         pendingOutputsPrivate: true,
         generativeAiEnabled: false,
+        sixImageComposition: true,
+        listingImageFactory: getListingImageFactoryConfiguration(),
+        reviewActions: ["APPROVE", "REGENERATE", "CORRECT", "REJECT"],
         output: "1600x1600 JPEG",
       },
     })
@@ -197,6 +271,150 @@ export async function POST(req: Request) {
     const body = await parseBody(req)
     const action = text(body.action, 40)
     const supabase = getSupabaseAdminClient()
+
+    if (action === "compose_set_url" || action === "compose_set_upload") {
+      const candidateKey = text(body.candidateKey, 300)
+      const packageId = uuid(body.listingPackageId)
+      const generationId = uuid(body.generationId)
+      if (!candidateKey || !packageId || !generationId) {
+        return NextResponse.json(
+          { success: false, error: "EBAY_IMAGE_SET_SCOPE_REQUIRED" },
+          { status: 400 },
+        )
+      }
+      const packageRow = await packageForActor(supabase, packageId, actor, accountKey)
+      if (text(packageRow.candidate_key, 300) !== candidateKey) {
+        throw new Error("EBAY_IMAGE_PACKAGE_CANDIDATE_MISMATCH")
+      }
+      const approved = await approvedGenerationForPackage(
+        supabase,
+        generationId,
+        packageRow,
+        accountKey,
+      )
+      const rights = validateImageRightsEvidence(body)
+      let sourceBuffer: Buffer
+      let sourceUrl: string | null = null
+      let sourceContentType = "image/jpeg"
+      let sourceKind: "authorized_url" | "owned_upload"
+      if (action === "compose_set_url") {
+        const fetched = await fetchAuthorizedImageSource(body.sourceUrl)
+        sourceBuffer = fetched.buffer
+        sourceUrl = fetched.sourceUrl
+        sourceContentType = fetched.contentType
+        sourceKind = "authorized_url"
+      } else {
+        const file = body.file
+        if (!(file instanceof File) || !supportedUpload(file)) {
+          return NextResponse.json(
+            { success: false, error: "EBAY_IMAGE_UPLOAD_INVALID" },
+            { status: 400 },
+          )
+        }
+        sourceBuffer = Buffer.from(await file.arrayBuffer())
+        sourceContentType = file.type
+        sourceKind = "owned_upload"
+      }
+      const sourceMetadata = await sharp(sourceBuffer).metadata()
+      const compositions = await composeAuthorizedEbayListingImageSet(
+        sourceBuffer,
+        approved.factoryInput,
+      )
+      const roleBySlot: Record<string, string> = {
+        MAIN_WHITE_BACKGROUND: "main",
+        PACK_AND_COUNT: "detail",
+        KEY_FEATURES: "detail",
+        SIZE_AND_CONTENT: "label",
+        USE_CONTEXT: "lifestyle",
+        PACKAGE_CONTENTS: "packaging",
+      }
+      const created: JsonRecord[] = []
+      const reused: JsonRecord[] = []
+      for (const composition of compositions) {
+        const { data: duplicate, error: duplicateError } = await supabase
+          .from("ebay_listing_image_assets")
+          .select("*")
+          .eq("account_key", accountKey)
+          .eq("created_by", actor)
+          .eq("listing_package_id", packageId)
+          .eq("output_sha256", composition.outputSha256)
+          .in("status", ["pending_review", "approved"])
+          .maybeSingle()
+        if (duplicateError) throw new Error("EBAY_IMAGE_DUPLICATE_CHECK_FAILED")
+        if (duplicate) {
+          reused.push(duplicate)
+          continue
+        }
+        const assetId = crypto.randomUUID()
+        const basePath = `${actor}/${candidatePath(candidateKey)}/${assetId}`
+        const outputPath = `${basePath}-optimized.jpg`
+        const sourceExtension = sourceContentType === "image/png"
+          ? "png" : sourceContentType === "image/webp" ? "webp" : "jpg"
+        const sourcePath = `${basePath}-source.${sourceExtension}`
+        const { error: sourceUploadError } = await supabase.storage
+          .from(SOURCE_BUCKET)
+          .upload(sourcePath, sourceBuffer, { contentType: sourceContentType, upsert: false })
+        if (sourceUploadError) throw new Error("EBAY_IMAGE_SOURCE_STORAGE_FAILED")
+        const { error: outputUploadError } = await supabase.storage
+          .from(STAGING_BUCKET)
+          .upload(outputPath, composition.output, { contentType: "image/jpeg", upsert: false })
+        if (outputUploadError) {
+          await supabase.storage.from(SOURCE_BUCKET).remove([sourcePath])
+          throw new Error("EBAY_IMAGE_OUTPUT_STORAGE_FAILED")
+        }
+        const { data, error } = await supabase.rpc("ebay_create_pending_listing_image", {
+          p_package_id: packageId,
+          p_account_key: accountKey,
+          p_actor: actor,
+          p_opportunity_id: packageRow.opportunity_id,
+          p_candidate_key: candidateKey,
+          p_asset: {
+            id: assetId,
+            asset_role: roleBySlot[composition.slot],
+            source_kind: sourceKind,
+            source_url: sourceUrl,
+            source_storage_path: sourcePath,
+            output_storage_path: outputPath,
+            source_sha256: composition.sourceSha256,
+            output_sha256: composition.outputSha256,
+            source_width: sourceMetadata.width,
+            source_height: sourceMetadata.height,
+            output_width: composition.width,
+            output_height: composition.height,
+            output_bytes: composition.bytes,
+            rights_basis: rights.rightsBasis,
+            authorization_reference: rights.authorizationReference,
+            rights_evidence_confirmed: rights.rightsEvidenceConfirmed,
+            transformation_version: EBAY_LISTING_IMAGE_SET_VERSION,
+            transformation: {
+              ...composition.transformation,
+              listingGenerationId: approved.generation.id,
+              listingGenerationOutputHash: approved.generation.output_hash,
+            },
+            qa_result: composition.qa,
+          },
+        })
+        const row = Array.isArray(data) ? record(data[0]) : record(data)
+        if (error || !row.id) {
+          await supabase.storage.from(STAGING_BUCKET).remove([outputPath])
+          await supabase.storage.from(SOURCE_BUCKET).remove([sourcePath])
+          throw new Error(databaseErrorCode(error, "EBAY_IMAGE_ASSET_SAVE_FAILED"))
+        }
+        created.push(row)
+      }
+      return NextResponse.json({
+        success: true,
+        setVersion: EBAY_LISTING_IMAGE_SET_VERSION,
+        assets: [...reused, ...created],
+        created: created.length,
+        reused: reused.length,
+        expected: 6,
+        status: "PENDING_HUMAN_REVIEW",
+        sourcePolicy: "AUTHORIZED_PRODUCT_IMAGE_ONLY",
+        competitorImagesUsed: 0,
+        ebayWrites: 0,
+      })
+    }
 
     if (action === "optimize_url" || action === "optimize_upload") {
       const candidateKey = text(body.candidateKey, 300)
