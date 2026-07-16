@@ -68,6 +68,7 @@ type ListingRow = {
   listing_status: string
   title: string
   ebay_price: number | string | null
+  ebay_price_source?: string | null
   currency: string
   market_radar_product_id: string | null
   supplier_variant_id: string | null
@@ -1139,6 +1140,8 @@ async function persistSnapshotsAndRules(input: {
           analyticsRulesSuspended: input.analyticsRulesSuspendedListingIds.has(snapshot.listingId),
           watchers: watcher?.source ?? null,
           stock: supply ? "LUNA_PORTEX_MARKET_RADAR_LATEST_VARIANT" : null,
+          price: listing.ebay_price_source ??
+            (listing.ebay_price === null ? null : "SELLER_OS_LISTING_LINK"),
           transactionsClassification: "ANALYTICS_NOT_CONFIRMED_ORDER",
           watchersClassification: "INTEREST_SIGNAL_NOT_SALE",
         },
@@ -1521,6 +1524,15 @@ export async function runEbayCommercialMonitor(
         for (const identity of identityResult.observations) {
           if (identity.activeListingConfirmed) {
             verifiedIdentities.add(`${identity.listingId}:${identity.expectedSku}`)
+            const verifiedListing = listings.find((row) =>
+              row.ebay_item_id === identity.listingId &&
+              row.ebay_sku === identity.expectedSku
+            )
+            if (verifiedListing && identity.currentPrice !== null) {
+              verifiedListing.ebay_price = identity.currentPrice
+              verifiedListing.currency = identity.currency ?? verifiedListing.currency
+              verifiedListing.ebay_price_source = "EBAY_TRADING_GET_ITEM_CURRENT_PRICE"
+            }
           } else {
             errors.push({
               reader: "listing_identity",

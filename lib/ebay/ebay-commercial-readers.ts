@@ -215,6 +215,8 @@ async function watcherRead(
     "<OutputSelector>Item.ItemID</OutputSelector>" +
     "<OutputSelector>Item.SKU</OutputSelector>" +
     "<OutputSelector>Item.SellingStatus.ListingStatus</OutputSelector>" +
+    "<OutputSelector>Item.SellingStatus.CurrentPrice</OutputSelector>" +
+    "<OutputSelector>Item.Currency</OutputSelector>" +
     "<OutputSelector>Item.WatchCount</OutputSelector>" +
     "</GetItemRequest>"
   for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
@@ -237,12 +239,16 @@ async function watcherRead(
       const returnedItemId = xmlValue(xml, "ItemID")
       const returnedSku = xmlValue(xml, "SKU")
       const listingStatus = xmlValue(xml, "ListingStatus")
+      const currentPrice = numeric(xmlValue(xml, "CurrentPrice"))
+      const currency = xmlValue(xml, "Currency")
       const count = numeric(xmlValue(xml, "WatchCount"))
       if (returnedItemId !== listingId) throw new Error("EBAY_WATCHERS_ITEM_ID_MISMATCH")
       return {
         listingId,
         returnedSku,
         listingStatus,
+        currentPrice,
+        currency,
         currentWatchers: count === null ? 0 : Math.max(0, Math.trunc(count)),
         source: "EBAY_TRADING_GET_ITEM_WATCHCOUNT" as const,
         observedAt: new Date().toISOString(),
@@ -281,6 +287,8 @@ export async function verifyEbayActiveListingIdentities(input: {
     observedListingId: string
     observedSku: string | null
     observedListingStatus: string | null
+    currentPrice: number | null
+    currency: string | null
     itemIdMatches: boolean
     skuMatches: boolean
     activeListingConfirmed: boolean
@@ -304,6 +312,8 @@ export async function verifyEbayActiveListingIdentities(input: {
           observedListingId: result.listingId,
           observedSku: result.returnedSku,
           observedListingStatus: result.listingStatus,
+          currentPrice: result.currentPrice,
+          currency: result.currency,
           itemIdMatches,
           skuMatches,
           activeListingConfirmed,
