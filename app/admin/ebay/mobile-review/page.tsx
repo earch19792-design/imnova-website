@@ -34,6 +34,7 @@ import {
 } from "@/lib/ebay/ebay-luna-ebay-identity-comparison"
 import type { EbaySellerKeywordDemandReport } from "@/lib/ebay/ebay-seller-keyword-demand-validation"
 import type { EbayLunaOpportunityAssessment } from "@/lib/ebay/ebay-luna-demand-opportunity-engine"
+import type { WinnerEvidenceDecisionPackage } from "@/lib/ebay/ebay-winner-evidence-v2"
 import {
   getMobileReviewPayloadError,
   getMobileReviewRequestError,
@@ -254,6 +255,7 @@ export default function EbayMobileReviewPage() {
   })
   const [sellerKeywordDemand, setSellerKeywordDemand] = useState<EbaySellerKeywordDemandReport | null>(null)
   const [opportunityAssessment, setOpportunityAssessment] = useState<EbayLunaOpportunityAssessment | null>(null)
+  const [visualWinnerEvidence, setVisualWinnerEvidence] = useState<WinnerEvidenceDecisionPackage["visualEvidenceAnalysis"] | null>(null)
   const [sellerKeywordDemandLoading, setSellerKeywordDemandLoading] = useState(false)
   const [sellerKeywordDemandError, setSellerKeywordDemandError] = useState("")
   const [loading, setLoading] = useState(true)
@@ -471,7 +473,7 @@ export default function EbayMobileReviewPage() {
   }, [radarGuards.pendingGuards, sellerKeywordDemand])
   const marketValidation = useMemo(() => buildEbayMarketValidationSelectedCandidate({ selectedCandidate: selectedRadarCandidate, humanConfirmationsComplete: localConfirmationsComplete, pendingGuards: [...demandAwareRadarGuards, ...(selectedRadarCandidate && !identityComparison.identityComparisonComplete ? identityComparison.pendingGuards : [])] }), [selectedRadarCandidate, localConfirmationsComplete, demandAwareRadarGuards, identityComparison.identityComparisonComplete, identityComparison.pendingGuards])
   const effectiveDecision = useMemo(() => buildMobileReviewEffectiveDecision({ dataSource: report.dataSource, selectedCandidateName: decision.selectedCandidateName, pendingGuards: marketValidation.pendingGuards, primaryBlockingReason: localConfirmationsComplete ? marketValidation.nextRecommendedRoute : radarGuards.primaryBlockingReason, localConfirmationsComplete, holdForReview: state.holdForReview, refreshRequested: state.refreshRequested }), [report.dataSource, decision.selectedCandidateName, marketValidation, radarGuards.primaryBlockingReason, localConfirmationsComplete, state.holdForReview, state.refreshRequested])
-  const summary = useMemo(() => JSON.stringify({ ...JSON.parse(buildMobileReviewCopyPasteSummary(state)), dataSource: report.dataSource, mobileDecisionPersistence: selectedQueueOpportunity ? "SERVER_AUTOSAVE" : "BROWSER_STATE_ONLY", decisionPersistence: selectedQueueOpportunity ? "SERVER_AUTOSAVE_WITH_BROWSER_FALLBACK" : "BROWSER_STATE_OR_LOCAL_STORAGE", officialApprovalRecord: false, effectiveDecision, lunaEbayIdentityComparison: identityComparison, ebaySellerKeywordDemand: sellerKeywordDemand, ebayLunaOpportunityAssessment: opportunityAssessment, marketValidationSelectedCandidate: marketValidation, pendingGuards: selectedRadarCandidate ? marketValidation.pendingGuards : null, guardsEvaluated: Boolean(selectedRadarCandidate), manualConfirmationReconciliation: radarGuards.reconciliation, pinnedCandidateContinuity: pinnedContinuity, canPublish: false }, null, 2), [state, report.dataSource, selectedQueueOpportunity, effectiveDecision, identityComparison, sellerKeywordDemand, opportunityAssessment, marketValidation, selectedRadarCandidate, radarGuards.reconciliation, pinnedContinuity])
+  const summary = useMemo(() => JSON.stringify({ ...JSON.parse(buildMobileReviewCopyPasteSummary(state)), dataSource: report.dataSource, mobileDecisionPersistence: selectedQueueOpportunity ? "SERVER_AUTOSAVE" : "BROWSER_STATE_ONLY", decisionPersistence: selectedQueueOpportunity ? "SERVER_AUTOSAVE_WITH_BROWSER_FALLBACK" : "BROWSER_STATE_OR_LOCAL_STORAGE", officialApprovalRecord: false, effectiveDecision, lunaEbayIdentityComparison: identityComparison, ebaySellerKeywordDemand: sellerKeywordDemand, ebayLunaOpportunityAssessment: opportunityAssessment, visualWinnerEvidence, marketValidationSelectedCandidate: marketValidation, pendingGuards: selectedRadarCandidate ? marketValidation.pendingGuards : null, guardsEvaluated: Boolean(selectedRadarCandidate), manualConfirmationReconciliation: radarGuards.reconciliation, pinnedCandidateContinuity: pinnedContinuity, canPublish: false }, null, 2), [state, report.dataSource, selectedQueueOpportunity, effectiveDecision, identityComparison, sellerKeywordDemand, opportunityAssessment, visualWinnerEvidence, marketValidation, selectedRadarCandidate, radarGuards.reconciliation, pinnedContinuity])
 
   useEffect(() => {
     if (!selectedRadarCandidate || !localConfirmationsComplete) return
@@ -563,6 +565,11 @@ export default function EbayMobileReviewPage() {
     if (savedForm.opportunityAssessment && typeof savedForm.opportunityAssessment === "object") {
       setOpportunityAssessment(savedForm.opportunityAssessment as EbayLunaOpportunityAssessment)
     }
+    if (savedForm.visualWinnerEvidence && typeof savedForm.visualWinnerEvidence === "object") {
+      setVisualWinnerEvidence(
+        savedForm.visualWinnerEvidence as WinnerEvidenceDecisionPackage["visualEvidenceAnalysis"],
+      )
+    }
     if (typeof savedForm.ebayListingUrl === "string" && savedForm.ebayListingUrl) {
       setEbayListingUrl(savedForm.ebayListingUrl)
       setEbayObservedTitle(typeof savedForm.ebayObservedTitle === "string" ? savedForm.ebayObservedTitle : "")
@@ -638,6 +645,7 @@ export default function EbayMobileReviewPage() {
                 ebayObservedTitle,
                 sellerKeywordDemand,
                 opportunityAssessment,
+                visualWinnerEvidence,
               },
             }),
           })
@@ -656,7 +664,7 @@ export default function EbayMobileReviewPage() {
       })()
     }, 800)
     return () => window.clearTimeout(timer)
-  }, [selectedQueueOpportunity, selectedRadarCandidate, state.stockQuantityConfirmed, state.imageConfirmed, lunaPrice, lunaPriceConfirmed, identityComparison.identityComparisonComplete, ebayListingUrl, ebayObservedTitle, sellerKeywordDemand, opportunityAssessment, marketValidation.pendingGuards, loadServerReviews])
+  }, [selectedQueueOpportunity, selectedRadarCandidate, state.stockQuantityConfirmed, state.imageConfirmed, lunaPrice, lunaPriceConfirmed, identityComparison.identityComparisonComplete, ebayListingUrl, ebayObservedTitle, sellerKeywordDemand, opportunityAssessment, visualWinnerEvidence, marketValidation.pendingGuards, loadServerReviews])
 
   const resetIdentityConfirmation = () => {
     setState((current) =>
@@ -680,6 +688,7 @@ export default function EbayMobileReviewPage() {
     setSellerKeywordDemandError("")
     setSellerKeywordDemand(null)
     setOpportunityAssessment(null)
+    setVisualWinnerEvidence(null)
     setEbayListingUrl("")
     setEbayObservedTitle("")
     setEbayReferenceOpened(false)
@@ -724,12 +733,14 @@ export default function EbayMobileReviewPage() {
         error?: string
         report?: EbaySellerKeywordDemandReport
         opportunityAssessment?: EbayLunaOpportunityAssessment
+        visualWinnerEvidence?: WinnerEvidenceDecisionPackage["visualEvidenceAnalysis"] | null
       }>(response, "No se pudo consultar la evidencia read-only de eBay")
       if (!payload.success || !payload.report) {
         throw new Error(getMobileReviewPayloadError(payload, "EBAY_READONLY_MARKET_VALIDATION_FAILED"))
       }
       setSellerKeywordDemand(payload.report)
       setOpportunityAssessment(payload.opportunityAssessment ?? null)
+      setVisualWinnerEvidence(payload.visualWinnerEvidence ?? null)
       setLastActionMessage(
         `eBay analizado en modo read-only: ${payload.report.eligibleComparableListings} comparables y ${payload.report.sellersAnalyzed} vendedores.`
       )
@@ -1031,6 +1042,65 @@ export default function EbayMobileReviewPage() {
                         <p className="mt-1 text-sm leading-6 text-white/75">{sellerKeywordDemand.highestPotentialBuyerIntent.explanation}</p>
                         <div className="mt-2 flex flex-wrap gap-2"><StatusPill>{sellerKeywordDemand.highestPotentialBuyerIntent.intentType.replaceAll("_", " ")}</StatusPill><StatusPill tone={professionalKeywordSignalsAreVerified ? "good" : "warning"}>{sellerKeywordDemand.highestPotentialBuyerIntent.potentialLevel.replaceAll("_", " ")}</StatusPill></div>
                         <p className="mt-2 text-[11px] text-white/50">Perfil de intención agregado; no utiliza datos personales de compradores.</p>
+                      </section>
+
+                      <section aria-labelledby="visual-winner-evidence-heading" className="rounded-2xl border border-sky-200/25 bg-sky-200/[0.07] p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <h3 id="visual-winner-evidence-heading" className="font-black">Patrones visuales del mercado</h3>
+                            <p className="mt-1 text-xs leading-5 text-white/60">Sólo observaciones estructuradas de comparables exactos; asociación no significa causalidad.</p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <StatusPill tone={visualWinnerEvidence?.status === "AVAILABLE" ? "good" : "warning"}>{visualWinnerEvidence?.status ?? "N/D"}</StatusPill>
+                            <StatusPill>{visualWinnerEvidence?.visualPatternConfidence.level ?? "INSUFFICIENT"}</StatusPill>
+                            <StatusPill>Score {visualWinnerEvidence?.visualOpportunityScore ?? "N/D"}</StatusPill>
+                          </div>
+                        </div>
+                        <dl className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Vendidos exactos</dt><dd className="mt-1 font-black">{visualWinnerEvidence?.visualEvidenceSummary.soldOrCompletedExactSampleSize ?? 0}</dd></div>
+                          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Activos exactos</dt><dd className="mt-1 font-black">{visualWinnerEvidence?.visualEvidenceSummary.activeExactSampleSize ?? 0}</dd></div>
+                          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Evidencia visual útil</dt><dd className="mt-1 font-black">{visualWinnerEvidence?.visualPatternConfidence.sampleSize ?? 0}</dd></div>
+                          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Confianza</dt><dd className="mt-1 font-black">{visualWinnerEvidence?.visualPatternConfidence.score ?? "N/D"}</dd></div>
+                        </dl>
+                        {visualWinnerEvidence?.status === "AVAILABLE" ? (
+                          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                            <div>
+                              <h4 className="text-sm font-black">Qué se repite</h4>
+                              <ul className="mt-2 grid gap-2 text-xs">
+                                {[...visualWinnerEvidence.mainImagePatterns, ...visualWinnerEvidence.secondaryImagePatterns].map((pattern) => (
+                                  <li key={pattern.pattern} className="rounded-xl border border-white/10 bg-black/20 p-2">
+                                    <p className="font-black">{pattern.pattern.replaceAll("_", " ")}</p>
+                                    <p className="mt-1 text-white/65">Vendidos: {pattern.soldOrCompletedExactMatches.count}/{pattern.soldOrCompletedExactMatches.observed || "N/D"} · Activos: {pattern.activeExactMatches.count}/{pattern.activeExactMatches.observed || "N/D"}</p>
+                                    <p className="mt-1 text-white/45">{pattern.interpretation.replaceAll("_", " ")}</p>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-black">Oportunidades visuales</h4>
+                              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-white/75">
+                                {visualWinnerEvidence.differentiationOpportunities.length
+                                  ? visualWinnerEvidence.differentiationOpportunities.map((entry) => <li key={entry.opportunity}>{entry.opportunity.replaceAll("_", " ")}</li>)
+                                  : <li>N/D · la evidencia no permite diferenciar patrones.</li>}
+                              </ul>
+                              <h4 className="mt-4 text-sm font-black">Estrategia original de seis imágenes</h4>
+                              <ol className="mt-2 space-y-2 text-xs">
+                                {visualWinnerEvidence.recommendedSixImageStrategy.map((entry) => (
+                                  <li key={entry.slot} className="rounded-xl bg-black/20 p-2"><strong>{entry.position}. {entry.slot.replaceAll("_", " ")}</strong><span className="mt-1 block text-white/65">{entry.strategy}</span></li>
+                                ))}
+                              </ol>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="mt-3 rounded-xl border border-amber-200/20 bg-amber-200/[0.06] p-3 text-sm text-amber-50">N/D · eBay no devolvió observaciones visuales estructuradas y todavía no existe una importación humana revisada. No se descargaron ni copiaron imágenes.</p>
+                        )}
+                        <details className="mt-3 rounded-xl border border-white/10 p-2 text-xs">
+                          <summary className="cursor-pointer font-black">Limitaciones de evidencia</summary>
+                          <ul className="mt-2 list-disc space-y-1 pl-5 text-white/60">
+                            {(visualWinnerEvidence?.unsupportedVisualHypotheses ?? ["NO_USABLE_STRUCTURED_VISUAL_OBSERVATIONS"]).map((item) => <li key={item}>{item.replaceAll("_", " ")}</li>)}
+                          </ul>
+                          <p className="mt-2 text-white/45">Imágenes descargadas: 0 · copiadas: 0 · usadas como input generativo: 0 · escrituras eBay: 0.</p>
+                        </details>
                       </section>
 
                       {opportunityAssessment && (

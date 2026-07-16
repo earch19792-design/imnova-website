@@ -35,6 +35,29 @@ export type EbaySellerComparableInput = {
   returnsAccepted?: boolean | null
   itemOriginDate?: string | null
   itemEndDate?: string | null
+  visualEvidence?: {
+    imageCount?: number | null
+    mainImageBackground?: string | null
+    productCoverageEstimate?: number | null
+    fullPackVisible?: boolean | null
+    unitCountVisible?: boolean | null
+    packageFrontVisible?: boolean | null
+    textDensity?: string | null
+    infographicPresence?: boolean | null
+    dimensionsImage?: boolean | null
+    contentsImage?: boolean | null
+    lifestyleImage?: boolean | null
+    useContextImage?: boolean | null
+    handsOrPeoplePresent?: boolean | null
+    visibleClaims?: string[] | null
+    visualClutter?: string | null
+    imageConsistency?: string | null
+    mainImageClarity?: string | null
+    observableVisualRisks?: string[] | null
+    evidenceLevel?: string | null
+    observedAt?: string | null
+    sourceType?: string | null
+  } | null
   source: EbaySalesEvidenceSource
 }
 
@@ -131,6 +154,16 @@ function cleanText(value: unknown) {
 function numberOrZero(value: unknown) {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
+function numberOrNull(value: unknown) {
+  if (value === null || value === undefined || value === "") return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function booleanOrNull(value: unknown) {
+  return value === true ? true : value === false ? false : null
 }
 
 function normalizedIdentifier(value: unknown) {
@@ -453,6 +486,37 @@ export function buildEbaySellerKeywordDemandValidation(
       returnsAccepted: entry.returnsAccepted === true,
       itemOriginDate: cleanText(entry.itemOriginDate) || null,
       itemEndDate: cleanText(entry.itemEndDate) || null,
+      visualEvidence: entry.visualEvidence && typeof entry.visualEvidence === "object"
+        ? {
+            imageCount: numberOrNull(entry.visualEvidence.imageCount),
+            mainImageBackground: cleanText(entry.visualEvidence.mainImageBackground) || null,
+            productCoverageEstimate: numberOrNull(entry.visualEvidence.productCoverageEstimate),
+            fullPackVisible: booleanOrNull(entry.visualEvidence.fullPackVisible),
+            unitCountVisible: booleanOrNull(entry.visualEvidence.unitCountVisible),
+            packageFrontVisible: booleanOrNull(entry.visualEvidence.packageFrontVisible),
+            textDensity: cleanText(entry.visualEvidence.textDensity) || null,
+            infographicPresence: booleanOrNull(entry.visualEvidence.infographicPresence),
+            dimensionsImage: booleanOrNull(entry.visualEvidence.dimensionsImage),
+            contentsImage: booleanOrNull(entry.visualEvidence.contentsImage),
+            lifestyleImage: booleanOrNull(entry.visualEvidence.lifestyleImage),
+            useContextImage: booleanOrNull(entry.visualEvidence.useContextImage),
+            handsOrPeoplePresent: booleanOrNull(entry.visualEvidence.handsOrPeoplePresent),
+            visibleClaims: Array.isArray(entry.visualEvidence.visibleClaims)
+              ? entry.visualEvidence.visibleClaims.map(cleanText).filter(Boolean).slice(0, 20)
+              : [],
+            visualClutter: cleanText(entry.visualEvidence.visualClutter) || null,
+            imageConsistency: cleanText(entry.visualEvidence.imageConsistency) || null,
+            mainImageClarity: cleanText(entry.visualEvidence.mainImageClarity) || null,
+            observableVisualRisks: Array.isArray(entry.visualEvidence.observableVisualRisks)
+              ? entry.visualEvidence.observableVisualRisks.map(cleanText).filter(Boolean).slice(0, 20)
+              : [],
+            evidenceLevel: cleanText(entry.visualEvidence.evidenceLevel) || null,
+            observedAt: cleanText(entry.visualEvidence.observedAt) || null,
+            sourceType: cleanText(entry.visualEvidence.sourceType) || null,
+            rawImageStored: false,
+            imageDownloaded: false,
+          }
+        : null,
       evidenceSource: entry.source,
       identityMatchScore: identifierExact ? 100 : identity.score,
       identityMatchQuality: identifierExact ? "EXACT_IDENTIFIER" : identity.matchQuality,

@@ -40,8 +40,11 @@ export async function GET(req: Request) {
     sourcePolicy: {
       active: "EBAY_BROWSE_API",
       soldOrCompleted: "MARKETPLACE_INSIGHTS_IF_ENTITLED_OR_REVIEWED_IMPORT",
+      visualEvidence: "STRUCTURED_OFFICIAL_METADATA_OR_HUMAN_REVIEWED_IMPORT_ONLY",
       scrapingAllowed: false,
       browserAutomationAllowed: false,
+      competitorImageDownloadAllowed: false,
+      competitorImageGenerativeInputAllowed: false,
     },
   })
 }

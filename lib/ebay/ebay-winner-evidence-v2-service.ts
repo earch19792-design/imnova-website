@@ -81,7 +81,7 @@ export function winnerComparablesFromKeywordReport(report: unknown): WinnerCompa
     return {
       source: source as WinnerComparableInput["source"],
       sourceListingId: text(comparable.comparableId),
-      observedAt: text(root.asOf),
+      observedAt: text(root.evidenceAsOf) ?? text(root.asOf),
       identity: variantFromComparable(comparable),
       itemPrice: numberOrNull(comparable.price),
       shippingCost: numberOrNull(comparable.shippingCost),
@@ -94,6 +94,7 @@ export function winnerComparablesFromKeywordReport(report: unknown): WinnerCompa
       shippingPattern: null,
       returnsPattern: comparable.returnsAccepted === true ? "RETURNS_ACCEPTED" : null,
       imageCount: null,
+      visualEvidence: record(comparable.visualEvidence) as WinnerComparableInput["visualEvidence"],
       evidenceReviewed: true,
     }
   }).filter((value): value is WinnerComparableInput => value !== null)

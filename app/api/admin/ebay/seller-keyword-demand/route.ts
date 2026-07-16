@@ -7,6 +7,9 @@ import {
   runEbaySellerKeywordDemandValidation,
 } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import { buildEbayLunaOpportunityAssessment } from "@/lib/ebay/ebay-luna-demand-opportunity-engine"
+import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
+import { buildWinnerEvidenceDecisionPackage } from "@/lib/ebay/ebay-winner-evidence-v2"
+import { winnerComparablesFromKeywordReport } from "@/lib/ebay/ebay-winner-evidence-v2-service"
 
 function text(value: unknown, maxLength: number) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : ""
@@ -102,17 +105,54 @@ export async function POST(req: Request) {
       observationHistory: [],
       taxonomyIntelligence,
     })
+    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    const visualWinnerEvidence = accountKey && candidate.supplierSku
+      ? buildWinnerEvidenceDecisionPackage({
+          marketplaceAccountKey: accountKey,
+          candidateId: null,
+          supplierSku: candidate.supplierSku,
+          supplierVariantId: text(raw.supplierVariantId, 120) || null,
+          identity: {
+            manufacturerBrand: candidate.brand || null,
+            gtin: candidate.gtin || null,
+            mpn: candidate.mpn || null,
+            model: candidate.mpn || null,
+            productName: candidate.productName || candidate.productTitle,
+            packCount: candidate.packQuantity,
+            unitCount: null,
+            size: candidate.size || null,
+            color: candidate.color || null,
+            scent: null,
+            variant: candidate.variantTitle || null,
+            condition: "New",
+          },
+          comparables: winnerComparablesFromKeywordReport(report),
+          supplierPackageCost: numberOrNull(raw.supplierCost),
+          packagingCost: null,
+          outboundShippingCost: null,
+          fixedFulfillmentCost: null,
+          authorizedKeywords: [],
+          stockAvailable: numberOrNull(raw.inventoryQuantity),
+          stockObservedAt: text(raw.stockCapturedAt, 80) || null,
+          costObservedAt: text(raw.stockCapturedAt, 80) || null,
+          complianceBlocked: false,
+          now: report.evidenceAsOf,
+        }).visualEvidenceAnalysis
+      : null
     return NextResponse.json({
       success: true,
       report,
       taxonomyIntelligence,
       opportunityAssessment,
+      visualWinnerEvidence,
       safety: {
         mode: "EBAY_OFFICIAL_READ_ONLY",
         ebayWriteUsed: false,
         supabaseWriteUsed: false,
         tokenReturnedToBrowser: false,
         imagesCopied: false,
+        competitorImagesDownloaded: 0,
+        imageGenerationStarted: false,
         canPublish: false,
       },
     })

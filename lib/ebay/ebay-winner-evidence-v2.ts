@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 
 export const EBAY_WINNER_EVIDENCE_V2_VERSION =
-  "EBAY_WINNER_EVIDENCE_PRODUCT_DECISION_V2_2026_07_16"
+  "EBAY_WINNER_EVIDENCE_PRODUCT_DECISION_VISUAL_V2_1_2026_07_16"
 export const PRODUCT_IDENTITY_FINGERPRINT_VERSION =
   "EBAY_PRODUCT_IDENTITY_FINGERPRINT_V2"
 export const WINNER_ECONOMICS_CONFIG_VERSION =
@@ -39,6 +39,36 @@ export type WinnerComparableSource =
   | "EBAY_OFFICIAL_JSON_IMPORT"
   | "HUMAN_REVIEWED_IMPORT"
 
+export type WinnerVisualEvidenceSourceType =
+  | "OFFICIAL_EBAY_METADATA"
+  | "OFFICIAL_EBAY_CSV_IMPORT"
+  | "OFFICIAL_EBAY_JSON_IMPORT"
+  | "HUMAN_REVIEWED_OBSERVATION"
+
+export type WinnerComparableVisualEvidence = {
+  imageCount?: number | null
+  mainImageBackground?: "WHITE" | "LIGHT_NEUTRAL" | "COLORED" | "LIFESTYLE" | "UNKNOWN" | null
+  productCoverageEstimate?: number | null
+  fullPackVisible?: boolean | null
+  unitCountVisible?: boolean | null
+  packageFrontVisible?: boolean | null
+  textDensity?: "NONE" | "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN" | null
+  infographicPresence?: boolean | null
+  dimensionsImage?: boolean | null
+  contentsImage?: boolean | null
+  lifestyleImage?: boolean | null
+  useContextImage?: boolean | null
+  handsOrPeoplePresent?: boolean | null
+  visibleClaims?: string[] | null
+  visualClutter?: "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN" | null
+  imageConsistency?: "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN" | null
+  mainImageClarity?: "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN" | null
+  observableVisualRisks?: string[] | null
+  evidenceLevel?: "HIGH" | "MEDIUM" | "LOW" | "INSUFFICIENT" | null
+  observedAt?: string | null
+  sourceType?: WinnerVisualEvidenceSourceType | null
+}
+
 export type ProductIdentityInput = {
   manufacturerBrand?: string | null
   distributor?: string | null
@@ -70,6 +100,7 @@ export type WinnerComparableInput = {
   shippingPattern?: string | null
   returnsPattern?: string | null
   imageCount?: number | null
+  visualEvidence?: WinnerComparableVisualEvidence | null
   evidenceReviewed?: boolean | null
 }
 
@@ -383,6 +414,335 @@ function normalizedKeywords(value: unknown) {
     .filter((entry): entry is string => Boolean(entry)))]
 }
 
+function normalizedBoolean(value: unknown) {
+  return value === true ? true : value === false ? false : null
+}
+
+function normalizedEnum<T extends string>(value: unknown, allowed: readonly T[]) {
+  const candidate = normalizedText(value)?.toUpperCase() as T | undefined
+  return candidate && allowed.includes(candidate) ? candidate : null
+}
+
+function normalizedPercent(value: unknown) {
+  const parsed = finiteNonNegative(value)
+  return parsed === null ? null : Math.min(100, roundScore(parsed))
+}
+
+function safeObservationList(value: unknown) {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.map(normalizedText)
+    .filter((entry): entry is string => Boolean(entry))
+    .map((entry) => entry.slice(0, 160)))]
+    .slice(0, 20)
+}
+
+function defaultVisualSource(source: WinnerComparableSource): WinnerVisualEvidenceSourceType {
+  if (source === "EBAY_OFFICIAL_CSV_IMPORT") return "OFFICIAL_EBAY_CSV_IMPORT"
+  if (source === "EBAY_OFFICIAL_JSON_IMPORT") return "OFFICIAL_EBAY_JSON_IMPORT"
+  if (source === "HUMAN_REVIEWED_IMPORT") return "HUMAN_REVIEWED_OBSERVATION"
+  return "OFFICIAL_EBAY_METADATA"
+}
+
+function normalizeVisualEvidence(comparable: WinnerComparableInput) {
+  const input = comparable.visualEvidence ?? {}
+  const imageCount = normalizedPositiveInteger(input.imageCount ?? comparable.imageCount)
+  const hasStructuredEvidence = [
+    input.mainImageBackground,
+    input.productCoverageEstimate,
+    input.fullPackVisible,
+    input.unitCountVisible,
+    input.packageFrontVisible,
+    input.textDensity,
+    input.infographicPresence,
+    input.dimensionsImage,
+    input.contentsImage,
+    input.lifestyleImage,
+    input.useContextImage,
+    input.handsOrPeoplePresent,
+    input.visualClutter,
+    input.imageConsistency,
+    input.mainImageClarity,
+  ].some((value) => value !== null && value !== undefined) ||
+    safeObservationList(input.visibleClaims).length > 0 ||
+    safeObservationList(input.observableVisualRisks).length > 0
+  const evidenceLevel = normalizedEnum(input.evidenceLevel, [
+    "HIGH", "MEDIUM", "LOW", "INSUFFICIENT",
+  ] as const) ?? (hasStructuredEvidence ? "LOW" : imageCount !== null ? "LOW" : "INSUFFICIENT")
+  return {
+    imageCount,
+    mainImageBackground: normalizedEnum(input.mainImageBackground, [
+      "WHITE", "LIGHT_NEUTRAL", "COLORED", "LIFESTYLE", "UNKNOWN",
+    ] as const),
+    productCoverageEstimate: normalizedPercent(input.productCoverageEstimate),
+    fullPackVisible: normalizedBoolean(input.fullPackVisible),
+    unitCountVisible: normalizedBoolean(input.unitCountVisible),
+    packageFrontVisible: normalizedBoolean(input.packageFrontVisible),
+    textDensity: normalizedEnum(input.textDensity, [
+      "NONE", "LOW", "MEDIUM", "HIGH", "UNKNOWN",
+    ] as const),
+    infographicPresence: normalizedBoolean(input.infographicPresence),
+    dimensionsImage: normalizedBoolean(input.dimensionsImage),
+    contentsImage: normalizedBoolean(input.contentsImage),
+    lifestyleImage: normalizedBoolean(input.lifestyleImage),
+    useContextImage: normalizedBoolean(input.useContextImage),
+    handsOrPeoplePresent: normalizedBoolean(input.handsOrPeoplePresent),
+    visibleClaims: safeObservationList(input.visibleClaims),
+    visualClutter: normalizedEnum(input.visualClutter, [
+      "LOW", "MEDIUM", "HIGH", "UNKNOWN",
+    ] as const),
+    imageConsistency: normalizedEnum(input.imageConsistency, [
+      "LOW", "MEDIUM", "HIGH", "UNKNOWN",
+    ] as const),
+    mainImageClarity: normalizedEnum(input.mainImageClarity, [
+      "LOW", "MEDIUM", "HIGH", "UNKNOWN",
+    ] as const),
+    observableVisualRisks: safeObservationList(input.observableVisualRisks),
+    evidenceLevel,
+    observedAt: normalizedText(input.observedAt) ?? normalizedText(comparable.observedAt),
+    sourceType: normalizedEnum(input.sourceType, [
+      "OFFICIAL_EBAY_METADATA",
+      "OFFICIAL_EBAY_CSV_IMPORT",
+      "OFFICIAL_EBAY_JSON_IMPORT",
+      "HUMAN_REVIEWED_OBSERVATION",
+    ] as const) ?? defaultVisualSource(comparable.source),
+    rawImageStored: false,
+    imageUrlStored: false,
+    imageDownloaded: false,
+    competitorImageCopied: false,
+    usable: evidenceLevel !== "INSUFFICIENT" && (hasStructuredEvidence || imageCount !== null),
+  }
+}
+
+type NormalizedVisualEvidence = ReturnType<typeof normalizeVisualEvidence>
+
+type NormalizedComparable = {
+  cohort: WinnerEvidenceCohort | null
+  classification: WinnerComparableClassification
+  visualEvidence: NormalizedVisualEvidence
+}
+
+function countBoolean(rows: NormalizedComparable[], field: keyof NormalizedVisualEvidence) {
+  const observed = rows.filter((row) => typeof row.visualEvidence[field] === "boolean")
+  const count = observed.filter((row) => row.visualEvidence[field] === true).length
+  return { count, observed: observed.length, percent: observed.length ? roundScore(count / observed.length * 100) : null }
+}
+
+function countEnum(rows: NormalizedComparable[], field: keyof NormalizedVisualEvidence, value: string) {
+  const observed = rows.filter((row) => {
+    const entry = row.visualEvidence[field]
+    return typeof entry === "string" && entry !== "UNKNOWN"
+  })
+  const count = observed.filter((row) => row.visualEvidence[field] === value).length
+  return { count, observed: observed.length, percent: observed.length ? roundScore(count / observed.length * 100) : null }
+}
+
+function averageNumber(rows: NormalizedComparable[], field: keyof NormalizedVisualEvidence) {
+  const values = rows.map((row) => row.visualEvidence[field])
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  return {
+    average: values.length ? roundScore(values.reduce((sum, value) => sum + value, 0) / values.length) : null,
+    observed: values.length,
+  }
+}
+
+function visualPattern(
+  pattern: string,
+  sold: ReturnType<typeof countBoolean>,
+  active: ReturnType<typeof countBoolean>,
+) {
+  const difference = sold.percent === null || active.percent === null
+    ? null
+    : roundScore(sold.percent - active.percent)
+  return {
+    pattern,
+    soldOrCompletedExactMatches: sold,
+    activeExactMatches: active,
+    percentagePointDifference: difference,
+    interpretation: difference === null
+      ? "N/D"
+      : difference > 10
+        ? "PATTERN_ASSOCIATED_MORE_WITH_SOLD_OR_COMPLETED_EXACT_MATCHES"
+        : difference < -10
+          ? "PATTERN_ASSOCIATED_MORE_WITH_ACTIVE_EXACT_MATCHES"
+          : "NO_MEANINGFUL_OBSERVED_DIFFERENCE",
+    causalityClaimed: false,
+  }
+}
+
+function buildVisualWinnerEvidenceAnalysis(rows: NormalizedComparable[]) {
+  const soldAll = rows.filter((row) => row.cohort === "SOLD_OR_COMPLETED_EXACT_MATCHES")
+  const activeAll = rows.filter((row) => row.cohort === "ACTIVE_EXACT_MATCHES")
+  const sold = soldAll.filter((row) => row.visualEvidence.usable)
+  const active = activeAll.filter((row) => row.visualEvidence.usable)
+  const usable = sold.length + active.length
+  const balancedSample = Math.min(sold.length, active.length)
+  const confidenceScore = usable === 0
+    ? null
+    : roundScore(Math.min(70, usable * 9) + Math.min(30, balancedSample * 8))
+  const confidenceLevel = confidenceScore === null
+    ? "INSUFFICIENT"
+    : usable < 3 || balancedSample === 0
+      ? "LOW"
+      : usable < 8 || confidenceScore < 70
+        ? "MEDIUM"
+        : "HIGH"
+  const mainImagePatterns = [
+    visualPattern("WHITE_OR_LIGHT_NEUTRAL_MAIN", {
+      count: sold.filter((row) => ["WHITE", "LIGHT_NEUTRAL"].includes(row.visualEvidence.mainImageBackground ?? "")).length,
+      observed: sold.filter((row) => row.visualEvidence.mainImageBackground && row.visualEvidence.mainImageBackground !== "UNKNOWN").length,
+      percent: null,
+    }, {
+      count: active.filter((row) => ["WHITE", "LIGHT_NEUTRAL"].includes(row.visualEvidence.mainImageBackground ?? "")).length,
+      observed: active.filter((row) => row.visualEvidence.mainImageBackground && row.visualEvidence.mainImageBackground !== "UNKNOWN").length,
+      percent: null,
+    }),
+    visualPattern("FULL_PACK_VISIBLE", countBoolean(sold, "fullPackVisible"), countBoolean(active, "fullPackVisible")),
+    visualPattern("UNIT_COUNT_VISIBLE", countBoolean(sold, "unitCountVisible"), countBoolean(active, "unitCountVisible")),
+    visualPattern("PACKAGE_FRONT_VISIBLE", countBoolean(sold, "packageFrontVisible"), countBoolean(active, "packageFrontVisible")),
+    visualPattern("LOW_OR_NO_TEXT_DENSITY", {
+      count: sold.filter((row) => ["NONE", "LOW"].includes(row.visualEvidence.textDensity ?? "")).length,
+      observed: sold.filter((row) => row.visualEvidence.textDensity && row.visualEvidence.textDensity !== "UNKNOWN").length,
+      percent: null,
+    }, {
+      count: active.filter((row) => ["NONE", "LOW"].includes(row.visualEvidence.textDensity ?? "")).length,
+      observed: active.filter((row) => row.visualEvidence.textDensity && row.visualEvidence.textDensity !== "UNKNOWN").length,
+      percent: null,
+    }),
+    visualPattern("LOW_VISUAL_CLUTTER", countEnum(sold, "visualClutter", "LOW"), countEnum(active, "visualClutter", "LOW")),
+    visualPattern("HIGH_IMAGE_CONSISTENCY", countEnum(sold, "imageConsistency", "HIGH"), countEnum(active, "imageConsistency", "HIGH")),
+    visualPattern("HIGH_MAIN_IMAGE_CLARITY", countEnum(sold, "mainImageClarity", "HIGH"), countEnum(active, "mainImageClarity", "HIGH")),
+  ].map((pattern) => {
+    const soldMetric = pattern.soldOrCompletedExactMatches
+    const activeMetric = pattern.activeExactMatches
+    const soldPercent = soldMetric.observed ? roundScore(soldMetric.count / soldMetric.observed * 100) : null
+    const activePercent = activeMetric.observed ? roundScore(activeMetric.count / activeMetric.observed * 100) : null
+    const difference = soldPercent === null || activePercent === null ? null : roundScore(soldPercent - activePercent)
+    return {
+      ...pattern,
+      soldOrCompletedExactMatches: { ...soldMetric, percent: soldPercent },
+      activeExactMatches: { ...activeMetric, percent: activePercent },
+      percentagePointDifference: difference,
+      interpretation: difference === null ? "N/D" : difference > 10
+        ? "PATTERN_ASSOCIATED_MORE_WITH_SOLD_OR_COMPLETED_EXACT_MATCHES"
+        : difference < -10 ? "PATTERN_ASSOCIATED_MORE_WITH_ACTIVE_EXACT_MATCHES"
+          : "NO_MEANINGFUL_OBSERVED_DIFFERENCE",
+    }
+  })
+  const secondaryImagePatterns = [
+    ["INFOGRAPHIC_PRESENT", "infographicPresence"],
+    ["DIMENSIONS_IMAGE", "dimensionsImage"],
+    ["CONTENTS_IMAGE", "contentsImage"],
+    ["LIFESTYLE_IMAGE", "lifestyleImage"],
+    ["USE_CONTEXT_IMAGE", "useContextImage"],
+    ["HANDS_OR_PEOPLE_PRESENT", "handsOrPeoplePresent"],
+  ].map(([label, field]) => visualPattern(
+    label,
+    countBoolean(sold, field as keyof NormalizedVisualEvidence),
+    countBoolean(active, field as keyof NormalizedVisualEvidence),
+  ))
+  const activeHighClutter = countEnum(active, "visualClutter", "HIGH")
+  const activeLowConsistency = countEnum(active, "imageConsistency", "LOW")
+  const activeLowClarity = countEnum(active, "mainImageClarity", "LOW")
+  const visualWeaknesses = [
+    activeHighClutter.count ? { weakness: "HIGH_VISUAL_CLUTTER_IN_ACTIVE_EXACT_MATCHES", ...activeHighClutter } : null,
+    activeLowConsistency.count ? { weakness: "LOW_IMAGE_CONSISTENCY_IN_ACTIVE_EXACT_MATCHES", ...activeLowConsistency } : null,
+    activeLowClarity.count ? { weakness: "LOW_MAIN_IMAGE_CLARITY_IN_ACTIVE_EXACT_MATCHES", ...activeLowClarity } : null,
+  ].filter((value) => value !== null)
+  const associatedSoldPatterns = [...mainImagePatterns, ...secondaryImagePatterns]
+    .filter((pattern) => (pattern.percentagePointDifference ?? 0) > 10)
+    .map((pattern) => pattern.pattern)
+  const differentiationOpportunities = [
+    ...associatedSoldPatterns.map((pattern) => ({
+      opportunity: `ORIGINAL_EXECUTION_OF_${pattern}`,
+      evidenceBasis: "PATTERN_ASSOCIATED_WITH_SOLD_OR_COMPLETED_EXACT_MATCHES",
+      copyCompetitorLayout: false,
+    })),
+    ...visualWeaknesses.map((weakness) => ({
+      opportunity: `AVOID_${weakness.weakness}`,
+      evidenceBasis: "OBSERVED_ACTIVE_EXACT_MATCH_WEAKNESS",
+      copyCompetitorLayout: false,
+    })),
+  ]
+  const recommendedSixImageStrategy = [
+    ["MAIN_WHITE_BACKGROUND", "Clear original product and full pack on white; no promotional text."],
+    ["PACK_AND_COUNT", "Make verified pack and unit count immediately legible."],
+    ["KEY_FEATURES", "Present only verified facts in an original layout."],
+    ["SIZE_AND_CONTENT", "Show verified dimensions, size and contents."],
+    ["USE_CONTEXT", "Use an authorized, truthful context without adding unverified items."],
+    ["PACKAGE_CONTENTS", "Show exactly what the buyer receives."],
+  ].map(([slot, strategy], index) => ({
+    position: index + 1,
+    slot,
+    strategy,
+    evidenceAssociation: associatedSoldPatterns.length ? associatedSoldPatterns : ["INSUFFICIENT_FOR_PATTERN_RANKING"],
+    originalExecutionRequired: true,
+    competitorImageInputAllowed: false,
+  }))
+  const unsupportedVisualHypotheses = [
+    ...(usable === 0 ? ["NO_USABLE_STRUCTURED_VISUAL_OBSERVATIONS"] : []),
+    ...(sold.length === 0 ? ["SOLD_OR_COMPLETED_VISUAL_ASSOCIATION_UNAVAILABLE"] : []),
+    ...(active.length === 0 ? ["ACTIVE_VISUAL_BASELINE_UNAVAILABLE"] : []),
+    ...(confidenceLevel === "LOW" ? ["SAMPLE_TOO_SMALL_FOR_STRONG_VISUAL_GENERALIZATION"] : []),
+    "VISUAL_PATTERNS_DO_NOT_PROVE_CAUSALITY_OR_SALES_LIFT",
+  ]
+  const opportunityScore = usable === 0 ? null : roundScore(
+    40 + Math.min(30, differentiationOpportunities.length * 6) +
+    Math.min(30, (confidenceScore ?? 0) * 0.3),
+  )
+  return {
+    status: usable ? "AVAILABLE" as const : "N/D" as const,
+    visualEvidenceSummary: {
+      soldOrCompletedExactSampleSize: soldAll.length,
+      activeExactSampleSize: activeAll.length,
+      soldOrCompletedWithUsableVisualEvidence: sold.length,
+      activeWithUsableVisualEvidence: active.length,
+      exactMatchesExcludedForMissingVisualEvidence: soldAll.length + activeAll.length - usable,
+      productCoverageEstimate: {
+        soldOrCompletedExactMatches: averageNumber(sold, "productCoverageEstimate"),
+        activeExactMatches: averageNumber(active, "productCoverageEstimate"),
+      },
+      imageCount: {
+        soldOrCompletedExactMatches: averageNumber(sold, "imageCount"),
+        activeExactMatches: averageNumber(active, "imageCount"),
+      },
+      visibleClaimObservationCount: {
+        soldOrCompletedExactMatches: sold.reduce((sum, row) => sum + row.visualEvidence.visibleClaims.length, 0),
+        activeExactMatches: active.reduce((sum, row) => sum + row.visualEvidence.visibleClaims.length, 0),
+      },
+      observableVisualRiskCount: {
+        soldOrCompletedExactMatches: sold.reduce((sum, row) => sum + row.visualEvidence.observableVisualRisks.length, 0),
+        activeExactMatches: active.reduce((sum, row) => sum + row.visualEvidence.observableVisualRisks.length, 0),
+      },
+      differentPackAndVariantComparablesIncluded: 0,
+      comparison: "SOLD_OR_COMPLETED_EXACT_MATCHES_VS_ACTIVE_EXACT_MATCHES_ONLY",
+      language: "ASSOCIATION_NOT_CAUSATION",
+    },
+    mainImagePatterns,
+    secondaryImagePatterns,
+    commonGallerySequence: recommendedSixImageStrategy.map(({ position, slot }) => ({ position, slot })),
+    visualWeaknesses,
+    differentiationOpportunities,
+    recommendedSixImageStrategy,
+    visualPatternConfidence: {
+      level: confidenceLevel,
+      score: confidenceScore,
+      sampleSize: usable,
+      smallSamplePenaltyApplied: usable > 0 && (usable < 3 || balancedSample === 0),
+    },
+    visualOpportunityScore: opportunityScore,
+    unsupportedVisualHypotheses,
+    safeguards: {
+      causalityClaimed: false,
+      competitorImagesCopied: 0,
+      competitorImagesDownloaded: 0,
+      competitorImagesUsedAsGenerativeInput: 0,
+      competitorLayoutsReproduced: 0,
+      imageGenerationStarted: false,
+      ebayWrites: 0,
+    },
+  }
+}
+
 export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
   const now = input.now ? new Date(input.now) : new Date()
   if (!Number.isFinite(now.getTime())) throw new Error("WINNER_EVIDENCE_NOW_INVALID")
@@ -413,6 +773,7 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
     ].includes(comparable.source)
     const sourceAccepted = !reviewedImport || comparable.evidenceReviewed === true
     const confirmedSoldQuantity = finiteNonNegative(comparable.confirmedSoldQuantity)
+    const visualEvidence = normalizeVisualEvidence(comparable)
     return {
       comparableKey: sha256({
         source: comparable.source,
@@ -451,8 +812,9 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
       patterns: {
         shipping: normalizedText(comparable.shippingPattern),
         returns: normalizedText(comparable.returnsPattern),
-        imageCount: finiteNonNegative(comparable.imageCount),
+        imageCount: visualEvidence.imageCount,
       },
+      visualEvidence,
       competitorTitleStored: false,
       competitorDescriptionStored: false,
       competitorImagesStored: false,
@@ -462,6 +824,7 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
   const activeExact = normalizedComparables.filter((row) => row.cohort === "ACTIVE_EXACT_MATCHES")
   const soldExact = normalizedComparables.filter((row) => row.cohort === "SOLD_OR_COMPLETED_EXACT_MATCHES")
   const estimatedSignals = normalizedComparables.filter((row) => row.cohort === "ESTIMATED_DEMAND_SIGNALS")
+  const visualEvidenceAnalysis = buildVisualWinnerEvidenceAnalysis(normalizedComparables)
   const activePrices = activeExact.map((row) => row.pricing.landedPrice)
     .filter((value): value is number => value !== null)
   const soldPrices = soldExact.map((row) => ({
@@ -590,6 +953,7 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
         browserAutomationUsed: false,
       },
     },
+    visualEvidenceAnalysis,
     economics: {
       configVersion: WINNER_ECONOMICS_CONFIG_VERSION,
       config: WINNER_ECONOMICS_CONFIG,
