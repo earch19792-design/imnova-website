@@ -375,6 +375,8 @@ export async function getEbayFulfillmentTrackingAuthorizationStatus(
     branchMatch: configuration.branchAuthorized,
     adapterConfigured: configuration.baseConfigured && configuration.refreshToken === "PRESENT",
     operatorPrepared: configuration.operatorPrepared,
+    callbackPath: configuration.callback.canonicalPath,
+    callbackHostMatch: configuration.callback.deployedBranchHostStatus,
     authorizationAvailable: configuration.configured && !["pending", "claimed", "ready"].includes(latest?.status ?? ""),
     lastHandoff: latest ? {
       status: latest.status,
