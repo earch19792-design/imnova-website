@@ -2,7 +2,7 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
 
-import { randomUUID, timingSafeEqual } from "node:crypto"
+import { randomUUID } from "node:crypto"
 
 import { NextResponse } from "next/server"
 
@@ -12,15 +12,8 @@ import {
   runEbayCommercialMonitor,
 } from "@/lib/ebay/ebay-commercial-monitor-service"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
+import { commercialPreviewCronAuthorized } from "@/lib/ebay/ebay-commercial-preview-pilot"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
-
-function authorized(req: Request) {
-  const secret = process.env.CRON_SECRET?.trim() ?? ""
-  const authorization = req.headers.get("authorization") ?? ""
-  const left = Buffer.from(authorization)
-  const right = Buffer.from(`Bearer ${secret}`)
-  return Boolean(secret && left.length === right.length && timingSafeEqual(left, right))
-}
 
 function safeCode(error: unknown) {
   const value = error instanceof Error ? error.message : ""
@@ -28,7 +21,7 @@ function safeCode(error: unknown) {
 }
 
 export async function GET(req: Request) {
-  if (!authorized(req)) return NextResponse.json(
+  if (!commercialPreviewCronAuthorized(req)) return NextResponse.json(
     { success: false, error: "CRON_UNAUTHORIZED" },
     { status: 401 },
   )

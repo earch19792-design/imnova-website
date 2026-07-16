@@ -41,6 +41,10 @@ import {
 } from "./ebay-commercial-oauth-domain"
 import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
 import { isSatisfactoryCommercialDryRun } from "./commercial-monitor-ui"
+import {
+  currentCommercialPreviewPilotConfiguration,
+  summarizeCommercialPilotRuns,
+} from "./ebay-commercial-preview-pilot"
 
 const MARKETPLACE = "EBAY_US"
 const MONITOR_LEASE_SECONDS = 300
@@ -799,6 +803,7 @@ async function persistOrdersAndSales(input: {
   let newSales = 0
   let tasksCreated = 0
   let alertsGenerated = 0
+  let duplicatesAvoided = 0
   let estimatedProfit = 0
   const errors: RunError[] = []
 
@@ -896,6 +901,7 @@ async function persistOrdersAndSales(input: {
         .maybeSingle()
       if (taskError && taskError.code !== "23505") throw new Error("FULFILLMENT_TASK_CREATE_FAILED")
       if (task?.id) tasksCreated += 1
+      else if (taskError?.code === "23505") duplicatesAvoided += 1
 
       const saleKey = stableCommercialKey(accountKey, "SALE_DETECTED", order.ebayOrderId, line.lineItemId)
       const saleEvent: CommercialEvent & { marketplaceOrderId: string; marketplaceLineItemId: string } = {
@@ -983,7 +989,7 @@ async function persistOrdersAndSales(input: {
       void firstEventResult
     }
   }
-  return { newSales, tasksCreated, alertsGenerated, estimatedProfit, errors }
+  return { newSales, tasksCreated, alertsGenerated, duplicatesAvoided, estimatedProfit, errors }
 }
 
 async function confirmedUnitsSoldByListing24h(
@@ -1673,7 +1679,14 @@ export async function runEbayCommercialMonitor(
           supabase, accountKey, orders, listings, supplies, thresholds, observedAt,
           verifiedIdentities,
         })
-      : { newSales: 0, tasksCreated: 0, alertsGenerated: 0, estimatedProfit: 0, errors: [] }
+      : {
+          newSales: 0,
+          tasksCreated: 0,
+          alertsGenerated: 0,
+          duplicatesAvoided: 0,
+          estimatedProfit: 0,
+          errors: [],
+        }
     errors.push(...orderWork.errors)
     const confirmedUnits24h = await confirmedUnitsSoldByListing24h(
       supabase,
@@ -1750,6 +1763,7 @@ export async function runEbayCommercialMonitor(
       commercialEventsCreated: snapshotWork.eventsGenerated + orderWork.newSales,
       eventsCreated: snapshotWork.eventsGenerated + orderWork.newSales,
       alertsGenerated: orderWork.alertsGenerated + snapshotWork.alertsGenerated + (daily?.alertGenerated ? 1 : 0),
+      duplicatesAvoided: orderWork.duplicatesAvoided,
       analytics: {
         impressions: sumAvailableSnapshotMetric(snapshotWork.snapshots, "impressions"),
         views: sumAvailableSnapshotMetric(snapshotWork.snapshots, "views"),
@@ -1765,6 +1779,7 @@ export async function runEbayCommercialMonitor(
         failed: delivery.failed,
       } : null,
       whatsappDelivered: delivery?.delivered ?? 0,
+      ebayWrites: 0,
       thresholdConfigVersion: thresholds.version,
     }
     const unavailable = Object.values(readers).some((reader) => reader.status === "unavailable")
@@ -1814,8 +1829,10 @@ export async function runEbayCommercialMonitor(
 }
 
 export function getCommercialMonitorScheduleConfiguration() {
+  const pilot = currentCommercialPreviewPilotConfiguration()
   return {
-    enabled: process.env.EBAY_COMMERCIAL_MONITOR_ENABLED === "true",
+    enabled: pilot.enabled,
+    pilot,
     previewOnly: true,
     currentEnvironment: process.env.VERCEL_ENV ?? "development",
     orderIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_ORDERS_INTERVAL_MINUTES, 5, 5, 1_440),
@@ -1823,6 +1840,56 @@ export function getCommercialMonitorScheduleConfiguration() {
     watchersIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_WATCHERS_INTERVAL_MINUTES, 240, 15, 1_440),
     dailySummaryHourUtc: integer(process.env.EBAY_COMMERCIAL_DAILY_SUMMARY_HOUR_UTC, 14, 0, 23),
     dispatcherIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_DISPATCHER_INTERVAL_MINUTES, 5, 5, 60),
+  }
+}
+
+async function getCommercialPilotReport(
+  supabase: SupabaseClient,
+  accountKey: string,
+  schedule: ReturnType<typeof getCommercialMonitorScheduleConfiguration>,
+  divergenceStatus: string | null,
+) {
+  const startedAt = schedule.pilot.startedAt
+  const expiresAt = schedule.pilot.expiresAt
+  if (!startedAt || !expiresAt) return null
+  const [runResult, attemptResult, deadLetterResult] = await Promise.all([
+    supabase.from("commercial_monitor_runs")
+      .select("status,metrics")
+      .eq("marketplace_account_key", accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .eq("trigger_source", "schedule")
+      .gte("started_at", startedAt)
+      .lt("started_at", expiresAt)
+      .order("started_at", { ascending: true })
+      .limit(500),
+    supabase.from("alert_delivery_attempts")
+      .select("status,attempt_number,alert_delivery_outbox!inner(marketplace_account_key,marketplace)")
+      .eq("alert_delivery_outbox.marketplace_account_key", accountKey)
+      .eq("alert_delivery_outbox.marketplace", MARKETPLACE)
+      .gte("attempted_at", startedAt)
+      .lt("attempted_at", expiresAt)
+      .limit(500),
+    supabase.from("alert_delivery_outbox")
+      .select("id", { count: "exact", head: true })
+      .eq("marketplace_account_key", accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .eq("status", "dead_letter")
+      .gte("updated_at", startedAt)
+      .lt("updated_at", expiresAt),
+  ])
+  if (runResult.error || attemptResult.error || deadLetterResult.error) {
+    throw new Error("COMMERCIAL_PILOT_REPORT_READ_FAILED")
+  }
+  return {
+    status: schedule.pilot.status,
+    startedAt,
+    expiresAt,
+    ...summarizeCommercialPilotRuns({
+      runs: runResult.data ?? [],
+      deliveryAttempts: attemptResult.data ?? [],
+      deadLetterCount: deadLetterResult.count ?? 0,
+      divergenceStatus,
+    }),
   }
 }
 
@@ -1975,11 +2042,18 @@ export async function getEbayCommercialMonitorDashboard(
     : manualEvidenceRows.data?.[0] ?? null
   const identity = identityRows.data ?? null
   const divergenceOpen = openDivergences.length > 0
+  const pilot24h = await getCommercialPilotReport(
+    supabase,
+    accountKey,
+    schedule,
+    divergence?.status ?? null,
+  )
   return {
     status: latestRun.data?.status ?? "never_run",
     accountScope: { configured: true, accountAlias: accountScope.accountAlias },
     readersConfiguration: getEbayCommercialReadersConfiguration(),
     schedule,
+    pilot24h,
     latestRun: latestRun.data ?? null,
     lastDryRun,
     lastPersistentRun: persistentRun ?? null,

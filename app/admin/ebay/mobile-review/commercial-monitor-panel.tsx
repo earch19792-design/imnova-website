@@ -117,9 +117,36 @@ type Dashboard = {
     salesProcessingBlocked?: boolean
   }
   nextAutomaticRunAt?: string | null
+  pilot24h?: {
+    status?: string
+    startedAt?: string | null
+    expiresAt?: string | null
+    totalRuns?: number
+    completedRuns?: number
+    partialRuns?: number
+    failedRuns?: number
+    ordersRead?: number
+    newSales?: number
+    fulfillmentTasksCreated?: number
+    alertsGenerated?: number
+    whatsappDelivered?: number
+    whatsappFailed?: number
+    duplicatesAvoided?: number
+    retries?: number
+    deadLetter?: number
+    analyticsDivergenceStatus?: string | null
+    ebayWrites?: number
+    productionChanged?: boolean
+  } | null
   schedule?: {
     enabled?: boolean
     previewOnly?: boolean
+    pilot?: {
+      status?: string
+      startedAt?: string | null
+      expiresAt?: string | null
+      automaticCutoff?: boolean
+    }
   }
 }
 
@@ -679,6 +706,26 @@ export function CommercialMonitorPanel() {
         <p className="mt-3 text-sm leading-6 text-cyan-50">{run?.next_action ?? "Ejecuta la primera actualización controlada."}</p>
         {(run?.errors?.length ?? 0) > 0 && <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-rose-100">{run?.errors?.map((item, index) => <li key={`${item.code}-${index}`}>{item.reader}: {item.code}{item.retryable ? " · reintentable" : ""}</li>)}</ul>}
       </details>
+
+      {dashboard?.pilot24h && <details open className="mt-4 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.04] p-3">
+        <summary className="cursor-pointer font-black">Piloto controlado de 24 horas</summary>
+        <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+          <div><dt className="text-white/45">Estado</dt><dd className="font-black uppercase text-cyan-100">{dashboard.pilot24h.status}</dd></div>
+          <div><dt className="text-white/45">Inicio</dt><dd className="font-bold">{formatDate(dashboard.pilot24h.startedAt)}</dd></div>
+          <div><dt className="text-white/45">Corte automático</dt><dd className="font-bold">{formatDate(dashboard.pilot24h.expiresAt)}</dd></div>
+          <div><dt className="text-white/45">Ejecuciones</dt><dd className="font-bold">{value(dashboard.pilot24h.totalRuns)}</dd></div>
+          <div><dt className="text-white/45">Completadas / parciales / fallidas</dt><dd className="font-bold">{value(dashboard.pilot24h.completedRuns)} / {value(dashboard.pilot24h.partialRuns)} / {value(dashboard.pilot24h.failedRuns)}</dd></div>
+          <div><dt className="text-white/45">Órdenes leídas</dt><dd className="font-bold">{value(dashboard.pilot24h.ordersRead)}</dd></div>
+          <div><dt className="text-white/45">Ventas / fulfillment</dt><dd className="font-bold">{value(dashboard.pilot24h.newSales)} / {value(dashboard.pilot24h.fulfillmentTasksCreated)}</dd></div>
+          <div><dt className="text-white/45">Alertas</dt><dd className="font-bold">{value(dashboard.pilot24h.alertsGenerated)}</dd></div>
+          <div><dt className="text-white/45">WhatsApp entregados / fallidos</dt><dd className="font-bold">{value(dashboard.pilot24h.whatsappDelivered)} / {value(dashboard.pilot24h.whatsappFailed)}</dd></div>
+          <div><dt className="text-white/45">Duplicados evitados</dt><dd className="font-bold">{value(dashboard.pilot24h.duplicatesAvoided)}</dd></div>
+          <div><dt className="text-white/45">Reintentos / dead-letter</dt><dd className="font-bold">{value(dashboard.pilot24h.retries)} / {value(dashboard.pilot24h.deadLetter)}</dd></div>
+          <div><dt className="text-white/45">Divergencia Analytics</dt><dd className="font-bold uppercase">{dashboard.pilot24h.analyticsDivergenceStatus ?? "sin evidencia"}</dd></div>
+          <div><dt className="text-white/45">Escrituras eBay</dt><dd className="font-bold">{value(dashboard.pilot24h.ebayWrites)}</dd></div>
+          <div><dt className="text-white/45">Production modificada</dt><dd className="font-bold">{dashboard.pilot24h.productionChanged ? "SÍ" : "NO"}</dd></div>
+        </dl>
+      </details>}
 
       {message && <p aria-live="polite" className="mt-3 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm text-cyan-50">{message}</p>}
       {error && <p role="alert" className="mt-3 rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-3 text-sm text-rose-50">{error}</p>}
