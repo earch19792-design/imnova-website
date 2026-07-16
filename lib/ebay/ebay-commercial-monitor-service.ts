@@ -22,6 +22,10 @@ import {
 import {
   dispatchCommercialAlertOutbox,
 } from "../marketplace/commercial-alert-dispatcher"
+import {
+  fulfillmentIdentityFingerprint,
+  isAllowedLunaProductUrl,
+} from "../marketplace/fulfillment-v1a-domain"
 import { calculateEbayUnitEconomics } from "./ebay-unit-economics"
 import {
   getComparableEbayTrafficAnalytics,
@@ -884,8 +888,35 @@ async function persistOrdersAndSales(input: {
         })
         continue
       }
-      const fulfillmentSku = listing.supplier_sku ?? line.sku
       const supply = supplyForListing(listing, supplies)
+      if (!listing.supplier_sku || !listing.supplier_variant_id || !supply ||
+        supply.sku !== listing.supplier_sku ||
+        supply.supplier_variant_id !== listing.supplier_variant_id ||
+        !isAllowedLunaProductUrl(supply.product_url)) {
+        errors.push({
+          reader: "orders",
+          code: "SALE_EXACT_LUNA_IDENTITY_LINK_REQUIRED",
+          retryable: false,
+        })
+        continue
+      }
+      const fulfillmentSku = listing.supplier_sku
+      const marketplaceListingSku = line.sku
+      if (!marketplaceListingSku) {
+        errors.push({ reader: "orders", code: "SALE_CUSTOM_LABEL_REQUIRED", retryable: false })
+        continue
+      }
+      const identityFingerprint = fulfillmentIdentityFingerprint({
+        marketplaceAccountKey: accountKey,
+        marketplace: MARKETPLACE,
+        orderId: order.ebayOrderId,
+        lineItemId: line.lineItemId,
+        listingId: line.listingId,
+        marketplaceListingSku,
+        supplierSku: fulfillmentSku,
+        supplierVariantId: listing.supplier_variant_id,
+        quantity: line.quantity,
+      })
       const supplierUnitCost = numeric(supply?.price) ?? numeric(listing.supplier_cost_at_linking)
       const estimatedSupplierCost = supplierUnitCost === null
         ? null
@@ -910,10 +941,16 @@ async function persistOrdersAndSales(input: {
           marketplace_line_item_id: line.lineItemId,
           listing_id: line.listingId,
           sku: fulfillmentSku,
+          marketplace_listing_sku: marketplaceListingSku,
+          supplier_sku: fulfillmentSku,
+          supplier_variant_id: listing.supplier_variant_id,
+          identity_fingerprint: identityFingerprint,
+          identity_verified_at: observedAt,
           product_title: line.title,
           pack_quantity: packQuantity,
           quantity: line.quantity,
           status: "PENDING_MANUAL_PURCHASE",
+          workflow_state: "PENDING_MANUAL_PURCHASE",
           status_history: statusHistory,
           source_product_url: supply?.product_url ?? null,
           seller_order_url: sellerOrderUrl(order.ebayOrderId),
@@ -922,6 +959,10 @@ async function persistOrdersAndSales(input: {
           estimated_profit: profit,
           stock_available: stockAvailable,
           ship_by_at: line.shipByDate,
+          priority: line.shipByDate
+            ? Math.max(0, Math.min(10_000, Math.floor((Date.parse(line.shipByDate) - Date.now()) / 60_000)))
+            : 10_000,
+          next_action_at: observedAt,
         })
         .select("id")
         .maybeSingle()

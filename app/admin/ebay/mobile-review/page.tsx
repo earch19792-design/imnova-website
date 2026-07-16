@@ -47,6 +47,7 @@ import {
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 import { OpportunityCommandCenter, type Opportunity } from "./opportunity-command-center"
 import { CommercialMonitorPanel } from "./commercial-monitor-panel"
+import { MarketplaceFulfillmentPanel } from "./marketplace-fulfillment-panel"
 
 const emptyReport = buildMobileReviewRealRadarConnector({ products: [] })
 type View = "opportunities" | "top5" | "pinned" | "blocked" | "decision"
@@ -838,6 +839,7 @@ export default function EbayMobileReviewPage() {
 
         {view === "opportunities" && <>
           <CommercialMonitorPanel />
+          <MarketplaceFulfillmentPanel />
           <OpportunityCommandCenter onReviewCandidate={reviewOpportunityCandidate} onRadarRefresh={load} onRadarLookup={lookupRadarCandidateByProductId} confirmDestructiveRefresh={confirmReviewReset} preferredMarketRadarProductId={!selectedQueueOpportunity ? selectedRadarCandidate?.marketRadarProductId ?? null : null} />
         </>}
 
