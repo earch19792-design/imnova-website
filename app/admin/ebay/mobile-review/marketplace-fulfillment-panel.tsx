@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 
+import {
+  resolveEbayFulfillmentTrackingCallback,
+  type EbayFulfillmentTrackingCallbackHostStatus,
+} from "@/lib/ebay/ebay-fulfillment-tracking-public"
 import { supabase } from "@/lib/supabase"
 
 type Task = {
@@ -121,6 +125,16 @@ type ApiPayload = {
   error?: string
   authorizationUrl?: string
   connection?: TrackingOAuthConnection
+  configuration?: TrackingOAuthConfiguration
+}
+
+type TrackingOAuthConfiguration = {
+  callback?: {
+    canonicalPath?: string
+    canonicalUrl?: string
+    dedicated?: boolean
+    deployedBranchHostStatus?: EbayFulfillmentTrackingCallbackHostStatus
+  }
 }
 
 type TrackingOAuthConnection = {
@@ -200,7 +214,14 @@ export function MarketplaceFulfillmentPanel() {
   const [busyTask, setBusyTask] = useState<string | null>(null)
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
-  const [oauthConnection, setOauthConnection] = useState<TrackingOAuthConnection | null>(null)
+  const [trackingOAuthConfiguration, setTrackingOAuthConfiguration] =
+    useState<TrackingOAuthConfiguration | null>(null)
+  const [trackingOAuthConnection, setTrackingOAuthConnection] =
+    useState<TrackingOAuthConnection | null>(null)
+  const [loadingStatus, setLoadingStatus] = useState(true)
+  const [statusUnavailable, setStatusUnavailable] = useState(false)
+  const [showCallback, setShowCallback] = useState(false)
+  const [trackingCallbackOrigin, setTrackingCallbackOrigin] = useState<string | null>(null)
   const [oauthBusy, setOauthBusy] = useState(false)
   const [purchaseForms, setPurchaseForms] = useState<Record<string, PurchaseForm>>({})
   const [trackingForms, setTrackingForms] = useState<Record<string, TrackingForm>>({})
@@ -236,22 +257,36 @@ export function MarketplaceFulfillmentPanel() {
   }, [authenticatedRequest])
 
   const loadOAuth = useCallback(async () => {
+    setLoadingStatus(true)
+    setStatusUnavailable(false)
     try {
       const payload = await authenticatedRequest(
         "/api/admin/ebay/fulfillment-tracking-oauth/status",
       )
-      setOauthConnection(payload.connection ?? null)
-    } catch (requestError) {
-      setError(requestError instanceof Error
-        ? requestError.message
-        : "EBAY_FULFILLMENT_TRACKING_AUTHORIZATION_STATUS_FAILED")
+      setTrackingOAuthConfiguration(payload.configuration ?? null)
+      setTrackingOAuthConnection(payload.connection ?? null)
+    } catch {
+      setStatusUnavailable(true)
+    } finally {
+      setLoadingStatus(false)
     }
   }, [authenticatedRequest])
 
-  useEffect(() => { void Promise.all([load(), loadOAuth()]) }, [load, loadOAuth])
+  useEffect(() => {
+    setTrackingCallbackOrigin(window.location.origin)
+    void Promise.all([load(), loadOAuth()])
+  }, [load, loadOAuth])
+
+  const resolvedTrackingCallback = useMemo(() =>
+    resolveEbayFulfillmentTrackingCallback({
+      configurationCallback: trackingOAuthConfiguration?.callback,
+      connectionCallbackPath: trackingOAuthConnection?.callbackPath,
+      currentOrigin: trackingCallbackOrigin,
+    }), [trackingCallbackOrigin, trackingOAuthConfiguration, trackingOAuthConnection])
+  const callbackAvailable = resolvedTrackingCallback.callbackAvailable
 
   const authorizeTracking = useCallback(async () => {
-    if (!oauthConnection?.authorizationAvailable) return
+    if (!trackingOAuthConnection?.authorizationAvailable) return
     const confirmed = window.confirm(
       "Se abrirá eBay para autorizar únicamente el envío de tracking. Los cuatro gates de escritura permanecerán apagados. ¿Continuar?",
     )
@@ -275,7 +310,7 @@ export function MarketplaceFulfillmentPanel() {
       setOauthBusy(false)
       await loadOAuth()
     }
-  }, [authenticatedRequest, loadOAuth, oauthConnection])
+  }, [authenticatedRequest, loadOAuth, trackingOAuthConnection])
 
   const checkTrackingConnection = useCallback(async () => {
     setOauthBusy(true)
@@ -296,12 +331,10 @@ export function MarketplaceFulfillmentPanel() {
   }, [authenticatedRequest, loadOAuth])
 
   const copyTrackingCallback = useCallback(async () => {
-    if (!oauthConnection?.callbackPath) return
-    await navigator.clipboard.writeText(
-      `${window.location.origin}${oauthConnection.callbackPath}`,
-    )
+    if (!callbackAvailable) return
+    await navigator.clipboard.writeText(resolvedTrackingCallback.callbackUrl)
     setMessage("Callback dedicado copiado. Úsalo únicamente como Auth Accepted URL del RuName de tracking.")
-  }, [oauthConnection])
+  }, [callbackAvailable, resolvedTrackingCallback.callbackUrl])
 
   const purchases = useMemo(() => new Map((dashboard?.purchases ?? []).map((row) => [row.fulfillment_task_id, row])), [dashboard])
   const shipments = useMemo(() => new Map((dashboard?.shipments ?? []).filter((row) => !row.superseded_at).map((row) => [row.primary_fulfillment_task_id, row])), [dashboard])
@@ -402,25 +435,36 @@ export function MarketplaceFulfillmentPanel() {
     {dashboard?.enabled && <section aria-labelledby="fulfillment-tracking-oauth-heading" className="rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.06] p-4">
       <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">OAuth dedicado · Preview</p>
       <h3 id="fulfillment-tracking-oauth-heading" className="mt-1 text-lg font-black">Conexión eBay para envío de tracking</h3>
-      <p className="mt-2 text-sm text-white/65">Estado: <strong className="text-cyan-50">{oauthConnection?.state ?? "NOT_CONFIGURED"}</strong></p>
+      <p className="mt-2 text-sm text-white/65">Estado: <strong className="text-cyan-50">{trackingOAuthConnection?.state ?? "NOT_CONFIGURED"}</strong></p>
       <dl className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">OAuth tracking</dt><dd className="mt-1 font-black">{oauthConnection?.state === "READY" ? "READY" : "NOT READY"}</dd></div>
-        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">fulfillment scope</dt><dd className="mt-1 font-black">{oauthConnection?.fulfillmentScope ?? "NO"}</dd></div>
-        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Identity</dt><dd className="mt-1 font-black">{oauthConnection?.identity ?? "UNKNOWN"}</dd></div>
-        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Fingerprint</dt><dd className="mt-1 font-black">{oauthConnection?.fingerprint ?? "UNKNOWN"}</dd></div>
-        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Token</dt><dd className="mt-1 font-black">{oauthConnection?.token ?? "MISSING"}</dd></div>
-        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Write gate</dt><dd className="mt-1 font-black">{oauthConnection?.writeGate ?? "OFF"}</dd></div>
-        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Submitter</dt><dd className="mt-1 font-black">{oauthConnection?.submitter ?? "OFF"}</dd></div>
-        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Escrituras eBay</dt><dd className="mt-1 font-black">{oauthConnection?.ebayWrites ?? 0}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">OAuth tracking</dt><dd className="mt-1 font-black">{trackingOAuthConnection?.state === "READY" ? "READY" : "NOT READY"}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">fulfillment scope</dt><dd className="mt-1 font-black">{trackingOAuthConnection?.fulfillmentScope ?? "NO"}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Identity</dt><dd className="mt-1 font-black">{trackingOAuthConnection?.identity ?? "UNKNOWN"}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Fingerprint</dt><dd className="mt-1 font-black">{trackingOAuthConnection?.fingerprint ?? "UNKNOWN"}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Token</dt><dd className="mt-1 font-black">{trackingOAuthConnection?.token ?? "MISSING"}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Write gate</dt><dd className="mt-1 font-black">{trackingOAuthConnection?.writeGate ?? "OFF"}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Submitter</dt><dd className="mt-1 font-black">{trackingOAuthConnection?.submitter ?? "OFF"}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Escrituras eBay</dt><dd className="mt-1 font-black">{trackingOAuthConnection?.ebayWrites ?? 0}</dd></div>
       </dl>
-      <p className="mt-3 text-xs text-white/60">Entorno Preview: {oauthConnection?.environmentPreview ? "SÍ" : "NO"} · rama: {oauthConnection?.branchMatch ? "MATCH" : "MISMATCH"} · adapter configurado: {oauthConnection?.adapterConfigured ? "SÍ" : "NO"}</p>
-      <p className="mt-2 text-xs"><strong>Próxima acción:</strong> {oauthConnection?.nextAction ?? "Cargar estado sanitizado."}</p>
-      <div className="mt-3 grid gap-2 sm:grid-cols-3">
-        <button type="button" disabled={oauthBusy || !oauthConnection?.authorizationAvailable} onClick={() => void authorizeTracking()} className="min-h-12 rounded-xl bg-cyan-200 px-3 font-black text-black disabled:cursor-not-allowed disabled:opacity-45">Autorizar tracking con eBay</button>
-        <button type="button" disabled={oauthBusy || oauthConnection?.token !== "PRESENT"} onClick={() => void checkTrackingConnection()} className="min-h-12 rounded-xl border border-cyan-100/30 px-3 font-black disabled:cursor-not-allowed disabled:opacity-45">Verificar conexión</button>
-        <button type="button" disabled={!oauthConnection?.callbackPath} onClick={() => void copyTrackingCallback()} className="min-h-12 rounded-xl border border-white/20 px-3 font-black disabled:cursor-not-allowed disabled:opacity-45">Copiar callback dedicado</button>
+      <p className="mt-3 text-xs text-white/60">Entorno Preview: {trackingOAuthConnection?.environmentPreview ? "SÍ" : "NO"} · rama: {trackingOAuthConnection?.branchMatch ? "MATCH" : "MISMATCH"} · adapter configurado: {trackingOAuthConnection?.adapterConfigured ? "SÍ" : "NO"}</p>
+      <p className="mt-2 text-xs"><strong>Próxima acción:</strong> {trackingOAuthConnection?.nextAction ?? "Cargar estado sanitizado."}</p>
+      <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-xs" aria-live="polite">
+        <p><strong>Callback dedicado:</strong> {callbackAvailable ? "DISPONIBLE" : "NO DISPONIBLE"}</p>
+        <p className="mt-1"><strong>Host canónico:</strong> {resolvedTrackingCallback.hostStatus}</p>
+        <p className="mt-1"><strong>OAuth:</strong> {trackingOAuthConnection?.state === "READY" ? "READY" : "NOT READY"}</p>
+        <p className="mt-1 text-white/50">Status: {loadingStatus ? "CARGANDO" : statusUnavailable ? "NO DISPONIBLE" : "DISPONIBLE"}</p>
       </div>
-      {oauthConnection && (oauthConnection.flags.oauth !== "OFF" || oauthConnection.flags.write !== "OFF") && <p role="alert" className="mt-3 rounded-xl border border-rose-200/25 bg-rose-200/[0.08] p-2 text-xs font-black text-rose-50">Gate inesperado: autorización bloqueada hasta restaurar los cuatro flags a OFF.</p>}
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        <button type="button" disabled={oauthBusy || !trackingOAuthConnection?.authorizationAvailable} onClick={() => void authorizeTracking()} className="min-h-12 rounded-xl bg-cyan-200 px-3 font-black text-black disabled:cursor-not-allowed disabled:opacity-45">Autorizar tracking con eBay</button>
+        <button type="button" disabled={oauthBusy || trackingOAuthConnection?.token !== "PRESENT"} onClick={() => void checkTrackingConnection()} className="min-h-12 rounded-xl border border-cyan-100/30 px-3 font-black disabled:cursor-not-allowed disabled:opacity-45">Verificar conexión</button>
+        <button type="button" disabled={!callbackAvailable} onClick={() => void copyTrackingCallback()} className="min-h-12 rounded-xl border border-white/20 px-3 font-black disabled:cursor-not-allowed disabled:opacity-45">Copiar callback dedicado</button>
+        <button type="button" disabled={!callbackAvailable} onClick={() => setShowCallback((current) => !current)} className="min-h-12 rounded-xl border border-white/20 px-3 font-black disabled:cursor-not-allowed disabled:opacity-45">{showCallback ? "Ocultar callback" : "Mostrar callback"}</button>
+      </div>
+      {showCallback && callbackAvailable && <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+        <label className="text-xs text-white/60">Callback dedicado canónico<input aria-label="Callback dedicado canónico" readOnly value={resolvedTrackingCallback.callbackUrl} className="mt-1 min-h-11 w-full rounded-xl border border-white/10 bg-black/35 px-3 font-mono text-[11px] text-white" /></label>
+        <button type="button" onClick={() => void copyTrackingCallback()} className="min-h-11 self-end rounded-xl bg-white/10 px-4 text-sm font-black">Copiar</button>
+      </div>}
+      {trackingOAuthConnection && (trackingOAuthConnection.flags.oauth !== "OFF" || trackingOAuthConnection.flags.write !== "OFF") && <p role="alert" className="mt-3 rounded-xl border border-rose-200/25 bg-rose-200/[0.08] p-2 text-xs font-black text-rose-50">Gate inesperado: autorización bloqueada hasta restaurar los cuatro flags a OFF.</p>}
     </section>}
 
     {dashboard?.enabled && <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">

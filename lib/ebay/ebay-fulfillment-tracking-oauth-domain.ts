@@ -1,5 +1,13 @@
 // @ts-ignore Node's native TypeScript test runner requires the explicit extension.
 import * as commercialOAuthDomain from "./ebay-commercial-orders-oauth-domain.ts"
+// @ts-ignore Node's native TypeScript test runner requires the explicit extension.
+import { EBAY_FULFILLMENT_TRACKING_CALLBACK_PATH, EBAY_FULFILLMENT_TRACKING_CALLBACK_URL, EBAY_FULFILLMENT_TRACKING_PREVIEW_BRANCH_HOST } from "./ebay-fulfillment-tracking-public.ts"
+
+export {
+  EBAY_FULFILLMENT_TRACKING_CALLBACK_PATH,
+  EBAY_FULFILLMENT_TRACKING_CALLBACK_URL,
+  EBAY_FULFILLMENT_TRACKING_PREVIEW_BRANCH_HOST,
+}
 
 const {
   createEbayCommercialOAuthState,
@@ -55,13 +63,6 @@ export function classifyEbayFulfillmentTrackingConnectionError(
   ) return "EXPIRED_OR_REVOKED"
   return "ERROR"
 }
-
-export const EBAY_FULFILLMENT_TRACKING_CALLBACK_PATH =
-  "/api/admin/ebay/fulfillment-tracking-oauth/callback"
-export const EBAY_FULFILLMENT_TRACKING_PREVIEW_BRANCH_HOST =
-  "imnova-website-z1qh-git-featur-438554-earch19792-6888s-projects.vercel.app"
-export const EBAY_FULFILLMENT_TRACKING_CALLBACK_URL =
-  `https://${EBAY_FULFILLMENT_TRACKING_PREVIEW_BRANCH_HOST}${EBAY_FULFILLMENT_TRACKING_CALLBACK_PATH}`
 
 export {
   createEbayCommercialOAuthState as createEbayFulfillmentTrackingOAuthState,
