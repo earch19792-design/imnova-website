@@ -119,6 +119,7 @@ type SellerHubComparison = {
   }
   operational?: AnalyticsAudit
   comparison?: AnalyticsAudit
+  accountDiagnostic?: AnalyticsAudit
   safety?: {
     persistencePerformed?: boolean
     alertsGenerated?: number
@@ -528,6 +529,7 @@ export function CommercialMonitorPanel() {
           <div className="mt-3 grid gap-3 xl:grid-cols-2">
             <AnalyticsWindowAudit label="A · Ventana operativa · 7 días cerrados" audit={comparison.operational} />
             <AnalyticsWindowAudit label="B · Ventana diagnóstica · hasta 90 días" audit={comparison.comparison} />
+            <AnalyticsWindowAudit label="C · Cuenta por día · sólo diagnóstico" audit={comparison.accountDiagnostic} />
           </div>
           <p className="mt-3 text-xs font-bold text-emerald-100">
             Persistencia: {comparison.safety?.persistencePerformed === false ? "NO" : "—"} · Alertas: {value(comparison.safety?.alertsGenerated)} · Fulfillment: {value(comparison.safety?.fulfillmentTasksCreated)} · WhatsApp: {value(comparison.safety?.whatsappDelivered)} · Escrituras eBay: {value(comparison.safety?.ebayWrites)}

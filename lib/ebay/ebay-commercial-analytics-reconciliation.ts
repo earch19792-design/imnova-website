@@ -1,4 +1,9 @@
 import { getComparableEbayTrafficAnalytics } from "./ebay-commercial-readers"
+import { getEbaySellerTrafficPerformance } from "./ebay-seller-analytics-readonly-gateway"
+import {
+  normalizeEbaySellerTrafficReport,
+  type EbaySellerTrafficDashboard,
+} from "./ebay-seller-traffic-report"
 import {
   calculateSellerHubCtr,
   classifySellerHubComparison,
@@ -8,6 +13,74 @@ import {
 } from "./ebay-commercial-analytics-domain"
 
 export const EBAY_COMMERCIAL_PILOT_LISTING_ID = "366543596425"
+
+function completeMetricTotal(report: EbaySellerTrafficDashboard, metric: string) {
+  if (!report.rows.length) return null
+  const values = report.rows.map((row) =>
+    row.applicability[metric] === true && typeof row.metrics[metric] === "number"
+      ? row.metrics[metric]
+      : null
+  )
+  return values.every((value): value is number => value !== null)
+    ? values.reduce((total, value) => total + value, 0)
+    : null
+}
+
+async function getAccountDailyDiagnostic(input: {
+  dateFrom: string
+  dateTo: string
+}) {
+  const report = normalizeEbaySellerTrafficReport(
+    await getEbaySellerTrafficPerformance({
+      dateFrom: input.dateFrom,
+      dateTo: input.dateTo,
+      timeZone: "UTC",
+    }),
+  )
+  const reportStartDate = report.startDate?.slice(0, 10) ?? null
+  const reportEndDate = report.endDate?.slice(0, 10) ?? null
+  const lastUpdatedDate = report.lastUpdatedDate?.slice(0, 10) ?? null
+  const dataFreshnessStatus = !lastUpdatedDate || lastUpdatedDate < input.dateTo
+    ? "REPORT_NOT_UPDATED_YET" as const
+    : !reportStartDate || !reportEndDate || reportStartDate > input.dateFrom ||
+        reportEndDate < input.dateTo || report.warnings.length > 0
+      ? "INCOMPLETE_WINDOW" as const
+      : "CURRENT" as const
+  const impressions = completeMetricTotal(report, "TOTAL_IMPRESSION_TOTAL")
+  const views = completeMetricTotal(report, "LISTING_VIEWS_TOTAL")
+  const transactions = completeMetricTotal(report, "TRANSACTION")
+  return {
+    requestedListingIds: [] as string[],
+    returnedListingDimensions: report.rows.map((row) => row.dimension),
+    matchedListingIds: [] as string[],
+    unmatchedRequestedListingIds: [] as string[],
+    unexpectedDimensions: [] as string[],
+    queryDimension: report.dimension,
+    queryTimeZone: "UTC" as const,
+    windowStart: input.dateFrom,
+    windowEnd: input.dateTo,
+    reportStartDate,
+    reportEndDate,
+    lastUpdatedDate,
+    completenessStatus: dataFreshnessStatus === "CURRENT"
+      ? "complete" as const
+      : "incomplete" as const,
+    dataFreshnessStatus,
+    warnings: report.warnings.map(() => "EBAY_ANALYTICS_REPORT_WARNING"),
+    metrics: [{
+      impressions,
+      views,
+      transactions,
+      ctr: impressions !== null && views !== null
+        ? calculateSellerHubCtr(views, impressions)
+        : null,
+      salesConversionRate: views !== null && transactions !== null
+        ? calculateSellerHubCtr(transactions, views)
+        : null,
+      revenue: null,
+    }],
+  }
+}
 
 function sanitizedReportAudit(report: ComparableEbayTrafficAnalytics) {
   const metrics = report.observations.map((row) => ({
@@ -60,7 +133,7 @@ export async function compareEbayCommercialAnalyticsWithSellerHub(input: {
   const now = input.now ?? new Date()
   const operationalWindow = closedEbayAnalyticsWindow(now, 7)
   const comparisonWindow = closedEbayAnalyticsWindow(now, 90)
-  const [operational, comparison] = await Promise.all([
+  const [operational, comparison, accountDiagnostic] = await Promise.all([
     getComparableEbayTrafficAnalytics({
       listingIds: [listingId],
       dateFrom: operationalWindow.dateFrom,
@@ -73,12 +146,17 @@ export async function compareEbayCommercialAnalyticsWithSellerHub(input: {
       dateTo: comparisonWindow.dateTo,
       timeZone: "UTC",
     }),
+    getAccountDailyDiagnostic({
+      dateFrom: comparisonWindow.dateFrom,
+      dateTo: comparisonWindow.dateTo,
+    }),
   ])
   const classification = classifySellerHubComparison({
     listingId,
     evidence,
     operational,
     comparison,
+    accountDiagnostic,
   })
   return {
     classification,
@@ -86,6 +164,8 @@ export async function compareEbayCommercialAnalyticsWithSellerHub(input: {
       ? "La ventana diagnóstica amplia coincide con Seller Hub; la ventana operativa de 7 días cerrados tiene otro alcance temporal."
       : classification === "MATCH_EXACT"
         ? "La ventana operativa coincide con la evidencia de Seller Hub."
+        : classification === "SELLER_HUB_ACCOUNT_LEVEL_NOT_LISTING_LEVEL"
+          ? "La evidencia coincide con el reporte oficial por día de la cuenta, no con la dimensión LISTING del Item ID solicitado."
         : classification === "REPORT_NOT_UPDATED_YET"
           ? "eBay todavía no ha consolidado la fecha final solicitada."
           : classification === "LISTING_DIMENSION_MISMATCH"
@@ -99,6 +179,7 @@ export async function compareEbayCommercialAnalyticsWithSellerHub(input: {
     },
     operational: sanitizedReportAudit(operational),
     comparison: sanitizedReportAudit(comparison),
+    accountDiagnostic,
     safety: {
       persistencePerformed: false,
       commercialRulesEvaluated: false,

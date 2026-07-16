@@ -167,6 +167,17 @@ export function reconcileEbayTrafficAnalyticsReport(input: {
 
 export type ComparableEbayTrafficAnalytics = ReturnType<typeof reconcileEbayTrafficAnalyticsReport>
 
+export type ComparableEbayAccountTrafficAnalytics = {
+  completenessStatus: "complete" | "incomplete"
+  dataFreshnessStatus: "CURRENT" | "REPORT_NOT_UPDATED_YET" | "INCOMPLETE_WINDOW"
+  metrics: Array<{
+    impressions: number | null
+    views: number | null
+    transactions: number | null
+    ctr: number | null
+  }>
+}
+
 function isoDay(date: Date) {
   return date.toISOString().slice(0, 10)
 }
@@ -220,10 +231,20 @@ export function classifySellerHubComparison(input: {
   evidence: SellerHubEvidence
   operational: ComparableEbayTrafficAnalytics
   comparison: ComparableEbayTrafficAnalytics
+  accountDiagnostic?: ComparableEbayAccountTrafficAnalytics | null
 }): SellerHubComparisonClassification {
+  const accountMetrics = input.accountDiagnostic?.metrics[0]
   if (input.evidence.scope === "ACCOUNT") return "SELLER_HUB_ACCOUNT_LEVEL_NOT_LISTING_LEVEL"
   if (exactMetricsMatch(input.operational, input.listingId, input.evidence)) return "MATCH_EXACT"
   if (exactMetricsMatch(input.comparison, input.listingId, input.evidence)) return "MATCH_DIFFERENT_WINDOW"
+  if (
+    input.accountDiagnostic?.completenessStatus === "complete" &&
+    accountMetrics?.impressions === input.evidence.impressions &&
+    accountMetrics.views === input.evidence.views &&
+    accountMetrics.transactions === input.evidence.transactions &&
+    accountMetrics.ctr !== null && accountMetrics.ctr !== undefined &&
+    Math.abs(accountMetrics.ctr - input.evidence.ctr) <= 0.1
+  ) return "SELLER_HUB_ACCOUNT_LEVEL_NOT_LISTING_LEVEL"
   if (
     input.operational.dataFreshnessStatus === "LISTING_DIMENSION_MISMATCH" ||
     input.comparison.dataFreshnessStatus === "LISTING_DIMENSION_MISMATCH"
