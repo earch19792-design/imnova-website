@@ -15,6 +15,7 @@ import {
   type FulfillmentSimulationScenario,
   type ShipmentItemInput,
 } from "./fulfillment-v1a-domain"
+import { getMarketplaceFulfillmentV1BReadiness } from "./fulfillment-v1b-service"
 
 const MARKETPLACE = "EBAY_US"
 const STAGING_REF = "vsfthqydfrdzulldbfbe"
@@ -184,10 +185,11 @@ function allowlistedExternalUrl(value: unknown, domain: "luna" | "ebay") {
 
 export async function getMarketplaceFulfillmentDashboard(supabase: SupabaseClient) {
   const config = getMarketplaceFulfillmentV1AConfiguration()
-  if (!config.uiEnabled) return { enabled: false, config, tasks: [], safety: safety() }
+  const realAdapter = getMarketplaceFulfillmentV1BReadiness()
+  if (!config.uiEnabled) return { enabled: false, config: { ...config, realAdapter }, tasks: [], safety: safety() }
   const scopedAccount = accountKey()
   const { data: tasks, error: taskError } = await supabase.from("fulfillment_tasks")
-    .select("id,marketplace_order_id,marketplace_line_item_id,listing_id,marketplace_listing_sku,supplier_sku,supplier_variant_id,product_title,quantity,workflow_state,lock_version,priority,next_action_at,last_error_code,source_product_url,seller_order_url,supplier_unit_cost,estimated_supplier_cost,estimated_profit,stock_available,ship_by_at,purchase_confirmed_at,tracking_approved_at,tracking_payload_hash,current_shipment_id,created_at,updated_at")
+    .select("id,marketplace_order_id,marketplace_line_item_id,listing_id,marketplace_listing_sku,supplier_sku,supplier_variant_id,product_title,quantity,workflow_state,lock_version,priority,next_action_at,last_error_code,source_product_url,seller_order_url,supplier_unit_cost,estimated_supplier_cost,estimated_profit,stock_available,ship_by_at,purchase_confirmed_at,tracking_approved_at,tracking_approval_expires_at,tracking_submission_mode,tracking_payload_hash,current_shipment_id,ebay_fulfillment_id,ebay_fulfillment_reconciled_at,created_at,updated_at")
     .eq("marketplace_account_key", scopedAccount).eq("marketplace", MARKETPLACE)
     .order("priority", { ascending: true }).order("ship_by_at", { ascending: true, nullsFirst: false }).limit(200)
   if (taskError) throw new Error("FULFILLMENT_QUEUE_READ_FAILED")
@@ -214,7 +216,7 @@ export async function getMarketplaceFulfillmentDashboard(supabase: SupabaseClien
   if (events.error || purchases.error || shipments.error || outbox.error) {
     throw new Error("FULFILLMENT_QUEUE_DETAILS_READ_FAILED")
   }
-  const result = { enabled: true, config, tasks: safeTasks, events: events.data ?? [], purchases: purchases.data ?? [], shipments: shipments.data ?? [], submissions: outbox.data ?? [], safety: safety() }
+  const result = { enabled: true, config: { ...config, realAdapter }, tasks: safeTasks, events: events.data ?? [], purchases: purchases.data ?? [], shipments: shipments.data ?? [], submissions: outbox.data ?? [], safety: safety() }
   if (containsFulfillmentPrivateData(result)) throw new Error("FULFILLMENT_PRIVATE_DATA_BLOCKED")
   return result
 }

@@ -27,7 +27,11 @@ type Task = {
   ship_by_at: string | null
   purchase_confirmed_at: string | null
   tracking_payload_hash: string | null
+  tracking_submission_mode: string | null
+  tracking_approval_expires_at: string | null
   current_shipment_id: string | null
+  ebay_fulfillment_id: string | null
+  ebay_fulfillment_reconciled_at: string | null
 }
 
 type Event = {
@@ -93,6 +97,19 @@ type Dashboard = {
     realSubmitterEnabled?: boolean
     ebayTrackingWriteEnabled?: boolean
     adapter?: string
+    realAdapter?: {
+      executable?: boolean
+      token?: "PRESENT" | "MISSING"
+      requiredScope?: string
+      identityBound?: boolean
+      cronConfigured?: boolean
+      flags?: {
+        oauthEnabled?: boolean
+        writeEnabled?: boolean
+        realAdapterEnabled?: boolean
+        submitterEnabled?: boolean
+      }
+    }
   }
   safety?: { ebayWrites?: number; buyerPiiReturned?: boolean; cardDataStored?: boolean }
 }
@@ -213,7 +230,7 @@ export function MarketplaceFulfillmentPanel() {
     quantity: String(task.quantity),
   }
 
-  const submit = useCallback(async (task: Task, action: "purchase" | "tracking" | "approve") => {
+  const submit = useCallback(async (task: Task, action: "purchase" | "tracking" | "approve" | "approve-real") => {
     setBusyTask(task.id)
     setError("")
     setMessage("")
@@ -241,19 +258,32 @@ export function MarketplaceFulfillmentPanel() {
       } else {
         const shipment = shipments.get(task.id)
         if (!shipment || !task.tracking_payload_hash) throw new Error("FULFILLMENT_SHIPMENT_NOT_APPROVABLE")
-        const confirmed = window.confirm(
-          `Confirmo que revisé el payload ${task.tracking_payload_hash}. Esta acción sólo encolará una submission simulada y no escribirá tracking en eBay. ¿Continuar?`,
+        const real = action === "approve-real"
+        const confirmed = window.confirm(real
+          ? `Confirmo que revisé el payload ${task.tracking_payload_hash}. Esta aprobación encolará una única escritura real de tracking en eBay, sujeta al preflight y reconciliación. ¿Continuar?`
+          : `Confirmo que revisé el payload ${task.tracking_payload_hash}. Esta acción sólo encolará una submission simulada y no escribirá tracking en eBay. ¿Continuar?`
         )
         if (!confirmed) return
         path = `/api/admin/marketplace/fulfillment/tasks/${encodeURIComponent(task.id)}/approve-tracking-submission`
-        body = { confirmed: true, payloadHash: shipment.payload_hash, lockVersion: task.lock_version }
+        body = {
+          confirmed: true,
+          payloadHash: shipment.payload_hash,
+          lockVersion: task.lock_version,
+          submissionMode: real ? "ebay_real" : "simulated",
+        }
       }
       await authenticatedRequest(path, {
         method: "POST",
         headers: { "Idempotency-Key": crypto.randomUUID() },
         body: JSON.stringify(body),
       })
-      setMessage(action === "purchase" ? "Compra manual registrada." : action === "tracking" ? "Tracking validado; revisa el payload antes de aprobar." : "Submission simulada encolada. No se llamó a eBay.")
+      setMessage(action === "purchase"
+        ? "Compra manual registrada."
+        : action === "tracking"
+          ? "Tracking validado; revisa el payload antes de aprobar."
+          : action === "approve-real"
+            ? "Submission real encolada; el worker aún debe ejecutar preflight y reconciliación."
+            : "Submission simulada encolada. No se llamó a eBay.")
       await load()
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "FULFILLMENT_REQUEST_FAILED")
@@ -266,9 +296,9 @@ export function MarketplaceFulfillmentPanel() {
 
   return <section aria-labelledby="fulfillment-v1a-heading" className="space-y-4 rounded-3xl border border-violet-200/25 bg-violet-200/[0.06] p-4">
     <header>
-      <p className="text-xs font-black uppercase tracking-widest text-violet-100/65">Preview · staging · V1A</p>
-      <h2 id="fulfillment-v1a-heading" className="mt-1 text-xl font-black">Fulfillment manual y tracking simulado</h2>
-      <p className="mt-2 text-sm text-white/70">Compra manual en Luna, tracking con aprobación humana y adapter exclusivamente simulado. Escrituras eBay: 0.</p>
+      <p className="text-xs font-black uppercase tracking-widest text-violet-100/65">Preview · staging · V1A + V1B preparada</p>
+      <h2 id="fulfillment-v1a-heading" className="mt-1 text-xl font-black">Fulfillment manual y tracking reconciliable</h2>
+      <p className="mt-2 text-sm text-white/70">Compra manual en Luna, tracking con aprobación humana y adapter real protegido por cuatro flags. Escrituras eBay durante esta implementación: 0.</p>
     </header>
 
     {loading && <p role="status" className="rounded-2xl border border-white/10 p-4 text-sm">Cargando cola de fulfillment…</p>}
@@ -280,6 +310,12 @@ export function MarketplaceFulfillmentPanel() {
       <div className="rounded-2xl bg-black/25 p-3"><span className="text-white/50">Adapter</span><strong className="mt-1 block uppercase">{dashboard.config?.adapter ?? "—"}</strong></div>
       <div className="rounded-2xl bg-black/25 p-3"><span className="text-white/50">Escrituras eBay</span><strong className="mt-1 block text-lg">{dashboard.safety?.ebayWrites ?? 0}</strong></div>
       <div className="rounded-2xl bg-black/25 p-3"><span className="text-white/50">PII / tarjeta</span><strong className="mt-1 block">NO</strong></div>
+    </div>}
+
+    {dashboard?.enabled && <div className="rounded-2xl border border-amber-200/20 bg-amber-200/[0.05] p-3 text-xs">
+      <p className="font-black">Adapter real eBay: {dashboard.config?.realAdapter?.executable ? "ARMADO" : "DESACTIVADO"}</p>
+      <p className="mt-1 text-white/60">OAuth {dashboard.config?.realAdapter?.flags?.oauthEnabled ? "ON" : "OFF"} · write {dashboard.config?.realAdapter?.flags?.writeEnabled ? "ON" : "OFF"} · adapter {dashboard.config?.realAdapter?.flags?.realAdapterEnabled ? "ON" : "OFF"} · submitter {dashboard.config?.realAdapter?.flags?.submitterEnabled ? "ON" : "OFF"} · cron NO</p>
+      <p className="mt-1 text-white/60">Token dedicado: {dashboard.config?.realAdapter?.token ?? "MISSING"} · scope requerido: sell.fulfillment · identidad: {dashboard.config?.realAdapter?.identityBound ? "BOUND" : "BLOCKED"}</p>
     </div>}
 
     {dashboard?.enabled && dashboard.tasks.length === 0 && <p className="rounded-2xl border border-white/10 p-5 text-center text-white/65">No hay ventas que requieran fulfillment.</p>}
@@ -330,7 +366,7 @@ export function MarketplaceFulfillmentPanel() {
           <button disabled={busyTask === task.id} className="min-h-12 rounded-xl bg-cyan-200 px-3 font-black text-black sm:col-span-2">Validar tracking y preparar payload</button>
         </form>}
 
-        {shipment && <div className="mt-3 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-xs"><p className="font-black">Payload normalizado · {shipment.approval_status}</p><pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] text-cyan-50/80">{JSON.stringify(shipment.normalized_payload, null, 2)}</pre><p className="mt-2 break-all font-mono">{shipment.payload_hash}</p>{task.workflow_state === "TRACKING_READY_FOR_SUBMISSION" && <button type="button" disabled={busyTask === task.id} onClick={() => void submit(task, "approve")} className="mt-3 min-h-12 w-full rounded-xl bg-amber-100 px-3 font-black text-black">Aprobar submission simulada</button>}</div>}
+        {shipment && <div className="mt-3 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-xs"><p className="font-black">Payload normalizado · {shipment.approval_status}</p><pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] text-cyan-50/80">{JSON.stringify(shipment.normalized_payload, null, 2)}</pre><p className="mt-2 break-all font-mono">{shipment.payload_hash}</p>{task.workflow_state === "TRACKING_READY_FOR_SUBMISSION" && <div className="mt-3 grid gap-2"><button type="button" disabled={busyTask === task.id} onClick={() => void submit(task, "approve")} className="min-h-12 w-full rounded-xl bg-amber-100 px-3 font-black text-black">Aprobar submission simulada</button>{dashboard.config?.realAdapter?.executable && <button type="button" disabled={busyTask === task.id} onClick={() => void submit(task, "approve-real")} className="min-h-12 w-full rounded-xl border border-rose-100/40 bg-rose-100/10 px-3 font-black text-rose-50">Aprobar escritura real en eBay</button>}</div>}</div>}
         {submission && <p className="mt-3 rounded-xl bg-violet-200/[0.08] p-3 text-xs">Outbox {submission.status} · adapter {submission.adapter} · intentos {submission.attempts}/{submission.max_attempts}{submission.last_error_code ? ` · ${submission.last_error_code}` : ""}</p>}
         <p className="mt-3 text-sm"><strong>Siguiente acción:</strong> {nextAction(task)}</p>
         {task.last_error_code && <p className="mt-2 text-xs font-bold text-rose-100">Error sanitizado: {task.last_error_code}</p>}

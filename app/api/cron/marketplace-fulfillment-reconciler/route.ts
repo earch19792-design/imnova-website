@@ -6,12 +6,23 @@ import { NextResponse } from "next/server"
 
 import { commercialPreviewCronAuthorized } from "@/lib/ebay/ebay-commercial-preview-pilot"
 import { reconcileMarketplaceFulfillmentSimulator } from "@/lib/marketplace/fulfillment-v1a-service"
+import {
+  getMarketplaceFulfillmentV1BReadiness,
+  runMarketplaceFulfillmentRealReconciler,
+} from "@/lib/marketplace/fulfillment-v1b-service"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 
 export async function GET(req: Request) {
   if (!commercialPreviewCronAuthorized(req)) return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" }, { status: 401 })
   try {
-    return NextResponse.json({ success: true, result: await reconcileMarketplaceFulfillmentSimulator(getSupabaseAdminClient()) })
+    const supabase = getSupabaseAdminClient()
+    const readiness = getMarketplaceFulfillmentV1BReadiness()
+    return NextResponse.json({
+      success: true,
+      result: readiness.executable
+        ? await runMarketplaceFulfillmentRealReconciler(supabase)
+        : await reconcileMarketplaceFulfillmentSimulator(supabase),
+    })
   } catch (error) {
     return NextResponse.json({ success: false, error: safeCode(error), safety: { secondPosts: 0, ebayWrites: 0, previewOnly: true } }, { status: 403 })
   }

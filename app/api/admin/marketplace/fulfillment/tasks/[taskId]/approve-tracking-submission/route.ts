@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic"
 import { NextResponse } from "next/server"
 
 import { approveMarketplaceFulfillmentTracking } from "@/lib/marketplace/fulfillment-v1a-service"
+import { approveMarketplaceFulfillmentTrackingReal } from "@/lib/marketplace/fulfillment-v1b-service"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
 export async function POST(req: Request, context: { params: Promise<{ taskId: string }> }) {
@@ -13,12 +14,18 @@ export async function POST(req: Request, context: { params: Promise<{ taskId: st
     const input = await req.json()
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("FULFILLMENT_INVALID_JSON")
     const { taskId } = await context.params
+    const body = input as Record<string, unknown>
     return NextResponse.json({
       success: true,
-      result: await approveMarketplaceFulfillmentTracking(
-        getSupabaseAdminClient(), taskId, input as Record<string, unknown>, validation.userId,
-        req.headers.get("idempotency-key") ?? "",
-      ),
+      result: body.submissionMode === "ebay_real"
+        ? await approveMarketplaceFulfillmentTrackingReal(
+          getSupabaseAdminClient(), taskId, body, validation.userId,
+          req.headers.get("idempotency-key") ?? "",
+        )
+        : await approveMarketplaceFulfillmentTracking(
+          getSupabaseAdminClient(), taskId, body, validation.userId,
+          req.headers.get("idempotency-key") ?? "",
+        ),
     })
   } catch (error) {
     const code = safeCode(error)
