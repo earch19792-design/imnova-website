@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { getEbaySellerAccountScopeConfiguration } from "../ebay/ebay-seller-account-scope"
+import { getEbayFulfillmentOrderGuard } from "../ebay/ebay-commercial-readers"
 import {
   containsFulfillmentPrivateData,
   fulfillmentIdentityFingerprint,
@@ -273,6 +274,19 @@ async function loadOrderTasks(supabase: SupabaseClient, task: TaskRow) {
   return (data ?? []) as TaskRow[]
 }
 
+async function officialOrderGuard(task: TaskRow, siblings: TaskRow[]) {
+  for (const sibling of siblings) assertTaskIdentity(sibling)
+  return getEbayFulfillmentOrderGuard({
+    orderId: task.marketplace_order_id,
+    expectedLines: siblings.map((row) => ({
+      lineItemId: row.marketplace_line_item_id,
+      listingId: row.listing_id,
+      marketplaceListingSku: row.marketplace_listing_sku as string,
+      quantity: row.quantity,
+    })),
+  })
+}
+
 export async function saveMarketplaceFulfillmentTracking(
   supabase: SupabaseClient,
   taskId: string,
@@ -348,6 +362,8 @@ export async function approveMarketplaceFulfillmentTracking(
       safety: safety(),
     }
   }
+  const guard = await officialOrderGuard(task, await loadOrderTasks(supabase, task))
+  if (guard.blocked) throw new Error(`FULFILLMENT_${guard.blockCode}`)
   const { data: shipment, error: shipmentError } = await supabase.from("marketplace_fulfillment_shipments")
     .select("id,normalized_payload,payload_hash,approval_status,superseded_at")
     .eq("id", task.current_shipment_id).eq("payload_hash", input.payloadHash).maybeSingle()
@@ -365,15 +381,6 @@ export async function approveMarketplaceFulfillmentTracking(
   return { submission: data, approvedPayloadHash: input.payloadHash, directMarketplaceCall: false, safety: safety() }
 }
 
-function orderGuard(paymentStatus: unknown, fulfillmentStatus: unknown) {
-  const payment = String(paymentStatus ?? "").toLowerCase()
-  const fulfillment = String(fulfillmentStatus ?? "").toLowerCase()
-  if (payment.includes("refund")) return "ORDER_REFUNDED"
-  if (fulfillment.includes("cancel")) return "ORDER_CANCELLED"
-  if (["fulfilled", "shipped"].includes(fulfillment)) return "ORDER_ALREADY_FULFILLED"
-  return null
-}
-
 export async function runMarketplaceFulfillmentSimulator(
   supabase: SupabaseClient,
   options: { workerId?: string; limit?: number } = {},
@@ -388,21 +395,38 @@ export async function runMarketplaceFulfillmentSimulator(
   })
   if (claimError) throw new Error("FULFILLMENT_SUBMISSION_CLAIM_FAILED")
   const outcomes = []
+  let adapterCalls = 0
+  let officialOrderReads = 0
   for (const claim of claims ?? []) {
-    const { data: order } = await supabase.from("marketplace_order_snapshots")
-      .select("payment_status,fulfillment_status")
-      .eq("marketplace_account_key", claim.marketplace_account_key)
-      .eq("marketplace", claim.marketplace)
-      .eq("marketplace_order_id", claim.marketplace_order_id).maybeSingle()
-    const blocked = orderGuard(order?.payment_status, order?.fulfillment_status)
-    const simulated = blocked
-      ? { outcome: "blocked" as const, retryable: false, acceptedRemotely: false, remoteId: null, code: blocked }
-      : simulateMarketplaceFulfillmentSubmission(
+    let simulated: ReturnType<typeof simulateMarketplaceFulfillmentSubmission> | {
+      outcome: "blocked" | "temporary_error"
+      retryable: boolean
+      acceptedRemotely: false
+      remoteId: null
+      code: string
+    }
+    try {
+      const task = await loadTask(supabase, claim.fulfillment_task_id)
+      const guard = await officialOrderGuard(task, await loadOrderTasks(supabase, task))
+      officialOrderReads += 1
+      if (guard.blocked) {
+        simulated = { outcome: "blocked", retryable: false, acceptedRemotely: false, remoteId: null, code: guard.blockCode ?? "ORDER_GUARD_BLOCKED" }
+      } else {
+        adapterCalls += 1
+        simulated = simulateMarketplaceFulfillmentSubmission(
           FULFILLMENT_SIMULATION_SCENARIOS.includes(claim.simulation_scenario as FulfillmentSimulationScenario)
             ? claim.simulation_scenario as FulfillmentSimulationScenario
             : "permanent_error",
           claim.payload_hash,
         )
+      }
+    } catch (guardError) {
+      const identityMismatch = guardError instanceof Error &&
+        /IDENTITY_MISMATCH/.test(guardError.message)
+      simulated = identityMismatch
+        ? { outcome: "blocked", retryable: false, acceptedRemotely: false, remoteId: null, code: "ORDER_IDENTITY_MISMATCH" }
+        : { outcome: "temporary_error", retryable: true, acceptedRemotely: false, remoteId: null, code: "FULFILLMENT_ORDER_GUARD_READ_FAILED" }
+    }
     const { data, error } = await supabase.rpc("record_fulfillment_simulation_outcome_v1a", {
       p_outbox_id: claim.id,
       p_worker_id: workerId,
@@ -414,7 +438,7 @@ export async function runMarketplaceFulfillmentSimulator(
     if (error) throw new Error("FULFILLMENT_SIMULATION_RESULT_WRITE_FAILED")
     outcomes.push({ id: claim.id, outcome: simulated.outcome, status: data?.status ?? null })
   }
-  return { status: "completed", processed: outcomes.length, outcomes, adapterCalls: outcomes.length, ebayWrites: 0, safety: safety() }
+  return { status: "completed", processed: outcomes.length, outcomes, adapterCalls, officialOrderReads, ebayWrites: 0, safety: safety() }
 }
 
 export async function reconcileMarketplaceFulfillmentSimulator(

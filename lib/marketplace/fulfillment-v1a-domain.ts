@@ -75,6 +75,24 @@ export type NormalizedTrackingPayload = {
   items: ShipmentItemInput[]
 }
 
+export type EbayFulfillmentGuardExpectedLine = {
+  lineItemId: string
+  listingId: string
+  marketplaceListingSku: string
+  quantity: number
+}
+
+export type EbayFulfillmentOrderGuard = {
+  orderId: string
+  identityMatch: boolean
+  cancellationStatus: string | null
+  refundStatus: string | null
+  fulfillmentStatus: string
+  blocked: boolean
+  blockCode: "ORDER_CANCELLED" | "ORDER_REFUNDED" | "ORDER_ALREADY_FULFILLED" | "ORDER_IDENTITY_MISMATCH" | null
+  buyerPiiReturned: false
+}
+
 export const FULFILLMENT_SIMULATION_SCENARIOS = [
   "success",
   "temporary_error",
@@ -306,6 +324,89 @@ export function simulateMarketplaceFulfillmentSubmission(
       return { outcome: "permanent_error" as const, retryable: false, acceptedRemotely: false, remoteId: null, code: "SIMULATED_PERMANENT_ERROR" }
     case "ambiguous_timeout":
       return { outcome: "ambiguous_timeout" as const, retryable: false, acceptedRemotely: true, remoteId, code: "SIMULATED_TIMEOUT_AFTER_ACCEPTANCE" }
+  }
+}
+
+function guardRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function guardArray(value: unknown) {
+  return Array.isArray(value) ? value : []
+}
+
+function guardText(value: unknown, maximum = 200) {
+  return typeof value === "string"
+    ? value.trim().replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, maximum)
+    : ""
+}
+
+function guardUpper(value: unknown, maximum = 80) {
+  return guardText(value, maximum).toUpperCase()
+}
+
+export function normalizeEbayFulfillmentOrderGuard(
+  payload: unknown,
+  expectedOrderId: string,
+  expectedLines: EbayFulfillmentGuardExpectedLine[],
+): EbayFulfillmentOrderGuard {
+  const order = guardRecord(payload)
+  const orderId = guardText(order.orderId, 120)
+  const fulfillmentStatus = guardUpper(order.orderFulfillmentStatus, 40)
+  const cancel = guardRecord(order.cancelStatus)
+  const cancellationStatus = guardUpper(cancel.cancelState ?? cancel.cancelStatus, 80) || null
+  const paymentStatus = guardUpper(order.orderPaymentStatus, 80)
+  const refundStates = guardArray(guardRecord(order.paymentSummary).refunds).map((value) => {
+    const refund = guardRecord(value)
+    return guardUpper(refund.refundStatus ?? refund.refundState ?? refund.status, 80)
+  }).filter(Boolean)
+  const refundStatus = paymentStatus.includes("REFUND")
+    ? paymentStatus
+    : refundStates.find((value) => !["FAILED", "CANCELLED", "REJECTED"].includes(value)) ?? null
+  const officialLines = guardArray(order.lineItems).map((value) => {
+    const line = guardRecord(value)
+    const quantity = Number(line.quantity)
+    return {
+      lineItemId: guardText(line.lineItemId, 120),
+      listingId: guardText(line.legacyItemId, 40),
+      marketplaceListingSku: guardText(line.sku, 200),
+      quantity: Number.isFinite(quantity) ? Math.trunc(quantity) : 0,
+      fulfillmentStatus: guardUpper(line.lineItemFulfillmentStatus ?? line.fulfillmentStatus, 40),
+    }
+  })
+  const identityMatch = orderId === expectedOrderId && expectedLines.length > 0 &&
+    expectedLines.every((expected) => officialLines.some((line) =>
+      line.lineItemId === expected.lineItemId &&
+      line.listingId === expected.listingId &&
+      line.marketplaceListingSku === expected.marketplaceListingSku &&
+      line.quantity === expected.quantity
+    ))
+  const cancelled = Boolean(cancellationStatus &&
+    !["NONE_REQUESTED", "CANCEL_REJECTED", "CANCEL_CLOSED_NO_REFUND"].includes(cancellationStatus))
+  const alreadyFulfilled = ["FULFILLED", "SHIPPED"].includes(fulfillmentStatus) ||
+    expectedLines.some((expected) => officialLines.some((line) =>
+      line.lineItemId === expected.lineItemId && ["FULFILLED", "SHIPPED"].includes(line.fulfillmentStatus)
+    ))
+  const blockCode = !identityMatch
+    ? "ORDER_IDENTITY_MISMATCH" as const
+    : cancelled
+      ? "ORDER_CANCELLED" as const
+      : refundStatus
+        ? "ORDER_REFUNDED" as const
+        : alreadyFulfilled
+          ? "ORDER_ALREADY_FULFILLED" as const
+          : null
+  return {
+    orderId,
+    identityMatch,
+    cancellationStatus,
+    refundStatus,
+    fulfillmentStatus,
+    blocked: blockCode !== null,
+    blockCode,
+    buyerPiiReturned: false,
   }
 }
 

@@ -20,6 +20,10 @@ import {
 import {
   getEbayTradingReadOnlyAccessToken,
 } from "./ebay-manual-listing-trading-readonly"
+import {
+  normalizeEbayFulfillmentOrderGuard,
+  type EbayFulfillmentGuardExpectedLine,
+} from "../marketplace/fulfillment-v1a-domain"
 
 const EBAY_API_ORIGIN = "https://api.ebay.com"
 const ORDERS_ENDPOINT = `${EBAY_API_ORIGIN}/sell/fulfillment/v1/order`
@@ -199,6 +203,51 @@ export async function getEbayCompletedCheckoutOrders(input: {
     observedAt: new Date().toISOString(),
     pagesRead,
     rawOrdersDiscardedAfterSanitization: Math.max(0, rawOrderCount - orders.length),
+  }
+}
+
+export async function getEbayFulfillmentOrderGuard(input: {
+  orderId: string
+  expectedLines: EbayFulfillmentGuardExpectedLine[]
+  fetchImpl?: FetchLike
+}) {
+  const orderId = input.orderId.trim()
+  if (!/^[A-Za-z0-9-]{5,120}$/.test(orderId) || !input.expectedLines.length) {
+    throw new Error("EBAY_FULFILLMENT_GUARD_INPUT_INVALID")
+  }
+  const fetchImpl = input.fetchImpl ?? fetch
+  const token = await getEbayCommercialOrdersAccessToken(fetchImpl)
+  await verifyEbayCommercialOfficialAccount(token, fetchImpl)
+  const url = new URL(`${ORDERS_ENDPOINT}/${encodeURIComponent(orderId)}`)
+  let payload: JsonRecord | null = null
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
+    const response = await fetchImpl(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    if (response.ok) {
+      payload = record(await response.json())
+      break
+    }
+    if (response.status === 401) clearEbayCommercialOrdersAccessToken()
+    if (!retryable(response.status) || attempt === MAX_RETRIES - 1) {
+      throw new Error(`EBAY_FULFILLMENT_GUARD_READ_${response.status}`)
+    }
+    await wait(attempt)
+  }
+  if (!payload) throw new Error("EBAY_FULFILLMENT_GUARD_READ_FAILED")
+  const guard = normalizeEbayFulfillmentOrderGuard(payload, orderId, input.expectedLines)
+  if (!guard.identityMatch) throw new Error("EBAY_FULFILLMENT_GUARD_IDENTITY_MISMATCH")
+  return {
+    ...guard,
+    source: "EBAY_SELL_FULFILLMENT_GET_ORDER_READONLY" as const,
+    identityVerified: true as const,
+    ebayWrites: 0 as const,
   }
 }
 
