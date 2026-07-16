@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 
 export const EBAY_WINNER_EVIDENCE_V2_VERSION =
-  "EBAY_WINNER_EVIDENCE_PRODUCT_DECISION_VISUAL_V2_1_2026_07_16"
+  "EBAY_WINNER_EVIDENCE_PRODUCT_DECISION_VISUAL_V2_2_2026_07_16"
 export const PRODUCT_IDENTITY_FINGERPRINT_VERSION =
   "EBAY_PRODUCT_IDENTITY_FINGERPRINT_V2"
 export const WINNER_ECONOMICS_CONFIG_VERSION =
@@ -171,6 +171,10 @@ function roundMoney(value: number) {
 
 function roundScore(value: number) {
   return Math.max(0, Math.min(100, Math.round(value * 100) / 100))
+}
+
+function roundPercent(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100
 }
 
 function canonicalJson(value: unknown): string {
@@ -384,8 +388,8 @@ function economicsAtPrice(price: number | null, totalBaseCost: number | null) {
   return {
     price: roundMoney(price),
     estimatedProfit: roundMoney(profit),
-    estimatedNetMarginPercent: roundScore(margin),
-    estimatedRoiPercent: roi === null ? null : roundScore(roi),
+    estimatedNetMarginPercent: roundPercent(margin),
+    estimatedRoiPercent: roi === null ? null : roundPercent(roi),
     passes: profit >= WINNER_ECONOMICS_CONFIG.minimumProfitUsd &&
       margin >= WINNER_ECONOMICS_CONFIG.minimumNetMarginPercent &&
       roi !== null && roi >= WINNER_ECONOMICS_CONFIG.minimumRoiPercent,
@@ -863,6 +867,14 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
     ? null
     : roundMoney(Math.max(idealSafePrice, premiumAnchor))
   const targetEconomics = economicsAtPrice(targetPrice, totalBaseCost)
+  const marketSupportsMinimumSafePrice = minimumSafePrice === null || evidenceAnchor === null
+    ? null
+    : evidenceAnchor >= minimumSafePrice
+  const minimumSafePriceMarketGap = minimumSafePrice === null || evidenceAnchor === null
+    ? null
+    : roundMoney(evidenceAnchor - minimumSafePrice)
+  const economicsViable = targetEconomics?.passes === true &&
+    marketSupportsMinimumSafePrice === true
   const keywordSet = new Set(normalizedComparables.flatMap((row) => row.keywords))
   const authorizedKeywords = normalizedKeywords(input.authorizedKeywords)
   const requiredKeywordCount = Math.max(1, normalizedPositiveInteger(input.requiredKeywordCount) ?? 5)
@@ -884,13 +896,13 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
       ? Math.min(30, ((Math.max(...activePrices) - Math.min(...activePrices)) / activeMarketMedian) * 50)
       : 0),
   )
-  const marginSafety = targetEconomics?.passes
+  const marginSafety = economicsViable
     ? roundScore(60 + Math.min(40, (targetEconomics.estimatedProfit - WINNER_ECONOMICS_CONFIG.minimumProfitUsd) * 8))
     : 0
   const keywordOpportunity = roundScore(keywordCoverage * 100)
   const listingReadiness = roundScore(
     (strength.strong ? 35 : strength.exactIdentifier ? 20 : 0) +
-    (targetEconomics?.passes ? 30 : 0) +
+    (economicsViable ? 30 : 0) +
     (activeExact.length || soldExact.length ? 20 : 0) +
     (input.complianceBlocked === true ? 0 : 10) +
     (finiteNonNegative(input.stockAvailable) !== null ? 5 : 0),
@@ -908,6 +920,7 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
     !strength.strong ? "PRODUCT_IDENTITY_NOT_STRONG" : null,
     input.complianceBlocked === true ? "COMPLIANCE_BLOCKED" : null,
     !targetEconomics?.passes ? "ECONOMICS_NOT_VIABLE" : null,
+    marketSupportsMinimumSafePrice === false ? "MARKET_PRICE_BELOW_MINIMUM_SAFE_PRICE" : null,
     !evidenceSufficientForConditionalGo ? "EXACT_EVIDENCE_INSUFFICIENT" : null,
   ].filter((value): value is string => Boolean(value))
   const verdict = blockers.length
@@ -968,6 +981,10 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
       premiumPrice,
       weightedSoldMedian: weightedSoldMedian === null ? null : roundMoney(weightedSoldMedian),
       activeMarketMedian: activeMarketMedian === null ? null : roundMoney(activeMarketMedian),
+      evidenceMarketAnchor: evidenceAnchor === null ? null : roundMoney(evidenceAnchor),
+      marketSupportsMinimumSafePrice,
+      minimumSafePriceMarketGap,
+      viable: economicsViable,
       targetEconomics,
       unavailableValuesRenderAs: "N/D",
     },
