@@ -164,6 +164,8 @@ export async function compareEbayCommercialAnalyticsWithSellerHub(input: {
       ? "La ventana diagnóstica amplia coincide con Seller Hub; la ventana operativa de 7 días cerrados tiene otro alcance temporal."
       : classification === "MATCH_EXACT"
         ? "La ventana operativa coincide con la evidencia de Seller Hub."
+        : classification === "SELLER_HUB_LISTING_API_DISCREPANCY"
+          ? "Seller Hub y Traffic API difieren para el mismo Item ID: ambas fuentes se conservan separadas y las reglas Analytics quedan suspendidas mientras se reconcilian."
         : classification === "SELLER_HUB_ACCOUNT_LEVEL_NOT_LISTING_LEVEL"
           ? "La evidencia coincide con el reporte oficial por día de la cuenta, no con la dimensión LISTING del Item ID solicitado."
         : classification === "REPORT_NOT_UPDATED_YET"

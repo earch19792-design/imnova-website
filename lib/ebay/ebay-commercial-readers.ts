@@ -213,6 +213,8 @@ async function watcherRead(
     `<ItemID>${escapedXml(listingId)}</ItemID>` +
     "<IncludeWatchCount>true</IncludeWatchCount>" +
     "<OutputSelector>Item.ItemID</OutputSelector>" +
+    "<OutputSelector>Item.SKU</OutputSelector>" +
+    "<OutputSelector>Item.SellingStatus.ListingStatus</OutputSelector>" +
     "<OutputSelector>Item.WatchCount</OutputSelector>" +
     "</GetItemRequest>"
   for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
@@ -233,10 +235,14 @@ async function watcherRead(
     const ack = xmlValue(xml, "Ack")?.toLowerCase()
     if (response.ok && ["success", "warning"].includes(ack ?? "")) {
       const returnedItemId = xmlValue(xml, "ItemID")
+      const returnedSku = xmlValue(xml, "SKU")
+      const listingStatus = xmlValue(xml, "ListingStatus")
       const count = numeric(xmlValue(xml, "WatchCount"))
       if (returnedItemId !== listingId) throw new Error("EBAY_WATCHERS_ITEM_ID_MISMATCH")
       return {
         listingId,
+        returnedSku,
+        listingStatus,
         currentWatchers: count === null ? 0 : Math.max(0, Math.trunc(count)),
         source: "EBAY_TRADING_GET_ITEM_WATCHCOUNT" as const,
         observedAt: new Date().toISOString(),
@@ -248,6 +254,81 @@ async function watcherRead(
     await wait(attempt)
   }
   throw new Error("EBAY_WATCHERS_READ_FAILED")
+}
+
+export async function verifyEbayActiveListingIdentities(input: {
+  listings: Array<{ listingId: string; sku: string }>
+  fetchImpl?: FetchLike
+}) {
+  const listings = [...new Map(input.listings
+    .filter((row) => /^\d{9,20}$/.test(row.listingId) && row.sku.trim().length > 0)
+    .map((row) => [`${row.listingId}:${row.sku}`, {
+      listingId: row.listingId,
+      sku: row.sku.trim().slice(0, 100),
+    }])).values()].slice(0, 200)
+  if (!listings.length) return {
+    status: "UNAVAILABLE" as const,
+    source: "EBAY_TRADING_GET_ITEM_READONLY" as const,
+    observations: [],
+    errors: [],
+  }
+  const fetchImpl = input.fetchImpl ?? fetch
+  const token = await getEbayTradingReadOnlyAccessToken(fetchImpl)
+  await verifyEbayCommercialOfficialAccount(token, fetchImpl)
+  const observations: Array<{
+    listingId: string
+    expectedSku: string
+    observedListingId: string
+    observedSku: string | null
+    observedListingStatus: string | null
+    itemIdMatches: boolean
+    skuMatches: boolean
+    activeListingConfirmed: boolean
+    source: "EBAY_TRADING_GET_ITEM_READONLY"
+    observedAt: string
+  }> = []
+  const errors: Array<{ listingId: string; expectedSku: string; code: string }> = []
+  let cursor = 0
+  await Promise.all(Array.from({ length: Math.min(WATCHER_CONCURRENCY, listings.length) }, async () => {
+    while (cursor < listings.length) {
+      const expected = listings[cursor++]
+      try {
+        const result = await watcherRead(expected.listingId, token, fetchImpl)
+        const itemIdMatches = result.listingId === expected.listingId
+        const skuMatches = result.returnedSku === expected.sku
+        const activeListingConfirmed = itemIdMatches && skuMatches &&
+          result.listingStatus?.toLocaleLowerCase("en-US") === "active"
+        observations.push({
+          listingId: expected.listingId,
+          expectedSku: expected.sku,
+          observedListingId: result.listingId,
+          observedSku: result.returnedSku,
+          observedListingStatus: result.listingStatus,
+          itemIdMatches,
+          skuMatches,
+          activeListingConfirmed,
+          source: "EBAY_TRADING_GET_ITEM_READONLY",
+          observedAt: result.observedAt,
+        })
+      } catch (error) {
+        errors.push({
+          listingId: expected.listingId,
+          expectedSku: expected.sku,
+          code: error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
+            ? error.message
+            : "EBAY_LISTING_IDENTITY_READ_FAILED",
+        })
+      }
+    }
+  }))
+  return {
+    status: observations.length === listings.length
+      ? "AVAILABLE" as const
+      : observations.length ? "PARTIAL" as const : "UNAVAILABLE" as const,
+    source: "EBAY_TRADING_GET_ITEM_READONLY" as const,
+    observations,
+    errors,
+  }
 }
 
 export async function getEbayListingWatchers(input: {

@@ -16,6 +16,7 @@ type NormalizedTrafficReport = {
 export type SellerHubComparisonClassification =
   | "MATCH_EXACT"
   | "MATCH_DIFFERENT_WINDOW"
+  | "SELLER_HUB_LISTING_API_DISCREPANCY"
   | "REPORT_NOT_UPDATED_YET"
   | "LISTING_DIMENSION_MISMATCH"
   | "SELLER_HUB_ACCOUNT_LEVEL_NOT_LISTING_LEVEL"
@@ -257,5 +258,12 @@ export function classifySellerHubComparison(input: {
     hasMetricMappingConflict(input.operational, input.listingId, input.evidence) ||
     hasMetricMappingConflict(input.comparison, input.listingId, input.evidence)
   ) return "METRIC_MAPPING_ERROR"
+  if (
+    input.evidence.scope === "LISTING" &&
+    input.operational.completenessStatus === "complete" &&
+    input.comparison.completenessStatus === "complete" &&
+    input.operational.matchedListingIds.includes(input.listingId) &&
+    input.comparison.matchedListingIds.includes(input.listingId)
+  ) return "SELLER_HUB_LISTING_API_DISCREPANCY"
   return "INSUFFICIENT_EVIDENCE"
 }

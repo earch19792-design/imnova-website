@@ -9,6 +9,7 @@ import { NextResponse } from "next/server"
 import {
   COMMERCIAL_MONITOR_LANES,
   getEbayCommercialMonitorDashboard,
+  recordSellerHubListingEvidence,
   runEbayCommercialMonitor,
   updateCommercialThresholds,
   type CommercialMonitorLane,
@@ -117,6 +118,24 @@ export async function POST(req: Request) {
         comparison: await compareEbayCommercialAnalyticsWithSellerHub({
           listingId: "366543596425",
         }),
+      })
+    }
+    if (input.action === "record_seller_hub_listing_evidence") {
+      const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+      if (!accountKey) throw new Error("COMMERCIAL_MONITOR_ACCOUNT_SCOPE_REQUIRED")
+      const evidence = await recordSellerHubListingEvidence(supabase, {
+        marketplaceAccountKey: accountKey,
+        evidence: input.evidence && typeof input.evidence === "object" &&
+            !Array.isArray(input.evidence)
+          ? input.evidence as Record<string, unknown>
+          : {},
+        userId: validation.userId,
+      })
+      return NextResponse.json({
+        success: true,
+        action: "record_seller_hub_listing_evidence",
+        evidence,
+        dashboard: await getEbayCommercialMonitorDashboard(supabase),
       })
     }
     if (input.action !== "run") {

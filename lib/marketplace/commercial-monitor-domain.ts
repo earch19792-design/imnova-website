@@ -270,6 +270,7 @@ export function evaluateCommercialRules(input: {
   previous?: CommercialSnapshot | null
   unitsSold24h?: number
   thresholds?: CommercialThresholds
+  analyticsRulesSuspended?: boolean
 }) {
   const thresholds = input.thresholds ?? DEFAULT_COMMERCIAL_THRESHOLDS
   const snapshot = input.current
@@ -278,6 +279,7 @@ export function evaluateCommercialRules(input: {
   const bucket = dayBucket(snapshot.windowEnd ?? snapshot.observedAt)
 
   if (
+    !input.analyticsRulesSuspended &&
     complete &&
     (snapshot.impressions ?? -1) >= thresholds.trafficMinimumImpressions &&
     snapshot.ctr !== null && snapshot.ctr < thresholds.lowCtrPercent &&
@@ -294,6 +296,7 @@ export function evaluateCommercialRules(input: {
   }
 
   if (
+    !input.analyticsRulesSuspended &&
     complete &&
     (snapshot.views ?? -1) >= thresholds.conversionMinimumViews &&
     snapshot.ctr !== null && snapshot.ctr >= thresholds.lowCtrPercent &&

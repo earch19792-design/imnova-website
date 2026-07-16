@@ -26,7 +26,15 @@ import {
   getEbayCommercialReadersConfiguration,
   getEbayCompletedCheckoutOrders,
   getEbayListingWatchers,
+  verifyEbayActiveListingIdentities,
 } from "./ebay-commercial-readers"
+import {
+  ANALYTICS_SOURCE_DIVERGENCE,
+  commercialAnalyticsDivergenceState,
+  normalizeSellerHubListingEvidence,
+  type CommercialAnalyticsMetrics,
+} from "./ebay-commercial-analytics-divergence-domain"
+import { closedEbayAnalyticsWindow } from "./ebay-commercial-analytics-domain"
 import {
   getEbayCommercialReaderAuthState,
   settleEbayCommercialReaderPromises,
@@ -281,6 +289,298 @@ async function loadActiveListings(supabase: SupabaseClient, accountKey: string) 
   return canonicalListings((data ?? []) as ListingRow[])
 }
 
+function officialAnalyticsMetrics(value: {
+  impressions?: number | null
+  views?: number | null
+  transactions?: number | null
+  ctr?: number | null
+} | null | undefined): CommercialAnalyticsMetrics | null {
+  if (!value) return null
+  return {
+    impressions: numeric(value.impressions),
+    views: numeric(value.views),
+    transactions: numeric(value.transactions),
+    ctr: numeric(value.ctr),
+  }
+}
+
+async function persistListingIdentityVerification(
+  supabase: SupabaseClient,
+  accountKey: string,
+  input: {
+    listingId: string
+    expectedSku: string
+    observedListingId?: string | null
+    observedSku?: string | null
+    observedListingStatus?: string | null
+    itemIdMatches?: boolean
+    skuMatches?: boolean
+    activeListingConfirmed?: boolean
+    observedAt?: string
+    errorCode?: string | null
+  },
+) {
+  const observedAt = input.observedAt ?? new Date().toISOString()
+  const { error } = await supabase.from("marketplace_listing_identity_verifications").upsert({
+    marketplace_account_key: accountKey,
+    marketplace: MARKETPLACE,
+    listing_id: input.listingId,
+    expected_sku: input.expectedSku,
+    observed_listing_id: input.observedListingId ?? null,
+    observed_sku: input.observedSku ?? null,
+    observed_listing_status: input.observedListingStatus ?? null,
+    item_id_matches: input.itemIdMatches === true,
+    sku_matches: input.skuMatches === true,
+    active_listing_confirmed: input.activeListingConfirmed === true,
+    source: "EBAY_TRADING_GET_ITEM_READONLY",
+    error_code: input.errorCode ?? null,
+    observed_at: observedAt,
+    updated_at: observedAt,
+  }, { onConflict: "marketplace_account_key,marketplace,listing_id,expected_sku" })
+  if (error) throw new Error("COMMERCIAL_LISTING_IDENTITY_AUDIT_FAILED")
+}
+
+export async function recordSellerHubListingEvidence(
+  supabase: SupabaseClient,
+  input: {
+    marketplaceAccountKey: string
+    evidence: Record<string, unknown>
+    userId?: string | null
+  },
+) {
+  const evidence = normalizeSellerHubListingEvidence(input.evidence)
+  const { data: activeListing, error: listingError } = await supabase
+    .from("ebay_active_listings")
+    .select("ebay_item_id,ebay_sku,listing_status")
+    .eq("account_key", input.marketplaceAccountKey)
+    .eq("ebay_item_id", evidence.listingId)
+    .eq("ebay_sku", evidence.sku)
+    .eq("listing_status", "active")
+    .limit(1)
+    .maybeSingle()
+  if (listingError) throw new Error("COMMERCIAL_ACTIVE_LISTING_READ_FAILED")
+  if (!activeListing) throw new Error("COMMERCIAL_LISTING_ITEM_ID_OR_CUSTOM_LABEL_MISMATCH")
+
+  const verification = await verifyEbayActiveListingIdentities({
+    listings: [{ listingId: evidence.listingId, sku: evidence.sku }],
+  })
+  const identity = verification.observations[0]
+  const identityError = verification.errors[0]
+  await persistListingIdentityVerification(supabase, input.marketplaceAccountKey, identity ? {
+    ...identity,
+  } : {
+    listingId: evidence.listingId,
+    expectedSku: evidence.sku,
+    errorCode: identityError?.code ?? "EBAY_LISTING_IDENTITY_UNAVAILABLE",
+  })
+  if (!identity?.activeListingConfirmed) {
+    throw new Error("COMMERCIAL_LISTING_ITEM_ID_OR_CUSTOM_LABEL_MISMATCH")
+  }
+
+  const { data: manual, error: manualError } = await supabase
+    .from("listing_commercial_manual_evidence")
+    .upsert({
+      marketplace_account_key: input.marketplaceAccountKey,
+      marketplace: MARKETPLACE,
+      listing_id: evidence.listingId,
+      sku: evidence.sku,
+      source: evidence.source,
+      impressions_metric: evidence.impressionsMetric,
+      views_metric: evidence.viewsMetric,
+      transactions_metric: evidence.transactionsMetric,
+      observed_on: evidence.observedOn,
+      impressions: evidence.impressions,
+      views: evidence.views,
+      transactions: evidence.transactions,
+      ctr: evidence.ctr,
+      recorded_by: input.userId ?? null,
+    }, {
+      onConflict: "marketplace_account_key,marketplace,listing_id,sku,source,observed_on",
+    })
+    .select("id")
+    .single()
+  if (manualError || !manual?.id) throw new Error("COMMERCIAL_MANUAL_EVIDENCE_WRITE_FAILED")
+
+  const { data: snapshot, error: snapshotError } = await supabase
+    .from("listing_commercial_snapshots")
+    .select("impressions,views,transactions,ctr,source,window_start,window_end,completeness_status,observed_at")
+    .eq("marketplace_account_key", input.marketplaceAccountKey)
+    .eq("marketplace", MARKETPLACE)
+    .eq("listing_id", evidence.listingId)
+    .eq("sku", evidence.sku)
+    .order("observed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (snapshotError) throw new Error("COMMERCIAL_SNAPSHOT_HISTORY_READ_FAILED")
+  const official = officialAnalyticsMetrics(snapshot)
+  const state = commercialAnalyticsDivergenceState({
+    manual: evidence,
+    official,
+    officialComparable: snapshot?.completeness_status === "complete",
+  })
+  const now = new Date().toISOString()
+  const nextCheckAt = new Date(Date.parse(now) + 24 * 60 * 60 * 1_000).toISOString()
+  const { data: existing, error: existingError } = await supabase
+    .from("listing_analytics_source_divergences")
+    .select("id")
+    .eq("marketplace_account_key", input.marketplaceAccountKey)
+    .eq("marketplace", MARKETPLACE)
+    .eq("listing_id", evidence.listingId)
+    .eq("sku", evidence.sku)
+    .eq("status", "open")
+    .maybeSingle()
+  if (existingError) throw new Error("COMMERCIAL_ANALYTICS_DIVERGENCE_READ_FAILED")
+  const divergencePayload = {
+    manual_evidence_id: manual.id,
+    classification: state.classification,
+    health_flag: state.healthFlag ?? "RESOLVED",
+    status: state.status,
+    official_source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT",
+    official_metrics: official,
+    official_window_start: snapshot?.window_start ?? null,
+    official_window_end: snapshot?.window_end ?? null,
+    last_checked_at: now,
+    next_check_at: nextCheckAt,
+    resolved_at: state.status === "resolved" ? now : null,
+    resolution_code: state.status === "resolved" ? state.classification : null,
+    updated_at: now,
+  }
+  const divergenceWrite = existing?.id
+    ? await supabase.from("listing_analytics_source_divergences")
+        .update(divergencePayload).eq("id", existing.id)
+    : await supabase.from("listing_analytics_source_divergences").insert({
+        marketplace_account_key: input.marketplaceAccountKey,
+        marketplace: MARKETPLACE,
+        listing_id: evidence.listingId,
+        sku: evidence.sku,
+        ...divergencePayload,
+      })
+  if (divergenceWrite.error) throw new Error("COMMERCIAL_ANALYTICS_DIVERGENCE_WRITE_FAILED")
+  return {
+    classification: state.classification,
+    healthFlag: state.healthFlag,
+    status: state.status,
+    analyticsRulesSuspended: state.analyticsRulesSuspended,
+    manual: evidence,
+    official: {
+      source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT",
+      observedAt: snapshot?.observed_at ?? null,
+      windowStart: snapshot?.window_start ?? null,
+      windowEnd: snapshot?.window_end ?? null,
+      metrics: official,
+    },
+    identity: {
+      listingId: identity.listingId,
+      expectedSku: identity.expectedSku,
+      itemIdMatches: identity.itemIdMatches,
+      skuMatches: identity.skuMatches,
+      activeListingConfirmed: identity.activeListingConfirmed,
+      observedAt: identity.observedAt,
+    },
+    nextCheckAt,
+    manualEvidenceUsedAsApiMetric: false,
+  }
+}
+
+async function loadOpenAnalyticsDivergences(
+  supabase: SupabaseClient,
+  accountKey: string,
+) {
+  const { data, error } = await supabase
+    .from("listing_analytics_source_divergences")
+    .select("id,listing_id,sku,manual_evidence_id,next_check_at")
+    .eq("marketplace_account_key", accountKey)
+    .eq("marketplace", MARKETPLACE)
+    .eq("status", "open")
+    .limit(500)
+  if (error) throw new Error("COMMERCIAL_ANALYTICS_DIVERGENCE_READ_FAILED")
+  return data ?? []
+}
+
+async function reconcileOpenAnalyticsDivergences(
+  supabase: SupabaseClient,
+  accountKey: string,
+  now: Date,
+) {
+  const open = await loadOpenAnalyticsDivergences(supabase, accountKey)
+  const openListingIds = new Set(open.map((row) => row.listing_id as string))
+  const dueRows = open.filter((row) =>
+    !row.next_check_at || Date.parse(row.next_check_at) <= now.getTime()
+  )
+  if (!dueRows.length) return {
+    openListingIds,
+    rechecked: 0,
+    resolved: 0,
+    error: null as string | null,
+  }
+  try {
+    const evidenceIds = dueRows.map((row) => row.manual_evidence_id)
+    const { data: evidenceRows, error: evidenceError } = await supabase
+      .from("listing_commercial_manual_evidence")
+      .select("id,listing_id,sku,impressions,views,transactions,ctr")
+      .in("id", evidenceIds)
+    if (evidenceError) throw new Error("COMMERCIAL_MANUAL_EVIDENCE_READ_FAILED")
+    const evidenceById = new Map((evidenceRows ?? []).map((row) => [row.id, row]))
+    const window = closedEbayAnalyticsWindow(now, 90)
+    const official = await getComparableEbayTrafficAnalytics({
+      listingIds: [...new Set(dueRows.map((row) => row.listing_id as string))],
+      dateFrom: window.dateFrom,
+      dateTo: window.dateTo,
+      timeZone: "UTC",
+    })
+    const officialByListing = new Map(official.observations.map((row) => [row.listingId, row]))
+    let resolved = 0
+    for (const divergence of dueRows) {
+      const evidence = evidenceById.get(divergence.manual_evidence_id)
+      const observation = officialByListing.get(divergence.listing_id)
+      if (!evidence) continue
+      const manual: CommercialAnalyticsMetrics = {
+        impressions: numeric(evidence.impressions),
+        views: numeric(evidence.views),
+        transactions: numeric(evidence.transactions),
+        ctr: numeric(evidence.ctr),
+      }
+      const api = officialAnalyticsMetrics(observation)
+      const state = commercialAnalyticsDivergenceState({
+        manual,
+        official: api,
+        officialComparable: official.completenessStatus === "complete" &&
+          official.matchedListingIds.includes(divergence.listing_id),
+      })
+      const checkedAt = now.toISOString()
+      const nextCheckAt = new Date(now.getTime() + 24 * 60 * 60 * 1_000).toISOString()
+      const { error } = await supabase.from("listing_analytics_source_divergences").update({
+        classification: state.classification,
+        health_flag: state.healthFlag ?? "RESOLVED",
+        status: state.status,
+        official_source: official.source,
+        official_metrics: api,
+        official_window_start: official.windowStart,
+        official_window_end: official.windowEnd,
+        official_last_updated_date: official.reportCoverage.lastUpdatedDay,
+        last_checked_at: checkedAt,
+        next_check_at: nextCheckAt,
+        resolved_at: state.status === "resolved" ? checkedAt : null,
+        resolution_code: state.status === "resolved" ? state.classification : null,
+        updated_at: checkedAt,
+      }).eq("id", divergence.id)
+      if (error) throw new Error("COMMERCIAL_ANALYTICS_DIVERGENCE_WRITE_FAILED")
+      if (state.status === "resolved") {
+        resolved += 1
+        openListingIds.delete(divergence.listing_id)
+      }
+    }
+    return { openListingIds, rechecked: dueRows.length, resolved, error: null as string | null }
+  } catch (error) {
+    return {
+      openListingIds,
+      rechecked: 0,
+      resolved: 0,
+      error: safeCode(error, "COMMERCIAL_ANALYTICS_DIVERGENCE_RECHECK_FAILED"),
+    }
+  }
+}
+
 async function loadSupplyRows(supabase: SupabaseClient, listings: ListingRow[]) {
   const productIds = [...new Set(listings
     .map((row) => row.market_radar_product_id)
@@ -363,12 +663,17 @@ async function latestOrderModifiedAt(supabase: SupabaseClient, accountKey: strin
   return new Date(Math.max(oldest, Number.isFinite(previous) ? previous : oldest)).toISOString()
 }
 
-function verifiedListingForLine(listings: ListingRow[], line: SafeMarketplaceOrderLine) {
+function verifiedListingForLine(
+  listings: ListingRow[],
+  line: SafeMarketplaceOrderLine,
+  verifiedIdentities: Set<string>,
+) {
   if (!line.sku) return null
   return listings.find((listing) =>
     listing.ebay_item_id === line.listingId &&
     listing.listing_status === "active" &&
-    (listing.ebay_sku === line.sku || listing.supplier_sku === line.sku)
+    listing.ebay_sku === line.sku &&
+    verifiedIdentities.has(`${line.listingId}:${line.sku}`)
   ) ?? null
 }
 
@@ -482,8 +787,12 @@ async function persistOrdersAndSales(input: {
   supplies: SupplyRow[]
   thresholds: CommercialThresholds
   observedAt: string
+  verifiedIdentities: Set<string>
 }) {
-  const { supabase, accountKey, orders, listings, supplies, thresholds, observedAt } = input
+  const {
+    supabase, accountKey, orders, listings, supplies, thresholds, observedAt,
+    verifiedIdentities,
+  } = input
   let newSales = 0
   let tasksCreated = 0
   let alertsGenerated = 0
@@ -532,7 +841,7 @@ async function persistOrdersAndSales(input: {
         }, { onConflict: "marketplace_account_key,marketplace,marketplace_order_id,marketplace_line_item_id" })
       if (lineError) throw new Error("COMMERCIAL_ORDER_LINE_WRITE_FAILED")
 
-      const listing = verifiedListingForLine(listings, line)
+      const listing = verifiedListingForLine(listings, line, verifiedIdentities)
       if (!listing) {
         errors.push({
           reader: "orders",
@@ -712,6 +1021,7 @@ async function persistSnapshotsAndRules(input: {
   analytics: Awaited<ReturnType<typeof getComparableEbayTrafficAnalytics>> | null
   watchers: Awaited<ReturnType<typeof getEbayListingWatchers>> | null
   units24h: Map<string, number>
+  analyticsRulesSuspendedListingIds: Set<string>
   observedAt: string
 }) {
   const analyticsByListing = new Map(input.analytics?.observations.map((row) => [row.listingId, row]) ?? [])
@@ -784,6 +1094,10 @@ async function persistSnapshotsAndRules(input: {
         window_end: snapshot.windowEnd,
         source: {
           analytics: input.analytics?.source ?? null,
+          analyticsHealthFlag: input.analyticsRulesSuspendedListingIds.has(snapshot.listingId)
+            ? ANALYTICS_SOURCE_DIVERGENCE
+            : null,
+          analyticsRulesSuspended: input.analyticsRulesSuspendedListingIds.has(snapshot.listingId),
           watchers: watcher?.source ?? null,
           stock: supply ? "LUNA_PORTEX_MARKET_RADAR_LATEST_VARIANT" : null,
           transactionsClassification: "ANALYTICS_NOT_CONFIRMED_ORDER",
@@ -799,6 +1113,7 @@ async function persistSnapshotsAndRules(input: {
       previous,
       unitsSold24h: input.units24h.get(listing.ebay_item_id) ?? 0,
       thresholds: input.thresholds,
+      analyticsRulesSuspended: input.analyticsRulesSuspendedListingIds.has(listing.ebay_item_id),
     })) {
       const eventResult = await insertEvent(input.supabase, input.accountKey, event)
       if (eventResult.created) eventsGenerated += 1
@@ -1132,6 +1447,125 @@ export async function runEbayCommercialMonitor(
       errors.push({ reader: "watchers", code, retryable: true })
     } else readers.watchers = { status: "skipped", source: "schedule", observedAt: null }
 
+    const expectedIdentityRows = new Map<string, { listingId: string; sku: string }>()
+    const pilotListing = listings.find((row) => row.ebay_item_id === PILOT_LISTING_ID)
+    if (pilotListing?.ebay_sku) {
+      expectedIdentityRows.set(`${PILOT_LISTING_ID}:${pilotListing.ebay_sku}`, {
+        listingId: PILOT_LISTING_ID,
+        sku: pilotListing.ebay_sku,
+      })
+    }
+    for (const order of orders) {
+      for (const line of order.lineItems) {
+        if (line.sku) expectedIdentityRows.set(`${line.listingId}:${line.sku}`, {
+          listingId: line.listingId,
+          sku: line.sku,
+        })
+      }
+    }
+    const verifiedIdentities = new Set<string>()
+    if (!pilotListing || pilotListing.ebay_sku !== PILOT_SKU) {
+      errors.push({
+        reader: "listing_identity",
+        code: "COMMERCIAL_LISTING_ITEM_ID_OR_CUSTOM_LABEL_MISMATCH",
+        retryable: false,
+      })
+    }
+    if (expectedIdentityRows.size) {
+      try {
+        const identityResult = await verifyEbayActiveListingIdentities({
+          listings: [...expectedIdentityRows.values()],
+        })
+        for (const identity of identityResult.observations) {
+          if (identity.activeListingConfirmed) {
+            verifiedIdentities.add(`${identity.listingId}:${identity.expectedSku}`)
+          } else {
+            errors.push({
+              reader: "listing_identity",
+              code: "COMMERCIAL_LISTING_ITEM_ID_OR_CUSTOM_LABEL_MISMATCH",
+              retryable: false,
+            })
+          }
+          if (input.triggerSource !== "dry_run") {
+            await persistListingIdentityVerification(supabase, accountKey, identity)
+          }
+        }
+        for (const identityError of identityResult.errors) {
+          errors.push({
+            reader: "listing_identity",
+            code: identityError.code,
+            retryable: true,
+          })
+          if (input.triggerSource !== "dry_run") {
+            await persistListingIdentityVerification(supabase, accountKey, {
+              listingId: identityError.listingId,
+              expectedSku: identityError.expectedSku,
+              errorCode: identityError.code,
+            })
+          }
+        }
+        readers.listing_identity = {
+          status: identityResult.status === "AVAILABLE"
+            ? identityResult.observations.every((row) => row.activeListingConfirmed)
+              ? "available"
+              : "unavailable"
+            : identityResult.status === "PARTIAL" ? "partial" : "unavailable",
+          source: identityResult.source,
+          observedAt,
+          metrics: {
+            checked: expectedIdentityRows.size,
+            verified: verifiedIdentities.size,
+            itemIdAndCustomLabelExact: verifiedIdentities.has(`${PILOT_LISTING_ID}:${PILOT_SKU}`),
+          },
+        }
+      } catch (error) {
+        const code = safeCode(error, "EBAY_LISTING_IDENTITY_READ_FAILED")
+        readers.listing_identity = {
+          status: "unavailable",
+          source: "EBAY_TRADING_GET_ITEM_READONLY",
+          observedAt,
+          error: code,
+        }
+        errors.push({ reader: "listing_identity", code, retryable: true })
+      }
+    } else readers.listing_identity = {
+      status: "unavailable",
+      source: "EBAY_TRADING_GET_ITEM_READONLY",
+      observedAt,
+      error: "COMMERCIAL_LISTING_IDENTITY_EXPECTATION_MISSING",
+    }
+
+    let divergence = {
+      openListingIds: new Set<string>(),
+      rechecked: 0,
+      resolved: 0,
+      error: null as string | null,
+    }
+    try {
+      divergence = input.triggerSource !== "dry_run" && lanes.includes("analytics")
+        ? await reconcileOpenAnalyticsDivergences(supabase, accountKey, now)
+        : {
+            openListingIds: new Set((await loadOpenAnalyticsDivergences(supabase, accountKey))
+              .map((row) => row.listing_id as string)),
+            rechecked: 0,
+            resolved: 0,
+            error: null,
+          }
+    } catch (error) {
+      divergence.error = safeCode(error, "COMMERCIAL_ANALYTICS_DIVERGENCE_READ_FAILED")
+    }
+    if (readers.analytics.metrics) {
+      readers.analytics.metrics.healthFlag = divergence.openListingIds.size
+        ? ANALYTICS_SOURCE_DIVERGENCE
+        : null
+      readers.analytics.metrics.analyticsRulesSuspendedListingIds = [
+        ...divergence.openListingIds,
+      ]
+      readers.analytics.metrics.divergenceRechecked = divergence.rechecked
+      readers.analytics.metrics.divergenceResolved = divergence.resolved
+      readers.analytics.metrics.divergenceRecheckError = divergence.error
+    }
+
     if (input.triggerSource === "dry_run") {
       readers.whatsapp = {
         status: "skipped",
@@ -1162,6 +1596,9 @@ export async function runEbayCommercialMonitor(
           : null,
         analyticsListingsRead: analytics ? analytics.observations.length : null,
         watcherListingsRead: watchers ? watchers.observations.length : null,
+        healthFlags: divergence.openListingIds.size ? [ANALYTICS_SOURCE_DIVERGENCE] : [],
+        analyticsRulesSuspendedListingIds: [...divergence.openListingIds],
+        listingIdentityVerified: verifiedIdentities.has(`${PILOT_LISTING_ID}:${PILOT_SKU}`),
         commercialDataPersistencePerformed: false,
         alertsEnqueued: 0,
         fulfillmentTasksCreated: 0,
@@ -1212,6 +1649,7 @@ export async function runEbayCommercialMonitor(
     const orderWork = lanes.includes("orders") && orders.length
       ? await persistOrdersAndSales({
           supabase, accountKey, orders, listings, supplies, thresholds, observedAt,
+          verifiedIdentities,
         })
       : { newSales: 0, tasksCreated: 0, alertsGenerated: 0, estimatedProfit: 0, errors: [] }
     errors.push(...orderWork.errors)
@@ -1233,6 +1671,7 @@ export async function runEbayCommercialMonitor(
           analytics,
           watchers,
           units24h: confirmedUnits24h,
+          analyticsRulesSuspendedListingIds: divergence.openListingIds,
           observedAt,
         })
       : { snapshots: [], eventsGenerated: 0, alertsGenerated: 0 }
@@ -1276,7 +1715,8 @@ export async function runEbayCommercialMonitor(
         sku: PILOT_SKU,
         activeListingVerified: listings.some((row) =>
           row.ebay_item_id === PILOT_LISTING_ID &&
-          (row.ebay_sku === PILOT_SKU || row.supplier_sku === PILOT_SKU)
+          row.ebay_sku === PILOT_SKU &&
+          verifiedIdentities.has(`${PILOT_LISTING_ID}:${PILOT_SKU}`)
         ),
       },
       officialOrdersRead: ordersResponseAvailable ? orders.length : null,
@@ -1291,6 +1731,8 @@ export async function runEbayCommercialMonitor(
         views: sumAvailableSnapshotMetric(snapshotWork.snapshots, "views"),
         transactions: sumAvailableSnapshotMetric(snapshotWork.snapshots, "transactions"),
         watchers: sumAvailableSnapshotMetric(snapshotWork.snapshots, "currentWatchers"),
+        healthFlag: divergence.openListingIds.size ? ANALYTICS_SOURCE_DIVERGENCE : null,
+        rulesSuspendedListingIds: [...divergence.openListingIds],
       },
       dailySummary: daily?.summary ?? null,
       whatsapp: delivery ? {
@@ -1428,7 +1870,10 @@ export async function getEbayCommercialMonitorDashboard(
     latestRun: null,
     health: null,
   }
-  const [latestRun, latestDryRun, latestPersistentRun, latestCompleted, taskRows, outboxRows] = await Promise.all([
+  const [
+    latestRun, latestDryRun, latestPersistentRun, latestCompleted, taskRows,
+    outboxRows, divergenceRows, manualEvidenceRows, identityRows,
+  ] = await Promise.all([
     supabase.from("commercial_monitor_runs").select("*")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
       .order("started_at", { ascending: false }).limit(1).maybeSingle(),
@@ -1449,9 +1894,23 @@ export async function getEbayCommercialMonitorDashboard(
     supabase.from("alert_delivery_outbox").select("id,status,severity,attempts,last_error_code,due_at,created_at")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
       .order("created_at", { ascending: false }).limit(100),
+    supabase.from("listing_analytics_source_divergences")
+      .select("id,listing_id,sku,manual_evidence_id,classification,health_flag,status,official_source,official_metrics,official_window_start,official_window_end,official_last_updated_date,opened_at,last_checked_at,next_check_at,resolved_at,resolution_code,updated_at")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .order("updated_at", { ascending: false }).limit(20),
+    supabase.from("listing_commercial_manual_evidence")
+      .select("id,listing_id,sku,source,impressions_metric,views_metric,transactions_metric,observed_on,impressions,views,transactions,ctr,created_at")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .order("observed_on", { ascending: false }).limit(20),
+    supabase.from("marketplace_listing_identity_verifications")
+      .select("listing_id,expected_sku,observed_listing_id,observed_sku,observed_listing_status,item_id_matches,sku_matches,active_listing_confirmed,source,error_code,observed_at")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .eq("listing_id", PILOT_LISTING_ID).eq("expected_sku", PILOT_SKU)
+      .limit(1).maybeSingle(),
   ])
   const firstError = latestRun.error ?? latestDryRun.error ?? latestPersistentRun.error ??
-    latestCompleted.error ?? taskRows.error ?? outboxRows.error
+    latestCompleted.error ?? taskRows.error ?? outboxRows.error ?? divergenceRows.error ??
+    manualEvidenceRows.error ?? identityRows.error
   if (firstError) throw new Error("COMMERCIAL_MONITOR_DASHBOARD_READ_FAILED")
   const readerLast = new Map<string, string>()
   for (const run of latestCompleted.data ?? []) {
@@ -1485,6 +1944,13 @@ export async function getEbayCommercialMonitorDashboard(
     authorizedPersistentRunId: dryRun.authorized_persistent_run_id ??
       (legacyConsumed ? persistentRun?.id : null),
   } : null
+  const openDivergences = (divergenceRows.data ?? []).filter((row) => row.status === "open")
+  const divergence = openDivergences[0] ?? divergenceRows.data?.[0] ?? null
+  const manualEvidence = divergence
+    ? (manualEvidenceRows.data ?? []).find((row) => row.id === divergence.manual_evidence_id) ?? null
+    : manualEvidenceRows.data?.[0] ?? null
+  const identity = identityRows.data ?? null
+  const divergenceOpen = openDivergences.length > 0
   return {
     status: latestRun.data?.status ?? "never_run",
     accountScope: { configured: true, accountAlias: accountScope.accountAlias },
@@ -1501,6 +1967,68 @@ export async function getEbayCommercialMonitorDashboard(
       alertsFailed: outbox.filter((row) => row.status === "failed").length,
       alertsDeadLetter: outbox.filter((row) => row.status === "dead_letter").length,
       retries: outbox.reduce((sum, row) => sum + Number(row.attempts ?? 0), 0),
+      flags: divergenceOpen ? [ANALYTICS_SOURCE_DIVERGENCE] : [],
+      analyticsRulesSuspended: divergenceOpen,
+      analyticsRulesSuspendedListingIds: openDivergences.map((row) => row.listing_id),
+      continuingLanes: ["orders", "watchers", "stock", "fulfillment", "whatsapp"],
+    },
+    analyticsSourceDivergence: divergence ? {
+      classification: divergence.classification,
+      healthFlag: divergenceOpen ? ANALYTICS_SOURCE_DIVERGENCE : null,
+      status: divergence.status,
+      listingId: divergence.listing_id,
+      sku: divergence.sku,
+      manualSource: manualEvidence ? {
+        source: manualEvidence.source,
+        impressionsMetric: manualEvidence.impressions_metric,
+        viewsMetric: manualEvidence.views_metric,
+        transactionsMetric: manualEvidence.transactions_metric,
+        observedOn: manualEvidence.observed_on,
+        metrics: {
+          impressions: numeric(manualEvidence.impressions),
+          views: numeric(manualEvidence.views),
+          transactions: numeric(manualEvidence.transactions),
+          ctr: numeric(manualEvidence.ctr),
+        },
+      } : null,
+      officialSource: {
+        source: divergence.official_source,
+        impressionsMetric: "TOTAL_IMPRESSION_TOTAL",
+        viewsMetric: "LISTING_VIEWS_TOTAL",
+        transactionsMetric: "TRANSACTION",
+        ctrMetric: "CLICK_THROUGH_RATE",
+        observedAt: divergence.last_checked_at,
+        windowStart: divergence.official_window_start,
+        windowEnd: divergence.official_window_end,
+        lastUpdatedDate: divergence.official_last_updated_date,
+        metrics: divergence.official_metrics,
+      },
+      openedAt: divergence.opened_at,
+      lastCheckedAt: divergence.last_checked_at,
+      nextCheckAt: divergence.next_check_at,
+      resolvedAt: divergence.resolved_at,
+      resolutionCode: divergence.resolution_code,
+      manualEvidenceUsedAsApiMetric: false,
+    } : null,
+    listingIdentity: identity ? {
+      listingId: identity.listing_id,
+      expectedSku: identity.expected_sku,
+      observedListingId: identity.observed_listing_id,
+      observedSku: identity.observed_sku,
+      observedListingStatus: identity.observed_listing_status,
+      itemIdMatches: identity.item_id_matches,
+      skuMatches: identity.sku_matches,
+      activeListingConfirmed: identity.active_listing_confirmed,
+      source: identity.source,
+      error: identity.error_code,
+      observedAt: identity.observed_at,
+      salesProcessingBlocked: identity.active_listing_confirmed !== true,
+    } : {
+      listingId: PILOT_LISTING_ID,
+      expectedSku: PILOT_SKU,
+      activeListingConfirmed: false,
+      salesProcessingBlocked: true,
+      error: "COMMERCIAL_LISTING_IDENTITY_NOT_VERIFIED",
     },
     fulfillmentTasks: tasks,
     nextAutomaticRunAt: [

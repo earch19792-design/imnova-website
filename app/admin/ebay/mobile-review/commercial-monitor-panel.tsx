@@ -66,7 +66,55 @@ type Dashboard = {
     alertsFailed?: number
     alertsDeadLetter?: number
     retries?: number
+    flags?: string[]
+    analyticsRulesSuspended?: boolean
+    analyticsRulesSuspendedListingIds?: string[]
+    continuingLanes?: string[]
   } | null
+  analyticsSourceDivergence?: {
+    classification?: string
+    healthFlag?: string | null
+    status?: string
+    listingId?: string
+    sku?: string
+    manualSource?: {
+      source?: string
+      impressionsMetric?: string
+      viewsMetric?: string
+      transactionsMetric?: string
+      observedOn?: string
+      metrics?: { impressions?: number | null; views?: number | null; transactions?: number | null; ctr?: number | null }
+    } | null
+    officialSource?: {
+      source?: string | null
+      impressionsMetric?: string
+      viewsMetric?: string
+      transactionsMetric?: string
+      ctrMetric?: string
+      observedAt?: string | null
+      windowStart?: string | null
+      windowEnd?: string | null
+      lastUpdatedDate?: string | null
+      metrics?: { impressions?: number | null; views?: number | null; transactions?: number | null; ctr?: number | null } | null
+    }
+    lastCheckedAt?: string | null
+    nextCheckAt?: string | null
+    manualEvidenceUsedAsApiMetric?: boolean
+  } | null
+  listingIdentity?: {
+    listingId?: string
+    expectedSku?: string
+    observedListingId?: string | null
+    observedSku?: string | null
+    observedListingStatus?: string | null
+    itemIdMatches?: boolean
+    skuMatches?: boolean
+    activeListingConfirmed?: boolean
+    source?: string
+    error?: string | null
+    observedAt?: string | null
+    salesProcessingBlocked?: boolean
+  }
   nextAutomaticRunAt?: string | null
   schedule?: {
     enabled?: boolean
@@ -349,6 +397,8 @@ export function CommercialMonitorPanel() {
   const metrics = run?.metrics
   const analytics = metrics?.analytics
   const health = dashboard?.health
+  const divergence = dashboard?.analyticsSourceDivergence
+  const listingIdentity = dashboard?.listingIdentity
   const readers: Record<string, CommercialMonitorReaderView> = run?.readers ?? {}
   const displayedDryRun = dryRunResult ?? dashboard?.lastDryRun ??
     (dashboard?.latestRun?.metrics?.dryRun === true ? dashboard.latestRun : null)
@@ -535,6 +585,61 @@ export function CommercialMonitorPanel() {
             Persistencia: {comparison.safety?.persistencePerformed === false ? "NO" : "—"} · Alertas: {value(comparison.safety?.alertsGenerated)} · Fulfillment: {value(comparison.safety?.fulfillmentTasksCreated)} · WhatsApp: {value(comparison.safety?.whatsappDelivered)} · Escrituras eBay: {value(comparison.safety?.ebayWrites)}
           </p>
         </>}
+      </section>
+
+      <section aria-labelledby="analytics-source-health-heading" className="mt-4 rounded-2xl border border-amber-200/30 bg-amber-200/[0.06] p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-amber-100/60">Salud de fuentes Analytics</p>
+            <h3 id="analytics-source-health-heading" className="text-lg font-black">
+              {divergence?.healthFlag ?? "SIN DIVERGENCIA ABIERTA"}
+            </h3>
+            <p className="mt-1 text-xs text-white/60">
+              {divergence?.classification ?? "Las fuentes no tienen una discrepancia registrada."}
+            </p>
+          </div>
+          <span className="rounded-full border border-amber-100/25 px-3 py-1 text-xs font-black uppercase">
+            {divergence?.status ?? "clear"}
+          </span>
+        </div>
+        {divergence && <>
+          <p className="mt-2 text-[11px] font-black uppercase text-amber-100">Health flag: ANALYTICS_SOURCE_DIVERGENCE</p>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <article className="rounded-xl bg-black/25 p-3">
+              <h4 className="font-black text-amber-50">Seller Hub · evidencia manual separada</h4>
+              <p className="mt-1 text-xs text-white/50">Fuente: {divergence.manualSource?.source ?? "—"} · Observada: {divergence.manualSource?.observedOn ?? "—"}</p>
+              <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
+                <div><span className="text-white/45">Organic impressions</span><strong className="block">{value(divergence.manualSource?.metrics?.impressions)}</strong></div>
+                <div><span className="text-white/45">Organic listing views</span><strong className="block">{value(divergence.manualSource?.metrics?.views)}</strong></div>
+                <div><span className="text-white/45">Quantity sold</span><strong className="block">{value(divergence.manualSource?.metrics?.transactions)}</strong></div>
+                <div><span className="text-white/45">CTR</span><strong className="block">{typeof divergence.manualSource?.metrics?.ctr === "number" ? `${divergence.manualSource.metrics.ctr}%` : "—"}</strong></div>
+              </div>
+            </article>
+            <article className="rounded-xl bg-black/25 p-3">
+              <h4 className="font-black text-cyan-50">Traffic API · fuente oficial</h4>
+              <p className="mt-1 text-xs text-white/50">Fuente: {divergence.officialSource?.source ?? "—"} · Consultada: {formatDate(divergence.officialSource?.observedAt)}</p>
+              <p className="mt-1 text-[11px] text-white/45">Ventana: {divergence.officialSource?.windowStart ?? "—"} → {divergence.officialSource?.windowEnd ?? "—"} · lastUpdated: {divergence.officialSource?.lastUpdatedDate ?? "—"}</p>
+              <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
+                <div><span className="text-white/45">Total impressions</span><strong className="block">{value(divergence.officialSource?.metrics?.impressions)}</strong></div>
+                <div><span className="text-white/45">Listing views total</span><strong className="block">{value(divergence.officialSource?.metrics?.views)}</strong></div>
+                <div><span className="text-white/45">Transaction</span><strong className="block">{value(divergence.officialSource?.metrics?.transactions)}</strong></div>
+                <div><span className="text-white/45">CTR</span><strong className="block">{typeof divergence.officialSource?.metrics?.ctr === "number" ? `${divergence.officialSource.metrics.ctr}%` : "—"}</strong></div>
+              </div>
+            </article>
+          </div>
+          <p className="mt-3 text-xs font-bold text-amber-50">
+            Reglas de impresiones, CTR y conversión: SUSPENDIDAS · Próxima reconciliación: {formatDate(divergence.nextCheckAt)}
+          </p>
+          <p className="mt-1 text-xs text-emerald-100">Orders, Watchers, stock, fulfillment y WhatsApp continúan independientes.</p>
+          <p className="mt-1 text-[11px] text-white/45">Evidencia manual usada como métrica API: {divergence.manualEvidenceUsedAsApiMetric === false ? "NO" : "—"}</p>
+        </>}
+        <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-xs">
+          <h4 className="font-black text-white">Vínculo oficial antes del scheduler</h4>
+          <p className="mt-1">Item ID esperado/observado: {listingIdentity?.listingId ?? "366543596425"} / {listingIdentity?.observedListingId ?? "—"}</p>
+          <p>Custom label esperado/observado: {listingIdentity?.expectedSku ?? "ITEM3995"} / {listingIdentity?.observedSku ?? "—"}</p>
+          <p>Estado oficial: {listingIdentity?.observedListingStatus ?? "—"} · Match exacto: {listingIdentity?.activeListingConfirmed ? "SÍ" : "NO"}</p>
+          <p className="mt-1 font-black">Procesamiento de ventas: {listingIdentity?.salesProcessingBlocked ? "BLOQUEADO" : "HABILITADO"}</p>
+        </div>
       </section>
 
       <div className="mt-4 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
