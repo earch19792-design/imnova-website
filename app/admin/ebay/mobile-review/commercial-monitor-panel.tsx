@@ -10,6 +10,7 @@ import {
 } from "@/lib/ebay/ebay-mobile-review-http"
 import {
   buildCommercialMonitorRunRequest,
+  formatCommercialMetricValue,
   isSatisfactoryCommercialDryRun,
   type CommercialMonitorReaderView,
   type CommercialMonitorRunView,
@@ -25,6 +26,7 @@ type MonitorMetrics = Record<string, unknown> & {
   newSales?: number
   fulfillmentTasksCreated?: number
   snapshotsCreated?: number
+  eventsCreated?: number
   alertsGenerated?: number
   alertsEnqueued?: number
   whatsappDelivered?: number
@@ -40,10 +42,10 @@ type MonitorMetrics = Record<string, unknown> & {
     actionRequired?: string
   }
   analytics?: {
-    impressions?: number
-    views?: number
-    transactions?: number
-    watchers?: number
+    impressions?: number | null
+    views?: number | null
+    transactions?: number | null
+    watchers?: number | null
   }
 }
 
@@ -54,6 +56,8 @@ type MonitorRun = Omit<CommercialMonitorRunView, "metrics"> & {
 type Dashboard = {
   status?: string
   latestRun?: MonitorRun | null
+  lastDryRun?: MonitorRun | null
+  lastPersistentRun?: MonitorRun | null
   health?: {
     fulfillmentTasks?: number
     pendingManualPurchase?: number
@@ -75,6 +79,54 @@ type Payload = {
   error?: string
   dashboard?: Dashboard
   run?: MonitorRun
+  comparison?: SellerHubComparison
+}
+
+type AnalyticsAudit = {
+  requestedListingIds?: string[]
+  returnedListingDimensions?: string[]
+  matchedListingIds?: string[]
+  unmatchedRequestedListingIds?: string[]
+  unexpectedDimensions?: string[]
+  queryDimension?: string
+  queryTimeZone?: string
+  windowStart?: string
+  windowEnd?: string
+  reportStartDate?: string | null
+  reportEndDate?: string | null
+  lastUpdatedDate?: string | null
+  completenessStatus?: string
+  dataFreshnessStatus?: string
+  warnings?: string[]
+  metrics?: Array<{
+    listingId?: string
+    impressions?: number | null
+    views?: number | null
+    transactions?: number | null
+    ctr?: number | null
+  }>
+}
+
+type SellerHubComparison = {
+  classification?: string
+  explanation?: string
+  sellerHubEvidence?: {
+    impressions?: number
+    views?: number
+    transactions?: number
+    ctr?: number
+    calculatedCtr?: number | null
+  }
+  operational?: AnalyticsAudit
+  comparison?: AnalyticsAudit
+  safety?: {
+    persistencePerformed?: boolean
+    alertsGenerated?: number
+    fulfillmentTasksCreated?: number
+    whatsappDelivered?: number
+    ebayWrites?: number
+    buyerPiiReturned?: boolean
+  }
 }
 
 function formatDate(value: string | null | undefined) {
@@ -93,7 +145,11 @@ function statusTone(status: string | undefined) {
 }
 
 function value(input: unknown) {
-  return typeof input === "number" ? new Intl.NumberFormat("es-US").format(input) : "0"
+  return formatCommercialMetricValue(input)
+}
+
+function list(value: string[] | undefined) {
+  return value?.length ? value.join(", ") : "—"
 }
 
 function authLabel(status: string | undefined) {
@@ -101,16 +157,54 @@ function authLabel(status: string | undefined) {
   return status ?? "PENDIENTE"
 }
 
+function AnalyticsWindowAudit({ label, audit }: { label: string; audit?: AnalyticsAudit }) {
+  const row = audit?.metrics?.[0]
+  const metric = (input: number | null | undefined, suffix = "") =>
+    typeof input === "number" && Number.isFinite(input)
+      ? `${new Intl.NumberFormat("es-US", { maximumFractionDigits: 2 }).format(input)}${suffix}`
+      : audit?.dataFreshnessStatus === "REPORT_NOT_UPDATED_YET"
+        ? "Pendiente de actualización eBay"
+        : "—"
+  return <article className="rounded-2xl border border-white/10 bg-black/20 p-3">
+    <h4 className="font-black text-cyan-50">{label}</h4>
+    <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+      <div><span className="text-white/45">Impresiones</span><strong className="mt-1 block">{metric(row?.impressions)}</strong></div>
+      <div><span className="text-white/45">Vistas</span><strong className="mt-1 block">{metric(row?.views)}</strong></div>
+      <div><span className="text-white/45">Transacciones</span><strong className="mt-1 block">{metric(row?.transactions)}</strong></div>
+      <div><span className="text-white/45">CTR</span><strong className="mt-1 block">{metric(row?.ctr, "%")}</strong></div>
+    </div>
+    <dl className="mt-3 grid gap-2 text-[11px] sm:grid-cols-2">
+      <div><dt className="text-white/45">requestedListingIds</dt><dd className="break-all font-mono">{list(audit?.requestedListingIds)}</dd></div>
+      <div><dt className="text-white/45">returnedListingDimensions</dt><dd className="break-all font-mono">{list(audit?.returnedListingDimensions)}</dd></div>
+      <div><dt className="text-white/45">matchedListingIds</dt><dd className="break-all font-mono">{list(audit?.matchedListingIds)}</dd></div>
+      <div><dt className="text-white/45">unmatchedRequestedListingIds</dt><dd className="break-all font-mono">{list(audit?.unmatchedRequestedListingIds)}</dd></div>
+      <div><dt className="text-white/45">unexpectedDimensions</dt><dd className="break-all font-mono">{list(audit?.unexpectedDimensions)}</dd></div>
+      <div><dt className="text-white/45">queryDimension</dt><dd className="font-black">{audit?.queryDimension ?? "—"}</dd></div>
+      <div><dt className="text-white/45">queryTimeZone</dt><dd className="font-black">{audit?.queryTimeZone ?? "—"}</dd></div>
+      <div><dt className="text-white/45">windowStart / windowEnd</dt><dd>{audit?.windowStart ?? "—"} / {audit?.windowEnd ?? "—"}</dd></div>
+      <div><dt className="text-white/45">reportStartDate / reportEndDate</dt><dd>{audit?.reportStartDate ?? "—"} / {audit?.reportEndDate ?? "—"}</dd></div>
+      <div><dt className="text-white/45">lastUpdatedDate</dt><dd>{audit?.lastUpdatedDate ?? "—"}</dd></div>
+      <div><dt className="text-white/45">completenessStatus</dt><dd className="font-black uppercase">{audit?.completenessStatus ?? "—"}</dd></div>
+      <div><dt className="text-white/45">dataFreshnessStatus</dt><dd className="font-black uppercase">{audit?.dataFreshnessStatus ?? "—"}</dd></div>
+      <div><dt className="text-white/45">warnings</dt><dd>{list(audit?.warnings)}</dd></div>
+    </dl>
+  </article>
+}
+
 export function CommercialMonitorPanel() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
-  const [busyMode, setBusyMode] = useState<"dry_run" | "persistent" | null>(null)
+  const [busyMode, setBusyMode] = useState<"dry_run" | "persistent" | "comparison" | null>(null)
   const [dryRunResult, setDryRunResult] = useState<MonitorRun | null>(null)
+  const [comparison, setComparison] = useState<SellerHubComparison | null>(null)
   const [gateNow, setGateNow] = useState(0)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
 
-  const request = useCallback(async (mode?: "dry_run" | "persistent") => {
+  const request = useCallback(async (
+    mode?: "dry_run" | "persistent",
+    authorizedDryRunId?: string,
+  ) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
     if (sessionError || !data.session) throw new Error("AUTH_REQUIRED")
     const response = await fetch("/api/admin/ebay/commercial-monitor", {
@@ -121,7 +215,10 @@ export function CommercialMonitorPanel() {
         ...(mode ? { "Content-Type": "application/json" } : {}),
       },
       body: mode
-        ? JSON.stringify(buildCommercialMonitorRunRequest(mode === "dry_run"))
+        ? JSON.stringify(buildCommercialMonitorRunRequest(
+            mode === "dry_run",
+            authorizedDryRunId,
+          ))
         : undefined,
     })
     const payload = await readMobileReviewJson<Payload>(
@@ -133,6 +230,42 @@ export function CommercialMonitorPanel() {
     }
     return payload
   }, [])
+
+  const compareWithSellerHub = useCallback(async () => {
+    if (busyMode) return
+    setBusyMode("comparison")
+    setError("")
+    setMessage("Comparando dos ventanas oficiales sin persistencia comercial…")
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError || !data.session) throw new Error("AUTH_REQUIRED")
+      const response = await fetch("/api/admin/ebay/commercial-monitor", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "compare_seller_hub" }),
+      })
+      const payload = await readMobileReviewJson<Payload>(
+        response,
+        "No se pudo comparar Analytics con Seller Hub",
+      )
+      if (!payload.success || !payload.comparison) {
+        throw new Error(getMobileReviewPayloadError(payload, "EBAY_ANALYTICS_COMPARISON_FAILED"))
+      }
+      setComparison(payload.comparison)
+      setMessage(payload.comparison.explanation ?? "Comparación read-only completada.")
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(
+        requestError,
+        "No se pudo completar la comparación oficial.",
+      ))
+    } finally {
+      setBusyMode(null)
+    }
+  }, [busyMode])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -191,7 +324,9 @@ export function CommercialMonitorPanel() {
     setError("")
     setMessage("Guardando la actualización comercial confirmada…")
     try {
-      const payload = await request("persistent")
+      const dryRunId = displayedDryRun?.runId ?? displayedDryRun?.id
+      if (!dryRunId) throw new Error("COMMERCIAL_DRY_RUN_GATE_REQUIRED")
+      const payload = await request("persistent", dryRunId)
       setDashboard(payload.dashboard ?? null)
       setDryRunResult(null)
       setMessage(payload.run?.status === "already_running"
@@ -208,17 +343,22 @@ export function CommercialMonitorPanel() {
     }
   }
 
-  const run = dashboard?.latestRun
+  const run = dashboard?.lastPersistentRun ??
+    (dashboard?.latestRun?.metrics?.dryRun === true ? null : dashboard?.latestRun)
   const metrics = run?.metrics
   const analytics = metrics?.analytics
   const health = dashboard?.health
   const readers: Record<string, CommercialMonitorReaderView> = run?.readers ?? {}
-  const displayedDryRun = dryRunResult ?? (run?.metrics?.dryRun === true ? run : null)
+  const displayedDryRun = dryRunResult ?? dashboard?.lastDryRun ??
+    (dashboard?.latestRun?.metrics?.dryRun === true ? dashboard.latestRun : null)
   const dryRunMetrics = displayedDryRun?.metrics
   const dryRunReaders: Record<string, CommercialMonitorReaderView> = displayedDryRun?.readers ?? {}
   const dryRunAuthentication = dryRunMetrics?.authentication
   const dryRunSatisfactory = gateNow > 0
     && isSatisfactoryCommercialDryRun(displayedDryRun, gateNow)
+  const dryRunConsumedAt = displayedDryRun?.consumedAt ?? displayedDryRun?.dry_run_consumed_at
+  const dryRunWasSatisfactory = displayedDryRun?.satisfactory === true ||
+    displayedDryRun?.dry_run_satisfactory === true || dryRunSatisfactory || Boolean(dryRunConsumedAt)
   const dryRunValue = (input: unknown) => displayedDryRun ? value(input) : "—"
 
   return (
@@ -256,7 +396,9 @@ export function CommercialMonitorPanel() {
       <p id="persistent-update-gate" className="mt-2 text-xs leading-5 text-white/55">
         {dryRunSatisfactory
           ? "Dry run reciente y satisfactorio. La actualización persistente requiere confirmación adicional."
-          : "Actualizar rendimiento permanece bloqueado hasta completar un dry run satisfactorio en los últimos 30 minutos."}
+          : dryRunConsumedAt
+            ? "Dry run anterior consumido. Ejecuta un dry run nuevo antes de otra actualización."
+            : "Actualizar rendimiento permanece bloqueado hasta completar un dry run satisfactorio en los últimos 30 minutos."}
       </p>
 
       <section aria-labelledby="dry-run-results-heading" className="mt-4 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
@@ -266,9 +408,23 @@ export function CommercialMonitorPanel() {
             <h3 id="dry-run-results-heading" className="text-lg font-black text-cyan-50">DRY RUN</h3>
           </div>
           <span className={`rounded-full border border-white/15 px-3 py-1 text-[10px] font-black uppercase ${dryRunSatisfactory ? "text-emerald-100" : "text-white/55"}`}>
-            {displayedDryRun ? (dryRunSatisfactory ? "satisfactorio" : displayedDryRun.status ?? "requiere revisión") : "sin ejecutar"}
+            {displayedDryRun
+              ? dryRunConsumedAt
+                ? "consumido"
+                : dryRunSatisfactory
+                  ? "satisfactorio"
+                  : displayedDryRun.status ?? "requiere revisión"
+              : "sin ejecutar"}
           </span>
         </div>
+
+        <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-4">
+          <div className="rounded-xl border border-white/10 p-2"><dt className="text-white/45">Status</dt><dd className="mt-1 font-black uppercase">{displayedDryRun?.status ?? "sin ejecutar"}</dd></div>
+          <div className="rounded-xl border border-white/10 p-2"><dt className="text-white/45">Completed at</dt><dd className="mt-1 font-black">{formatDate(displayedDryRun?.completedAt ?? displayedDryRun?.completed_at)}</dd></div>
+          <div className="rounded-xl border border-white/10 p-2"><dt className="text-white/45">Satisfactory</dt><dd className="mt-1 font-black">{displayedDryRun ? (dryRunWasSatisfactory ? "SÍ" : "NO") : "—"}</dd></div>
+          <div className="rounded-xl border border-white/10 p-2"><dt className="text-white/45">Consumed at</dt><dd className="mt-1 font-black">{dryRunConsumedAt ? formatDate(dryRunConsumedAt) : "—"}</dd></div>
+          <div className="rounded-xl border border-white/10 p-2 sm:col-span-4"><dt className="text-white/45">Authorized persistent run ID</dt><dd className="mt-1 break-all font-mono text-[11px]">{displayedDryRun?.authorizedPersistentRunId ?? displayedDryRun?.authorized_persistent_run_id ?? "—"}</dd></div>
+        </dl>
 
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Órdenes leídas</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.officialOrdersRead)}</strong></div>
@@ -323,6 +479,60 @@ export function CommercialMonitorPanel() {
           <span className="text-white/45">Próxima acción</span>
           <p className="mt-1 font-bold text-cyan-50">{dryRunAuthentication?.actionRequired ?? displayedDryRun?.nextAction ?? displayedDryRun?.next_action ?? "Ejecutar el dry run seguro."}</p>
         </div>
+      </section>
+
+      <section aria-labelledby="persistent-run-heading" className="mt-4 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100/60">Última actualización persistente</p>
+            <h3 id="persistent-run-heading" className="text-lg font-black text-emerald-50">
+              Última actualización: {run ? (run.status === "completed" ? "COMPLETADA" : run.status?.toUpperCase()) : "PENDIENTE"}
+            </h3>
+          </div>
+          {dryRunConsumedAt && <span className="rounded-full border border-white/15 px-3 py-1 text-[10px] font-black uppercase text-cyan-100">Dry run anterior: CONSUMIDO</span>}
+        </div>
+        <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-4">
+          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Completed at</dt><dd className="mt-1 font-black">{formatDate(run?.completedAt ?? run?.completed_at)}</dd></div>
+          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Snapshots creados</dt><dd className="mt-1 text-lg font-black">{value(metrics?.snapshotsCreated)}</dd></div>
+          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Eventos creados</dt><dd className="mt-1 text-lg font-black">{value(metrics?.eventsCreated)}</dd></div>
+          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Alertas generadas</dt><dd className="mt-1 text-lg font-black">{value(metrics?.alertsGenerated)}</dd></div>
+          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">WhatsApp delivered</dt><dd className="mt-1 text-lg font-black">{value(metrics?.whatsappDelivered)}</dd></div>
+          <div className="rounded-xl bg-black/25 p-2 sm:col-span-3"><dt className="text-white/45">Próxima acción</dt><dd className="mt-1 font-black text-emerald-50">{run?.nextAction ?? run?.next_action ?? "Ejecuta un dry run nuevo antes de otra actualización."}</dd></div>
+        </dl>
+        {run && dryRunConsumedAt && <p className="mt-3 text-xs font-bold text-cyan-50">Ejecuta un dry run nuevo antes de otra actualización.</p>}
+      </section>
+
+      <section aria-labelledby="seller-hub-comparison-heading" className="mt-4 rounded-2xl border border-violet-200/25 bg-violet-200/[0.05] p-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/60">Diagnóstico oficial · listing 366543596425</p>
+            <h3 id="seller-hub-comparison-heading" className="text-lg font-black">Comparar con Seller Hub</h3>
+            <p className="mt-1 text-xs text-white/55">Compara 7 días cerrados contra hasta 90 días. No persiste snapshots, reglas, alertas ni WhatsApp.</p>
+          </div>
+          <button
+            type="button"
+            disabled={Boolean(busyMode) || loading}
+            onClick={() => void compareWithSellerHub()}
+            className="min-h-12 rounded-2xl border border-violet-100/30 bg-violet-100 px-4 font-black text-black disabled:opacity-50"
+          >
+            {busyMode === "comparison" ? "Comparando…" : "Comparar con Seller Hub"}
+          </button>
+        </div>
+        {comparison && <>
+          <div className="mt-3 rounded-xl bg-black/25 p-3">
+            <span className="text-[10px] font-black uppercase text-white/45">Clasificación</span>
+            <p className="mt-1 text-lg font-black text-violet-50">{comparison.classification ?? "INSUFFICIENT_EVIDENCE"}</p>
+            <p className="mt-1 text-xs leading-5 text-white/65">{comparison.explanation}</p>
+            <p className="mt-2 text-xs text-white/50">CTR Seller Hub validado: {comparison.sellerHubEvidence?.calculatedCtr === 5.56 ? "1 / 18 × 100 = 5.56% (5.6% UI)" : "—"}</p>
+          </div>
+          <div className="mt-3 grid gap-3 xl:grid-cols-2">
+            <AnalyticsWindowAudit label="A · Ventana operativa · 7 días cerrados" audit={comparison.operational} />
+            <AnalyticsWindowAudit label="B · Ventana diagnóstica · hasta 90 días" audit={comparison.comparison} />
+          </div>
+          <p className="mt-3 text-xs font-bold text-emerald-100">
+            Persistencia: {comparison.safety?.persistencePerformed === false ? "NO" : "—"} · Alertas: {value(comparison.safety?.alertsGenerated)} · Fulfillment: {value(comparison.safety?.fulfillmentTasksCreated)} · WhatsApp: {value(comparison.safety?.whatsappDelivered)} · Escrituras eBay: {value(comparison.safety?.ebayWrites)}
+          </p>
+        </>}
       </section>
 
       <div className="mt-4 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">

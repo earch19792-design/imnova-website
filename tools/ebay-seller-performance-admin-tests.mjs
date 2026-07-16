@@ -87,6 +87,20 @@ test("builds an official read-only URL with compact dates and listing filters", 
   assert.deepEqual(listingIds, ["123456789012", "987654321098"])
 })
 
+test("builds closed UTC windows with an explicit ISO 8601 offset", () => {
+  const { url, timeZone } = buildEbaySellerTrafficReportUrl({
+    dateFrom: "2026-07-08",
+    dateTo: "2026-07-14",
+    listingIds: ["366543596425"],
+    timeZone: "UTC",
+  })
+  assert.equal(timeZone, "UTC")
+  assert.equal(
+    url.searchParams.get("filter"),
+    "marketplace_ids:{EBAY_US},date_range:[2026-07-08T00:00:00.000Z..2026-07-14T23:59:59.999Z],listing_ids:{366543596425}",
+  )
+})
+
 test("rejects impossible dates and ranges over 90 days", () => {
   assert.throws(
     () => buildEbaySellerTrafficReportUrl({ dateFrom: "2026-02-30", dateTo: "2026-03-01" }),

@@ -15,6 +15,7 @@ export type EbaySellerTrafficPerformanceInput = {
   dateFrom: string
   dateTo: string
   listingIds?: string[]
+  timeZone?: "UTC" | "AMERICA_LOS_ANGELES"
 }
 
 const TRAFFIC_REPORT_ENDPOINT =
@@ -85,12 +86,18 @@ export function buildEbaySellerTrafficReportUrl(
   url.searchParams.set("dimension", listingIds.length ? "LISTING" : "DAY")
   const filters = [
     "marketplace_ids:{EBAY_US}",
-    `date_range:[${input.dateFrom.replaceAll("-", "")}..${input.dateTo.replaceAll("-", "")}]`,
+    input.timeZone === "UTC"
+      ? `date_range:[${input.dateFrom}T00:00:00.000Z..${input.dateTo}T23:59:59.999Z]`
+      : `date_range:[${input.dateFrom.replaceAll("-", "")}..${input.dateTo.replaceAll("-", "")}]`,
     listingIds.length ? `listing_ids:{${listingIds.join("|")}}` : "",
   ].filter(Boolean).join(",")
   url.searchParams.set("filter", filters)
   url.searchParams.set("metric", EBAY_SELLER_TRAFFIC_METRICS.join(","))
-  return { url, listingIds }
+  return {
+    url,
+    listingIds,
+    timeZone: input.timeZone === "UTC" ? "UTC" as const : "AMERICA_LOS_ANGELES" as const,
+  }
 }
 
 function reportValue(value: unknown): unknown {
@@ -138,7 +145,11 @@ export function normalizeEbaySellerTrafficReport(
   const dimensionDefinitions = array(header.dimensionKeys).map(record)
   const metricDefinitions = array(header.metrics).map(record)
   const dimensionKey = text(dimensionDefinitions[0]?.key).toUpperCase()
-  const dimension = dimensionKey === "LISTING" ? "LISTING" : "DAY"
+  // eBay documents LISTING for the request dimension, while some report
+  // payloads describe the returned key as LISTING_ID. Both are listing scoped.
+  const dimension = ["LISTING", "LISTING_ID"].includes(dimensionKey)
+    ? "LISTING"
+    : "DAY"
   const dimensionLabel = text(dimensionDefinitions[0]?.localizedName) ||
     (dimension === "LISTING" ? "Listing" : "Día")
 

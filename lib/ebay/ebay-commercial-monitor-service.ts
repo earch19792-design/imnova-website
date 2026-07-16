@@ -32,6 +32,7 @@ import {
   settleEbayCommercialReaderPromises,
 } from "./ebay-commercial-oauth-domain"
 import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
+import { isSatisfactoryCommercialDryRun } from "./commercial-monitor-ui"
 
 const MARKETPLACE = "EBAY_US"
 const MONITOR_LEASE_SECONDS = 300
@@ -90,6 +91,14 @@ function numeric(value: unknown) {
   if (value === null || value === undefined || value === "") return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function sumAvailableSnapshotMetric(
+  snapshots: CommercialSnapshot[],
+  key: "impressions" | "views" | "transactions" | "currentWatchers",
+) {
+  if (!snapshots.length || snapshots.some((snapshot) => snapshot[key] === null)) return null
+  return snapshots.reduce((sum, snapshot) => sum + (snapshot[key] ?? 0), 0)
 }
 
 function integer(value: unknown, fallback: number, minimum: number, maximum: number) {
@@ -723,6 +732,10 @@ async function persistSnapshotsAndRules(input: {
     })
     const previous = input.previous.get(`${listing.ebay_item_id}:${listing.ebay_sku ?? listing.supplier_sku ?? ""}`)
     const currentWatchers = watcher?.currentWatchers ?? null
+    const analyticsMatched = Boolean(
+      analytics && input.analytics?.completenessStatus === "complete" &&
+      input.analytics.matchedListingIds.includes(listing.ebay_item_id)
+    )
     const snapshot: CommercialSnapshot = {
       marketplaceAccountKey: input.accountKey,
       listingId: listing.ebay_item_id,
@@ -741,7 +754,7 @@ async function persistSnapshotsAndRules(input: {
       observedAt: input.observedAt,
       windowStart: input.analytics?.windowStart ?? null,
       windowEnd: input.analytics?.windowEnd ?? null,
-      completenessStatus: input.analytics?.completenessStatus ?? "unavailable",
+      completenessStatus: analyticsMatched ? "complete" : analytics ? "incomplete" : "unavailable",
     }
     const { error } = await input.supabase
       .from("listing_commercial_snapshots")
@@ -948,6 +961,7 @@ export async function runEbayCommercialMonitor(
     workerId?: string
     dispatchWhatsApp?: boolean
     dryRunWhatsApp?: boolean
+    authorizedDryRunId?: string
     now?: Date
   },
 ) {
@@ -956,14 +970,25 @@ export async function runEbayCommercialMonitor(
   const accountKey = accountScope.accountKey
   const lanes = normalizedLanes(input.lanes)
   const workerId = input.workerId ?? `commercial-monitor:${input.triggerSource}:${randomUUID()}`
-  const { data: claimed, error: claimError } = await supabase.rpc("start_commercial_monitor_run", {
-    p_marketplace_account_key: accountKey,
-    p_marketplace: MARKETPLACE,
-    p_trigger_source: input.triggerSource,
-    p_requested_lanes: lanes,
-    p_worker_id: workerId,
-    p_lease_seconds: MONITOR_LEASE_SECONDS,
-  })
+  const claim = input.triggerSource === "manual"
+    ? await supabase.rpc("start_authorized_commercial_monitor_run", {
+        p_marketplace_account_key: accountKey,
+        p_marketplace: MARKETPLACE,
+        p_requested_lanes: lanes,
+        p_worker_id: workerId,
+        p_dry_run_id: input.authorizedDryRunId ?? null,
+        p_lease_seconds: MONITOR_LEASE_SECONDS,
+        p_max_dry_run_age_seconds: 1_800,
+      })
+    : await supabase.rpc("start_commercial_monitor_run", {
+        p_marketplace_account_key: accountKey,
+        p_marketplace: MARKETPLACE,
+        p_trigger_source: input.triggerSource,
+        p_requested_lanes: lanes,
+        p_worker_id: workerId,
+        p_lease_seconds: MONITOR_LEASE_SECONDS,
+      })
+  const { data: claimed, error: claimError } = claim
   if (claimError) throw new Error("COMMERCIAL_MONITOR_RUN_CLAIM_FAILED")
   const run = Array.isArray(claimed) ? claimed[0] : claimed
   if (!run?.id) {
@@ -1001,6 +1026,7 @@ export async function runEbayCommercialMonitor(
           listingIds: listings.map((row) => row.ebay_item_id),
           dateFrom: window.dateFrom,
           dateTo: window.dateTo,
+          timeZone: "UTC",
         })
       : Promise.resolve(null)
     const watchersPromise = lanes.includes("watchers")
@@ -1019,6 +1045,7 @@ export async function runEbayCommercialMonitor(
     let orders: SafeMarketplaceOrder[] = []
     let analytics: Awaited<ReturnType<typeof getComparableEbayTrafficAnalytics>> | null = null
     let watchers: Awaited<ReturnType<typeof getEbayListingWatchers>> | null = null
+    const ordersResponseAvailable = orderResult.status === "fulfilled" && Boolean(orderResult.value)
     if (orderResult.status === "fulfilled" && orderResult.value) {
       orders = orderResult.value.orders
       readers.orders = {
@@ -1051,6 +1078,18 @@ export async function runEbayCommercialMonitor(
           windowStart: analytics.windowStart,
           windowEnd: analytics.windowEnd,
           completenessStatus: analytics.completenessStatus,
+          dataFreshnessStatus: analytics.dataFreshnessStatus,
+          queryDimension: analytics.queryDimension,
+          queryTimeZone: analytics.queryTimeZone,
+          requestedListingIds: analytics.requestedListingIds,
+          returnedListingDimensions: analytics.returnedListingDimensions,
+          matchedListingIds: analytics.matchedListingIds,
+          unmatchedRequestedListingIds: analytics.unmatchedRequestedListingIds,
+          unexpectedDimensions: analytics.unexpectedDimensions,
+          reportStartDate: analytics.reportCoverage.reportStartDay,
+          reportEndDate: analytics.reportCoverage.reportEndDay,
+          lastUpdatedDate: analytics.reportCoverage.lastUpdatedDay,
+          warnings: analytics.reportCoverage.warnings,
         },
         auth: getEbayCommercialReaderAuthState("analytics"),
       }
@@ -1117,13 +1156,12 @@ export async function runEbayCommercialMonitor(
       const metrics = {
         dryRun: true,
         activeListings: listings.length,
-        officialOrdersRead: orders.length,
-        completedCheckoutLineItems: orders.reduce(
-          (total, order) => total + order.lineItems.length,
-          0,
-        ),
-        analyticsListingsRead: analytics?.observations.length ?? 0,
-        watcherListingsRead: watchers?.observations.length ?? 0,
+        officialOrdersRead: ordersResponseAvailable ? orders.length : null,
+        completedCheckoutLineItems: ordersResponseAvailable
+          ? orders.reduce((total, order) => total + order.lineItems.length, 0)
+          : null,
+        analyticsListingsRead: analytics ? analytics.observations.length : null,
+        watcherListingsRead: watchers ? watchers.observations.length : null,
         commercialDataPersistencePerformed: false,
         alertsEnqueued: 0,
         fulfillmentTasksCreated: 0,
@@ -1138,12 +1176,13 @@ export async function runEbayCommercialMonitor(
         ? authentication.actionRequired
         : "Dry run correcto; ejecutar una actualización manual controlada para persistir snapshots."
       await finishRun(supabase, runId, workerId, status, readers, metrics, errors, nextAction)
-      return {
+      const completedAt = new Date().toISOString()
+      const result = {
         success: true,
         status,
         runId,
         startedAt: run.started_at,
-        completedAt: new Date().toISOString(),
+        completedAt,
         readers,
         metrics,
         errors,
@@ -1159,6 +1198,15 @@ export async function runEbayCommercialMonitor(
           buyerPiiReturned: false,
         },
       }
+      const satisfactory = isSatisfactoryCommercialDryRun(result, Date.parse(completedAt))
+      const { error: gateError } = await supabase
+        .from("commercial_monitor_runs")
+        .update({ dry_run_satisfactory: satisfactory })
+        .eq("id", runId)
+        .eq("worker_id", workerId)
+        .eq("trigger_source", "dry_run")
+      if (gateError) throw new Error("COMMERCIAL_DRY_RUN_GATE_RECORD_FAILED")
+      return { ...result, satisfactory }
     }
 
     const orderWork = lanes.includes("orders") && orders.length
@@ -1231,24 +1279,26 @@ export async function runEbayCommercialMonitor(
           (row.ebay_sku === PILOT_SKU || row.supplier_sku === PILOT_SKU)
         ),
       },
-      officialOrdersRead: orders.length,
+      officialOrdersRead: ordersResponseAvailable ? orders.length : null,
       newSales: orderWork.newSales,
       fulfillmentTasksCreated: orderWork.tasksCreated,
       snapshotsCreated: snapshotWork.snapshots.length,
       commercialEventsCreated: snapshotWork.eventsGenerated + orderWork.newSales,
+      eventsCreated: snapshotWork.eventsGenerated + orderWork.newSales,
       alertsGenerated: orderWork.alertsGenerated + snapshotWork.alertsGenerated + (daily?.alertGenerated ? 1 : 0),
-      analytics: snapshotWork.snapshots.reduce((totals, row) => ({
-        impressions: totals.impressions + (row.impressions ?? 0),
-        views: totals.views + (row.views ?? 0),
-        transactions: totals.transactions + (row.transactions ?? 0),
-        watchers: totals.watchers + (row.currentWatchers ?? 0),
-      }), { impressions: 0, views: 0, transactions: 0, watchers: 0 }),
+      analytics: {
+        impressions: sumAvailableSnapshotMetric(snapshotWork.snapshots, "impressions"),
+        views: sumAvailableSnapshotMetric(snapshotWork.snapshots, "views"),
+        transactions: sumAvailableSnapshotMetric(snapshotWork.snapshots, "transactions"),
+        watchers: sumAvailableSnapshotMetric(snapshotWork.snapshots, "currentWatchers"),
+      },
       dailySummary: daily?.summary ?? null,
       whatsapp: delivery ? {
         mode: delivery.mode,
         delivered: delivery.delivered,
         failed: delivery.failed,
       } : null,
+      whatsappDelivered: delivery?.delivered ?? 0,
       thresholdConfigVersion: thresholds.version,
     }
     const unavailable = Object.values(readers).some((reader) => reader.status === "unavailable")
@@ -1378,9 +1428,17 @@ export async function getEbayCommercialMonitorDashboard(
     latestRun: null,
     health: null,
   }
-  const [latestRun, latestCompleted, taskRows, outboxRows] = await Promise.all([
+  const [latestRun, latestDryRun, latestPersistentRun, latestCompleted, taskRows, outboxRows] = await Promise.all([
     supabase.from("commercial_monitor_runs").select("*")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .order("started_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("commercial_monitor_runs").select("*")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .eq("trigger_source", "dry_run")
+      .order("started_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("commercial_monitor_runs").select("*")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .neq("trigger_source", "dry_run")
       .order("started_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("commercial_monitor_runs").select("started_at,readers")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
@@ -1392,7 +1450,8 @@ export async function getEbayCommercialMonitorDashboard(
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
       .order("created_at", { ascending: false }).limit(100),
   ])
-  const firstError = latestRun.error ?? latestCompleted.error ?? taskRows.error ?? outboxRows.error
+  const firstError = latestRun.error ?? latestDryRun.error ?? latestPersistentRun.error ??
+    latestCompleted.error ?? taskRows.error ?? outboxRows.error
   if (firstError) throw new Error("COMMERCIAL_MONITOR_DASHBOARD_READ_FAILED")
   const readerLast = new Map<string, string>()
   for (const run of latestCompleted.data ?? []) {
@@ -1407,12 +1466,33 @@ export async function getEbayCommercialMonitorDashboard(
   }
   const outbox = outboxRows.data ?? []
   const tasks = taskRows.data ?? []
+  const dryRun = latestDryRun.data
+  const persistentRun = latestPersistentRun.data
+  const legacySatisfactory = dryRun
+    ? isSatisfactoryCommercialDryRun(dryRun, Date.parse(dryRun.completed_at ?? ""))
+    : false
+  const persistentStarted = Date.parse(persistentRun?.started_at ?? "")
+  const dryCompleted = Date.parse(dryRun?.completed_at ?? "")
+  const legacyConsumed = Boolean(
+    dryRun && persistentRun && !dryRun.dry_run_consumed_at &&
+    Number.isFinite(persistentStarted) && Number.isFinite(dryCompleted) &&
+    persistentStarted >= dryCompleted && persistentStarted - dryCompleted <= 30 * 60_000
+  )
+  const lastDryRun = dryRun ? {
+    ...dryRun,
+    satisfactory: dryRun.dry_run_satisfactory === true || legacySatisfactory,
+    consumedAt: dryRun.dry_run_consumed_at ?? (legacyConsumed ? persistentRun?.started_at : null),
+    authorizedPersistentRunId: dryRun.authorized_persistent_run_id ??
+      (legacyConsumed ? persistentRun?.id : null),
+  } : null
   return {
     status: latestRun.data?.status ?? "never_run",
     accountScope: { configured: true, accountAlias: accountScope.accountAlias },
     readersConfiguration: getEbayCommercialReadersConfiguration(),
     schedule,
     latestRun: latestRun.data ?? null,
+    lastDryRun,
+    lastPersistentRun: persistentRun ?? null,
     health: {
       fulfillmentTasks: tasks.length,
       pendingManualPurchase: tasks.filter((task) => task.status === "PENDING_MANUAL_PURCHASE").length,

@@ -16,6 +16,9 @@ import {
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { getEbayCommercialOAuthPreflight } from "@/lib/ebay/ebay-commercial-oauth"
 import {
+  compareEbayCommercialAnalyticsWithSellerHub,
+} from "@/lib/ebay/ebay-commercial-analytics-reconciliation"
+import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
 } from "@/lib/supabase-admin"
@@ -107,10 +110,29 @@ export async function POST(req: Request) {
         preflight: await getEbayCommercialOAuthPreflight(),
       })
     }
+    if (input.action === "compare_seller_hub") {
+      return NextResponse.json({
+        success: true,
+        action: "compare_seller_hub",
+        comparison: await compareEbayCommercialAnalyticsWithSellerHub({
+          listingId: "366543596425",
+        }),
+      })
+    }
     if (input.action !== "run") {
       return NextResponse.json(
         { success: false, error: "COMMERCIAL_MONITOR_ACTION_INVALID" },
         { status: 400 },
+      )
+    }
+    const dryRunId = typeof input.dryRunId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.dryRunId)
+      ? input.dryRunId
+      : undefined
+    if (input.dryRun !== true && !dryRunId) {
+      return NextResponse.json(
+        { success: false, error: "COMMERCIAL_DRY_RUN_GATE_REQUIRED" },
+        { status: 409 },
       )
     }
     const result = await runEbayCommercialMonitor(supabase, {
@@ -119,6 +141,7 @@ export async function POST(req: Request) {
       workerId: `commercial-manual:${validation.userId ?? "service"}:${randomUUID()}`,
       dispatchWhatsApp: true,
       dryRunWhatsApp: input.dryRun === true || process.env.VERCEL_ENV !== "preview",
+      authorizedDryRunId: input.dryRun === true ? undefined : dryRunId,
     })
     const dashboard = await getEbayCommercialMonitorDashboard(supabase)
     return NextResponse.json({ success: true, run: result, dashboard })

@@ -1,9 +1,8 @@
 import {
   getEbaySellerTrafficPerformance,
 } from "./ebay-seller-analytics-readonly-gateway"
-import {
-  normalizeEbaySellerTrafficReport,
-} from "./ebay-seller-traffic-report"
+import { normalizeEbaySellerTrafficReport } from "./ebay-seller-traffic-report"
+import { reconcileEbayTrafficAnalyticsReport } from "./ebay-commercial-analytics-domain"
 import {
   ebayProductionAccountFingerprint,
   getEbayProductionIdentityBindingConfiguration,
@@ -293,62 +292,17 @@ export async function getEbayListingWatchers(input: {
   }
 }
 
-function metric(row: ReturnType<typeof normalizeEbaySellerTrafficReport>["rows"][number], key: string) {
-  const value = row.metrics[key]
-  return row.applicability[key] !== false && typeof value === "number" ? value : null
-}
-
-function derivedRate(numerator: number | null, denominator: number | null) {
-  return numerator !== null && denominator !== null && denominator > 0
-    ? Number(((numerator / denominator) * 100).toFixed(2))
-    : null
-}
-
 export async function getComparableEbayTrafficAnalytics(input: {
   listingIds: string[]
   dateFrom: string
   dateTo: string
+  timeZone?: "UTC"
 }) {
   const report = await getEbaySellerTrafficPerformance(input)
-  const normalized = normalizeEbaySellerTrafficReport(report)
-  const reportStartDay = normalized.startDate?.slice(0, 10) ?? null
-  const reportEndDay = normalized.endDate?.slice(0, 10) ?? null
-  const updatedDay = normalized.lastUpdatedDate?.slice(0, 10) ?? null
-  const complete = Boolean(
-    reportStartDay && reportEndDay && updatedDay &&
-    reportStartDay <= input.dateFrom && reportEndDay >= input.dateTo && updatedDay >= input.dateTo &&
-    normalized.warnings.length === 0
+  return reconcileEbayTrafficAnalyticsReport(
+    input,
+    normalizeEbaySellerTrafficReport(report),
   )
-  return {
-    status: complete ? "AVAILABLE" as const : "INCOMPLETE" as const,
-    source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT" as const,
-    observedAt: new Date().toISOString(),
-    windowStart: input.dateFrom,
-    windowEnd: input.dateTo,
-    completenessStatus: complete ? "complete" as const : "incomplete" as const,
-    reportCoverage: {
-      reportStartDay,
-      reportEndDay,
-      lastUpdatedDay: updatedDay,
-      warnings: normalized.warnings,
-    },
-    observations: normalized.rows.map((row) => {
-      const impressions = metric(row, "TOTAL_IMPRESSION_TOTAL")
-      const searchImpressions = metric(row, "LISTING_IMPRESSION_SEARCH_RESULTS_PAGE")
-      const searchViews = metric(row, "LISTING_VIEWS_SOURCE_SEARCH_RESULTS_PAGE")
-      const views = metric(row, "LISTING_VIEWS_TOTAL")
-      const transactions = metric(row, "TRANSACTION")
-      return {
-        listingId: row.dimension,
-        impressions,
-        views,
-        ctr: metric(row, "CLICK_THROUGH_RATE") ?? derivedRate(searchViews, searchImpressions),
-        transactions,
-        salesConversionRate: metric(row, "SALES_CONVERSION_RATE") ?? derivedRate(transactions, views),
-        revenue: null,
-      }
-    }),
-  }
 }
 
 export function getEbayCommercialReadersConfiguration() {

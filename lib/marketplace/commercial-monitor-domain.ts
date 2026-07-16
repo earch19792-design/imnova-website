@@ -359,10 +359,10 @@ export function evaluateCommercialRules(input: {
 
 export type DailyCommercialSummary = {
   activeListings: number
-  impressions: number
-  views: number
+  impressions: number | null
+  views: number | null
   ctr: number | null
-  watchers: number
+  watchers: number | null
   sales: number
   conversion: number | null
   revenue: number
@@ -383,17 +383,29 @@ export function buildDailyCommercialSummary(input: {
   awaitingTrackingOrders: number
   previousDayComplete?: boolean
 }): DailyCommercialSummary {
-  const complete = input.snapshots.length > 0 && input.snapshots.every((row) => row.completenessStatus === "complete")
-  const impressions = input.snapshots.reduce((sum, row) => sum + (row.impressions ?? 0), 0)
-  const views = input.snapshots.reduce((sum, row) => sum + (row.views ?? 0), 0)
+  const complete = input.snapshots.length > 0 && input.snapshots.every((row) =>
+    row.completenessStatus === "complete" && row.impressions !== null && row.views !== null
+  )
+  const sumWhenComplete = (key: "impressions" | "views" | "currentWatchers") =>
+    input.snapshots.length > 0 && input.snapshots.every((row) =>
+      row.completenessStatus === "complete" && row[key] !== null
+    )
+      ? input.snapshots.reduce((sum, row) => sum + (row[key] ?? 0), 0)
+      : null
+  const impressions = sumWhenComplete("impressions")
+  const views = sumWhenComplete("views")
   return {
     activeListings: input.snapshots.filter((row) => row.listingStatus === "active").length,
     impressions,
     views,
-    ctr: impressions > 0 ? Number(((views / impressions) * 100).toFixed(2)) : null,
-    watchers: input.snapshots.reduce((sum, row) => sum + (row.currentWatchers ?? 0), 0),
+    ctr: impressions !== null && views !== null && impressions > 0
+      ? Number(((views / impressions) * 100).toFixed(2))
+      : null,
+    watchers: sumWhenComplete("currentWatchers"),
     sales: Math.max(0, Math.trunc(input.confirmedSales)),
-    conversion: views > 0 ? Number(((input.confirmedSales / views) * 100).toFixed(2)) : null,
+    conversion: views !== null && views > 0
+      ? Number(((input.confirmedSales / views) * 100).toFixed(2))
+      : null,
     revenue: Number(input.revenue.toFixed(2)),
     estimatedProfit: Number(input.estimatedProfit.toFixed(2)),
     pendingPurchaseOrders: Math.max(0, Math.trunc(input.pendingPurchaseOrders)),
@@ -405,15 +417,15 @@ export function buildDailyCommercialSummary(input: {
 }
 
 export function renderDailyCommercialSummary(summary: DailyCommercialSummary) {
-  const value = (number: number | null, suffix = "") => number === null ? "—" : `${number}${suffix}`
+  const value = (number: number | null, suffix = "") => number === null ? "N/D" : `${number}${suffix}`
   return [
     "📊 RESUMEN DIARIO EBAY",
     "",
     `Listings activos: ${summary.activeListings}`,
-    `Impresiones: ${summary.impressions}`,
-    `Vistas: ${summary.views}`,
+    `Impresiones: ${value(summary.impressions)}`,
+    `Vistas: ${value(summary.views)}`,
     `CTR: ${value(summary.ctr, "%")}`,
-    `Watchers (señales de interés): ${summary.watchers}`,
+    `Watchers (señales de interés): ${value(summary.watchers)}`,
     `Ventas confirmadas: ${summary.sales}`,
     `Conversión: ${value(summary.conversion, "%")}`,
     `Ingresos: $${summary.revenue.toFixed(2)}`,

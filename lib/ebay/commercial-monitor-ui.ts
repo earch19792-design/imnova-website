@@ -1,5 +1,11 @@
 export const COMMERCIAL_DRY_RUN_MAX_AGE_MS = 30 * 60 * 1000
 
+export function formatCommercialMetricValue(input: unknown) {
+  return typeof input === "number" && Number.isFinite(input)
+    ? new Intl.NumberFormat("es-US").format(input)
+    : "—"
+}
+
 export type CommercialMonitorReaderView = {
   status?: string
   source?: string
@@ -17,6 +23,8 @@ export type CommercialMonitorReaderView = {
 }
 
 export type CommercialMonitorRunView = {
+  id?: string
+  runId?: string
   status?: string
   startedAt?: string
   completedAt?: string | null
@@ -24,6 +32,12 @@ export type CommercialMonitorRunView = {
   completed_at?: string | null
   nextAction?: string
   next_action?: string
+  satisfactory?: boolean
+  consumedAt?: string | null
+  authorizedPersistentRunId?: string | null
+  dry_run_satisfactory?: boolean
+  dry_run_consumed_at?: string | null
+  authorized_persistent_run_id?: string | null
   readers?: Record<string, CommercialMonitorReaderView>
   metrics?: Record<string, unknown>
   errors?: Array<{ reader?: string; code?: string; retryable?: boolean }>
@@ -36,8 +50,11 @@ export type CommercialMonitorRunView = {
   }
 }
 
-export function buildCommercialMonitorRunRequest(dryRun: boolean) {
-  return { action: "run" as const, dryRun }
+export function buildCommercialMonitorRunRequest(dryRun: boolean, dryRunId?: string) {
+  if (dryRun) return { action: "run" as const, dryRun: true as const }
+  return dryRunId
+    ? { action: "run" as const, dryRun: false as const, dryRunId }
+    : { action: "run" as const, dryRun: false as const }
 }
 
 function errorRows(run: CommercialMonitorRunView) {
@@ -59,6 +76,8 @@ export function isSatisfactoryCommercialDryRun(
   now = Date.now(),
 ) {
   if (!run || !["completed", "partial"].includes(run.status ?? "")) return false
+  if (run.consumedAt || run.dry_run_consumed_at || run.authorizedPersistentRunId ||
+    run.authorized_persistent_run_id) return false
   const metrics = run.metrics ?? {}
   if (metrics.dryRun !== true) return false
 
