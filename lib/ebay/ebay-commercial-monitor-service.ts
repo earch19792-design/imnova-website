@@ -45,7 +45,7 @@ import { isSatisfactoryCommercialDryRun } from "./commercial-monitor-ui"
 const MARKETPLACE = "EBAY_US"
 const MONITOR_LEASE_SECONDS = 300
 const PILOT_LISTING_ID = "366543596425"
-const PILOT_SKU = "ITEM3995"
+const PILOT_SUPPLIER_SKU = "ITEM3995"
 
 export const COMMERCIAL_MONITOR_LANES = [
   "orders", "analytics", "watchers", "rules", "daily_summary", "whatsapp",
@@ -351,26 +351,28 @@ export async function recordSellerHubListingEvidence(
   const evidence = normalizeSellerHubListingEvidence(input.evidence)
   const { data: activeListing, error: listingError } = await supabase
     .from("ebay_active_listings")
-    .select("ebay_item_id,ebay_sku,listing_status")
+    .select("ebay_item_id,ebay_sku,supplier_sku,listing_status")
     .eq("account_key", input.marketplaceAccountKey)
     .eq("ebay_item_id", evidence.listingId)
-    .eq("ebay_sku", evidence.sku)
+    .eq("supplier_sku", evidence.sku)
     .eq("listing_status", "active")
     .limit(1)
     .maybeSingle()
   if (listingError) throw new Error("COMMERCIAL_ACTIVE_LISTING_READ_FAILED")
-  if (!activeListing) throw new Error("COMMERCIAL_LISTING_ITEM_ID_OR_CUSTOM_LABEL_MISMATCH")
+  if (!activeListing?.ebay_sku) {
+    throw new Error("COMMERCIAL_LISTING_ITEM_ID_OR_CUSTOM_LABEL_MISMATCH")
+  }
 
   const verification = await verifyEbayActiveListingIdentities({
-    listings: [{ listingId: evidence.listingId, sku: evidence.sku }],
+    listings: [{ listingId: evidence.listingId, sku: activeListing.ebay_sku }],
   })
   const identity = verification.observations[0]
   const identityError = verification.errors[0]
   await persistListingIdentityVerification(supabase, input.marketplaceAccountKey, identity ? {
     ...identity,
   } : {
-    listingId: evidence.listingId,
-    expectedSku: evidence.sku,
+      listingId: evidence.listingId,
+      expectedSku: activeListing.ebay_sku,
     errorCode: identityError?.code ?? "EBAY_LISTING_IDENTITY_UNAVAILABLE",
   })
   if (!identity?.activeListingConfirmed) {
@@ -471,7 +473,9 @@ export async function recordSellerHubListingEvidence(
     },
     identity: {
       listingId: identity.listingId,
-      expectedSku: identity.expectedSku,
+      expectedEbayCustomLabel: identity.expectedSku,
+      observedEbayCustomLabel: identity.observedSku,
+      supplierSku: evidence.sku,
       itemIdMatches: identity.itemIdMatches,
       skuMatches: identity.skuMatches,
       activeListingConfirmed: identity.activeListingConfirmed,
@@ -850,6 +854,7 @@ async function persistOrdersAndSales(input: {
         })
         continue
       }
+      const fulfillmentSku = listing.supplier_sku ?? line.sku
       const supply = supplyForListing(listing, supplies)
       const supplierUnitCost = numeric(supply?.price) ?? numeric(listing.supplier_cost_at_linking)
       const estimatedSupplierCost = supplierUnitCost === null
@@ -874,7 +879,7 @@ async function persistOrdersAndSales(input: {
           marketplace_order_id: order.ebayOrderId,
           marketplace_line_item_id: line.lineItemId,
           listing_id: line.listingId,
-          sku: line.sku,
+          sku: fulfillmentSku,
           product_title: line.title,
           pack_quantity: packQuantity,
           quantity: line.quantity,
@@ -910,12 +915,15 @@ async function persistOrdersAndSales(input: {
           estimatedProfit: profit,
           stockAvailable,
           itemIdVerified: true,
-          skuVerified: true,
+          ebayCustomLabelVerified: line.sku === listing.ebay_sku,
+          supplierSkuVerified: fulfillmentSku === listing.supplier_sku,
+          ebayCustomLabel: listing.ebay_sku,
+          supplierSku: fulfillmentSku,
         },
         thresholdConfigVersion: thresholds.version,
         detectedAt: observedAt,
         listingId: line.listingId,
-        sku: line.sku,
+        sku: fulfillmentSku,
         deduplicationKey: saleKey,
         recommendedAction: "Comprar manualmente en Luna Portex y luego pegar el tracking en Seller OS.",
         marketplaceOrderId: order.ebayOrderId,
@@ -927,7 +935,7 @@ async function persistOrdersAndSales(input: {
       }
       const message = renderSaleDetectedMessage({
         product: line.title,
-        sku: line.sku ?? "pendiente",
+        sku: fulfillmentSku ?? "pendiente",
         quantity: line.quantity,
         amount: line.lineItemAmount,
         currency: line.currency ?? order.currency ?? "USD",
@@ -954,7 +962,7 @@ async function persistOrdersAndSales(input: {
         },
       })) alertsGenerated += 1
 
-      const firstSaleIdentity = line.listingId || line.sku || "unknown"
+      const firstSaleIdentity = line.listingId || fulfillmentSku || "unknown"
       const firstSaleKey = stableCommercialKey(accountKey, "FIRST_SALE_CONFIRMED", firstSaleIdentity)
       const firstEventResult = await insertEvent(supabase, accountKey, {
         ...saleEvent,
@@ -964,7 +972,8 @@ async function persistOrdersAndSales(input: {
           source: "OFFICIAL_COMPLETED_CHECKOUT_ORDER",
           firstSaleIdentity,
           itemIdVerified: true,
-          skuVerified: true,
+          ebayCustomLabelVerified: line.sku === listing.ebay_sku,
+          supplierSkuVerified: fulfillmentSku === listing.supplier_sku,
         },
         deduplicationKey: firstSaleKey,
         recommendedAction: "Conservar esta confirmación y priorizar el fulfillment manual de la primera venta.",
@@ -1449,7 +1458,7 @@ export async function runEbayCommercialMonitor(
 
     const expectedIdentityRows = new Map<string, { listingId: string; sku: string }>()
     const pilotListing = listings.find((row) => row.ebay_item_id === PILOT_LISTING_ID)
-    if (pilotListing?.ebay_sku) {
+    if (pilotListing?.ebay_sku && pilotListing.supplier_sku === PILOT_SUPPLIER_SKU) {
       expectedIdentityRows.set(`${PILOT_LISTING_ID}:${pilotListing.ebay_sku}`, {
         listingId: PILOT_LISTING_ID,
         sku: pilotListing.ebay_sku,
@@ -1464,7 +1473,10 @@ export async function runEbayCommercialMonitor(
       }
     }
     const verifiedIdentities = new Set<string>()
-    if (!pilotListing || pilotListing.ebay_sku !== PILOT_SKU) {
+    if (
+      !pilotListing || !pilotListing.ebay_sku ||
+      pilotListing.supplier_sku !== PILOT_SUPPLIER_SKU
+    ) {
       errors.push({
         reader: "listing_identity",
         code: "COMMERCIAL_LISTING_ITEM_ID_OR_CUSTOM_LABEL_MISMATCH",
@@ -1515,7 +1527,11 @@ export async function runEbayCommercialMonitor(
           metrics: {
             checked: expectedIdentityRows.size,
             verified: verifiedIdentities.size,
-            itemIdAndCustomLabelExact: verifiedIdentities.has(`${PILOT_LISTING_ID}:${PILOT_SKU}`),
+            itemIdAndCustomLabelExact: Boolean(
+              pilotListing?.ebay_sku &&
+              verifiedIdentities.has(`${PILOT_LISTING_ID}:${pilotListing.ebay_sku}`)
+            ),
+            supplierSkuLinked: pilotListing?.supplier_sku === PILOT_SUPPLIER_SKU,
           },
         }
       } catch (error) {
@@ -1598,7 +1614,11 @@ export async function runEbayCommercialMonitor(
         watcherListingsRead: watchers ? watchers.observations.length : null,
         healthFlags: divergence.openListingIds.size ? [ANALYTICS_SOURCE_DIVERGENCE] : [],
         analyticsRulesSuspendedListingIds: [...divergence.openListingIds],
-        listingIdentityVerified: verifiedIdentities.has(`${PILOT_LISTING_ID}:${PILOT_SKU}`),
+        listingIdentityVerified: Boolean(
+          pilotListing?.ebay_sku &&
+          pilotListing.supplier_sku === PILOT_SUPPLIER_SKU &&
+          verifiedIdentities.has(`${PILOT_LISTING_ID}:${pilotListing.ebay_sku}`)
+        ),
         commercialDataPersistencePerformed: false,
         alertsEnqueued: 0,
         fulfillmentTasksCreated: 0,
@@ -1712,11 +1732,13 @@ export async function runEbayCommercialMonitor(
       activeListings: listings.length,
       pilot: {
         listingId: PILOT_LISTING_ID,
-        sku: PILOT_SKU,
+        supplierSku: PILOT_SUPPLIER_SKU,
+        ebayCustomLabel: pilotListing?.ebay_sku ?? null,
         activeListingVerified: listings.some((row) =>
           row.ebay_item_id === PILOT_LISTING_ID &&
-          row.ebay_sku === PILOT_SKU &&
-          verifiedIdentities.has(`${PILOT_LISTING_ID}:${PILOT_SKU}`)
+          row.supplier_sku === PILOT_SUPPLIER_SKU &&
+          Boolean(row.ebay_sku) &&
+          verifiedIdentities.has(`${PILOT_LISTING_ID}:${row.ebay_sku}`)
         ),
       },
       officialOrdersRead: ordersResponseAvailable ? orders.length : null,
@@ -1905,8 +1927,8 @@ export async function getEbayCommercialMonitorDashboard(
     supabase.from("marketplace_listing_identity_verifications")
       .select("listing_id,expected_sku,observed_listing_id,observed_sku,observed_listing_status,item_id_matches,sku_matches,active_listing_confirmed,source,error_code,observed_at")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
-      .eq("listing_id", PILOT_LISTING_ID).eq("expected_sku", PILOT_SKU)
-      .limit(1).maybeSingle(),
+      .eq("listing_id", PILOT_LISTING_ID)
+      .order("observed_at", { ascending: false }).limit(1).maybeSingle(),
   ])
   const firstError = latestRun.error ?? latestDryRun.error ?? latestPersistentRun.error ??
     latestCompleted.error ?? taskRows.error ?? outboxRows.error ?? divergenceRows.error ??
@@ -2013,6 +2035,7 @@ export async function getEbayCommercialMonitorDashboard(
     listingIdentity: identity ? {
       listingId: identity.listing_id,
       expectedSku: identity.expected_sku,
+      supplierSku: PILOT_SUPPLIER_SKU,
       observedListingId: identity.observed_listing_id,
       observedSku: identity.observed_sku,
       observedListingStatus: identity.observed_listing_status,
@@ -2025,7 +2048,7 @@ export async function getEbayCommercialMonitorDashboard(
       salesProcessingBlocked: identity.active_listing_confirmed !== true,
     } : {
       listingId: PILOT_LISTING_ID,
-      expectedSku: PILOT_SKU,
+      supplierSku: PILOT_SUPPLIER_SKU,
       activeListingConfirmed: false,
       salesProcessingBlocked: true,
       error: "COMMERCIAL_LISTING_IDENTITY_NOT_VERIFIED",

@@ -104,6 +104,7 @@ type Dashboard = {
   listingIdentity?: {
     listingId?: string
     expectedSku?: string
+    supplierSku?: string
     observedListingId?: string | null
     observedSku?: string | null
     observedListingStatus?: string | null
@@ -636,7 +637,8 @@ export function CommercialMonitorPanel() {
         <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-xs">
           <h4 className="font-black text-white">Vínculo oficial antes del scheduler</h4>
           <p className="mt-1">Item ID esperado/observado: {listingIdentity?.listingId ?? "366543596425"} / {listingIdentity?.observedListingId ?? "—"}</p>
-          <p>Custom label esperado/observado: {listingIdentity?.expectedSku ?? "ITEM3995"} / {listingIdentity?.observedSku ?? "—"}</p>
+          <p>Custom label eBay esperado/observado: {listingIdentity?.expectedSku ?? "—"} / {listingIdentity?.observedSku ?? "—"}</p>
+          <p>SKU Luna/Seller OS: {listingIdentity?.supplierSku ?? divergence?.sku ?? "ITEM3995"}</p>
           <p>Estado oficial: {listingIdentity?.observedListingStatus ?? "—"} · Match exacto: {listingIdentity?.activeListingConfirmed ? "SÍ" : "NO"}</p>
           <p className="mt-1 font-black">Procesamiento de ventas: {listingIdentity?.salesProcessingBlocked ? "BLOQUEADO" : "HABILITADO"}</p>
         </div>
