@@ -44,6 +44,7 @@ import {
 import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
 import { isSatisfactoryCommercialDryRun } from "./commercial-monitor-ui"
 import {
+  commercialScheduleLaneDue,
   currentCommercialPreviewPilotConfiguration,
   summarizeCommercialPilotRuns,
 } from "./ebay-commercial-preview-pilot"
@@ -1927,10 +1928,6 @@ async function getCommercialPilotReport(
   }
 }
 
-function due(last: string | null | undefined, minutes: number, now: Date) {
-  return !last || !Number.isFinite(Date.parse(last)) || Date.parse(last) + minutes * 60_000 <= now.getTime()
-}
-
 export async function getDueCommercialMonitorLanes(
   supabase: SupabaseClient,
   accountKey: string,
@@ -1958,9 +1955,9 @@ export async function getDueCommercialMonitorLanes(
     }
   }
   const lanes: CommercialMonitorLane[] = []
-  if (due(lastByReader.get("orders"), schedule.orderIntervalMinutes, now)) lanes.push("orders", "rules")
-  if (due(lastByReader.get("analytics"), schedule.analyticsIntervalMinutes, now)) lanes.push("analytics", "rules")
-  if (due(lastByReader.get("watchers"), schedule.watchersIntervalMinutes, now)) lanes.push("watchers", "rules")
+  if (commercialScheduleLaneDue(lastByReader.get("orders"), schedule.orderIntervalMinutes, now)) lanes.push("orders", "rules")
+  if (commercialScheduleLaneDue(lastByReader.get("analytics"), schedule.analyticsIntervalMinutes, now)) lanes.push("analytics", "rules")
+  if (commercialScheduleLaneDue(lastByReader.get("watchers"), schedule.watchersIntervalMinutes, now)) lanes.push("watchers", "rules")
   const { data: todaySummary } = await supabase
     .from("commercial_daily_summaries")
     .select("id")

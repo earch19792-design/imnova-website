@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto"
 
 const PILOT_MAX_DURATION_MS = 24 * 60 * 60 * 1_000
+const SCHEDULE_TICK_TOLERANCE_MS = 30_000
 
 type PilotEnvironment = {
   vercelEnvironment?: string | null
@@ -79,6 +80,18 @@ export function commercialPreviewCronAuthorized(request: Request) {
     const expected = Buffer.from(`Bearer ${secret}`)
     return provided.length === expected.length && timingSafeEqual(provided, expected)
   })
+}
+
+export function commercialScheduleLaneDue(
+  lastObservedAt: string | null | undefined,
+  intervalMinutes: number,
+  now = new Date(),
+) {
+  if (!lastObservedAt) return true
+  const lastObservedAtMs = Date.parse(lastObservedAt)
+  if (!Number.isFinite(lastObservedAtMs)) return true
+  return lastObservedAtMs + intervalMinutes * 60_000 <=
+    now.getTime() + SCHEDULE_TICK_TOLERANCE_MS
 }
 
 export function summarizeCommercialPilotRuns(input: {
