@@ -409,7 +409,6 @@ export async function recordSellerHubListingEvidence(
     .eq("marketplace_account_key", input.marketplaceAccountKey)
     .eq("marketplace", MARKETPLACE)
     .eq("listing_id", evidence.listingId)
-    .eq("sku", evidence.sku)
     .order("observed_at", { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -1049,7 +1048,8 @@ async function persistSnapshotsAndRules(input: {
       salePrice: listing.ebay_price,
       supplierCost: totalSupplierCost,
     })
-    const previous = input.previous.get(`${listing.ebay_item_id}:${listing.ebay_sku ?? listing.supplier_sku ?? ""}`)
+    const previous = input.previous.get(`${listing.ebay_item_id}:${listing.supplier_sku ?? listing.ebay_sku ?? ""}`) ??
+      input.previous.get(`${listing.ebay_item_id}:${listing.ebay_sku ?? listing.supplier_sku ?? ""}`)
     const currentWatchers = watcher?.currentWatchers ?? null
     const analyticsMatched = Boolean(
       analytics && input.analytics?.completenessStatus === "complete" &&
@@ -1058,7 +1058,7 @@ async function persistSnapshotsAndRules(input: {
     const snapshot: CommercialSnapshot = {
       marketplaceAccountKey: input.accountKey,
       listingId: listing.ebay_item_id,
-      sku: listing.ebay_sku ?? listing.supplier_sku,
+      sku: listing.supplier_sku ?? listing.ebay_sku,
       listingStatus: listing.listing_status,
       impressions: analytics?.impressions ?? null,
       views: analytics?.views ?? null,
@@ -1103,6 +1103,8 @@ async function persistSnapshotsAndRules(input: {
         window_end: snapshot.windowEnd,
         source: {
           analytics: input.analytics?.source ?? null,
+          ebayCustomLabel: listing.ebay_sku,
+          supplierSku: listing.supplier_sku,
           analyticsHealthFlag: input.analyticsRulesSuspendedListingIds.has(snapshot.listingId)
             ? ANALYTICS_SOURCE_DIVERGENCE
             : null,
