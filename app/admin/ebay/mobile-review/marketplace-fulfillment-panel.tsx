@@ -119,6 +119,30 @@ type ApiPayload = {
   dashboard?: Dashboard
   result?: unknown
   error?: string
+  authorizationUrl?: string
+  connection?: TrackingOAuthConnection
+}
+
+type TrackingOAuthConnection = {
+  state: "NOT_CONFIGURED" | "AUTHORIZATION_REQUIRED" |
+    "AUTHORIZATION_IN_PROGRESS" | "READY" | "SCOPE_MISSING" |
+    "IDENTITY_MISMATCH" | "FINGERPRINT_MISMATCH" |
+    "EXPIRED_OR_REVOKED" | "ERROR"
+  token: "PRESENT" | "MISSING"
+  fulfillmentScope: "YES" | "NO"
+  identity: "MATCH" | "MISMATCH" | "UNKNOWN"
+  fingerprint: "MATCH" | "MISMATCH" | "UNKNOWN"
+  refreshSuccessful: boolean
+  environmentPreview: boolean
+  branchMatch: boolean
+  adapterConfigured: boolean
+  operatorPrepared: boolean
+  authorizationAvailable: boolean
+  writeGate: "ON" | "OFF"
+  submitter: "ON" | "OFF"
+  flags: { oauth: "ON" | "OFF"; write: "OFF" | "CHECK_REQUIRED" }
+  ebayWrites: 0
+  nextAction: string
 }
 
 type PurchaseForm = {
@@ -174,6 +198,8 @@ export function MarketplaceFulfillmentPanel() {
   const [busyTask, setBusyTask] = useState<string | null>(null)
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
+  const [oauthConnection, setOauthConnection] = useState<TrackingOAuthConnection | null>(null)
+  const [oauthBusy, setOauthBusy] = useState(false)
   const [purchaseForms, setPurchaseForms] = useState<Record<string, PurchaseForm>>({})
   const [trackingForms, setTrackingForms] = useState<Record<string, TrackingForm>>({})
 
@@ -207,7 +233,65 @@ export function MarketplaceFulfillmentPanel() {
     }
   }, [authenticatedRequest])
 
-  useEffect(() => { void load() }, [load])
+  const loadOAuth = useCallback(async () => {
+    try {
+      const payload = await authenticatedRequest(
+        "/api/admin/ebay/fulfillment-tracking-oauth/status",
+      )
+      setOauthConnection(payload.connection ?? null)
+    } catch (requestError) {
+      setError(requestError instanceof Error
+        ? requestError.message
+        : "EBAY_FULFILLMENT_TRACKING_AUTHORIZATION_STATUS_FAILED")
+    }
+  }, [authenticatedRequest])
+
+  useEffect(() => { void Promise.all([load(), loadOAuth()]) }, [load, loadOAuth])
+
+  const authorizeTracking = useCallback(async () => {
+    if (!oauthConnection?.authorizationAvailable) return
+    const confirmed = window.confirm(
+      "Se abrirá eBay para autorizar únicamente el envío de tracking. Los cuatro gates de escritura permanecerán apagados. ¿Continuar?",
+    )
+    if (!confirmed) return
+    setOauthBusy(true)
+    setError("")
+    try {
+      const payload = await authenticatedRequest(
+        "/api/admin/ebay/fulfillment-tracking-oauth/start",
+        { method: "POST" },
+      )
+      if (
+        typeof payload.authorizationUrl !== "string" ||
+        !payload.authorizationUrl.startsWith("https://auth.ebay.com/oauth2/authorize?")
+      ) throw new Error("EBAY_FULFILLMENT_TRACKING_AUTHORIZATION_URL_INVALID")
+      window.location.assign(payload.authorizationUrl)
+    } catch (requestError) {
+      setError(requestError instanceof Error
+        ? requestError.message
+        : "EBAY_FULFILLMENT_TRACKING_AUTHORIZATION_START_FAILED")
+      setOauthBusy(false)
+      await loadOAuth()
+    }
+  }, [authenticatedRequest, loadOAuth, oauthConnection])
+
+  const checkTrackingConnection = useCallback(async () => {
+    setOauthBusy(true)
+    setError("")
+    try {
+      await authenticatedRequest(
+        "/api/admin/ebay/fulfillment-tracking-oauth/status",
+        { method: "POST" },
+      )
+      await loadOAuth()
+    } catch (requestError) {
+      setError(requestError instanceof Error
+        ? requestError.message
+        : "EBAY_FULFILLMENT_TRACKING_READINESS_FAILED")
+    } finally {
+      setOauthBusy(false)
+    }
+  }, [authenticatedRequest, loadOAuth])
 
   const purchases = useMemo(() => new Map((dashboard?.purchases ?? []).map((row) => [row.fulfillment_task_id, row])), [dashboard])
   const shipments = useMemo(() => new Map((dashboard?.shipments ?? []).filter((row) => !row.superseded_at).map((row) => [row.primary_fulfillment_task_id, row])), [dashboard])
@@ -304,6 +388,29 @@ export function MarketplaceFulfillmentPanel() {
     {loading && <p role="status" className="rounded-2xl border border-white/10 p-4 text-sm">Cargando cola de fulfillment…</p>}
     {error && <p role="alert" className="rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-3 text-sm font-bold text-rose-50">{error}</p>}
     {message && <p role="status" className="rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.08] p-3 text-sm font-bold text-emerald-50">{message}</p>}
+
+    {dashboard?.enabled && <section aria-labelledby="fulfillment-tracking-oauth-heading" className="rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.06] p-4">
+      <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">OAuth dedicado · Preview</p>
+      <h3 id="fulfillment-tracking-oauth-heading" className="mt-1 text-lg font-black">Conexión eBay para envío de tracking</h3>
+      <p className="mt-2 text-sm text-white/65">Estado: <strong className="text-cyan-50">{oauthConnection?.state ?? "NOT_CONFIGURED"}</strong></p>
+      <dl className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">OAuth tracking</dt><dd className="mt-1 font-black">{oauthConnection?.state === "READY" ? "READY" : "NOT READY"}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">fulfillment scope</dt><dd className="mt-1 font-black">{oauthConnection?.fulfillmentScope ?? "NO"}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Identity</dt><dd className="mt-1 font-black">{oauthConnection?.identity ?? "UNKNOWN"}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Fingerprint</dt><dd className="mt-1 font-black">{oauthConnection?.fingerprint ?? "UNKNOWN"}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Token</dt><dd className="mt-1 font-black">{oauthConnection?.token ?? "MISSING"}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Write gate</dt><dd className="mt-1 font-black">{oauthConnection?.writeGate ?? "OFF"}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Submitter</dt><dd className="mt-1 font-black">{oauthConnection?.submitter ?? "OFF"}</dd></div>
+        <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Escrituras eBay</dt><dd className="mt-1 font-black">{oauthConnection?.ebayWrites ?? 0}</dd></div>
+      </dl>
+      <p className="mt-3 text-xs text-white/60">Entorno Preview: {oauthConnection?.environmentPreview ? "SÍ" : "NO"} · rama: {oauthConnection?.branchMatch ? "MATCH" : "MISMATCH"} · adapter configurado: {oauthConnection?.adapterConfigured ? "SÍ" : "NO"}</p>
+      <p className="mt-2 text-xs"><strong>Próxima acción:</strong> {oauthConnection?.nextAction ?? "Cargar estado sanitizado."}</p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <button type="button" disabled={oauthBusy || !oauthConnection?.authorizationAvailable} onClick={() => void authorizeTracking()} className="min-h-12 rounded-xl bg-cyan-200 px-3 font-black text-black disabled:cursor-not-allowed disabled:opacity-45">Autorizar tracking con eBay</button>
+        <button type="button" disabled={oauthBusy || oauthConnection?.token !== "PRESENT"} onClick={() => void checkTrackingConnection()} className="min-h-12 rounded-xl border border-cyan-100/30 px-3 font-black disabled:cursor-not-allowed disabled:opacity-45">Verificar conexión</button>
+      </div>
+      {oauthConnection && (oauthConnection.flags.oauth !== "OFF" || oauthConnection.flags.write !== "OFF") && <p role="alert" className="mt-3 rounded-xl border border-rose-200/25 bg-rose-200/[0.08] p-2 text-xs font-black text-rose-50">Gate inesperado: autorización bloqueada hasta restaurar los cuatro flags a OFF.</p>}
+    </section>}
 
     {dashboard?.enabled && <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
       <div className="rounded-2xl bg-black/25 p-3"><span className="text-white/50">Tareas</span><strong className="mt-1 block text-lg">{dashboard.tasks.length}</strong></div>

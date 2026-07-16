@@ -19,6 +19,43 @@ export const EBAY_FULFILLMENT_TRACKING_OAUTH_SCOPES = [
   EBAY_FULFILLMENT_TRACKING_WRITE_SCOPE,
 ] as const
 
+export const EBAY_FULFILLMENT_TRACKING_CONNECTION_STATES = [
+  "NOT_CONFIGURED",
+  "AUTHORIZATION_REQUIRED",
+  "AUTHORIZATION_IN_PROGRESS",
+  "READY",
+  "SCOPE_MISSING",
+  "IDENTITY_MISMATCH",
+  "FINGERPRINT_MISMATCH",
+  "EXPIRED_OR_REVOKED",
+  "ERROR",
+] as const
+
+export type EbayFulfillmentTrackingConnectionState =
+  typeof EBAY_FULFILLMENT_TRACKING_CONNECTION_STATES[number]
+
+export function ebayFulfillmentTrackingScopeConfirmed(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null
+  const scopes = new Set(value.trim().split(/\s+/u))
+  return scopes.has(EBAY_FULFILLMENT_TRACKING_WRITE_SCOPE)
+}
+
+export function classifyEbayFulfillmentTrackingConnectionError(
+  value: unknown,
+): EbayFulfillmentTrackingConnectionState {
+  const code = typeof value === "string" ? value : ""
+  if (code.includes("INVALID_SCOPE") || code.includes("SCOPE_MISSING")) {
+    return "SCOPE_MISSING"
+  }
+  if (code.includes("FINGERPRINT_MISMATCH")) return "FINGERPRINT_MISMATCH"
+  if (code.includes("IDENTITY_MISMATCH")) return "IDENTITY_MISMATCH"
+  if (
+    code.includes("INVALID_GRANT") || code.includes("REVOKED") ||
+    code.includes("EXPIRED")
+  ) return "EXPIRED_OR_REVOKED"
+  return "ERROR"
+}
+
 export const EBAY_FULFILLMENT_TRACKING_CALLBACK_PATH =
   "/api/admin/ebay/fulfillment-tracking-oauth/callback"
 export const EBAY_FULFILLMENT_TRACKING_PREVIEW_BRANCH_HOST =

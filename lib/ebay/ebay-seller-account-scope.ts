@@ -13,13 +13,15 @@ export function ebayProductionAccountFingerprint(userId: string) {
     .digest("hex")
 }
 
-export function getEbayProductionIdentityBindingConfiguration() {
+export function getEbayProductionIdentityBindingConfiguration(
+  environment: NodeJS.ProcessEnv = process.env,
+) {
   const expectedUserId =
-    process.env.EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID?.trim() ?? ""
+    environment.EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID?.trim() ?? ""
   const rawConfiguredFingerprint =
-    process.env.EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_CREDENTIAL_FINGERPRINT
+    environment.EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_CREDENTIAL_FINGERPRINT
       ?.trim()
-    || process.env.EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_ACCOUNT_FINGERPRINT
+    || environment.EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_ACCOUNT_FINGERPRINT
       ?.trim()
     || ""
   const configuredFingerprint = normalizedFingerprint(

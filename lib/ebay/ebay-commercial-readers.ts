@@ -121,8 +121,11 @@ export async function verifyEbayCommercialOfficialAccount(
   const userMatches = !identity.expectedUserId ||
     identity.expectedUserId.toLocaleLowerCase("en-US") === userId.toLocaleLowerCase("en-US")
   const fingerprintMatches = ebayProductionAccountFingerprint(userId) === identity.expectedAccountFingerprint
-  if (!userMatches || !fingerprintMatches) {
+  if (!userMatches) {
     throw new Error("EBAY_COMMERCIAL_ACCOUNT_IDENTITY_MISMATCH")
+  }
+  if (!fingerprintMatches) {
+    throw new Error("EBAY_COMMERCIAL_ACCOUNT_FINGERPRINT_MISMATCH")
   }
   return {
     identityMatch: true as const,

@@ -5,8 +5,10 @@ import { createHash } from "node:crypto"
 import { classifyEbayCommercialOAuthFailure } from "./ebay-commercial-oauth-domain"
 import { verifyEbayCommercialOfficialAccount } from "./ebay-commercial-readers"
 import {
+  classifyEbayFulfillmentTrackingConnectionError,
   EBAY_FULFILLMENT_TRACKING_OAUTH_SCOPES,
   EBAY_FULFILLMENT_TRACKING_WRITE_SCOPE,
+  ebayFulfillmentTrackingScopeConfirmed,
 } from "./ebay-fulfillment-tracking-oauth-domain"
 import { getEbayProductionIdentityBindingConfiguration } from "./ebay-seller-account-scope"
 
@@ -76,7 +78,7 @@ export function getEbayFulfillmentTrackingConfiguration(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const value = credentials(environment)
-  const identity = getEbayProductionIdentityBindingConfiguration()
+  const identity = getEbayProductionIdentityBindingConfiguration(environment)
   const preview = environment.VERCEL_ENV === "preview"
   const staging = stagingMatches(environment)
   const branch = environment.VERCEL_GIT_COMMIT_REF === AUTHORIZED_PREVIEW_BRANCH
@@ -98,7 +100,7 @@ export function getEbayFulfillmentTrackingConfiguration(
     allFlagsEnabled,
     executable: preview && staging && branch && allFlagsEnabled && tokenPresent &&
       clientPairPresent && identity.bound,
-    oauthAuthorizationReady: preview && staging && branch && flags.oauthEnabled &&
+    oauthAuthorizationReady: preview && staging && branch &&
       clientPairPresent && Boolean(value.runame) && identity.bound,
     token: tokenPresent ? "PRESENT" as const : "MISSING" as const,
     tokenSource: "EBAY_FULFILLMENT_TRACKING_REFRESH_TOKEN" as const,
@@ -135,7 +137,6 @@ function assertEbayFulfillmentTrackingOAuthPreflightEnabled(
   if (!configuration.preview) throw new Error("EBAY_FULFILLMENT_TRACKING_PRODUCTION_BLOCKED")
   if (!configuration.staging) throw new Error("EBAY_FULFILLMENT_TRACKING_STAGING_REQUIRED")
   if (!configuration.branchAuthorized) throw new Error("EBAY_FULFILLMENT_TRACKING_BRANCH_BLOCKED")
-  if (!configuration.flags.oauthEnabled) throw new Error("EBAY_FULFILLMENT_TRACKING_OAUTH_DISABLED")
   if (configuration.token !== "PRESENT" || configuration.clientPair !== "PRESENT" || !configuration.identityBound) {
     throw new Error("EBAY_FULFILLMENT_TRACKING_OAUTH_NOT_READY")
   }
@@ -179,6 +180,10 @@ export async function getEbayFulfillmentTrackingAccessToken(
   }
   const accessToken = text(payload.access_token)
   if (!accessToken) throw new Error("EBAY_FULFILLMENT_TRACKING_OAUTH_MALFORMED_REQUEST")
+  const returnedScopeConfirmed = ebayFulfillmentTrackingScopeConfirmed(payload.scope)
+  if (returnedScopeConfirmed === false) {
+    throw new Error("EBAY_FULFILLMENT_TRACKING_OAUTH_SCOPE_MISSING")
+  }
   await verifyEbayCommercialOfficialAccount(accessToken, fetchImpl)
   cachedToken = {
     value: accessToken,
@@ -197,11 +202,21 @@ export async function preflightEbayFulfillmentTrackingOAuth(
 ) {
   try {
     const token = await getEbayFulfillmentTrackingAccessToken(fetchImpl, environment)
-    await verifyEbayCommercialOfficialAccount(token, fetchImpl)
+    const identity = await verifyEbayCommercialOfficialAccount(token, fetchImpl)
+    const configuration = getEbayFulfillmentTrackingConfiguration(environment)
     return {
       status: "READY" as const,
       scopeConfirmed: true as const,
-      identityMatch: true as const,
+      refreshSuccessful: true as const,
+      identityMatch: identity.identityMatch,
+      fingerprintMatch: identity.fingerprintMatches,
+      environmentPreview: configuration.preview,
+      branchMatch: configuration.branchAuthorized,
+      adapterConfigured: configuration.preview && configuration.staging &&
+        configuration.branchAuthorized && configuration.clientPair === "PRESENT" &&
+        configuration.token === "PRESENT" && configuration.identityBound,
+      writeGate: configuration.flags.writeEnabled ? "ON" as const : "OFF" as const,
+      submitter: configuration.flags.submitterEnabled ? "ON" as const : "OFF" as const,
       tokenSource: "EBAY_FULFILLMENT_TRACKING_REFRESH_TOKEN" as const,
       getOrdersUsed: false as const,
       ebayWrites: 0 as const,
@@ -212,9 +227,21 @@ export async function preflightEbayFulfillmentTrackingOAuth(
       ? error.message
       : "EBAY_FULFILLMENT_TRACKING_OAUTH_UNKNOWN_ERROR"
     return {
-      status: code,
+      status: classifyEbayFulfillmentTrackingConnectionError(code),
+      errorCode: code,
       scopeConfirmed: false as const,
+      refreshSuccessful: false as const,
       identityMatch: null,
+      fingerprintMatch: null,
+      environmentPreview: getEbayFulfillmentTrackingConfiguration(environment).preview,
+      branchMatch: getEbayFulfillmentTrackingConfiguration(environment).branchAuthorized,
+      adapterConfigured: false as const,
+      writeGate: getEbayFulfillmentTrackingConfiguration(environment).flags.writeEnabled
+        ? "ON" as const
+        : "OFF" as const,
+      submitter: getEbayFulfillmentTrackingConfiguration(environment).flags.submitterEnabled
+        ? "ON" as const
+        : "OFF" as const,
       tokenSource: "EBAY_FULFILLMENT_TRACKING_REFRESH_TOKEN" as const,
       getOrdersUsed: false as const,
       ebayWrites: 0 as const,

@@ -5,6 +5,7 @@ import { NextResponse } from "next/server"
 
 import {
   completeEbayFulfillmentTrackingAuthorization,
+  failEbayFulfillmentTrackingAuthorizationConsent,
   sanitizeEbayFulfillmentTrackingCallbackError,
 } from "@/lib/ebay/ebay-fulfillment-tracking-oauth-authorization"
 import {
@@ -37,11 +38,19 @@ function redirect(req: Request, outcome: "ready" | "error", reason?: string) {
 export async function GET(req: Request) {
   const url = new URL(req.url)
   const callbackError = url.searchParams.get("error")?.trim() ?? ""
-  if (callbackError) return redirect(
-    req,
-    "error",
-    sanitizeEbayFulfillmentTrackingCallbackError(callbackError),
-  )
+  if (callbackError) {
+    const state = url.searchParams.get("state")?.trim() ?? ""
+    await failEbayFulfillmentTrackingAuthorizationConsent(
+      getSupabaseAdminClient(),
+      state,
+      callbackError,
+    ).catch(() => false)
+    return redirect(
+      req,
+      "error",
+      sanitizeEbayFulfillmentTrackingCallbackError(callbackError),
+    )
+  }
   const input = {
     code: url.searchParams.get("code")?.trim() ?? "",
     state: url.searchParams.get("state")?.trim() ?? "",

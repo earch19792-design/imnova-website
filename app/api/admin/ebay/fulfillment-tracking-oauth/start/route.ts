@@ -23,15 +23,10 @@ export async function POST(req: Request) {
     { status: validation.status || 403 },
   )
   try {
-    const input = await req.json() as { publicKeyPem?: unknown }
-    if (typeof input.publicKeyPem !== "string") {
-      throw new Error("EBAY_FULFILLMENT_TRACKING_AUTHORIZATION_PUBLIC_KEY_REQUIRED")
-    }
     return NextResponse.json({
       success: true,
       ...await startEbayFulfillmentTrackingAuthorization(
         getSupabaseAdminClient(),
-        input.publicKeyPem,
       ),
     }, { headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } })
   } catch (error) {
