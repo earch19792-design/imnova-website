@@ -12,6 +12,7 @@ import {
   renderDailyCommercialSummary,
   renderSaleDetectedMessage,
   stableCommercialKey,
+  selectExactCommercialSupply,
   type CommercialEvent,
   type CommercialSnapshot,
   type CommercialThresholds,
@@ -593,25 +594,45 @@ async function loadSupplyRows(supabase: SupabaseClient, listings: ListingRow[]) 
   const productIds = [...new Set(listings
     .map((row) => row.market_radar_product_id)
     .filter((value): value is string => Boolean(value)))]
+  const variantIds = [...new Set(listings
+    .map((row) => row.supplier_variant_id)
+    .filter((value): value is string => Boolean(value)))]
+  const supplierSkus = [...new Set(listings
+    .map((row) => row.supplier_sku)
+    .filter((value): value is string => Boolean(value)))]
   const rows: SupplyRow[] = []
-  for (let index = 0; index < productIds.length; index += 100) {
-    const { data, error } = await supabase
-      .from("market_radar_latest_variants")
-      .select("product_id,supplier_variant_id,sku,title,variant_title,price,available,inventory_quantity,product_url,captured_at")
-      .in("product_id", productIds.slice(index, index + 100))
-    if (error) throw new Error("COMMERCIAL_LUNA_SUPPLY_READ_FAILED")
-    rows.push(...((data ?? []) as SupplyRow[]))
+  const selectors: Array<["product_id" | "supplier_variant_id" | "sku", string[]]> = [
+    ["product_id", productIds],
+    ["supplier_variant_id", variantIds],
+    ["sku", supplierSkus],
+  ]
+  for (const [column, values] of selectors) {
+    for (let index = 0; index < values.length; index += 100) {
+      const { data, error } = await supabase
+        .from("market_radar_latest_variants")
+        .select("product_id,supplier_variant_id,sku,title,variant_title,price,available,inventory_quantity,product_url,captured_at")
+        .in(column, values.slice(index, index + 100))
+      if (error) throw new Error("COMMERCIAL_LUNA_SUPPLY_READ_FAILED")
+      rows.push(...((data ?? []) as SupplyRow[]))
+    }
   }
-  return rows
+  return [...new Map(rows.map((row) => [
+    `${row.product_id}:${row.supplier_variant_id ?? ""}:${row.sku ?? ""}`,
+    row,
+  ])).values()]
 }
 
 function supplyForListing(listing: ListingRow, supplies: SupplyRow[]) {
-  const candidates = supplies.filter((row) => row.product_id === listing.market_radar_product_id)
-  return candidates.find((row) =>
-    listing.supplier_variant_id && row.supplier_variant_id === listing.supplier_variant_id
-  ) ?? candidates.find((row) =>
-    listing.supplier_sku && row.sku === listing.supplier_sku
-  ) ?? (candidates.length === 1 ? candidates[0] : null)
+  return selectExactCommercialSupply({
+    productId: listing.market_radar_product_id,
+    variantId: listing.supplier_variant_id,
+    sku: listing.supplier_sku,
+  }, supplies.map((row) => ({
+    productId: row.product_id,
+    variantId: row.supplier_variant_id,
+    sku: row.sku,
+    value: row,
+  })))
 }
 
 async function loadPreviousSnapshots(

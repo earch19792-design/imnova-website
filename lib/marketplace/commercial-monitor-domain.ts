@@ -60,6 +60,24 @@ export function mergePreviousCommercialSnapshot(
   return latest
 }
 
+export function selectExactCommercialSupply<T>(
+  listing: { productId?: string | null; variantId?: string | null; sku?: string | null },
+  supplies: Array<{ productId?: string | null; variantId?: string | null; sku?: string | null; value: T }>,
+) {
+  const expected = {
+    productId: listing.productId?.trim() || null,
+    variantId: listing.variantId?.trim() || null,
+    sku: listing.sku?.trim() || null,
+  }
+  if (!expected.productId && !expected.variantId && !expected.sku) return null
+  const matches = supplies.filter((row) =>
+    (!expected.productId || row.productId === expected.productId) &&
+    (!expected.variantId || row.variantId === expected.variantId) &&
+    (!expected.sku || row.sku === expected.sku)
+  )
+  return matches.length === 1 ? matches[0].value : null
+}
+
 export type CommercialEvent = {
   eventType: string
   severity: CommercialSeverity
