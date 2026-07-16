@@ -793,7 +793,12 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
         ? classification.reasons
         : ["IMPORTED_EVIDENCE_REQUIRES_HUMAN_REVIEW"],
       cohort: sourceAccepted ? cohort : null,
-      identity: comparableIdentity,
+      identity: {
+        ...comparableIdentity,
+        distributor: null,
+        vendor: null,
+        normalizedProductName: null,
+      },
       pricing: {
         currency: normalizedText(comparable.currency) ?? "USD",
         itemPrice: itemPrice === null ? null : roundMoney(itemPrice),
@@ -1036,3 +1041,17 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
 export type WinnerEvidenceDecisionPackage = ReturnType<
   typeof buildWinnerEvidenceDecisionPackage
 >
+
+export function verifyWinnerEvidenceDecisionPackageIntegrity(
+  value: WinnerEvidenceDecisionPackage,
+) {
+  const {
+    inputHash: _inputHash,
+    packageHash,
+    ...packagePayload
+  } = value
+  return packageHash === sha256({
+    ...packagePayload,
+    generatedAt: undefined,
+  })
+}

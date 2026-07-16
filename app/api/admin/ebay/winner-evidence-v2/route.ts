@@ -6,8 +6,10 @@ import { NextResponse } from "next/server"
 
 import {
   createWinnerEvidenceDecisionPackage,
+  readWinnerEvidenceDecisionPackage,
   winnerEvidencePreviewConfiguration,
 } from "@/lib/ebay/ebay-winner-evidence-v2-service"
+import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
 function response(payload: unknown, status = 200) {
@@ -34,6 +36,25 @@ export async function GET(req: Request) {
     validation.status || 403,
   )
   const configuration = winnerEvidencePreviewConfiguration()
+  const packageId = new URL(req.url).searchParams.get("packageId")?.trim() ?? ""
+  if (packageId) {
+    try {
+      const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+      if (!accountKey) throw new Error("WINNER_EVIDENCE_ACCOUNT_SCOPE_REQUIRED")
+      const result = await readWinnerEvidenceDecisionPackage(
+        getSupabaseAdminClient(),
+        packageId,
+        accountKey,
+      )
+      return response({ success: true, ...result })
+    } catch (error) {
+      const code = safeCode(error)
+      return response(
+        { success: false, error: code },
+        code === "WINNER_EVIDENCE_PACKAGE_NOT_FOUND" ? 404 : 400,
+      )
+    }
+  }
   return response({
     success: true,
     configuration,
@@ -67,9 +88,14 @@ export async function POST(req: Request) {
       400,
     )
     const input = record(body.input)
+    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    if (!accountKey) throw new Error("WINNER_EVIDENCE_ACCOUNT_SCOPE_REQUIRED")
     const result = await createWinnerEvidenceDecisionPackage(
       getSupabaseAdminClient(),
-      input as Parameters<typeof createWinnerEvidenceDecisionPackage>[1],
+      {
+        ...input,
+        marketplaceAccountKey: accountKey,
+      } as Parameters<typeof createWinnerEvidenceDecisionPackage>[1],
       {
         useOfficialRead: body.useOfficialRead === true,
         persist: body.persist !== false,

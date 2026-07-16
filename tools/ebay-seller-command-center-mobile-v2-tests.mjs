@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 
 const mobile = readFileSync("app/admin/ebay/mobile-review/page.tsx", "utf8")
+const loop1Summary = readFileSync("app/admin/ebay/mobile-review/loop1-winner-analysis-summary.tsx", "utf8")
 const queue = readFileSync("app/admin/ebay/mobile-review/opportunity-command-center.tsx", "utf8")
 const workspace = readFileSync("app/admin/ebay/listing-workspace/page.tsx", "utf8")
 const api = readFileSync("app/api/admin/ebay/command-center/route.ts", "utf8")
@@ -49,7 +50,10 @@ test("listing entry points use one safe name and remain gated", () => {
   assert.match(queue, /Registrar listing manual/)
   assert.match(queue, /row\.can_open_listing_workspace \?/)
   assert.match(mobile, /review\.opportunity\.can_open_listing_workspace \?/)
-  assert.match(mobile, /selectedQueueOpportunity\.can_open_listing_workspace \?/)
+  assert.match(mobile, /Loop 1 — Analizar producto ganador/)
+  assert.match(mobile, /Loop1WinnerAnalysisSummary/)
+  assert.match(loop1Summary, /Guardar paquete de decisión/)
+  assert.match(loop1Summary, /<dt className="text-white\/50">canPublish<\/dt><dd className="font-black">false<\/dd>/)
   assert.match(queue, /row\.can_prepare_listing_package \? "Preparar draft" : "Completar paquete"/)
   assert.doesNotMatch(`${mobile}\n${queue}\n${hub}`, />Workspace</)
   assert.doesNotMatch(`${mobile}\n${hub}`, />4\. Publicar</)

@@ -5,6 +5,7 @@ import {
 } from "./ebay-seller-keyword-demand-gateway"
 import {
   buildWinnerEvidenceDecisionPackage,
+  verifyWinnerEvidenceDecisionPackageIntegrity,
   type ProductIdentityInput,
   type WinnerComparableInput,
   type WinnerEvidenceDecisionPackage,
@@ -14,6 +15,20 @@ import {
 const STAGING_REF = "vsfthqydfrdzulldbfbe"
 
 type JsonRecord = Record<string, unknown>
+
+export type WinnerEvidenceClientInput = Omit<
+  WinnerEvidenceInput,
+  "marketplaceAccountKey"
+>
+
+export type SanitizedWinnerEvidenceDecisionPackage = Omit<
+  WinnerEvidenceDecisionPackage,
+  "marketplaceAccountKey"
+> & {
+  accountScopeBound: true
+  secretsExposed: false
+  piiExposed: false
+}
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -128,13 +143,64 @@ function uuidOrNull(value: unknown) {
     : null
 }
 
-export function sanitizeWinnerEvidencePackage(value: WinnerEvidenceDecisionPackage) {
+export function sanitizeWinnerEvidencePackage(
+  value: WinnerEvidenceDecisionPackage,
+): SanitizedWinnerEvidenceDecisionPackage {
   const { marketplaceAccountKey: _marketplaceAccountKey, ...safe } = value
   return {
     ...safe,
     accountScopeBound: true,
     secretsExposed: false,
     piiExposed: false,
+  }
+}
+
+export async function readWinnerEvidenceDecisionPackage(
+  supabase: SupabaseClient,
+  packageId: string,
+  marketplaceAccountKey: string,
+) {
+  if (!winnerEvidencePreviewConfiguration().configured) {
+    throw new Error("WINNER_EVIDENCE_PREVIEW_STAGING_REQUIRED")
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(packageId)) {
+    throw new Error("WINNER_EVIDENCE_PACKAGE_ID_INVALID")
+  }
+  const { data, error } = await supabase
+    .from("marketplace_listing_decision_packages")
+    .select("id,status,package_version,package_hash,verdict,generated_at,package_payload")
+    .eq("id", packageId)
+    .eq("marketplace_account_key", marketplaceAccountKey)
+    .eq("marketplace", "EBAY_US")
+    .maybeSingle()
+  if (error) throw new Error("WINNER_EVIDENCE_PACKAGE_READ_FAILED")
+  if (!data) throw new Error("WINNER_EVIDENCE_PACKAGE_NOT_FOUND")
+  const payload = data.package_payload as WinnerEvidenceDecisionPackage
+  if (
+    payload.marketplaceAccountKey !== marketplaceAccountKey ||
+    payload.marketplace !== "EBAY_US" ||
+    payload.packageHash !== data.package_hash ||
+    payload.packageVersion !== data.package_version ||
+    payload.decision.verdict !== data.verdict ||
+    !verifyWinnerEvidenceDecisionPackageIntegrity(payload)
+  ) {
+    throw new Error("WINNER_EVIDENCE_PACKAGE_INTEGRITY_MISMATCH")
+  }
+  return {
+    packageId: data.id as string,
+    status: data.status as string,
+    generatedAt: data.generated_at as string,
+    package: sanitizeWinnerEvidencePackage(payload),
+    safety: {
+      previewOnly: true,
+      stagingOnly: true,
+      canPublish: false,
+      ebayWrites: 0,
+      openAiCalls: 0,
+      imagesGenerated: 0,
+      draftsCreated: 0,
+      publicationsCreated: 0,
+    },
   }
 }
 
@@ -218,6 +284,11 @@ export async function createWinnerEvidenceDecisionPackage(
       stagingOnly: true,
       ebayMethods: officialRead.executed ? ["GET"] : [],
       ebayWrites: 0,
+      openAiCalls: 0,
+      imagesGenerated: 0,
+      draftsCreated: 0,
+      publicationsCreated: 0,
+      canPublish: false,
       browserAutomationUsed: false,
       scrapingUsed: false,
       competitorContentCopied: false,
