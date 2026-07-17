@@ -232,6 +232,7 @@
     const normalized = text(value)
     if (!normalized) return null
     const lowered = normalized.toLowerCase()
+      .replace(/^(?:last\s+sold(?:\s+date)?|sold\s+date|fecha\s+de\s+(?:la\s+)?[úu]ltima\s+venta)\s*:?\s*/i, "")
     const now = new Date()
     const toIsoDate = (date) => date.toISOString().slice(0, 10)
     if (lowered === "today" || lowered === "hoy") return toIsoDate(now)
@@ -489,6 +490,95 @@
     })
   }
 
+  // eBay can collapse the research grid into a responsive layout where the
+  // visible column labels remain in the document but no longer align with the
+  // values. Keep the Item ID as the row anchor and read the values in its
+  // vertical band without relying on horizontal cell coordinates.
+  function relaxedRowsFromItemLinks(container, headerElements = []) {
+    const recognizedHeaders = headerElements.length ? headerElements : deepQueryAll(
+      "th,[role='columnheader'],div,span,p,a,button", container,
+    ).filter(visible).filter((element) =>
+      canonicalHeader(text(element.innerText || element.textContent)))
+    const headerBottom = recognizedHeaders.length
+      ? Math.max(...recognizedHeaders.map((element) => elementRect(element).bottom))
+      : Number.NEGATIVE_INFINITY
+    const rawLinks = deepQueryAll('a[href*="/itm/"]', container).filter(visible)
+      .filter((link) => listingIdFromLink(link))
+      .filter((link) => elementRect(link).top >= headerBottom - 4)
+      .sort((left, right) => elementRect(left).top - elementRect(right).top)
+      .slice(0, MAX_ITEM_LINKS)
+    const linksByListing = new Map()
+    for (const link of rawLinks) {
+      const listingId = listingIdFromLink(link)
+      const current = linksByListing.get(listingId)
+      if (!current || accessibleLinkText(link).length > accessibleLinkText(current).length) {
+        linksByListing.set(listingId, link)
+      }
+    }
+    const links = [...linksByListing.values()].sort((left, right) =>
+      elementRect(left).top - elementRect(right).top)
+    const bands = []
+    for (const link of links) {
+      const box = elementRect(link)
+      const center = box.top + box.height / 2
+      const duplicate = bands.find((entry) => Math.abs(entry.center - center) <= 8)
+      if (!duplicate) bands.push({ center, link })
+      else if (accessibleLinkText(link).length > accessibleLinkText(duplicate.link).length) {
+        duplicate.link = link
+      }
+    }
+    const gaps = bands.slice(1).map((entry, index) => entry.center - bands[index].center)
+      .filter((gap) => gap > 8 && gap < 400).sort((left, right) => left - right)
+    const typicalGap = gaps[Math.floor(gaps.length / 2)] ?? 72
+    const candidates = smallestVisibleMatches(container, `${CELL_SELECTOR},div,span,p,a,time`)
+    const aliasesFor = (field) => HEADER_ALIASES[field]?.map((alias) => key(alias)) ?? []
+    const valueForField = (field, rowCandidates) => rowCandidates.flatMap((element) => {
+      const box = elementRect(element)
+      return candidateFieldValues(element, field).flatMap((value) => {
+        const normalized = text(value)
+        if (normalized.length > 100 || !requiredFieldValid(field, normalized)) return []
+        const valueKey = key(normalized)
+        let score = 100
+        if (aliasesFor(field).some((alias) => alias && valueKey.includes(alias))) score += 120
+        if (field === "averageSoldPrice") {
+          if (/[$€£]|\bfree\b/i.test(normalized)) score += 30
+          if (/shipping|item\s+sales|total\s+sales|ventas|env[ií]o/i.test(normalized)) score -= 140
+        }
+        if (field === "totalSold") {
+          if (/^\s*[\d,]+(?:\s+sold)?\s*$/i.test(normalized)) score += 40
+          if (/item\s+sales|total\s+sales|average\s+sold\s+price|shipping|ventas|env[ií]o/i.test(normalized)) score -= 140
+        }
+        if (field === "lastSoldDate") {
+          if (dateText(normalized)) score += 40
+          if (/sold|venta|date|fecha/i.test(normalized)) score += 40
+        }
+        return [{ value: field === "lastSoldDate" ? dateText(normalized) ?? normalized : normalized,
+          score, area: box.width * box.height }]
+      })
+    }).sort((left, right) => right.score - left.score || left.area - right.area ||
+      left.value.length - right.value.length)[0]?.value
+    return bands.flatMap((entry, index) => {
+      const previous = bands[index - 1]
+      const next = bands[index + 1]
+      const lower = Math.max(headerBottom,
+        previous ? (previous.center + entry.center) / 2 : entry.center - typicalGap / 2)
+      const upper = next ? (entry.center + next.center) / 2 : entry.center + typicalGap / 2
+      const rowCandidates = candidates.filter((element) => {
+        const box = elementRect(element)
+        const center = box.top + box.height / 2
+        return center >= lower && center < upper && box.width > 0 && box.height > 0
+      })
+      const values = {
+        temporaryTitle: accessibleLinkText(entry.link),
+        averageSoldPrice: valueForField("averageSoldPrice", rowCandidates),
+        totalSold: valueForField("totalSold", rowCandidates),
+        lastSoldDate: valueForField("lastSoldDate", rowCandidates),
+      }
+      if (!requiredValuesValid(values)) return []
+      return [{ values, itemLink: entry.link, row: entry.link.parentElement }]
+    })
+  }
+
   function requiredValuesValid(values) {
     return REQUIRED_FIELDS.every((field) => requiredFieldValid(field, values[field]))
   }
@@ -620,10 +710,13 @@
     const coordinateRows = semanticTable || elementRows.length
       ? []
       : coordinateRowsFromItemLinks(container, headerElements, mapped)
-    const bestEffortRows = elementRows.length || coordinateRows.length ? [] : bestEffortRowElements(container, headerElements, mapped)
-    const syntheticRows = elementRows.length || coordinateRows.length || bestEffortRows.length
+    const relaxedRows = elementRows.length || coordinateRows.length
+      ? [] : relaxedRowsFromItemLinks(container, headerElements)
+    const bestEffortRows = elementRows.length || coordinateRows.length || relaxedRows.length
+      ? [] : bestEffortRowElements(container, headerElements, mapped)
+    const syntheticRows = elementRows.length || coordinateRows.length || relaxedRows.length || bestEffortRows.length
       ? [] : bestEffortCardRows(container, headerElements)
-    const rows = [...elementRows, ...coordinateRows, ...bestEffortRows, ...syntheticRows].map(({ values, itemLink, row }) => {
+    const rows = [...elementRows, ...coordinateRows, ...relaxedRows, ...bestEffortRows, ...syntheticRows].map(({ values, itemLink, row }) => {
       const listingId = values.listingId || listingIdFromLink(itemLink)
       const facts = offerFacts(values.temporaryTitle)
       return {
@@ -666,11 +759,15 @@
       const headerElements = headerElementsFor(container)
       const headers = headerElements.map((element) => text(element.innerText || element.textContent))
       const mapped = headers.map(canonicalHeader)
-      if (!REQUIRED_FIELDS.every((field) => mapped.includes(field))) continue
-      const coordinateRows = coordinateRowsFromItemLinks(container, headerElements, mapped)
-      const bestEffortRows = coordinateRows.length ? [] : bestEffortRowElements(container, headerElements, mapped)
-      const syntheticRows = coordinateRows.length || bestEffortRows.length ? [] : bestEffortCardRows(container, headerElements)
-      const rows = [...coordinateRows, ...bestEffortRows, ...syntheticRows].map(({ values, itemLink, row }) => {
+      const hasRequiredHeaders = REQUIRED_FIELDS.every((field) => mapped.includes(field))
+      const coordinateRows = hasRequiredHeaders
+        ? coordinateRowsFromItemLinks(container, headerElements, mapped) : []
+      const relaxedRows = coordinateRows.length ? [] : relaxedRowsFromItemLinks(container, headerElements)
+      const bestEffortRows = coordinateRows.length || relaxedRows.length || !hasRequiredHeaders
+        ? [] : bestEffortRowElements(container, headerElements, mapped)
+      const syntheticRows = coordinateRows.length || relaxedRows.length || bestEffortRows.length || !hasRequiredHeaders
+        ? [] : bestEffortCardRows(container, headerElements)
+      const rows = [...coordinateRows, ...relaxedRows, ...bestEffortRows, ...syntheticRows].map(({ values, itemLink, row }) => {
         const listingId = values.listingId || listingIdFromLink(itemLink)
         return {
           temporaryTitle: values.temporaryTitle,
@@ -889,7 +986,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.0.8"
+  title.textContent = "Seller OS · Product Research · v1.0.9"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"
