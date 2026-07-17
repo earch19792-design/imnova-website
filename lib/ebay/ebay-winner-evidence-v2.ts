@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 
 export const EBAY_WINNER_EVIDENCE_V2_VERSION =
-  "EBAY_WINNER_EVIDENCE_PRODUCT_DECISION_VISUAL_V2_2_2026_07_16"
+  "EBAY_WINNER_EVIDENCE_PRODUCT_DECISION_VISUAL_V2_3_2026_07_16"
 export const PRODUCT_IDENTITY_FINGERPRINT_VERSION =
   "EBAY_PRODUCT_IDENTITY_FINGERPRINT_V2"
 export const WINNER_ECONOMICS_CONFIG_VERSION =
@@ -122,6 +122,18 @@ export type WinnerEvidenceInput = {
   stockAvailable?: number | null
   stockObservedAt?: string | null
   costObservedAt?: string | null
+  listingAiIntake?: {
+    approvedKeywords?: string[] | null
+    category?: { id?: string | null; name?: string | null } | null
+    requiredAspects?: Array<{ name?: string | null; value?: string | null }> | null
+    optionalAspects?: Array<{ name?: string | null; value?: string | null }> | null
+    pricingScenarioName?: string | null
+    includedContents?: string[] | null
+    complianceRestrictions?: string[] | null
+    blockedClaims?: string[] | null
+    allowedImageFacts?: string[] | null
+    locale?: string | null
+  } | null
   now?: string | Date | null
 }
 
@@ -151,6 +163,36 @@ function normalizedText(value: unknown) {
 
 function identityText(value: unknown) {
   return normalizedText(value)?.toLocaleLowerCase("en-US") ?? null
+}
+
+function normalizedListingAiIntake(value: WinnerEvidenceInput["listingAiIntake"]) {
+  if (!value) return null
+  const normalizeArray = (entries: unknown) => [...new Set(
+    (Array.isArray(entries) ? entries : [])
+      .map(normalizedText)
+      .filter((entry): entry is string => Boolean(entry)),
+  )]
+  const normalizeAspects = (entries: unknown) => (Array.isArray(entries) ? entries : [])
+    .map((entry) => entry && typeof entry === "object" && !Array.isArray(entry)
+      ? entry as Record<string, unknown> : {})
+    .map((entry) => ({ name: normalizedText(entry.name), value: normalizedText(entry.value) }))
+    .filter((entry): entry is { name: string; value: string } => Boolean(entry.name && entry.value))
+  const category = value.category ?? null
+  return {
+    approvedKeywords: normalizeArray(value.approvedKeywords),
+    category: {
+      id: normalizedText(category?.id),
+      name: normalizedText(category?.name),
+    },
+    requiredAspects: normalizeAspects(value.requiredAspects),
+    optionalAspects: normalizeAspects(value.optionalAspects),
+    pricingScenarioName: normalizedText(value.pricingScenarioName),
+    includedContents: normalizeArray(value.includedContents),
+    complianceRestrictions: normalizeArray(value.complianceRestrictions),
+    blockedClaims: normalizeArray(value.blockedClaims),
+    allowedImageFacts: normalizeArray(value.allowedImageFacts),
+    locale: normalizedText(value.locale),
+  }
 }
 
 function normalizedPositiveInteger(value: unknown) {
@@ -1010,6 +1052,7 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
       stockObservedAt: normalizedText(input.stockObservedAt),
       costObservedAt: normalizedText(input.costObservedAt),
     },
+    listingAiIntake: normalizedListingAiIntake(input.listingAiIntake),
     decision: {
       verdict,
       blockers,

@@ -64,9 +64,10 @@ import { OpportunityCommandCenter, type Opportunity } from "./opportunity-comman
 import { CommercialMonitorPanel } from "./commercial-monitor-panel"
 import { MarketplaceFulfillmentPanel } from "./marketplace-fulfillment-panel"
 import { Loop1WinnerAnalysisSummary } from "./loop1-winner-analysis-summary"
+import { Loop2ListingAiPanel } from "./loop2-listing-ai-panel"
 
 const emptyReport = buildMobileReviewRealRadarConnector({ products: [] })
-type View = "loop1" | "opportunities" | "top5" | "pinned" | "blocked"
+type View = "loop1" | "loop2" | "opportunities" | "top5" | "pinned" | "blocked"
 
 type ServerReview = {
   id: string
@@ -254,7 +255,7 @@ export default function EbayMobileReviewPage() {
   const [lastActionMessage, setLastActionMessage] = useState("Todavía no realizaste ninguna acción.")
   const [pinnedCandidates, setPinnedCandidates] = useState<PinnedCandidate[]>([])
   const [storageRestored, setStorageRestored] = useState(false)
-  const [view, setView] = useState<View>("loop1")
+  const [view, setView] = useState<View>("loop2")
   const [selectedQueueCandidate, setSelectedQueueCandidate] = useState<RealRadarCandidate | null>(null)
   const [selectedQueueOpportunity, setSelectedQueueOpportunity] = useState<Opportunity | null>(null)
   const [serverReviews, setServerReviews] = useState<ServerReview[]>([])
@@ -1039,7 +1040,10 @@ export default function EbayMobileReviewPage() {
           <p className="sr-only">Radar observó {report.realRadarCandidatesCount} productos y muestra {report.top5Candidates.length} candidatos seleccionables. La fuente y antigüedad del stock están disponibles en los detalles.</p>
           {loadState === "AUTH_REQUIRED" ? <a href="/admin/login?returnTo=%2Fadmin%2Febay%2Fmobile-review" className="mt-3 inline-flex min-h-11 items-center rounded-2xl bg-white px-4 py-2 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200">Iniciar sesión</a> : loadState !== "READY" && <button type="button" onClick={() => void load()} className="mt-3 min-h-11 rounded-2xl bg-white px-4 py-2 font-black text-black">Reintentar lectura</button>}
         </section>
-        {view !== "loop1" && <button type="button" onClick={() => setView("loop1")} className="min-h-12 w-full rounded-2xl bg-violet-200 px-4 font-black text-black">Volver a Loop 1 — Analizar producto ganador</button>}
+        <nav aria-label="Loops activos" className="grid grid-cols-2 gap-2">
+          <button type="button" aria-pressed={view === "loop1"} onClick={() => setView("loop1")} className={`min-h-12 rounded-2xl px-3 text-sm font-black ${view === "loop1" ? "bg-violet-200 text-black" : "border border-violet-200/30 text-violet-50"}`}>Loop 1 · Evidencia</button>
+          <button type="button" aria-pressed={view === "loop2"} onClick={() => setView("loop2")} className={`min-h-12 rounded-2xl px-3 text-sm font-black ${view === "loop2" ? "bg-fuchsia-200 text-black" : "border border-fuchsia-200/30 text-fuchsia-50"}`}>Loop 2 · Listing IA</button>
+        </nav>
         {view === "loop1" && (
           <section aria-labelledby="loop1-main-heading" className="rounded-3xl border border-violet-200/35 bg-violet-200/[0.08] p-4">
             <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-100/70">Validación humana unificada</p>
@@ -1077,8 +1081,9 @@ export default function EbayMobileReviewPage() {
             ) : <p className="mt-3 text-sm text-white/65">Selecciona un candidato para comenzar. No necesitas salir de esta página.</p>}
           </section>
         )}
+        {view === "loop2" && <Loop2ListingAiPanel />}
         {loadState === "READY" && <div className="grid grid-cols-3 gap-2 rounded-2xl border border-white/15 bg-black/30 p-2 text-center"><div className="rounded-xl bg-white/[0.04] px-2 py-3"><span className="text-[10px] font-bold uppercase tracking-wide text-white/55">Observados</span><strong className="mt-1 block text-xl font-black">{report.realRadarCandidatesCount}</strong></div><button type="button" onClick={() => setView("pinned")} className="rounded-xl bg-emerald-200/[0.07] px-2 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200"><span className="text-[10px] font-bold uppercase tracking-wide text-emerald-50/70">En curso</span><strong className="mt-1 block text-xl font-black">{serverReviewsLoadState === "READY" ? serverReviews.length : "—"}</strong></button><button type="button" onClick={() => setView("blocked")} className="rounded-xl bg-rose-200/[0.07] px-2 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-200"><span className="text-[10px] font-bold uppercase tracking-wide text-rose-50/70">Operación</span><strong className="mt-1 block text-xl font-black">{serverReviewsLoadState === "READY" ? alertCount : "—"}</strong></button></div>}
-        <ol aria-label="Flujo seguro de listing" className="grid grid-cols-4 gap-1 rounded-2xl border border-white/10 bg-black/25 p-2 text-center text-[10px] font-black uppercase tracking-wide text-white/60"><li className={view === "opportunities" ? "rounded-xl bg-violet-200 px-1 py-2 text-black" : "px-1 py-2"}>1 Descubrir</li><li className={view === "loop1" || view === "top5" || view === "pinned" ? "rounded-xl bg-cyan-200 px-1 py-2 text-black" : "px-1 py-2"}>2 Validar Loop 1</li><li className="px-1 py-2 text-white/45">3 Loop 2</li><li className={view === "blocked" ? "rounded-xl bg-amber-100 px-1 py-2 text-black" : "px-1 py-2 text-white/45"}>4 Draft / manual</li></ol>
+        <ol aria-label="Flujo seguro de listing" className="grid grid-cols-4 gap-1 rounded-2xl border border-white/10 bg-black/25 p-2 text-center text-[10px] font-black uppercase tracking-wide text-white/60"><li className={view === "opportunities" ? "rounded-xl bg-violet-200 px-1 py-2 text-black" : "px-1 py-2"}>1 Descubrir</li><li className={view === "loop1" || view === "top5" || view === "pinned" ? "rounded-xl bg-cyan-200 px-1 py-2 text-black" : "px-1 py-2"}>2 Validar Loop 1</li><li className={view === "loop2" ? "rounded-xl bg-fuchsia-200 px-1 py-2 text-black" : "px-1 py-2 text-white/45"}>3 Loop 2</li><li className={view === "blocked" ? "rounded-xl bg-amber-100 px-1 py-2 text-black" : "px-1 py-2 text-white/45"}>4 Draft / manual</li></ol>
         {report.fixtureUsed && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4 text-sm"><p className="font-black">FIXTURE/DEMO · no usar para aprobación real</p><p className="mt-2 text-white/80">Fuente actual: fixture modelado · no es data viva. score modelado · Fixture · no precio runtime · Fixture · no Category ID.</p></aside>}
 
         <div role="status" aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.07] p-3 text-sm text-cyan-50">{lastActionMessage}</div>
@@ -1562,7 +1567,7 @@ export default function EbayMobileReviewPage() {
       </section>
       {selectedRadarCandidate && view === "top5" && <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 border-t border-white/15 bg-[#0b1018]/95 p-3 backdrop-blur"><div className="mx-auto flex max-w-xl items-center gap-3"><p className="min-w-0 flex-1 truncate text-sm font-bold">Seleccionado: {selectedRadarCandidate.productTitle}</p><button type="button" onClick={() => setView("loop1")} className="min-h-12 rounded-2xl bg-emerald-200 px-4 font-black text-black">Abrir Loop 1</button></div></div>}
       <SellerOsMobileNav
-        active={view === "pinned" || view === "loop1" ? "in-progress" : view === "blocked" ? "operation" : "opportunities"}
+        active={view === "pinned" || view === "loop1" || view === "loop2" ? "in-progress" : view === "blocked" ? "operation" : "opportunities"}
         operationCount={serverReviewsLoadState === "READY" ? alertCount : 0}
         onNavigate={(destination) => {
           if (destination === "opportunities") { setView("opportunities"); return true }
