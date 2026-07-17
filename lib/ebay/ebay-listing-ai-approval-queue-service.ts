@@ -573,6 +573,7 @@ export async function runListingAiApprovalQueueBatch(input: {
   const queueRows = await loadQueueRows(input.supabase, (variants ?? []).map((row) => row.product_id))
   let analyzed = 0
   let retries = 0
+  const itemPayloads: JsonRecord[] = []
   for (const rawVariant of variants ?? []) {
     const variant = record(rawVariant)
     const queue = queueRows.get(`${variant.product_id}:${variant.supplier_variant_id ?? ""}`) ?? {}
@@ -613,8 +614,7 @@ export async function runListingAiApprovalQueueBatch(input: {
         retries += 1
       }
     }
-    const { error: itemError } = await input.supabase.from("marketplace_listing_approval_queue_items")
-      .upsert({
+    itemPayloads.push({
         run_id: run.id,
         marketplace_account_key: input.accountKey,
         marketplace: MARKETPLACE,
@@ -642,7 +642,11 @@ export async function runListingAiApprovalQueueBatch(input: {
         supplier_shipping_reserve_usd: candidate.supplierShippingReserveUsd,
         analyzed_at: now.toISOString(),
         updated_at: now.toISOString(),
-      }, { onConflict: "run_id,market_radar_product_id,supplier_variant_id" })
+      })
+  }
+  if (itemPayloads.length) {
+    const { error: itemError } = await input.supabase.from("marketplace_listing_approval_queue_items")
+      .upsert(itemPayloads, { onConflict: "run_id,market_radar_product_id,supplier_variant_id" })
     if (itemError) throw new Error("TOP10_QUEUE_ITEM_PERSIST_FAILED")
   }
   const newOffset = offset + (variants?.length ?? 0)
