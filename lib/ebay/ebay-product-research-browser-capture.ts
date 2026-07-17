@@ -93,10 +93,13 @@ const STOP_WORDS = new Set([
 ])
 
 const REQUIRED_COLUMN_GROUPS = [
-  ["title", "listingtitle", "itemtitle"],
-  ["averagesoldprice", "avgsoldprice", "averageprice"],
-  ["totalsold", "quantitysold", "soldquantity"],
-  ["lastsolddate", "solddate", "lastsold"],
+  ["title", "temporarytitle", "listing", "listingtitle", "item", "itemtitle", "product",
+    "titulo", "anuncio", "articulo", "producto"],
+  ["averagesoldprice", "avgsoldprice", "averageprice", "preciomediodeventa",
+    "preciopromediodeventa"],
+  ["totalsold", "quantitysold", "soldquantity", "totalvendido", "cantidadvendida",
+    "unidadesvendidas"],
+  ["lastsolddate", "solddate", "lastsold", "ultimaventa", "fechadeultimaventa"],
 ]
 
 function record(value: unknown): JsonRecord {
@@ -104,7 +107,8 @@ function record(value: unknown): JsonRecord {
 }
 
 function canonicalKey(value: string) {
-  return value.normalize("NFKC").toLocaleLowerCase("en-US").replace(/[^a-z0-9]/g, "")
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("en-US").replace(/[^a-z0-9]/g, "")
 }
 
 function normalizedText(value: unknown, maximum = 300) {
