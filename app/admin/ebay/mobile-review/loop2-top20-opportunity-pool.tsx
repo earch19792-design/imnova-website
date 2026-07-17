@@ -215,7 +215,7 @@ export function Loop2Top20OpportunityPool() {
     setWorkingId("scan"); setError(""); setMessage("")
     try {
       await adminFetch("/api/admin/ebay/listing-ai/approval-queue", {
-        method: "POST", body: JSON.stringify({ action: "scan", batchSize: 20 }),
+        method: "POST", body: JSON.stringify({ action: "scan", batchSize: 3 }),
       })
       await load()
       setMessage("Lote procesado sin OpenAI. Si el scan está PARTIAL, vuelve a pulsar para continuar el checkpoint.")

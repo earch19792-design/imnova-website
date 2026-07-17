@@ -54,8 +54,8 @@ import {
 type JsonRecord = Record<string, unknown>
 
 const MARKETPLACE = "EBAY_US"
-const DEFAULT_BATCH_SIZE = 20
-const MAX_BATCH_SIZE = 50
+const DEFAULT_BATCH_SIZE = 3
+const MAX_BATCH_SIZE = 5
 const LEASE_MS = 2 * 60_000
 const FRESHNESS_MS = 24 * 60 * 60_000
 const DEFAULT_SUPPLIER_SHIPPING_RESERVE_USD = 8
