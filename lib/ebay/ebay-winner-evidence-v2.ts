@@ -102,6 +102,7 @@ export type WinnerComparableInput = {
   imageCount?: number | null
   visualEvidence?: WinnerComparableVisualEvidence | null
   evidenceReviewed?: boolean | null
+  evidenceScope?: "MARKET_WIDE_SOLD_EVIDENCE" | "OWN_ACCOUNT_SOLD_EVIDENCE" | null
 }
 
 export type WinnerEvidenceInput = {
@@ -1012,6 +1013,10 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
         observedAt: normalizedText(comparable.observedAt),
       }),
       source: comparable.source,
+      evidenceScope: comparable.evidenceScope === "MARKET_WIDE_SOLD_EVIDENCE" ||
+        comparable.evidenceScope === "OWN_ACCOUNT_SOLD_EVIDENCE"
+        ? comparable.evidenceScope
+        : null,
       sourceListingId: normalizedText(comparable.sourceListingId),
       observedAt: normalizedText(comparable.observedAt),
       classification: sourceAccepted ? classification.classification : "INVALID_COMPARABLE" as const,
@@ -1183,6 +1188,11 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
       counts: {
         activeExact: activeExact.length,
         soldOrCompletedExact: soldExact.length,
+        confirmedSoldExact: soldExact.length,
+        marketWideSoldExact: soldExact.filter((row) =>
+          row.evidenceScope === "MARKET_WIDE_SOLD_EVIDENCE").length,
+        ownAccountSoldExact: soldExact.filter((row) =>
+          row.evidenceScope === "OWN_ACCOUNT_SOLD_EVIDENCE").length,
         estimatedDemandSignals: estimatedSignals.length,
         excludedOrNonExact: normalizedComparables.length - activeExact.length - soldExact.length - estimatedSignals.length,
       },
@@ -1193,6 +1203,7 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
           : soldExact.length
             ? "REVIEWED_IMPORT"
             : "UNAVAILABLE",
+        completedWithoutConfirmedSaleIncluded: false,
         scrapingUsed: false,
         browserAutomationUsed: false,
       },

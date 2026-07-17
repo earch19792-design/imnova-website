@@ -209,7 +209,12 @@ type SoldEvidenceStatus = {
     id: string
     source_type: string
     source_export_type: string
-    row_count: number
+    evidence_scope: "MARKET_WIDE_SOLD_EVIDENCE" | "OWN_ACCOUNT_SOLD_EVIDENCE"
+    market_wide_schema_confirmed: boolean
+    source_row_count: number
+    valid_count: number
+    confirmed_sale_count: number
+    completed_without_sale_count: number
     imported_count: number
     duplicate_count: number
     rejected_count: number
@@ -217,6 +222,12 @@ type SoldEvidenceStatus = {
     source_observed_end: string | null
     imported_at: string
   } | null
+  coverage: {
+    exactMatches: number
+    ambiguousMatches: number
+    withoutLunaMatch: number
+    top20CandidatesEnriched: number
+  }
   maxRows: number
   recencyDays: number
   rawFilesStored: false
@@ -382,6 +393,11 @@ export function Loop2Top20OpportunityPool() {
         importedCount: number
         duplicateCount: number
         rejectedCount: number
+        rowCount: number
+        validCount: number
+        confirmedSaleCount: number
+        completedWithoutSaleCount: number
+        evidenceScope: "MARKET_WIDE_SOLD_EVIDENCE" | "OWN_ACCOUNT_SOLD_EVIDENCE"
         scan: { status?: string } | null
       } }>("/api/admin/ebay/listing-ai/sold-evidence", {
         method: "POST",
@@ -398,7 +414,7 @@ export function Loop2Top20OpportunityPool() {
       await Promise.all([load(), loadSoldEvidence()])
       setMessage(result.result.duplicate
         ? "Este archivo oficial ya había sido importado; no se duplicó evidencia ni trabajo."
-        : `Evidencia importada: ${result.result.importedCount}; duplicadas ${result.result.duplicateCount}; rechazadas ${result.result.rejectedCount}. Seller OS reanalizará el mismo run automáticamente.`)
+        : `Archivo amplio procesado: ${result.result.rowCount} filas; válidas ${result.result.validCount}; ventas confirmadas ${result.result.confirmedSaleCount}; completados sin venta ${result.result.completedWithoutSaleCount}; importadas ${result.result.importedCount}; duplicadas ${result.result.duplicateCount}; rechazadas ${result.result.rejectedCount}. Seller OS reanalizará el mismo run automáticamente.`)
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "SOLD_EVIDENCE_IMPORT_FAILED")
     } finally {
@@ -506,19 +522,28 @@ export function Loop2Top20OpportunityPool() {
           </div>}
           <section aria-labelledby="sold-evidence-import-heading" className="space-y-3 rounded-xl border border-amber-200/20 bg-amber-100/[0.04] p-3 text-xs">
             <div>
-              <h4 id="sold-evidence-import-heading" className="font-black">Evidencia oficial vendida/completada</h4>
-              <p className="mt-1 text-white/60">Importa en lote un CSV/JSON exportado oficialmente por eBay. No es una investigación producto por producto y no llama OpenAI.</p>
+              <h4 id="sold-evidence-import-heading" className="font-black">Evidencia oficial de ventas confirmadas</h4>
+              <p className="mt-1 text-white/60">Importación masiva, temporal y ocasional de un solo export oficial amplio. No es investigación producto por producto y no llama OpenAI.</p>
             </div>
             <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <div><dt className="text-white/45">Observaciones revisadas</dt><dd className="font-black">{soldEvidenceStatus?.reviewedObservationCount ?? 0}</dd></div>
               <div><dt className="text-white/45">Último import</dt><dd>{soldEvidenceStatus?.latest?.imported_at ? new Date(soldEvidenceStatus.latest.imported_at).toLocaleString("es") : "N/D"}</dd></div>
               <div><dt className="text-white/45">Ventana admitida</dt><dd>{soldEvidenceStatus?.recencyDays ?? 90} días</dd></div>
               <div><dt className="text-white/45">Privacidad</dt><dd>PII 0 · raw files 0</dd></div>
+              <div><dt className="text-white/45">Filas totales / válidas</dt><dd>{soldEvidenceStatus?.latest?.source_row_count ?? 0} / {soldEvidenceStatus?.latest?.valid_count ?? 0}</dd></div>
+              <div><dt className="text-white/45">Ventas confirmadas</dt><dd>{soldEvidenceStatus?.latest?.confirmed_sale_count ?? 0}</dd></div>
+              <div><dt className="text-white/45">Completados sin venta</dt><dd>{soldEvidenceStatus?.latest?.completed_without_sale_count ?? 0}</dd></div>
+              <div><dt className="text-white/45">Duplicadas / rechazadas</dt><dd>{soldEvidenceStatus?.latest?.duplicate_count ?? 0} / {soldEvidenceStatus?.latest?.rejected_count ?? 0}</dd></div>
+              <div><dt className="text-white/45">Match exacto Luna</dt><dd>{soldEvidenceStatus?.coverage.exactMatches ?? 0}</dd></div>
+              <div><dt className="text-white/45">Ambiguas</dt><dd>{soldEvidenceStatus?.coverage.ambiguousMatches ?? 0}</dd></div>
+              <div><dt className="text-white/45">Sin match Luna</dt><dd>{soldEvidenceStatus?.coverage.withoutLunaMatch ?? 0}</dd></div>
+              <div><dt className="text-white/45">Top 20 enriquecidos</dt><dd>{soldEvidenceStatus?.coverage.top20CandidatesEnriched ?? 0}</dd></div>
             </dl>
+            <p className="text-white/55">Semántica de la última fuente: {soldEvidenceStatus?.latest?.evidence_scope === "MARKET_WIDE_SOLD_EVIDENCE" ? "mercado completo" : soldEvidenceStatus?.latest ? "ventas de la cuenta propia" : "N/D"}. Un listing finalizado sin venta nunca se registra como CONFIRMED_SOLD.</p>
             <label className="block">Tipo de export oficial
               <select value={soldEvidenceSource} onChange={(event) => setSoldEvidenceSource(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-white/20 bg-black/30 px-3">
                 <option value="EBAY_PRODUCT_RESEARCH_EXPORT">eBay Product Research</option>
-                <option value="EBAY_SELLER_HUB_EXPORT">eBay Seller Hub</option>
+                <option value="EBAY_SELLER_HUB_EXPORT">eBay Seller Hub (cuenta propia por defecto)</option>
                 <option value="EBAY_MARKETPLACE_INSIGHTS_EXPORT">eBay Marketplace Insights</option>
               </select>
             </label>

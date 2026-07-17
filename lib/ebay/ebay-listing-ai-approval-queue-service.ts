@@ -628,6 +628,10 @@ function comparableInputFromPackage(payload: JsonRecord): WinnerComparableInput[
     const patterns = record(entry.patterns)
     return {
       source: entry.source as WinnerComparableInput["source"],
+      evidenceScope: entry.evidenceScope === "MARKET_WIDE_SOLD_EVIDENCE" ||
+        entry.evidenceScope === "OWN_ACCOUNT_SOLD_EVIDENCE"
+        ? entry.evidenceScope as NonNullable<WinnerComparableInput["evidenceScope"]>
+        : null,
       sourceListingId: text(entry.sourceListingId),
       observedAt: text(entry.observedAt),
       identity: {

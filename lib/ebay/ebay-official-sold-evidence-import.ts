@@ -7,7 +7,7 @@ import { classifyWinnerComparable, normalizeProductIdentity } from "./ebay-winne
 import type { ProductIdentityInput, WinnerComparableInput, WinnerComparableVisualEvidence } from "./ebay-winner-evidence-v2.ts"
 
 export const OFFICIAL_SOLD_EVIDENCE_IMPORT_VERSION =
-  "EBAY_OFFICIAL_SOLD_EVIDENCE_IMPORT_V1_2026_07_17"
+  "EBAY_OFFICIAL_SOLD_EVIDENCE_IMPORT_V2_2026_07_17"
 export const OFFICIAL_SOLD_EVIDENCE_MAX_ROWS = 2_000
 export const OFFICIAL_SOLD_EVIDENCE_MAX_BYTES = 2_000_000
 export const OFFICIAL_SOLD_EVIDENCE_RECENCY_DAYS = 90
@@ -17,6 +17,12 @@ export type OfficialSoldEvidenceExport =
   | "EBAY_PRODUCT_RESEARCH_EXPORT"
   | "EBAY_SELLER_HUB_EXPORT"
   | "EBAY_MARKETPLACE_INSIGHTS_EXPORT"
+export type OfficialSoldEvidenceScope =
+  | "MARKET_WIDE_SOLD_EVIDENCE"
+  | "OWN_ACCOUNT_SOLD_EVIDENCE"
+export type OfficialSaleConfirmationBasis =
+  | "SOLD_QUANTITY_POSITIVE"
+  | "EXPLICIT_CONFIRMED_SALE_MINIMUM_ONE"
 
 type JsonRecord = Record<string, unknown>
 
@@ -25,6 +31,8 @@ export type NormalizedOfficialSoldEvidence = {
   evidenceDeduplicationKey: string
   normalizedIdentity: ReturnType<typeof normalizeProductIdentity>
   confirmedSoldQuantity: number
+  evidenceScope: OfficialSoldEvidenceScope
+  saleConfirmationBasis: OfficialSaleConfirmationBasis
   itemPrice: number | null
   shippingCost: number | null
   keywordSignals: string[]
@@ -41,6 +49,8 @@ export type StoredOfficialSoldEvidence = {
   source_listing_reference_hash: string
   normalized_identity: ReturnType<typeof normalizeProductIdentity>
   confirmed_sold_quantity: number
+  evidence_scope: OfficialSoldEvidenceScope
+  sale_confirmation_basis: OfficialSaleConfirmationBasis
   item_price: number | null
   shipping_cost: number | null
   keyword_signals: string[]
@@ -96,6 +106,9 @@ const ALIASES: Record<string, string[]> = {
   useContextImage: ["usecontextimage"], handsOrPeoplePresent: ["handsorpeoplepresent"],
   visualClutter: ["visualclutter"], imageConsistency: ["imageconsistency"],
   mainImageClarity: ["mainimageclarity"],
+  explicitSaleConfirmed: ["saleconfirmed", "issold", "confirmedsale", "transactionconfirmed"],
+  listingStatus: ["status", "listingstatus", "completionstatus", "itemstatus"],
+  reportType: ["reporttype", "reportsource", "exporttype", "sourcereporttype"],
 }
 
 function record(value: unknown): JsonRecord {
@@ -197,11 +210,16 @@ function jsonRecords(source: string): JsonRecord[] {
   const rootRows = record(parsed).rows
   const rows: unknown[] | null = Array.isArray(parsed) ? parsed : Array.isArray(rootRows) ? rootRows : null
   if (!rows?.length) throw new Error("SOLD_EVIDENCE_ROWS_REQUIRED")
+  const root = record(parsed)
+  const rootReportType = normalizedText(root.reportType) ?? normalizedText(root.reportSource) ??
+    normalizedText(root.exportType)
   return rows.map((entry, index) => {
     const row = record(entry)
     if (!Object.keys(row).length) throw new Error(`SOLD_EVIDENCE_ROW_${index + 1}_INVALID`)
     rejectPiiKeys(Object.keys(row))
-    return row
+    return rootReportType && !Object.keys(row).some((key) => ALIASES.reportType.includes(canonicalKey(key)))
+      ? { ...row, sourceReportType: rootReportType }
+      : row
   })
 }
 
@@ -260,17 +278,54 @@ function visualEvidence(row: Map<string, unknown>, observedAt: string): WinnerCo
 type ParsedObservation = {
   value: NormalizedOfficialSoldEvidence
   transientTitleTokens: string[]
-} | { error: string }
+} | { completedWithoutSale: true }
+  | { error: string }
 
-function normalizeObservation(row: JsonRecord, now: Date): ParsedObservation {
+function sourceSemantics(sourceExportType: OfficialSoldEvidenceExport, rows: JsonRecord[]) {
+  if (sourceExportType === "EBAY_PRODUCT_RESEARCH_EXPORT" ||
+    sourceExportType === "EBAY_MARKETPLACE_INSIGHTS_EXPORT") {
+    return { evidenceScope: "MARKET_WIDE_SOLD_EVIDENCE" as const,
+      marketWideSchemaConfirmed: true }
+  }
+  const markers = rows.map((row) => normalizedText(field(normalizedRow(row), "reportType")))
+    .filter((value): value is string => Boolean(value))
+  const marketWideSchemaConfirmed = markers.length === rows.length && markers.every((value) => {
+    const normalized = canonicalKey(value)
+    return normalized.includes("productresearch") || normalized.includes("marketplaceinsights")
+  })
+  return {
+    evidenceScope: marketWideSchemaConfirmed
+      ? "MARKET_WIDE_SOLD_EVIDENCE" as const
+      : "OWN_ACCOUNT_SOLD_EVIDENCE" as const,
+    marketWideSchemaConfirmed,
+  }
+}
+
+function normalizeObservation(
+  row: JsonRecord,
+  now: Date,
+  evidenceScope: OfficialSoldEvidenceScope,
+): ParsedObservation {
   const values = normalizedRow(row)
   const sourceListingId = normalizedText(field(values, "sourceListingId"))
-  const soldQuantity = positiveInteger(field(values, "confirmedSoldQuantity"))
+  const reportedSoldQuantity = positiveInteger(field(values, "confirmedSoldQuantity"))
+  const explicitSale = booleanValue(field(values, "explicitSaleConfirmed")) === true
+  const listingStatus = canonicalKey(normalizedText(field(values, "listingStatus")) ?? "")
+  const statusConfirmsSale = ["sold", "confirmedsold", "saleconfirmed"].includes(listingStatus)
+  const saleConfirmationBasis: OfficialSaleConfirmationBasis | null = reportedSoldQuantity
+    ? "SOLD_QUANTITY_POSITIVE"
+    : explicitSale || statusConfirmsSale
+      ? "EXPLICIT_CONFIRMED_SALE_MINIMUM_ONE"
+      : null
+  const soldQuantity = reportedSoldQuantity ?? (saleConfirmationBasis ? 1 : null)
+  if (!soldQuantity && ["completed", "ended", "closed", "finished"].includes(listingStatus)) {
+    return { completedWithoutSale: true }
+  }
   const packCount = positiveInteger(field(values, "packCount"))
   const observedRaw = normalizedText(field(values, "observedAt"))
   const observed = observedRaw ? new Date(observedRaw) : null
   if (!sourceListingId) return { error: "SOURCE_LISTING_REFERENCE_REQUIRED" as const }
-  if (!soldQuantity) return { error: "CONFIRMED_SOLD_QUANTITY_REQUIRED" as const }
+  if (!soldQuantity || !saleConfirmationBasis) return { error: "SALE_CONFIRMATION_REQUIRED" as const }
   if (!packCount) return { error: "PACK_COUNT_REQUIRED" as const }
   if (!observed || Number.isNaN(observed.getTime()) || observed.getTime() > now.getTime() + 86_400_000) {
     return { error: "OBSERVED_AT_INVALID" as const }
@@ -296,6 +351,8 @@ function normalizeObservation(row: JsonRecord, now: Date): ParsedObservation {
     sourceListingReferenceHash,
     normalizedIdentity: identity,
     confirmedSoldQuantity: soldQuantity,
+    evidenceScope,
+    saleConfirmationBasis,
     itemPrice,
     shippingCost,
     shippingPattern: normalizedText(field(values, "shippingPattern")),
@@ -330,13 +387,15 @@ export function parseOfficialSoldEvidenceImport(input: {
       : (() => { throw new Error("SOLD_EVIDENCE_FORMAT_INVALID") })()
   if (rows.length > OFFICIAL_SOLD_EVIDENCE_MAX_ROWS) throw new Error("SOLD_EVIDENCE_ROW_LIMIT_EXCEEDED")
   const now = input.now ?? new Date()
-  const normalized = rows.map((row) => normalizeObservation(row, now))
+  const semantics = sourceSemantics(input.sourceExportType, rows)
+  const normalized = rows.map((row) => normalizeObservation(row, now, semantics.evidenceScope))
   const errors = normalized.reduce<Record<string, number>>((counts, entry) => {
     if ("error" in entry) counts[entry.error] = (counts[entry.error] ?? 0) + 1
     return counts
   }, {})
   const accepted = normalized.filter((entry): entry is Extract<ParsedObservation, { value: unknown }> =>
     "value" in entry)
+  const completedWithoutSaleCount = normalized.filter((entry) => "completedWithoutSale" in entry).length
   const tokenFrequency = accepted.reduce<Map<string, number>>((counts, entry) => {
     for (const token of entry.transientTitleTokens) counts.set(token, (counts.get(token) ?? 0) + 1)
     return counts
@@ -344,14 +403,22 @@ export function parseOfficialSoldEvidenceImport(input: {
   const observations = accepted.map((entry) => ({ ...entry.value,
     keywordSignals: entry.transientTitleTokens.filter((token) => (tokenFrequency.get(token) ?? 0) >= 2)
       .slice(0, 12) }))
-  if (!observations.length) throw new Error("SOLD_EVIDENCE_NO_VALID_ROWS")
+  if (!observations.length && completedWithoutSaleCount === 0) {
+    throw new Error("SOLD_EVIDENCE_NO_VALID_ROWS")
+  }
   return {
     sourceType: input.format === "CSV" ? "EBAY_OFFICIAL_CSV_IMPORT" as const
       : "EBAY_OFFICIAL_JSON_IMPORT" as const,
     sourceExportType: input.sourceExportType,
+    evidenceScope: semantics.evidenceScope,
+    marketWideSchemaConfirmed: semantics.marketWideSchemaConfirmed,
     sourceFileHash: sha256(input.content),
-    rowCount: rows.length,
-    rejectedCount: rows.length - observations.length,
+    sourceRowCount: rows.length,
+    rowCount: rows.length - completedWithoutSaleCount,
+    validCount: observations.length + completedWithoutSaleCount,
+    confirmedSaleCount: observations.length,
+    completedWithoutSaleCount,
+    rejectedCount: rows.length - observations.length - completedWithoutSaleCount,
     errorCounts: errors,
     observations,
     rawFileStored: false,
@@ -386,6 +453,7 @@ export function officialSoldEvidenceComparablesForTarget(input: {
       identity: { ...identity, productName: target.normalizedProductName },
       itemPrice: row.item_price, shippingCost: row.shipping_cost, currency: "USD",
       confirmedSoldQuantity: row.confirmed_sold_quantity,
+      evidenceScope: row.evidence_scope,
       keywords: row.keyword_signals, shippingPattern: row.shipping_pattern,
       returnsPattern: row.returns_pattern, imageCount: row.image_count,
       visualEvidence: { ...record(row.visual_evidence),
@@ -394,9 +462,14 @@ export function officialSoldEvidenceComparablesForTarget(input: {
       evidenceReviewed: true,
     }
     const classification = classifyWinnerComparable(input.targetIdentity, comparable.identity).classification
-    return ["EXACT_MATCH", "DIFFERENT_PACK", "DIFFERENT_VARIANT", "NEAR_MATCH"].includes(classification)
-      ? [comparable] : []
+    return classification === "EXACT_MATCH" ? [comparable] : []
   }).slice(0, 100)
+}
+
+export function deduplicateOfficialSoldEvidence(rows: NormalizedOfficialSoldEvidence[]) {
+  const observations = [...new Map(rows.map((row) =>
+    [row.evidenceDeduplicationKey, row] as const)).values()]
+  return { observations, duplicateCount: rows.length - observations.length }
 }
 
 export async function readReviewedOfficialSoldEvidence(input: {
@@ -406,7 +479,7 @@ export async function readReviewedOfficialSoldEvidence(input: {
 }) {
   const now = input.now ?? new Date()
   const { data, error } = await input.supabase.from("marketplace_sold_evidence_observations")
-    .select("source_type,source_listing_reference_hash,normalized_identity,confirmed_sold_quantity,item_price,shipping_cost,keyword_signals,shipping_pattern,returns_pattern,image_count,visual_evidence,observed_at")
+    .select("source_type,source_listing_reference_hash,normalized_identity,confirmed_sold_quantity,evidence_scope,sale_confirmation_basis,item_price,shipping_cost,keyword_signals,shipping_pattern,returns_pattern,image_count,visual_evidence,observed_at")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
     .eq("evidence_reviewed", true).gte("eligible_until", now.toISOString())
     .order("observed_at", { ascending: false }).limit(2_000)
@@ -428,17 +501,22 @@ export async function importOfficialSoldEvidence(input: {
   const parsed = parseOfficialSoldEvidenceImport(input)
   const { data: duplicateBatch, error: duplicateBatchError } = await input.supabase
     .from("marketplace_sold_evidence_import_batches")
-    .select("id,row_count,imported_count,duplicate_count,rejected_count,imported_at")
+    .select("id,evidence_scope,source_row_count,valid_count,confirmed_sale_count,completed_without_sale_count,imported_count,duplicate_count,rejected_count,imported_at")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
     .eq("source_file_hash", parsed.sourceFileHash).maybeSingle()
   if (duplicateBatchError) throw new Error("SOLD_EVIDENCE_BATCH_DEDUP_READ_FAILED")
   if (duplicateBatch) return { duplicate: true, batchId: duplicateBatch.id,
-    rowCount: duplicateBatch.row_count, importedCount: duplicateBatch.imported_count,
+    evidenceScope: duplicateBatch.evidence_scope,
+    rowCount: duplicateBatch.source_row_count, validCount: duplicateBatch.valid_count,
+    confirmedSaleCount: duplicateBatch.confirmed_sale_count,
+    completedWithoutSaleCount: duplicateBatch.completed_without_sale_count,
+    importedCount: duplicateBatch.imported_count,
     duplicateCount: duplicateBatch.duplicate_count, rejectedCount: duplicateBatch.rejected_count,
     importedAt: duplicateBatch.imported_at, reanalysisRequired: false,
     rawFileStored: false, piiStored: false, openAiCalls: 0, ebayWrites: 0 }
 
-  const deduplicationKeys = parsed.observations.map((row) => row.evidenceDeduplicationKey)
+  const uniqueObservations = deduplicateOfficialSoldEvidence(parsed.observations).observations
+  const deduplicationKeys = uniqueObservations.map((row) => row.evidenceDeduplicationKey)
   const existingKeys = new Set<string>()
   for (let offset = 0; offset < deduplicationKeys.length; offset += 250) {
     const page = deduplicationKeys.slice(offset, offset + 250)
@@ -448,11 +526,12 @@ export async function importOfficialSoldEvidence(input: {
     if (error) throw new Error("SOLD_EVIDENCE_OBSERVATION_DEDUP_READ_FAILED")
     for (const row of data ?? []) existingKeys.add(row.evidence_deduplication_key)
   }
-  const fresh = parsed.observations.filter((row) => !existingKeys.has(row.evidenceDeduplicationKey))
+  const fresh = uniqueObservations.filter((row) => !existingKeys.has(row.evidenceDeduplicationKey))
   const duplicateCount = parsed.observations.length - fresh.length
   const batchId = randomUUID()
   const observedTimes = fresh.map((row) => Date.parse(row.observedAt)).filter(Number.isFinite)
   const rpcRows = fresh.map((row) => ({
+    sale_confirmation_basis: row.saleConfirmationBasis,
     source_listing_reference_hash: row.sourceListingReferenceHash,
     evidence_deduplication_key: row.evidenceDeduplicationKey,
     normalized_identity: row.normalizedIdentity,
@@ -467,14 +546,20 @@ export async function importOfficialSoldEvidence(input: {
     observed_at: row.observedAt,
     eligible_until: row.eligibleUntil,
   }))
-  const { error: importError } = await input.supabase.rpc("import_marketplace_sold_evidence_v1", {
+  const { error: importError } = await input.supabase.rpc("import_marketplace_sold_evidence_v2", {
     p_batch_id: batchId,
     p_marketplace_account_key: input.accountKey,
     p_source_type: parsed.sourceType,
     p_source_export_type: parsed.sourceExportType,
+    p_evidence_scope: parsed.evidenceScope,
+    p_market_wide_schema_confirmed: parsed.marketWideSchemaConfirmed,
     p_source_file_hash: parsed.sourceFileHash,
     p_import_schema_version: OFFICIAL_SOLD_EVIDENCE_IMPORT_VERSION,
+    p_source_row_count: parsed.sourceRowCount,
     p_row_count: parsed.rowCount,
+    p_valid_count: parsed.validCount,
+    p_confirmed_sale_count: parsed.confirmedSaleCount,
+    p_completed_without_sale_count: parsed.completedWithoutSaleCount,
     p_duplicate_count: duplicateCount,
     p_rejected_count: parsed.rejectedCount,
     p_error_counts: parsed.errorCounts,
@@ -504,28 +589,94 @@ export async function importOfficialSoldEvidence(input: {
       .eq("marketplace_account_key", input.accountKey)
     if (runError) throw new Error("SOLD_EVIDENCE_RUN_MARK_FAILED")
   }
-  return { duplicate: false, batchId, rowCount: parsed.rowCount,
+  return { duplicate: false, batchId, evidenceScope: parsed.evidenceScope,
+    rowCount: parsed.sourceRowCount, validCount: parsed.validCount,
+    confirmedSaleCount: parsed.confirmedSaleCount,
+    completedWithoutSaleCount: parsed.completedWithoutSaleCount,
     importedCount: fresh.length, duplicateCount, rejectedCount: parsed.rejectedCount,
     importedAt, reanalysisRequired: fresh.length > 0,
     rawFileStored: false, piiStored: false, openAiCalls: 0, ebayWrites: 0 }
+}
+
+type SoldEvidenceCoverageTarget = {
+  id: string
+  identity: ProductIdentityInput
+}
+
+export function officialSoldEvidenceCoverage(input: {
+  rows: StoredOfficialSoldEvidence[]
+  targets: SoldEvidenceCoverageTarget[]
+}) {
+  const matchedTargetIds = new Set<string>()
+  let exactMatches = 0
+  let ambiguousMatches = 0
+  let withoutLunaMatch = 0
+  for (const row of input.rows) {
+    const matches = input.targets.filter((target) =>
+      officialSoldEvidenceComparablesForTarget({ targetIdentity: target.identity, rows: [row] }).length === 1)
+    if (matches.length === 1) {
+      exactMatches += 1
+      matchedTargetIds.add(matches[0].id)
+    } else if (matches.length > 1) {
+      ambiguousMatches += 1
+    } else {
+      withoutLunaMatch += 1
+    }
+  }
+  return {
+    exactMatches,
+    ambiguousMatches,
+    withoutLunaMatch,
+    top20CandidatesEnriched: matchedTargetIds.size,
+  }
+}
+
+function coverageTarget(row: { id: string; evidence_snapshot: unknown }): SoldEvidenceCoverageTarget | null {
+  const snapshot = record(row.evidence_snapshot)
+  const identity = record(record(snapshot.identityEnrichment).identity)
+  if (!Object.keys(identity).length) return null
+  return { id: row.id, identity: identity as ProductIdentityInput }
 }
 
 export async function getOfficialSoldEvidenceImportStatus(input: {
   supabase: SupabaseClient
   accountKey: string
 }) {
-  const [{ count: observations, error: observationError }, { data: latest, error: latestError }] =
-    await Promise.all([
+  const [{ count: observations, error: observationError }, { data: latest, error: latestError },
+    { data: latestRun, error: runError }] = await Promise.all([
       input.supabase.from("marketplace_sold_evidence_observations")
         .select("id", { count: "exact", head: true }).eq("marketplace_account_key", input.accountKey)
         .eq("marketplace", "EBAY_US").eq("evidence_reviewed", true),
       input.supabase.from("marketplace_sold_evidence_import_batches")
-        .select("id,source_type,source_export_type,row_count,imported_count,duplicate_count,rejected_count,source_observed_start,source_observed_end,imported_at")
+        .select("id,source_type,source_export_type,evidence_scope,market_wide_schema_confirmed,source_row_count,valid_count,confirmed_sale_count,completed_without_sale_count,imported_count,duplicate_count,rejected_count,source_observed_start,source_observed_end,imported_at")
         .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
         .order("imported_at", { ascending: false }).limit(1).maybeSingle(),
+      input.supabase.from("marketplace_listing_approval_queue_runs").select("id")
+        .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+        .order("created_at", { ascending: false }).limit(1).maybeSingle(),
     ])
-  if (observationError || latestError) throw new Error("SOLD_EVIDENCE_STATUS_READ_FAILED")
+  if (observationError || latestError || runError) throw new Error("SOLD_EVIDENCE_STATUS_READ_FAILED")
+  let coverage = { exactMatches: 0, ambiguousMatches: 0, withoutLunaMatch: 0,
+    top20CandidatesEnriched: 0 }
+  if (latest) {
+    const [observationResult, targetResult] = await Promise.all([
+      input.supabase.from("marketplace_sold_evidence_observations")
+        .select("source_type,source_listing_reference_hash,normalized_identity,confirmed_sold_quantity,evidence_scope,sale_confirmation_basis,item_price,shipping_cost,keyword_signals,shipping_pattern,returns_pattern,image_count,visual_evidence,observed_at")
+        .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+        .eq("import_batch_id", latest.id).eq("evidence_reviewed", true),
+      latestRun ? input.supabase.from("marketplace_listing_approval_queue_items")
+        .select("id,evidence_snapshot").eq("marketplace_account_key", input.accountKey)
+        .eq("marketplace", "EBAY_US").eq("run_id", latestRun.id) : Promise.resolve({ data: [], error: null }),
+    ])
+    if (observationResult.error || targetResult.error) throw new Error("SOLD_EVIDENCE_COVERAGE_READ_FAILED")
+    coverage = officialSoldEvidenceCoverage({
+      rows: (observationResult.data ?? []) as StoredOfficialSoldEvidence[],
+      targets: (targetResult.data ?? []).map(coverageTarget)
+        .filter((value): value is SoldEvidenceCoverageTarget => value !== null),
+    })
+  }
   return { configured: true, reviewedObservationCount: observations ?? 0, latest: latest ?? null,
+    coverage,
     acceptedFormats: ["CSV", "JSON"], maxRows: OFFICIAL_SOLD_EVIDENCE_MAX_ROWS,
     recencyDays: OFFICIAL_SOLD_EVIDENCE_RECENCY_DAYS,
     rawFilesStored: false, competitorTitlesStored: false, sellerIdentitiesStored: false,
