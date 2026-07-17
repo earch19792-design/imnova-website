@@ -2,17 +2,27 @@ import { createHash } from "node:crypto"
 
 import { z } from "zod"
 
-export const LISTING_AI_SCHEMA_VERSION = "EBAY_LISTING_AI_OUTPUT_V2"
-export const LISTING_AI_ENGINE_VERSION = "EBAY_LISTING_AI_ENGINE_V2"
-export const LISTING_AI_VALIDATION_POLICY_VERSION = "EBAY_LISTING_AI_VALIDATION_V2"
-export const LISTING_AI_DEFAULT_PROMPT_VERSION = "EBAY_LISTING_AI_PROMPT_V2_2026_07_16"
+// @ts-expect-error Node test runtime imports the TypeScript source directly.
+import { buildListingAiEvidenceDistillation, listingAiEvidenceDistillationSchema } from "./ebay-openai-listing-evidence-distillation.ts"
+// @ts-expect-error Node test runtime imports the TypeScript source directly.
+import { buildListingAiPackStrategy } from "./ebay-openai-listing-pack-strategy.ts"
+
+export const LISTING_AI_SCHEMA_VERSION = "EBAY_LISTING_AI_OUTPUT_V2_1"
+export const LISTING_AI_ENGINE_VERSION = "EBAY_LISTING_AI_ENGINE_V2_1"
+export const LISTING_AI_VALIDATION_POLICY_VERSION = "EBAY_LISTING_AI_VALIDATION_V2_1"
+export const LISTING_AI_DEFAULT_PROMPT_VERSION =
+  "EBAY_LISTING_AI_PROMPT_V2_1_EVIDENCE_2026_07_16"
 export const LISTING_AI_STAGING_REF = "vsfthqydfrdzulldbfbe"
 
 const SYSTEM_PROMPT = [
   "You create original eBay US listing content from verified product facts only.",
   "Never invent identifiers, brand, manufacturer, compatibility, package quantity, variant, certification, warranty, shipping, returns, authenticity or medical claims.",
   "Never copy competitor titles or descriptions and never request competitor images or URLs.",
-  "Use only the authorized keyword and evidence summaries supplied in the structured input.",
+  "Treat evidenceDistillation as the canonical market evidence; do not treat productFacts alone as sufficient context.",
+  "Use sold/completed exact evidence as confirmed demand evidence and active exact evidence as competition context; never merge them or present estimated signals as sales.",
+  "Near matches, different packs and different variants are excluded and must never be described as exact evidence.",
+  "Describe market observations as associations, never as causal proof.",
+  "Use only authorized keywords and compact evidence summaries supplied in the structured input.",
   "Return only JSON that conforms to the supplied schema.",
 ].join(" ")
 
@@ -20,7 +30,9 @@ const GENERATION_PROMPT = [
   "Write clear factual listing copy for human approval.",
   "Provide exactly three distinct title candidates of at most 80 characters.",
   "Keep the recommended price at or above minimumSafePrice.",
-  "Image briefs are planning text only and must use authorized product facts and images.",
+  "Never recalculate, lower or reinterpret minimumSafePrice.",
+  "Image briefs are planning text only, must use authorized product facts and images, and should apply the compact visual pattern evidence through an original execution.",
+  "For each output area, report whether its support is strong, medium, low or insufficient.",
   "Report uncertain statements in unsupportedClaims instead of presenting them as facts.",
 ].join(" ")
 
@@ -116,6 +128,7 @@ export const listingAiInputSchema = z.object({
     score: z.number().finite().min(0).max(100),
     level: z.enum(["HIGH", "MEDIUM", "LOW", "INSUFFICIENT"]),
   }).strict(),
+  evidenceDistillation: listingAiEvidenceDistillationSchema,
   marketplace: z.literal("EBAY_US"),
   locale: z.literal("en-US"),
 }).strict()
@@ -154,10 +167,34 @@ export const listingAiModelOutputSchema = z.object({
   imageText: z.array(z.string().trim().max(100)).max(12),
   complianceNotes: z.array(z.string().trim().min(1).max(500)).max(30),
   unsupportedClaims: z.array(z.string().trim().min(1).max(500)).max(30),
+  differentiationStrategy: z.object({
+    marketPositioning: z.string().trim().min(1).max(500),
+    trustPresentation: z.string().trim().min(1).max(500),
+    visualDifferentiation: z.string().trim().min(1).max(500),
+    evidenceConfidence: z.enum(["STRONG", "MEDIUM", "LOW", "INSUFFICIENT"]),
+    causalityClaimed: z.literal(false),
+  }).strict(),
+  evidenceAttribution: z.array(z.object({
+    outputSection: z.enum([
+      "TITLES", "KEYWORDS", "ITEM_SPECIFICS", "DESCRIPTION", "FAQ",
+      "DIFFERENTIATION", "PRICE_PRESENTATION", "IMAGE_BRIEFS", "COMPLIANCE",
+    ]),
+    evidenceSources: z.array(z.enum([
+      "PRODUCT_IDENTITY", "ACTIVE_EXACT_MATCHES", "SOLD_OR_COMPLETED_EXACT_MATCHES",
+      "SELLER_PATTERNS", "VISUAL_PATTERNS", "CANONICAL_ECONOMICS", "COMPLIANCE",
+    ])).min(1).max(7),
+    confidence: z.enum(["STRONG", "MEDIUM", "LOW", "INSUFFICIENT"]),
+    rationale: z.string().trim().min(1).max(400),
+  }).strict()).min(6).max(12),
   pricePresentation: z.object({
     price: z.number().finite().positive(),
     currency: z.literal("USD"),
     minimumSafePrice: z.number().finite().positive(),
+    packCount: z.number().int().positive(),
+    totalUnitCount: z.number().int().positive().nullable(),
+    pricePerUnit: z.number().finite().positive().nullable(),
+    buyerDiscountPercent: z.number().finite().nullable(),
+    buyerDiscountVerified: z.boolean(),
   }).strict(),
   experimentAlternatives: z.object({
     titleAlternatives: z.array(z.string().trim().min(1).max(80)).max(3),
@@ -315,6 +352,12 @@ export function assessListingAiDecisionPackage(
   const decision = record(payload.decision)
   const safety = record(payload.safety)
   const intake = record(payload.listingAiIntake)
+  let packStrategyReady = false
+  try {
+    packStrategyReady = Boolean(buildListingAiPackStrategy(row).recommendedPack)
+  } catch {
+    packStrategyReady = false
+  }
   const blockers = stringArray(decision.blockers)
   const exactIdentifier = identity.gtinValid === true || Boolean(
     optionalText(identity.manufacturerBrand) &&
@@ -334,6 +377,7 @@ export function assessListingAiDecisionPackage(
     !["GO", "GO_WITH_CHANGES"].includes(row.verdict) ? "LOOP1_VERDICT_NOT_ELIGIBLE" : null,
     payload.decision && decision.verdict !== row.verdict ? "LOOP1_VERDICT_MISMATCH" : null,
     !integrityValid ? "LOOP1_PACKAGE_INTEGRITY_INVALID" : null,
+    !freshness(payload.generatedAt, now) ? "LOOP1_PACKAGE_STALE" : null,
     !validHash(row.product_identity_fingerprint) ||
       productIdentity.fingerprint !== row.product_identity_fingerprint
       ? "IDENTITY_FINGERPRINT_INVALID" : null,
@@ -354,6 +398,7 @@ export function assessListingAiDecisionPackage(
     !stringArray(intake.includedContents).length ? "INCLUDED_CONTENTS_REQUIRED" : null,
     !stringArray(intake.allowedImageFacts).length ? "ALLOWED_IMAGE_FACTS_REQUIRED" : null,
     intake.locale !== "en-US" ? "LOCALE_EN_US_REQUIRED" : null,
+    !packStrategyReady ? "PACK_STRATEGY_RECOMMENDATION_REQUIRED" : null,
   ].filter((value): value is string => Boolean(value))
   return {
     eligible: reasons.length === 0,
@@ -411,6 +456,15 @@ export function buildListingAiInputFromDecisionPackage(
   const intake = record(payload.listingAiIntake)
   const category = record(intake.category)
   const compliance = record(payload.compliance)
+  const currentPackCount = numberOrNull(identity.packCount)
+  const currentUnitCount = numberOrNull(identity.unitCount)
+  const verifiedOffer = array(record(payload.packStrategyEvidence).offers).map(record)
+    .find((entry) => numberOrNull(entry.packCount) === currentPackCount &&
+      numberOrNull(entry.unitCountPerItem) === currentUnitCount &&
+      entry.offerGtinVerified === true)
+  const safeOfferGtin = currentPackCount !== null && currentPackCount > 1
+    ? optionalText(verifiedOffer?.offerGtin)
+    : optionalText(identity.gtin)
   const demandScore = numberOrNull(scores.demandConfidence)
   const exactIdentifier = identity.gtinValid === true || Boolean(
     optionalText(identity.manufacturerBrand) &&
@@ -431,7 +485,7 @@ export function buildListingAiInputFromDecisionPackage(
     productFacts: {
       manufacturerBrand: optionalText(identity.manufacturerBrand),
       manufacturer: null,
-      gtin: optionalText(identity.gtin),
+      gtin: safeOfferGtin,
       mpn: optionalText(identity.mpn),
       model: optionalText(identity.model),
       normalizedProductName: optionalText(identity.normalizedProductName),
@@ -474,6 +528,7 @@ export function buildListingAiInputFromDecisionPackage(
       score: demandScore ?? 0,
       level: confidenceLevel(demandScore),
     },
+    evidenceDistillation: buildListingAiEvidenceDistillation(row, now),
     marketplace: "EBAY_US",
     locale: "en-US",
   })
@@ -572,6 +627,7 @@ export function buildListingAiInputHash(
     loop1PackageHash: input.packageHash,
     identityFingerprint: input.identityFingerprint,
     normalizedProductFacts: input.productFacts,
+    evidenceDistillationHash: input.evidenceDistillation.distillationHash,
     pricingScenario: input.pricingScenario,
     minimumSafePrice: input.minimumSafePrice,
     targetPrice: input.targetPrice,
@@ -598,6 +654,11 @@ export function buildListingAiPrompt(
     competitorTitlesIncluded: false,
     competitorDescriptionsIncluded: false,
     competitorImagesIncluded: false,
+    competitorUrlsIncluded: false,
+    nearMatchesIncluded: false,
+    differentPacksIncluded: false,
+    differentVariantsIncluded: false,
+    estimatedSignalsPresentedAsSales: false,
     rawComparablePayloadIncluded: false,
     promptHashes: definition.hashes,
   }
@@ -620,15 +681,33 @@ function safeTitle(value: string) {
 
 export function createFakeListingAiModelOutput(input: ListingAiInput): ListingAiModelOutput {
   const facts = input.productFacts
+  const evidence = input.evidenceDistillation
+  const recommendedPack = evidence.packStrategy.recommendedPack
   const brand = titleCase(facts.manufacturerBrand)
   const product = titleCase(facts.normalizedProductName)
   const pack = facts.packCount ? `${facts.packCount} Pack` : ""
   const units = facts.unitCount ? `${facts.unitCount} Count` : ""
   const variant = titleCase(facts.scent ?? facts.color ?? facts.variant)
+  const approvedKeywordMap = new Map(input.approvedKeywords.map((keyword) => [
+    String(normalized(keyword)), keyword,
+  ]))
+  const soldKeywords = evidence.keywordsAndTitles.soldKeywordRecurrence
+    .map((entry) => approvedKeywordMap.get(String(normalized(entry.value))))
+    .filter((entry): entry is string => Boolean(entry))
+  const activeKeywords = evidence.keywordsAndTitles.activeKeywordRecurrence
+    .map((entry) => approvedKeywordMap.get(String(normalized(entry.value))))
+    .filter((entry): entry is string => Boolean(entry))
+  const evidenceOrderedKeywords = [...new Set([
+    ...soldKeywords,
+    ...activeKeywords,
+    ...input.approvedKeywords,
+  ])]
+  const soldLead = soldKeywords.find((keyword) => !activeKeywords.includes(keyword)) ?? soldKeywords[0] ?? ""
+  const activeLead = activeKeywords.find((keyword) => !soldKeywords.includes(keyword)) ?? activeKeywords[0] ?? ""
   const titles = [
-    safeTitle(`${brand} ${product} ${variant} ${units} ${pack}`),
-    safeTitle(`${product} ${brand} ${pack} ${variant} ${units}`),
-    safeTitle(`${brand} ${product} ${units} ${variant} ${pack}`),
+    safeTitle(`${brand} ${product} ${soldLead} ${variant} ${units} ${pack}`),
+    safeTitle(`${product} ${brand} ${activeLead} ${pack} ${variant} ${units}`),
+    safeTitle(`${brand} ${product} ${units} ${variant} ${pack} ${evidenceOrderedKeywords[2] ?? ""}`),
   ]
   const unique = [...new Set(titles)]
   while (unique.length < 3) unique.push(safeTitle(`${titles[0]} ${unique.length + 1}`))
@@ -648,8 +727,8 @@ export function createFakeListingAiModelOutput(input: ListingAiInput): ListingAi
     name: name.replace(/\b\w/g, (letter) => letter.toUpperCase()),
     value,
   }))
-  const primaryKeywords = input.approvedKeywords.slice(0, Math.min(3, input.approvedKeywords.length))
-  const secondaryKeywords = input.approvedKeywords.slice(primaryKeywords.length)
+  const primaryKeywords = evidenceOrderedKeywords.slice(0, Math.min(3, evidenceOrderedKeywords.length))
+  const secondaryKeywords = evidenceOrderedKeywords.slice(primaryKeywords.length)
   const description = `${brand} ${product} is offered in verified ${facts.condition} condition. ` +
     `Verified product details: ${factsSummary.join(", ")}. ` +
     `The package includes only ${facts.includedContents.join(", ")}. ` +
@@ -671,6 +750,12 @@ export function createFakeListingAiModelOutput(input: ListingAiInput): ListingAi
     faq: [
       { question: "What is included?", answer: `Only ${facts.includedContents.join(", ")} is included.` },
       { question: "What is the item condition?", answer: `The verified condition is ${facts.condition}.` },
+      ...(recommendedPack ? [{
+        question: "How many units are included?",
+        answer: recommendedPack.totalUnitCount
+          ? `This offer contains exactly ${recommendedPack.packCount} pack units and ${recommendedPack.totalUnitCount} total units.`
+          : `This offer contains exactly ${recommendedPack.packCount} pack units; no unsupported total-unit claim is added.`,
+      }] : []),
     ],
     imageBriefs: [
       ["MAIN_WHITE_BACKGROUND", "Center the unchanged authorized product package on pure white."],
@@ -679,23 +764,83 @@ export function createFakeListingAiModelOutput(input: ListingAiInput): ListingAi
       ["SIZE_AND_CONTENT", "Clarify verified size and included contents."],
       ["USE_CONTEXT", "Show a truthful context that does not imply unsupported performance."],
       ["PACKAGE_CONTENTS", "Show exactly what the buyer receives and no additional items."],
-    ].map(([slot, objective]) => ({
+    ].map(([slot, objective]) => {
+      const evidenceStrategy = evidence.visualPatterns.recommendedSixImageStrategy
+        .find((entry) => entry.slot === slot)?.strategy
+      const packInstruction = slot === "PACK_AND_COUNT" && recommendedPack
+        ? ` Show exactly ${recommendedPack.packCount} pack units${recommendedPack.totalUnitCount ? ` and ${recommendedPack.totalUnitCount} total units` : ""}; do not show extra units.`
+        : ""
+      return {
       slot: slot as ListingAiModelOutput["imageBriefs"][number]["slot"],
-      objective,
+      objective: evidenceStrategy
+        ? `${objective}${packInstruction} Evidence-informed original execution: ${evidenceStrategy}`.slice(0, 500)
+        : `${objective}${packInstruction}`.slice(0, 500),
       overlayText: null,
       allowedFacts: input.allowedImageFacts.slice(0, 12),
       sourcePolicy: "AUTHORIZED_PRODUCT_IMAGE_ONLY" as const,
-    })),
-    imageText: factsSummary.slice(0, 6),
+    }}),
+    imageText: [...factsSummary,
+      recommendedPack ? `${recommendedPack.packCount} pack` : null,
+      recommendedPack?.totalUnitCount ? `${recommendedPack.totalUnitCount} total units` : null,
+    ].filter((entry): entry is string => Boolean(entry)).slice(0, 12),
     complianceNotes: [
       "Use verified facts only.",
       "Do not alter brand, package quantity, variant, identifiers or certifications.",
     ],
     unsupportedClaims: [],
+    differentiationStrategy: {
+      marketPositioning: evidence.soldEvidence.exactCount
+        ? "Prioritize verified sold-exact keyword recurrence while keeping active-exact terms as competition context."
+        : "Use active-exact competition patterns cautiously; verified sold evidence is unavailable.",
+      trustPresentation: evidence.sellerPatterns.freeShippingPrevalencePercent !== null ||
+        evidence.sellerPatterns.returnsPrevalencePercent !== null ||
+        evidence.sellerPatterns.visibleTrustElements.length
+        ? "Present only configured fulfillment and return facts clearly; market seller patterns are context, not promises."
+        : "Seller trust pattern evidence is insufficient; rely only on configured policies and verified product facts.",
+      visualDifferentiation: evidence.visualPatterns.differentiationOpportunities[0] ??
+        "Use an original, uncluttered gallery based only on authorized product assets.",
+      evidenceConfidence: evidence.soldEvidence.exactCount
+        ? evidence.soldEvidence.confidence : evidence.activeMarket.confidence,
+      causalityClaimed: false,
+    },
+    evidenceAttribution: [
+      {
+        outputSection: "TITLES",
+        evidenceSources: evidence.soldEvidence.exactCount
+          ? ["PRODUCT_IDENTITY", "SOLD_OR_COMPLETED_EXACT_MATCHES", "ACTIVE_EXACT_MATCHES"]
+          : ["PRODUCT_IDENTITY", "ACTIVE_EXACT_MATCHES"],
+        confidence: evidence.keywordsAndTitles.confidence,
+        rationale: evidence.soldEvidence.exactCount
+          ? "Original titles prioritize recurring sold-exact terms and use active terms as competition context."
+          : "Original titles use identity and active-exact terms; sold evidence is unavailable.",
+      },
+      {
+        outputSection: "KEYWORDS",
+        evidenceSources: evidence.soldEvidence.exactCount
+          ? ["SOLD_OR_COMPLETED_EXACT_MATCHES", "ACTIVE_EXACT_MATCHES"]
+          : ["ACTIVE_EXACT_MATCHES"],
+        confidence: evidence.keywordsAndTitles.confidence,
+        rationale: "Only approved recurring terms are included; competitor title text is not present.",
+      },
+      { outputSection: "ITEM_SPECIFICS", evidenceSources: ["PRODUCT_IDENTITY"], confidence: "STRONG", rationale: "Item specifics come from verified product identity and approved aspects." },
+      { outputSection: "DESCRIPTION", evidenceSources: ["PRODUCT_IDENTITY", "COMPLIANCE"], confidence: "STRONG", rationale: "Description uses verified facts and compliance restrictions only." },
+      { outputSection: "FAQ", evidenceSources: ["PRODUCT_IDENTITY", "COMPLIANCE"], confidence: "STRONG", rationale: "FAQ answers are limited to included contents and condition." },
+      { outputSection: "DIFFERENTIATION", evidenceSources: ["SELLER_PATTERNS", "VISUAL_PATTERNS", "ACTIVE_EXACT_MATCHES"], confidence: evidence.visualPatterns.confidence, rationale: "Strategy uses observed associations and does not claim causality." },
+      { outputSection: "PRICE_PRESENTATION", evidenceSources: ["CANONICAL_ECONOMICS"], confidence: evidence.economics.costConfidence, rationale: "Price preserves the immutable canonical minimumSafePrice." },
+      { outputSection: "IMAGE_BRIEFS", evidenceSources: ["PRODUCT_IDENTITY", "VISUAL_PATTERNS"], confidence: evidence.visualPatterns.confidence, rationale: "Briefs adapt the six-image evidence strategy through original execution and authorized assets." },
+      { outputSection: "COMPLIANCE", evidenceSources: ["COMPLIANCE", "PRODUCT_IDENTITY"], confidence: evidence.compliance.confidence, rationale: "Compliance notes reflect blocked claims and verified product facts." },
+    ],
     pricePresentation: {
       price: input.targetPrice,
       currency: "USD",
       minimumSafePrice: input.minimumSafePrice,
+      packCount: recommendedPack?.packCount ?? facts.packCount ?? 1,
+      totalUnitCount: recommendedPack?.totalUnitCount ?? null,
+      pricePerUnit: recommendedPack?.totalUnitCount
+        ? Math.round(input.targetPrice / recommendedPack.totalUnitCount * 100) / 100 : null,
+      buyerDiscountPercent: recommendedPack?.economics.buyerDiscountPercent ?? null,
+      buyerDiscountVerified: recommendedPack?.economics.buyerDiscountPercent !== null &&
+        recommendedPack?.economics.buyerDiscountPercent !== undefined,
     },
     experimentAlternatives: {
       titleAlternatives: unique.slice(1, 3),
@@ -722,6 +867,10 @@ function flattenedOutput(output: ListingAiModelOutput) {
     ...output.faq.flatMap((entry) => [entry.question, entry.answer]),
     ...output.imageText,
     ...output.imageBriefs.flatMap((entry) => [entry.objective, entry.overlayText ?? ""]),
+    output.differentiationStrategy.marketPositioning,
+    output.differentiationStrategy.trustPresentation,
+    output.differentiationStrategy.visualDifferentiation,
+    ...output.evidenceAttribution.map((entry) => entry.rationale),
   ].join("\n").toLocaleLowerCase("en-US")
 }
 
@@ -757,6 +906,39 @@ export function validateListingAiModelOutput(input: ListingAiInput, value: unkno
   }
   if (new Set(output.titleCandidates.map(normalized)).size !== 3) {
     factualErrors.push("TITLE_CANDIDATES_NOT_UNIQUE")
+  }
+  const recommendedPack = input.evidenceDistillation.packStrategy.recommendedPack
+  if (recommendedPack && output.titleCandidates.some((title) =>
+    !new RegExp(`\\b${recommendedPack.packCount}\\s*[- ]?pack\\b`, "i").test(title))) {
+    factualErrors.push("PACK_COUNT_MISSING_FROM_TITLE")
+  }
+  const packBrief = output.imageBriefs.find((entry) => entry.slot === "PACK_AND_COUNT")
+  if (recommendedPack && (!packBrief || !packBrief.objective.includes(String(recommendedPack.packCount)))) {
+    factualErrors.push("PACK_COUNT_MISSING_FROM_IMAGE_BRIEF")
+  }
+  if (recommendedPack?.totalUnitCount &&
+    (!packBrief || !packBrief.objective.includes(String(recommendedPack.totalUnitCount)))) {
+    factualErrors.push("TOTAL_UNIT_COUNT_MISSING_FROM_IMAGE_BRIEF")
+  }
+  if (recommendedPack && output.pricePresentation.packCount !== recommendedPack.packCount) {
+    factualErrors.push("PRICE_PRESENTATION_PACK_COUNT_MISMATCH")
+  }
+  if (recommendedPack && output.pricePresentation.totalUnitCount !== recommendedPack.totalUnitCount) {
+    factualErrors.push("PRICE_PRESENTATION_TOTAL_UNIT_COUNT_MISMATCH")
+  }
+  if (recommendedPack && output.pricePresentation.buyerDiscountPercent !==
+    recommendedPack.economics.buyerDiscountPercent) {
+    factualErrors.push("BUYER_DISCOUNT_CHANGED_OR_INVENTED")
+  }
+  if (output.pricePresentation.buyerDiscountVerified !==
+    (recommendedPack?.economics.buyerDiscountPercent !== null &&
+      recommendedPack?.economics.buyerDiscountPercent !== undefined)) {
+    factualErrors.push("BUYER_DISCOUNT_VERIFICATION_MISMATCH")
+  }
+  if (input.evidenceDistillation.soldEvidence.exactCount === 0 &&
+    output.evidenceAttribution.some((entry) =>
+      entry.evidenceSources.includes("SOLD_OR_COMPLETED_EXACT_MATCHES"))) {
+    factualErrors.push("SOLD_EVIDENCE_ATTRIBUTION_UNSUPPORTED")
   }
   const generatedKeywords = [...output.primaryKeywords, ...output.secondaryKeywords]
   const allowedKeywords = new Set(input.approvedKeywords.map(normalized))
@@ -931,7 +1113,8 @@ const listingAiModelJsonSchema = {
     "primaryKeywords", "secondaryKeywords", "blockedKeywords", "titleCandidates",
     "recommendedTitle", "factualBullets", "itemSpecifics", "description", "faq",
     "imageBriefs", "imageText", "complianceNotes", "unsupportedClaims",
-    "pricePresentation", "experimentAlternatives", "factAssertions",
+    "differentiationStrategy", "evidenceAttribution", "pricePresentation",
+    "experimentAlternatives", "factAssertions",
   ],
   properties: {
     primaryKeywords: { type: "array", minItems: 1, maxItems: 10, items: { type: "string" } },
@@ -966,10 +1149,38 @@ const listingAiModelJsonSchema = {
     imageText: { type: "array", maxItems: 12, items: { type: "string" } },
     complianceNotes: { type: "array", maxItems: 30, items: { type: "string" } },
     unsupportedClaims: { type: "array", maxItems: 30, items: { type: "string" } },
+    differentiationStrategy: {
+      type: "object", additionalProperties: false,
+      required: ["marketPositioning", "trustPresentation", "visualDifferentiation", "evidenceConfidence", "causalityClaimed"],
+      properties: {
+        marketPositioning: { type: "string" }, trustPresentation: { type: "string" },
+        visualDifferentiation: { type: "string" },
+        evidenceConfidence: { type: "string", enum: ["STRONG", "MEDIUM", "LOW", "INSUFFICIENT"] },
+        causalityClaimed: { type: "boolean", enum: [false] },
+      },
+    },
+    evidenceAttribution: {
+      type: "array", minItems: 6, maxItems: 12,
+      items: {
+        type: "object", additionalProperties: false,
+        required: ["outputSection", "evidenceSources", "confidence", "rationale"],
+        properties: {
+          outputSection: { type: "string", enum: ["TITLES", "KEYWORDS", "ITEM_SPECIFICS", "DESCRIPTION", "FAQ", "DIFFERENTIATION", "PRICE_PRESENTATION", "IMAGE_BRIEFS", "COMPLIANCE"] },
+          evidenceSources: { type: "array", minItems: 1, maxItems: 7, items: { type: "string", enum: ["PRODUCT_IDENTITY", "ACTIVE_EXACT_MATCHES", "SOLD_OR_COMPLETED_EXACT_MATCHES", "SELLER_PATTERNS", "VISUAL_PATTERNS", "CANONICAL_ECONOMICS", "COMPLIANCE"] } },
+          confidence: { type: "string", enum: ["STRONG", "MEDIUM", "LOW", "INSUFFICIENT"] },
+          rationale: { type: "string" },
+        },
+      },
+    },
     pricePresentation: {
       type: "object", additionalProperties: false,
-      required: ["price", "currency", "minimumSafePrice"],
-      properties: { price: { type: "number" }, currency: { type: "string", enum: ["USD"] }, minimumSafePrice: { type: "number" } },
+      required: ["price", "currency", "minimumSafePrice", "packCount", "totalUnitCount", "pricePerUnit", "buyerDiscountPercent", "buyerDiscountVerified"],
+      properties: {
+        price: { type: "number" }, currency: { type: "string", enum: ["USD"] },
+        minimumSafePrice: { type: "number" }, packCount: { type: "integer" },
+        totalUnitCount: { type: ["integer", "null"] }, pricePerUnit: { type: ["number", "null"] },
+        buyerDiscountPercent: { type: ["number", "null"] }, buyerDiscountVerified: { type: "boolean" },
+      },
     },
     experimentAlternatives: {
       type: "object", additionalProperties: false,

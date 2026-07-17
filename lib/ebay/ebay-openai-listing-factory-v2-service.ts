@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
+import { buildListingAiEvidenceDistillation } from "./ebay-openai-listing-evidence-distillation"
+
 import {
   assessListingAiDecisionPackage,
   buildListingAiInputHash,
@@ -822,11 +824,19 @@ export async function getListingAiStatus(
     const productIdentity = record(payload.productIdentity)
     const identity = record(productIdentity.identity)
     let estimatedCostUsd: number | null = null
-    if (assessment.eligible && configuration.model) {
+    let evidenceDistillation: ListingAiInput["evidenceDistillation"] | null = null
+    try {
+      evidenceDistillation = buildListingAiEvidenceDistillation(typedRow, now)
+    } catch {
+      evidenceDistillation = null
+    }
+    if (assessment.eligible) {
       const factoryInput = buildListingAiInputFromDecisionPackage(typedRow, now)
-      estimatedCostUsd = estimateListingAiPreflightCost(
-        factoryInput, configuration.promptVersion,
-      ).estimatedCostUsd
+      if (configuration.model) {
+        estimatedCostUsd = estimateListingAiPreflightCost(
+          factoryInput, configuration.promptVersion,
+        ).estimatedCostUsd
+      }
     }
     return {
       id: row.id,
@@ -839,6 +849,7 @@ export async function getListingAiStatus(
       approvedAt: row.approved_at,
       productName: text(identity.normalizedProductName),
       estimatedCostUsd,
+      evidenceDistillation,
       assessment,
     }
   })

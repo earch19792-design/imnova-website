@@ -14,6 +14,17 @@ type Decision = {
   status: string
   productName: string | null
   estimatedCostUsd: number | null
+  evidenceDistillation: {
+    distillationHash: string
+    soldEvidence: { exactCount: number; confidence: string }
+    activeMarket: { exactCount: number; confidence: string }
+    packStrategy: {
+      strategyHash: string
+      recommendedPack: PackStrategyRow | null
+      alternativePack: PackStrategyRow | null
+      packMatrix: PackStrategyRow[]
+    }
+  } | null
   assessment: {
     eligible: boolean
     reasons: string[]
@@ -25,6 +36,29 @@ type Decision = {
     costRecent: boolean
     canPublish: false
   }
+}
+
+type PackStrategyRow = {
+  offerPackFingerprint: string
+  packCount: number
+  totalUnitCount: number | null
+  medianLandedPrice: number | null
+  medianPricePerUnit: number | null
+  activeListingCount: number
+  soldEvidenceCount: number
+  evidenceConfidence: string
+  competitionPressure: number
+  stockRequired: number | null
+  operationalRisk: string[]
+  economics: {
+    buyerDiscountPercent: number | null
+    sellerProfit: number | null
+    roiPercent: number | null
+    netMarginPercent: number | null
+  }
+  scores: { demandConfidence: number; overallPackStrategy: number }
+  decision: string
+  explanation: string
 }
 
 type GenerationRun = {
@@ -116,6 +150,7 @@ function humanReason(code: string) {
     LOOP1_PACKAGE_NOT_APPROVED: "El paquete de Loop 1 todavía no tiene aprobación humana.",
     LOOP1_VERDICT_NOT_ELIGIBLE: "Loop 1 determinó NO_GO; selecciona otro producto.",
     LOOP1_PACKAGE_INTEGRITY_INVALID: "No se pudo verificar la integridad del paquete.",
+    LOOP1_PACKAGE_STALE: "El paquete de Loop 1 está vencido y debe regenerarse con evidencia reciente.",
     PRODUCT_IDENTITY_NOT_STRONG: "Falta identidad fuerte de producto.",
     ECONOMICS_NOT_VIABLE: "La economía no cumple los límites comerciales.",
     MINIMUM_SAFE_PRICE_REQUIRED: "Falta el precio mínimo seguro.",
@@ -130,6 +165,7 @@ function humanReason(code: string) {
     REQUIRED_ASPECTS_REQUIRED: "Faltan los item specifics obligatorios.",
     INCLUDED_CONTENTS_REQUIRED: "Falta confirmar exactamente qué incluye el paquete.",
     ALLOWED_IMAGE_FACTS_REQUIRED: "Faltan hechos autorizados para los briefs visuales.",
+    PACK_STRATEGY_RECOMMENDATION_REQUIRED: "Falta una estrategia de pack segura: revisa stock, shipping, peso, dimensiones y economía por presentación.",
   }
   return labels[code] ?? code.replaceAll("_", " ")
 }
@@ -296,7 +332,33 @@ export function Loop2ListingAiPanel() {
           <button type="button" onClick={() => void generate()} disabled={Boolean(blockedReason) || working} className="min-h-12 w-full rounded-2xl bg-fuchsia-200 px-4 font-black text-black disabled:cursor-not-allowed disabled:opacity-40">{working ? "Procesando…" : "Generar listing con IA"}</button>
           {blockedReason && <p className="text-xs text-white/60">Botón bloqueado: {blockedReason}</p>}
           <button type="button" onClick={() => setShowEvidence((value) => !value)} className="min-h-11 w-full rounded-2xl border border-fuchsia-200/30 px-4 font-black">{showEvidence ? "Ocultar evidencia" : "Ver evidencia"}</button>
-          {showEvidence && decision && <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-black/35 p-3 text-xs">{JSON.stringify({ packageVersion: decision.packageVersion, verdict: decision.verdict, identityFingerprint: decision.identityFingerprint, assessment: decision.assessment, canPublish: false }, null, 2)}</pre>}
+          {decision?.evidenceDistillation?.packStrategy && (
+            <section aria-labelledby="pack-strategy-heading" className="space-y-3 rounded-2xl border border-white/15 bg-black/20 p-3">
+              <div>
+                <h3 id="pack-strategy-heading" className="font-black">Estrategia de presentación y paquetes</h3>
+                <p className="text-xs text-white/60">Packs distintos informan estrategia, pero nunca se mezclan con el offer exacto.</p>
+              </div>
+              <div className="space-y-2">
+                {decision.evidenceDistillation.packStrategy.packMatrix.map((pack) => (
+                  <article key={pack.offerPackFingerprint} className="rounded-xl bg-black/25 p-3 text-sm">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <strong>{pack.packCount}-pack · {pack.totalUnitCount ?? "N/D"} unidades</strong>
+                      <span className="rounded-full border border-white/20 px-2 py-1 text-xs font-black">{pack.decision}</span>
+                    </div>
+                    <dl className="mt-2 grid gap-1 text-xs sm:grid-cols-4">
+                      <div><dt className="text-white/50">Precio / unidad</dt><dd>{money(pack.medianLandedPrice)} / {money(pack.medianPricePerUnit)}</dd></div>
+                      <div><dt className="text-white/50">Demanda / competencia</dt><dd>{pack.scores.demandConfidence.toFixed(0)} / {pack.competitionPressure.toFixed(0)}</dd></div>
+                      <div><dt className="text-white/50">Beneficio / ROI / margen</dt><dd>{money(pack.economics.sellerProfit)} / {pack.economics.roiPercent?.toFixed(1) ?? "N/D"}% / {pack.economics.netMarginPercent?.toFixed(1) ?? "N/D"}%</dd></div>
+                      <div><dt className="text-white/50">Descuento / score</dt><dd>{pack.economics.buyerDiscountPercent?.toFixed(1) ?? "N/D"}% / {pack.scores.overallPackStrategy.toFixed(0)}</dd></div>
+                    </dl>
+                    <p className="mt-2 text-xs text-white/70">{pack.explanation}</p>
+                    {pack.operationalRisk.length > 0 && <p className="mt-1 text-xs text-amber-100">Pendiente: {pack.operationalRisk.join(", ")}</p>}
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+          {showEvidence && decision && <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-black/35 p-3 text-xs">{JSON.stringify({ packageVersion: decision.packageVersion, verdict: decision.verdict, identityFingerprint: decision.identityFingerprint, assessment: decision.assessment, evidenceDistillation: decision.evidenceDistillation, canPublish: false }, null, 2)}</pre>}
         </>
       )}
 
