@@ -266,6 +266,31 @@ type ProductResearchCaptureStatus = {
   ebayWrites: 0
 }
 
+type MarketplaceInsightsPreflight = {
+  environment: "PREVIEW" | "BLOCKED"
+  preview: boolean
+  staging: boolean
+  branchMatch: boolean
+  clientPair: "PRESENT" | "MISSING"
+  configuredFlag: "TRUE" | "FALSE"
+  requestedScope: "BUY_MARKETPLACE_INSIGHTS"
+  scopeConfirmed: boolean
+  tokenStatus: string
+  entitlement: string
+  historyRequest: "AVAILABLE" | "REJECTED" | "NOT_EXECUTED"
+  httpStatus: number | null
+  observedAt: string
+  safety: {
+    payloadStored: false
+    payloadReturned: false
+    secretsExposed: false
+    piiExposed: false
+    openAiCalls: 0
+    ebayWrites: 0
+    productionChanged: false
+  }
+}
+
 function money(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? `$${value.toFixed(2)}` : "N/D"
 }
@@ -348,6 +373,8 @@ export function Loop2Top20OpportunityPool() {
   const [soldEvidenceAttested, setSoldEvidenceAttested] = useState(false)
   const [browserCaptureStatus, setBrowserCaptureStatus] =
     useState<ProductResearchCaptureStatus | null>(null)
+  const [marketplaceInsightsPreflight, setMarketplaceInsightsPreflight] =
+    useState<MarketplaceInsightsPreflight | null>(null)
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
@@ -417,6 +444,31 @@ export function Loop2Top20OpportunityPool() {
       setMessage("Escaneo iniciado. Puedes cerrar esta página; Seller OS continuará automáticamente.")
     } catch (scanError) {
       setError(scanError instanceof Error ? scanError.message : "TOP20_SCAN_FAILED")
+    } finally {
+      setWorkingId("")
+    }
+  }
+
+  const verifyMarketplaceInsights = async () => {
+    setWorkingId("marketplace-insights-preflight"); setError(""); setMessage("")
+    try {
+      const response = await adminFetch<{ result: MarketplaceInsightsPreflight }>(
+        "/api/admin/ebay/marketplace-insights/preflight",
+        {
+          method: "POST",
+          headers: {
+            "Idempotency-Key": requestKey("marketplace-insights-preflight", "entitlement"),
+          },
+        },
+      )
+      setMarketplaceInsightsPreflight(response.result)
+      setMessage(response.result.entitlement === "AUTHORIZED"
+        ? "Marketplace Insights está autorizado para evidencia oficial de ventas."
+        : "Preflight completado sin secretos. Revisa el resultado oficial antes de cambiar el flujo.")
+    } catch (preflightError) {
+      setError(preflightError instanceof Error
+        ? preflightError.message
+        : "MARKETPLACE_INSIGHTS_PREFLIGHT_FAILED")
     } finally {
       setWorkingId("")
     }
@@ -561,6 +613,34 @@ export function Loop2Top20OpportunityPool() {
             <p className="mt-1 text-white/65">eBay-first: {payload.run.ebay_first_status ?? "NOT_STARTED"} · categorías {payload.run.ebay_first_category_count ?? 0} · señales {payload.run.ebay_first_signal_count ?? 0} · coincidencias Luna exactas {payload.run.ebay_first_exact_luna_match_count ?? 0}</p>
             <p className="mt-1 text-white/55">Brand {payload.run.coverage_before?.brand ?? 0} → {payload.run.coverage_after?.brand ?? 0} · GTIN/MPN {payload.run.coverage_before?.gtinOrMpn ?? 0} → {payload.run.coverage_after?.gtinOrMpn ?? 0} · pack {payload.run.coverage_before?.pack ?? 0} → {payload.run.coverage_after?.pack ?? 0} · peso {payload.run.coverage_before?.weight ?? 0} → {payload.run.coverage_after?.weight ?? 0} · dimensiones {payload.run.coverage_before?.dimensions ?? 0} → {payload.run.coverage_after?.dimensions ?? 0}</p>
           </div>}
+          <section aria-labelledby="marketplace-insights-preflight-heading" className="space-y-3 rounded-xl border border-emerald-200/20 bg-emerald-100/[0.04] p-3 text-xs">
+            <div>
+              <h4 id="marketplace-insights-preflight-heading" className="font-black">API oficial de ventas de mercado</h4>
+              <p className="mt-1 text-white/60">Comprueba si el keyset de Seller OS tiene acceso a Marketplace Insights. Hace una sola consulta oficial GET en Preview; no guarda ni devuelve resultados, tokens o payloads.</p>
+            </div>
+            <button
+              type="button"
+              disabled={workingId === "marketplace-insights-preflight" || scanActive}
+              onClick={() => void verifyMarketplaceInsights()}
+              className="min-h-11 w-full rounded-xl bg-emerald-100 px-4 font-black text-emerald-950 disabled:opacity-40"
+            >
+              {workingId === "marketplace-insights-preflight"
+                ? "Verificando acceso oficial…"
+                : "Verificar Marketplace Insights"}
+            </button>
+            <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div><dt className="text-white/45">Client pair</dt><dd className="font-black">{marketplaceInsightsPreflight?.clientPair ?? "SIN VERIFICAR"}</dd></div>
+              <div><dt className="text-white/45">Scope</dt><dd className="font-black">{marketplaceInsightsPreflight?.scopeConfirmed ? "CONFIRMADO" : marketplaceInsightsPreflight ? "NO" : "SIN VERIFICAR"}</dd></div>
+              <div><dt className="text-white/45">Token OAuth</dt><dd>{marketplaceInsightsPreflight?.tokenStatus ?? "SIN VERIFICAR"}</dd></div>
+              <div><dt className="text-white/45">Entitlement</dt><dd className="font-black">{marketplaceInsightsPreflight?.entitlement ?? "SIN VERIFICAR"}</dd></div>
+              <div><dt className="text-white/45">Historial oficial</dt><dd>{marketplaceInsightsPreflight?.historyRequest ?? "SIN VERIFICAR"}</dd></div>
+              <div><dt className="text-white/45">Preview / staging</dt><dd>{marketplaceInsightsPreflight ? `${marketplaceInsightsPreflight.preview ? "SÍ" : "NO"} / ${marketplaceInsightsPreflight.staging ? "SÍ" : "NO"}` : "SIN VERIFICAR"}</dd></div>
+              <div><dt className="text-white/45">Rama</dt><dd>{marketplaceInsightsPreflight ? (marketplaceInsightsPreflight.branchMatch ? "MATCH" : "MISMATCH") : "SIN VERIFICAR"}</dd></div>
+              <div><dt className="text-white/45">HTTP sanitizado</dt><dd>{marketplaceInsightsPreflight?.httpStatus ?? "N/D"}</dd></div>
+            </dl>
+            {marketplaceInsightsPreflight && <p className="text-white/55">Observado {new Date(marketplaceInsightsPreflight.observedAt).toLocaleString("es")} · payload guardado NO · secretos expuestos NO · OpenAI 0 · escrituras eBay 0 · Production sin cambios.</p>}
+            <p className="text-white/45">La verificación no activa el adapter ni modifica variables. Si el entitlement es NOT_ENTITLED, Product Research seguirá siendo accesible sólo mediante las vías oficialmente habilitadas para la cuenta.</p>
+          </section>
           <section aria-labelledby="product-research-capture-heading" className="space-y-3 rounded-xl border border-cyan-200/20 bg-cyan-100/[0.04] p-3 text-xs">
             <div>
               <h4 id="product-research-capture-heading" className="font-black">Captura oficial desde Product Research</h4>
