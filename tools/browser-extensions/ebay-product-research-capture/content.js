@@ -265,6 +265,57 @@
       ? [[field, text(cells[index]?.innerText || cells[index]?.textContent)]] : []))
   }
 
+  function textAfterAnyAlias(source, aliases, length = 140) {
+    const lowered = source.toLowerCase()
+    let bestStart = -1
+    let bestAliasLength = 0
+    for (const alias of aliases) {
+      const index = lowered.indexOf(alias)
+      if (index === -1) continue
+      if (bestStart === -1 || index < bestStart) {
+        bestStart = index
+        bestAliasLength = alias.length
+      }
+    }
+    if (bestStart === -1) return source
+    return source.slice(bestStart + bestAliasLength, bestStart + bestAliasLength + length)
+  }
+
+  function bestEffortValuesForBlock(block, itemLink) {
+    const content = text(block.innerText || block.textContent)
+    const title = accessibleLinkText(itemLink)
+    const values = {}
+    if (title) values.temporaryTitle = title
+    const priceSource = textAfterAnyAlias(content, [
+      "average sold price", "avg sold price", "average price", "price", "precio",
+    ])
+    const priceMatch = priceSource.match(/[$€£]\s*[\d,.]+|\bfree\b/i) ?? content.match(/[$€£]\s*[\d,.]+|\bfree\b/i)
+    if (priceMatch) values.averageSoldPrice = priceMatch[0]
+    const totalSoldSource = textAfterAnyAlias(content, [
+      "total sold", "quantity sold", "sold quantity", "total vendido", "cantidad vendida",
+      "unidades vendidas", "sold",
+    ])
+    const totalSoldMatch = totalSoldSource.match(/\b[\d,]+\b/) ?? content.match(/\b[\d,]+\b/)
+    if (totalSoldMatch) values.totalSold = totalSoldMatch[0]
+    const dateSource = textAfterAnyAlias(content, [
+      "last sold date", "last sold", "sold date", "ultima venta", "última venta",
+      "fecha de ultima venta", "fecha de última venta",
+    ])
+    const dateMatch = dateText(dateSource) ?? dateText(content)
+    if (dateMatch) values.lastSoldDate = dateMatch
+    const listingFormatSource = content.toLowerCase()
+    if (/\bauction\b|\bsubasta\b/.test(listingFormatSource)) values.listingFormat = "AUCTION"
+    else if (/\bbuy it now\b|\bfixed price\b|\bprecio fijo\b/.test(listingFormatSource)) {
+      values.listingFormat = "FIXED_PRICE"
+    }
+    const shippingSource = textAfterAnyAlias(content, [
+      "average shipping", "avg shipping", "shipping", "envio", "envío",
+    ])
+    const shippingMatch = shippingSource.match(/[$€£]\s*[\d,.]+|\bfree\b/i)
+    if (shippingMatch) values.averageShipping = shippingMatch[0]
+    return values
+  }
+
   function coordinateValuesForRow(row, headerElements, mapped) {
     const headerCenters = headerElements.map((element) => {
       const box = elementRect(element)
@@ -452,6 +503,30 @@
         return leftBox.height - rightBox.height || leftBox.top - rightBox.top
       })
   }
+
+  function bestEffortRowElements(container, headerElements, mapped) {
+    const headerBottom = Math.max(...headerElements.map((element) =>
+      elementRect(element).bottom))
+    const itemLinks = deepQueryAll('a[href*="/itm/"]', container).filter(visible)
+      .filter((link) => listingIdFromLink(link))
+      .filter((link) => elementRect(link).top >= headerBottom - 4)
+    const candidates = []
+    for (const link of itemLinks) {
+      let ancestor = link.parentElement
+      for (let depth = 0; ancestor && depth < 8; depth += 1, ancestor = ancestor.parentElement) {
+        if (!visible(ancestor) || elementRect(ancestor).top < headerBottom - 4) continue
+        const values = bestEffortValuesForBlock(ancestor, link)
+        if (requiredFieldValid("temporaryTitle", values.temporaryTitle)
+          && requiredFieldValid("averageSoldPrice", values.averageSoldPrice)
+          && requiredFieldValid("totalSold", values.totalSold)
+          && requiredFieldValid("lastSoldDate", values.lastSoldDate)) {
+          candidates.push({ values, itemLink: link, row: ancestor })
+          break
+        }
+      }
+    }
+    return [...new Map(candidates.map((entry) => [listingIdFromLink(entry.itemLink) ?? entry.values.temporaryTitle, entry])).values()]
+  }
   const offerFacts = (title) => {
     const normalized = text(title).toLowerCase()
     const pack = normalized.match(/\b(?:lot|pack|set)\s+of\s+(\d{1,3})\b/) ??
@@ -495,7 +570,8 @@
     const coordinateRows = semanticTable || elementRows.length
       ? []
       : coordinateRowsFromItemLinks(container, headerElements, mapped)
-    const rows = [...elementRows, ...coordinateRows].map(({ values, itemLink, row }) => {
+    const bestEffortRows = elementRows.length || coordinateRows.length ? [] : bestEffortRowElements(container, headerElements, mapped)
+    const rows = [...elementRows, ...coordinateRows, ...bestEffortRows].map(({ values, itemLink, row }) => {
       const listingId = values.listingId || listingIdFromLink(itemLink)
       const facts = offerFacts(values.temporaryTitle)
       return {
@@ -540,7 +616,8 @@
       const mapped = headers.map(canonicalHeader)
       if (!REQUIRED_FIELDS.every((field) => mapped.includes(field))) continue
       const coordinateRows = coordinateRowsFromItemLinks(container, headerElements, mapped)
-      const rows = coordinateRows.map(({ values, itemLink }) => {
+      const bestEffortRows = coordinateRows.length ? [] : bestEffortRowElements(container, headerElements, mapped)
+      const rows = [...coordinateRows, ...bestEffortRows].map(({ values, itemLink, row }) => {
         const listingId = values.listingId || listingIdFromLink(itemLink)
         return {
           temporaryTitle: values.temporaryTitle,
@@ -553,7 +630,7 @@
           listingFormat: values.listingFormat || "UNKNOWN",
           freeShippingPercent: values.freeShippingPercent ? percentage(values.freeShippingPercent) : null,
           bids: values.bids ? integer(values.bids) : null,
-          visibleImageCount: 0,
+          visibleImageCount: row ? deepQueryAll("img", row).length : 0,
           ...offerFacts(values.temporaryTitle),
         }
       })
