@@ -243,7 +243,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research"
+  title.textContent = "Seller OS · Product Research · v1.0.1"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar resultados para Seller OS"

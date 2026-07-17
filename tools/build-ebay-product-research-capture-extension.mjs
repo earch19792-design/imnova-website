@@ -2,7 +2,10 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { basename, resolve } from "node:path"
 
 const source = resolve("tools/browser-extensions/ebay-product-research-capture")
-const output = resolve("public/seller-os-tools/ebay-product-research-capture-extension.zip")
+const outputPaths = [
+  "public/seller-os-tools/ebay-product-research-capture-extension.zip",
+  "public/seller-os-tools/ebay-product-research-capture-extension-v1.0.1.zip",
+]
 const files = ["manifest.json", "content.js", "README.md"]
 
 const crcTable = Array.from({ length: 256 }, (_, index) => {
@@ -62,6 +65,6 @@ const archive = Buffer.concat([
 ])
 
 mkdirSync(resolve("public/seller-os-tools"), { recursive: true })
-writeFileSync(output, archive)
-console.log(JSON.stringify({ output: "public/seller-os-tools/ebay-product-research-capture-extension.zip",
+for (const output of outputPaths) writeFileSync(resolve(output), archive)
+console.log(JSON.stringify({ outputs: outputPaths,
   files: files.length, bytes: archive.length, deterministic: true }))
