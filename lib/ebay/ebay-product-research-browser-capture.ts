@@ -373,6 +373,10 @@ export function classifyProductResearchCaptureRow(
     return { classification: "AMBIGUOUS" as const,
       reasons: ["MULTIPLE_LUNA_IDENTITIES_COMPATIBLE"], target: null }
   }
+  if (matches[0].classification === "AMBIGUOUS") {
+    return { classification: "AMBIGUOUS" as const,
+      reasons: matches[0].reasons, target: null }
+  }
   return { classification: matches[0].classification, reasons: matches[0].reasons,
     target: matches[0].target }
 }
@@ -492,7 +496,9 @@ export function parseProductResearchBrowserCapture(input: {
 }
 
 export function productResearchCapturePersistenceRows(rows: ClassifiedProductResearchCapture[]) {
-  return rows.map((row) => ({
+  return rows.map((row) => {
+    const canBindLuna = !["AMBIGUOUS", "NO_LUNA_MATCH"].includes(row.matchClassification)
+    return ({
     source_listing_id: row.sourceListingId,
     source_listing_reference_hash: row.sourceListingReferenceHash,
     title_fingerprint: row.titleFingerprint,
@@ -515,9 +521,9 @@ export function productResearchCapturePersistenceRows(rows: ClassifiedProductRes
     keyword_signals: row.keywordSignals,
     match_classification: row.matchClassification,
     match_reasons: row.matchReasons,
-    matched_queue_item_id: row.matchedTarget?.queueItemId ?? null,
-    matched_supplier_variant_id: row.matchedTarget?.supplierVariantId ?? null,
-  }))
+    matched_queue_item_id: canBindLuna ? row.matchedTarget?.queueItemId ?? null : null,
+    matched_supplier_variant_id: canBindLuna ? row.matchedTarget?.supplierVariantId ?? null : null,
+  })})
 }
 
 export function productResearchCapturePersistenceError(error: unknown) {
