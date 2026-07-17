@@ -1107,7 +1107,7 @@ async function ensureEbayFirstDiscovery(input: {
   environment: NodeJS.ProcessEnv
   now: Date
 }) {
-  if (["COMPLETED", "UNAVAILABLE", "FAILED_RECOVERABLE"]
+  if (["COMPLETED", "UNAVAILABLE"]
     .includes(text(input.run.ebay_first_status) ?? "")) return
   const { error: startError } = await input.supabase.from("marketplace_listing_approval_queue_runs")
     .update({ ebay_first_status: "RUNNING", last_activity_at: input.now.toISOString(),
@@ -1165,6 +1165,12 @@ async function ensureEbayFirstDiscovery(input: {
       right.product.demandConfidence - left.product.demandConfidence ||
       right.match.score - left.match.score ||
       String(left.match.candidate?.supplierSku).localeCompare(String(right.match.candidate?.supplierSku)))
+    const { count: currentPreselected, error: currentPreselectedError } = await input.supabase
+      .from("marketplace_listing_approval_queue_scan_targets")
+      .select("id", { count: "exact", head: true }).eq("run_id", input.run.id)
+      .eq("marketplace_account_key", input.accountKey).eq("preselected", true)
+    if (currentPreselectedError) throw new Error("TOP20_EBAY_FIRST_PRESELECTION_COUNT_FAILED")
+    const promotionCapacity = Math.max(0, 100 - (currentPreselected ?? 0))
     for (const [index, entry] of ranked.entries()) {
       const candidate = entry.match.candidate
       if (!candidate) continue
@@ -1178,12 +1184,30 @@ async function ensureEbayFirstDiscovery(input: {
         .eq("market_radar_product_id", candidate.productId)
         .eq("supplier_variant_id", candidate.supplierVariantId)
       if (error) throw new Error("TOP20_EBAY_FIRST_TARGET_PERSIST_FAILED")
+      if (index < promotionCapacity) {
+        const { error: promoteError } = await input.supabase
+          .from("marketplace_listing_approval_queue_scan_targets")
+          .update({ status: "PRESELECTED", preselected: true, processing_phase: null,
+            lease_owner: null, lease_expires_at: null, next_retry_at: null,
+            last_error_code: null, updated_at: input.now.toISOString() })
+          .eq("run_id", input.run.id).eq("marketplace_account_key", input.accountKey)
+          .eq("market_radar_product_id", candidate.productId)
+          .eq("supplier_variant_id", candidate.supplierVariantId)
+          .in("status", ["PENDING", "DISCOVERED", "SKIPPED"])
+        if (promoteError) throw new Error("TOP20_EBAY_FIRST_PRESELECTION_FAILED")
+      }
     }
+    const { count: preselectedCount, error: preselectedError } = await input.supabase
+      .from("marketplace_listing_approval_queue_scan_targets")
+      .select("id", { count: "exact", head: true }).eq("run_id", input.run.id)
+      .eq("marketplace_account_key", input.accountKey).eq("preselected", true)
+    if (preselectedError) throw new Error("TOP20_EBAY_FIRST_PRESELECTION_COUNT_FAILED")
     const available = discoveries.some((entry) => entry.status === "AVAILABLE")
     const { error: finishError } = await input.supabase.from("marketplace_listing_approval_queue_runs")
       .update({ ebay_first_status: available ? "COMPLETED" : "UNAVAILABLE",
         ebay_first_category_count: categories.length, ebay_first_signal_count: products.length,
         ebay_first_exact_luna_match_count: ranked.length,
+        preselected_count: preselectedCount ?? Number(input.run.preselected_count ?? 0),
         ebay_first_match_counts: { ...sourceStatusCounts, ...matchCounts },
         ebay_first_observed_at: input.now.toISOString(), last_activity_at: input.now.toISOString(),
         updated_at: input.now.toISOString() })
@@ -1859,7 +1883,8 @@ export async function runListingAiApprovalQueueBatch(input: {
     canPublish: false,
     schedulingEnabled: false,
   }
-  if (run.scan_phase === "DISCOVERY") {
+  if (run.scan_phase === "DISCOVERY" || run.ebay_first_status === "NOT_STARTED" ||
+    run.ebay_first_status === "FAILED_RECOVERABLE") {
     await ensureEbayFirstDiscovery({ supabase: input.supabase, accountKey: input.accountKey,
       run, environment, now })
   }
