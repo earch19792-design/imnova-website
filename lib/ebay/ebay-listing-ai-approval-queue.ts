@@ -41,6 +41,8 @@ export type ApprovalQueueCatalogCandidate = {
   weight: number | null
   weightUnit: string | null
   dimensions: { length: number; width: number; height: number; unit: "in" | "cm" } | null
+  logisticsStatus: "CONFIRMED" | "ESTIMATED" | "INSUFFICIENT"
+  identityConflictAttributes: string[]
   exactContents: string[]
   categoryId: string | null
   categoryName: string | null
@@ -175,7 +177,7 @@ export function evaluateApprovalQueueCatalogCandidate(
   }
   if (!urlAllowed(candidate.productUrl)) missing.push("LUNA_URL_NOT_ALLOWLISTED")
   if (!recent(candidate.capturedAt, now)) missing.push("LUNA_COST_AND_STOCK_STALE")
-  if (candidate.available !== true || (candidate.inventoryQuantity ?? 0) <= 0) {
+  if (candidate.available === false || (candidate.inventoryQuantity !== null && candidate.inventoryQuantity <= 0)) {
     return {
       cohort: "REJECTED" as const,
       reasonCodes: ["LUNA_OUT_OF_STOCK"],
@@ -212,6 +214,7 @@ export function evaluateApprovalQueueDecision(evidence: ApprovalQueueDecisionEvi
     evidence.targetPrice === null ? "TARGET_PRICE_REQUIRED" : null,
     !evidence.safePackStrategy ? "SAFE_PACK_STRATEGY_REQUIRED" : null,
     !evidence.shippingComplete ? "SHIPPING_LOGISTICS_INCOMPLETE" : null,
+    evidence.activeExactCount < 1 ? "EXACT_COMPARABLES_REQUIRED" : null,
   ].filter((entry): entry is string => Boolean(entry))
   const rejected = [
     evidence.verdict === "NO_GO" ? "LOOP1_NO_GO" : null,

@@ -21,10 +21,31 @@ import {
 } from "./ebay-openai-listing-factory-v2"
 import { buildListingAiPackStrategy } from "./ebay-openai-listing-pack-strategy"
 import {
+  getEbayTaxonomyListingIntelligence,
+  runEbaySellerKeywordDemandValidation,
+  searchEbayCatalogIdentity,
+} from "./ebay-seller-keyword-demand-gateway"
+import {
+  LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION,
+  automaticQualification,
+  buildEbayCatalogIdentityEvidence,
+  buildExactComparableConsensus,
+  buildLunaStructuredIdentityEvidence,
+  classifyComparableAgainstLunaSupply,
+  conservativeLogistics,
+  resolveProductIdentity,
+  sanitizedSourceIdentifier,
+  selectCatalogIdentityMatches,
+  type CanonicalProductIdentity,
+  type EbayComparableIdentityObservation,
+  type IdentityAttributeEvidence,
+} from "./ebay-luna-product-identity-enrichment"
+import {
   createWinnerEvidenceDecisionPackage,
   winnerComparablesFromKeywordReport,
 } from "./ebay-winner-evidence-v2-service"
 import {
+  buildProductIdentityFingerprint,
   validateGtinChecksum,
   type WinnerComparableInput,
   type WinnerEvidenceInput,
@@ -33,11 +54,14 @@ import {
 type JsonRecord = Record<string, unknown>
 
 const MARKETPLACE = "EBAY_US"
-const DEFAULT_BATCH_SIZE = 50
-const MAX_BATCH_SIZE = 100
+const DEFAULT_BATCH_SIZE = 20
+const MAX_BATCH_SIZE = 50
 const LEASE_MS = 2 * 60_000
 const FRESHNESS_MS = 24 * 60 * 60_000
 const DEFAULT_SUPPLIER_SHIPPING_RESERVE_USD = 8
+const DEFAULT_CONSERVATIVE_OUTBOUND_RESERVE_USD = 18
+const DEFAULT_PACKAGING_COST_USD = 1.5
+const DEFAULT_FIXED_FULFILLMENT_COST_USD = 1.5
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {}
@@ -110,6 +134,12 @@ function candidateFromRows(
   variant: JsonRecord,
   queue: JsonRecord,
   environment: NodeJS.ProcessEnv,
+  enriched?: {
+    identity: CanonicalProductIdentity
+    logistics: ReturnType<typeof conservativeLogistics>
+    requiredAspects: Array<{ name: string; value: string }>
+    conflicts: string[]
+  },
 ): ApprovalQueueCatalogCandidate {
   const metadata = record(variant.metadata)
   const assessment = record(queue.assessment)
@@ -118,13 +148,14 @@ function candidateFromRows(
   const keywordStructure = record(queue.keyword_structure)
   const category = record(metadata.ebayCategory ?? metadata.ebay_category)
   const imageProvenance = record(metadata.imageProvenance ?? metadata.image_provenance)
-  const packCount = positiveInteger(metadata.packCount ?? metadata.pack_count ?? metadata.packQuantity ?? metadata.pack_quantity)
-  const unitCount = positiveInteger(metadata.unitCount ?? metadata.unit_count ?? metadata.countPerItem ?? metadata.count_per_item)
-  const manufacturerBrand = text(metadata.manufacturerBrand ?? metadata.manufacturer_brand ?? metadata.brand)
-  const gtin = text(variant.barcode ?? metadata.gtin ?? metadata.upc)
-  const model = text(metadata.model)
-  const mpn = text(metadata.mpn)
-  const requiredAspects = records(metadata.requiredAspects ?? metadata.required_aspects)
+  const identity = enriched?.identity
+  const packCount = identity?.packCount ?? positiveInteger(metadata.packCount ?? metadata.pack_count ?? metadata.packQuantity ?? metadata.pack_quantity)
+  const unitCount = identity?.unitCount ?? positiveInteger(metadata.unitCount ?? metadata.unit_count ?? metadata.countPerItem ?? metadata.count_per_item)
+  const manufacturerBrand = identity?.brand ?? text(metadata.manufacturerBrand ?? metadata.manufacturer_brand ?? metadata.brand)
+  const gtin = identity?.validGtin ?? text(variant.barcode ?? metadata.gtin ?? metadata.upc)
+  const model = identity?.model ?? text(metadata.model)
+  const mpn = identity?.mpn ?? text(metadata.mpn)
+  const requiredAspects = enriched?.requiredAspects ?? records(metadata.requiredAspects ?? metadata.required_aspects)
     .map((entry) => ({ name: text(entry.name), value: text(entry.value) }))
     .filter((entry): entry is { name: string; value: string } => Boolean(entry.name && entry.value))
   const approvedKeywords = [...new Set([
@@ -153,29 +184,192 @@ function candidateFromRows(
     gtinValid: validateGtinChecksum(gtin),
     mpn,
     model,
-    productName,
+    productName: identity?.normalizedProductName ?? productName,
     packCount,
     unitCount,
-    size: text(metadata.size),
-    color: text(metadata.color),
-    scent: text(metadata.scent ?? metadata.fragrance),
-    variant: text(metadata.variant) ?? meaningfulVariant(variant.variant_title),
-    condition: text(metadata.condition) ?? "new",
-    weight: number(variant.weight),
-    weightUnit: text(variant.weight_unit),
-    dimensions: dimensions(metadata.dimensions),
-    exactContents: exactContents(metadata),
-    categoryId: text(category.id ?? metadata.ebayCategoryId ?? metadata.ebay_category_id ?? titleStrategy.categoryId),
+    size: identity?.size ?? text(metadata.size),
+    color: identity?.color ?? text(metadata.color),
+    scent: identity?.scent ?? text(metadata.scent ?? metadata.fragrance),
+    variant: identity?.variant ?? text(metadata.variant) ?? meaningfulVariant(variant.variant_title),
+    condition: identity?.condition ?? text(metadata.condition) ?? "new",
+    weight: enriched?.logistics.weight.value ?? number(variant.weight),
+    weightUnit: enriched?.logistics.weight.unit ?? text(variant.weight_unit),
+    dimensions: enriched?.logistics.dimensions ?? dimensions(metadata.dimensions),
+    logisticsStatus: enriched?.logistics.status ?? (dimensions(metadata.dimensions) && number(variant.weight) ? "CONFIRMED" : "INSUFFICIENT"),
+    identityConflictAttributes: enriched?.conflicts ?? [],
+    exactContents: identity?.totalContents.length ? identity.totalContents : exactContents(metadata),
+    categoryId: identity?.categoryId ?? text(category.id ?? metadata.ebayCategoryId ?? metadata.ebay_category_id ?? titleStrategy.categoryId),
     categoryName: text(category.name ?? metadata.ebayCategoryName ?? metadata.ebay_category_name ?? titleStrategy.categoryName),
     requiredAspects,
     approvedKeywords,
-    outboundShippingCost: number(metadata.outboundShippingCost ?? metadata.outbound_shipping_cost ?? assessedEconomics.estimatedOutboundShipping),
-    packagingCost: number(metadata.packagingCost ?? metadata.packaging_cost),
-    fixedFulfillmentCost: number(metadata.fixedFulfillmentCost ?? metadata.fixed_fulfillment_cost),
+    outboundShippingCost: number(metadata.outboundShippingCost ?? metadata.outbound_shipping_cost ?? assessedEconomics.estimatedOutboundShipping) ??
+      (enriched?.logistics.status === "ESTIMATED" ? enriched.logistics.outboundReserveUsd : null),
+    packagingCost: number(metadata.packagingCost ?? metadata.packaging_cost) ?? DEFAULT_PACKAGING_COST_USD,
+    fixedFulfillmentCost: number(metadata.fixedFulfillmentCost ?? metadata.fixed_fulfillment_cost) ?? DEFAULT_FIXED_FULFILLMENT_COST_USD,
     supplierShippingReserveUsd,
     complianceBlocked: restrictions.length > 0 || metadata.complianceBlocked === true,
     complianceFindings: restrictions,
   }
+}
+
+function aspectValue(value: unknown, names: string[]) {
+  const expected = new Set(names.map((name) => name.toLowerCase().replace(/[^a-z0-9]/g, "")))
+  for (const entry of records(value)) {
+    const name = (text(entry.name) ?? "").toLowerCase().replace(/[^a-z0-9]/g, "")
+    if (expected.has(name)) return text(entry.value)
+  }
+  return null
+}
+
+function comparableObservations(report: unknown) {
+  const root = record(report)
+  return records(root.comparableEvidence).map((entry): EbayComparableIdentityObservation | null => {
+    const listingId = text(entry.comparableId)
+    if (!listingId || !["EBAY_BROWSE_ACTIVE_LISTING", "EBAY_BROWSE_ESTIMATED_SALES"]
+      .includes(text(entry.evidenceSource) ?? "")) return null
+    const aspects = records(entry.localizedAspects).map((aspect) => ({
+      name: text(aspect.name) ?? "", value: text(aspect.value) ?? "",
+    })).filter((aspect) => aspect.name && aspect.value)
+    return {
+      listingIdentifier: listingId,
+      sellerIdentifier: text(entry.sellerUsername),
+      productName: text(entry.title), brand: text(entry.brand) ?? aspectValue(aspects, ["brand"]),
+      manufacturer: aspectValue(aspects, ["manufacturer"]),
+      gtin: text(entry.gtin) ?? aspectValue(aspects, ["upc", "ean", "gtin"]),
+      mpn: text(entry.mpn) ?? aspectValue(aspects, ["mpn", "manufacturer part number"]),
+      model: aspectValue(aspects, ["model"]),
+      packCount: positiveInteger(aspectValue(aspects, ["number in pack", "pack quantity", "pack size"])),
+      unitCount: positiveInteger(aspectValue(aspects, ["unit count", "count per pack"])),
+      size: text(entry.size) ?? aspectValue(aspects, ["size", "capacity", "volume"]),
+      color: text(entry.color) ?? aspectValue(aspects, ["color", "colour"]),
+      scent: aspectValue(aspects, ["scent", "fragrance"]),
+      variant: aspectValue(aspects, ["variant", "type", "formulation"]),
+      condition: text(entry.condition) ?? "new", categoryId: text(entry.categoryId), aspects,
+    }
+  }).filter((entry): entry is EbayComparableIdentityObservation => Boolean(entry))
+}
+
+function sourceCoverage(rows: IdentityAttributeEvidence[]) {
+  return rows.reduce<Record<string, number>>((coverage, row) => {
+    coverage[row.sourceType] = (coverage[row.sourceType] ?? 0) + 1
+    return coverage
+  }, {})
+}
+
+function mergeNumericCoverage(current: unknown, increment: Record<string, number>) {
+  const existing = record(current)
+  return Object.fromEntries(Object.entries(increment).map(([key, value]) =>
+    [key, (number(existing[key]) ?? 0) + value]))
+}
+
+function evidenceHash(row: IdentityAttributeEvidence) {
+  return hash({ attribute: row.attribute, normalizedValue: row.normalizedValue,
+    sourceType: row.sourceType, sourceIdentifier: row.sourceIdentifier,
+    observedAt: row.observedAt, rule: row.verifiedByRule })
+}
+
+function requiredAspectsFromTaxonomy(input: {
+  required: Array<{ name: string }>
+  identity: CanonicalProductIdentity
+}) {
+  const facts = new Map<string, string | null>([
+    ["brand", input.identity.brand], ["manufacturer", input.identity.manufacturer],
+    ["mpn", input.identity.mpn], ["model", input.identity.model],
+    ["size", input.identity.size], ["color", input.identity.color],
+    ["scent", input.identity.scent], ["fragrance", input.identity.scent],
+    ["condition", input.identity.condition],
+    ["number in pack", input.identity.packCount ? String(input.identity.packCount) : null],
+    ["unit quantity", input.identity.unitCount ? String(input.identity.unitCount) : null],
+  ])
+  return input.required.map((aspect) => ({ name: aspect.name,
+    value: facts.get(aspect.name.toLowerCase()) ?? null }))
+    .filter((entry): entry is { name: string; value: string } => Boolean(entry.value))
+}
+
+async function enrichFromOfficialSources(input: {
+  variant: JsonRecord
+  queue: JsonRecord
+  rawSnapshot: JsonRecord
+  environment: NodeJS.ProcessEnv
+  catalogReader: typeof searchEbayCatalogIdentity
+}) {
+  const raw = record(input.rawSnapshot.raw)
+  const rawProduct = record(raw.product)
+  const rawVariant = record(raw.variant)
+  const observedAt = text(input.variant.captured_at) ?? new Date().toISOString()
+  const lunaEvidence = buildLunaStructuredIdentityEvidence({
+    sourceIdentifier: `${input.variant.product_id}:${input.variant.supplier_variant_id}`,
+    observedAt, title: text(input.variant.title), variantTitle: meaningfulVariant(input.variant.variant_title),
+    optionValues: [rawVariant.option1, rawVariant.option2, rawVariant.option3]
+      .map(text).filter((entry): entry is string => Boolean(entry)),
+    vendor: text(input.variant.vendor ?? rawProduct.vendor), barcode: text(input.variant.barcode),
+    metadata: record(input.variant.metadata), weight: number(input.variant.weight),
+    weightUnit: text(input.variant.weight_unit),
+  })
+  const supplyResolved = resolveProductIdentity(lunaEvidence)
+  const supplyCandidate = candidateFromRows(input.variant, input.queue, input.environment, {
+    identity: supplyResolved.identity,
+    logistics: conservativeLogistics({ weight: supplyResolved.identity.weight,
+      dimensions: supplyResolved.identity.dimensions,
+      outboundReserveUsd: DEFAULT_CONSERVATIVE_OUTBOUND_RESERVE_USD }),
+    requiredAspects: [], conflicts: supplyResolved.conflicts,
+  })
+  const report = await runEbaySellerKeywordDemandValidation({
+    productName: supplyCandidate.productName, variantTitle: supplyCandidate.variant,
+    supplierSku: supplyCandidate.supplierSku, gtin: supplyCandidate.gtin,
+    brand: supplyCandidate.manufacturerBrand, mpn: supplyCandidate.mpn ?? supplyCandidate.model,
+    color: supplyCandidate.color, size: supplyCandidate.size, packQuantity: supplyCandidate.packCount,
+  })
+  const observations = comparableObservations(report)
+  const classified = observations.map((row) => ({ row,
+    result: classifyComparableAgainstLunaSupply({ supplyTitle: supplyCandidate.productName,
+      supplyVariant: supplyCandidate.variant, supplyPackCount: supplyCandidate.packCount,
+      supplySize: supplyCandidate.size, supplyColor: supplyCandidate.color,
+      supplyScent: supplyCandidate.scent }, row) }))
+  const exact = classified.filter((entry) => entry.result.classification === "EXACT_MATCH")
+    .map((entry) => entry.row)
+  const preliminaryConsensus = buildExactComparableConsensus({ exactComparables: exact, observedAt })
+  const preliminary = resolveProductIdentity([...lunaEvidence, ...preliminaryConsensus.evidence]).identity
+  const catalog = await input.catalogReader({ query: preliminary.normalizedProductName ?? supplyCandidate.productName ?? "",
+    gtin: preliminary.validGtin, mpn: preliminary.mpn, categoryId: preliminary.categoryId })
+  const selectedCatalog = selectCatalogIdentityMatches({ title: preliminary.normalizedProductName,
+    gtin: preliminary.validGtin, brand: preliminary.brand, mpn: preliminary.mpn,
+    packCount: preliminary.packCount }, catalog.products)
+  const catalogEvidence = buildEbayCatalogIdentityEvidence(selectedCatalog.products, catalog.observedAt)
+  const consensus = buildExactComparableConsensus({ exactComparables: exact, catalogEvidence, observedAt })
+  const resolved = resolveProductIdentity([...lunaEvidence, ...catalogEvidence, ...consensus.evidence])
+  const taxonomy = resolved.identity.categoryId || resolved.identity.normalizedProductName
+    ? await getEbayTaxonomyListingIntelligence(resolved.identity.normalizedProductName ?? "",
+      resolved.identity.categoryId) : null
+  const identity: CanonicalProductIdentity = { ...resolved.identity,
+    categoryId: resolved.identity.categoryId ?? taxonomy?.categoryId ?? null }
+  const requiredAspects = requiredAspectsFromTaxonomy({ required: taxonomy?.requiredAspects ?? [], identity })
+  const taxonomyEvidence: IdentityAttributeEvidence[] = taxonomy?.status === "AVAILABLE" ? [
+    ...(identity.categoryId ? [{ attribute: "categoryId" as const, rawValue: identity.categoryId,
+      normalizedValue: identity.categoryId, sourceType: "EBAY_CATALOG" as const,
+      sourceIdentifier: sanitizedSourceIdentifier("EBAY_CATALOG", `taxonomy:${identity.categoryId}`),
+      observedAt: taxonomy.observedAt ?? observedAt, confidence: .95,
+      verifiedByRule: "EBAY_TAXONOMY_CATEGORY", conflictStatus: "CLEAR" as const }] : []),
+    ...(requiredAspects.length ? [{ attribute: "requiredAspects" as const, rawValue: requiredAspects,
+      normalizedValue: requiredAspects, sourceType: "EBAY_CATALOG" as const,
+      sourceIdentifier: sanitizedSourceIdentifier("EBAY_CATALOG", `taxonomy-aspects:${identity.categoryId}`),
+      observedAt: taxonomy.observedAt ?? observedAt, confidence: .95,
+      verifiedByRule: "EBAY_TAXONOMY_REQUIRED_ASPECTS", conflictStatus: "CLEAR" as const }] : []),
+  ] : []
+  const logistics = conservativeLogistics({ weight: identity.weight, dimensions: identity.dimensions,
+    outboundReserveUsd: DEFAULT_CONSERVATIVE_OUTBOUND_RESERVE_USD })
+  if (!identity.totalContents.length && identity.packCount && identity.normalizedProductName) {
+    identity.totalContents = [`${identity.packCount} x ${identity.normalizedProductName}`]
+  }
+  const candidate = candidateFromRows(input.variant, input.queue, input.environment, {
+    identity, logistics, requiredAspects, conflicts: resolved.conflicts,
+  })
+  return { candidate, identity, report, catalog, catalogMatchRule: selectedCatalog.matchRule,
+    catalogMatchCount: selectedCatalog.products.length,
+    exactComparables: exact, comparableClassifications: classified,
+    consensus, evidence: [...resolved.evidence, ...taxonomyEvidence], conflicts: resolved.conflicts,
+    logistics, taxonomyStatus: taxonomy?.status ?? "NOT_REQUESTED",
+    sourceCoverage: sourceCoverage([...resolved.evidence, ...taxonomyEvidence]) }
 }
 
 function winnerInput(candidate: ApprovalQueueCatalogCandidate, accountKey: string): WinnerEvidenceInput {
@@ -291,6 +485,14 @@ function comparableInputFromPackage(payload: JsonRecord): WinnerComparableInput[
   }).filter((entry) => entry.source)
 }
 
+function separateActiveAndEstimatedComparables(report: unknown) {
+  return winnerComparablesFromKeywordReport(report).flatMap((entry) =>
+    entry.source === "EBAY_BROWSE_ESTIMATED_SALES"
+      ? [{ ...entry, source: "EBAY_BROWSE_ACTIVE_LISTING" as const,
+        estimatedSoldQuantity: null }, entry]
+      : [entry])
+}
+
 function evidenceFromPackage(row: ListingAiDecisionRow, candidate: ApprovalQueueCatalogCandidate, now: Date) {
   const payload = record(row.package_payload)
   const economics = record(payload.economics)
@@ -361,6 +563,8 @@ function safeEvidenceSnapshot(input: {
       lunaUrl: input.candidate.productUrl,
       authorizedImageUrl: input.candidate.imageAuthorized ? input.candidate.imageUrl : null,
       variant: input.candidate.variant,
+      categoryId: input.candidate.categoryId,
+      categoryName: input.candidate.categoryName,
       capturedAt: input.candidate.capturedAt,
     },
     logistics: {
@@ -437,6 +641,77 @@ async function loadQueueRows(supabase: SupabaseClient, productIds: string[]) {
     .in("market_radar_product_id", productIds)
   if (error) throw new Error("TOP10_EXISTING_QUEUE_READ_FAILED")
   return new Map((data ?? []).map((row) => [`${row.market_radar_product_id}:${row.supplier_variant_id ?? ""}`, record(row)]))
+}
+
+async function loadSnapshotRows(supabase: SupabaseClient, snapshotIds: string[]) {
+  if (!snapshotIds.length) return new Map<string, JsonRecord>()
+  const { data, error } = await supabase.from("market_radar_snapshots")
+    .select("id,raw").in("id", snapshotIds)
+  if (error) throw new Error("TOP20_LUNA_STRUCTURED_SOURCE_READ_FAILED")
+  return new Map((data ?? []).map((row) => [String(row.id), record(row)]))
+}
+
+async function persistIdentityEnrichment(input: {
+  supabase: SupabaseClient
+  runId: string
+  accountKey: string
+  candidate: ApprovalQueueCatalogCandidate
+  result: Awaited<ReturnType<typeof enrichFromOfficialSources>>
+  now: Date
+}) {
+  const status = input.result.conflicts.length ? "CONFLICTED" : "RESOLVED"
+  const identityFingerprint = buildProductIdentityFingerprint({
+    manufacturerBrand: input.result.identity.brand,
+    gtin: input.result.identity.validGtin, mpn: input.result.identity.mpn,
+    model: input.result.identity.model, productName: input.result.identity.normalizedProductName,
+    packCount: input.result.identity.packCount, unitCount: input.result.identity.unitCount,
+    size: input.result.identity.size, color: input.result.identity.color,
+    scent: input.result.identity.scent, variant: input.result.identity.variant,
+    condition: input.result.identity.condition,
+  }).fingerprint
+  const { data, error } = await input.supabase.from("marketplace_product_identity_enrichments")
+    .upsert({ run_id: input.runId, marketplace_account_key: input.accountKey, marketplace: MARKETPLACE,
+      market_radar_product_id: input.candidate.marketRadarProductId,
+      supplier_product_id: input.candidate.supplierProductId,
+      supplier_variant_id: input.candidate.supplierVariantId,
+      supplier_sku: input.candidate.supplierSku,
+      enrichment_version: LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION, status,
+      identity_fingerprint: identityFingerprint,
+      canonical_identity: input.result.identity, logistics: input.result.logistics,
+      conflict_attributes: input.result.conflicts, reason_codes: [],
+      source_coverage: input.result.sourceCoverage, retry_count: 0, next_retry_at: null,
+      last_error_code: null, observed_at: input.now.toISOString(),
+      stale_after: new Date(input.now.getTime() + FRESHNESS_MS).toISOString(),
+      updated_at: input.now.toISOString() },
+    { onConflict: "run_id,market_radar_product_id,supplier_variant_id" }).select("id").single()
+  if (error || !data) throw new Error("TOP20_IDENTITY_ENRICHMENT_PERSIST_FAILED")
+  if (input.result.evidence.length) {
+    const rows = input.result.evidence.map((row) => ({ enrichment_id: data.id,
+      marketplace_account_key: input.accountKey, marketplace: MARKETPLACE,
+      attribute_name: row.attribute, raw_value: row.rawValue ?? null,
+      normalized_value: row.normalizedValue ?? null, source_type: row.sourceType,
+      source_identifier: row.sourceIdentifier, observed_at: row.observedAt,
+      confidence: row.confidence, verified_by_rule: row.verifiedByRule,
+      conflict_status: row.conflictStatus, evidence_hash: evidenceHash(row) }))
+    const { error: evidenceError } = await input.supabase
+      .from("marketplace_product_identity_attribute_evidence")
+      .upsert(rows, { onConflict: "enrichment_id,evidence_hash", ignoreDuplicates: true })
+    if (evidenceError) throw new Error("TOP20_IDENTITY_PROVENANCE_PERSIST_FAILED")
+  }
+  const { error: attemptsError } = await input.supabase.from("marketplace_product_identity_source_attempts")
+    .insert([
+      { enrichment_id: data.id, marketplace_account_key: input.accountKey, marketplace: MARKETPLACE,
+        source_type: "LUNA_STRUCTURED", status: "AVAILABLE", retry_number: 0,
+        started_at: input.now.toISOString(), completed_at: input.now.toISOString() },
+      { enrichment_id: data.id, marketplace_account_key: input.accountKey, marketplace: MARKETPLACE,
+        source_type: "EBAY_BROWSE", status: input.result.exactComparables.length ? "AVAILABLE" : "NO_MATCH",
+        retry_number: 0, started_at: input.now.toISOString(), completed_at: input.now.toISOString() },
+      { enrichment_id: data.id, marketplace_account_key: input.accountKey, marketplace: MARKETPLACE,
+        source_type: "EBAY_CATALOG", status: input.result.catalog.status, retry_number: 0,
+        started_at: input.now.toISOString(), completed_at: input.now.toISOString() },
+    ])
+  if (attemptsError) throw new Error("TOP20_IDENTITY_SOURCE_AUDIT_PERSIST_FAILED")
+  return data.id as string
 }
 
 async function claimRun(supabase: SupabaseClient, accountKey: string, total: number, workerId: string, now: Date) {
@@ -551,6 +826,7 @@ export async function runListingAiApprovalQueueBatch(input: {
   batchSize?: number
   now?: Date
   environment?: NodeJS.ProcessEnv
+  catalogReader?: typeof searchEbayCatalogIdentity
 }) {
   const now = input.now ?? new Date()
   const environment = input.environment ?? process.env
@@ -571,14 +847,29 @@ export async function runListingAiApprovalQueueBatch(input: {
     .range(offset, offset + batchSize - 1)
   if (catalogError) throw new Error("TOP10_CATALOG_READ_FAILED")
   const queueRows = await loadQueueRows(input.supabase, (variants ?? []).map((row) => row.product_id))
+  const snapshotRows = await loadSnapshotRows(input.supabase, (variants ?? [])
+    .map((row) => String(row.snapshot_id)).filter(Boolean))
   let analyzed = 0
   let retries = 0
+  let enrichedCount = 0
+  let conflictCount = 0
+  let catalogReads = 0
+  let browseReads = 0
+  const coverageBefore = { total: 0, brand: 0, gtinOrMpn: 0, pack: 0, weight: 0, dimensions: 0 }
+  const coverageAfter = { total: 0, brand: 0, gtinOrMpn: 0, pack: 0, weight: 0, dimensions: 0 }
+  const sources: Record<string, number> = {}
   const itemPayloads: JsonRecord[] = []
   for (const rawVariant of variants ?? []) {
     const variant = record(rawVariant)
     const queue = queueRows.get(`${variant.product_id}:${variant.supplier_variant_id ?? ""}`) ?? {}
-    const candidate = candidateFromRows(variant, queue, environment)
-    const catalogGate = evaluateApprovalQueueCatalogCandidate(candidate, now)
+    let candidate = candidateFromRows(variant, queue, environment)
+    coverageBefore.total += 1
+    if (candidate.manufacturerBrand) coverageBefore.brand += 1
+    if (candidate.gtinValid || candidate.mpn || candidate.model) coverageBefore.gtinOrMpn += 1
+    if (candidate.packCount) coverageBefore.pack += 1
+    if (candidate.weight) coverageBefore.weight += 1
+    if (candidate.dimensions) coverageBefore.dimensions += 1
+    let catalogGate = evaluateApprovalQueueCatalogCandidate(candidate, now)
     let cohort = catalogGate.cohort
     let reasons = catalogGate.reasonCodes
     let packageId: string | null = null
@@ -588,23 +879,74 @@ export async function runListingAiApprovalQueueBatch(input: {
     let offerFingerprint: string | null = null
     let rankingScore = number(queue.opportunity_score) ??
       number(variant.seller_scan_priority_score) ?? 0
-    let snapshot = safeEvidenceSnapshot({ candidate })
+    let snapshot: JsonRecord = safeEvidenceSnapshot({ candidate })
     let lastError: string | null = null
-    if (catalogGate.canRunOfficialMarketRead) {
+    let identityEnrichmentId: string | null = null
+    const hasPriorIntelligence = Boolean(candidate.supplierProductId && candidate.supplierVariantId &&
+      candidate.supplierSku && candidate.productName && candidate.productUrl)
+    if (hasPriorIntelligence) {
       try {
-        const result = await analyzeCandidate({
-          supabase: input.supabase, accountKey: input.accountKey, candidate, now,
-        })
-        analyzed += 1
-        cohort = result.classification.cohort
-        reasons = result.classification.reasonCodes
-        packageId = result.row.id
-        packageHash = result.row.package_hash
-        identityFingerprint = result.row.product_identity_fingerprint
-        baseFingerprint = result.pack.baseProductFingerprint
-        offerFingerprint = result.pack.recommendedPack?.offerPackFingerprint ?? result.pack.currentOfferPackFingerprint
-        rankingScore = approvalQueueRankingScore(result.evidence.scores)
-        snapshot = safeEvidenceSnapshot({ candidate, evidence: result.evidence, pack: result.pack })
+        const enriched = await enrichFromOfficialSources({ variant, queue,
+          rawSnapshot: snapshotRows.get(String(variant.snapshot_id)) ?? {}, environment,
+          catalogReader: input.catalogReader ?? searchEbayCatalogIdentity })
+        candidate = enriched.candidate
+        enrichedCount += 1
+        conflictCount += enriched.conflicts.length ? 1 : 0
+        catalogReads += 1
+        browseReads += 1
+        for (const [source, count] of Object.entries(enriched.sourceCoverage)) {
+          sources[source] = (sources[source] ?? 0) + count
+        }
+        identityEnrichmentId = await persistIdentityEnrichment({ supabase: input.supabase,
+          runId: run.id, accountKey: input.accountKey, candidate, result: enriched, now })
+        catalogGate = evaluateApprovalQueueCatalogCandidate(candidate, now)
+        if (!catalogGate.canRunOfficialMarketRead) {
+          cohort = catalogGate.cohort
+          reasons = [...catalogGate.reasonCodes,
+            ...enriched.conflicts.length ? ["IDENTITY_SOURCE_CONFLICT"] : []]
+          snapshot = safeEvidenceSnapshot({ candidate })
+        } else {
+          const result = await analyzeCandidate({
+            supabase: input.supabase, accountKey: input.accountKey, candidate, now,
+            comparables: separateActiveAndEstimatedComparables(enriched.report),
+          })
+          analyzed += 1
+          const preliminarySafe = result.evidence.estimatedProfit !== null && result.evidence.estimatedProfit >= 5 &&
+            result.evidence.roiPercent !== null && result.evidence.roiPercent >= 30 &&
+            result.evidence.netMarginPercent !== null && result.evidence.netMarginPercent >= 20
+          const qualification = automaticQualification({ identity: enriched.identity,
+            conflicts: enriched.conflicts, exactLunaMapping: result.evidence.exactLunaMapping,
+            exactComparableCount: result.evidence.activeExactCount,
+            imageAuthorized: candidate.imageAuthorized, currentUrl: Boolean(candidate.productUrl),
+            logisticsStatus: candidate.logisticsStatus, conservativeEconomicsSafe: preliminarySafe,
+            safePackStrategy: result.evidence.safePackStrategy,
+            complianceBlocked: result.evidence.complianceBlocked,
+            identityConsensusConfirmed: enriched.consensus.sellerCount >= 2 ||
+              enriched.exactComparables.length >= 1 && enriched.catalogMatchCount >= 1 })
+          cohort = qualification.visibleInTop20 ? result.classification.cohort : "NEEDS_DATA"
+          reasons = qualification.visibleInTop20 ? result.classification.reasonCodes : qualification.reasons
+          packageId = result.row.id
+          packageHash = result.row.package_hash
+          identityFingerprint = result.row.product_identity_fingerprint
+          baseFingerprint = result.pack.baseProductFingerprint
+          offerFingerprint = result.pack.recommendedPack?.offerPackFingerprint ?? result.pack.currentOfferPackFingerprint
+          rankingScore = approvalQueueRankingScore(result.evidence.scores)
+          snapshot = { ...safeEvidenceSnapshot({ candidate, evidence: result.evidence, pack: result.pack }),
+            identityEnrichment: {
+              version: LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION,
+              identity: enriched.identity,
+              conflicts: enriched.conflicts,
+              exactComparableCount: enriched.exactComparables.length,
+              comparableClassificationCounts: enriched.comparableClassifications.reduce<Record<string, number>>(
+                (counts, entry) => { counts[entry.result.classification] =
+                  (counts[entry.result.classification] ?? 0) + 1; return counts }, {}),
+              consensus: enriched.consensus.fields,
+              catalogMatchRule: enriched.catalogMatchRule,
+              categoryStatus: enriched.taxonomyStatus,
+              sourceCoverage: enriched.sourceCoverage,
+              competitorContentStored: false,
+            } }
+        }
       } catch (error) {
         const code = error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
           ? error.message : "TOP10_CANDIDATE_ANALYSIS_FAILED"
@@ -613,7 +955,16 @@ export async function runListingAiApprovalQueueBatch(input: {
         lastError = code
         retries += 1
       }
+    } else {
+      cohort = "NEEDS_DATA"
+      reasons = ["AUTOMATIC_MARKET_DISCOVERY_PENDING"]
     }
+    coverageAfter.total += 1
+    if (candidate.manufacturerBrand) coverageAfter.brand += 1
+    if (candidate.gtinValid || candidate.mpn || candidate.model) coverageAfter.gtinOrMpn += 1
+    if (candidate.packCount) coverageAfter.pack += 1
+    if (candidate.weight) coverageAfter.weight += 1
+    if (candidate.dimensions) coverageAfter.dimensions += 1
     itemPayloads.push({
         run_id: run.id,
         marketplace_account_key: input.accountKey,
@@ -637,6 +988,7 @@ export async function runListingAiApprovalQueueBatch(input: {
         retry_count: lastError ? 1 : 0,
         next_retry_at: lastError ? new Date(now.getTime() + 15 * 60_000).toISOString() : null,
         last_error_code: lastError,
+        identity_enrichment_id: identityEnrichmentId,
         stale_after: new Date(now.getTime() + FRESHNESS_MS).toISOString(),
         supplier_shipping_cost_status: "ESTIMATED",
         supplier_shipping_reserve_usd: candidate.supplierShippingReserveUsd,
@@ -669,6 +1021,14 @@ export async function runListingAiApprovalQueueBatch(input: {
       needs_data_count: needs,
       rejected_count: rejected,
       retry_count: Number(run.retry_count ?? 0) + retries,
+      enrichment_version: LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION,
+      identity_enriched_count: Number(run.identity_enriched_count ?? 0) + enrichedCount,
+      identity_conflict_count: Number(run.identity_conflict_count ?? 0) + conflictCount,
+      catalog_read_count: Number(run.catalog_read_count ?? 0) + catalogReads,
+      browse_read_count: Number(run.browse_read_count ?? 0) + browseReads,
+      coverage_before: mergeNumericCoverage(run.coverage_before, coverageBefore),
+      coverage_after: mergeNumericCoverage(run.coverage_after, coverageAfter),
+      source_coverage: mergeNumericCoverage(run.source_coverage, sources),
       lease_owner: null,
       lease_expires_at: null,
       completed_at: completed ? now.toISOString() : null,
@@ -685,6 +1045,11 @@ export async function runListingAiApprovalQueueBatch(input: {
     needsData: needs,
     rejected,
     retries: Number(run.retry_count ?? 0) + retries,
+    enriched: Number(run.identity_enriched_count ?? 0) + enrichedCount,
+    conflicts: Number(run.identity_conflict_count ?? 0) + conflictCount,
+    coverageBefore: mergeNumericCoverage(run.coverage_before, coverageBefore),
+    coverageAfter: mergeNumericCoverage(run.coverage_after, coverageAfter),
+    sourceCoverage: mergeNumericCoverage(run.source_coverage, sources),
     openAiCalls: 0,
     ebayWrites: 0,
     canPublish: false,
@@ -878,6 +1243,8 @@ export async function confirmListingAiQueueLunaObservation(input: {
     packCount: confirmation.recommendedPackCount, unitCount: number(identity.unitCount), size: text(identity.size),
     color: text(identity.color), scent: text(identity.scent), variant: text(identity.variant), condition: text(identity.condition),
     weight: number(logistics.weight), weightUnit: text(logistics.weightUnit), dimensions: dims,
+    logisticsStatus: record(snapshot.logistics).supplierShippingCostStatus === "CONFIRMED" ? "CONFIRMED" : "ESTIMATED",
+    identityConflictAttributes: [],
     exactContents: strings(intake.includedContents), categoryId: text(record(intake.category).id),
     categoryName: text(record(intake.category).name), requiredAspects: records(intake.requiredAspects)
       .map((entry) => ({ name: text(entry.name) ?? "", value: text(entry.value) ?? "" })).filter((entry) => entry.name && entry.value),

@@ -96,6 +96,13 @@ type QueuePayload = {
     needs_data_count: number
     rejected_count: number
     retry_count: number
+    identity_enriched_count?: number
+    identity_conflict_count?: number
+    catalog_read_count?: number
+    browse_read_count?: number
+    coverage_before?: Record<string, number>
+    coverage_after?: Record<string, number>
+    source_coverage?: Record<string, number>
   } | null
   pool?: QueueItem[]
   ready?: QueueItem[]
@@ -208,7 +215,7 @@ export function Loop2Top20OpportunityPool() {
     setWorkingId("scan"); setError(""); setMessage("")
     try {
       await adminFetch("/api/admin/ebay/listing-ai/approval-queue", {
-        method: "POST", body: JSON.stringify({ action: "scan", batchSize: 50 }),
+        method: "POST", body: JSON.stringify({ action: "scan", batchSize: 20 }),
       })
       await load()
       setMessage("Lote procesado sin OpenAI. Si el scan está PARTIAL, vuelve a pulsar para continuar el checkpoint.")
@@ -295,6 +302,11 @@ export function Loop2Top20OpportunityPool() {
             <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Gestionados internamente</dt><dd className="text-lg font-black">{counts.managedInternally}</dd></div>
           </dl>
           <p className="text-xs text-white/60">Catálogo examinado: {payload?.run?.catalog_examined ?? 0}/{payload?.run?.catalog_total ?? 0} · scan {payload?.run?.status ?? "NOT_STARTED"} · cron OFF.</p>
+          {payload?.run && <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs">
+            <p className="font-black">Cobertura automática por fuentes autorizadas</p>
+            <p className="mt-1 text-white/65">Enriquecidos: {payload.run.identity_enriched_count ?? 0} · conflictos excluidos: {payload.run.identity_conflict_count ?? 0} · Browse: {payload.run.browse_read_count ?? 0} · Catalog: {payload.run.catalog_read_count ?? 0}</p>
+            <p className="mt-1 text-white/55">Brand {payload.run.coverage_before?.brand ?? 0} → {payload.run.coverage_after?.brand ?? 0} · GTIN/MPN {payload.run.coverage_before?.gtinOrMpn ?? 0} → {payload.run.coverage_after?.gtinOrMpn ?? 0} · pack {payload.run.coverage_before?.pack ?? 0} → {payload.run.coverage_after?.pack ?? 0} · peso {payload.run.coverage_before?.weight ?? 0} → {payload.run.coverage_after?.weight ?? 0} · dimensiones {payload.run.coverage_before?.dimensions ?? 0} → {payload.run.coverage_after?.dimensions ?? 0}</p>
+          </div>}
           {pool.length ? <div className="space-y-3">{pool.map((item) => {
             const product = item.evidence_snapshot.product ?? {}
             const economics = item.evidence_snapshot.economics

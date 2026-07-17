@@ -15,6 +15,7 @@ const MARKETPLACE_INSIGHTS_ENDPOINT =
 const BUY_MARKETING_ENDPOINT =
   "https://api.ebay.com/buy/marketing/v1_beta/merchandised_product"
 const TAXONOMY_ENDPOINT = "https://api.ebay.com/commerce/taxonomy/v1"
+const CATALOG_ENDPOINT = "https://api.ebay.com/commerce/catalog/v1_beta/product_summary/search"
 const BROWSE_SCOPE = "https://api.ebay.com/oauth/api_scope"
 const MARKETPLACE_INSIGHTS_SCOPE =
   "https://api.ebay.com/oauth/api_scope/buy.marketplace.insights"
@@ -24,6 +25,23 @@ const DETAIL_CONCURRENCY = 5
 const EBAY_REQUEST_TIMEOUT_MS = 8_000
 const EBAY_MAX_RETRIES = 3
 const TAXONOMY_CACHE_TTL_MS = 6 * 60 * 60 * 1_000
+
+export type EbayCatalogIdentityProduct = {
+  epid: string | null
+  title: string | null
+  brand: string | null
+  gtins: string[]
+  mpns: string[]
+  aspects: Array<{ name: string; values: string[] }>
+  categoryId: string | null
+}
+
+export type EbayCatalogIdentityResult = {
+  status: "AVAILABLE" | "NO_MATCH" | "REQUEST_FAILED" | "NOT_CONFIGURED"
+  products: EbayCatalogIdentityProduct[]
+  observedAt: string
+  source: "EBAY_CATALOG_OFFICIAL_READONLY"
+}
 
 type JsonRecord = Record<string, unknown>
 
@@ -458,6 +476,63 @@ export type EbayTaxonomyAspectIntelligence = {
   values: EbayTaxonomyAspectValueIntelligence[]
   valuesComplete: boolean
   constraintsComplete: boolean
+}
+
+function catalogStrings(value: unknown) {
+  return [...new Set(array(value).map(text).filter(Boolean))]
+}
+
+function mapCatalogProduct(value: unknown): EbayCatalogIdentityProduct {
+  const product = record(value)
+  const aspects = array(product.aspects).map(record).map((aspect) => ({
+    name: text(aspect.localizedName ?? aspect.name),
+    values: catalogStrings(aspect.localizedValues ?? aspect.values),
+  })).filter((aspect) => aspect.name && aspect.values.length)
+  const category = record(array(product.categories)[0])
+  return {
+    epid: text(product.epid ?? product.ePID) || null,
+    title: text(product.title) || null,
+    brand: text(product.brand) || null,
+    gtins: catalogStrings(product.gtins ?? product.gtin),
+    mpns: catalogStrings(product.mpns ?? product.mpn),
+    aspects,
+    categoryId: text(product.primaryCategoryId ?? category.categoryId) || null,
+  }
+}
+
+/** Official, read-only Catalog lookup. It never returns tokens or request headers. */
+export async function searchEbayCatalogIdentity(input: {
+  query: string
+  gtin?: string | null
+  mpn?: string | null
+  categoryId?: string | null
+}): Promise<EbayCatalogIdentityResult> {
+  const observedAt = new Date().toISOString()
+  if (!process.env.EBAY_CLIENT_ID?.trim() || !process.env.EBAY_CLIENT_SECRET?.trim()) {
+    return { status: "NOT_CONFIGURED", products: [], observedAt,
+      source: "EBAY_CATALOG_OFFICIAL_READONLY" }
+  }
+  let token = ""
+  try {
+    token = await getApplicationToken(BROWSE_SCOPE)
+    const url = new URL(CATALOG_ENDPOINT)
+    const gtin = normalizedGtin(input.gtin)
+    if (gtin) url.searchParams.set("gtin", gtin)
+    else if (text(input.mpn)) url.searchParams.set("mpn", text(input.mpn))
+    else url.searchParams.set("q", text(input.query).slice(0, 350))
+    if (/^\d+$/.test(text(input.categoryId))) url.searchParams.set("category_ids", text(input.categoryId))
+    url.searchParams.set("limit", "10")
+    const payload = await getEbayJson(url, token)
+    const products = array(payload.productSummaries).map(mapCatalogProduct)
+      .filter((product) => Boolean(product.epid || product.gtins.length || product.title))
+    return { status: products.length ? "AVAILABLE" : "NO_MATCH", products,
+      observedAt, source: "EBAY_CATALOG_OFFICIAL_READONLY" }
+  } catch {
+    return { status: "REQUEST_FAILED", products: [], observedAt,
+      source: "EBAY_CATALOG_OFFICIAL_READONLY" }
+  } finally {
+    token = ""
+  }
 }
 
 export type EbayTaxonomyListingIntelligence = {
