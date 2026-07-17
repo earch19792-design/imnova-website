@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Seller OS — eBay Product Research Capture",
+  "version": "1.0.0",
+  "description": "Captura únicamente la tabla visible de Product Research y la entrega a Seller OS Preview.",
+  "permissions": [],
+  "host_permissions": [
+    "https://www.ebay.com/sh/research*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.ebay.com/sh/research*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

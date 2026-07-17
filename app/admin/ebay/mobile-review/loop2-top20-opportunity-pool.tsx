@@ -239,6 +239,33 @@ type SoldEvidenceStatus = {
   ebayWrites: 0
 }
 
+type ProductResearchCaptureStatus = {
+  configured: boolean
+  source: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE"
+  latest: {
+    source_row_count: number
+    valid_count: number
+    imported_count: number
+    duplicate_count: number
+    rejected_count: number
+    exact_luna_match_count: number
+    different_pack_count: number
+    different_size_count: number
+    different_variant_count: number
+    ambiguous_count: number
+    no_luna_match_count: number
+    candidates_enriched_count: number
+    captured_at: string
+  } | null
+  readyResultCount: number
+  rawHtmlStored: false
+  temporaryTitlesStored: false
+  competitorImagesDownloaded: 0
+  piiStored: false
+  openAiCalls: 0
+  ebayWrites: 0
+}
+
 function money(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? `$${value.toFixed(2)}` : "N/D"
 }
@@ -319,6 +346,8 @@ export function Loop2Top20OpportunityPool() {
     "EBAY_PRODUCT_RESEARCH_EXPORT",
   )
   const [soldEvidenceAttested, setSoldEvidenceAttested] = useState(false)
+  const [browserCaptureStatus, setBrowserCaptureStatus] =
+    useState<ProductResearchCaptureStatus | null>(null)
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
@@ -343,7 +372,19 @@ export function Loop2Top20OpportunityPool() {
     }
   }, [])
 
-  useEffect(() => { void load(); void loadSoldEvidence() }, [load, loadSoldEvidence])
+  const loadBrowserCapture = useCallback(async () => {
+    try {
+      const result = await adminFetch<{ status: ProductResearchCaptureStatus }>(
+        "/api/admin/ebay/listing-ai/product-research-capture",
+      )
+      setBrowserCaptureStatus(result.status)
+    } catch {
+      setBrowserCaptureStatus(null)
+    }
+  }, [])
+
+  useEffect(() => { void load(); void loadSoldEvidence(); void loadBrowserCapture() },
+    [load, loadSoldEvidence, loadBrowserCapture])
   const scanActive = ["RUNNING", "PARTIAL_AUTO_CONTINUING"].includes(payload?.run?.status ?? "")
   useEffect(() => {
     if (!scanActive) return
@@ -520,6 +561,28 @@ export function Loop2Top20OpportunityPool() {
             <p className="mt-1 text-white/65">eBay-first: {payload.run.ebay_first_status ?? "NOT_STARTED"} · categorías {payload.run.ebay_first_category_count ?? 0} · señales {payload.run.ebay_first_signal_count ?? 0} · coincidencias Luna exactas {payload.run.ebay_first_exact_luna_match_count ?? 0}</p>
             <p className="mt-1 text-white/55">Brand {payload.run.coverage_before?.brand ?? 0} → {payload.run.coverage_after?.brand ?? 0} · GTIN/MPN {payload.run.coverage_before?.gtinOrMpn ?? 0} → {payload.run.coverage_after?.gtinOrMpn ?? 0} · pack {payload.run.coverage_before?.pack ?? 0} → {payload.run.coverage_after?.pack ?? 0} · peso {payload.run.coverage_before?.weight ?? 0} → {payload.run.coverage_after?.weight ?? 0} · dimensiones {payload.run.coverage_before?.dimensions ?? 0} → {payload.run.coverage_after?.dimensions ?? 0}</p>
           </div>}
+          <section aria-labelledby="product-research-capture-heading" className="space-y-3 rounded-xl border border-cyan-200/20 bg-cyan-100/[0.04] p-3 text-xs">
+            <div>
+              <h4 id="product-research-capture-heading" className="font-black">Captura oficial desde Product Research</h4>
+              <p className="mt-1 text-white/60">Para cuentas sin export CSV/JSON: la extensión captura con un clic únicamente la tabla visible en la página oficial autenticada. No comparte cookies ni credenciales con Seller OS.</p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <a href="/seller-os-tools/ebay-product-research-capture-extension.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión segura</a>
+              <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
+            </div>
+            <p className="text-white/55">Instálala localmente una vez. Después ejecuta la búsqueda, revisa la tabla visible y pulsa “Capturar resultados para Seller OS” dentro de Product Research.</p>
+            <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div><dt className="text-white/45">Filas / válidas</dt><dd className="font-black">{browserCaptureStatus?.latest?.source_row_count ?? 0} / {browserCaptureStatus?.latest?.valid_count ?? 0}</dd></div>
+              <div><dt className="text-white/45">Duplicadas / rechazadas</dt><dd>{browserCaptureStatus?.latest?.duplicate_count ?? 0} / {browserCaptureStatus?.latest?.rejected_count ?? 0}</dd></div>
+              <div><dt className="text-white/45">Match exacto Luna</dt><dd>{browserCaptureStatus?.latest?.exact_luna_match_count ?? 0}</dd></div>
+              <div><dt className="text-white/45">Pack diferente</dt><dd>{browserCaptureStatus?.latest?.different_pack_count ?? 0}</dd></div>
+              <div><dt className="text-white/45">Tamaño diferente</dt><dd>{browserCaptureStatus?.latest?.different_size_count ?? 0}</dd></div>
+              <div><dt className="text-white/45">Ambiguas / sin Luna</dt><dd>{browserCaptureStatus?.latest?.ambiguous_count ?? 0} / {browserCaptureStatus?.latest?.no_luna_match_count ?? 0}</dd></div>
+              <div><dt className="text-white/45">Candidatos enriquecidos</dt><dd>{browserCaptureStatus?.latest?.candidates_enriched_count ?? 0}</dd></div>
+              <div><dt className="text-white/45">READY resultantes</dt><dd>{browserCaptureStatus?.readyResultCount ?? 0}</dd></div>
+            </dl>
+            <p className="text-white/45">Privacidad: PII 0 · HTML 0 · títulos completos persistidos 0 · imágenes descargadas 0 · OpenAI 0 · escrituras eBay 0.</p>
+          </section>
           <section aria-labelledby="sold-evidence-import-heading" className="space-y-3 rounded-xl border border-amber-200/20 bg-amber-100/[0.04] p-3 text-xs">
             <div>
               <h4 id="sold-evidence-import-heading" className="font-black">Evidencia oficial de ventas confirmadas</h4>

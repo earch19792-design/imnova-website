@@ -824,6 +824,7 @@ async function analyzeCandidate(input: {
   const importedSold = officialSoldEvidenceComparablesForTarget({
     targetIdentity,
     rows: input.reviewedSoldEvidence ?? [],
+    targetSupplierVariantId: input.candidate.supplierVariantId,
   })
   const comparables = input.comparables === undefined
     ? undefined

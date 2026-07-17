@@ -45,7 +45,8 @@ export type NormalizedOfficialSoldEvidence = {
 }
 
 export type StoredOfficialSoldEvidence = {
-  source_type: "EBAY_OFFICIAL_CSV_IMPORT" | "EBAY_OFFICIAL_JSON_IMPORT"
+  source_type: "EBAY_OFFICIAL_CSV_IMPORT" | "EBAY_OFFICIAL_JSON_IMPORT" |
+    "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE"
   source_listing_reference_hash: string
   normalized_identity: ReturnType<typeof normalizeProductIdentity>
   confirmed_sold_quantity: number
@@ -59,6 +60,9 @@ export type StoredOfficialSoldEvidence = {
   image_count: number | null
   visual_evidence: WinnerComparableVisualEvidence
   observed_at: string
+  match_classification?: "EXACT_LUNA_MATCH" | "SAME_PRODUCT_DIFFERENT_PACK" |
+    "SAME_PRODUCT_DIFFERENT_SIZE" | "DIFFERENT_VARIANT" | null
+  matched_supplier_variant_id?: string | null
 }
 
 const EXPORT_TYPES = new Set<OfficialSoldEvidenceExport>([
@@ -432,6 +436,7 @@ export function parseOfficialSoldEvidenceImport(input: {
 export function officialSoldEvidenceComparablesForTarget(input: {
   targetIdentity: ProductIdentityInput
   rows: StoredOfficialSoldEvidence[]
+  targetSupplierVariantId?: string | null
 }) {
   const target = normalizeProductIdentity(input.targetIdentity)
   const now = Date.now()
@@ -445,7 +450,11 @@ export function officialSoldEvidenceComparablesForTarget(input: {
         target.model && identity.model && target.model === identity.model
       ),
     )
-    if (!strictIdentifierMatch || Date.parse(row.observed_at) > now + 86_400_000) return []
+    const captureStrategicMatch = row.source_type === "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE" &&
+      Boolean(input.targetSupplierVariantId &&
+        row.matched_supplier_variant_id === input.targetSupplierVariantId)
+    if ((!strictIdentifierMatch && !captureStrategicMatch) ||
+      Date.parse(row.observed_at) > now + 86_400_000) return []
     const comparable: WinnerComparableInput = {
       source: row.source_type,
       sourceListingId: row.source_listing_reference_hash,
@@ -458,10 +467,25 @@ export function officialSoldEvidenceComparablesForTarget(input: {
       returnsPattern: row.returns_pattern, imageCount: row.image_count,
       visualEvidence: { ...record(row.visual_evidence),
         sourceType: row.source_type === "EBAY_OFFICIAL_CSV_IMPORT"
-          ? "OFFICIAL_EBAY_CSV_IMPORT" : "OFFICIAL_EBAY_JSON_IMPORT" },
+          ? "OFFICIAL_EBAY_CSV_IMPORT"
+          : row.source_type === "EBAY_OFFICIAL_JSON_IMPORT"
+            ? "OFFICIAL_EBAY_JSON_IMPORT"
+            : "OFFICIAL_EBAY_BROWSER_CAPTURE" },
       evidenceReviewed: true,
     }
     const classification = classifyWinnerComparable(input.targetIdentity, comparable.identity).classification
+    if (row.source_type === "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE") {
+      if (row.match_classification === "SAME_PRODUCT_DIFFERENT_SIZE") {
+        return ["DIFFERENT_PACK", "DIFFERENT_VARIANT"].includes(classification)
+          ? [comparable] : []
+      }
+      const expected = row.match_classification === "DIFFERENT_VARIANT"
+        ? "DIFFERENT_VARIANT"
+        : row.match_classification === "SAME_PRODUCT_DIFFERENT_PACK"
+          ? "DIFFERENT_PACK"
+          : "EXACT_MATCH"
+      return classification === expected ? [comparable] : []
+    }
     return classification === "EXACT_MATCH" ? [comparable] : []
   }).slice(0, 100)
 }
@@ -478,13 +502,42 @@ export async function readReviewedOfficialSoldEvidence(input: {
   now?: Date
 }) {
   const now = input.now ?? new Date()
-  const { data, error } = await input.supabase.from("marketplace_sold_evidence_observations")
-    .select("source_type,source_listing_reference_hash,normalized_identity,confirmed_sold_quantity,evidence_scope,sale_confirmation_basis,item_price,shipping_cost,keyword_signals,shipping_pattern,returns_pattern,image_count,visual_evidence,observed_at")
-    .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
-    .eq("evidence_reviewed", true).gte("eligible_until", now.toISOString())
-    .order("observed_at", { ascending: false }).limit(2_000)
-  if (error) throw new Error("SOLD_EVIDENCE_READ_FAILED")
-  return (data ?? []) as StoredOfficialSoldEvidence[]
+  const [imports, captures] = await Promise.all([
+    input.supabase.from("marketplace_sold_evidence_observations")
+      .select("source_type,source_listing_reference_hash,normalized_identity,confirmed_sold_quantity,evidence_scope,sale_confirmation_basis,item_price,shipping_cost,keyword_signals,shipping_pattern,returns_pattern,image_count,visual_evidence,observed_at")
+      .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+      .eq("evidence_reviewed", true).gte("eligible_until", now.toISOString())
+      .order("observed_at", { ascending: false }).limit(2_000),
+    input.supabase.from("marketplace_product_research_capture_observations")
+      .select("source,source_listing_reference_hash,normalized_identity,confirmed_sold_quantity,evidence_scope,average_sold_price,average_shipping,keyword_signals,visible_image_count,last_sold_date,match_classification,matched_supplier_variant_id")
+      .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+      .eq("evidence_reviewed", true)
+      .in("match_classification", ["EXACT_LUNA_MATCH", "SAME_PRODUCT_DIFFERENT_PACK",
+        "SAME_PRODUCT_DIFFERENT_SIZE", "DIFFERENT_VARIANT"])
+      .gte("last_sold_date", new Date(now.getTime() - OFFICIAL_SOLD_EVIDENCE_RECENCY_DAYS * 86_400_000).toISOString())
+      .order("last_sold_date", { ascending: false }).limit(2_000),
+  ])
+  if (imports.error || captures.error) throw new Error("SOLD_EVIDENCE_READ_FAILED")
+  const browserRows: StoredOfficialSoldEvidence[] = (captures.data ?? []).map((row) => ({
+    source_type: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
+    source_listing_reference_hash: row.source_listing_reference_hash,
+    normalized_identity: row.normalized_identity as ReturnType<typeof normalizeProductIdentity>,
+    confirmed_sold_quantity: row.confirmed_sold_quantity,
+    evidence_scope: "MARKET_WIDE_SOLD_EVIDENCE",
+    sale_confirmation_basis: "SOLD_QUANTITY_POSITIVE",
+    item_price: row.average_sold_price,
+    shipping_cost: row.average_shipping,
+    keyword_signals: row.keyword_signals,
+    shipping_pattern: row.average_shipping === 0 ? "FREE_SHIPPING" : null,
+    returns_pattern: null,
+    image_count: row.visible_image_count,
+    visual_evidence: { imageCount: row.visible_image_count, observedAt: row.last_sold_date,
+      evidenceLevel: row.visible_image_count === null ? "INSUFFICIENT" : "LOW" },
+    observed_at: row.last_sold_date,
+    match_classification: row.match_classification as StoredOfficialSoldEvidence["match_classification"],
+    matched_supplier_variant_id: row.matched_supplier_variant_id,
+  }))
+  return [...(imports.data ?? []) as StoredOfficialSoldEvidence[], ...browserRows]
 }
 
 export async function importOfficialSoldEvidence(input: {
@@ -570,12 +623,19 @@ export async function importOfficialSoldEvidence(input: {
   })
   if (importError) throw new Error("SOLD_EVIDENCE_IMPORT_PERSIST_FAILED")
 
-  const { data: hashes, error: hashesError } = await input.supabase
-    .from("marketplace_sold_evidence_import_batches").select("source_file_hash")
-    .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
-    .eq("status", "IMPORTED").order("source_file_hash", { ascending: true })
-  if (hashesError) throw new Error("SOLD_EVIDENCE_VERSION_READ_FAILED")
-  const soldEvidenceVersion = sha256((hashes ?? []).map((row) => row.source_file_hash))
+  const [officialHashes, captureHashes] = await Promise.all([
+    input.supabase.from("marketplace_sold_evidence_import_batches").select("source_file_hash")
+      .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+      .eq("status", "IMPORTED").order("source_file_hash", { ascending: true }),
+    input.supabase.from("marketplace_product_research_capture_batches").select("capture_hash")
+      .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+      .order("capture_hash", { ascending: true }),
+  ])
+  if (officialHashes.error || captureHashes.error) throw new Error("SOLD_EVIDENCE_VERSION_READ_FAILED")
+  const soldEvidenceVersion = sha256([
+    ...(officialHashes.data ?? []).map((row) => row.source_file_hash),
+    ...(captureHashes.data ?? []).map((row) => row.capture_hash),
+  ].sort())
   const importedAt = (input.now ?? new Date()).toISOString()
   const { data: latestRun, error: latestRunError } = await input.supabase
     .from("marketplace_listing_approval_queue_runs").select("id")

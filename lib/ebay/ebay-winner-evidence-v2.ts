@@ -37,12 +37,14 @@ export type WinnerComparableSource =
   | "EBAY_BROWSE_ESTIMATED_SALES"
   | "EBAY_OFFICIAL_CSV_IMPORT"
   | "EBAY_OFFICIAL_JSON_IMPORT"
+  | "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE"
   | "HUMAN_REVIEWED_IMPORT"
 
 export type WinnerVisualEvidenceSourceType =
   | "OFFICIAL_EBAY_METADATA"
   | "OFFICIAL_EBAY_CSV_IMPORT"
   | "OFFICIAL_EBAY_JSON_IMPORT"
+  | "OFFICIAL_EBAY_BROWSER_CAPTURE"
   | "HUMAN_REVIEWED_OBSERVATION"
 
 export type WinnerComparableVisualEvidence = {
@@ -565,6 +567,7 @@ function comparableCohort(source: WinnerComparableSource): WinnerEvidenceCohort 
     "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY",
     "EBAY_OFFICIAL_CSV_IMPORT",
     "EBAY_OFFICIAL_JSON_IMPORT",
+    "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
     "HUMAN_REVIEWED_IMPORT",
   ].includes(source)) return "SOLD_OR_COMPLETED_EXACT_MATCHES"
   if (source === "EBAY_BROWSE_ESTIMATED_SALES") return "ESTIMATED_DEMAND_SIGNALS"
@@ -1000,6 +1003,7 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
     const reviewedImport = [
       "EBAY_OFFICIAL_CSV_IMPORT",
       "EBAY_OFFICIAL_JSON_IMPORT",
+      "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
       "HUMAN_REVIEWED_IMPORT",
     ].includes(comparable.source)
     const sourceAccepted = !reviewedImport || comparable.evidenceReviewed === true
