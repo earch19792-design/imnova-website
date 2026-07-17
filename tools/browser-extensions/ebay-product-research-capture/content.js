@@ -20,16 +20,23 @@
     '[class*="cell" i]',
   ].join(",")
   const HEADER_ALIASES = {
-    temporaryTitle: ["title", "listing title", "item title", "product"],
+    temporaryTitle: ["title", "listing", "listing title", "item", "item title", "product",
+      "titulo", "anuncio", "articulo", "producto"],
     listingId: ["item id", "listing id", "ebay item id"],
-    averageSoldPrice: ["average sold price", "avg sold price", "average price"],
-    averageShipping: ["average shipping", "avg shipping", "shipping"],
-    totalSold: ["total sold", "quantity sold", "sold quantity"],
-    itemSales: ["item sales", "total sales", "sales"],
-    lastSoldDate: ["last sold date", "last sold", "sold date"],
-    listingFormat: ["listing format", "format"],
-    freeShippingPercent: ["free shipping", "free shipping percent", "% free shipping"],
-    bids: ["bids", "bid count"],
+    averageSoldPrice: ["average sold price", "avg sold price", "average price",
+      "precio medio de venta", "precio promedio de venta"],
+    averageShipping: ["average shipping", "avg shipping", "shipping",
+      "envio medio", "envio promedio", "gastos de envio medios"],
+    totalSold: ["total sold", "quantity sold", "sold quantity", "total vendido",
+      "cantidad vendida", "unidades vendidas"],
+    itemSales: ["item sales", "total item sales", "total sales", "sales",
+      "ventas del articulo", "ventas totales"],
+    lastSoldDate: ["last sold date", "last sold", "sold date", "ultima venta",
+      "fecha de ultima venta"],
+    listingFormat: ["listing format", "format", "formato del anuncio", "formato"],
+    freeShippingPercent: ["free shipping", "free shipping percent", "% free shipping",
+      "envio gratis", "porcentaje de envio gratis"],
+    bids: ["bids", "bid count", "pujas", "numero de pujas"],
   }
 
   let pending = null
@@ -53,7 +60,8 @@
     ? value.normalize("NFKC").trim().replace(/\s+/g, " ") : ""
   const key = (value) => text(value).toLowerCase().replace(/[^a-z0-9%]/g, "")
   const visible = (element) => {
-    const style = window.getComputedStyle(element)
+    const view = element.ownerDocument?.defaultView ?? window
+    const style = view.getComputedStyle(element)
     const box = element.getBoundingClientRect()
     return style.display !== "none" && style.visibility !== "hidden" && box.width > 0 && box.height > 0
   }
@@ -77,21 +85,78 @@
       aliases.some((alias) => normalized === key(alias) || normalized.includes(key(alias))))?.[0] ?? null
   }
 
+  function deepRoots(root = document) {
+    const roots = []
+    const visited = new Set()
+    const visit = (scope) => {
+      if (!scope || visited.has(scope)) return
+      visited.add(scope)
+      roots.push(scope)
+      for (const element of scope.querySelectorAll?.("*") ?? []) {
+        if (element.shadowRoot) visit(element.shadowRoot)
+        if (element.tagName === "IFRAME") {
+          try {
+            const frameDocument = element.contentDocument
+            if (frameDocument?.location?.hostname === "www.ebay.com") visit(frameDocument)
+          } catch {
+            // Cross-origin frames are intentionally not inspected.
+          }
+        }
+      }
+    }
+    visit(root)
+    return roots
+  }
+
+  function deepQueryAll(selector, root = document) {
+    const matches = new Set()
+    for (const scope of deepRoots(root)) {
+      for (const element of scope.querySelectorAll?.(selector) ?? []) matches.add(element)
+    }
+    return [...matches]
+  }
+
   function smallestVisibleMatches(container, selector) {
-    return [...container.querySelectorAll(selector)].filter(visible).filter((element) => {
+    const matches = deepQueryAll(selector, container).filter(visible).filter((element) =>
+      text(element.innerText || element.textContent))
+    const byText = new Map()
+    for (const element of matches) {
+      const value = text(element.innerText || element.textContent)
+      byText.set(value, [...(byText.get(value) ?? []), element])
+    }
+    return matches.filter((element) => {
       const own = text(element.innerText || element.textContent)
-      if (!own) return false
-      return ![...element.querySelectorAll(selector)].some((child) =>
-        child !== element && visible(child) &&
-        text(child.innerText || child.textContent) === own)
+      return !(byText.get(own) ?? []).some((child) =>
+        child !== element && element.contains(child))
     })
   }
 
   function headerElementsFor(container) {
-    const matches = smallestVisibleMatches(container, HEADER_SELECTOR)
+    const semanticMatches = smallestVisibleMatches(container, HEADER_SELECTOR)
+    const visualMatches = smallestVisibleMatches(container, "div,span,p,a,button")
+      .filter((element) => text(element.innerText || element.textContent).length <= 80)
+    const matches = [...new Set([...semanticMatches, ...visualMatches])]
       .filter((element) => canonicalHeader(text(element.innerText || element.textContent)))
-    const byField = new Map()
+      .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top)
+    const groups = []
     for (const element of matches) {
+      const top = element.getBoundingClientRect().top
+      const group = groups.find((candidate) => Math.abs(candidate.top - top) <= 24)
+      if (group) {
+        group.elements.push(element)
+        group.top = (group.top * (group.elements.length - 1) + top) / group.elements.length
+      } else groups.push({ top, elements: [element] })
+    }
+    const bestGroup = groups.sort((left, right) => {
+      const score = (group) => {
+        const fields = new Set(group.elements.map((element) =>
+          canonicalHeader(text(element.innerText || element.textContent))))
+        return REQUIRED_FIELDS.filter((field) => fields.has(field)).length * 100 + fields.size
+      }
+      return score(right) - score(left)
+    })[0]
+    const byField = new Map()
+    for (const element of bestGroup?.elements ?? matches) {
       const field = canonicalHeader(text(element.innerText || element.textContent))
       if (field && !byField.has(field)) byField.set(field, element)
     }
@@ -110,7 +175,36 @@
         text(element.innerText || element.textContent))
       if (nested.length >= expectedCount) return nested
     }
+    const visual = smallestVisibleMatches(row, "div,span,p,a")
+      .filter((element) => text(element.innerText || element.textContent).length <= 500)
+      .sort((left, right) => left.getBoundingClientRect().left - right.getBoundingClientRect().left)
+    if (visual.length >= expectedCount) return visual
     return []
+  }
+
+  function genericRowElements(container, headerElements, expectedCount) {
+    const headerBottom = Math.max(...headerElements.map((element) =>
+      element.getBoundingClientRect().bottom))
+    const itemLinks = deepQueryAll('a[href*="/itm/"]', container).filter(visible)
+    const candidates = []
+    for (const link of itemLinks) {
+      let ancestor = link.parentElement
+      for (let depth = 0; ancestor && depth < 7; depth += 1, ancestor = ancestor.parentElement) {
+        candidates.push(ancestor)
+      }
+    }
+    if (!candidates.length) {
+      candidates.push(...deepQueryAll("tr,li,[role='listitem'],[data-testid*='row' i],[class*='row' i]", container))
+    }
+    return [...new Set(candidates)].filter(visible)
+      .filter((element) => element.getBoundingClientRect().top >= headerBottom - 4)
+      .filter((element) => !element.querySelector?.(HEADER_SELECTOR))
+      .filter((element) => rowCells(element, expectedCount).length >= expectedCount)
+      .sort((left, right) => {
+        const leftBox = left.getBoundingClientRect()
+        const rightBox = right.getBoundingClientRect()
+        return leftBox.height - rightBox.height || leftBox.top - rightBox.top
+      })
   }
   const offerFacts = (title) => {
     const normalized = text(title).toLowerCase()
@@ -141,9 +235,11 @@
     const mapped = headers.map(canonicalHeader)
     if (!REQUIRED_FIELDS.every((field) => mapped.includes(field))) return null
     const rowElements = semanticTable
-      ? [...container.querySelectorAll("tbody tr")]
-      : [...container.querySelectorAll(ROW_SELECTOR)].filter((row) =>
-        !headerElements.includes(row) && !row.querySelector(HEADER_SELECTOR))
+      ? deepQueryAll("tbody tr", container)
+      : [...new Set([
+        ...deepQueryAll(ROW_SELECTOR, container),
+        ...genericRowElements(container, headerElements, headers.length),
+      ])].filter((row) => !headerElements.includes(row) && !row.querySelector?.(HEADER_SELECTOR))
     const rows = rowElements.filter(visible).flatMap((row) => {
       const cells = semanticTable ? [...row.querySelectorAll("td")]
         : rowCells(row, headers.length)
@@ -151,7 +247,7 @@
       const values = Object.fromEntries(mapped.flatMap((field, index) => field
         ? [[field, text(cells[index]?.innerText || cells[index]?.textContent)]] : []))
       if (!values.temporaryTitle) return []
-      const itemLink = row.querySelector('a[href*="/itm/"]')
+      const itemLink = deepQueryAll('a[href*="/itm/"]', row)[0]
       const listingId = values.listingId || itemLink?.getAttribute("href")?.match(/\/itm\/(?:[^/]+\/)?(\d{9,20})/)?.[1] || null
       const facts = offerFacts(values.temporaryTitle)
       return [{
@@ -165,7 +261,7 @@
         listingFormat: values.listingFormat || "UNKNOWN",
         freeShippingPercent: values.freeShippingPercent ? percentage(values.freeShippingPercent) : null,
         bids: values.bids ? integer(values.bids) : null,
-        visibleImageCount: row.querySelectorAll("img").length,
+        visibleImageCount: deepQueryAll("img", row).length,
         ...facts,
       }]
     })
@@ -173,11 +269,15 @@
   }
 
   function findVisibleResults() {
-    const containers = [...document.querySelectorAll([
+    const containers = deepQueryAll([
       "table", '[role="table"]', '[role="grid"]', '[data-testid*="table" i]',
       '[data-testid*="grid" i]', '[class*="table" i]', '[class*="grid" i]',
-    ].join(","))].filter(visible)
-    const headerCandidates = [...document.querySelectorAll(HEADER_SELECTOR)].filter(visible)
+    ].join(",")).filter(visible)
+    const headerCandidates = [...new Set([
+      ...deepQueryAll(HEADER_SELECTOR),
+      ...deepQueryAll("div,span,p,a,button").filter((element) =>
+        text(element.innerText || element.textContent).length <= 80),
+    ])].filter(visible)
       .filter((element) => canonicalHeader(text(element.innerText || element.textContent)))
     for (const header of headerCandidates) {
       let ancestor = header.parentElement
@@ -198,6 +298,21 @@
       if (result) return result
     }
     throw new Error("PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND")
+  }
+
+  function safeStructureDiagnostics() {
+    const roots = deepRoots()
+    const fields = new Set(deepQueryAll("th,div,span,p,a,button")
+      .filter(visible)
+      .filter((element) => text(element.innerText || element.textContent).length <= 80)
+      .map((element) => canonicalHeader(text(element.innerText || element.textContent)))
+      .filter(Boolean))
+    return {
+      roots: roots.length,
+      sameOriginFrames: roots.filter((root) => root.nodeType === Node.DOCUMENT_NODE && root !== document).length,
+      recognizedFields: [...fields].sort(),
+      itemLinks: deepQueryAll('a[href*="/itm/"]').filter(visible).length,
+    }
   }
 
   function queryContext() {
@@ -280,7 +395,11 @@
       }, 20_000)
     } catch (error) {
       pending = null
-      setStatus(error instanceof Error ? error.message : "PRODUCT_RESEARCH_CAPTURE_FAILED", "error")
+      const code = error instanceof Error ? error.message : "PRODUCT_RESEARCH_CAPTURE_FAILED"
+      if (code === "PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND") {
+        const diagnostic = safeStructureDiagnostics()
+        setStatus(`${ERROR_MESSAGES[code]} Diagnóstico seguro: roots=${diagnostic.roots}; frames=${diagnostic.sameOriginFrames}; fields=${diagnostic.recognizedFields.join(",") || "none"}; itemLinks=${diagnostic.itemLinks}.`, "error")
+      } else setStatus(code, "error")
       finishCapture()
     }
   }
@@ -309,7 +428,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.0.2"
+  title.textContent = "Seller OS · Product Research · v1.0.3"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar resultados para Seller OS"
