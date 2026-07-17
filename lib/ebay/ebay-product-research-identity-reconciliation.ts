@@ -474,7 +474,12 @@ export async function reopenTop20RunForReconciledVariants(input: {
     .from("marketplace_listing_approval_queue_scan_targets")
     .update({ status: "PRESELECTED", preselected: true, processing_phase: null,
       lease_owner: null, lease_expires_at: null, processed_at: null,
-      next_retry_at: null, last_error_code: null, updated_at: now.toISOString() })
+      next_retry_at: null, last_error_code: null,
+      evidence_reanalysis_priority: 100,
+      evidence_reanalysis_version: input.soldEvidenceVersion,
+      evidence_reanalysis_requested_at: now.toISOString(),
+      evidence_reanalysis_completed_at: null,
+      updated_at: now.toISOString() })
     .in("id", targetIds).eq("run_id", run.id)
   if (restoreError) throw new Error("PRODUCT_IDENTITY_RECONCILIATION_TARGET_RESTORE_FAILED")
   await input.supabase.from("marketplace_listing_approval_queue_items")

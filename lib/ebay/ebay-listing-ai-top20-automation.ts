@@ -13,6 +13,7 @@ export const TOP20_AUTOMATION_POLICY_VERSION =
   "TOP20_AUTOMATION_POLICY_V3_2026_07_17"
 
 export type Top20AutomationStatus = typeof TOP20_AUTOMATION_STATUSES[number]
+export type Top20ReanalysisScope = "NONE" | "SELECTIVE_SOLD_EVIDENCE" | "FULL_POLICY_UPGRADE"
 
 export type Top20RateLimitPause = {
   consecutiveCount: number
@@ -284,4 +285,13 @@ export function shouldReanalyzeTop20ForPolicyUpgrade(input: {
   ].includes(String(input.automationStatus ?? ""))
   return resumable && input.preselected > 0 &&
     input.persistedVersion !== input.currentVersion
+}
+
+export function top20ReanalysisScope(input: {
+  policyUpgradeNeedsReanalysis: boolean
+  soldEvidenceNeedsReanalysis: boolean
+}): Top20ReanalysisScope {
+  if (input.policyUpgradeNeedsReanalysis) return "FULL_POLICY_UPGRADE"
+  if (input.soldEvidenceNeedsReanalysis) return "SELECTIVE_SOLD_EVIDENCE"
+  return "NONE"
 }

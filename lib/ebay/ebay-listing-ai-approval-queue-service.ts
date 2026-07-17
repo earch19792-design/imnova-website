@@ -77,6 +77,7 @@ import {
   shouldRecoverEmptyTop20Completion,
   shouldRecoverIncompleteTop20Completion,
   shouldReanalyzeTop20ForPolicyUpgrade,
+  top20ReanalysisScope,
   TOP20_AUTOMATION_POLICY_VERSION,
   top20ProgressPercent,
   top20ReleasedTargetStatus,
@@ -1386,10 +1387,14 @@ export async function startListingAiApprovalQueueScan(input: {
     }))
   const soldEvidenceNeedsReanalysis = Boolean(latest?.sold_evidence_version &&
     latest.sold_evidence_version !== latest.sold_evidence_applied_version)
-  const analysisUpgradeNeedsReanalysis = policyUpgradeNeedsReanalysis || soldEvidenceNeedsReanalysis
+  const reanalysisScope = top20ReanalysisScope({
+    policyUpgradeNeedsReanalysis,
+    soldEvidenceNeedsReanalysis,
+  })
+  const resumeNeedsReanalysis = reanalysisScope !== "NONE"
   const latestFresh = latest?.automation_status === "COMPLETED" &&
     !emptyCompletionNeedsRecovery && !incompleteLoop1NeedsRecovery &&
-    !analysisUpgradeNeedsReanalysis &&
+    !resumeNeedsReanalysis &&
     Date.parse(latest.updated_at ?? "") > now.getTime() - FRESHNESS_MS
   if (latestFresh) {
     return { runId: latest.id, status: "COMPLETED" as const, shouldSchedule: false,
@@ -1404,11 +1409,11 @@ export async function startListingAiApprovalQueueScan(input: {
     RECOVERABLE_DISPATCH_ERRORS.has(String(latest.last_error_code ?? ""))
   ))
   let run = latest && (["RUNNING", "PARTIAL"].includes(latest.status) || recoverableDispatch ||
-    emptyCompletionNeedsRecovery || incompleteLoop1NeedsRecovery || analysisUpgradeNeedsReanalysis)
+    emptyCompletionNeedsRecovery || incompleteLoop1NeedsRecovery || resumeNeedsReanalysis)
     ? latest
     : null
   if (run) {
-    if (analysisUpgradeNeedsReanalysis) {
+    if (reanalysisScope === "FULL_POLICY_UPGRADE") {
       // Restore work before advancing the run version. If the optimistic run
       // update loses a race, this update is safe to repeat on the next click.
       const { error: restorePolicyError } = await input.supabase
@@ -1433,9 +1438,9 @@ export async function startListingAiApprovalQueueScan(input: {
         lease_owner: null, lease_expires_at: null, next_continuation_at: now.toISOString(),
         last_error_code: null, completed_at: null,
         ebay_first_status: emptyCompletionNeedsRecovery ? "NOT_STARTED" : run.ebay_first_status,
-        scan_phase: incompleteLoop1NeedsRecovery || analysisUpgradeNeedsReanalysis
+        scan_phase: incompleteLoop1NeedsRecovery || resumeNeedsReanalysis
           ? "LOOP1_ANALYSIS" : run.scan_phase,
-        ...(analysisUpgradeNeedsReanalysis ? {
+        ...(reanalysisScope === "FULL_POLICY_UPGRADE" ? {
           deep_analyzed_count: 0, candidates_analyzed: 0, ready_count: 0,
           needs_data_count: 0, rejected_count: 0, go_count: 0,
           go_with_changes_count: 0, no_go_count: 0, exact_match_count: 0,
@@ -1531,7 +1536,7 @@ export async function startListingAiApprovalQueueScan(input: {
     continuationGeneration: Number(run.continuation_generation ?? 1),
     expectedBatch: Number(run.current_batch ?? 0) + 1,
     recovered: recoverableDispatch || emptyCompletionRecovered || incompleteLoop1NeedsRecovery ||
-      analysisUpgradeNeedsReanalysis,
+      resumeNeedsReanalysis,
     recoveredEmptyCompletion: emptyCompletionRecovered,
     batchSize: configuration.batchSize, timeBudgetSeconds: configuration.timeBudgetSeconds,
     openAiCalls: 0, ebayWrites: 0, canPublish: false }
@@ -2219,6 +2224,8 @@ export async function runListingAiApprovalQueueBatch(input: {
       .update({ status: "PROCESSED", lease_owner: null, lease_expires_at: null,
         processed_at: now.toISOString(), deep_analyzed_at: now.toISOString(),
         processing_phase: null, rate_limit_consecutive_count: 0,
+        evidence_reanalysis_priority: 0,
+        evidence_reanalysis_completed_at: now.toISOString(),
         last_error_code: null, updated_at: now.toISOString() })
       .in("id", processedTargetIds).eq("lease_owner", workerId)
     if (error) throw new Error("TOP20_TARGET_COMPLETE_FAILED")
@@ -2306,6 +2313,11 @@ export async function runListingAiApprovalQueueBatch(input: {
     .select("id", { count: "exact", head: true }).eq("run_id", run.id)
     .eq("status", "PROCESSED")
   if (examinedError) throw new Error("TOP20_TARGET_EXAMINED_COUNT_FAILED")
+  const { count: evidenceReanalysisRemaining, error: evidenceRemainingError } = await input.supabase
+    .from("marketplace_listing_approval_queue_scan_targets")
+    .select("id", { count: "exact", head: true }).eq("run_id", run.id)
+    .gt("evidence_reanalysis_priority", 0)
+  if (evidenceRemainingError) throw new Error("TOP20_EVIDENCE_REANALYSIS_REMAINING_COUNT_FAILED")
   const catalogExamined = Number(run.discovery_examined_count ?? total)
   const deepAnalyzed = deepAnalyzedCount ?? 0
   const completed = (remainingCount ?? 0) === 0
@@ -2351,7 +2363,7 @@ export async function runListingAiApprovalQueueBatch(input: {
       last_rate_limit_source: rateLimitPause?.source ?? null,
       last_rate_limit_observed_at: rateLimitPause?.observedAt ?? null,
       continuation_token_hash: completed ? null : run.continuation_token_hash,
-      sold_evidence_applied_version: completed
+      sold_evidence_applied_version: (evidenceReanalysisRemaining ?? 0) === 0
         ? run.sold_evidence_version ?? run.sold_evidence_applied_version
         : run.sold_evidence_applied_version,
       last_error_code: rateLimitCode,
