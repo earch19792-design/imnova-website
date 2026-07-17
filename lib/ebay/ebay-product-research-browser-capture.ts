@@ -49,6 +49,7 @@ export type ProductResearchBrowserCapture = {
 }
 
 type NormalizedCaptureRow = {
+  sourceListingId: string | null
   sourceListingReferenceHash: string
   titleFingerprint: string
   identityHash: string
@@ -288,6 +289,7 @@ function normalizeCaptureRow(value: unknown, capturedAt: Date): NormalizedCaptur
   const keywords = titleTokens(transientTitle)
   const identityHash = sha256({ keywords, packCount, unitCount, size, variant })
   return {
+    sourceListingId,
     sourceListingReferenceHash: sha256(sourceListingId ?? identityHash),
     titleFingerprint: sha256(transientTitle.toLocaleLowerCase("en-US")),
     identityHash,
@@ -491,6 +493,7 @@ export function parseProductResearchBrowserCapture(input: {
 
 export function productResearchCapturePersistenceRows(rows: ClassifiedProductResearchCapture[]) {
   return rows.map((row) => ({
+    source_listing_id: row.sourceListingId,
     source_listing_reference_hash: row.sourceListingReferenceHash,
     title_fingerprint: row.titleFingerprint,
     identity_hash: row.identityHash,
@@ -527,7 +530,7 @@ function targetFromQueueRow(row: { id: string; supplier_variant_id: string; evid
     identity: identity as ProductIdentityInput, productName }
 }
 
-function targetFromCatalogRow(row: JsonRecord): ProductResearchCaptureTarget | null {
+export function targetFromCatalogRow(row: JsonRecord): ProductResearchCaptureTarget | null {
   const productName = normalizedText(row.title)
   const supplierVariantId = normalizedText(row.supplier_variant_id, 160)
   const supplierProductId = normalizedText(row.supplier_product_id ?? row.product_id, 160)
@@ -552,7 +555,6 @@ function targetFromCatalogRow(row: JsonRecord): ProductResearchCaptureTarget | n
     variant,
     condition: "new",
   })
-  if (!identity.gtinValid && !(identity.manufacturerBrand && (identity.mpn || identity.model))) return null
   return {
     id: `catalog:${supplierProductId}:${supplierVariantId}`,
     queueItemId: null,
@@ -574,13 +576,10 @@ export function targetFromVerifiedActiveListingLink(input: {
   const productName = normalizedText(input.opportunity.product_title)
   const verificationStatus = normalizedText(input.link.verification_status, 50)
   const verificationMethod = normalizedText(input.link.verification_method, 80)
-  const exactIdentityConfirmed = record(input.opportunity.assessment).identity
-    ? record(record(input.opportunity.assessment).identity).exactIdentityConfirmed === true
-    : false
   if (!supplierVariantId || !productName || verificationStatus !== "verified" ||
     !["EBAY_TRADING_GET_ITEM_READONLY", "EBAY_SELL_INVENTORY_READONLY"].includes(
       verificationMethod ?? "",
-    ) || !exactIdentityConfirmed) return null
+    )) return null
   const variantTitle = normalizedText(input.opportunity.variant_title, 120)
   const offer = detectProductResearchOfferFacts(`${productName} ${variantTitle ?? ""}`)
   const variantParts = (variantTitle ?? "").split(/[·|]/).map((part) => part.trim())
@@ -650,10 +649,10 @@ async function latestCaptureTargets(supabase: SupabaseClient, accountKey: string
     })).filter((value): value is ProductResearchCaptureTarget => value !== null)
   const byVariant = new Map<string, ProductResearchCaptureTarget>()
   for (const target of queueTargets) byVariant.set(target.supplierVariantId, target)
-  for (const target of catalogTargets) if (!byVariant.has(target.supplierVariantId)) {
+  for (const target of verifiedLinkTargets) if (!byVariant.has(target.supplierVariantId)) {
     byVariant.set(target.supplierVariantId, target)
   }
-  for (const target of verifiedLinkTargets) if (!byVariant.has(target.supplierVariantId)) {
+  for (const target of catalogTargets) if (!byVariant.has(target.supplierVariantId)) {
     byVariant.set(target.supplierVariantId, target)
   }
   return { runId: run?.id ?? null, targets: [...byVariant.values()] }
@@ -703,7 +702,7 @@ export async function importProductResearchBrowserCapture(input: {
     .map((row) => row.matchedTarget?.supplierVariantId).filter(Boolean)).size
   const batchId = randomUUID()
   const rpcRows = productResearchCapturePersistenceRows(fresh)
-  const { error: persistError } = await input.supabase.rpc("import_product_research_browser_capture_v1", {
+  const { error: persistError } = await input.supabase.rpc("import_product_research_browser_capture_v2", {
     p_batch_id: batchId,
     p_marketplace_account_key: input.accountKey,
     p_capture_hash: parsed.captureHash,

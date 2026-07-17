@@ -502,23 +502,39 @@ export async function readReviewedOfficialSoldEvidence(input: {
   now?: Date
 }) {
   const now = input.now ?? new Date()
-  const [imports, captures] = await Promise.all([
+  const [imports, captures, reconciliations] = await Promise.all([
     input.supabase.from("marketplace_sold_evidence_observations")
       .select("source_type,source_listing_reference_hash,normalized_identity,confirmed_sold_quantity,evidence_scope,sale_confirmation_basis,item_price,shipping_cost,keyword_signals,shipping_pattern,returns_pattern,image_count,visual_evidence,observed_at")
       .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
       .eq("evidence_reviewed", true).gte("eligible_until", now.toISOString())
       .order("observed_at", { ascending: false }).limit(2_000),
     input.supabase.from("marketplace_product_research_capture_observations")
-      .select("source,source_listing_reference_hash,normalized_identity,confirmed_sold_quantity,evidence_scope,average_sold_price,average_shipping,keyword_signals,visible_image_count,last_sold_date,match_classification,matched_supplier_variant_id")
+      .select("id,source,source_listing_reference_hash,normalized_identity,confirmed_sold_quantity,evidence_scope,average_sold_price,average_shipping,keyword_signals,visible_image_count,last_sold_date,match_classification,matched_supplier_variant_id")
       .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
       .eq("evidence_reviewed", true)
-      .in("match_classification", ["EXACT_LUNA_MATCH", "SAME_PRODUCT_DIFFERENT_PACK",
-        "SAME_PRODUCT_DIFFERENT_SIZE", "DIFFERENT_VARIANT"])
       .gte("last_sold_date", new Date(now.getTime() - OFFICIAL_SOLD_EVIDENCE_RECENCY_DAYS * 86_400_000).toISOString())
       .order("last_sold_date", { ascending: false }).limit(2_000),
+    input.supabase.from("marketplace_product_identity_reconciliation_events")
+      .select("observation_id,classification,luna_supplier_variant_id,reconciled_at")
+      .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+      .order("reconciled_at", { ascending: false }).limit(5_000),
   ])
-  if (imports.error || captures.error) throw new Error("SOLD_EVIDENCE_READ_FAILED")
-  const browserRows: StoredOfficialSoldEvidence[] = (captures.data ?? []).map((row) => ({
+  if (imports.error || captures.error || reconciliations.error) throw new Error("SOLD_EVIDENCE_READ_FAILED")
+  const latestReconciliation = new Map<string, { classification: string; variant: string | null }>()
+  for (const row of reconciliations.data ?? []) if (!latestReconciliation.has(row.observation_id)) {
+    latestReconciliation.set(row.observation_id, {
+      classification: row.classification,
+      variant: row.luna_supplier_variant_id,
+    })
+  }
+  const eligible = new Set(["EXACT_LUNA_MATCH", "SAME_PRODUCT_DIFFERENT_PACK",
+    "SAME_PRODUCT_DIFFERENT_SIZE"])
+  const browserRows: StoredOfficialSoldEvidence[] = (captures.data ?? []).flatMap((row) => {
+    const reconciliation = latestReconciliation.get(row.id)
+    const classification = reconciliation?.classification ?? row.match_classification
+    const matchedVariant = reconciliation?.variant ?? row.matched_supplier_variant_id
+    if (!eligible.has(classification) || !matchedVariant) return []
+    return [{
     source_type: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
     source_listing_reference_hash: row.source_listing_reference_hash,
     normalized_identity: row.normalized_identity as ReturnType<typeof normalizeProductIdentity>,
@@ -534,9 +550,10 @@ export async function readReviewedOfficialSoldEvidence(input: {
     visual_evidence: { imageCount: row.visible_image_count, observedAt: row.last_sold_date,
       evidenceLevel: row.visible_image_count === null ? "INSUFFICIENT" : "LOW" },
     observed_at: row.last_sold_date,
-    match_classification: row.match_classification as StoredOfficialSoldEvidence["match_classification"],
-    matched_supplier_variant_id: row.matched_supplier_variant_id,
-  }))
+    match_classification: classification as StoredOfficialSoldEvidence["match_classification"],
+    matched_supplier_variant_id: matchedVariant,
+  }]
+  })
   return [...(imports.data ?? []) as StoredOfficialSoldEvidence[], ...browserRows]
 }
 

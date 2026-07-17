@@ -266,6 +266,31 @@ type ProductResearchCaptureStatus = {
   ebayWrites: 0
 }
 
+type ProductIdentityReconciliationStatus = {
+  version: string
+  aggregates: {
+    reconciled: number
+    exact: number
+    differentPack: number
+    differentSize: number
+    differentVariant: number
+    ambiguous: number
+    withoutLunaMatch: number
+    conflicted: number
+    candidatesEnriched: number
+  }
+  readyResultCount: number
+  latestReconciledAt: string | null
+  customLabelComparedToSupplierSku: false
+  competitorSkuComparedToSupplierSku: false
+  rawObservationsChanged: false
+  piiStored: false
+  competitorImagesDownloaded: 0
+  openAiCalls: 0
+  ebayWrites: 0
+  productionChanged: false
+}
+
 type MarketplaceInsightsPreflight = {
   environment: "PREVIEW" | "BLOCKED"
   preview: boolean
@@ -373,6 +398,8 @@ export function Loop2Top20OpportunityPool() {
   const [soldEvidenceAttested, setSoldEvidenceAttested] = useState(false)
   const [browserCaptureStatus, setBrowserCaptureStatus] =
     useState<ProductResearchCaptureStatus | null>(null)
+  const [identityReconciliationStatus, setIdentityReconciliationStatus] =
+    useState<ProductIdentityReconciliationStatus | null>(null)
   const [marketplaceInsightsPreflight, setMarketplaceInsightsPreflight] =
     useState<MarketplaceInsightsPreflight | null>(null)
 
@@ -410,8 +437,19 @@ export function Loop2Top20OpportunityPool() {
     }
   }, [])
 
-  useEffect(() => { void load(); void loadSoldEvidence(); void loadBrowserCapture() },
-    [load, loadSoldEvidence, loadBrowserCapture])
+  const loadIdentityReconciliation = useCallback(async () => {
+    try {
+      const result = await adminFetch<{ status: ProductIdentityReconciliationStatus }>(
+        "/api/admin/ebay/listing-ai/product-research-reconciliation",
+      )
+      setIdentityReconciliationStatus(result.status)
+    } catch {
+      setIdentityReconciliationStatus(null)
+    }
+  }, [])
+
+  useEffect(() => { void load(); void loadSoldEvidence(); void loadBrowserCapture(); void loadIdentityReconciliation() },
+    [load, loadSoldEvidence, loadBrowserCapture, loadIdentityReconciliation])
   const scanActive = ["RUNNING", "PARTIAL_AUTO_CONTINUING"].includes(payload?.run?.status ?? "")
   useEffect(() => {
     if (!scanActive) return
@@ -469,6 +507,31 @@ export function Loop2Top20OpportunityPool() {
       setError(preflightError instanceof Error
         ? preflightError.message
         : "MARKETPLACE_INSIGHTS_PREFLIGHT_FAILED")
+    } finally {
+      setWorkingId("")
+    }
+  }
+
+  const reconcileProductResearch = async () => {
+    setWorkingId("identity-reconciliation"); setError(""); setMessage("")
+    try {
+      const response = await adminFetch<{ result: {
+        observationsProcessed: number
+        aggregates: ProductIdentityReconciliationStatus["aggregates"]
+        reanalysis: { affectedTargets: number; dispatchStatus: string | null }
+      } }>("/api/admin/ebay/listing-ai/product-research-reconciliation", {
+        method: "POST",
+        headers: { "Idempotency-Key": requestKey("identity-reconciliation", "all") },
+        body: JSON.stringify({ action: "reconcile" }),
+      })
+      await Promise.all([load(), loadBrowserCapture(), loadIdentityReconciliation()])
+      setMessage(`Reconciliación automática completada: ${response.result.observationsProcessed} observaciones; ` +
+        `${response.result.aggregates.exact} exactas; ${response.result.aggregates.differentPack} de pack relacionado; ` +
+        `${response.result.aggregates.differentSize} de tamaño relacionado. ` +
+        `Loop 1 reanaliza sólo ${response.result.reanalysis.affectedTargets} target(s); Discovery no se repite.`)
+    } catch (reconciliationError) {
+      setError(reconciliationError instanceof Error
+        ? reconciliationError.message : "PRODUCT_IDENTITY_RECONCILIATION_FAILED")
     } finally {
       setWorkingId("")
     }
@@ -661,6 +724,29 @@ export function Loop2Top20OpportunityPool() {
               <div><dt className="text-white/45">Candidatos enriquecidos</dt><dd>{browserCaptureStatus?.latest?.candidates_enriched_count ?? 0}</dd></div>
               <div><dt className="text-white/45">READY resultantes</dt><dd>{browserCaptureStatus?.readyResultCount ?? 0}</dd></div>
             </dl>
+            <div className="space-y-2 rounded-xl border border-emerald-200/20 bg-emerald-100/[0.04] p-3">
+              <div>
+                <p className="font-black">Reconciliación automática de identidad</p>
+                <p className="mt-1 text-white/55">Cruza la evidencia vendida con GetItem cuando existe Item ID, Browse, Catalog y Taxonomy. Custom Label o SKU de competidores nunca se compara con el supplier SKU Luna.</p>
+              </div>
+              <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div><dt className="text-white/45">Reconciliadas</dt><dd className="font-black">{identityReconciliationStatus?.aggregates.reconciled ?? 0}</dd></div>
+                <div><dt className="text-white/45">Exactas</dt><dd>{identityReconciliationStatus?.aggregates.exact ?? 0}</dd></div>
+                <div><dt className="text-white/45">Pack diferente</dt><dd>{identityReconciliationStatus?.aggregates.differentPack ?? 0}</dd></div>
+                <div><dt className="text-white/45">Tamaño diferente</dt><dd>{identityReconciliationStatus?.aggregates.differentSize ?? 0}</dd></div>
+                <div><dt className="text-white/45">Variante diferente</dt><dd>{identityReconciliationStatus?.aggregates.differentVariant ?? 0}</dd></div>
+                <div><dt className="text-white/45">Ambiguas</dt><dd>{identityReconciliationStatus?.aggregates.ambiguous ?? 0}</dd></div>
+                <div><dt className="text-white/45">Sin Luna / conflicto</dt><dd>{identityReconciliationStatus?.aggregates.withoutLunaMatch ?? 0} / {identityReconciliationStatus?.aggregates.conflicted ?? 0}</dd></div>
+                <div><dt className="text-white/45">Candidatos enriquecidos</dt><dd>{identityReconciliationStatus?.aggregates.candidatesEnriched ?? 0}</dd></div>
+              </dl>
+              <button type="button" onClick={() => void reconcileProductResearch()}
+                disabled={workingId === "identity-reconciliation" || scanActive ||
+                  (browserCaptureStatus?.latest?.imported_count ?? 0) === 0}
+                className="min-h-11 w-full rounded-xl bg-emerald-100 font-black text-emerald-950 disabled:opacity-40">
+                {workingId === "identity-reconciliation" ? "Reconciliando…" : "Reconciliar evidencia automáticamente"}
+              </button>
+              <p className="text-white/45">La captura nueva ejecuta este paso automáticamente. Este botón reprocesa de forma idempotente evidencia ya existente y conserva sus observaciones originales.</p>
+            </div>
             <p className="text-white/45">Privacidad: PII 0 · HTML 0 · títulos completos persistidos 0 · imágenes descargadas 0 · OpenAI 0 · escrituras eBay 0.</p>
           </section>
           <section aria-labelledby="sold-evidence-import-heading" className="space-y-3 rounded-xl border border-amber-200/20 bg-amber-100/[0.04] p-3 text-xs">

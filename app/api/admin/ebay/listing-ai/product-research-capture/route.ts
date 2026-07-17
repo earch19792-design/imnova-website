@@ -15,7 +15,7 @@ import {
   importProductResearchBrowserCapture,
   type ProductResearchBrowserCapture,
 } from "@/lib/ebay/ebay-product-research-browser-capture"
-import { startListingAiApprovalQueueScan } from "@/lib/ebay/ebay-listing-ai-approval-queue-service"
+import { reconcileProductResearchObservations } from "@/lib/ebay/ebay-product-research-identity-reconciliation"
 import { enqueueListingAiTop20Continuation } from "@/lib/ebay/ebay-listing-ai-top20-queue"
 
 export async function GET(req: Request) {
@@ -48,20 +48,24 @@ export async function POST(req: Request) {
     })
     let scan: Record<string, unknown> | null = null
     if (result.reanalysisRequired) {
-      const started = await startListingAiApprovalQueueScan({
+      const reconciled = await reconcileProductResearchObservations({
         supabase: auth.supabase, accountKey: auth.accountKey,
       })
       let dispatchStatus: string | null = null
-      if (started.shouldSchedule && started.continuationToken) {
+      if (reconciled.reanalysis.shouldSchedule && reconciled.reanalysis.runId) {
         const dispatched = await enqueueListingAiTop20Continuation({
           supabase: auth.supabase,
-          runId: started.runId,
-          continuationGeneration: started.continuationGeneration,
-          expectedBatch: started.expectedBatch,
+          runId: reconciled.reanalysis.runId,
+          continuationGeneration: reconciled.reanalysis.continuationGeneration,
+          expectedBatch: reconciled.reanalysis.expectedBatch,
         })
         dispatchStatus = dispatched.status
       }
-      scan = { runId: started.runId, status: dispatchStatus ?? started.status,
+      scan = { runId: reconciled.reanalysis.runId,
+        status: dispatchStatus ?? (reconciled.reanalysis.shouldSchedule
+          ? "PARTIAL_AUTO_CONTINUING" : "NO_AFFECTED_TARGETS"),
+        observationsReconciled: reconciled.observationsProcessed,
+        affectedTargets: reconciled.reanalysis.affectedTargets,
         sameRunResumed: true, discoveryRepeated: false }
     }
     return listingAiResponse({ success: true, result: { ...result, scan,
