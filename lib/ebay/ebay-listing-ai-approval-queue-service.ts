@@ -1727,25 +1727,28 @@ export async function getListingAiApprovalQueueStatus(
   const isFresh = (row: { stale_after: string }) => Date.parse(row.stale_after) > Date.now()
   const automationStatus = (run?.automation_status ?? (run?.status === "COMPLETED"
     ? "COMPLETED" : run ? "PARTIAL_AUTO_CONTINUING" : "NOT_STARTED")) as Top20AutomationStatus
+  const automationStarted = automationStatus !== "NOT_STARTED"
   const visibleResults = automationStatus === "COMPLETED"
   const discoveryProgress = top20ProgressPercent(
-    Number(run?.discovery_examined_count ?? 0), Number(run?.catalog_total ?? 0),
+    automationStarted ? Number(run?.discovery_examined_count ?? 0) : 0,
+    Number(run?.catalog_total ?? 0),
   )
   const loop1Progress = top20ProgressPercent(
-    Number(run?.deep_analyzed_count ?? 0), Number(run?.preselected_count ?? 0),
+    automationStarted ? Number(run?.deep_analyzed_count ?? 0) : 0,
+    automationStarted ? Number(run?.preselected_count ?? 0) : 0,
   )
   const sanitizedRun = run ? {
     id: run.id,
     status: automationStatus,
     phase: run.scan_phase ?? "DISCOVERY",
     catalog_total: Number(run.catalog_total ?? 0),
-    catalog_examined: Number(run.discovery_examined_count ?? run.catalog_examined ?? 0),
-    candidates_analyzed: Number(run.deep_analyzed_count ?? run.candidates_analyzed ?? 0),
-    preselected_count: Number(run.preselected_count ?? 0),
-    ready_count: Number(run.ready_count ?? 0),
-    go_count: Number(run.go_count ?? 0),
-    go_with_changes_count: Number(run.go_with_changes_count ?? 0),
-    no_go_count: Number(run.no_go_count ?? 0),
+    catalog_examined: automationStarted ? Number(run.discovery_examined_count ?? 0) : 0,
+    candidates_analyzed: automationStarted ? Number(run.deep_analyzed_count ?? 0) : 0,
+    preselected_count: automationStarted ? Number(run.preselected_count ?? 0) : 0,
+    ready_count: automationStarted ? Number(run.ready_count ?? 0) : 0,
+    go_count: automationStarted ? Number(run.go_count ?? 0) : 0,
+    go_with_changes_count: automationStarted ? Number(run.go_with_changes_count ?? 0) : 0,
+    no_go_count: automationStarted ? Number(run.no_go_count ?? 0) : 0,
     needs_data_count: Number(run.needs_data_count ?? 0),
     rejected_count: Number(run.rejected_count ?? 0),
     retry_count: Number(run.retry_count ?? 0),
@@ -1758,9 +1761,9 @@ export async function getListingAiApprovalQueueStatus(
     current_batch: Number(run.current_batch ?? 0),
     progress_percent: automationStatus === "COMPLETED" ? 100
       : Math.round((discoveryProgress * .6 + loop1Progress * .4) * 10) / 10,
-    last_activity_at: run.last_activity_at ?? run.updated_at ?? null,
-    next_continuation_at: run.next_continuation_at ?? null,
-    last_error_code: text(run.last_error_code),
+    last_activity_at: automationStarted ? run.last_activity_at ?? run.updated_at ?? null : null,
+    next_continuation_at: automationStarted ? run.next_continuation_at ?? null : null,
+    last_error_code: automationStarted ? text(run.last_error_code) : null,
     priority_counts: record(run.priority_counts),
     diagnostic_counts: record(run.diagnostic_counts),
     coverage_before: record(run.coverage_before),
