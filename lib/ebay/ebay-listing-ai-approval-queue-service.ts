@@ -21,10 +21,12 @@ import {
 } from "./ebay-openai-listing-factory-v2"
 import { buildListingAiPackStrategy } from "./ebay-openai-listing-pack-strategy"
 import {
+  discoverEbayBestSellingProducts,
   discoverEbayListingSignals,
   getEbayTaxonomyListingIntelligence,
   runEbaySellerKeywordDemandValidation,
   searchEbayCatalogIdentity,
+  type EbayCatalogIdentityProduct,
 } from "./ebay-seller-keyword-demand-gateway"
 import {
   LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION,
@@ -63,6 +65,13 @@ import {
   type Top20AutomationStatus,
   type Top20TargetCandidate,
 } from "./ebay-listing-ai-top20-automation"
+import type { Top20DispatchDiagnostic } from "./ebay-listing-ai-top20-dispatch"
+import {
+  ebayFirstEvidenceSnapshot,
+  matchEbayFirstProductsToLuna,
+  type HybridEbayProduct,
+  type HybridLunaCandidate,
+} from "./ebay-listing-ai-hybrid-discovery"
 
 type JsonRecord = Record<string, unknown>
 
@@ -73,6 +82,10 @@ const DEFAULT_SUPPLIER_SHIPPING_RESERVE_USD = 8
 const DEFAULT_CONSERVATIVE_OUTBOUND_RESERVE_USD = 18
 const DEFAULT_PACKAGING_COST_USD = 1.5
 const DEFAULT_FIXED_FULFILLMENT_COST_USD = 1.5
+const RECOVERABLE_DISPATCH_ERRORS = new Set([
+  "TOP20_CONTINUATION_DISPATCH_FAILED",
+  "TOP20_CONTINUATION_QUEUE_FAILED",
+])
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {}
@@ -732,7 +745,7 @@ async function loadTop20TargetCatalog(supabase: SupabaseClient) {
   const rows: JsonRecord[] = []
   for (let offset = 0; ; offset += TARGET_CATALOG_PAGE_SIZE) {
     const { data, error } = await supabase.from("market_radar_latest_variants")
-      .select("product_id,supplier_product_id,supplier_variant_id,sku,seller_scan_priority_score")
+      .select("product_id,supplier_product_id,supplier_variant_id,sku,barcode,title,variant_title,vendor,product_type,tags,product_url,featured_image_url,image_urls,metadata,snapshot_id,price,available,inventory_quantity,weight,weight_unit,captured_at,seller_scan_priority_score")
       .eq("source_key", "lunaportex")
       .order("seller_scan_priority_score", { ascending: false })
       .order("product_id", { ascending: true })
@@ -825,6 +838,173 @@ async function ensureTop20RunTargets(
   return manifest.length
 }
 
+function ebayFirstCategorySeeds(environment: NodeJS.ProcessEnv) {
+  return [...new Set((environment.EBAY_LISTING_TOP20_EBAY_FIRST_CATEGORY_IDS ??
+    environment.EBAY_LUNA_BEST_SELLING_CATEGORY_IDS ?? "").split(",")
+    .map((entry) => entry.trim()).filter((entry) => /^\d+$/.test(entry)))].slice(0, 8)
+}
+
+function hybridLunaCandidate(row: JsonRecord, environment: NodeJS.ProcessEnv): HybridLunaCandidate | null {
+  const candidate = candidateFromRows(row, {}, environment)
+  if (!candidate.marketRadarProductId || !candidate.supplierProductId ||
+    !candidate.supplierVariantId || !candidate.supplierSku || !candidate.productName) return null
+  return {
+    productId: candidate.marketRadarProductId,
+    supplierProductId: candidate.supplierProductId,
+    supplierVariantId: candidate.supplierVariantId,
+    supplierSku: candidate.supplierSku,
+    productName: candidate.productName,
+    brand: candidate.manufacturerBrand,
+    gtin: candidate.gtinValid ? candidate.gtin : null,
+    mpn: candidate.mpn,
+    model: candidate.model,
+    size: candidate.size,
+    color: candidate.color,
+    scent: candidate.scent,
+    variant: candidate.variant,
+    packCount: candidate.packCount,
+    available: candidate.available === true &&
+      (candidate.inventoryQuantity === null || candidate.inventoryQuantity > 0),
+  }
+}
+
+function hybridEbayProduct(input: {
+  signal: { categoryId: string; epid: string | null; title: string;
+    averageRating: number | null; ratingCount: number | null; reviewCount: number | null }
+  catalog: EbayCatalogIdentityProduct
+  observedAt: string
+}): HybridEbayProduct {
+  const ratingEvidence = Math.min(20, Math.log10(Math.max(1,
+    Number(input.signal.ratingCount ?? input.signal.reviewCount ?? 0))) * 8)
+  return {
+    sourceKey: `${input.signal.categoryId}:${input.signal.epid ?? hash(input.signal.title)}`,
+    categoryId: input.catalog.categoryId ?? input.signal.categoryId,
+    title: input.catalog.title ?? input.signal.title,
+    brand: input.catalog.brand,
+    gtins: input.catalog.gtins,
+    mpns: input.catalog.mpns,
+    aspects: input.catalog.aspects,
+    // Marketing BEST_SELLING is a product-level demand signal, not a confirmed sale.
+    demandEvidence: "ESTIMATED_MOVEMENT",
+    demandConfidence: Math.round(Math.min(70, 40 + ratingEvidence)),
+    sellerCount: null,
+    activeListingCount: null,
+    landedPriceRange: null,
+    observedAt: input.observedAt,
+  }
+}
+
+async function deriveEbayFirstCategories(input: {
+  catalog: JsonRecord[]
+  environment: NodeJS.ProcessEnv
+}) {
+  const configured = ebayFirstCategorySeeds(input.environment)
+  if (configured.length) return configured
+  const seeds = input.catalog.filter((row) => text(row.title))
+    .sort((left, right) => (number(right.seller_scan_priority_score) ?? 0) -
+      (number(left.seller_scan_priority_score) ?? 0) ||
+      String(left.product_id).localeCompare(String(right.product_id)))
+    .slice(0, 3)
+  const results = await Promise.all(seeds.map((seed) =>
+    getEbayTaxonomyListingIntelligence(text(seed.title) ?? "")))
+  const derived = results.filter((taxonomy) => taxonomy.status === "AVAILABLE")
+    .map((taxonomy) => taxonomy.categoryId).filter((entry): entry is string => Boolean(entry))
+  return [...new Set(derived)]
+}
+
+async function ensureEbayFirstDiscovery(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  run: JsonRecord
+  environment: NodeJS.ProcessEnv
+  now: Date
+}) {
+  if (["COMPLETED", "UNAVAILABLE", "FAILED_RECOVERABLE"]
+    .includes(text(input.run.ebay_first_status) ?? "")) return
+  const { error: startError } = await input.supabase.from("marketplace_listing_approval_queue_runs")
+    .update({ ebay_first_status: "RUNNING", last_activity_at: input.now.toISOString(),
+      updated_at: input.now.toISOString() })
+    .eq("id", input.run.id).eq("marketplace_account_key", input.accountKey)
+  if (startError) throw new Error("TOP20_EBAY_FIRST_START_FAILED")
+  try {
+    const catalog = await loadTop20TargetCatalog(input.supabase)
+    const luna = catalog.map((row) => hybridLunaCandidate(row, input.environment))
+      .filter((entry): entry is HybridLunaCandidate => Boolean(entry?.available))
+    const categories = await deriveEbayFirstCategories({ catalog, environment: input.environment })
+    if (!categories.length) {
+      await input.supabase.from("marketplace_listing_approval_queue_runs").update({
+        ebay_first_status: "UNAVAILABLE", ebay_first_category_count: 0,
+        ebay_first_signal_count: 0, ebay_first_exact_luna_match_count: 0,
+        ebay_first_match_counts: {}, ebay_first_observed_at: input.now.toISOString(),
+        updated_at: input.now.toISOString(),
+      }).eq("id", input.run.id).eq("marketplace_account_key", input.accountKey)
+      return
+    }
+    const discoveries = await Promise.all(categories.map(async (categoryId) => ({
+      categoryId, ...await discoverEbayBestSellingProducts(categoryId),
+    })))
+    const signals = discoveries.flatMap((entry) => entry.products).slice(0, 9)
+    const products: HybridEbayProduct[] = []
+    for (const page of chunks(signals, 3)) {
+      const catalogResults = await Promise.all(page.map(async (signal) => ({ signal,
+        result: await searchEbayCatalogIdentity({ query: signal.title,
+          categoryId: signal.categoryId }) })))
+      for (const { signal, result } of catalogResults) {
+        for (const product of result.products.slice(0, 3)) {
+          products.push(hybridEbayProduct({ signal, catalog: product,
+            observedAt: result.observedAt }))
+        }
+      }
+    }
+    const matches = matchEbayFirstProductsToLuna(products, luna)
+    const matchCounts = matches.reduce<Record<string, number>>((counts, entry) => {
+      counts[entry.match.status] = (counts[entry.match.status] ?? 0) + 1
+      return counts
+    }, {})
+    const exactByCandidate = new Map<string, (typeof matches)[number]>()
+    for (const entry of matches.filter((candidate) =>
+      candidate.match.status === "EXACT_LUNA_MATCH" && candidate.match.candidate)) {
+      const key = `${entry.match.candidate?.productId}:${entry.match.candidate?.supplierVariantId}`
+      const previous = exactByCandidate.get(key)
+      if (!previous || entry.match.score > previous.match.score) exactByCandidate.set(key, entry)
+    }
+    const ranked = [...exactByCandidate.values()].sort((left, right) =>
+      right.product.demandConfidence - left.product.demandConfidence ||
+      right.match.score - left.match.score ||
+      String(left.match.candidate?.supplierSku).localeCompare(String(right.match.candidate?.supplierSku)))
+    for (const [index, entry] of ranked.entries()) {
+      const candidate = entry.match.candidate
+      if (!candidate) continue
+      const { error } = await input.supabase.from("marketplace_listing_approval_queue_scan_targets")
+        .update({ discovery_strategy: "EBAY_FIRST", ebay_first_rank: index + 1,
+          ebay_first_luna_match_status: "EXACT_LUNA_MATCH",
+          ebay_first_evidence_snapshot: ebayFirstEvidenceSnapshot({
+            product: entry.product, match: entry.match, rank: index + 1,
+          }), updated_at: input.now.toISOString() })
+        .eq("run_id", input.run.id).eq("marketplace_account_key", input.accountKey)
+        .eq("market_radar_product_id", candidate.productId)
+        .eq("supplier_variant_id", candidate.supplierVariantId)
+      if (error) throw new Error("TOP20_EBAY_FIRST_TARGET_PERSIST_FAILED")
+    }
+    const available = discoveries.some((entry) => entry.status === "AVAILABLE")
+    const { error: finishError } = await input.supabase.from("marketplace_listing_approval_queue_runs")
+      .update({ ebay_first_status: available ? "COMPLETED" : "UNAVAILABLE",
+        ebay_first_category_count: categories.length, ebay_first_signal_count: products.length,
+        ebay_first_exact_luna_match_count: ranked.length, ebay_first_match_counts: matchCounts,
+        ebay_first_observed_at: input.now.toISOString(), last_activity_at: input.now.toISOString(),
+        updated_at: input.now.toISOString() })
+      .eq("id", input.run.id).eq("marketplace_account_key", input.accountKey)
+    if (finishError) throw new Error("TOP20_EBAY_FIRST_RUN_PERSIST_FAILED")
+  } catch (error) {
+    await input.supabase.from("marketplace_listing_approval_queue_runs").update({
+      ebay_first_status: "FAILED_RECOVERABLE", ebay_first_observed_at: input.now.toISOString(),
+      last_activity_at: input.now.toISOString(), updated_at: input.now.toISOString(),
+    }).eq("id", input.run.id).eq("marketplace_account_key", input.accountKey)
+    // The official Luna-first direction remains available; eBay-first is retried on recovery.
+    if (isTop20RateLimitError(error)) return
+  }
+}
+
 async function claimRun(
   supabase: SupabaseClient,
   accountKey: string,
@@ -832,6 +1012,7 @@ async function claimRun(
   workerId: string,
   now: Date,
   requestedRunId?: string,
+  expectedBatch?: number,
 ) {
   const base = supabase.from("marketplace_listing_approval_queue_runs")
     .select("*").eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
@@ -841,18 +1022,27 @@ async function claimRun(
       .order("created_at", { ascending: false }).limit(1).maybeSingle()
   const leaseExpires = new Date(now.getTime() + LEASE_MS).toISOString()
   if (existing) {
+    const currentBatch = Number(existing.current_batch ?? 0)
+    if (expectedBatch !== undefined) {
+      if (!Number.isInteger(expectedBatch) || expectedBatch < 1) {
+        throw new Error("TOP20_CONTINUATION_BATCH_REJECTED")
+      }
+      if (currentBatch >= expectedBatch) return { run: existing, duplicate: true }
+      if (currentBatch + 1 !== expectedBatch) throw new Error("TOP20_CONTINUATION_BATCH_REJECTED")
+    }
     const activeLease = existing.status === "RUNNING" && Date.parse(existing.lease_expires_at ?? "") > now.getTime()
     if (activeLease && existing.lease_owner !== workerId) throw new Error("TOP10_SCAN_LEASE_ACTIVE")
     const { data, error } = await supabase.from("marketplace_listing_approval_queue_runs")
       .update({ status: "RUNNING", lease_owner: workerId, lease_expires_at: leaseExpires,
         automation_status: "RUNNING", catalog_total: total,
         lock_version: Number(existing.lock_version) + 1,
-        current_batch: Number(existing.current_batch ?? 0) + 1,
+        current_batch: expectedBatch ?? currentBatch + 1,
         continuation_attempt_count: Number(existing.continuation_attempt_count ?? 0) + 1,
+        continuation_dispatch_status: "DISPATCHING",
         last_activity_at: now.toISOString(), updated_at: now.toISOString() })
       .eq("id", existing.id).eq("lock_version", existing.lock_version).select("*").maybeSingle()
     if (error || !data) throw new Error("TOP10_SCAN_CONCURRENT_UPDATE")
-    return data
+    return { run: data, duplicate: false }
   }
   const { data, error } = await supabase.from("marketplace_listing_approval_queue_runs").insert({
     marketplace_account_key: accountKey,
@@ -864,11 +1054,13 @@ async function claimRun(
     lease_expires_at: leaseExpires,
     current_batch: 1,
     continuation_attempt_count: 1,
+    continuation_generation: 1,
+    continuation_dispatch_status: "DISPATCHING",
     last_activity_at: now.toISOString(),
     scheduling_enabled: false,
   }).select("*").single()
   if (error || !data) throw new Error("TOP10_SCAN_RUN_CREATE_FAILED")
-  return data
+  return { run: data, duplicate: false }
 }
 
 export async function startListingAiApprovalQueueScan(input: {
@@ -907,18 +1099,37 @@ export async function startListingAiApprovalQueueScan(input: {
 
   const token = createTop20ContinuationToken()
   const tokenHash = hashTop20ContinuationToken(token)
-  let run = latest && ["RUNNING", "PARTIAL"].includes(latest.status) ? latest : null
+  const recoverableDispatch = Boolean(latest && latest.scan_phase !== "COMPLETED" && (
+    latest.continuation_dispatch_status === "PAUSED_DISPATCH_RECOVERABLE" ||
+    RECOVERABLE_DISPATCH_ERRORS.has(String(latest.last_error_code ?? ""))
+  ))
+  let run = latest && (["RUNNING", "PARTIAL"].includes(latest.status) || recoverableDispatch)
+    ? latest
+    : null
   if (run) {
+    const nextGeneration = Number(run.continuation_generation ?? 0) + 1
     const { data, error: updateError } = await input.supabase
       .from("marketplace_listing_approval_queue_runs").update({
         status: "PARTIAL", automation_status: "PARTIAL_AUTO_CONTINUING",
         continuation_token_hash: tokenHash, batch_size: configuration.batchSize,
         time_budget_seconds: configuration.timeBudgetSeconds,
+        continuation_generation: nextGeneration,
+        continuation_dispatch_status: "RETRY_SCHEDULED",
+        dispatch_recovery_count: Number(run.dispatch_recovery_count ?? 0) + (recoverableDispatch ? 1 : 0),
+        lock_version: Number(run.lock_version ?? 0) + 1,
         lease_owner: null, lease_expires_at: null, next_continuation_at: now.toISOString(),
-        last_error_code: null, last_activity_at: now.toISOString(), updated_at: now.toISOString(),
+        last_error_code: null, completed_at: null,
+        last_checkpoint_at: run.last_checkpoint_at ?? run.last_activity_at ?? run.updated_at,
+        last_activity_at: now.toISOString(), updated_at: now.toISOString(),
       }).eq("id", run.id).eq("lock_version", run.lock_version).select("*").maybeSingle()
     if (updateError || !data) throw new Error("TOP20_SCAN_RESUME_CONFLICT")
     run = data
+    const { error: releaseError } = await input.supabase
+      .from("marketplace_listing_approval_queue_scan_targets")
+      .update({ status: "PENDING", processing_phase: null, lease_owner: null,
+        lease_expires_at: null, updated_at: now.toISOString() })
+      .eq("run_id", run.id).eq("status", "CLAIMED").lte("lease_expires_at", now.toISOString())
+    if (releaseError) throw new Error("TOP20_SCAN_EXPIRED_LEASE_RELEASE_FAILED")
   } else {
     const { data, error: insertError } = await input.supabase
       .from("marketplace_listing_approval_queue_runs").insert({
@@ -926,6 +1137,7 @@ export async function startListingAiApprovalQueueScan(input: {
         status: "PARTIAL", automation_status: "PARTIAL_AUTO_CONTINUING",
         continuation_token_hash: tokenHash, batch_size: configuration.batchSize,
         time_budget_seconds: configuration.timeBudgetSeconds,
+        continuation_generation: 1, continuation_dispatch_status: "RETRY_SCHEDULED",
         next_continuation_at: now.toISOString(), last_activity_at: now.toISOString(),
         scheduling_enabled: false,
       }).select("*").single()
@@ -935,6 +1147,9 @@ export async function startListingAiApprovalQueueScan(input: {
   const total = await ensureTop20RunTargets(input.supabase, input.accountKey, run.id, now)
   return { runId: run.id, status: "PARTIAL_AUTO_CONTINUING" as const,
     catalogTotal: total, shouldSchedule: true, continuationToken: token,
+    continuationGeneration: Number(run.continuation_generation ?? 1),
+    expectedBatch: Number(run.current_batch ?? 0) + 1,
+    recovered: recoverableDispatch,
     batchSize: configuration.batchSize, timeBudgetSeconds: configuration.timeBudgetSeconds,
     openAiCalls: 0, ebayWrites: 0, canPublish: false }
 }
@@ -1031,7 +1246,7 @@ async function preselectTop20DiscoveryTargets(input: {
   now: Date
 }) {
   const { data, error } = await input.supabase.from("marketplace_listing_approval_queue_scan_targets")
-    .select("id,ordinal,source_priority,discovery_score,discovery_snapshot")
+    .select("id,ordinal,source_priority,discovery_strategy,ebay_first_rank,discovery_score,discovery_snapshot")
     .eq("run_id", input.runId).eq("marketplace_account_key", input.accountKey)
     .eq("marketplace", MARKETPLACE).eq("status", "DISCOVERED")
   if (error) throw new Error("TOP20_PRESELECTION_READ_FAILED")
@@ -1043,7 +1258,11 @@ async function preselectTop20DiscoveryTargets(input: {
       Number(snapshot.returnedCandidateCount ?? 0) > 0 &&
       !riskCodes.some((code) => ["LUNA_OUT_OF_STOCK", "COMPLIANCE_BLOCKED",
         "NO_EBAY_CANDIDATES", "WEAK_DISCOVERY_IDENTITY_SIGNAL"].includes(code))
-  }).sort((left, right) => Number(right.discovery_score ?? 0) - Number(left.discovery_score ?? 0) ||
+  }).sort((left, right) =>
+    Number(right.discovery_strategy === "EBAY_FIRST") - Number(left.discovery_strategy === "EBAY_FIRST") ||
+    Number(right.discovery_score ?? 0) - Number(left.discovery_score ?? 0) ||
+    Number(left.ebay_first_rank ?? Number.MAX_SAFE_INTEGER) -
+      Number(right.ebay_first_rank ?? Number.MAX_SAFE_INTEGER) ||
     (sourceOrder[left.source_priority] ?? 9) - (sourceOrder[right.source_priority] ?? 9) ||
     Number(left.ordinal) - Number(right.ordinal))
   const selectedIds = eligible.slice(0, input.limit).map((row) => row.id)
@@ -1129,6 +1348,10 @@ async function runTop20DiscoveryBatch(input: {
         (!candidate.weight && !candidate.dimensions ? 5 : 0)))
       const snapshot = {
         version: "EBAY_LUNA_DISCOVERY_V1",
+        origin: entry.target.discovery_strategy === "EBAY_FIRST" ? "EBAY_FIRST" : "LUNA_FIRST",
+        lunaMatchStatus: entry.target.ebay_first_luna_match_status ?? "NOT_APPLICABLE",
+        ebayFirstEvidence: entry.target.discovery_strategy === "EBAY_FIRST"
+          ? record(entry.target.ebay_first_evidence_snapshot) : null,
         source: signals?.source ?? "LUNA_SUPPLY_ONLY",
         observedAt: signals?.observedAt ?? input.now.toISOString(),
         supplierAvailable,
@@ -1168,6 +1391,8 @@ async function runTop20DiscoveryBatch(input: {
         .from("marketplace_listing_approval_queue_scan_targets")
         .update({ status: "DISCOVERED", discovery_score: 0,
           discovery_snapshot: { version: "EBAY_LUNA_DISCOVERY_V1", basicRiskCodes: [code],
+            origin: entry.target.discovery_strategy === "EBAY_FIRST" ? "EBAY_FIRST" : "LUNA_FIRST",
+            lunaMatchStatus: entry.target.ebay_first_luna_match_status ?? "NOT_APPLICABLE",
             fullCompetitorContentStored: false, openAiCalls: 0, ebayWrites: 0 },
           discovery_observed_at: input.now.toISOString(), processing_phase: null,
           lease_owner: null, lease_expires_at: null, last_error_code: code,
@@ -1218,8 +1443,11 @@ async function runTop20DiscoveryBatch(input: {
       discovery_examined_count: discoveryExamined,
       catalog_examined: discoveryExamined,
       checkpoint_offset: discoveryExamined,
+      last_checkpoint_at: input.now.toISOString(),
       preselected_count: preselection.selected,
       lease_owner: null, lease_expires_at: null,
+      continuation_dispatch_status: status === "PARTIAL_AUTO_CONTINUING"
+        ? "RETRY_SCHEDULED" : "NOT_SCHEDULED",
       next_continuation_at: status === "PARTIAL_AUTO_CONTINUING" ? input.now.toISOString()
         : new Date(input.now.getTime() + 15 * 60_000).toISOString(),
       last_error_code: rateLimitCode, last_activity_at: input.now.toISOString(),
@@ -1252,6 +1480,7 @@ export async function runListingAiApprovalQueueBatch(input: {
   now?: Date
   environment?: NodeJS.ProcessEnv
   catalogReader?: typeof searchEbayCatalogIdentity
+  expectedBatch?: number
 }) {
   const now = input.now ?? new Date()
   const environment = input.environment ?? process.env
@@ -1262,8 +1491,37 @@ export async function runListingAiApprovalQueueBatch(input: {
   const workerId = `top20:${randomUUID()}`
   let total = 0
   if (input.runId) total = await ensureTop20RunTargets(input.supabase, input.accountKey, input.runId, now)
-  const run = await claimRun(input.supabase, input.accountKey, total, workerId, now, input.runId)
+  const claim = await claimRun(
+    input.supabase,
+    input.accountKey,
+    total,
+    workerId,
+    now,
+    input.runId,
+    input.expectedBatch,
+  )
+  const run = claim.run
   total = await ensureTop20RunTargets(input.supabase, input.accountKey, run.id, now)
+  if (claim.duplicate) return {
+    runId: run.id,
+    status: run.automation_status as Top20AutomationStatus,
+    phase: run.scan_phase,
+    catalogTotal: total,
+    catalogExamined: Number(run.discovery_examined_count ?? 0),
+    progressPercent: top20ProgressPercent(Number(run.discovery_examined_count ?? 0), total),
+    preselected: Number(run.preselected_count ?? 0),
+    deepAnalyzed: Number(run.deep_analyzed_count ?? 0),
+    currentBatch: Number(run.current_batch ?? 0),
+    duplicateBatch: true,
+    openAiCalls: 0,
+    ebayWrites: 0,
+    canPublish: false,
+    schedulingEnabled: false,
+  }
+  if (run.scan_phase === "DISCOVERY") {
+    await ensureEbayFirstDiscovery({ supabase: input.supabase, accountKey: input.accountKey,
+      run, environment, now })
+  }
   const { data: claimedTargets, error: claimError } = await input.supabase
     .rpc("claim_marketplace_listing_top20_targets", {
       p_run_id: run.id,
@@ -1408,6 +1666,14 @@ export async function runListingAiApprovalQueueBatch(input: {
           offerFingerprint = result.pack.recommendedPack?.offerPackFingerprint ?? result.pack.currentOfferPackFingerprint
           rankingScore = approvalQueueRankingScore(result.evidence.scores)
           snapshot = { ...safeEvidenceSnapshot({ candidate, evidence: result.evidence, pack: result.pack }),
+            discovery: {
+              origin: entry.target.discovery_strategy === "EBAY_FIRST" ? "EBAY_FIRST" : "LUNA_FIRST",
+              lunaMatchStatus: entry.target.discovery_strategy === "EBAY_FIRST"
+                ? entry.target.ebay_first_luna_match_status ?? "NO_LUNA_MATCH" : "NOT_APPLICABLE",
+              ebayFirstEvidence: entry.target.discovery_strategy === "EBAY_FIRST"
+                ? record(entry.target.ebay_first_evidence_snapshot) : null,
+              activeAndSoldEvidenceSeparated: true,
+            },
             loop1Verdict: result.row.verdict,
             identityEnrichment: {
               version: LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION,
@@ -1457,6 +1723,9 @@ export async function runListingAiApprovalQueueBatch(input: {
         supplier_product_id: candidate.supplierProductId ?? candidate.marketRadarProductId,
         supplier_variant_id: candidate.supplierVariantId ?? "UNKNOWN",
         supplier_sku: candidate.supplierSku ?? "UNKNOWN",
+        discovery_strategy: entry.target.discovery_strategy === "EBAY_FIRST" ? "EBAY_FIRST" : "LUNA_FIRST",
+        luna_match_status: entry.target.discovery_strategy === "EBAY_FIRST"
+          ? entry.target.ebay_first_luna_match_status ?? "NO_LUNA_MATCH" : "NOT_APPLICABLE",
         product_identity_fingerprint: identityFingerprint,
         base_product_fingerprint: baseFingerprint,
         offer_pack_fingerprint: offerFingerprint,
@@ -1574,6 +1843,7 @@ export async function runListingAiApprovalQueueBatch(input: {
       automation_status: automationStatus,
       scan_phase: completed ? "COMPLETED" : "LOOP1_ANALYSIS",
       checkpoint_offset: catalogExamined,
+      last_checkpoint_at: now.toISOString(),
       catalog_examined: catalogExamined,
       candidates_analyzed: deepAnalyzed,
       deep_analyzed_count: deepAnalyzed,
@@ -1597,6 +1867,8 @@ export async function runListingAiApprovalQueueBatch(input: {
       source_coverage: mergeNumericCoverage(run.source_coverage, sources),
       lease_owner: null,
       lease_expires_at: null,
+      continuation_dispatch_status: completed ? "COMPLETED"
+        : automationStatus === "PARTIAL_AUTO_CONTINUING" ? "RETRY_SCHEDULED" : "NOT_SCHEDULED",
       next_continuation_at: automationStatus === "PARTIAL_AUTO_CONTINUING"
         ? now.toISOString() : automationStatus === "PAUSED_RATE_LIMIT"
           ? new Date(now.getTime() + 15 * 60_000).toISOString() : null,
@@ -1670,6 +1942,54 @@ export async function continueListingAiApprovalQueueScan(input: {
   return { ...result, shouldContinue: result.status === "PARTIAL_AUTO_CONTINUING" }
 }
 
+export async function continueListingAiApprovalQueueScanFromQueue(input: {
+  supabase: SupabaseClient
+  runId: string
+  continuationGeneration: number
+  expectedBatch: number
+  now?: Date
+  environment?: NodeJS.ProcessEnv
+  catalogReader?: typeof searchEbayCatalogIdentity
+}) {
+  const now = input.now ?? new Date()
+  const configuration = getTop20AutomationConfiguration(input.environment ?? process.env)
+  const run = await validateListingAiApprovalQueueQueueContinuation({
+    supabase: input.supabase,
+    runId: input.runId,
+    continuationGeneration: input.continuationGeneration,
+  })
+  if (!isTop20AutomationActive(run.automation_status)) return {
+    runId: run.id,
+    status: run.automation_status as Top20AutomationStatus,
+    currentBatch: Number(run.current_batch ?? 0),
+    shouldContinue: false,
+    openAiCalls: 0,
+    ebayWrites: 0,
+  }
+  if (Number(run.continuation_attempt_count ?? 0) >= configuration.maxContinuations) {
+    await markListingAiApprovalQueueScanFailedTrusted({
+      supabase: input.supabase,
+      runId: run.id,
+      continuationGeneration: input.continuationGeneration,
+      errorCode: "TOP20_CONTINUATION_LIMIT_REACHED",
+      now,
+    })
+    throw new Error("TOP20_CONTINUATION_LIMIT_REACHED")
+  }
+  const result = await runListingAiApprovalQueueBatch({
+    supabase: input.supabase,
+    accountKey: run.marketplace_account_key,
+    runId: run.id,
+    batchSize: Number(run.batch_size ?? configuration.batchSize),
+    timeBudgetMs: Number(run.time_budget_seconds ?? configuration.timeBudgetSeconds) * 1_000,
+    expectedBatch: input.expectedBatch,
+    now,
+    environment: input.environment,
+    catalogReader: input.catalogReader,
+  })
+  return { ...result, shouldContinue: result.status === "PARTIAL_AUTO_CONTINUING" }
+}
+
 export async function validateListingAiApprovalQueueContinuation(input: {
   supabase: SupabaseClient
   runId: string
@@ -1682,6 +2002,171 @@ export async function validateListingAiApprovalQueueContinuation(input: {
     throw new Error("TOP20_CONTINUATION_TOKEN_REJECTED")
   }
   return run
+}
+
+export async function validateListingAiApprovalQueueQueueContinuation(input: {
+  supabase: SupabaseClient
+  runId: string
+  continuationGeneration: number
+}) {
+  const { data: run, error } = await input.supabase.from("marketplace_listing_approval_queue_runs")
+    .select("*").eq("id", input.runId).eq("marketplace", MARKETPLACE).maybeSingle()
+  if (error || !run) throw new Error("TOP20_CONTINUATION_RUN_NOT_FOUND")
+  if (!Number.isInteger(input.continuationGeneration) || input.continuationGeneration < 1 ||
+    Number(run.continuation_generation ?? 0) !== input.continuationGeneration) {
+    throw new Error("TOP20_CONTINUATION_TOKEN_REJECTED")
+  }
+  return run
+}
+
+export async function getListingAiApprovalQueueDispatchContext(input: {
+  supabase: SupabaseClient
+  runId: string
+  continuationGeneration: number
+}) {
+  const run = await validateListingAiApprovalQueueQueueContinuation(input)
+  return {
+    accountKey: run.marketplace_account_key as string,
+    continuationGeneration: Number(run.continuation_generation),
+    attemptOffset: Number(run.dispatch_attempt_count ?? 0),
+    currentBatch: Number(run.current_batch ?? 0),
+    status: run.automation_status as Top20AutomationStatus,
+  }
+}
+
+export async function persistListingAiApprovalQueueDispatchAttempt(input: {
+  supabase: SupabaseClient
+  runId: string
+  continuationGeneration: number
+  diagnostic: Top20DispatchDiagnostic
+}) {
+  const run = await validateListingAiApprovalQueueQueueContinuation({
+    supabase: input.supabase,
+    runId: input.runId,
+    continuationGeneration: input.continuationGeneration,
+  })
+  const diagnostic = input.diagnostic
+  const { error: insertError } = await input.supabase
+    .from("marketplace_listing_approval_queue_dispatch_attempts")
+    .upsert({
+      run_id: run.id,
+      marketplace_account_key: run.marketplace_account_key,
+      marketplace: MARKETPLACE,
+      continuation_generation: input.continuationGeneration,
+      attempt_number: diagnostic.attemptNumber,
+      transport: diagnostic.transport,
+      outcome: diagnostic.outcome,
+      http_status: diagnostic.httpStatus,
+      error_class: diagnostic.errorClass,
+      elapsed_ms: diagnostic.elapsedMs,
+      host_fingerprint: diagnostic.hostFingerprint,
+      bypass_configured: diagnostic.bypassConfigured,
+      protection_cookie_present: diagnostic.protectionCookiePresent,
+      x_vercel_id: diagnostic.xVercelId,
+      queue_message_fingerprint: diagnostic.queueMessageFingerprint,
+      observed_at: diagnostic.observedAt,
+    }, {
+      onConflict: "run_id,continuation_generation,attempt_number,transport",
+      ignoreDuplicates: true,
+    })
+  if (insertError) throw new Error("TOP20_DISPATCH_DIAGNOSTIC_PERSIST_FAILED")
+  const dispatchStatus = diagnostic.outcome === "ACCEPTED"
+    ? "QUEUED"
+    : diagnostic.outcome === "PAUSED_RECOVERABLE"
+      ? "PAUSED_DISPATCH_RECOVERABLE"
+      : "DISPATCHING"
+  const { error: updateError } = await input.supabase
+    .from("marketplace_listing_approval_queue_runs")
+    .update({
+      continuation_dispatch_status: dispatchStatus,
+      dispatch_attempt_count: Math.max(Number(run.dispatch_attempt_count ?? 0), diagnostic.attemptNumber),
+      last_dispatch_error_class: diagnostic.errorClass,
+      last_dispatch_http_status: diagnostic.httpStatus,
+      last_dispatch_elapsed_ms: diagnostic.elapsedMs,
+      last_dispatch_observed_at: diagnostic.observedAt,
+      last_dispatch_host_fingerprint: diagnostic.hostFingerprint,
+      last_dispatch_bypass_configured: diagnostic.bypassConfigured,
+      last_dispatch_protection_cookie_present: diagnostic.protectionCookiePresent,
+      last_dispatch_x_vercel_id: diagnostic.xVercelId,
+      last_queue_message_fingerprint: diagnostic.queueMessageFingerprint,
+      updated_at: diagnostic.observedAt,
+    })
+    .eq("id", run.id)
+    .eq("continuation_generation", input.continuationGeneration)
+  if (updateError) throw new Error("TOP20_DISPATCH_DIAGNOSTIC_RUN_UPDATE_FAILED")
+}
+
+export async function markListingAiApprovalQueueDispatchRecoverable(input: {
+  supabase: SupabaseClient
+  runId: string
+  continuationGeneration: number
+  diagnostic?: Top20DispatchDiagnostic | null
+  now?: Date
+}) {
+  const now = input.now ?? new Date()
+  const run = await validateListingAiApprovalQueueQueueContinuation({
+    supabase: input.supabase,
+    runId: input.runId,
+    continuationGeneration: input.continuationGeneration,
+  })
+  if (input.diagnostic) await persistListingAiApprovalQueueDispatchAttempt({
+    supabase: input.supabase,
+    runId: input.runId,
+    continuationGeneration: input.continuationGeneration,
+    diagnostic: { ...input.diagnostic, outcome: "PAUSED_RECOVERABLE" },
+  })
+  const { error } = await input.supabase.from("marketplace_listing_approval_queue_runs")
+    .update({
+      status: "PARTIAL",
+      automation_status: "PARTIAL_AUTO_CONTINUING",
+      continuation_dispatch_status: "PAUSED_DISPATCH_RECOVERABLE",
+      lease_owner: null,
+      lease_expires_at: null,
+      next_continuation_at: null,
+      last_error_code: "TOP20_CONTINUATION_DISPATCH_FAILED",
+      last_checkpoint_at: run.last_checkpoint_at ?? run.last_activity_at ?? run.updated_at,
+      last_activity_at: now.toISOString(),
+      completed_at: null,
+      updated_at: now.toISOString(),
+    })
+    .eq("id", run.id)
+    .eq("continuation_generation", input.continuationGeneration)
+  if (error) throw new Error("TOP20_DISPATCH_RECOVERABLE_PERSIST_FAILED")
+}
+
+async function markListingAiApprovalQueueScanFailedTrusted(input: {
+  supabase: SupabaseClient
+  runId: string
+  continuationGeneration: number
+  errorCode: string
+  now?: Date
+}) {
+  const now = input.now ?? new Date()
+  const run = await validateListingAiApprovalQueueQueueContinuation({
+    supabase: input.supabase,
+    runId: input.runId,
+    continuationGeneration: input.continuationGeneration,
+  })
+  const safeCode = /^[A-Z0-9_]+$/.test(input.errorCode)
+    ? input.errorCode
+    : "TOP20_CONTINUATION_FAILED"
+  const { error } = await input.supabase.from("marketplace_listing_approval_queue_runs")
+    .update({
+      status: "FAILED",
+      automation_status: "FAILED",
+      continuation_dispatch_status: "COMPLETED",
+      continuation_token_hash: null,
+      lease_owner: null,
+      lease_expires_at: null,
+      next_continuation_at: null,
+      last_error_code: safeCode,
+      last_activity_at: now.toISOString(),
+      completed_at: now.toISOString(),
+      updated_at: now.toISOString(),
+    })
+    .eq("id", run.id)
+    .eq("continuation_generation", input.continuationGeneration)
+  if (error) throw new Error("TOP20_CONTINUATION_FAILURE_PERSIST_FAILED")
 }
 
 export async function markListingAiApprovalQueueScanFailed(input: {
@@ -1698,8 +2183,20 @@ export async function markListingAiApprovalQueueScanFailed(input: {
     input.continuationToken, run.continuation_token_hash,
   )) throw new Error("TOP20_CONTINUATION_TOKEN_REJECTED")
   const safeCode = /^[A-Z0-9_]+$/.test(input.errorCode) ? input.errorCode : "TOP20_CONTINUATION_FAILED"
+  if (RECOVERABLE_DISPATCH_ERRORS.has(safeCode)) {
+    const { error: recoverableError } = await input.supabase
+      .from("marketplace_listing_approval_queue_runs")
+      .update({ status: "PARTIAL", automation_status: "PARTIAL_AUTO_CONTINUING",
+        continuation_dispatch_status: "PAUSED_DISPATCH_RECOVERABLE",
+        lease_owner: null, lease_expires_at: null, next_continuation_at: null,
+        last_error_code: safeCode, last_activity_at: now.toISOString(),
+        completed_at: null, updated_at: now.toISOString() }).eq("id", input.runId)
+    if (recoverableError) throw new Error("TOP20_DISPATCH_RECOVERABLE_PERSIST_FAILED")
+    return
+  }
   const { error: updateError } = await input.supabase.from("marketplace_listing_approval_queue_runs")
-    .update({ status: "FAILED", automation_status: "FAILED", continuation_token_hash: null,
+    .update({ status: "FAILED", automation_status: "FAILED",
+      continuation_dispatch_status: "COMPLETED", continuation_token_hash: null,
       lease_owner: null, lease_expires_at: null, next_continuation_at: null,
       last_error_code: safeCode, last_activity_at: now.toISOString(),
       completed_at: now.toISOString(), updated_at: now.toISOString() }).eq("id", input.runId)
@@ -1717,7 +2214,7 @@ export async function getListingAiApprovalQueueStatus(
   if (runError) throw new Error("TOP10_STATUS_READ_FAILED")
   const { data: items, error: itemsError } = run
     ? await supabase.from("marketplace_listing_approval_queue_items")
-      .select("id,market_radar_product_id,supplier_product_id,supplier_variant_id,supplier_sku,product_identity_fingerprint,base_product_fingerprint,offer_pack_fingerprint,decision_package_id,package_hash,cohort,internal_status,pool_rank,rank,ranking_score,reason_codes,evidence_snapshot,retry_count,next_retry_at,last_error_code,stale_after,operator_action,supplier_price_observed,supplier_availability_confirmation,supplier_unit_quantity,stock_confidence,recommended_pack_count,available_offer_pack_capacity,ebay_listing_quantity,supplier_shipping_cost_status,supplier_shipping_reserve_usd,supplier_confirmed_at,approved_at,discarded_at,analyzed_at")
+      .select("id,market_radar_product_id,supplier_product_id,supplier_variant_id,supplier_sku,discovery_strategy,luna_match_status,product_identity_fingerprint,base_product_fingerprint,offer_pack_fingerprint,decision_package_id,package_hash,cohort,internal_status,pool_rank,rank,ranking_score,reason_codes,evidence_snapshot,retry_count,next_retry_at,last_error_code,stale_after,operator_action,supplier_price_observed,supplier_availability_confirmation,supplier_unit_quantity,stock_confidence,recommended_pack_count,available_offer_pack_capacity,ebay_listing_quantity,supplier_shipping_cost_status,supplier_shipping_reserve_usd,supplier_confirmed_at,approved_at,discarded_at,analyzed_at")
       .eq("run_id", run.id).eq("marketplace_account_key", accountKey)
       .order("cohort", { ascending: true }).order("rank", { ascending: true, nullsFirst: false })
       .order("ranking_score", { ascending: false }).limit(300)
@@ -1727,6 +2224,10 @@ export async function getListingAiApprovalQueueStatus(
   const isFresh = (row: { stale_after: string }) => Date.parse(row.stale_after) > Date.now()
   const automationStatus = (run?.automation_status ?? (run?.status === "COMPLETED"
     ? "COMPLETED" : run ? "PARTIAL_AUTO_CONTINUING" : "NOT_STARTED")) as Top20AutomationStatus
+  const dispatchStatus = text(run?.continuation_dispatch_status) ?? "NOT_SCHEDULED"
+  const visibleAutomationStatus = dispatchStatus === "PAUSED_DISPATCH_RECOVERABLE"
+    ? "PAUSED_DISPATCH_RECOVERABLE"
+    : automationStatus
   const automationStarted = automationStatus !== "NOT_STARTED"
   const visibleResults = automationStatus === "COMPLETED"
   const discoveryProgress = top20ProgressPercent(
@@ -1739,7 +2240,9 @@ export async function getListingAiApprovalQueueStatus(
   )
   const sanitizedRun = run ? {
     id: run.id,
-    status: automationStatus,
+    status: visibleAutomationStatus,
+    automation_status: automationStatus,
+    dispatch_status: dispatchStatus,
     phase: run.scan_phase ?? "DISCOVERY",
     catalog_total: Number(run.catalog_total ?? 0),
     catalog_examined: automationStarted ? Number(run.discovery_examined_count ?? 0) : 0,
@@ -1759,16 +2262,38 @@ export async function getListingAiApprovalQueueStatus(
     exact_match_count: Number(run.exact_match_count ?? 0),
     excluded_internal_count: Number(run.excluded_internal_count ?? 0),
     current_batch: Number(run.current_batch ?? 0),
+    continuation_attempt_count: Number(run.continuation_attempt_count ?? 0),
+    dispatch_attempt_count: Number(run.dispatch_attempt_count ?? 0),
+    dispatch_recovery_count: Number(run.dispatch_recovery_count ?? 0),
     progress_percent: automationStatus === "COMPLETED" ? 100
       : Math.round((discoveryProgress * .6 + loop1Progress * .4) * 10) / 10,
     last_activity_at: automationStarted ? run.last_activity_at ?? run.updated_at ?? null : null,
+    last_checkpoint_at: automationStarted ? run.last_checkpoint_at ?? run.last_activity_at ?? null : null,
     next_continuation_at: automationStarted ? run.next_continuation_at ?? null : null,
     last_error_code: automationStarted ? text(run.last_error_code) : null,
+    error_recoverable: dispatchStatus === "PAUSED_DISPATCH_RECOVERABLE",
+    dispatch_diagnostic: {
+      errorClass: text(run.last_dispatch_error_class),
+      httpStatus: number(run.last_dispatch_http_status),
+      elapsedMs: number(run.last_dispatch_elapsed_ms),
+      observedAt: run.last_dispatch_observed_at ?? null,
+      hostFingerprint: text(run.last_dispatch_host_fingerprint),
+      bypassConfigured: run.last_dispatch_bypass_configured === true,
+      protectionCookiePresent: run.last_dispatch_protection_cookie_present === true,
+      xVercelId: text(run.last_dispatch_x_vercel_id),
+      queueMessageFingerprint: text(run.last_queue_message_fingerprint),
+    },
     priority_counts: record(run.priority_counts),
     diagnostic_counts: record(run.diagnostic_counts),
     coverage_before: record(run.coverage_before),
     coverage_after: record(run.coverage_after),
     source_coverage: record(run.source_coverage),
+    ebay_first_status: text(run.ebay_first_status) ?? "NOT_STARTED",
+    ebay_first_category_count: Number(run.ebay_first_category_count ?? 0),
+    ebay_first_signal_count: Number(run.ebay_first_signal_count ?? 0),
+    ebay_first_exact_luna_match_count: Number(run.ebay_first_exact_luna_match_count ?? 0),
+    ebay_first_match_counts: record(run.ebay_first_match_counts),
+    ebay_first_observed_at: run.ebay_first_observed_at ?? null,
     scheduling_enabled: false,
   } : null
   return {
