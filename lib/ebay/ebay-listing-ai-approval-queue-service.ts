@@ -70,6 +70,7 @@ import {
   shouldRecoverEmptyTop20Completion,
   shouldRecoverIncompleteTop20Completion,
   shouldReanalyzeTop20ForPolicyUpgrade,
+  TOP20_AUTOMATION_POLICY_VERSION,
   top20ProgressPercent,
   top20ReleasedTargetStatus,
   verifyTop20ContinuationToken,
@@ -94,7 +95,8 @@ const DEFAULT_CONSERVATIVE_OUTBOUND_RESERVE_USD = 18
 const DEFAULT_PACKAGING_COST_USD = 1.5
 const DEFAULT_FIXED_FULFILLMENT_COST_USD = 1.5
 export const TOP20_QUALIFICATION_POLICY_VERSION =
-  `${LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION}:${EBAY_WINNER_EVIDENCE_V2_VERSION}`
+  `${LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION}:${EBAY_WINNER_EVIDENCE_V2_VERSION}:` +
+  TOP20_AUTOMATION_POLICY_VERSION
 const RECOVERABLE_DISPATCH_ERRORS = new Set([
   "TOP20_CONTINUATION_DISPATCH_FAILED",
   "TOP20_CONTINUATION_QUEUE_FAILED",
@@ -1248,6 +1250,7 @@ async function claimRun(
     continuation_attempt_count: 1,
     continuation_generation: 1,
     continuation_dispatch_status: "DISPATCHING",
+    enrichment_version: TOP20_QUALIFICATION_POLICY_VERSION,
     last_activity_at: now.toISOString(),
     scheduling_enabled: false,
   }).select("*").single()
@@ -1369,7 +1372,9 @@ export async function startListingAiApprovalQueueScan(input: {
     run = data
     const { error: releaseError } = await input.supabase
       .from("marketplace_listing_approval_queue_scan_targets")
-      .update({ status: "PENDING", processing_phase: null, lease_owner: null,
+      .update({ status: top20ReleasedTargetStatus(
+        run.scan_phase === "LOOP1_ANALYSIS" ? "LOOP1_ANALYSIS" : "DISCOVERY",
+      ), processing_phase: null, lease_owner: null,
         lease_expires_at: null, updated_at: now.toISOString() })
       .eq("run_id", run.id).eq("status", "CLAIMED").lte("lease_expires_at", now.toISOString())
     if (releaseError) throw new Error("TOP20_SCAN_EXPIRED_LEASE_RELEASE_FAILED")
@@ -1381,6 +1386,7 @@ export async function startListingAiApprovalQueueScan(input: {
         continuation_token_hash: tokenHash, batch_size: configuration.batchSize,
         time_budget_seconds: configuration.timeBudgetSeconds,
         continuation_generation: 1, continuation_dispatch_status: "RETRY_SCHEDULED",
+        enrichment_version: TOP20_QUALIFICATION_POLICY_VERSION,
         next_continuation_at: now.toISOString(), last_activity_at: now.toISOString(),
         scheduling_enabled: false,
       }).select("*").single()
@@ -2215,7 +2221,6 @@ export async function runListingAiApprovalQueueBatch(input: {
       excluded_internal_count: needs + rejected,
       diagnostic_counts: { ...record(run.diagnostic_counts), ...diagnosticCounts },
       retry_count: Number(run.retry_count ?? 0) + retries,
-      enrichment_version: TOP20_QUALIFICATION_POLICY_VERSION,
       identity_enriched_count: Number(run.identity_enriched_count ?? 0) + enrichedCount,
       identity_conflict_count: Number(run.identity_conflict_count ?? 0) + conflictCount,
       catalog_read_count: Number(run.catalog_read_count ?? 0) + catalogReads,

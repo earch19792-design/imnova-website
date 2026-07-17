@@ -9,6 +9,9 @@ export const TOP20_AUTOMATION_STATUSES = [
   "FAILED",
 ] as const
 
+export const TOP20_AUTOMATION_POLICY_VERSION =
+  "TOP20_AUTOMATION_POLICY_V2_2026_07_17"
+
 export type Top20AutomationStatus = typeof TOP20_AUTOMATION_STATUSES[number]
 
 export type Top20TargetSource = "RADAR_TOP5" | "PRIOR_INTELLIGENCE" | "LUNA_CATALOG"
@@ -232,6 +235,12 @@ export function shouldReanalyzeTop20ForPolicyUpgrade(input: {
   persistedVersion: unknown
   currentVersion: string
 }) {
-  return input.automationStatus === "COMPLETED" && input.preselected > 0 &&
+  const resumable = [
+    "COMPLETED",
+    "PAUSED_RATE_LIMIT",
+    "PARTIAL_AUTO_CONTINUING",
+    "RUNNING",
+  ].includes(String(input.automationStatus ?? ""))
+  return resumable && input.preselected > 0 &&
     input.persistedVersion !== input.currentVersion
 }
