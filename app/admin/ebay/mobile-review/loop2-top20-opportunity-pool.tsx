@@ -202,6 +202,32 @@ type ConfirmationDraft = {
   exactQuantity: string
 }
 
+type SoldEvidenceStatus = {
+  configured: boolean
+  reviewedObservationCount: number
+  latest: {
+    id: string
+    source_type: string
+    source_export_type: string
+    row_count: number
+    imported_count: number
+    duplicate_count: number
+    rejected_count: number
+    source_observed_start: string | null
+    source_observed_end: string | null
+    imported_at: string
+  } | null
+  maxRows: number
+  recencyDays: number
+  rawFilesStored: false
+  competitorTitlesStored: false
+  sellerIdentitiesStored: false
+  competitorImageUrlsStored: false
+  piiStored: false
+  openAiCalls: 0
+  ebayWrites: 0
+}
+
 function money(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? `$${value.toFixed(2)}` : "N/D"
 }
@@ -238,6 +264,11 @@ function reason(code: string) {
     NET_MARGIN_BELOW_20_PERCENT: "Margen neto menor a 20%.",
     COMPLIANCE_BLOCKED: "Producto bloqueado por compliance.",
     TOP20_CONTINUATION_DISPATCH_FAILED: "La continuación automática está pausada; el checkpoint permanece guardado.",
+    SOLD_EVIDENCE_PII_COLUMNS_REJECTED: "El archivo contiene columnas de comprador, pedido o contacto y fue rechazado completo.",
+    SOLD_EVIDENCE_NO_VALID_ROWS: "El archivo no contiene filas vendidas con identificador fuerte, pack y fecha verificables.",
+    SOLD_EVIDENCE_OPERATOR_ATTESTATION_REQUIRED: "Confirma que el archivo proviene de una exportación oficial de eBay.",
+    SOLD_EVIDENCE_FILE_SIZE_INVALID: "El archivo está vacío o supera el límite seguro de 2 MB.",
+    SOLD_EVIDENCE_ROW_LIMIT_EXCEEDED: "El archivo supera 2,000 filas; divídelo en exports oficiales más pequeños.",
   }
   return labels[code] ?? code.replaceAll("_", " ")
 }
@@ -271,6 +302,12 @@ export function Loop2Top20OpportunityPool() {
   const [message, setMessage] = useState("")
   const [drafts, setDrafts] = useState<Record<string, ConfirmationDraft>>({})
   const [evidenceId, setEvidenceId] = useState("")
+  const [soldEvidenceStatus, setSoldEvidenceStatus] = useState<SoldEvidenceStatus | null>(null)
+  const [soldEvidenceFile, setSoldEvidenceFile] = useState<File | null>(null)
+  const [soldEvidenceSource, setSoldEvidenceSource] = useState(
+    "EBAY_PRODUCT_RESEARCH_EXPORT",
+  )
+  const [soldEvidenceAttested, setSoldEvidenceAttested] = useState(false)
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
@@ -284,7 +321,18 @@ export function Loop2Top20OpportunityPool() {
     }
   }, [])
 
-  useEffect(() => { void load() }, [load])
+  const loadSoldEvidence = useCallback(async () => {
+    try {
+      const result = await adminFetch<{ status: SoldEvidenceStatus }>(
+        "/api/admin/ebay/listing-ai/sold-evidence",
+      )
+      setSoldEvidenceStatus(result.status)
+    } catch {
+      setSoldEvidenceStatus(null)
+    }
+  }, [])
+
+  useEffect(() => { void load(); void loadSoldEvidence() }, [load, loadSoldEvidence])
   const scanActive = ["RUNNING", "PARTIAL_AUTO_CONTINUING"].includes(payload?.run?.status ?? "")
   useEffect(() => {
     if (!scanActive) return
@@ -317,6 +365,42 @@ export function Loop2Top20OpportunityPool() {
       setMessage("Escaneo iniciado. Puedes cerrar esta página; Seller OS continuará automáticamente.")
     } catch (scanError) {
       setError(scanError instanceof Error ? scanError.message : "TOP20_SCAN_FAILED")
+    } finally {
+      setWorkingId("")
+    }
+  }
+
+  const importSoldEvidence = async () => {
+    if (!soldEvidenceFile || !soldEvidenceAttested) return
+    setWorkingId("sold-evidence"); setError(""); setMessage("")
+    try {
+      const extension = soldEvidenceFile.name.split(".").at(-1)?.toLocaleLowerCase("en-US")
+      if (extension !== "csv" && extension !== "json") throw new Error("SOLD_EVIDENCE_FORMAT_INVALID")
+      const content = await soldEvidenceFile.text()
+      const result = await adminFetch<{ result: {
+        duplicate: boolean
+        importedCount: number
+        duplicateCount: number
+        rejectedCount: number
+        scan: { status?: string } | null
+      } }>("/api/admin/ebay/listing-ai/sold-evidence", {
+        method: "POST",
+        headers: { "Idempotency-Key": requestKey("sold-evidence", soldEvidenceFile.name) },
+        body: JSON.stringify({
+          action: "import",
+          format: extension.toLocaleUpperCase("en-US"),
+          sourceExportType: soldEvidenceSource,
+          content,
+          operatorAttested: true,
+        }),
+      })
+      setSoldEvidenceFile(null); setSoldEvidenceAttested(false)
+      await Promise.all([load(), loadSoldEvidence()])
+      setMessage(result.result.duplicate
+        ? "Este archivo oficial ya había sido importado; no se duplicó evidencia ni trabajo."
+        : `Evidencia importada: ${result.result.importedCount}; duplicadas ${result.result.duplicateCount}; rechazadas ${result.result.rejectedCount}. Seller OS reanalizará el mismo run automáticamente.`)
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "SOLD_EVIDENCE_IMPORT_FAILED")
     } finally {
       setWorkingId("")
     }
@@ -420,6 +504,32 @@ export function Loop2Top20OpportunityPool() {
             <p className="mt-1 text-white/65">eBay-first: {payload.run.ebay_first_status ?? "NOT_STARTED"} · categorías {payload.run.ebay_first_category_count ?? 0} · señales {payload.run.ebay_first_signal_count ?? 0} · coincidencias Luna exactas {payload.run.ebay_first_exact_luna_match_count ?? 0}</p>
             <p className="mt-1 text-white/55">Brand {payload.run.coverage_before?.brand ?? 0} → {payload.run.coverage_after?.brand ?? 0} · GTIN/MPN {payload.run.coverage_before?.gtinOrMpn ?? 0} → {payload.run.coverage_after?.gtinOrMpn ?? 0} · pack {payload.run.coverage_before?.pack ?? 0} → {payload.run.coverage_after?.pack ?? 0} · peso {payload.run.coverage_before?.weight ?? 0} → {payload.run.coverage_after?.weight ?? 0} · dimensiones {payload.run.coverage_before?.dimensions ?? 0} → {payload.run.coverage_after?.dimensions ?? 0}</p>
           </div>}
+          <section aria-labelledby="sold-evidence-import-heading" className="space-y-3 rounded-xl border border-amber-200/20 bg-amber-100/[0.04] p-3 text-xs">
+            <div>
+              <h4 id="sold-evidence-import-heading" className="font-black">Evidencia oficial vendida/completada</h4>
+              <p className="mt-1 text-white/60">Importa en lote un CSV/JSON exportado oficialmente por eBay. No es una investigación producto por producto y no llama OpenAI.</p>
+            </div>
+            <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div><dt className="text-white/45">Observaciones revisadas</dt><dd className="font-black">{soldEvidenceStatus?.reviewedObservationCount ?? 0}</dd></div>
+              <div><dt className="text-white/45">Último import</dt><dd>{soldEvidenceStatus?.latest?.imported_at ? new Date(soldEvidenceStatus.latest.imported_at).toLocaleString("es") : "N/D"}</dd></div>
+              <div><dt className="text-white/45">Ventana admitida</dt><dd>{soldEvidenceStatus?.recencyDays ?? 90} días</dd></div>
+              <div><dt className="text-white/45">Privacidad</dt><dd>PII 0 · raw files 0</dd></div>
+            </dl>
+            <label className="block">Tipo de export oficial
+              <select value={soldEvidenceSource} onChange={(event) => setSoldEvidenceSource(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-white/20 bg-black/30 px-3">
+                <option value="EBAY_PRODUCT_RESEARCH_EXPORT">eBay Product Research</option>
+                <option value="EBAY_SELLER_HUB_EXPORT">eBay Seller Hub</option>
+                <option value="EBAY_MARKETPLACE_INSIGHTS_EXPORT">eBay Marketplace Insights</option>
+              </select>
+            </label>
+            <label className="block">Archivo CSV o JSON
+              <input type="file" accept=".csv,.json,text/csv,application/json" onChange={(event) => setSoldEvidenceFile(event.target.files?.[0] ?? null)} className="mt-1 block min-h-11 w-full rounded-xl border border-white/20 bg-black/30 p-2" />
+            </label>
+            <label className="flex items-start gap-2"><input type="checkbox" checked={soldEvidenceAttested} onChange={(event) => setSoldEvidenceAttested(event.target.checked)} /><span>Confirmo que es una exportación oficial de eBay sin datos de comprador, pedido, dirección, teléfono ni email.</span></label>
+            <button type="button" disabled={!soldEvidenceFile || !soldEvidenceAttested || workingId === "sold-evidence" || scanActive} onClick={() => void importSoldEvidence()} className="min-h-11 w-full rounded-xl bg-amber-100 font-black text-black disabled:opacity-40">{workingId === "sold-evidence" ? "Validando e importando…" : "Importar evidencia y reanalizar"}</button>
+            {!soldEvidenceFile && <p className="text-white/50">Selecciona un export oficial. Seller OS descartará filas sin identificador fuerte, pack o fecha.</p>}
+            <p className="text-white/45">No se guardan archivos, títulos completos, vendedores ni URLs/imágenes de competidores. Sólo identidad normalizada, métricas agregables, hashes y patrones estructurados.</p>
+          </section>
           {pool.length ? <div className="space-y-3">{pool.map((item) => {
             const product = item.evidence_snapshot.product ?? {}
             const economics = item.evidence_snapshot.economics

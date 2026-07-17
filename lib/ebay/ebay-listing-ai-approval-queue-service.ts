@@ -52,6 +52,11 @@ import {
   winnerComparablesFromKeywordReport,
 } from "./ebay-winner-evidence-v2-service"
 import {
+  officialSoldEvidenceComparablesForTarget,
+  readReviewedOfficialSoldEvidence,
+  type StoredOfficialSoldEvidence,
+} from "./ebay-official-sold-evidence-import"
+import {
   EBAY_WINNER_EVIDENCE_V2_VERSION,
   buildProductIdentityFingerprint,
   classifyWinnerComparable,
@@ -794,15 +799,37 @@ async function analyzeCandidate(input: {
   now: Date
   comparables?: WinnerComparableInput[]
   marketReport?: unknown
+  reviewedSoldEvidence?: StoredOfficialSoldEvidence[]
   discovery?: { origin: "EBAY_FIRST" | "LUNA_FIRST"; lunaMatchStatus: string | null;
     ebayFirstEvidence?: unknown }
 }) {
+  const targetIdentity = {
+    manufacturerBrand: input.candidate.manufacturerBrand,
+    gtin: input.candidate.gtin,
+    mpn: input.candidate.mpn,
+    model: input.candidate.model,
+    productName: input.candidate.productName,
+    packCount: input.candidate.packCount,
+    unitCount: input.candidate.unitCount,
+    size: input.candidate.size,
+    color: input.candidate.color,
+    scent: input.candidate.scent,
+    variant: input.candidate.variant,
+    condition: input.candidate.condition,
+  }
+  const importedSold = officialSoldEvidenceComparablesForTarget({
+    targetIdentity,
+    rows: input.reviewedSoldEvidence ?? [],
+  })
+  const comparables = input.comparables === undefined
+    ? undefined
+    : [...input.comparables, ...importedSold]
   const generated = await createWinnerEvidenceDecisionPackage(
     input.supabase,
     { ...winnerInput(input.candidate, input.accountKey, input.marketReport, input.discovery),
-      comparables: input.comparables },
+      comparables },
     {
-      useOfficialRead: input.comparables === undefined,
+      useOfficialRead: comparables === undefined,
       persist: true,
       candidateRecordId: null,
     },
@@ -1331,9 +1358,12 @@ export async function startListingAiApprovalQueueScan(input: {
       persistedVersion: latest.enrichment_version,
       currentVersion: TOP20_QUALIFICATION_POLICY_VERSION,
     }))
+  const soldEvidenceNeedsReanalysis = Boolean(latest?.sold_evidence_version &&
+    latest.sold_evidence_version !== latest.sold_evidence_applied_version)
+  const analysisUpgradeNeedsReanalysis = policyUpgradeNeedsReanalysis || soldEvidenceNeedsReanalysis
   const latestFresh = latest?.automation_status === "COMPLETED" &&
     !emptyCompletionNeedsRecovery && !incompleteLoop1NeedsRecovery &&
-    !policyUpgradeNeedsReanalysis &&
+    !analysisUpgradeNeedsReanalysis &&
     Date.parse(latest.updated_at ?? "") > now.getTime() - FRESHNESS_MS
   if (latestFresh) {
     return { runId: latest.id, status: "COMPLETED" as const, shouldSchedule: false,
@@ -1348,11 +1378,11 @@ export async function startListingAiApprovalQueueScan(input: {
     RECOVERABLE_DISPATCH_ERRORS.has(String(latest.last_error_code ?? ""))
   ))
   let run = latest && (["RUNNING", "PARTIAL"].includes(latest.status) || recoverableDispatch ||
-    emptyCompletionNeedsRecovery || incompleteLoop1NeedsRecovery || policyUpgradeNeedsReanalysis)
+    emptyCompletionNeedsRecovery || incompleteLoop1NeedsRecovery || analysisUpgradeNeedsReanalysis)
     ? latest
     : null
   if (run) {
-    if (policyUpgradeNeedsReanalysis) {
+    if (analysisUpgradeNeedsReanalysis) {
       // Restore work before advancing the run version. If the optimistic run
       // update loses a race, this update is safe to repeat on the next click.
       const { error: restorePolicyError } = await input.supabase
@@ -1377,9 +1407,9 @@ export async function startListingAiApprovalQueueScan(input: {
         lease_owner: null, lease_expires_at: null, next_continuation_at: now.toISOString(),
         last_error_code: null, completed_at: null,
         ebay_first_status: emptyCompletionNeedsRecovery ? "NOT_STARTED" : run.ebay_first_status,
-        scan_phase: incompleteLoop1NeedsRecovery || policyUpgradeNeedsReanalysis
+        scan_phase: incompleteLoop1NeedsRecovery || analysisUpgradeNeedsReanalysis
           ? "LOOP1_ANALYSIS" : run.scan_phase,
-        ...(policyUpgradeNeedsReanalysis ? {
+        ...(analysisUpgradeNeedsReanalysis ? {
           deep_analyzed_count: 0, candidates_analyzed: 0, ready_count: 0,
           needs_data_count: 0, rejected_count: 0, go_count: 0,
           go_with_changes_count: 0, no_go_count: 0, exact_match_count: 0,
@@ -1387,7 +1417,9 @@ export async function startListingAiApprovalQueueScan(input: {
           identity_enriched_count: 0, identity_conflict_count: 0,
           catalog_read_count: 0, browse_read_count: 0,
           coverage_before: {}, coverage_after: {}, source_coverage: {},
-          enrichment_version: TOP20_QUALIFICATION_POLICY_VERSION,
+          ...(policyUpgradeNeedsReanalysis ? {
+            enrichment_version: TOP20_QUALIFICATION_POLICY_VERSION,
+          } : {}),
         } : {}),
         last_checkpoint_at: run.last_checkpoint_at ?? run.last_activity_at ?? run.updated_at,
         last_activity_at: now.toISOString(), updated_at: now.toISOString(),
@@ -1473,7 +1505,7 @@ export async function startListingAiApprovalQueueScan(input: {
     continuationGeneration: Number(run.continuation_generation ?? 1),
     expectedBatch: Number(run.current_batch ?? 0) + 1,
     recovered: recoverableDispatch || emptyCompletionRecovered || incompleteLoop1NeedsRecovery ||
-      policyUpgradeNeedsReanalysis,
+      analysisUpgradeNeedsReanalysis,
     recoveredEmptyCompletion: emptyCompletionRecovered,
     batchSize: configuration.batchSize, timeBudgetSeconds: configuration.timeBudgetSeconds,
     openAiCalls: 0, ebayWrites: 0, canPublish: false }
@@ -1932,6 +1964,9 @@ export async function runListingAiApprovalQueueBatch(input: {
     .filter((value): value is string => Boolean(value)))
   const snapshotRows = await loadSnapshotRows(input.supabase, (variants ?? [])
     .map((row) => String(row.snapshot_id)).filter(Boolean))
+  const reviewedSoldEvidence = await readReviewedOfficialSoldEvidence({
+    supabase: input.supabase, accountKey: input.accountKey, now,
+  })
   const invocationStartedAt = Date.now()
   let analyzed = 0
   let retries = 0
@@ -2012,6 +2047,7 @@ export async function runListingAiApprovalQueueBatch(input: {
             supabase: input.supabase, accountKey: input.accountKey, candidate, now,
             comparables: separateActiveAndEstimatedComparables(enriched.report),
             marketReport: enriched.report,
+            reviewedSoldEvidence,
             discovery: {
               origin: entry.target.discovery_strategy === "EBAY_FIRST" ? "EBAY_FIRST" : "LUNA_FIRST",
               lunaMatchStatus: text(entry.target.ebay_first_luna_match_status),
@@ -2261,6 +2297,9 @@ export async function runListingAiApprovalQueueBatch(input: {
         ? now.toISOString() : automationStatus === "PAUSED_RATE_LIMIT"
           ? new Date(now.getTime() + 15 * 60_000).toISOString() : null,
       continuation_token_hash: completed ? null : run.continuation_token_hash,
+      sold_evidence_applied_version: completed
+        ? run.sold_evidence_version ?? run.sold_evidence_applied_version
+        : run.sold_evidence_applied_version,
       last_error_code: rateLimitCode,
       last_activity_at: now.toISOString(),
       completed_at: completed ? now.toISOString() : null,
