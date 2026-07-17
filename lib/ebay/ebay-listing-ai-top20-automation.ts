@@ -295,3 +295,12 @@ export function top20ReanalysisScope(input: {
   if (input.soldEvidenceNeedsReanalysis) return "SELECTIVE_SOLD_EVIDENCE"
   return "NONE"
 }
+
+export function compareTop20ClaimedTargets(
+  left: { evidence_reanalysis_priority?: unknown; ordinal?: unknown },
+  right: { evidence_reanalysis_priority?: unknown; ordinal?: unknown },
+) {
+  const priority = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : 0
+  return priority(right.evidence_reanalysis_priority) - priority(left.evidence_reanalysis_priority) ||
+    priority(left.ordinal) - priority(right.ordinal)
+}

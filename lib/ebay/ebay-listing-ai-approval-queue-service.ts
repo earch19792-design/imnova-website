@@ -68,6 +68,7 @@ import {
 import {
   buildTop20TargetManifest,
   calculateTop20RateLimitPause,
+  compareTop20ClaimedTargets,
   createTop20ContinuationToken,
   evaluateTop20DiscoveryPreselection,
   getTop20AutomationConfiguration,
@@ -1977,7 +1978,7 @@ export async function runListingAiApprovalQueueBatch(input: {
   if (claimError) throw new Error("TOP20_TARGET_CLAIM_FAILED")
   const targets: JsonRecord[] = ((claimedTargets ?? []) as unknown[])
     .map((entry) => record(entry))
-  targets.sort((left: JsonRecord, right: JsonRecord) => Number(left.ordinal) - Number(right.ordinal))
+  targets.sort(compareTop20ClaimedTargets)
   const productIds = [...new Set(targets.map((target) => text(target.market_radar_product_id))
     .filter((value): value is string => Boolean(value)))]
   const { data: catalogVariants, error: catalogError } = productIds.length
