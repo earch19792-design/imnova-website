@@ -8,6 +8,9 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 4. Abre la página oficial `https://www.ebay.com/sh/research` e inicia sesión normalmente.
 5. Ejecuta una búsqueda y usa **Capturar resultados para Seller OS**.
 
+Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión corregida es 1.0.1.
+
 La extensión sólo se inyecta en la ruta oficial Product Research. No lee cookies,
 tokens, contraseñas, datos de comprador, HTML completo ni archivos de imagen. La
 tabla visible se entrega mediante `postMessage` a la URL canónica de Preview; la

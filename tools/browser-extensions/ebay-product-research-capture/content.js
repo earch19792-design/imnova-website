@@ -22,6 +22,20 @@
 
   let pending = null
   let receiver = null
+  let statusElement = null
+  let captureButton = null
+  let receiverReadyTimeout = null
+
+  const ERROR_MESSAGES = {
+    PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND:
+      "No encontré una tabla visible compatible. Espera a que carguen los resultados y vuelve a intentar.",
+    PRODUCT_RESEARCH_QUERY_CONTEXT_NOT_FOUND:
+      "No pude confirmar la búsqueda o el rango de fechas. Ejecuta la búsqueda y vuelve a intentar.",
+    PRODUCT_RESEARCH_CAPTURE_POPUP_BLOCKED:
+      "El navegador bloqueó la ventana de Seller OS. Permite popups para ebay.com y vuelve a intentar.",
+    PRODUCT_RESEARCH_RECEIVER_NOT_READY:
+      "Seller OS no respondió. Confirma que estás autenticado en Preview y vuelve a intentar.",
+  }
 
   const text = (value) => typeof value === "string"
     ? value.normalize("NFKC").trim().replace(/\s+/g, " ") : ""
@@ -158,27 +172,57 @@
   }
 
   function setStatus(message, tone = "neutral") {
-    const status = document.getElementById("imnova-product-research-capture-status")
-    if (!status) return
-    status.textContent = message
-    status.style.color = tone === "error" ? "#fecaca" : tone === "success" ? "#bbf7d0" : "#cffafe"
+    if (!statusElement) return
+    statusElement.textContent = ERROR_MESSAGES[message] ?? message
+    statusElement.style.color = tone === "error" ? "#fecaca"
+      : tone === "success" ? "#bbf7d0" : "#cffafe"
+  }
+
+  function resetReceiverTimeout() {
+    if (receiverReadyTimeout) window.clearTimeout(receiverReadyTimeout)
+    receiverReadyTimeout = null
+  }
+
+  function finishCapture() {
+    resetReceiverTimeout()
+    if (captureButton) {
+      captureButton.disabled = false
+      captureButton.textContent = "Capturar resultados para Seller OS"
+      captureButton.style.opacity = "1"
+    }
   }
 
   function startCapture() {
+    setStatus("Leyendo la tabla visible de Product Research…")
+    if (captureButton) {
+      captureButton.disabled = true
+      captureButton.textContent = "Preparando captura…"
+      captureButton.style.opacity = ".7"
+    }
     try {
       pending = buildCapture()
       receiver = window.open(RECEIVER_URL, "imnovaProductResearchCapture",
         "popup=yes,width=720,height=780,resizable=yes,scrollbars=yes")
       if (!receiver) throw new Error("PRODUCT_RESEARCH_CAPTURE_POPUP_BLOCKED")
       setStatus(`Captura preparada: ${pending.visibleResultCount} filas visibles. Esperando Seller OS…`)
+      resetReceiverTimeout()
+      receiverReadyTimeout = window.setTimeout(() => {
+        if (!pending) return
+        pending = null
+        setStatus("PRODUCT_RESEARCH_RECEIVER_NOT_READY", "error")
+        finishCapture()
+      }, 20_000)
     } catch (error) {
+      pending = null
       setStatus(error instanceof Error ? error.message : "PRODUCT_RESEARCH_CAPTURE_FAILED", "error")
+      finishCapture()
     }
   }
 
   window.addEventListener("message", (event) => {
     if (event.origin !== SELLER_OS_ORIGIN || event.source !== receiver || !event.data) return
     if (event.data.type === RECEIVER_READY_MESSAGE && pending) {
+      resetReceiverTimeout()
       receiver.postMessage({ type: CAPTURE_MESSAGE, capture: pending }, SELLER_OS_ORIGIN)
       setStatus("Enviando datos estructurados a Seller OS…")
     }
@@ -188,6 +232,7 @@
         : `Captura rechazada: ${event.data.error || "ERROR"}`,
       event.data.success ? "success" : "error")
       pending = null
+      finishCapture()
     }
   })
 
@@ -199,16 +244,17 @@
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
   title.textContent = "Seller OS · Product Research"
-  const button = document.createElement("button")
-  button.type = "button"
-  button.textContent = "Capturar resultados para Seller OS"
-  button.style.cssText = "display:block;width:100%;margin-top:10px;padding:11px;border:0;border-radius:11px;background:#a5f3fc;color:#082f49;font-weight:800;cursor:pointer"
-  button.addEventListener("click", startCapture)
+  captureButton = document.createElement("button")
+  captureButton.type = "button"
+  captureButton.textContent = "Capturar resultados para Seller OS"
+  captureButton.style.cssText = "display:block;width:100%;margin-top:10px;padding:11px;border:0;border-radius:11px;background:#a5f3fc;color:#082f49;font-weight:800;cursor:pointer"
+  captureButton.addEventListener("click", startCapture)
   const status = document.createElement("p")
   status.id = "imnova-product-research-capture-status"
   status.textContent = "Captura sólo la tabla actualmente visible."
   status.style.cssText = "margin:9px 0 0;color:#cffafe;font-size:11px"
-  panel.append(title, button, status)
+  statusElement = status
+  panel.append(title, captureButton, status)
   shadow.append(panel)
   document.documentElement.append(host)
 })()
