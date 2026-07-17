@@ -281,9 +281,18 @@
     return source.slice(bestStart + bestAliasLength, bestStart + bestAliasLength + length)
   }
 
+  function titleFromBlockContent(content) {
+    const chunks = content
+      .split(/\n|[•|·]/)
+      .map((chunk) => text(chunk))
+      .filter((chunk) => chunk.length >= 8 && /[a-z]/i.test(chunk) && !/^\d+(\.\d+)?$/.test(chunk))
+    const blocked = /(average sold price|avg sold price|average shipping|total sold|last sold|sold date|price|shipping|bids|auction|buy it now|free shipping)/i
+    return chunks.find((chunk) => !blocked.test(chunk)) ?? chunks[0] ?? null
+  }
+
   function bestEffortValuesForBlock(block, itemLink) {
     const content = text(block.innerText || block.textContent)
-    const title = accessibleLinkText(itemLink)
+    const title = accessibleLinkText(itemLink) || titleFromBlockContent(content)
     const values = {}
     if (title) values.temporaryTitle = title
     const priceSource = textAfterAnyAlias(content, [
@@ -314,6 +323,29 @@
     const shippingMatch = shippingSource.match(/[$€£]\s*[\d,.]+|\bfree\b/i)
     if (shippingMatch) values.averageShipping = shippingMatch[0]
     return values
+  }
+
+  function candidateBlocksForGenericCapture(container, headerBottom) {
+    const blocks = deepQueryAll([
+      "li", "article", '[role="listitem"]', '[role="article"]',
+      '[data-testid*="card" i]', '[data-testid*="result" i]',
+      '[class*="card" i]', '[class*="result" i]', '[class*="item" i]',
+      '[class*="listing" i]',
+    ].join(","), container).filter(visible)
+      .filter((element) => elementRect(element).top >= headerBottom - 4)
+    return blocks.map((element) => {
+      const content = text(element.innerText || element.textContent)
+      const score = [
+        /\b[$€£]\s*[\d,.]+|\bfree\b/i.test(content),
+        /\b[\d,]+\s+(?:sold|bids?)\b/i.test(content),
+        /\b(?:last sold|sold date|yesterday|today|\d{1,3}\s*(?:days?|weeks?|hours?)\s*ago)\b/i.test(content),
+        content.length >= 24,
+      ].filter(Boolean).length
+      return { element, score, content }
+    }).filter(({ score }) => score >= 2)
+      .sort((left, right) => elementRect(left.element).top - elementRect(right.element).top)
+      .slice(0, MAX_ITEM_LINKS)
+      .map(({ element }) => element)
   }
 
   function coordinateValuesForRow(row, headerElements, mapped) {
@@ -527,6 +559,24 @@
     }
     return [...new Map(candidates.map((entry) => [listingIdFromLink(entry.itemLink) ?? entry.values.temporaryTitle, entry])).values()]
   }
+
+  function bestEffortCardRows(container, headerElements) {
+    const headerBottom = Math.max(...headerElements.map((element) =>
+      elementRect(element).bottom))
+    const blocks = candidateBlocksForGenericCapture(container, headerBottom)
+    const rows = []
+    for (const block of blocks) {
+      const itemLink = deepQueryAll('a[href*="/itm/"]', block).filter(visible)[0] ?? null
+      const values = bestEffortValuesForBlock(block, itemLink)
+      if (requiredFieldValid("temporaryTitle", values.temporaryTitle)
+        && requiredFieldValid("averageSoldPrice", values.averageSoldPrice)
+        && requiredFieldValid("totalSold", values.totalSold)
+        && requiredFieldValid("lastSoldDate", values.lastSoldDate)) {
+        rows.push({ values, itemLink, row: block })
+      }
+    }
+    return rows
+  }
   const offerFacts = (title) => {
     const normalized = text(title).toLowerCase()
     const pack = normalized.match(/\b(?:lot|pack|set)\s+of\s+(\d{1,3})\b/) ??
@@ -571,7 +621,9 @@
       ? []
       : coordinateRowsFromItemLinks(container, headerElements, mapped)
     const bestEffortRows = elementRows.length || coordinateRows.length ? [] : bestEffortRowElements(container, headerElements, mapped)
-    const rows = [...elementRows, ...coordinateRows, ...bestEffortRows].map(({ values, itemLink, row }) => {
+    const syntheticRows = elementRows.length || coordinateRows.length || bestEffortRows.length
+      ? [] : bestEffortCardRows(container, headerElements)
+    const rows = [...elementRows, ...coordinateRows, ...bestEffortRows, ...syntheticRows].map(({ values, itemLink, row }) => {
       const listingId = values.listingId || listingIdFromLink(itemLink)
       const facts = offerFacts(values.temporaryTitle)
       return {
@@ -617,7 +669,8 @@
       if (!REQUIRED_FIELDS.every((field) => mapped.includes(field))) continue
       const coordinateRows = coordinateRowsFromItemLinks(container, headerElements, mapped)
       const bestEffortRows = coordinateRows.length ? [] : bestEffortRowElements(container, headerElements, mapped)
-      const rows = [...coordinateRows, ...bestEffortRows].map(({ values, itemLink, row }) => {
+      const syntheticRows = coordinateRows.length || bestEffortRows.length ? [] : bestEffortCardRows(container, headerElements)
+      const rows = [...coordinateRows, ...bestEffortRows, ...syntheticRows].map(({ values, itemLink, row }) => {
         const listingId = values.listingId || listingIdFromLink(itemLink)
         return {
           temporaryTitle: values.temporaryTitle,
