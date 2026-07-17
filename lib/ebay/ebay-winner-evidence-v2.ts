@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 
 export const EBAY_WINNER_EVIDENCE_V2_VERSION =
-  "EBAY_WINNER_EVIDENCE_PRODUCT_DECISION_VISUAL_V2_3_2026_07_16"
+  "EBAY_WINNER_EVIDENCE_PRODUCT_DECISION_VISUAL_V2_4_2026_07_16"
 export const PRODUCT_IDENTITY_FINGERPRINT_VERSION =
   "EBAY_PRODUCT_IDENTITY_FINGERPRINT_V2"
 export const WINNER_ECONOMICS_CONFIG_VERSION =
@@ -134,6 +134,35 @@ export type WinnerEvidenceInput = {
     allowedImageFacts?: string[] | null
     locale?: string | null
   } | null
+  packStrategyEvidence?: {
+    offers?: Array<{
+      packCount?: number | null
+      unitCountPerItem?: number | null
+      exactContents?: string[] | null
+      offerGtin?: string | null
+      offerGtinVerified?: boolean | null
+      cost?: number | null
+      shippingCost?: number | null
+      fees?: number | null
+      minimumSafePrice?: number | null
+      idealSafePrice?: number | null
+      competitivePrice?: number | null
+      targetPrice?: number | null
+      premiumPrice?: number | null
+      estimatedProfit?: number | null
+      estimatedRoiPercent?: number | null
+      estimatedNetMarginPercent?: number | null
+      stockRequired?: number | null
+      stockAvailable?: number | null
+      packageWeight?: number | null
+      packageDimensions?: {
+        length?: number | null
+        width?: number | null
+        height?: number | null
+        unit?: "in" | "cm" | null
+      } | null
+    }> | null
+  } | null
   now?: string | Date | null
 }
 
@@ -192,6 +221,50 @@ function normalizedListingAiIntake(value: WinnerEvidenceInput["listingAiIntake"]
     blockedClaims: normalizeArray(value.blockedClaims),
     allowedImageFacts: normalizeArray(value.allowedImageFacts),
     locale: normalizedText(value.locale),
+  }
+}
+
+function normalizedPackStrategyEvidence(value: WinnerEvidenceInput["packStrategyEvidence"]) {
+  const offers = Array.isArray(value?.offers) ? value.offers : []
+  return {
+    offers: offers.slice(0, 30).map((offer) => {
+      const dimensions = offer.packageDimensions
+      const dimensionUnit = dimensions?.unit === "in" || dimensions?.unit === "cm"
+        ? dimensions.unit : null
+      const exactContents = [...new Set((offer.exactContents ?? [])
+        .map(normalizedText).filter((entry): entry is string => Boolean(entry)))].slice(0, 30)
+      return {
+        packCount: normalizedPositiveInteger(offer.packCount),
+        unitCountPerItem: normalizedPositiveInteger(offer.unitCountPerItem),
+        exactContents,
+        offerGtin: normalizedText(offer.offerGtin),
+        offerGtinVerified: offer.offerGtinVerified === true,
+        cost: finiteNonNegative(offer.cost),
+        shippingCost: finiteNonNegative(offer.shippingCost),
+        fees: finiteNonNegative(offer.fees),
+        minimumSafePrice: finiteNonNegative(offer.minimumSafePrice),
+        idealSafePrice: finiteNonNegative(offer.idealSafePrice),
+        competitivePrice: finiteNonNegative(offer.competitivePrice),
+        targetPrice: finiteNonNegative(offer.targetPrice),
+        premiumPrice: finiteNonNegative(offer.premiumPrice),
+        estimatedProfit: finiteNonNegative(offer.estimatedProfit),
+        estimatedRoiPercent: finiteNonNegative(offer.estimatedRoiPercent),
+        estimatedNetMarginPercent: finiteNonNegative(offer.estimatedNetMarginPercent),
+        stockRequired: normalizedPositiveInteger(offer.stockRequired),
+        stockAvailable: finiteNonNegative(offer.stockAvailable),
+        packageWeight: finiteNonNegative(offer.packageWeight),
+        packageDimensions: dimensionUnit && dimensions &&
+          finiteNonNegative(dimensions.length) && finiteNonNegative(dimensions.width) &&
+          finiteNonNegative(dimensions.height)
+          ? {
+              length: finiteNonNegative(dimensions.length),
+              width: finiteNonNegative(dimensions.width),
+              height: finiteNonNegative(dimensions.height),
+              unit: dimensionUnit,
+            }
+          : null,
+      }
+    }).filter((offer) => offer.packCount !== null),
   }
 }
 
@@ -1053,6 +1126,7 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
       costObservedAt: normalizedText(input.costObservedAt),
     },
     listingAiIntake: normalizedListingAiIntake(input.listingAiIntake),
+    packStrategyEvidence: normalizedPackStrategyEvidence(input.packStrategyEvidence),
     decision: {
       verdict,
       blockers,

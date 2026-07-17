@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { supabase } from "@/lib/supabase"
 
+import { Loop2Top20OpportunityPool } from "./loop2-top20-opportunity-pool"
+
 type Decision = {
   id: string
   candidateId: string | null
@@ -306,6 +308,8 @@ export function Loop2ListingAiPanel() {
         <div className="rounded-xl bg-black/25 p-2"><span className="block text-white/50">LOOP 1 PACKAGE</span><strong>{decision?.assessment.eligible ? "APPROVED" : "NOT ELIGIBLE"}</strong></div>
         <div className="rounded-xl bg-black/25 p-2"><span className="block text-white/50">BACKGROUND MONITOR</span><strong>INDEPENDENT</strong></div>
       </div>
+
+      <Loop2Top20OpportunityPool />
 
       {loading ? <p role="status">Cargando configuración server-side…</p> : (
         <>
