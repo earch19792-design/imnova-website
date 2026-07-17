@@ -9,13 +9,14 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Ejecuta una búsqueda y usa **Capturar resultados para Seller OS**.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión optimizada es 1.0.9.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión optimizada es 1.1.0.
 
 La captura rápida usa un único snapshot de la cuadrícula visible, reutiliza geometría
 y procesa primero las filas ancladas a Item IDs, incluso cuando eBay representa el
 enlace mediante texto accesible o una imagen con `alt`. Después de importar, Seller OS puede
-entregar la siguiente consulta agrupada; la extensión nunca navega ni inicia sesión
-automáticamente.
+aplicar y ejecutar la siguiente consulta agrupada con un clic. La extensión espera resultados
+nuevos y verifica que la consulta visible coincida antes de habilitar la siguiente captura;
+nunca inicia sesión automáticamente.
 
 La extensión sólo se inyecta en la ruta oficial Product Research. No lee cookies,
 tokens, contraseñas, datos de comprador, HTML completo ni archivos de imagen. La

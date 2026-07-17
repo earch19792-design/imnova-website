@@ -18,6 +18,7 @@ import {
 import { reconcileProductResearchObservations } from "@/lib/ebay/ebay-product-research-identity-reconciliation"
 import { enqueueListingAiTop20Continuation } from "@/lib/ebay/ebay-listing-ai-top20-queue"
 import {
+  assertProductResearchCaptureMatchesNextQuery,
   getProductResearchQueryPlanStatus,
   markProductResearchQueryCaptured,
 } from "@/lib/ebay/ebay-product-research-query-plan"
@@ -51,18 +52,24 @@ export async function POST(req: Request) {
     listingAiIdempotencyKey(req)
     const body = await listingAiJson(req)
     if (body.action !== "capture") throw new Error("PRODUCT_RESEARCH_CAPTURE_ACTION_INVALID")
+    if (!body.capture || typeof body.capture !== "object") {
+      throw new Error("PRODUCT_RESEARCH_CAPTURE_BODY_INVALID")
+    }
+    const capture = body.capture as ProductResearchBrowserCapture
+    const plannedTask = await assertProductResearchCaptureMatchesNextQuery({
+      supabase: auth.supabase, accountKey: auth.accountKey, searchQuery: capture.searchQuery,
+    })
     const result = await importProductResearchBrowserCapture({
       supabase: auth.supabase,
       accountKey: auth.accountKey,
       actorId: auth.actorId,
-      capture: body.capture as ProductResearchBrowserCapture,
+      capture,
     })
-    const queryPlan = await markProductResearchQueryCaptured({
-      supabase: auth.supabase,
-      accountKey: auth.accountKey,
-      searchQueryHash: result.searchQueryHash,
-      captureBatchId: result.batchId,
-    })
+    const queryPlan = plannedTask ? await markProductResearchQueryCaptured({
+      supabase: auth.supabase, accountKey: auth.accountKey,
+      searchQueryHash: result.searchQueryHash, captureBatchId: result.batchId,
+      planId: plannedTask.planId, taskId: plannedTask.taskId,
+    }) : null
     let scan: Record<string, unknown> | null = null
     if (result.reanalysisRequired) {
       const reconciled = await reconcileProductResearchObservations({

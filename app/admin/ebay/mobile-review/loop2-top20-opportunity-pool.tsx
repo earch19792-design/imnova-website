@@ -522,6 +522,12 @@ export function Loop2Top20OpportunityPool() {
     const timer = window.setInterval(() => setClockMs(Date.now()), 30_000)
     return () => window.clearInterval(timer)
   }, [rateLimitPaused])
+  const productResearchPlanActive = (browserCaptureStatus?.queryPlan?.pendingCount ?? 0) > 0
+  useEffect(() => {
+    if (!productResearchPlanActive) return
+    const timer = window.setInterval(() => void loadBrowserCapture(), 8_000)
+    return () => window.clearInterval(timer)
+  }, [loadBrowserCapture, productResearchPlanActive])
 
   const pool = payload?.pool ?? []
   const discoveryDiagnostics = payload?.run?.diagnostic_counts ?? {}
@@ -798,10 +804,10 @@ export function Loop2Top20OpportunityPool() {
               <p className="mt-1 text-white/60">Para cuentas sin export CSV/JSON: la extensión captura con un clic únicamente la tabla visible en la página oficial autenticada. No comparte cookies ni credenciales con Seller OS.</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.0.9.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión optimizada v1.0.9</a>
+              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.1.0.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.1.0</a>
               <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
             </div>
-            <p className="text-white/55">Instálala localmente una vez. La versión 1.0.9 adapta la captura a la cuadrícula y al diseño responsivo de Product Research, y entrega automáticamente la siguiente consulta agrupada después de cada captura.</p>
+            <p className="text-white/55">Instálala localmente una vez. La versión 1.1.0 adapta la captura a la cuadrícula y al diseño responsivo de Product Research, aplica la próxima consulta con un clic y espera la tabla nueva antes de permitir la captura.</p>
             <div className="rounded-xl border border-amber-100/20 bg-amber-100/[0.04] p-3">
               <p className="font-black">Cuota oficial Browse</p>
               <p className="mt-1 text-white/55">Estado {browserCaptureStatus?.browseQuota?.status ?? "SIN VERIFICAR"} · restantes {browserCaptureStatus?.browseQuota?.remaining ?? "N/D"} de {browserCaptureStatus?.browseQuota?.limit ?? "N/D"} · reset {browserCaptureStatus?.browseQuota?.resetAt ? new Date(browserCaptureStatus.browseQuota.resetAt).toLocaleString("es") : "N/D"}.</p>

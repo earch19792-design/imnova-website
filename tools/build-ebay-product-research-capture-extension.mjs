@@ -4,8 +4,7 @@ import { basename, resolve } from "node:path"
 const source = resolve("tools/browser-extensions/ebay-product-research-capture")
 const outputPaths = [
   "public/seller-os-tools/ebay-product-research-capture-extension.zip",
-  "public/seller-os-tools/ebay-product-research-capture-extension-v1.0.8.zip",
-  "public/seller-os-tools/ebay-product-research-capture-extension-v1.0.9.zip",
+  "public/seller-os-tools/ebay-product-research-capture-extension-v1.1.0.zip",
 ]
 const files = ["manifest.json", "content.js", "README.md"]
 

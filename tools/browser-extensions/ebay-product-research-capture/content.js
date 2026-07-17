@@ -52,6 +52,8 @@
   let nextQueryPanel = null
   let nextQueryField = null
   let nextQueryProgress = null
+  let nextQueryState = null
+  let nextQueryWatchTimer = null
 
   const ERROR_MESSAGES = {
     PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND:
@@ -62,6 +64,12 @@
       "El navegador bloqueó la ventana de Seller OS. Permite popups para ebay.com y vuelve a intentar.",
     PRODUCT_RESEARCH_RECEIVER_NOT_READY:
       "Seller OS no respondió. Confirma que estás autenticado en Preview y vuelve a intentar.",
+    PRODUCT_RESEARCH_NEXT_QUERY_MISMATCH:
+      "La búsqueda visible no coincide con la próxima consulta de Seller OS. Usa Aplicar y buscar próxima consulta.",
+    PRODUCT_RESEARCH_NEXT_QUERY_RESULTS_PENDING:
+      "Estoy esperando los resultados de la próxima consulta. No captures todavía.",
+    PRODUCT_RESEARCH_QUERY_FIELD_NOT_FOUND:
+      "No encontré el campo de búsqueda de Product Research. Pega la consulta preparada y ejecuta Search.",
   }
 
   const text = (value) => typeof value === "string"
@@ -852,11 +860,102 @@
     }
   }
 
+  function researchSearchInputs() {
+    return [...document.querySelectorAll(
+      'input[type="search"],input[aria-label*="search" i],input[placeholder*="search" i]',
+    )].filter(visible)
+  }
+
+  function researchSearchInput() {
+    const inputs = researchSearchInputs()
+    return inputs.find((input) => text(input.value)) ?? inputs[0] ?? null
+  }
+
+  const normalizedQuery = (value) => text(value).toLocaleLowerCase("en-US")
+
+  function visibleResultsSignature() {
+    const ids = deepQueryAll('a[href*="/itm/"]').filter(visible)
+      .map((link) => listingIdFromLink(link)).filter(Boolean).slice(0, 12)
+    return ids.length ? [...new Set(ids)].join(",") : ""
+  }
+
+  function stopNextQueryWatch() {
+    if (nextQueryWatchTimer) window.clearInterval(nextQueryWatchTimer)
+    nextQueryWatchTimer = null
+  }
+
+  function updateCaptureAvailability() {
+    if (!captureButton) return
+    const waitingForResults = Boolean(nextQueryState && !nextQueryState.resultsReady)
+    captureButton.disabled = waitingForResults
+    captureButton.textContent = waitingForResults
+      ? "Esperando resultados nuevos…" : "Capturar y continuar"
+    captureButton.style.opacity = waitingForResults ? ".65" : "1"
+  }
+
+  function confirmNextQueryResults() {
+    if (!nextQueryState) return false
+    const current = normalizedQuery(queryContext().searchQuery)
+    if (current !== normalizedQuery(nextQueryState.query)) return false
+    const signature = visibleResultsSignature()
+    if (!signature || signature === nextQueryState.previousResultsSignature) return false
+    nextQueryState.resultsReady = true
+    stopNextQueryWatch()
+    updateCaptureAvailability()
+    setStatus("Resultados nuevos listos. Revísalos y pulsa Capturar y continuar.", "success")
+    return true
+  }
+
+  function watchForNextQueryResults() {
+    stopNextQueryWatch()
+    if (!nextQueryState || confirmNextQueryResults()) return
+    nextQueryWatchTimer = window.setInterval(confirmNextQueryResults, 700)
+  }
+
+  function assertExpectedQuery(context) {
+    if (!nextQueryState) return
+    if (normalizedQuery(context.searchQuery) !== normalizedQuery(nextQueryState.query)) {
+      throw new Error("PRODUCT_RESEARCH_NEXT_QUERY_MISMATCH")
+    }
+    if (!nextQueryState.resultsReady) {
+      throw new Error("PRODUCT_RESEARCH_NEXT_QUERY_RESULTS_PENDING")
+    }
+  }
+
+  function setSearchInputValue(input, value) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set
+    if (setter) setter.call(input, value)
+    else input.value = value
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+    input.dispatchEvent(new Event("change", { bubbles: true }))
+  }
+
+  function applyAndSearchNextQuery() {
+    const query = nextQueryState?.query ?? ""
+    if (query.length < 3) return
+    const input = researchSearchInput()
+    if (!input) {
+      setStatus("PRODUCT_RESEARCH_QUERY_FIELD_NOT_FOUND", "error")
+      return
+    }
+    nextQueryState.previousResultsSignature = visibleResultsSignature()
+    nextQueryState.resultsReady = false
+    setSearchInputValue(input, query)
+    input.focus()
+    const form = input.form || input.closest("form")
+    if (form?.requestSubmit) form.requestSubmit()
+    else input.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter", code: "Enter", bubbles: true,
+    }))
+    updateCaptureAvailability()
+    setStatus("Próxima consulta aplicada. Esperando resultados nuevos de eBay…")
+    watchForNextQueryResults()
+  }
+
   function queryContext() {
     const params = new URLSearchParams(window.location.search)
-    const searchQuery = ["q", "query", "keywords", "keyword"].map((name) => params.get(name))
-      .find(Boolean) || [...document.querySelectorAll('input[type="search"],input[aria-label*="search" i],input[placeholder*="search" i]')]
-        .map((input) => text(input.value)).find(Boolean) || ""
+    const searchQuery = text(researchSearchInput()?.value) ||
+      ["q", "query", "keywords", "keyword"].map((name) => params.get(name)).find(Boolean) || ""
     const start = ["start_date", "startDate", "from"].map((name) => params.get(name)).find(Boolean) || null
     const end = ["end_date", "endDate", "to"].map((name) => params.get(name)).find(Boolean) || null
     const rangeParameter = ["date_range", "dateRange", "range"].map((name) => params.get(name)).find(Boolean)
@@ -870,11 +969,12 @@
     if (window.location.hostname !== "www.ebay.com" || !/^\/sh\/research\/?$/.test(window.location.pathname)) {
       throw new Error("PRODUCT_RESEARCH_OFFICIAL_PAGE_REQUIRED")
     }
-    const result = findVisibleResults()
     const context = queryContext()
     if (!context.searchQuery || !(context.dateRange.label || context.dateRange.start && context.dateRange.end)) {
       throw new Error("PRODUCT_RESEARCH_QUERY_CONTEXT_NOT_FOUND")
     }
+    assertExpectedQuery(context)
+    const result = findVisibleResults()
     return {
       source: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
       captureId: crypto.randomUUID(),
@@ -903,23 +1003,39 @@
 
   function finishCapture() {
     resetReceiverTimeout()
-    if (captureButton) {
-      captureButton.disabled = false
-      captureButton.textContent = "Capturar y continuar"
-      captureButton.style.opacity = "1"
-    }
+    updateCaptureAvailability()
   }
 
   function showNextQuery(value, ordinal, total) {
     const query = text(value).slice(0, 100)
     if (query.length < 3 || !nextQueryPanel || !nextQueryField || !nextQueryProgress) return
+    nextQueryState = { query, previousResultsSignature: visibleResultsSignature(), resultsReady: false }
     nextQueryField.value = query
     nextQueryProgress.textContent = Number.isInteger(Number(ordinal)) && Number.isInteger(Number(total))
       ? `Próxima consulta: ${Number(ordinal)} de ${Number(total)}` : "Próxima consulta preparada"
     nextQueryPanel.hidden = false
+    watchForNextQueryResults()
+    updateCaptureAvailability()
+  }
+
+  function clearNextQuery() {
+    nextQueryState = null
+    stopNextQueryWatch()
+    if (nextQueryPanel) nextQueryPanel.hidden = true
   }
 
   function startCapture() {
+    try {
+      assertExpectedQuery(queryContext())
+      receiver = window.open(RECEIVER_URL, "imnovaProductResearchCapture",
+        "popup=yes,width=720,height=780,resizable=yes,scrollbars=yes")
+      if (!receiver) throw new Error("PRODUCT_RESEARCH_CAPTURE_POPUP_BLOCKED")
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "PRODUCT_RESEARCH_CAPTURE_FAILED"
+      setStatus(code, "error")
+      finishCapture()
+      return
+    }
     setStatus("Leyendo la tabla visible de Product Research…")
     if (captureButton) {
       captureButton.disabled = true
@@ -934,9 +1050,6 @@
         rects: new WeakMap(), visibility: new WeakMap() }
       try {
         pending = buildCapture()
-        receiver = window.open(RECEIVER_URL, "imnovaProductResearchCapture",
-          "popup=yes,width=720,height=780,resizable=yes,scrollbars=yes")
-        if (!receiver) throw new Error("PRODUCT_RESEARCH_CAPTURE_POPUP_BLOCKED")
         const elapsed = Math.max(1, Math.round(performance.now() - startedAt))
         setStatus(`Captura preparada: ${pending.visibleResultCount} filas en ${elapsed} ms. Esperando Seller OS…`)
         resetReceiverTimeout()
@@ -949,6 +1062,8 @@
       } catch (error) {
         pending = null
         const code = error instanceof Error ? error.message : "PRODUCT_RESEARCH_CAPTURE_FAILED"
+        if (receiver && !receiver.closed) receiver.close()
+        receiver = null
         if (code === "PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND") {
           const diagnostic = safeStructureDiagnostics()
           setStatus(`${ERROR_MESSAGES[code]} Diagnóstico seguro: roots=${diagnostic.roots}; frames=${diagnostic.sameOriginFrames}; fields=${diagnostic.recognizedFields.join(",") || "none"}; itemLinks=${diagnostic.itemLinks}; coordinateRows=${diagnostic.coordinateRows}.`, "error")
@@ -973,8 +1088,9 @@
         : `Captura rechazada: ${event.data.error || "ERROR"}`,
       event.data.success ? "success" : "error")
       pending = null
-      if (event.data.success && event.data.nextQuery) showNextQuery(event.data.nextQuery,
-        event.data.nextQueryOrdinal, event.data.queryCount)
+      if (event.data.success && event.data.nextQuery) {
+        showNextQuery(event.data.nextQuery, event.data.nextQueryOrdinal, event.data.queryCount)
+      } else if (event.data.success) clearNextQuery()
       finishCapture()
     }
   })
@@ -986,7 +1102,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.0.9"
+  title.textContent = "Seller OS · Product Research · v1.1.0"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"
@@ -1021,7 +1137,12 @@
       setStatus("Seleccioné la consulta. Usa Ctrl+C para copiarla.")
     }
   })
-  nextQueryPanel.append(nextQueryProgress, nextQueryField, copyNextQuery)
+  const applyNextQueryButton = document.createElement("button")
+  applyNextQueryButton.type = "button"
+  applyNextQueryButton.textContent = "Aplicar y buscar próxima consulta"
+  applyNextQueryButton.style.cssText = "display:block;width:100%;margin-top:7px;padding:9px;border:0;border-radius:8px;background:#a5f3fc;color:#082f49;font-weight:800;cursor:pointer"
+  applyNextQueryButton.addEventListener("click", applyAndSearchNextQuery)
+  nextQueryPanel.append(nextQueryProgress, nextQueryField, applyNextQueryButton, copyNextQuery)
   panel.append(title, captureButton, status, nextQueryPanel)
   shadow.append(panel)
   document.documentElement.append(host)
