@@ -89,10 +89,15 @@ type QueuePayload = {
   error?: string
   run?: {
     status: string
+    phase?: string
     catalog_total: number
     catalog_examined: number
     candidates_analyzed: number
+    preselected_count?: number
     ready_count: number
+    go_count?: number
+    go_with_changes_count?: number
+    no_go_count?: number
     needs_data_count: number
     rejected_count: number
     retry_count: number
@@ -103,6 +108,15 @@ type QueuePayload = {
     coverage_before?: Record<string, number>
     coverage_after?: Record<string, number>
     source_coverage?: Record<string, number>
+    exact_match_count?: number
+    excluded_internal_count?: number
+    current_batch?: number
+    progress_percent?: number
+    last_activity_at?: string | null
+    next_continuation_at?: string | null
+    last_error_code?: string | null
+    priority_counts?: Record<string, number>
+    diagnostic_counts?: Record<string, number>
   } | null
   pool?: QueueItem[]
   ready?: QueueItem[]
@@ -189,18 +203,25 @@ export function Loop2Top20OpportunityPool() {
   const [drafts, setDrafts] = useState<Record<string, ConfirmationDraft>>({})
   const [evidenceId, setEvidenceId] = useState("")
 
-  const load = useCallback(async () => {
-    setLoading(true); setError("")
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
+    setError("")
     try {
       setPayload(await adminFetch<QueuePayload>("/api/admin/ebay/listing-ai/approval-queue"))
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "TOP20_STATUS_UNAVAILABLE")
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
   useEffect(() => { void load() }, [load])
+  const scanActive = ["RUNNING", "PARTIAL_AUTO_CONTINUING"].includes(payload?.run?.status ?? "")
+  useEffect(() => {
+    if (!scanActive) return
+    const timer = window.setInterval(() => void load(true), 2_500)
+    return () => window.clearInterval(timer)
+  }, [load, scanActive])
 
   const pool = payload?.pool ?? []
   const counts = useMemo(() => ({
@@ -215,10 +236,10 @@ export function Loop2Top20OpportunityPool() {
     setWorkingId("scan"); setError(""); setMessage("")
     try {
       await adminFetch("/api/admin/ebay/listing-ai/approval-queue", {
-        method: "POST", body: JSON.stringify({ action: "scan", batchSize: 3 }),
+        method: "POST", body: JSON.stringify({ action: "scan" }),
       })
       await load()
-      setMessage("Lote procesado sin OpenAI. Si el scan está PARTIAL, vuelve a pulsar para continuar el checkpoint.")
+      setMessage("Escaneo iniciado. Puedes cerrar esta página; Seller OS continuará automáticamente.")
     } catch (scanError) {
       setError(scanError instanceof Error ? scanError.message : "TOP20_SCAN_FAILED")
     } finally {
@@ -291,17 +312,29 @@ export function Loop2Top20OpportunityPool() {
   return (
     <section aria-labelledby="top20-heading" className="space-y-4 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Sin costo OpenAI durante ranking</p><h3 id="top20-heading" className="text-lg font-black">Top 20 oportunidades Luna → eBay</h3></div>
-        <button type="button" onClick={() => void scan()} disabled={workingId === "scan"} className="min-h-11 rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">{workingId === "scan" ? "Analizando…" : "Actualizar Top 20"}</button>
+        <div><p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Discovery → Loop 1 automático → Top 20</p><h3 id="top20-heading" className="text-lg font-black">Top 20 automatizado</h3></div>
+        <button type="button" onClick={() => void scan()} disabled={workingId === "scan" || scanActive} className="min-h-11 rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">{workingId === "scan" ? "Iniciando…" : scanActive ? "Análisis en progreso" : "Analizar y actualizar oportunidades"}</button>
       </div>
       {loading ? <p role="status">Cargando pool…</p> : (
         <>
-          <dl className="grid grid-cols-3 gap-2 text-xs">
-            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Analizados</dt><dd className="text-lg font-black">{payload?.run?.candidates_analyzed ?? 0}</dd></div>
-            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Top 20 listo</dt><dd className="text-lg font-black">{counts.ready}</dd></div>
-            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Gestionados internamente</dt><dd className="text-lg font-black">{counts.managedInternally}</dd></div>
+          <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Catálogo / examinados</dt><dd className="text-lg font-black">{payload?.run?.catalog_total ?? 0} / {payload?.run?.catalog_examined ?? 0}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Preseleccionados</dt><dd className="text-lg font-black">{payload?.run?.preselected_count ?? 0}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Procesados por Loop 1</dt><dd className="text-lg font-black">{payload?.run?.candidates_analyzed ?? 0}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Top 20 READY</dt><dd className="text-lg font-black">{counts.ready}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">GO</dt><dd className="text-lg font-black">{payload?.run?.go_count ?? 0}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">GO_WITH_CHANGES</dt><dd className="text-lg font-black">{payload?.run?.go_with_changes_count ?? 0}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">NO_GO internos</dt><dd className="text-lg font-black">{payload?.run?.no_go_count ?? 0}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Excluidos internos</dt><dd className="text-lg font-black">{payload?.run?.excluded_internal_count ?? counts.managedInternally}</dd></div>
           </dl>
-          <p className="text-xs text-white/60">Catálogo examinado: {payload?.run?.catalog_examined ?? 0}/{payload?.run?.catalog_total ?? 0} · scan {payload?.run?.status ?? "NOT_STARTED"} · cron OFF.</p>
+          <div className="space-y-2 rounded-xl border border-white/10 bg-black/20 p-3 text-xs">
+            <div className="h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-cyan-200 transition-[width]" style={{ width: `${payload?.run?.progress_percent ?? 0}%` }} /></div>
+            <p>{payload?.run?.progress_percent ?? 0}% · fase {payload?.run?.phase ?? "NOT_STARTED"} · estado {payload?.run?.status ?? "NOT_STARTED"} · lote {payload?.run?.current_batch ?? 0}</p>
+            <p className="text-white/55">Última actividad: {payload?.run?.last_activity_at ? new Date(payload.run.last_activity_at).toLocaleString("es") : "N/D"} · próxima continuación: {payload?.run?.next_continuation_at ? new Date(payload.run.next_continuation_at).toLocaleString("es") : "N/D"}</p>
+            {scanActive && <p className="font-bold text-cyan-50">Puedes cerrar esta página. Seller OS continuará automáticamente.</p>}
+            {payload?.run?.status === "PAUSED_RATE_LIMIT" && <p className="font-bold text-amber-100">Pausado por límite oficial de eBay. Reanuda cuando llegue la próxima continuación indicada.</p>}
+            {payload?.run?.last_error_code && <p className="text-rose-100">Error sanitizado: {reason(payload.run.last_error_code)}</p>}
+          </div>
           {payload?.run && <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs">
             <p className="font-black">Cobertura automática por fuentes autorizadas</p>
             <p className="mt-1 text-white/65">Enriquecidos: {payload.run.identity_enriched_count ?? 0} · conflictos excluidos: {payload.run.identity_conflict_count ?? 0} · Browse: {payload.run.browse_read_count ?? 0} · Catalog: {payload.run.catalog_read_count ?? 0}</p>
@@ -334,7 +367,7 @@ export function Loop2Top20OpportunityPool() {
       )}
       {error && <p role="alert" className="rounded-xl border border-rose-200/30 p-3 text-sm text-rose-50">{reason(error)}</p>}
       {message && <p role="status" className="rounded-xl border border-emerald-200/25 p-3 text-sm text-emerald-50">{message}</p>}
-      <p className="text-xs text-white/50">Sólo precio y disponibilidad requieren confirmación humana · sin cron · OpenAI calls: 0 · eBay writes: 0.</p>
+      <p className="text-xs text-white/50">Un clic orquesta Discovery + Loop 1 + ranking · sólo precio y disponibilidad requieren confirmación humana · cron permanente OFF · OpenAI calls: 0 · eBay writes: 0.</p>
     </section>
   )
 }

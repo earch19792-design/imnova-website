@@ -309,7 +309,19 @@ export function Loop2ListingAiPanel() {
         <div className="rounded-xl bg-black/25 p-2"><span className="block text-white/50">BACKGROUND MONITOR</span><strong>INDEPENDENT</strong></div>
       </div>
 
+      <div className="grid gap-2 text-xs sm:grid-cols-4" aria-label="Capacidades separadas de Seller Command Center">
+        <div className="rounded-xl border border-white/10 p-2"><strong>A · Radar anterior</strong><p className="mt-1 text-white/55">Fuente prioritaria; sus cinco candidatos no son el Top 20.</p></div>
+        <div className="rounded-xl border border-cyan-200/20 p-2"><strong>B · Top 20 automatizado</strong><p className="mt-1 text-white/55">Discovery y Loop 1 se orquestan aquí con un solo botón.</p></div>
+        <div className="rounded-xl border border-emerald-200/20 p-2"><strong>C · Paquete Loop 1</strong><p className="mt-1 text-white/55">Referencia ya calculada; no inicia análisis.</p></div>
+        <div className="rounded-xl border border-fuchsia-200/20 p-2"><strong>D · OpenAI</strong><p className="mt-1 text-white/55">Sólo después de aprobación humana.</p></div>
+      </div>
+
       <Loop2Top20OpportunityPool />
+
+      <div className="rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.04] p-3">
+        <h3 className="font-black">Paquete Loop 1 actualmente seleccionado</h3>
+        <p className="mt-1 text-xs text-white/60">Referencia histórica separada del Top 20. Puede mostrar 9001E, pero no lo presenta como candidato del nuevo ranking.</p>
+      </div>
 
       {loading ? <p role="status">Cargando configuración server-side…</p> : (
         <>
@@ -366,6 +378,10 @@ export function Loop2ListingAiPanel() {
         </>
       )}
 
+      <div className="rounded-2xl border border-fuchsia-200/20 bg-fuchsia-200/[0.04] p-3">
+        <h3 className="font-black">Generaciones OpenAI</h3>
+        <p className="mt-1 text-xs text-white/60">Área separada; el scanner y el ranking mantienen OpenAI calls: 0.</p>
+      </div>
       {status?.generations?.length ? (
         <div className="space-y-2">
           <h3 className="font-black">Historial de generaciones</h3>

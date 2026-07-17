@@ -292,7 +292,7 @@ export default function EbayMobileReviewPage() {
       const nextReport = buildMobileReviewRealRadarConnector({ products, mode: demoRequested ? "DEMO_FIXTURE_ONLY" : "REAL_READONLY" })
       setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setSelectedQueueCandidate(null); setSelectedQueueOpportunity(null); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState()
       if (nextReport.realRadarCandidatesCount === 0) { setLoadState("RADAR_EMPTY"); setLoadMessage("Radar respondió, pero no devolvió productos. Ejecuta o revisa el scan antes de decidir.") }
-      else { setLoadState("READY"); setLoadMessage(`${nextReport.top5Candidates.length} candidatos disponibles de ${nextReport.realRadarCandidatesCount} productos observados.`) }
+      else { setLoadState("READY"); setLoadMessage(`Radar anterior: ${nextReport.top5Candidates.length} candidatos disponibles de ${nextReport.realRadarCandidatesCount} productos observados. No son el Top 20 automatizado.`) }
       return nextReport.allCandidates
     } catch (error) {
       setReport(emptyReport); setState(buildInitialMobileReviewState(toMobileFixture([])))

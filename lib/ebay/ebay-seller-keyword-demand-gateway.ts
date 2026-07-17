@@ -289,6 +289,123 @@ async function searchActiveListings(
   }
 }
 
+export type EbayListingDiscoverySignals = {
+  status: "AVAILABLE" | "NO_MATCH"
+  observedAt: string
+  source: "EBAY_BROWSE_DISCOVERY_READONLY"
+  candidateFoundCount: number
+  returnedCandidateCount: number
+  sellerCount: number
+  landedPriceRange: { minimum: number; maximum: number } | null
+  packsObserved: number[]
+  estimatedMovementSignals: number
+  demandSignalClass: "ESTIMATED_DEMAND_SIGNALS" | "NONE"
+  categoryId: string | null
+  identitySignalScore: number
+  discoveryScore: number
+  basicRiskCodes: string[]
+  fullCompetitorContentStored: false
+  ebayWrites: 0
+}
+
+function normalizedWords(value: unknown) {
+  return new Set(text(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ")
+    .filter((word) => word.length >= 3))
+}
+
+function wordOverlap(left: unknown, right: unknown) {
+  const expected = normalizedWords(left)
+  const observed = normalizedWords(right)
+  if (!expected.size || !observed.size) return 0
+  const matches = [...expected].filter((word) => observed.has(word)).length
+  return matches / expected.size
+}
+
+function structuredPackCount(item: JsonRecord) {
+  for (const aspect of normalizeAspects(item.localizedAspects)) {
+    if (!/^(number in pack|pack quantity|pack size)$/i.test(aspect.name)) continue
+    const parsed = Number(aspect.value.match(/^\s*(\d{1,3})\s*$/)?.[1])
+    if (Number.isInteger(parsed) && parsed > 0 && parsed <= 100) return parsed
+  }
+  return null
+}
+
+/**
+ * One Browse search per Luna variant. This is deliberately shallower than Loop 1:
+ * it stores aggregate signals only and never enriches individual listings.
+ */
+export async function discoverEbayListingSignals(
+  candidate: EbaySellerKeywordCandidate,
+): Promise<EbayListingDiscoverySignals> {
+  const observedAt = new Date().toISOString()
+  const query = buildEbaySellerKeywordSearchQuery(candidate)
+  if (query.length < 3) throw new Error("EBAY_SEARCH_QUERY_TOO_SHORT")
+  let token = ""
+  try {
+    token = await getApplicationToken(BROWSE_SCOPE)
+    let search = await searchActiveListings(candidate, query, token)
+    if (!search.items.length && normalizedGtin(candidate.gtin)) {
+      search = await searchActiveListings({ ...candidate, gtin: null }, query, token)
+    }
+    const items = search.items.map(record)
+    const sellers = new Set(items.map((item) => text(record(item.seller).username ??
+      record(item.seller).userId)).filter(Boolean))
+    const landedPrices = items.map((item) => {
+      const price = numberOrNull(record(item.price).value)
+      const shipping = numberOrNull(record(firstShippingOption(item.shippingOptions).shippingCost).value) ?? 0
+      return price === null ? null : price + shipping
+    }).filter((value): value is number => value !== null)
+    const packsObserved = [...new Set(items.map(structuredPackCount)
+      .filter((value): value is number => value !== null))].sort((left, right) => left - right)
+    const estimatedMovementSignals = items.reduce((sum, item) =>
+      sum + Math.max(0, numberOrNull(firstAvailability(item.estimatedAvailabilities)
+        .estimatedSoldQuantity) ?? 0), 0)
+    const candidateGtin = normalizedGtin(candidate.gtin)
+    const exactGtinObserved = Boolean(candidateGtin && items.some((item) =>
+      normalizedGtin(item.gtin) === candidateGtin))
+    const candidateBrand = text(candidate.brand).toLowerCase()
+    const brandAgreement = candidateBrand && items.length
+      ? items.filter((item) => text(item.brand).toLowerCase() === candidateBrand).length / items.length : 0
+    const titleAgreement = items.length
+      ? Math.max(...items.map((item) => wordOverlap(candidate.productName, item.title))) : 0
+    const identitySignalScore = Math.min(100, Math.round(
+      (exactGtinObserved ? 55 : 0) + brandAgreement * 20 + titleAgreement * 25,
+    ))
+    const basicRiskCodes = [
+      ...items.length ? [] : ["NO_EBAY_CANDIDATES"],
+      ...landedPrices.length ? [] : ["MARKET_PRICE_UNAVAILABLE"],
+      ...identitySignalScore < 35 ? ["WEAK_DISCOVERY_IDENTITY_SIGNAL"] : [],
+      ...sellers.size <= 1 ? ["SELLER_CONCENTRATION"] : [],
+    ]
+    const discoveryScore = Math.max(0, Math.min(100, Math.round(
+      identitySignalScore * .4 + Math.min(20, items.length / 2) +
+      Math.min(15, sellers.size * 3) + Math.min(15, estimatedMovementSignals * 2) +
+      (landedPrices.length ? 10 : 0) - basicRiskCodes.length * 3,
+    )))
+    return {
+      status: items.length ? "AVAILABLE" : "NO_MATCH",
+      observedAt,
+      source: "EBAY_BROWSE_DISCOVERY_READONLY",
+      candidateFoundCount: numberOrNull(search.payload.total) ?? items.length,
+      returnedCandidateCount: items.length,
+      sellerCount: sellers.size,
+      landedPriceRange: landedPrices.length
+        ? { minimum: Math.min(...landedPrices), maximum: Math.max(...landedPrices) } : null,
+      packsObserved,
+      estimatedMovementSignals,
+      demandSignalClass: estimatedMovementSignals > 0 ? "ESTIMATED_DEMAND_SIGNALS" : "NONE",
+      categoryId: inferCategoryId(candidate, search.payload, items) || null,
+      identitySignalScore,
+      discoveryScore,
+      basicRiskCodes,
+      fullCompetitorContentStored: false,
+      ebayWrites: 0,
+    }
+  } finally {
+    token = ""
+  }
+}
+
 async function enrichActiveListing(value: unknown, token: string) {
   const summary = record(value)
   const itemId = text(summary.itemId)
