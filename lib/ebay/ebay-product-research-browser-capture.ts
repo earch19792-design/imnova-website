@@ -520,6 +520,15 @@ export function productResearchCapturePersistenceRows(rows: ClassifiedProductRes
   }))
 }
 
+export function productResearchCapturePersistenceError(error: unknown) {
+  const code = normalizedText(record(error).code, 40) ?? ""
+  if (code === "23505") return "PRODUCT_RESEARCH_CAPTURE_IDEMPOTENCY_CONFLICT"
+  if (code === "23514") return "PRODUCT_RESEARCH_CAPTURE_CONSTRAINT_REJECTED"
+  if (code === "23503") return "PRODUCT_RESEARCH_CAPTURE_REFERENCE_MISMATCH"
+  if (["PGRST202", "42883"].includes(code)) return "PRODUCT_RESEARCH_CAPTURE_RPC_SCHEMA_STALE"
+  return "PRODUCT_RESEARCH_CAPTURE_PERSIST_FAILED"
+}
+
 function targetFromQueueRow(row: { id: string; supplier_variant_id: string; evidence_snapshot: unknown }) {
   const snapshot = record(row.evidence_snapshot)
   const identity = record(record(snapshot.identityEnrichment).identity)
@@ -703,7 +712,7 @@ export async function importProductResearchBrowserCapture(input: {
     .map((row) => row.matchedTarget?.supplierVariantId).filter(Boolean)).size
   const batchId = randomUUID()
   const rpcRows = productResearchCapturePersistenceRows(fresh)
-  const { error: persistError } = await input.supabase.rpc("import_product_research_browser_capture_v2", {
+  const { error: persistError } = await input.supabase.rpc("import_product_research_browser_capture_v3", {
     p_batch_id: batchId,
     p_marketplace_account_key: input.accountKey,
     p_capture_hash: parsed.captureHash,
@@ -728,7 +737,7 @@ export async function importProductResearchBrowserCapture(input: {
     p_captured_by: input.actorId,
     p_observations: rpcRows,
   })
-  if (persistError) throw new Error("PRODUCT_RESEARCH_CAPTURE_PERSIST_FAILED")
+  if (persistError) throw new Error(productResearchCapturePersistenceError(persistError))
 
   const { data: importHashes, error: importHashError } = await input.supabase
     .from("marketplace_sold_evidence_import_batches").select("source_file_hash")
