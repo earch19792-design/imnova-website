@@ -99,6 +99,19 @@
     const parsed = money(value)
     return parsed !== null && parsed >= 0 && parsed <= 100 ? parsed : null
   }
+  const listingIdFromLink = (link) => link?.getAttribute?.("href")
+    ?.match(/\/itm\/(?:[^/]+\/)?(\d{9,20})/)?.[1] ?? null
+  const accessibleLinkText = (link) => {
+    if (!link) return ""
+    const imageAlt = [...link.querySelectorAll?.("img[alt]") ?? []]
+      .map((image) => text(image.getAttribute("alt"))).find((value) => value.length >= 4)
+    return [
+      text(link.innerText || link.textContent),
+      text(link.getAttribute?.("aria-label")),
+      text(link.getAttribute?.("title")),
+      imageAlt,
+    ].find((value) => value && value.length >= 4) ?? ""
+  }
   const canonicalHeader = (header) => {
     const normalized = key(header)
     return Object.entries(HEADER_ALIASES).find(([, aliases]) =>
@@ -269,18 +282,21 @@
       if (matches[0]) values[field] = matches[0].value
     })
     const itemLink = deepQueryAll('a[href*="/itm/"]', row).filter(visible)[0]
-    const itemTitle = text(itemLink?.innerText || itemLink?.textContent)
+    const itemTitle = accessibleLinkText(itemLink)
     if (itemTitle) values.temporaryTitle = itemTitle
     return values
   }
 
   function candidateFieldValues(element, field) {
-    const values = [text(element.innerText || element.textContent)]
-    if (field === "lastSoldDate") {
-      values.push(text(element.getAttribute?.("datetime")))
-      values.push(text(element.getAttribute?.("aria-label")))
-      values.push(text(element.getAttribute?.("title")))
-      values.push(text(element.getAttribute?.("data-value")))
+    const values = [
+      text(element.innerText || element.textContent),
+      text(element.getAttribute?.("aria-label")),
+      text(element.getAttribute?.("title")),
+      text(element.getAttribute?.("data-value")),
+    ]
+    if (field === "lastSoldDate") values.push(text(element.getAttribute?.("datetime")))
+    if (field === "temporaryTitle" && element.matches?.('a[href*="/itm/"]')) {
+      values.push(accessibleLinkText(element))
     }
     return [...new Set(values.filter(Boolean))]
   }
@@ -320,7 +336,7 @@
         left.value.length - right.value.length)
       if (matches[0]) values[field] = matches[0].value
     })
-    const itemTitle = text(itemLink?.innerText || itemLink?.textContent)
+    const itemTitle = accessibleLinkText(itemLink)
     if (itemTitle) values.temporaryTitle = itemTitle
     return values
   }
@@ -328,19 +344,29 @@
   function coordinateRowsFromItemLinks(container, headerElements, mapped) {
     const headerBottom = Math.max(...headerElements.map((element) =>
       elementRect(element).bottom))
-    const links = deepQueryAll('a[href*="/itm/"]', container).filter(visible)
-      .filter((link) => text(link.innerText || link.textContent).length >= 4)
+    const rawLinks = deepQueryAll('a[href*="/itm/"]', container).filter(visible)
+      .filter((link) => listingIdFromLink(link))
       .filter((link) => elementRect(link).top >= headerBottom - 4)
       .sort((left, right) => elementRect(left).top - elementRect(right).top)
       .slice(0, MAX_ITEM_LINKS)
+    const linksByListing = new Map()
+    for (const link of rawLinks) {
+      const listingId = listingIdFromLink(link)
+      const current = linksByListing.get(listingId)
+      if (!current || accessibleLinkText(link).length > accessibleLinkText(current).length) {
+        linksByListing.set(listingId, link)
+      }
+    }
+    const links = [...linksByListing.values()].sort((left, right) =>
+      elementRect(left).top - elementRect(right).top)
     const bands = []
     for (const link of links) {
       const box = elementRect(link)
       const center = box.top + box.height / 2
       const duplicate = bands.find((entry) => Math.abs(entry.center - center) <= 8)
       if (!duplicate) bands.push({ center, link })
-      else if (text(link.innerText || link.textContent).length >
-        text(duplicate.link.innerText || duplicate.link.textContent).length) duplicate.link = link
+      else if (accessibleLinkText(link).length >
+        accessibleLinkText(duplicate.link).length) duplicate.link = link
     }
     const gaps = bands.slice(1).map((entry, index) => entry.center - bands[index].center)
       .filter((gap) => gap > 8 && gap < 400).sort((left, right) => left - right)
@@ -449,7 +475,7 @@
       ? []
       : coordinateRowsFromItemLinks(container, headerElements, mapped)
     const rows = [...elementRows, ...coordinateRows].map(({ values, itemLink, row }) => {
-      const listingId = values.listingId || itemLink?.getAttribute("href")?.match(/\/itm\/(?:[^/]+\/)?(\d{9,20})/)?.[1] || null
+      const listingId = values.listingId || listingIdFromLink(itemLink)
       const facts = offerFacts(values.temporaryTitle)
       return {
         temporaryTitle: values.temporaryTitle,
@@ -471,7 +497,7 @@
 
   function coordinateTableParts() {
     const itemLinks = deepQueryAll('a[href*="/itm/"]').filter(visible)
-      .filter((link) => text(link.innerText || link.textContent).length >= 4)
+      .filter((link) => listingIdFromLink(link))
       .slice(0, MAX_ITEM_LINKS)
     const ancestorCounts = new Map()
     for (const link of itemLinks) {
@@ -494,8 +520,7 @@
       if (!REQUIRED_FIELDS.every((field) => mapped.includes(field))) continue
       const coordinateRows = coordinateRowsFromItemLinks(container, headerElements, mapped)
       const rows = coordinateRows.map(({ values, itemLink }) => {
-        const listingId = values.listingId || itemLink?.getAttribute("href")
-          ?.match(/\/itm\/(?:[^/]+\/)?(\d{9,20})/)?.[1] || null
+        const listingId = values.listingId || listingIdFromLink(itemLink)
         return {
           temporaryTitle: values.temporaryTitle,
           listingId,
@@ -713,7 +738,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.0.7"
+  title.textContent = "Seller OS · Product Research · v1.0.8"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"
