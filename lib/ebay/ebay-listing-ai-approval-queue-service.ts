@@ -50,6 +50,7 @@ import {
   winnerComparablesFromKeywordReport,
 } from "./ebay-winner-evidence-v2-service"
 import {
+  EBAY_WINNER_EVIDENCE_V2_VERSION,
   buildProductIdentityFingerprint,
   validateGtinChecksum,
   type WinnerComparableInput,
@@ -88,6 +89,8 @@ const DEFAULT_SUPPLIER_SHIPPING_RESERVE_USD = 8
 const DEFAULT_CONSERVATIVE_OUTBOUND_RESERVE_USD = 18
 const DEFAULT_PACKAGING_COST_USD = 1.5
 const DEFAULT_FIXED_FULFILLMENT_COST_USD = 1.5
+export const TOP20_QUALIFICATION_POLICY_VERSION =
+  `${LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION}:${EBAY_WINNER_EVIDENCE_V2_VERSION}`
 const RECOVERABLE_DISPATCH_ERRORS = new Set([
   "TOP20_CONTINUATION_DISPATCH_FAILED",
   "TOP20_CONTINUATION_QUEUE_FAILED",
@@ -1130,7 +1133,7 @@ export async function startListingAiApprovalQueueScan(input: {
       automationStatus: latest.automation_status,
       preselected: Number(latest.preselected_count ?? 0),
       persistedVersion: latest.enrichment_version,
-      currentVersion: LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION,
+      currentVersion: TOP20_QUALIFICATION_POLICY_VERSION,
     }))
   const latestFresh = latest?.automation_status === "COMPLETED" &&
     !emptyCompletionNeedsRecovery && !incompleteLoop1NeedsRecovery &&
@@ -1188,7 +1191,7 @@ export async function startListingAiApprovalQueueScan(input: {
           identity_enriched_count: 0, identity_conflict_count: 0,
           catalog_read_count: 0, browse_read_count: 0,
           coverage_before: {}, coverage_after: {}, source_coverage: {},
-          enrichment_version: LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION,
+          enrichment_version: TOP20_QUALIFICATION_POLICY_VERSION,
         } : {}),
         last_checkpoint_at: run.last_checkpoint_at ?? run.last_activity_at ?? run.updated_at,
         last_activity_at: now.toISOString(), updated_at: now.toISOString(),
@@ -1839,6 +1842,7 @@ export async function runListingAiApprovalQueueBatch(input: {
             loop1Verdict: result.row.verdict,
             identityEnrichment: {
               version: LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION,
+              winnerEvidenceVersion: EBAY_WINNER_EVIDENCE_V2_VERSION,
               identity: enriched.identity,
               conflicts: enriched.conflicts,
               exactComparableCount: enriched.exactComparables.length,
@@ -2030,7 +2034,7 @@ export async function runListingAiApprovalQueueBatch(input: {
       excluded_internal_count: needs + rejected,
       diagnostic_counts: { ...record(run.diagnostic_counts), ...diagnosticCounts },
       retry_count: Number(run.retry_count ?? 0) + retries,
-      enrichment_version: LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION,
+      enrichment_version: TOP20_QUALIFICATION_POLICY_VERSION,
       identity_enriched_count: Number(run.identity_enriched_count ?? 0) + enrichedCount,
       identity_conflict_count: Number(run.identity_conflict_count ?? 0) + conflictCount,
       catalog_read_count: Number(run.catalog_read_count ?? 0) + catalogReads,

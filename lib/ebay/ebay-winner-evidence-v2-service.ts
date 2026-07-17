@@ -5,6 +5,7 @@ import {
 } from "./ebay-seller-keyword-demand-gateway"
 import {
   buildWinnerEvidenceDecisionPackage,
+  normalizeWinnerComparableOfferCounts,
   verifyWinnerEvidenceDecisionPackageIntegrity,
   type ProductIdentityInput,
   type WinnerComparableInput,
@@ -58,22 +59,22 @@ function aspectValue(value: unknown, names: string[]) {
   return null
 }
 
-function packFromTitle(value: unknown) {
-  const title = text(value)?.toLowerCase() ?? ""
-  const match = title.match(/\b(\d{1,4})\s*(?:pack|pk|count|ct|piece|pc|set)\b/)
-  return match ? Number(match[1]) : null
-}
-
 function variantFromComparable(comparable: JsonRecord): ProductIdentityInput {
   const aspects = comparable.localizedAspects
+  const offerCounts = normalizeWinnerComparableOfferCounts({
+    title: text(comparable.title),
+    packCount: numberOrNull(aspectValue(aspects, ["pack quantity", "number in pack"])),
+    unitCount: numberOrNull(aspectValue(aspects, ["unit count", "count per pack"])),
+  })
   return {
     manufacturerBrand: text(comparable.brand) ?? aspectValue(aspects, ["brand"]),
     gtin: text(comparable.gtin) ?? aspectValue(aspects, ["upc", "ean", "gtin"]),
     mpn: text(comparable.mpn) ?? aspectValue(aspects, ["mpn", "manufacturer part number"]),
     model: aspectValue(aspects, ["model"]),
     productName: text(comparable.title),
-    packCount: packFromTitle(comparable.title) ?? numberOrNull(aspectValue(aspects, ["pack quantity", "number in pack"])),
-    unitCount: numberOrNull(aspectValue(aspects, ["unit count", "count per pack"])),
+    // Count/ct describes contents and must never become the offer pack.
+    packCount: offerCounts.packCount,
+    unitCount: offerCounts.unitCount,
     size: text(comparable.size) ?? aspectValue(aspects, ["size", "capacity", "volume"]),
     color: text(comparable.color) ?? aspectValue(aspects, ["color", "colour"]),
     scent: aspectValue(aspects, ["scent", "fragrance"]),

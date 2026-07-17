@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 
 export const EBAY_WINNER_EVIDENCE_V2_VERSION =
-  "EBAY_WINNER_EVIDENCE_PRODUCT_DECISION_VISUAL_V2_4_2026_07_16"
+  "EBAY_WINNER_EVIDENCE_PRODUCT_DECISION_VISUAL_V2_5_2026_07_17"
 export const PRODUCT_IDENTITY_FINGERPRINT_VERSION =
   "EBAY_PRODUCT_IDENTITY_FINGERPRINT_V2"
 export const WINNER_ECONOMICS_CONFIG_VERSION =
@@ -274,6 +274,24 @@ function normalizedPositiveInteger(value: unknown) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null
 }
 
+export function normalizeWinnerComparableOfferCounts(input: {
+  title?: string | null
+  packCount?: number | string | null
+  unitCount?: number | string | null
+}) {
+  const title = normalizedText(input.title)?.toLocaleLowerCase("en-US") ?? ""
+  const explicitPack = title.match(/\b(?:pack|set|case)\s+of\s+(\d{1,3})\b/) ??
+    title.match(/\b(\d{1,3})\s*(?:-|\s)?(?:pack|pk|pieces?|pcs?|set)\b/)
+  const explicitUnitCount = title.match(/\b(\d{1,4})\s*(?:count|ct)\b/)
+  return {
+    // With no multipack signal, the listing represents one marketplace offer.
+    packCount: normalizedPositiveInteger(explicitPack?.[1]) ??
+      normalizedPositiveInteger(input.packCount) ?? 1,
+    unitCount: normalizedPositiveInteger(input.unitCount) ??
+      normalizedPositiveInteger(explicitUnitCount?.[1]),
+  }
+}
+
 function finiteNonNegative(value: unknown) {
   if (value === null || value === undefined || value === "") return null
   const parsed = Number(value)
@@ -375,6 +393,18 @@ function explicitConflict(left: unknown, right: unknown) {
   return left !== null && right !== null && left !== right
 }
 
+function identityTokens(value: string | null) {
+  return new Set((value?.match(/[a-z0-9]+/g) ?? []).filter((token) => token.length > 1))
+}
+
+function identityNameSimilarity(left: string | null, right: string | null) {
+  const leftTokens = identityTokens(left)
+  const rightTokens = identityTokens(right)
+  if (!leftTokens.size || !rightTokens.size) return 0
+  const intersection = [...leftTokens].filter((token) => rightTokens.has(token)).length
+  return intersection / new Set([...leftTokens, ...rightTokens]).size
+}
+
 function identityStrength(identity: CanonicalIdentity) {
   const exactIdentifier = identity.gtinValid || Boolean(
     identity.manufacturerBrand && (identity.mpn || identity.model),
@@ -421,6 +451,12 @@ export function classifyWinnerComparable(
   if (target.gtin && comparable.gtin && target.gtin !== comparable.gtin) {
     return { classification: "INVALID_COMPARABLE", reasons: ["GTIN_CONFLICT"] }
   }
+  if (target.mpn && comparable.mpn && target.mpn !== comparable.mpn) {
+    return { classification: "INVALID_COMPARABLE", reasons: ["MPN_CONFLICT"] }
+  }
+  if (target.model && comparable.model && target.model !== comparable.model) {
+    return { classification: "INVALID_COMPARABLE", reasons: ["MODEL_CONFLICT"] }
+  }
   const gtinExact = Boolean(target.gtin && comparable.gtin && target.gtin === comparable.gtin)
   const brandExact = Boolean(
     target.manufacturerBrand && comparable.manufacturerBrand &&
@@ -431,17 +467,30 @@ export function classifyWinnerComparable(
     (target.model && comparable.model && target.model === comparable.model),
   )
   const nameExact = target.normalizedProductName === comparable.normalizedProductName
+  const nameSimilarity = identityNameSimilarity(
+    target.normalizedProductName,
+    comparable.normalizedProductName,
+  )
   const packComplete = target.packCount !== null && comparable.packCount !== null &&
     sameNullable(target.packCount, comparable.packCount)
-  const exact = (gtinExact || (brandExact && modelExact)) && packComplete &&
+  const targetIdentifierCorroborated = identityStrength(target).exactIdentifier &&
+    brandExact && nameSimilarity >= 0.82
+  const exact = (gtinExact || (brandExact && modelExact) || targetIdentifierCorroborated) && packComplete &&
     !variantFields.some((field) => explicitConflict(target[field], comparable[field]))
   if (exact) {
     return {
       classification: "EXACT_MATCH",
-      reasons: [gtinExact ? "GTIN_EXACT" : "BRAND_MODEL_EXACT", nameExact ? "NAME_EXACT" : "NAME_COMPATIBLE"],
+      reasons: [
+        gtinExact
+          ? "GTIN_EXACT"
+          : brandExact && modelExact
+            ? "BRAND_MODEL_EXACT"
+            : "TARGET_IDENTIFIER_PLUS_BRAND_NAME_PACK",
+        nameExact ? "NAME_EXACT" : "NAME_COMPATIBLE",
+      ],
     }
   }
-  if ((brandExact && nameExact) || (modelExact && nameExact)) {
+  if ((brandExact || modelExact) && (nameExact || nameSimilarity >= 0.58)) {
     return { classification: "NEAR_MATCH", reasons: ["IDENTIFIER_OR_PACK_EVIDENCE_INCOMPLETE"] }
   }
   return { classification: "INSUFFICIENT_EVIDENCE", reasons: ["IDENTITY_EVIDENCE_INSUFFICIENT"] }
