@@ -35,7 +35,7 @@ function parsedMessage(value: unknown) {
   return { runId, continuationGeneration, expectedBatch }
 }
 
-export const POST = handleCallback(async (value, metadata) => {
+const queueCallback = handleCallback(async (value, metadata) => {
   const boundary = getListingAiConfiguration()
   if (!boundary.preview || !boundary.staging) {
     throw new Error("LISTING_AI_PREVIEW_STAGING_REQUIRED")
@@ -74,3 +74,9 @@ export const POST = handleCallback(async (value, metadata) => {
     afterSeconds: Math.min(60, 5 * (2 ** Math.max(0, metadata.deliveryCount - 1))),
   }),
 })
+
+// Keep the public Next.js route contract narrow even though the queue SDK also
+// accepts its framework-neutral `{ request }` callback wrapper.
+export function POST(request: Request) {
+  return queueCallback(request)
+}

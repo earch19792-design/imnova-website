@@ -201,6 +201,43 @@ export function evaluateApprovalQueueCatalogCandidate(
   }
 }
 
+/**
+ * Minimum supply-side gate for running official read-only market enrichment.
+ * Identity, pack, category, aspects, keywords, logistics and image provenance
+ * remain mandatory for READY, but are not prerequisites for discovering the
+ * evidence that is intended to resolve them.
+ */
+export function evaluateApprovalQueueLoop1Eligibility(
+  candidate: ApprovalQueueCatalogCandidate,
+  now = new Date(),
+) {
+  const missing = [
+    !candidate.marketRadarProductId ? "MARKET_RADAR_PRODUCT_ID_REQUIRED" : null,
+    !candidate.supplierProductId ? "SUPPLIER_PRODUCT_ID_REQUIRED" : null,
+    !candidate.supplierVariantId ? "SUPPLIER_VARIANT_ID_REQUIRED" : null,
+    !candidate.supplierSku ? "SUPPLIER_SKU_REQUIRED" : null,
+    !candidate.productName ? "PRODUCT_NAME_REQUIRED" : null,
+    candidate.supplierCost === null || candidate.supplierCost < 0
+      ? "SUPPLIER_COST_REQUIRED" : null,
+    !candidate.capturedAt ? "SUPPLIER_CAPTURE_DATE_REQUIRED" : null,
+    !urlAllowed(candidate.productUrl) ? "LUNA_URL_NOT_ALLOWLISTED" : null,
+    !recent(candidate.capturedAt, now) ? "LUNA_COST_AND_STOCK_STALE" : null,
+  ].filter((entry): entry is string => Boolean(entry))
+  if (candidate.available === false ||
+    (candidate.inventoryQuantity !== null && candidate.inventoryQuantity <= 0)) {
+    return { canAnalyze: false, cohort: "REJECTED" as const,
+      reasonCodes: ["LUNA_OUT_OF_STOCK"], technicalDataRequestedFromOperator: false }
+  }
+  if (candidate.complianceBlocked) {
+    return { canAnalyze: false, cohort: "REJECTED" as const,
+      reasonCodes: ["COMPLIANCE_BLOCKED", ...candidate.complianceFindings],
+      technicalDataRequestedFromOperator: false }
+  }
+  return { canAnalyze: missing.length === 0,
+    cohort: missing.length ? "NEEDS_DATA" as const : "READY_FOR_OPERATOR_APPROVAL" as const,
+    reasonCodes: [...new Set(missing)], technicalDataRequestedFromOperator: false }
+}
+
 export function evaluateApprovalQueueDecision(evidence: ApprovalQueueDecisionEvidence) {
   const needsData = [
     !evidence.identityStrong ? "PRODUCT_IDENTITY_NOT_STRONG" : null,

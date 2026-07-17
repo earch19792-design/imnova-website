@@ -8,6 +8,7 @@ import {
   buildLunaOperatorConfirmation,
   evaluateApprovalQueueCatalogCandidate,
   evaluateApprovalQueueDecision,
+  evaluateApprovalQueueLoop1Eligibility,
   rankApprovalQueue,
   rankTop20OpportunityPool,
   type ApprovalQueueCatalogCandidate,
@@ -56,10 +57,12 @@ import {
 import {
   buildTop20TargetManifest,
   createTop20ContinuationToken,
+  evaluateTop20DiscoveryPreselection,
   getTop20AutomationConfiguration,
   hashTop20ContinuationToken,
   isTop20AutomationActive,
   isTop20RateLimitError,
+  shouldRecoverEmptyTop20Completion,
   top20ProgressPercent,
   verifyTop20ContinuationToken,
   type Top20AutomationStatus,
@@ -943,6 +946,11 @@ async function ensureEbayFirstDiscovery(input: {
     const discoveries = await Promise.all(categories.map(async (categoryId) => ({
       categoryId, ...await discoverEbayBestSellingProducts(categoryId),
     })))
+    const sourceStatusCounts = discoveries.reduce<Record<string, number>>((counts, entry) => {
+      const key = `SOURCE_${entry.status}`
+      counts[key] = (counts[key] ?? 0) + 1
+      return counts
+    }, {})
     const signals = discoveries.flatMap((entry) => entry.products).slice(0, 9)
     const products: HybridEbayProduct[] = []
     for (const page of chunks(signals, 3)) {
@@ -990,7 +998,8 @@ async function ensureEbayFirstDiscovery(input: {
     const { error: finishError } = await input.supabase.from("marketplace_listing_approval_queue_runs")
       .update({ ebay_first_status: available ? "COMPLETED" : "UNAVAILABLE",
         ebay_first_category_count: categories.length, ebay_first_signal_count: products.length,
-        ebay_first_exact_luna_match_count: ranked.length, ebay_first_match_counts: matchCounts,
+        ebay_first_exact_luna_match_count: ranked.length,
+        ebay_first_match_counts: { ...sourceStatusCounts, ...matchCounts },
         ebay_first_observed_at: input.now.toISOString(), last_activity_at: input.now.toISOString(),
         updated_at: input.now.toISOString() })
       .eq("id", input.run.id).eq("marketplace_account_key", input.accountKey)
@@ -1089,7 +1098,17 @@ export async function startListingAiApprovalQueueScan(input: {
       nextContinuationAt: latest.next_continuation_at,
       openAiCalls: 0, ebayWrites: 0, canPublish: false }
   }
-  const latestFresh = latest?.automation_status === "COMPLETED" &&
+  const emptyCompletionNeedsRecovery = Boolean(latest &&
+    Number(record(latest.diagnostic_counts).PRESELECTION_POLICY_V2 ?? 0) !== 1 &&
+    shouldRecoverEmptyTop20Completion({
+      automationStatus: latest.automation_status,
+      catalogTotal: Number(latest.catalog_total ?? 0),
+      discoveryExamined: Number(latest.discovery_examined_count ?? 0),
+      preselected: Number(latest.preselected_count ?? 0),
+      deepAnalyzed: Number(latest.deep_analyzed_count ?? 0),
+      ready: Number(latest.ready_count ?? 0),
+    }))
+  const latestFresh = latest?.automation_status === "COMPLETED" && !emptyCompletionNeedsRecovery &&
     Date.parse(latest.updated_at ?? "") > now.getTime() - FRESHNESS_MS
   if (latestFresh) {
     return { runId: latest.id, status: "COMPLETED" as const, shouldSchedule: false,
@@ -1103,7 +1122,8 @@ export async function startListingAiApprovalQueueScan(input: {
     latest.continuation_dispatch_status === "PAUSED_DISPATCH_RECOVERABLE" ||
     RECOVERABLE_DISPATCH_ERRORS.has(String(latest.last_error_code ?? ""))
   ))
-  let run = latest && (["RUNNING", "PARTIAL"].includes(latest.status) || recoverableDispatch)
+  let run = latest && (["RUNNING", "PARTIAL"].includes(latest.status) || recoverableDispatch ||
+    emptyCompletionNeedsRecovery)
     ? latest
     : null
   if (run) {
@@ -1119,6 +1139,7 @@ export async function startListingAiApprovalQueueScan(input: {
         lock_version: Number(run.lock_version ?? 0) + 1,
         lease_owner: null, lease_expires_at: null, next_continuation_at: now.toISOString(),
         last_error_code: null, completed_at: null,
+        ebay_first_status: emptyCompletionNeedsRecovery ? "NOT_STARTED" : run.ebay_first_status,
         last_checkpoint_at: run.last_checkpoint_at ?? run.last_activity_at ?? run.updated_at,
         last_activity_at: now.toISOString(), updated_at: now.toISOString(),
       }).eq("id", run.id).eq("lock_version", run.lock_version).select("*").maybeSingle()
@@ -1145,11 +1166,42 @@ export async function startListingAiApprovalQueueScan(input: {
     run = data
   }
   const total = await ensureTop20RunTargets(input.supabase, input.accountKey, run.id, now)
+  let emptyCompletionRecovered = false
+  if (emptyCompletionNeedsRecovery) {
+    const { error: restoreError } = await input.supabase
+      .from("marketplace_listing_approval_queue_scan_targets")
+      .update({ status: "DISCOVERED", preselected: false, processing_phase: null,
+        lease_owner: null, lease_expires_at: null, processed_at: null,
+        next_retry_at: null, last_error_code: null, updated_at: now.toISOString() })
+      .eq("run_id", run.id).eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", MARKETPLACE).eq("status", "SKIPPED")
+      .not("discovery_observed_at", "is", null)
+    if (restoreError) throw new Error("TOP20_EMPTY_COMPLETION_RESTORE_FAILED")
+    const preselection = await preselectTop20DiscoveryTargets({
+      supabase: input.supabase, accountKey: input.accountKey, runId: run.id,
+      limit: configuration.preselectionSize, now,
+    })
+    emptyCompletionRecovered = preselection.selected > 0
+    if (!emptyCompletionRecovered) {
+      const { error: noSelectionError } = await input.supabase
+        .from("marketplace_listing_approval_queue_runs").update({
+          status: "COMPLETED", automation_status: "COMPLETED", scan_phase: "COMPLETED",
+          continuation_dispatch_status: "COMPLETED", continuation_token_hash: null,
+          next_continuation_at: null, last_error_code: "TOP20_NO_PRESELECTION_ELIGIBLE",
+          completed_at: now.toISOString(), updated_at: now.toISOString(),
+        }).eq("id", run.id).eq("marketplace_account_key", input.accountKey)
+      if (noSelectionError) throw new Error("TOP20_EMPTY_COMPLETION_FINALIZE_FAILED")
+      return { runId: run.id, status: "COMPLETED" as const, shouldSchedule: false,
+        continuationToken: null, recoveredEmptyCompletion: false,
+        openAiCalls: 0, ebayWrites: 0, canPublish: false }
+    }
+  }
   return { runId: run.id, status: "PARTIAL_AUTO_CONTINUING" as const,
     catalogTotal: total, shouldSchedule: true, continuationToken: token,
     continuationGeneration: Number(run.continuation_generation ?? 1),
     expectedBatch: Number(run.current_batch ?? 0) + 1,
-    recovered: recoverableDispatch,
+    recovered: recoverableDispatch || emptyCompletionRecovered,
+    recoveredEmptyCompletion: emptyCompletionRecovered,
     batchSize: configuration.batchSize, timeBudgetSeconds: configuration.timeBudgetSeconds,
     openAiCalls: 0, ebayWrites: 0, canPublish: false }
 }
@@ -1245,29 +1297,43 @@ async function preselectTop20DiscoveryTargets(input: {
   limit: number
   now: Date
 }) {
-  const { data, error } = await input.supabase.from("marketplace_listing_approval_queue_scan_targets")
-    .select("id,ordinal,source_priority,discovery_strategy,ebay_first_rank,discovery_score,discovery_snapshot")
-    .eq("run_id", input.runId).eq("marketplace_account_key", input.accountKey)
-    .eq("marketplace", MARKETPLACE).eq("status", "DISCOVERED")
-  if (error) throw new Error("TOP20_PRESELECTION_READ_FAILED")
+  const rows: JsonRecord[] = []
+  for (let offset = 0; ; offset += TARGET_CATALOG_PAGE_SIZE) {
+    const { data, error } = await input.supabase
+      .from("marketplace_listing_approval_queue_scan_targets")
+      .select("id,ordinal,source_priority,discovery_strategy,ebay_first_rank,discovery_score,discovery_snapshot")
+      .eq("run_id", input.runId).eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", MARKETPLACE).eq("status", "DISCOVERED")
+      .order("ordinal", { ascending: true })
+      .range(offset, offset + TARGET_CATALOG_PAGE_SIZE - 1)
+    if (error) throw new Error("TOP20_PRESELECTION_READ_FAILED")
+    rows.push(...(data ?? []).map(record))
+    if ((data ?? []).length < TARGET_CATALOG_PAGE_SIZE) break
+  }
   const sourceOrder: Record<string, number> = { RADAR_TOP5: 0, PRIOR_INTELLIGENCE: 1, LUNA_CATALOG: 2 }
-  const eligible = (data ?? []).filter((row) => {
+  const evaluated = rows.map((row) => {
     const snapshot = record(row.discovery_snapshot)
     const riskCodes = safeCodes(snapshot.basicRiskCodes)
-    return snapshot.supplierAvailable === true && Number(row.discovery_score ?? 0) >= 35 &&
-      Number(snapshot.returnedCandidateCount ?? 0) > 0 &&
-      !riskCodes.some((code) => ["LUNA_OUT_OF_STOCK", "COMPLIANCE_BLOCKED",
-        "NO_EBAY_CANDIDATES", "WEAK_DISCOVERY_IDENTITY_SIGNAL"].includes(code))
-  }).sort((left, right) =>
+    return { row, evaluation: evaluateTop20DiscoveryPreselection({
+      supplierAvailable: snapshot.supplierAvailable === true,
+      returnedCandidateCount: Number(snapshot.returnedCandidateCount ?? 0),
+      discoveryScore: Number(row.discovery_score ?? 0),
+      identitySignalScore: Number(snapshot.identitySignalScore ?? 0),
+      riskCodes,
+    }) }
+  })
+  const eligible = evaluated.filter((entry) => entry.evaluation.eligible).map((entry) => entry.row)
+    .sort((left, right) =>
     Number(right.discovery_strategy === "EBAY_FIRST") - Number(left.discovery_strategy === "EBAY_FIRST") ||
     Number(right.discovery_score ?? 0) - Number(left.discovery_score ?? 0) ||
     Number(left.ebay_first_rank ?? Number.MAX_SAFE_INTEGER) -
       Number(right.ebay_first_rank ?? Number.MAX_SAFE_INTEGER) ||
-    (sourceOrder[left.source_priority] ?? 9) - (sourceOrder[right.source_priority] ?? 9) ||
+    (sourceOrder[String(left.source_priority)] ?? 9) -
+      (sourceOrder[String(right.source_priority)] ?? 9) ||
     Number(left.ordinal) - Number(right.ordinal))
   const selectedIds = eligible.slice(0, input.limit).map((row) => row.id)
   const selectedSet = new Set(selectedIds)
-  const skippedIds = (data ?? []).filter((row) => !selectedSet.has(row.id)).map((row) => row.id)
+  const skippedIds = rows.filter((row) => !selectedSet.has(row.id)).map((row) => row.id)
   for (const page of chunks(selectedIds)) {
     const { error: updateError } = await input.supabase
       .from("marketplace_listing_approval_queue_scan_targets")
@@ -1285,6 +1351,19 @@ async function preselectTop20DiscoveryTargets(input: {
   const { error: runError } = await input.supabase.from("marketplace_listing_approval_queue_runs")
     .update({ scan_phase: "LOOP1_ANALYSIS", preselected_count: selectedIds.length,
       excluded_internal_count: skippedIds.length, next_continuation_at: input.now.toISOString(),
+      diagnostic_counts: {
+        PRESELECTION_POLICY_V2: 1,
+        DISCOVERY_WITH_CANDIDATES: evaluated.filter((entry) =>
+          Number(record(entry.row.discovery_snapshot).returnedCandidateCount ?? 0) > 0).length,
+        DISCOVERY_SCORE_ELIGIBLE: evaluated.filter((entry) =>
+          Number(entry.row.discovery_score ?? 0) >= 35).length,
+        DISCOVERY_PROVISIONAL_IDENTITY: evaluated.filter((entry) =>
+          entry.evaluation.identityStatus === "LOOP1_ENRICHMENT_REQUIRED").length,
+        DISCOVERY_STRONG_IDENTITY: evaluated.filter((entry) =>
+          entry.evaluation.identityStatus === "DISCOVERY_STRONG").length,
+        DISCOVERY_PRESELECTED: selectedIds.length,
+        DISCOVERY_HARD_EXCLUDED: evaluated.length - eligible.length,
+      },
       last_activity_at: input.now.toISOString(), updated_at: input.now.toISOString() })
     .eq("id", input.runId).eq("marketplace_account_key", input.accountKey)
   if (runError) throw new Error("TOP20_PRESELECTION_RUN_UPDATE_FAILED")
@@ -1322,7 +1401,8 @@ async function runTop20DiscoveryBatch(input: {
     const variant = record(entry.rawVariant)
     const candidate = candidateFromRows(variant, {}, input.environment)
     try {
-      const supplierAvailable = candidate.available && (candidate.inventoryQuantity === null || candidate.inventoryQuantity > 0)
+      const supplierAvailable = candidate.available === true &&
+        (candidate.inventoryQuantity === null || candidate.inventoryQuantity > 0)
       const signals = supplierAvailable && !candidate.complianceBlocked
         ? await discoverEbayListingSignals({
           productName: candidate.productName,
@@ -1346,6 +1426,13 @@ async function runTop20DiscoveryBatch(input: {
       const discoveryScore = Math.max(0, Math.min(100,
         (signals?.discoveryScore ?? 0) + operationalAdjustment -
         (!candidate.weight && !candidate.dimensions ? 5 : 0)))
+      const preselection = evaluateTop20DiscoveryPreselection({
+        supplierAvailable,
+        returnedCandidateCount: signals?.returnedCandidateCount ?? 0,
+        discoveryScore,
+        identitySignalScore: signals?.identitySignalScore ?? 0,
+        riskCodes,
+      })
       const snapshot = {
         version: "EBAY_LUNA_DISCOVERY_V1",
         origin: entry.target.discovery_strategy === "EBAY_FIRST" ? "EBAY_FIRST" : "LUNA_FIRST",
@@ -1364,6 +1451,8 @@ async function runTop20DiscoveryBatch(input: {
         demandSignalClass: signals?.demandSignalClass ?? "NONE",
         categoryId: signals?.categoryId ?? null,
         identitySignalScore: signals?.identitySignalScore ?? 0,
+        preselectionIdentityStatus: preselection.identityStatus,
+        preselectionEligible: preselection.eligible,
         basicRiskCodes: safeCodes(riskCodes),
         fullCompetitorContentStored: false,
         openAiCalls: 0,
@@ -1603,7 +1692,7 @@ export async function runListingAiApprovalQueueBatch(input: {
     if (candidate.packCount) coverageBefore.pack += 1
     if (candidate.weight) coverageBefore.weight += 1
     if (candidate.dimensions) coverageBefore.dimensions += 1
-    let catalogGate = evaluateApprovalQueueCatalogCandidate(candidate, now)
+    const catalogGate = evaluateApprovalQueueCatalogCandidate(candidate, now)
     let cohort = catalogGate.cohort
     let reasons = catalogGate.reasonCodes
     let packageId: string | null = null
@@ -1633,10 +1722,10 @@ export async function runListingAiApprovalQueueBatch(input: {
         }
         identityEnrichmentId = await persistIdentityEnrichment({ supabase: input.supabase,
           runId: run.id, accountKey: input.accountKey, candidate, result: enriched, now })
-        catalogGate = evaluateApprovalQueueCatalogCandidate(candidate, now)
-        if (!catalogGate.canRunOfficialMarketRead) {
-          cohort = catalogGate.cohort
-          reasons = [...catalogGate.reasonCodes,
+        const loop1Gate = evaluateApprovalQueueLoop1Eligibility(candidate, now)
+        if (!loop1Gate.canAnalyze) {
+          cohort = loop1Gate.cohort
+          reasons = [...loop1Gate.reasonCodes,
             ...enriched.conflicts.length ? ["IDENTITY_SOURCE_CONFLICT"] : []]
           snapshot = safeEvidenceSnapshot({ candidate })
         } else {
@@ -1855,7 +1944,7 @@ export async function runListingAiApprovalQueueBatch(input: {
       no_go_count: noGoCount,
       exact_match_count: exactMatches,
       excluded_internal_count: needs + rejected,
-      diagnostic_counts: diagnosticCounts,
+      diagnostic_counts: { ...record(run.diagnostic_counts), ...diagnosticCounts },
       retry_count: Number(run.retry_count ?? 0) + retries,
       enrichment_version: LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION,
       identity_enriched_count: Number(run.identity_enriched_count ?? 0) + enrichedCount,

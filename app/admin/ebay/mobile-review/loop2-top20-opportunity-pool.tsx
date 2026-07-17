@@ -262,6 +262,12 @@ export function Loop2Top20OpportunityPool() {
   }, [load, scanActive])
 
   const pool = payload?.pool ?? []
+  const discoveryDiagnostics = payload?.run?.diagnostic_counts ?? {}
+  const invalidEmptyCompletion = payload?.run?.status === "COMPLETED" &&
+    (payload.run.catalog_examined ?? 0) >= (payload.run.catalog_total ?? 0) &&
+    (payload.run.preselected_count ?? 0) === 0 &&
+    (payload.run.candidates_analyzed ?? 0) === 0 &&
+    Number(discoveryDiagnostics.PRESELECTION_POLICY_V2 ?? 0) !== 1
   const counts = useMemo(() => ({
     ready: payload?.ready?.length ?? 0,
     managedInternally: (payload?.internalCounts?.needsData ?? 0) +
@@ -378,7 +384,8 @@ export function Loop2Top20OpportunityPool() {
           </div>
           {payload?.run && <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs">
             <p className="font-black">Cobertura automática por fuentes autorizadas</p>
-            <p className="mt-1 text-white/65">Enriquecidos: {payload.run.identity_enriched_count ?? 0} · conflictos excluidos: {payload.run.identity_conflict_count ?? 0} · Browse: {payload.run.browse_read_count ?? 0} · Catalog: {payload.run.catalog_read_count ?? 0}</p>
+            <p className="mt-1 text-white/65">Discovery con candidatos eBay: {discoveryDiagnostics.DISCOVERY_WITH_CANDIDATES ?? "pendiente"} · aptos para Loop 1: {discoveryDiagnostics.DISCOVERY_PRESELECTED ?? payload.run.preselected_count ?? 0}</p>
+            <p className="mt-1 text-white/65">Loop 1 enriquecido: {payload.run.identity_enriched_count ?? 0} · conflictos excluidos: {payload.run.identity_conflict_count ?? 0} · Browse detallado: {payload.run.browse_read_count ?? 0} · Catalog: {payload.run.catalog_read_count ?? 0}</p>
             <p className="mt-1 text-white/65">eBay-first: {payload.run.ebay_first_status ?? "NOT_STARTED"} · categorías {payload.run.ebay_first_category_count ?? 0} · señales {payload.run.ebay_first_signal_count ?? 0} · coincidencias Luna exactas {payload.run.ebay_first_exact_luna_match_count ?? 0}</p>
             <p className="mt-1 text-white/55">Brand {payload.run.coverage_before?.brand ?? 0} → {payload.run.coverage_after?.brand ?? 0} · GTIN/MPN {payload.run.coverage_before?.gtinOrMpn ?? 0} → {payload.run.coverage_after?.gtinOrMpn ?? 0} · pack {payload.run.coverage_before?.pack ?? 0} → {payload.run.coverage_after?.pack ?? 0} · peso {payload.run.coverage_before?.weight ?? 0} → {payload.run.coverage_after?.weight ?? 0} · dimensiones {payload.run.coverage_before?.dimensions ?? 0} → {payload.run.coverage_after?.dimensions ?? 0}</p>
           </div>}
@@ -404,7 +411,11 @@ export function Loop2Top20OpportunityPool() {
               {item.supplier_confirmed_at && <><p className="mt-3 text-xs text-emerald-100">Precio/disponibilidad confirmados · confianza {item.stock_confidence} · capacidad {item.available_offer_pack_capacity ?? 0} offer pack · cantidad eBay {item.ebay_listing_quantity ?? 0}.</p><dl className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5"><div><dt className="text-white/45">Pack / alternativo</dt><dd>{pack?.packCount ?? "N/D"} / {alternative?.packCount ?? "N/D"}</dd></div><div><dt className="text-white/45">Precio / unidad</dt><dd>{money(economics?.targetPrice)} / {money(pack?.medianPricePerUnit)}</dd></div><div><dt className="text-white/45">Beneficio</dt><dd>{money(economics?.estimatedProfit)}</dd></div><div><dt className="text-white/45">ROI / margen</dt><dd>{percent(economics?.roiPercent)} / {percent(economics?.netMarginPercent)}</dd></div><div><dt className="text-white/45">Demanda / competencia</dt><dd>{evidence?.scores?.demandConfidence?.toFixed(0) ?? "N/D"} / {evidence?.scores?.competitionPressure?.toFixed(0) ?? "N/D"}</dd></div></dl><p className="mt-2 text-xs text-white/60">Activos exactos: {evidence?.activeExactCount ?? "N/D"} · vendidos exactos: {evidence?.soldExactCount ?? "N/D"} · confianza: {evidence?.confidence ?? "N/D"}</p><div className="mt-3 grid gap-2 sm:grid-cols-3"><button type="button" disabled={!confirmationReady || item.operator_action === "APPROVED" || workingId === item.id} onClick={() => void approve(item)} className="min-h-12 rounded-xl bg-fuchsia-200 font-black text-black disabled:opacity-40">{item.operator_action === "APPROVED" ? "Aprobado para OpenAI" : "Aprobar para OpenAI"}</button><button type="button" disabled={!item.package_hash || workingId === item.id} onClick={() => void discard(item)} className="min-h-11 rounded-xl border border-rose-200/25 font-black text-rose-50 disabled:opacity-40">Rechazar</button><button type="button" onClick={() => setEvidenceId((value) => value === item.id ? "" : item.id)} className="min-h-11 rounded-xl border border-white/20 font-black">Ver evidencia</button></div>{!confirmationReady && <p className="mt-1 text-xs text-white/55">La economía recalculada no conserva todos los hard gates; no se puede aprobar para OpenAI.</p>}</>}
               {item.supplier_confirmed_at && evidenceId === item.id && <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-black/35 p-3 text-xs">{JSON.stringify({ identityFingerprint: item.product_identity_fingerprint, baseProductFingerprint: item.base_product_fingerprint, offerPackFingerprint: item.offer_pack_fingerprint, evidence: item.evidence_snapshot, reasons: item.reason_codes, canPublish: false, openAiCalls: 0, ebayWrites: 0 }, null, 2)}</pre>}
             </article>
-          })}</div> : <p className="rounded-xl bg-black/20 p-3 text-sm text-white/65">Todavía no existen productos completamente analizados y listos. Seller OS continuará con otros candidatos; no necesitas investigar datos técnicos.</p>}
+          })}</div> : invalidEmptyCompletion
+            ? <p className="rounded-xl border border-amber-200/30 bg-amber-200/10 p-3 text-sm text-amber-50">El recorrido Discovery terminó, pero ningún candidato llegó a Loop 1 por una política de preselección anterior. El resultado vacío no representa el mercado. Usa “Analizar y actualizar oportunidades” una vez para reutilizar la evidencia guardada y continuar desde Loop 1.</p>
+            : <p className="rounded-xl bg-black/20 p-3 text-sm text-white/65">{scanActive
+              ? "Seller OS sigue analizando. Las tarjetas aparecerán cuando finalice Loop 1 y existan candidatos que superen todos los hard gates."
+              : "No existen candidatos READY después del análisis completo. Revisa los conteos y causas agregadas; no necesitas investigar datos técnicos."}</p>}
         </>
       )}
       {error && <p role="alert" className="rounded-xl border border-rose-200/30 p-3 text-sm text-rose-50">{reason(error)}</p>}
