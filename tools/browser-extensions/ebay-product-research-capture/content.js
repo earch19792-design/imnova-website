@@ -241,6 +241,87 @@
     return values
   }
 
+  function candidateFieldValues(element, field) {
+    const values = [text(element.innerText || element.textContent)]
+    if (field === "lastSoldDate") {
+      values.push(text(element.getAttribute?.("datetime")))
+      values.push(text(element.getAttribute?.("aria-label")))
+      values.push(text(element.getAttribute?.("title")))
+      values.push(text(element.getAttribute?.("data-value")))
+    }
+    return [...new Set(values.filter(Boolean))]
+  }
+
+  function coordinateValuesForBand(container, headerElements, mapped, band, itemLink) {
+    const headerCenters = headerElements.map((element) => {
+      const box = element.getBoundingClientRect()
+      return box.left + box.width / 2
+    })
+    const boundaries = headerCenters.slice(0, -1).map((center, index) =>
+      (center + headerCenters[index + 1]) / 2)
+    const candidates = smallestVisibleMatches(container,
+      `${CELL_SELECTOR},div,span,p,a,time`).filter((element) => {
+      const box = element.getBoundingClientRect()
+      const centerY = box.top + box.height / 2
+      return centerY >= band.lower && centerY < band.upper && box.width > 0 && box.height > 0
+    })
+    const values = {}
+    mapped.forEach((field, index) => {
+      if (!field) return
+      const lower = index === 0 ? Number.NEGATIVE_INFINITY : boundaries[index - 1]
+      const upper = index === mapped.length - 1 ? Number.POSITIVE_INFINITY : boundaries[index]
+      const matches = candidates.flatMap((element) => {
+        const box = element.getBoundingClientRect()
+        const center = box.left + box.width / 2
+        if (center < lower || center >= upper) return []
+        return candidateFieldValues(element, field).map((value) => {
+          let score = requiredFieldValid(field, value) ? 100 : 0
+          if (field === "temporaryTitle" && element === itemLink) score += 160
+          if (field === "averageSoldPrice" && /[$€£]|\bfree\b/i.test(value)) score += 30
+          if (field === "totalSold" && /^\s*[\d,]+(?:\s+sold)?\s*$/i.test(value)) score += 30
+          if (field === "lastSoldDate" && dateText(value)) score += 30
+          return { value, score, area: box.width * box.height }
+        })
+      }).sort((left, right) => right.score - left.score || left.area - right.area ||
+        left.value.length - right.value.length)
+      if (matches[0]) values[field] = matches[0].value
+    })
+    const itemTitle = text(itemLink?.innerText || itemLink?.textContent)
+    if (itemTitle) values.temporaryTitle = itemTitle
+    return values
+  }
+
+  function coordinateRowsFromItemLinks(container, headerElements, mapped) {
+    const headerBottom = Math.max(...headerElements.map((element) =>
+      element.getBoundingClientRect().bottom))
+    const links = deepQueryAll('a[href*="/itm/"]', container).filter(visible)
+      .filter((link) => text(link.innerText || link.textContent).length >= 4)
+      .filter((link) => link.getBoundingClientRect().top >= headerBottom - 4)
+      .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top)
+    const bands = []
+    for (const link of links) {
+      const box = link.getBoundingClientRect()
+      const center = box.top + box.height / 2
+      const duplicate = bands.find((entry) => Math.abs(entry.center - center) <= 8)
+      if (!duplicate) bands.push({ center, link })
+      else if (text(link.innerText || link.textContent).length >
+        text(duplicate.link.innerText || duplicate.link.textContent).length) duplicate.link = link
+    }
+    const gaps = bands.slice(1).map((entry, index) => entry.center - bands[index].center)
+      .filter((gap) => gap > 8 && gap < 400).sort((left, right) => left - right)
+    const typicalGap = gaps[Math.floor(gaps.length / 2)] ?? 72
+    return bands.flatMap((entry, index) => {
+      const previous = bands[index - 1]
+      const next = bands[index + 1]
+      const lower = Math.max(headerBottom,
+        previous ? (previous.center + entry.center) / 2 : entry.center - typicalGap / 2)
+      const upper = next ? (entry.center + next.center) / 2 : entry.center + typicalGap / 2
+      const values = coordinateValuesForBand(container, headerElements, mapped,
+        { lower, upper }, entry.link)
+      return requiredValuesValid(values) ? [{ values, itemLink: entry.link }] : []
+    })
+  }
+
   function requiredValuesValid(values) {
     return REQUIRED_FIELDS.every((field) => requiredFieldValid(field, values[field]))
   }
@@ -321,13 +402,19 @@
         ...deepQueryAll(ROW_SELECTOR, container),
         ...genericRowElements(container, headerElements, mapped),
       ])].filter((row) => !headerElements.includes(row) && !row.querySelector?.(HEADER_SELECTOR))
-    const rows = rowElements.filter(visible).flatMap((row) => {
+    const elementRows = rowElements.filter(visible).flatMap((row) => {
       const values = valuesForRow(row, headerElements, mapped, semanticTable)
       if (!requiredValuesValid(values)) return []
       const itemLink = deepQueryAll('a[href*="/itm/"]', row)[0]
+      return [{ values, itemLink, row }]
+    })
+    const coordinateRows = semanticTable || elementRows.length
+      ? []
+      : coordinateRowsFromItemLinks(container, headerElements, mapped)
+    const rows = [...elementRows, ...coordinateRows].map(({ values, itemLink, row }) => {
       const listingId = values.listingId || itemLink?.getAttribute("href")?.match(/\/itm\/(?:[^/]+\/)?(\d{9,20})/)?.[1] || null
       const facts = offerFacts(values.temporaryTitle)
-      return [{
+      return {
         temporaryTitle: values.temporaryTitle,
         listingId,
         averageSoldPrice: money(values.averageSoldPrice),
@@ -338,9 +425,36 @@
         listingFormat: values.listingFormat || "UNKNOWN",
         freeShippingPercent: values.freeShippingPercent ? percentage(values.freeShippingPercent) : null,
         bids: values.bids ? integer(values.bids) : null,
-        visibleImageCount: deepQueryAll("img", row).length,
+        visibleImageCount: row ? deepQueryAll("img", row).length : 0,
         ...facts,
-      }]
+      }
+    })
+    return rows.length ? { headers, rows } : null
+  }
+
+  function coordinateTableParts() {
+    const headerElements = headerElementsFor(document)
+    const headers = headerElements.map((element) => text(element.innerText || element.textContent))
+    const mapped = headers.map(canonicalHeader)
+    if (!REQUIRED_FIELDS.every((field) => mapped.includes(field))) return null
+    const coordinateRows = coordinateRowsFromItemLinks(document, headerElements, mapped)
+    const rows = coordinateRows.map(({ values, itemLink }) => {
+      const listingId = values.listingId || itemLink?.getAttribute("href")
+        ?.match(/\/itm\/(?:[^/]+\/)?(\d{9,20})/)?.[1] || null
+      return {
+        temporaryTitle: values.temporaryTitle,
+        listingId,
+        averageSoldPrice: money(values.averageSoldPrice),
+        averageShipping: values.averageShipping ? money(values.averageShipping) : null,
+        totalSold: integer(values.totalSold),
+        itemSales: values.itemSales ? money(values.itemSales) : null,
+        lastSoldDate: values.lastSoldDate,
+        listingFormat: values.listingFormat || "UNKNOWN",
+        freeShippingPercent: values.freeShippingPercent ? percentage(values.freeShippingPercent) : null,
+        bids: values.bids ? integer(values.bids) : null,
+        visibleImageCount: 0,
+        ...offerFacts(values.temporaryTitle),
+      }
     })
     return rows.length ? { headers, rows } : null
   }
@@ -374,6 +488,8 @@
       const result = tableParts(container)
       if (result) return result
     }
+    const coordinateResult = coordinateTableParts()
+    if (coordinateResult) return coordinateResult
     throw new Error("PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND")
   }
 
@@ -384,11 +500,16 @@
       .filter((element) => text(element.innerText || element.textContent).length <= 80)
       .map((element) => canonicalHeader(text(element.innerText || element.textContent)))
       .filter(Boolean))
+    const headerElements = headerElementsFor(document)
+    const mapped = headerElements.map((element) =>
+      canonicalHeader(text(element.innerText || element.textContent)))
     return {
       roots: roots.length,
       sameOriginFrames: roots.filter((root) => root.nodeType === Node.DOCUMENT_NODE && root !== document).length,
       recognizedFields: [...fields].sort(),
       itemLinks: deepQueryAll('a[href*="/itm/"]').filter(visible).length,
+      coordinateRows: REQUIRED_FIELDS.every((field) => mapped.includes(field))
+        ? coordinateRowsFromItemLinks(document, headerElements, mapped).length : 0,
     }
   }
 
@@ -475,7 +596,7 @@
       const code = error instanceof Error ? error.message : "PRODUCT_RESEARCH_CAPTURE_FAILED"
       if (code === "PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND") {
         const diagnostic = safeStructureDiagnostics()
-        setStatus(`${ERROR_MESSAGES[code]} Diagnóstico seguro: roots=${diagnostic.roots}; frames=${diagnostic.sameOriginFrames}; fields=${diagnostic.recognizedFields.join(",") || "none"}; itemLinks=${diagnostic.itemLinks}.`, "error")
+        setStatus(`${ERROR_MESSAGES[code]} Diagnóstico seguro: roots=${diagnostic.roots}; frames=${diagnostic.sameOriginFrames}; fields=${diagnostic.recognizedFields.join(",") || "none"}; itemLinks=${diagnostic.itemLinks}; coordinateRows=${diagnostic.coordinateRows}.`, "error")
       } else setStatus(code, "error")
       finishCapture()
     }
@@ -505,7 +626,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.0.4"
+  title.textContent = "Seller OS · Product Research · v1.0.5"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar resultados para Seller OS"
