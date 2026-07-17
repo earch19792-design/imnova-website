@@ -14,6 +14,15 @@ export const TOP20_AUTOMATION_POLICY_VERSION =
 
 export type Top20AutomationStatus = typeof TOP20_AUTOMATION_STATUSES[number]
 
+export type Top20RateLimitPause = {
+  consecutiveCount: number
+  retryAfterSeconds: number | null
+  backoffSeconds: number
+  source: "RETRY_AFTER_SECONDS" | "RETRY_AFTER_HTTP_DATE" | "ADAPTIVE_BACKOFF"
+  observedAt: string
+  nextRetryAt: string
+}
+
 export type Top20TargetSource = "RADAR_TOP5" | "PRIOR_INTELLIGENCE" | "LUNA_CATALOG"
 
 export type Top20TargetCandidate = {
@@ -162,6 +171,38 @@ export function buildTop20TargetManifest(input: {
 export function isTop20RateLimitError(error: unknown) {
   const code = error instanceof Error ? error.message : String(error ?? "")
   return code === "LISTING_AI_RATE_LIMITED" || /(?:^|_)429$/.test(code) || code.includes("RATE_LIMIT")
+}
+
+export function calculateTop20RateLimitPause(input: {
+  now: Date
+  previousConsecutiveCount: number
+  retryAfterSeconds?: number | null
+  retryAfterSource?: "RETRY_AFTER_SECONDS" | "RETRY_AFTER_HTTP_DATE" | "UNAVAILABLE"
+  random?: () => number
+}): Top20RateLimitPause {
+  const previousCount = Number.isInteger(input.previousConsecutiveCount)
+    ? Math.max(0, Math.min(input.previousConsecutiveCount, 20)) : 0
+  const consecutiveCount = previousCount + 1
+  const adaptiveSeconds = Math.min(15 * 60 * (2 ** Math.min(consecutiveCount - 1, 4)), 4 * 60 * 60)
+  const officialSeconds = Number.isFinite(input.retryAfterSeconds)
+    ? Math.max(0, Math.min(Math.ceil(input.retryAfterSeconds ?? 0), 7 * 24 * 60 * 60)) : null
+  const baseSeconds = Math.max(adaptiveSeconds, officialSeconds ?? 0)
+  const random = input.random ?? Math.random
+  const jitterWindow = Math.min(60, Math.ceil(baseSeconds * .05))
+  const jitterSeconds = Math.floor(Math.max(0, Math.min(1, random())) * jitterWindow)
+  const safetySeconds = officialSeconds === null ? 0 : 5
+  const backoffSeconds = baseSeconds + jitterSeconds + safetySeconds
+  const source = officialSeconds !== null && input.retryAfterSource !== "UNAVAILABLE"
+    ? input.retryAfterSource ?? "RETRY_AFTER_SECONDS"
+    : "ADAPTIVE_BACKOFF"
+  return {
+    consecutiveCount,
+    retryAfterSeconds: officialSeconds,
+    backoffSeconds,
+    source,
+    observedAt: input.now.toISOString(),
+    nextRetryAt: new Date(input.now.getTime() + backoffSeconds * 1_000).toISOString(),
+  }
 }
 
 export function isTop20AutomationActive(status: unknown) {

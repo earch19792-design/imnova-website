@@ -31,6 +31,7 @@ import {
   searchEbayCatalogIdentity,
   type EbayCatalogIdentityProduct,
 } from "./ebay-seller-keyword-demand-gateway"
+import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
 import {
   LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION,
   automaticQualification,
@@ -66,6 +67,7 @@ import {
 } from "./ebay-winner-evidence-v2"
 import {
   buildTop20TargetManifest,
+  calculateTop20RateLimitPause,
   createTop20ContinuationToken,
   evaluateTop20DiscoveryPreselection,
   getTop20AutomationConfiguration,
@@ -80,6 +82,7 @@ import {
   top20ReleasedTargetStatus,
   verifyTop20ContinuationToken,
   type Top20AutomationStatus,
+  type Top20RateLimitPause,
   type Top20TargetCandidate,
 } from "./ebay-listing-ai-top20-automation"
 import type { Top20DispatchDiagnostic } from "./ebay-listing-ai-top20-dispatch"
@@ -106,6 +109,24 @@ const RECOVERABLE_DISPATCH_ERRORS = new Set([
   "TOP20_CONTINUATION_DISPATCH_FAILED",
   "TOP20_CONTINUATION_QUEUE_FAILED",
 ])
+
+function priorTop20RateLimitCount(target: JsonRecord) {
+  const persisted = number(target.rate_limit_consecutive_count)
+  if (persisted !== null && persisted > 0) return Math.min(persisted, 20)
+  return isTop20RateLimitError(new Error(text(target.last_error_code) ?? ""))
+    ? Math.min(Math.max(number(target.attempt_count) ?? 1, 1), 4)
+    : 0
+}
+
+function top20RateLimitPause(error: unknown, target: JsonRecord, now: Date) {
+  const metadata = getEbayReadonlyRateLimitMetadata(error)
+  return calculateTop20RateLimitPause({
+    now,
+    previousConsecutiveCount: priorTop20RateLimitCount(target),
+    retryAfterSeconds: metadata?.retryAfterSeconds ?? null,
+    retryAfterSource: metadata?.retryAfterSource ?? "UNAVAILABLE",
+  })
+}
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {}
@@ -1700,6 +1721,7 @@ async function runTop20DiscoveryBatch(input: {
   const releasedIds: string[] = []
   let rateLimitedTarget: JsonRecord | null = null
   let rateLimitCode: string | null = null
+  let rateLimitPause: Top20RateLimitPause | null = null
   for (const [index, entry] of input.work.entries()) {
     if (index > 0 && Date.now() - startedAt >= input.timeBudgetMs) {
       releasedIds.push(...input.work.slice(index).map((remaining) => text(remaining.target.id))
@@ -1775,6 +1797,7 @@ async function runTop20DiscoveryBatch(input: {
         .update({ status: "DISCOVERED", discovery_score: discoveryScore,
           discovery_snapshot: snapshot, discovery_observed_at: input.now.toISOString(),
           processing_phase: null, lease_owner: null, lease_expires_at: null,
+          rate_limit_consecutive_count: 0,
           last_error_code: null, updated_at: input.now.toISOString() })
         .eq("id", targetId).eq("lease_owner", input.workerId)
       if (error) throw new Error("TOP20_DISCOVERY_TARGET_PERSIST_FAILED")
@@ -1785,6 +1808,7 @@ async function runTop20DiscoveryBatch(input: {
       if (isTop20RateLimitError(error)) {
         rateLimitedTarget = entry.target
         rateLimitCode = code
+        rateLimitPause = top20RateLimitPause(error, entry.target, input.now)
         releasedIds.push(...input.work.slice(index + 1).map((remaining) => text(remaining.target.id))
           .filter((value): value is string => Boolean(value)))
         break
@@ -1798,6 +1822,7 @@ async function runTop20DiscoveryBatch(input: {
             fullCompetitorContentStored: false, openAiCalls: 0, ebayWrites: 0 },
           discovery_observed_at: input.now.toISOString(), processing_phase: null,
           lease_owner: null, lease_expires_at: null, last_error_code: code,
+          rate_limit_consecutive_count: 0,
           updated_at: input.now.toISOString() }).eq("id", targetId).eq("lease_owner", input.workerId)
       if (updateError) throw new Error("TOP20_DISCOVERY_FAILURE_PERSIST_FAILED")
       discoveredIds.push(targetId)
@@ -1816,10 +1841,15 @@ async function runTop20DiscoveryBatch(input: {
         updated_at: input.now.toISOString() }).in("id", releasedIds).eq("lease_owner", input.workerId)
     if (error) throw new Error("TOP20_DISCOVERY_RELEASE_FAILED")
   }
-  if (rateLimitedTarget) {
+  if (rateLimitedTarget && rateLimitPause) {
     const { error } = await input.supabase.from("marketplace_listing_approval_queue_scan_targets")
       .update({ status: "RETRY_REQUIRED", processing_phase: "DISCOVERY", lease_owner: null,
-        lease_expires_at: null, next_retry_at: new Date(input.now.getTime() + 15 * 60_000).toISOString(),
+        lease_expires_at: null, next_retry_at: rateLimitPause.nextRetryAt,
+        rate_limit_consecutive_count: rateLimitPause.consecutiveCount,
+        last_rate_limit_retry_after_seconds: rateLimitPause.retryAfterSeconds,
+        last_rate_limit_backoff_seconds: rateLimitPause.backoffSeconds,
+        last_rate_limit_source: rateLimitPause.source,
+        last_rate_limit_observed_at: rateLimitPause.observedAt,
         last_error_code: rateLimitCode ?? "TOP20_RATE_LIMITED", updated_at: input.now.toISOString() })
       .eq("id", rateLimitedTarget.id).eq("lease_owner", input.workerId)
     if (error) throw new Error("TOP20_DISCOVERY_RATE_LIMIT_PERSIST_FAILED")
@@ -1851,7 +1881,12 @@ async function runTop20DiscoveryBatch(input: {
       continuation_dispatch_status: status === "PARTIAL_AUTO_CONTINUING"
         ? "RETRY_SCHEDULED" : "NOT_SCHEDULED",
       next_continuation_at: status === "PARTIAL_AUTO_CONTINUING" ? input.now.toISOString()
-        : new Date(input.now.getTime() + 15 * 60_000).toISOString(),
+        : rateLimitPause?.nextRetryAt ?? null,
+      rate_limit_consecutive_count: rateLimitPause?.consecutiveCount ?? 0,
+      last_rate_limit_retry_after_seconds: rateLimitPause?.retryAfterSeconds ?? null,
+      last_rate_limit_backoff_seconds: rateLimitPause?.backoffSeconds ?? null,
+      last_rate_limit_source: rateLimitPause?.source ?? null,
+      last_rate_limit_observed_at: rateLimitPause?.observedAt ?? null,
       last_error_code: rateLimitCode, last_activity_at: input.now.toISOString(),
       updated_at: input.now.toISOString(),
     }).eq("id", input.run.id).eq("lease_owner", input.workerId)
@@ -1865,7 +1900,8 @@ async function runTop20DiscoveryBatch(input: {
     progressPercent: top20ProgressPercent(discoveryExamined, input.total),
     preselected: preselection.selected,
     currentBatch: Number(input.run.current_batch ?? 0),
-    nextContinuationAt: status === "PARTIAL_AUTO_CONTINUING" ? input.now.toISOString() : null,
+    nextContinuationAt: status === "PARTIAL_AUTO_CONTINUING"
+      ? input.now.toISOString() : rateLimitPause?.nextRetryAt ?? null,
     openAiCalls: 0,
     ebayWrites: 0,
     canPublish: false,
@@ -1989,6 +2025,7 @@ export async function runListingAiApprovalQueueBatch(input: {
   const releasedTargetIds: string[] = []
   let rateLimitedTarget: JsonRecord | null = null
   let rateLimitCode: string | null = null
+  let rateLimitPause: Top20RateLimitPause | null = null
   for (const [index, entry] of work.entries()) {
     if (index > 0 && Date.now() - invocationStartedAt >= timeBudgetMs) {
       releasedTargetIds.push(...work.slice(index).map((remaining) => text(remaining.target.id))
@@ -2114,6 +2151,7 @@ export async function runListingAiApprovalQueueBatch(input: {
         if (isTop20RateLimitError(error)) {
           rateLimitedTarget = entry.target
           rateLimitCode = code
+          rateLimitPause = top20RateLimitPause(error, entry.target, now)
           releasedTargetIds.push(...work.slice(index + 1).map((remaining) => text(remaining.target.id))
             .filter((value): value is string => Boolean(value)))
           break
@@ -2180,7 +2218,8 @@ export async function runListingAiApprovalQueueBatch(input: {
     const { error } = await input.supabase.from("marketplace_listing_approval_queue_scan_targets")
       .update({ status: "PROCESSED", lease_owner: null, lease_expires_at: null,
         processed_at: now.toISOString(), deep_analyzed_at: now.toISOString(),
-        processing_phase: null, last_error_code: null, updated_at: now.toISOString() })
+        processing_phase: null, rate_limit_consecutive_count: 0,
+        last_error_code: null, updated_at: now.toISOString() })
       .in("id", processedTargetIds).eq("lease_owner", workerId)
     if (error) throw new Error("TOP20_TARGET_COMPLETE_FAILED")
   }
@@ -2209,12 +2248,17 @@ export async function runListingAiApprovalQueueBatch(input: {
       .in("id", releasedTargetIds).eq("lease_owner", workerId)
     if (error) throw new Error("TOP20_TARGET_RELEASE_FAILED")
   }
-  if (rateLimitedTarget) {
-    const retryAt = new Date(now.getTime() + 15 * 60_000).toISOString()
+  if (rateLimitedTarget && rateLimitPause) {
     const { error } = await input.supabase.from("marketplace_listing_approval_queue_scan_targets")
       .update({ status: "RETRY_REQUIRED", lease_owner: null, lease_expires_at: null,
         processing_phase: "LOOP1_ANALYSIS",
-        next_retry_at: retryAt, last_error_code: rateLimitCode ?? "TOP20_RATE_LIMITED",
+        next_retry_at: rateLimitPause.nextRetryAt,
+        rate_limit_consecutive_count: rateLimitPause.consecutiveCount,
+        last_rate_limit_retry_after_seconds: rateLimitPause.retryAfterSeconds,
+        last_rate_limit_backoff_seconds: rateLimitPause.backoffSeconds,
+        last_rate_limit_source: rateLimitPause.source,
+        last_rate_limit_observed_at: rateLimitPause.observedAt,
+        last_error_code: rateLimitCode ?? "TOP20_RATE_LIMITED",
         updated_at: now.toISOString() }).eq("id", rateLimitedTarget.id).eq("lease_owner", workerId)
     if (error) throw new Error("TOP20_TARGET_RATE_LIMIT_PAUSE_FAILED")
   }
@@ -2300,7 +2344,12 @@ export async function runListingAiApprovalQueueBatch(input: {
         : automationStatus === "PARTIAL_AUTO_CONTINUING" ? "RETRY_SCHEDULED" : "NOT_SCHEDULED",
       next_continuation_at: automationStatus === "PARTIAL_AUTO_CONTINUING"
         ? now.toISOString() : automationStatus === "PAUSED_RATE_LIMIT"
-          ? new Date(now.getTime() + 15 * 60_000).toISOString() : null,
+          ? rateLimitPause?.nextRetryAt ?? null : null,
+      rate_limit_consecutive_count: rateLimitPause?.consecutiveCount ?? 0,
+      last_rate_limit_retry_after_seconds: rateLimitPause?.retryAfterSeconds ?? null,
+      last_rate_limit_backoff_seconds: rateLimitPause?.backoffSeconds ?? null,
+      last_rate_limit_source: rateLimitPause?.source ?? null,
+      last_rate_limit_observed_at: rateLimitPause?.observedAt ?? null,
       continuation_token_hash: completed ? null : run.continuation_token_hash,
       sold_evidence_applied_version: completed
         ? run.sold_evidence_version ?? run.sold_evidence_applied_version
@@ -2325,7 +2374,8 @@ export async function runListingAiApprovalQueueBatch(input: {
     goWithChanges: goWithChangesCount,
     noGo: noGoCount,
     currentBatch: Number(run.current_batch ?? 0),
-    nextContinuationAt: automationStatus === "PARTIAL_AUTO_CONTINUING" ? now.toISOString() : null,
+    nextContinuationAt: automationStatus === "PARTIAL_AUTO_CONTINUING"
+      ? now.toISOString() : rateLimitPause?.nextRetryAt ?? null,
     candidatesAnalyzed: deepAnalyzed,
     ready,
     needsData: needs,
@@ -2703,6 +2753,13 @@ export async function getListingAiApprovalQueueStatus(
     last_checkpoint_at: automationStarted ? run.last_checkpoint_at ?? run.last_activity_at ?? null : null,
     next_continuation_at: automationStarted ? run.next_continuation_at ?? null : null,
     last_error_code: automationStarted ? text(run.last_error_code) : null,
+    rate_limit: {
+      consecutiveCount: Number(run.rate_limit_consecutive_count ?? 0),
+      retryAfterSeconds: number(run.last_rate_limit_retry_after_seconds),
+      backoffSeconds: number(run.last_rate_limit_backoff_seconds),
+      source: text(run.last_rate_limit_source),
+      observedAt: run.last_rate_limit_observed_at ?? null,
+    },
     error_recoverable: dispatchStatus === "PAUSED_DISPATCH_RECOVERABLE",
     dispatch_diagnostic: {
       errorClass: text(run.last_dispatch_error_class),

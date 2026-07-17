@@ -171,6 +171,13 @@ type QueuePayload = {
     last_checkpoint_at?: string | null
     next_continuation_at?: string | null
     last_error_code?: string | null
+    rate_limit?: {
+      consecutiveCount: number
+      retryAfterSeconds: number | null
+      backoffSeconds: number | null
+      source: string | null
+      observedAt: string | null
+    }
     error_recoverable?: boolean
     dispatch_diagnostic?: {
       errorClass?: string | null
@@ -664,7 +671,11 @@ export function Loop2Top20OpportunityPool() {
             <p className="text-white/55">Último checkpoint: {payload?.run?.last_checkpoint_at ? new Date(payload.run.last_checkpoint_at).toLocaleString("es") : "N/D"} · última actividad: {payload?.run?.last_activity_at ? new Date(payload.run.last_activity_at).toLocaleString("es") : "N/D"}</p>
             <p className="text-white/55">Continuación: {payload?.run?.dispatch_status ?? "NOT_SCHEDULED"} · intentos {payload?.run?.dispatch_attempt_count ?? 0} · recuperaciones {payload?.run?.dispatch_recovery_count ?? 0} · próxima: {payload?.run?.next_continuation_at ? new Date(payload.run.next_continuation_at).toLocaleString("es") : "N/D"}</p>
             {scanActive && <p className="font-bold text-cyan-50">Puedes cerrar esta página. Seller OS continuará automáticamente.</p>}
-            {payload?.run?.status === "PAUSED_RATE_LIMIT" && <p className="font-bold text-amber-100">Pausado por límite oficial de eBay. Reanuda cuando llegue la próxima continuación indicada.</p>}
+            {payload?.run?.status === "PAUSED_RATE_LIMIT" && <div className="space-y-1 font-bold text-amber-100">
+              <p>Pausado por límite oficial de eBay. El progreso está guardado y no se repetirán productos ya procesados.</p>
+              <p>Backoff adaptativo: {payload.run.rate_limit?.backoffSeconds
+                ? `${Math.ceil(payload.run.rate_limit.backoffSeconds / 60)} min` : "N/D"} · fuente {payload.run.rate_limit?.source ?? "N/D"} · intentos consecutivos {payload.run.rate_limit?.consecutiveCount ?? 0}.</p>
+            </div>}
             {payload?.run?.status === "PAUSED_DISPATCH_RECOVERABLE" && <p className="font-bold text-amber-100">El análisis está pausado y su progreso está guardado. Seller OS reanudará desde el último checkpoint al usar el mismo botón.</p>}
             {payload?.run?.dispatch_diagnostic?.errorClass && <p className="text-white/55">Diagnóstico de continuación: {payload.run.dispatch_diagnostic.errorClass} · HTTP {payload.run.dispatch_diagnostic.httpStatus ?? "N/D"} · {payload.run.dispatch_diagnostic.elapsedMs ?? 0} ms.</p>}
             {payload?.run?.last_error_code && <p className="text-rose-100">Error sanitizado: {reason(payload.run.last_error_code)}</p>}

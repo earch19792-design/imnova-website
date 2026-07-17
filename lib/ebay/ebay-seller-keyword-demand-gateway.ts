@@ -6,6 +6,7 @@ import {
   type EbaySellerComparableInput,
   type EbaySellerKeywordCandidate,
 } from "./ebay-seller-keyword-demand-validation"
+import { createEbayReadonlyRateLimitError } from "./ebay-readonly-rate-limit"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const BROWSE_SEARCH_ENDPOINT =
@@ -170,6 +171,9 @@ async function getApplicationToken(scope: string) {
         })
         return accessToken
       }
+      if (response.status === 429) {
+        throw createEbayReadonlyRateLimitError("EBAY_OAUTH_429", response)
+      }
       if (![429, 500, 502, 503, 504].includes(response.status) || attempt === EBAY_MAX_RETRIES - 1) {
         throw new Error(`EBAY_OAUTH_${response.status}`)
       }
@@ -203,6 +207,9 @@ async function getEbayJson(url: URL, accessToken: string) {
         for (const [scope, cached] of tokenCache) {
           if (cached.token === accessToken) tokenCache.delete(scope)
         }
+      }
+      if (response.status === 429) {
+        throw createEbayReadonlyRateLimitError("EBAY_READONLY_GET_429", response)
       }
       if (![429, 500, 502, 503, 504].includes(response.status) || attempt === EBAY_MAX_RETRIES - 1) {
         throw new Error(`EBAY_READONLY_GET_${response.status}`)
