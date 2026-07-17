@@ -265,6 +265,38 @@ type ProductResearchCaptureStatus = {
     captured_at: string
   } | null
   readyResultCount: number
+  queryPlan?: {
+    status: "ACTIVE" | "COMPLETED" | "SUPERSEDED"
+    queryCount: number
+    candidateCount: number
+    capturedCount: number
+    pendingCount: number
+    nextQuery: {
+      ordinal: number
+      searchQuery: string
+      categoryId: string | null
+      candidateCount: number
+    } | null
+    tasks: Array<{
+      id: string
+      ordinal: number
+      search_query: string
+      category_id: string | null
+      candidate_count: number
+      status: string
+    }>
+  } | null
+  browseQuota?: {
+    status: "AVAILABLE" | "UNAVAILABLE"
+    limit: number | null
+    count: number | null
+    remaining: number | null
+    resetAt: string | null
+    observedAt: string
+    payloadStored: false
+    secretsExposed: false
+    ebayWrites: 0
+  }
   rawHtmlStored: false
   temporaryTitlesStored: false
   competitorImagesDownloaded: 0
@@ -519,6 +551,15 @@ export function Loop2Top20OpportunityPool() {
     }
   }
 
+  const copyResearchQuery = async (query: string) => {
+    try {
+      await navigator.clipboard.writeText(query)
+      setMessage("Consulta agrupada copiada. Ejecútala en Product Research y usa Capturar y continuar.")
+    } catch {
+      setError("PRODUCT_RESEARCH_QUERY_COPY_FAILED")
+    }
+  }
+
   const reconcileProductResearch = async () => {
     setWorkingId("identity-reconciliation"); setError(""); setMessage("")
     try {
@@ -721,10 +762,30 @@ export function Loop2Top20OpportunityPool() {
               <p className="mt-1 text-white/60">Para cuentas sin export CSV/JSON: la extensión captura con un clic únicamente la tabla visible en la página oficial autenticada. No comparte cookies ni credenciales con Seller OS.</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.0.6.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión segura v1.0.6</a>
+              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.0.7.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión optimizada v1.0.7</a>
               <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
             </div>
-            <p className="text-white/55">Instálala localmente una vez. Después ejecuta la búsqueda, revisa la tabla visible y pulsa “Capturar resultados para Seller OS” dentro de Product Research.</p>
+            <p className="text-white/55">Instálala localmente una vez. La versión 1.0.7 evita recorridos repetidos del DOM y entrega automáticamente la siguiente consulta agrupada después de cada captura.</p>
+            <div className="rounded-xl border border-amber-100/20 bg-amber-100/[0.04] p-3">
+              <p className="font-black">Cuota oficial Browse</p>
+              <p className="mt-1 text-white/55">Estado {browserCaptureStatus?.browseQuota?.status ?? "SIN VERIFICAR"} · restantes {browserCaptureStatus?.browseQuota?.remaining ?? "N/D"} de {browserCaptureStatus?.browseQuota?.limit ?? "N/D"} · reset {browserCaptureStatus?.browseQuota?.resetAt ? new Date(browserCaptureStatus.browseQuota.resetAt).toLocaleString("es") : "N/D"}.</p>
+              <p className="mt-1 text-white/45">Seller OS reserva llamadas y pausa antes de agotar la cuota cuando eBay publica estos datos.</p>
+            </div>
+            {browserCaptureStatus?.queryPlan && <div className="space-y-2 rounded-xl border border-cyan-100/20 bg-black/20 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div><p className="font-black">Plan de consultas agrupadas</p><p className="text-white/55">{browserCaptureStatus.queryPlan.capturedCount} de {browserCaptureStatus.queryPlan.queryCount} capturadas · {browserCaptureStatus.queryPlan.candidateCount} candidatos cubiertos</p></div>
+                <span className="rounded-full border border-white/20 px-2 py-1 font-black">{browserCaptureStatus.queryPlan.status}</span>
+              </div>
+              {browserCaptureStatus.queryPlan.nextQuery ? <>
+                <label className="block text-white/55">Próxima consulta #{browserCaptureStatus.queryPlan.nextQuery.ordinal}
+                  <input readOnly value={browserCaptureStatus.queryPlan.nextQuery.searchQuery}
+                    className="mt-1 min-h-11 w-full rounded-xl border border-white/20 bg-black/30 px-3 text-white" />
+                </label>
+                <p className="text-white/45">Cubre {browserCaptureStatus.queryPlan.nextQuery.candidateCount} candidato(s) · categoría {browserCaptureStatus.queryPlan.nextQuery.categoryId ?? "general"}.</p>
+                <button type="button" onClick={() => void copyResearchQuery(browserCaptureStatus.queryPlan!.nextQuery!.searchQuery)}
+                  className="min-h-11 w-full rounded-xl border border-cyan-100/30 px-4 font-black text-cyan-50">Copiar próxima consulta</button>
+              </> : <p className="font-bold text-emerald-100">Todas las consultas agrupadas del plan fueron capturadas.</p>}
+            </div>}
             <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <div><dt className="text-white/45">Filas / válidas</dt><dd className="font-black">{browserCaptureStatus?.latest?.source_row_count ?? 0} / {browserCaptureStatus?.latest?.valid_count ?? 0}</dd></div>
               <div><dt className="text-white/45">Duplicadas / rechazadas</dt><dd>{browserCaptureStatus?.latest?.duplicate_count ?? 0} / {browserCaptureStatus?.latest?.rejected_count ?? 0}</dd></div>

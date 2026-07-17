@@ -6,6 +6,10 @@
   const CAPTURE_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_VISIBLE_CAPTURE_V1"
   const RECEIVER_READY_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_RECEIVER_READY_V1"
   const CAPTURE_RESULT_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_CAPTURE_RESULT_V1"
+  const MAX_ITEM_LINKS = 200
+  const MAX_COORDINATE_CONTAINERS = 6
+  const MAX_FALLBACK_HEADERS = 200
+  const MAX_FALLBACK_CONTAINERS = 80
   const REQUIRED_FIELDS = ["temporaryTitle", "averageSoldPrice", "totalSold", "lastSoldDate"]
   const HEADER_SELECTOR = [
     "th", '[role="columnheader"]', '[data-testid*="header" i]',
@@ -44,6 +48,10 @@
   let statusElement = null
   let captureButton = null
   let receiverReadyTimeout = null
+  let captureContext = null
+  let nextQueryPanel = null
+  let nextQueryField = null
+  let nextQueryProgress = null
 
   const ERROR_MESSAGES = {
     PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND:
@@ -59,11 +67,23 @@
   const text = (value) => typeof value === "string"
     ? value.normalize("NFKC").trim().replace(/\s+/g, " ") : ""
   const key = (value) => text(value).toLowerCase().replace(/[^a-z0-9%]/g, "")
+  const elementRect = (element) => {
+    const cached = captureContext?.rects.get(element)
+    if (cached) return cached
+    const value = element.getBoundingClientRect()
+    captureContext?.rects.set(element, value)
+    return value
+  }
   const visible = (element) => {
+    const cached = captureContext?.visibility.get(element)
+    if (cached !== undefined) return cached
     const view = element.ownerDocument?.defaultView ?? window
     const style = view.getComputedStyle(element)
-    const box = element.getBoundingClientRect()
-    return style.display !== "none" && style.visibility !== "hidden" && box.width > 0 && box.height > 0
+    const box = elementRect(element)
+    const value = !element.hidden && element.getAttribute?.("aria-hidden") !== "true" &&
+      style.display !== "none" && style.visibility !== "hidden" && box.width > 0 && box.height > 0
+    captureContext?.visibility.set(element, value)
+    return value
   }
   const money = (value) => {
     const normalized = text(value)
@@ -86,6 +106,8 @@
   }
 
   function deepRoots(root = document) {
+    const cached = captureContext?.roots.get(root)
+    if (cached) return cached
     const roots = []
     const visited = new Set()
     const visit = (scope) => {
@@ -105,15 +127,26 @@
       }
     }
     visit(root)
+    captureContext?.roots.set(root, roots)
     return roots
   }
 
   function deepQueryAll(selector, root = document) {
+    const queryCache = captureContext?.queries.get(root)
+    const cached = queryCache?.get(selector)
+    if (cached) return cached
     const matches = new Set()
-    for (const scope of deepRoots(root)) {
+    const scopes = captureContext?.shallow ? [root] : deepRoots(root)
+    for (const scope of scopes) {
       for (const element of scope.querySelectorAll?.(selector) ?? []) matches.add(element)
     }
-    return [...matches]
+    const result = [...matches]
+    if (captureContext) {
+      const cache = queryCache ?? new Map()
+      cache.set(selector, result)
+      captureContext.queries.set(root, cache)
+    }
+    return result
   }
 
   function smallestVisibleMatches(container, selector) {
@@ -137,10 +170,10 @@
       .filter((element) => text(element.innerText || element.textContent).length <= 80)
     const matches = [...new Set([...semanticMatches, ...visualMatches])]
       .filter((element) => canonicalHeader(text(element.innerText || element.textContent)))
-      .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top)
+      .sort((left, right) => elementRect(left).top - elementRect(right).top)
     const groups = []
     for (const element of matches) {
-      const top = element.getBoundingClientRect().top
+      const top = elementRect(element).top
       const group = groups.find((candidate) => Math.abs(candidate.top - top) <= 24)
       if (group) {
         group.elements.push(element)
@@ -161,7 +194,7 @@
       if (field && !byField.has(field)) byField.set(field, element)
     }
     return [...byField.values()].sort((left, right) =>
-      left.getBoundingClientRect().left - right.getBoundingClientRect().left)
+      elementRect(left).left - elementRect(right).left)
   }
 
   function rowCells(row, expectedCount) {
@@ -177,7 +210,7 @@
     }
     const visual = smallestVisibleMatches(row, "div,span,p,a")
       .filter((element) => text(element.innerText || element.textContent).length <= 500)
-      .sort((left, right) => left.getBoundingClientRect().left - right.getBoundingClientRect().left)
+      .sort((left, right) => elementRect(left).left - elementRect(right).left)
     if (visual.length >= expectedCount) return visual
     return []
   }
@@ -202,7 +235,7 @@
 
   function coordinateValuesForRow(row, headerElements, mapped) {
     const headerCenters = headerElements.map((element) => {
-      const box = element.getBoundingClientRect()
+      const box = elementRect(element)
       return box.left + box.width / 2
     })
     const boundaries = headerCenters.slice(0, -1).map((center, index) =>
@@ -210,8 +243,8 @@
     const candidates = smallestVisibleMatches(row,
       `${CELL_SELECTOR},div,span,p,a`).filter((element) => {
       const value = text(element.innerText || element.textContent)
-      const box = element.getBoundingClientRect()
-      return value && value.length <= 500 && box.width < row.getBoundingClientRect().width * 0.9
+      const box = elementRect(element)
+      return value && value.length <= 500 && box.width < elementRect(row).width * 0.9
     })
     const values = {}
     mapped.forEach((field, index) => {
@@ -219,12 +252,12 @@
       const lower = index === 0 ? Number.NEGATIVE_INFINITY : boundaries[index - 1]
       const upper = index === mapped.length - 1 ? Number.POSITIVE_INFINITY : boundaries[index]
       const matches = candidates.filter((element) => {
-        const box = element.getBoundingClientRect()
+        const box = elementRect(element)
         const center = box.left + box.width / 2
         return center >= lower && center < upper
       }).map((element) => {
         const value = text(element.innerText || element.textContent)
-        const box = element.getBoundingClientRect()
+        const box = elementRect(element)
         let score = requiredFieldValid(field, value) ? 100 : 0
         if (field === "temporaryTitle" && element.matches('a[href*="/itm/"]')) score += 100
         if (field === "averageSoldPrice" && /[$€£]|\bfree\b/i.test(value)) score += 30
@@ -252,16 +285,17 @@
     return [...new Set(values.filter(Boolean))]
   }
 
-  function coordinateValuesForBand(container, headerElements, mapped, band, itemLink) {
+  function coordinateValuesForBand(container, headerElements, mapped, band, itemLink,
+    preparedCandidates = null) {
     const headerCenters = headerElements.map((element) => {
-      const box = element.getBoundingClientRect()
+      const box = elementRect(element)
       return box.left + box.width / 2
     })
     const boundaries = headerCenters.slice(0, -1).map((center, index) =>
       (center + headerCenters[index + 1]) / 2)
-    const candidates = smallestVisibleMatches(container,
-      `${CELL_SELECTOR},div,span,p,a,time`).filter((element) => {
-      const box = element.getBoundingClientRect()
+    const candidates = (preparedCandidates ?? smallestVisibleMatches(container,
+      `${CELL_SELECTOR},div,span,p,a,time`)).filter((element) => {
+      const box = elementRect(element)
       const centerY = box.top + box.height / 2
       return centerY >= band.lower && centerY < band.upper && box.width > 0 && box.height > 0
     })
@@ -271,7 +305,7 @@
       const lower = index === 0 ? Number.NEGATIVE_INFINITY : boundaries[index - 1]
       const upper = index === mapped.length - 1 ? Number.POSITIVE_INFINITY : boundaries[index]
       const matches = candidates.flatMap((element) => {
-        const box = element.getBoundingClientRect()
+        const box = elementRect(element)
         const center = box.left + box.width / 2
         if (center < lower || center >= upper) return []
         return candidateFieldValues(element, field).map((value) => {
@@ -293,14 +327,15 @@
 
   function coordinateRowsFromItemLinks(container, headerElements, mapped) {
     const headerBottom = Math.max(...headerElements.map((element) =>
-      element.getBoundingClientRect().bottom))
+      elementRect(element).bottom))
     const links = deepQueryAll('a[href*="/itm/"]', container).filter(visible)
       .filter((link) => text(link.innerText || link.textContent).length >= 4)
-      .filter((link) => link.getBoundingClientRect().top >= headerBottom - 4)
-      .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top)
+      .filter((link) => elementRect(link).top >= headerBottom - 4)
+      .sort((left, right) => elementRect(left).top - elementRect(right).top)
+      .slice(0, MAX_ITEM_LINKS)
     const bands = []
     for (const link of links) {
-      const box = link.getBoundingClientRect()
+      const box = elementRect(link)
       const center = box.top + box.height / 2
       const duplicate = bands.find((entry) => Math.abs(entry.center - center) <= 8)
       if (!duplicate) bands.push({ center, link })
@@ -310,6 +345,8 @@
     const gaps = bands.slice(1).map((entry, index) => entry.center - bands[index].center)
       .filter((gap) => gap > 8 && gap < 400).sort((left, right) => left - right)
     const typicalGap = gaps[Math.floor(gaps.length / 2)] ?? 72
+    const preparedCandidates = smallestVisibleMatches(container,
+      `${CELL_SELECTOR},div,span,p,a,time`)
     return bands.flatMap((entry, index) => {
       const previous = bands[index - 1]
       const next = bands[index + 1]
@@ -317,7 +354,7 @@
         previous ? (previous.center + entry.center) / 2 : entry.center - typicalGap / 2)
       const upper = next ? (entry.center + next.center) / 2 : entry.center + typicalGap / 2
       const values = coordinateValuesForBand(container, headerElements, mapped,
-        { lower, upper }, entry.link)
+        { lower, upper }, entry.link, preparedCandidates)
       return requiredValuesValid(values) ? [{ values, itemLink: entry.link }] : []
     })
   }
@@ -341,13 +378,13 @@
 
   function genericRowElements(container, headerElements, mapped) {
     const headerBottom = Math.max(...headerElements.map((element) =>
-      element.getBoundingClientRect().bottom))
+      elementRect(element).bottom))
     const itemLinks = deepQueryAll('a[href*="/itm/"]', container).filter(visible)
     const candidates = []
     for (const link of itemLinks) {
       let ancestor = link.parentElement
       for (let depth = 0; ancestor && depth < 7; depth += 1, ancestor = ancestor.parentElement) {
-        if (ancestor.getBoundingClientRect().top < headerBottom - 4) continue
+        if (elementRect(ancestor).top < headerBottom - 4) continue
         const values = valuesForRow(ancestor, headerElements, mapped, false)
         if (requiredValuesValid(values)) {
           candidates.push(ancestor)
@@ -359,12 +396,12 @@
       candidates.push(...deepQueryAll("tr,li,[role='listitem'],[data-testid*='row' i],[class*='row' i]", container))
     }
     return [...new Set(candidates)].filter(visible)
-      .filter((element) => element.getBoundingClientRect().top >= headerBottom - 4)
+      .filter((element) => elementRect(element).top >= headerBottom - 4)
       .filter((element) => !element.querySelector?.(HEADER_SELECTOR))
       .filter((element) => requiredValuesValid(valuesForRow(element, headerElements, mapped, false)))
       .sort((left, right) => {
-        const leftBox = left.getBoundingClientRect()
-        const rightBox = right.getBoundingClientRect()
+        const leftBox = elementRect(left)
+        const rightBox = elementRect(right)
         return leftBox.height - rightBox.height || leftBox.top - rightBox.top
       })
   }
@@ -433,33 +470,63 @@
   }
 
   function coordinateTableParts() {
-    const headerElements = headerElementsFor(document)
-    const headers = headerElements.map((element) => text(element.innerText || element.textContent))
-    const mapped = headers.map(canonicalHeader)
-    if (!REQUIRED_FIELDS.every((field) => mapped.includes(field))) return null
-    const coordinateRows = coordinateRowsFromItemLinks(document, headerElements, mapped)
-    const rows = coordinateRows.map(({ values, itemLink }) => {
-      const listingId = values.listingId || itemLink?.getAttribute("href")
-        ?.match(/\/itm\/(?:[^/]+\/)?(\d{9,20})/)?.[1] || null
-      return {
-        temporaryTitle: values.temporaryTitle,
-        listingId,
-        averageSoldPrice: money(values.averageSoldPrice),
-        averageShipping: values.averageShipping ? money(values.averageShipping) : null,
-        totalSold: integer(values.totalSold),
-        itemSales: values.itemSales ? money(values.itemSales) : null,
-        lastSoldDate: values.lastSoldDate,
-        listingFormat: values.listingFormat || "UNKNOWN",
-        freeShippingPercent: values.freeShippingPercent ? percentage(values.freeShippingPercent) : null,
-        bids: values.bids ? integer(values.bids) : null,
-        visibleImageCount: 0,
-        ...offerFacts(values.temporaryTitle),
+    const itemLinks = deepQueryAll('a[href*="/itm/"]').filter(visible)
+      .filter((link) => text(link.innerText || link.textContent).length >= 4)
+      .slice(0, MAX_ITEM_LINKS)
+    const ancestorCounts = new Map()
+    for (const link of itemLinks) {
+      let ancestor = link.parentElement
+      for (let depth = 0; ancestor && depth < 9; depth += 1, ancestor = ancestor.parentElement) {
+        ancestorCounts.set(ancestor, (ancestorCounts.get(ancestor) ?? 0) + 1)
       }
-    })
-    return rows.length ? { headers, rows } : null
+    }
+    const candidates = [...ancestorCounts.entries()]
+      .filter(([, count]) => count >= Math.min(3, itemLinks.length))
+      .sort(([left, leftCount], [right, rightCount]) => rightCount - leftCount ||
+        elementRect(left).width * elementRect(left).height -
+        elementRect(right).width * elementRect(right).height)
+      .slice(0, MAX_COORDINATE_CONTAINERS).map(([container]) => container)
+    if (!candidates.includes(document)) candidates.push(document)
+    for (const container of candidates) {
+      const headerElements = headerElementsFor(container)
+      const headers = headerElements.map((element) => text(element.innerText || element.textContent))
+      const mapped = headers.map(canonicalHeader)
+      if (!REQUIRED_FIELDS.every((field) => mapped.includes(field))) continue
+      const coordinateRows = coordinateRowsFromItemLinks(container, headerElements, mapped)
+      const rows = coordinateRows.map(({ values, itemLink }) => {
+        const listingId = values.listingId || itemLink?.getAttribute("href")
+          ?.match(/\/itm\/(?:[^/]+\/)?(\d{9,20})/)?.[1] || null
+        return {
+          temporaryTitle: values.temporaryTitle,
+          listingId,
+          averageSoldPrice: money(values.averageSoldPrice),
+          averageShipping: values.averageShipping ? money(values.averageShipping) : null,
+          totalSold: integer(values.totalSold),
+          itemSales: values.itemSales ? money(values.itemSales) : null,
+          lastSoldDate: values.lastSoldDate,
+          listingFormat: values.listingFormat || "UNKNOWN",
+          freeShippingPercent: values.freeShippingPercent ? percentage(values.freeShippingPercent) : null,
+          bids: values.bids ? integer(values.bids) : null,
+          visibleImageCount: 0,
+          ...offerFacts(values.temporaryTitle),
+        }
+      })
+      if (rows.length) return { headers, rows }
+    }
+    return null
   }
 
   function findVisibleResults() {
+    // Product Research currently renders a virtualized grid. The coordinate
+    // parser is both the most reliable and the cheapest path, so attempt it
+    // before the legacy generic-container fallback.
+    if (captureContext) captureContext.shallow = true
+    const coordinateResult = coordinateTableParts()
+    if (coordinateResult) return coordinateResult
+    if (captureContext) {
+      captureContext.shallow = false
+      captureContext.queries = new WeakMap()
+    }
     const containers = deepQueryAll([
       "table", '[role="table"]', '[role="grid"]', '[data-testid*="table" i]',
       '[data-testid*="grid" i]', '[class*="table" i]', '[class*="grid" i]',
@@ -468,7 +535,7 @@
       ...deepQueryAll(HEADER_SELECTOR),
       ...deepQueryAll("div,span,p,a,button").filter((element) =>
         text(element.innerText || element.textContent).length <= 80),
-    ])].filter(visible)
+    ])].filter(visible).slice(0, MAX_FALLBACK_HEADERS)
       .filter((element) => canonicalHeader(text(element.innerText || element.textContent)))
     for (const header of headerCandidates) {
       let ancestor = header.parentElement
@@ -480,13 +547,12 @@
       }
     }
     const uniqueContainers = [...new Set(containers)].sort((left, right) => {
-      const leftBox = left.getBoundingClientRect()
-      const rightBox = right.getBoundingClientRect()
+      const leftBox = elementRect(left)
+      const rightBox = elementRect(right)
       return leftBox.width * leftBox.height - rightBox.width * rightBox.height
     })
-    const results = uniqueContainers.map((container) => tableParts(container)).filter(Boolean)
-    const coordinateResult = coordinateTableParts()
-    if (coordinateResult) results.push(coordinateResult)
+    const results = uniqueContainers.slice(0, MAX_FALLBACK_CONTAINERS)
+      .map((container) => tableParts(container)).filter(Boolean)
     results.sort((left, right) => right.rows.length - left.rows.length ||
       right.headers.length - left.headers.length)
     if (results[0]) return results[0]
@@ -566,9 +632,18 @@
     resetReceiverTimeout()
     if (captureButton) {
       captureButton.disabled = false
-      captureButton.textContent = "Capturar resultados para Seller OS"
+      captureButton.textContent = "Capturar y continuar"
       captureButton.style.opacity = "1"
     }
+  }
+
+  function showNextQuery(value, ordinal, total) {
+    const query = text(value).slice(0, 100)
+    if (query.length < 3 || !nextQueryPanel || !nextQueryField || !nextQueryProgress) return
+    nextQueryField.value = query
+    nextQueryProgress.textContent = Number.isInteger(Number(ordinal)) && Number.isInteger(Number(total))
+      ? `Próxima consulta: ${Number(ordinal)} de ${Number(total)}` : "Próxima consulta preparada"
+    nextQueryPanel.hidden = false
   }
 
   function startCapture() {
@@ -578,28 +653,38 @@
       captureButton.textContent = "Preparando captura…"
       captureButton.style.opacity = ".7"
     }
-    try {
-      pending = buildCapture()
-      receiver = window.open(RECEIVER_URL, "imnovaProductResearchCapture",
-        "popup=yes,width=720,height=780,resizable=yes,scrollbars=yes")
-      if (!receiver) throw new Error("PRODUCT_RESEARCH_CAPTURE_POPUP_BLOCKED")
-      setStatus(`Captura preparada: ${pending.visibleResultCount} filas visibles. Esperando Seller OS…`)
-      resetReceiverTimeout()
-      receiverReadyTimeout = window.setTimeout(() => {
-        if (!pending) return
+    // Let the button/status paint before reading the eBay grid. Cached DOM
+    // geometry prevents repeated forced layouts during the capture.
+    window.requestAnimationFrame(() => window.setTimeout(() => {
+      const startedAt = performance.now()
+      captureContext = { roots: new WeakMap(), queries: new WeakMap(),
+        rects: new WeakMap(), visibility: new WeakMap() }
+      try {
+        pending = buildCapture()
+        receiver = window.open(RECEIVER_URL, "imnovaProductResearchCapture",
+          "popup=yes,width=720,height=780,resizable=yes,scrollbars=yes")
+        if (!receiver) throw new Error("PRODUCT_RESEARCH_CAPTURE_POPUP_BLOCKED")
+        const elapsed = Math.max(1, Math.round(performance.now() - startedAt))
+        setStatus(`Captura preparada: ${pending.visibleResultCount} filas en ${elapsed} ms. Esperando Seller OS…`)
+        resetReceiverTimeout()
+        receiverReadyTimeout = window.setTimeout(() => {
+          if (!pending) return
+          pending = null
+          setStatus("PRODUCT_RESEARCH_RECEIVER_NOT_READY", "error")
+          finishCapture()
+        }, 20_000)
+      } catch (error) {
         pending = null
-        setStatus("PRODUCT_RESEARCH_RECEIVER_NOT_READY", "error")
+        const code = error instanceof Error ? error.message : "PRODUCT_RESEARCH_CAPTURE_FAILED"
+        if (code === "PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND") {
+          const diagnostic = safeStructureDiagnostics()
+          setStatus(`${ERROR_MESSAGES[code]} Diagnóstico seguro: roots=${diagnostic.roots}; frames=${diagnostic.sameOriginFrames}; fields=${diagnostic.recognizedFields.join(",") || "none"}; itemLinks=${diagnostic.itemLinks}; coordinateRows=${diagnostic.coordinateRows}.`, "error")
+        } else setStatus(code, "error")
         finishCapture()
-      }, 20_000)
-    } catch (error) {
-      pending = null
-      const code = error instanceof Error ? error.message : "PRODUCT_RESEARCH_CAPTURE_FAILED"
-      if (code === "PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND") {
-        const diagnostic = safeStructureDiagnostics()
-        setStatus(`${ERROR_MESSAGES[code]} Diagnóstico seguro: roots=${diagnostic.roots}; frames=${diagnostic.sameOriginFrames}; fields=${diagnostic.recognizedFields.join(",") || "none"}; itemLinks=${diagnostic.itemLinks}; coordinateRows=${diagnostic.coordinateRows}.`, "error")
-      } else setStatus(code, "error")
-      finishCapture()
-    }
+      } finally {
+        captureContext = null
+      }
+    }, 0))
   }
 
   window.addEventListener("message", (event) => {
@@ -615,6 +700,8 @@
         : `Captura rechazada: ${event.data.error || "ERROR"}`,
       event.data.success ? "success" : "error")
       pending = null
+      if (event.data.success && event.data.nextQuery) showNextQuery(event.data.nextQuery,
+        event.data.nextQueryOrdinal, event.data.queryCount)
       finishCapture()
     }
   })
@@ -626,10 +713,10 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.0.6"
+  title.textContent = "Seller OS · Product Research · v1.0.7"
   captureButton = document.createElement("button")
   captureButton.type = "button"
-  captureButton.textContent = "Capturar resultados para Seller OS"
+  captureButton.textContent = "Capturar y continuar"
   captureButton.style.cssText = "display:block;width:100%;margin-top:10px;padding:11px;border:0;border-radius:11px;background:#a5f3fc;color:#082f49;font-weight:800;cursor:pointer"
   captureButton.addEventListener("click", startCapture)
   const status = document.createElement("p")
@@ -637,7 +724,32 @@
   status.textContent = "Captura sólo la tabla actualmente visible."
   status.style.cssText = "margin:9px 0 0;color:#cffafe;font-size:11px"
   statusElement = status
-  panel.append(title, captureButton, status)
+  nextQueryPanel = document.createElement("div")
+  nextQueryPanel.hidden = true
+  nextQueryPanel.style.cssText = "margin-top:10px;border-top:1px solid rgba(255,255,255,.18);padding-top:10px"
+  nextQueryProgress = document.createElement("strong")
+  nextQueryProgress.style.cssText = "display:block;margin-bottom:6px;color:#cffafe"
+  nextQueryField = document.createElement("textarea")
+  nextQueryField.readOnly = true
+  nextQueryField.rows = 2
+  nextQueryField.setAttribute("aria-label", "Próxima consulta de Product Research")
+  nextQueryField.style.cssText = "box-sizing:border-box;width:100%;resize:none;border:1px solid rgba(255,255,255,.2);border-radius:8px;background:#020617;color:white;padding:7px;font:11px/1.35 system-ui,sans-serif"
+  const copyNextQuery = document.createElement("button")
+  copyNextQuery.type = "button"
+  copyNextQuery.textContent = "Copiar próxima consulta"
+  copyNextQuery.style.cssText = "display:block;width:100%;margin-top:7px;padding:8px;border:1px solid rgba(165,243,252,.45);border-radius:8px;background:transparent;color:#cffafe;font-weight:800;cursor:pointer"
+  copyNextQuery.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(nextQueryField?.value ?? "")
+      setStatus("Próxima consulta copiada. Ejecútala en Product Research y vuelve a capturar.", "success")
+    } catch {
+      nextQueryField?.focus()
+      nextQueryField?.select()
+      setStatus("Seleccioné la consulta. Usa Ctrl+C para copiarla.")
+    }
+  })
+  nextQueryPanel.append(nextQueryProgress, nextQueryField, copyNextQuery)
+  panel.append(title, captureButton, status, nextQueryPanel)
   shadow.append(panel)
   document.documentElement.append(host)
 })()

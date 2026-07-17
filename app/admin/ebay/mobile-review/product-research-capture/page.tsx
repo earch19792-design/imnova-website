@@ -24,6 +24,17 @@ type SafeResult = {
     noLunaMatch?: number
   }
   scan?: { status?: string }
+  queryPlan?: {
+    status?: string
+    queryCount?: number
+    capturedCount?: number
+    pendingCount?: number
+    nextQuery?: {
+      ordinal?: number
+      searchQuery?: string
+      candidateCount?: number
+    } | null
+  } | null
 }
 
 function safeCode(value: unknown) {
@@ -87,7 +98,10 @@ export default function ProductResearchCaptureReceiverPage() {
           validCount: payload.result.validCount ?? 0,
           duplicateCount: payload.result.duplicateCount ?? 0,
           rejectedCount: payload.result.rejectedCount ?? 0,
-          exactLunaMatches: payload.result.matchCounts?.exactLuna ?? 0 }, EBAY_PRODUCT_RESEARCH_ORIGIN)
+          exactLunaMatches: payload.result.matchCounts?.exactLuna ?? 0,
+          nextQuery: payload.result.queryPlan?.nextQuery?.searchQuery ?? null,
+          nextQueryOrdinal: payload.result.queryPlan?.nextQuery?.ordinal ?? null,
+          queryCount: payload.result.queryPlan?.queryCount ?? null }, EBAY_PRODUCT_RESEARCH_ORIGIN)
       } catch (captureError) {
         const code = safeCode(captureError instanceof Error ? captureError.message : "")
         setStatus("ERROR")
@@ -121,6 +135,11 @@ export default function ProductResearchCaptureReceiverPage() {
         <div><dt className="text-white/50">Match exacto Luna</dt><dd>{result.matchCounts?.exactLuna ?? 0}</dd></div>
         <div><dt className="text-white/50">Pack / tamaño distinto</dt><dd>{result.matchCounts?.differentPack ?? 0} / {result.matchCounts?.differentSize ?? 0}</dd></div>
         <div><dt className="text-white/50">Candidatos enriquecidos</dt><dd>{result.candidatesEnriched ?? 0}</dd></div>
+        <div><dt className="text-white/50">Consultas agrupadas</dt><dd>{result.queryPlan
+          ? `${result.queryPlan.capturedCount ?? 0} / ${result.queryPlan.queryCount ?? 0}` : "N/D"}</dd></div>
+        <div><dt className="text-white/50">Próxima consulta</dt><dd>{result.queryPlan?.nextQuery
+          ? `#${result.queryPlan.nextQuery.ordinal ?? "—"} · ${result.queryPlan.nextQuery.candidateCount ?? 0} candidatos`
+          : result.queryPlan?.status === "COMPLETED" ? "PLAN COMPLETADO" : "N/D"}</dd></div>
         <div><dt className="text-white/50">OpenAI</dt><dd>0 llamadas</dd></div>
         <div><dt className="text-white/50">Escrituras eBay</dt><dd>0</dd></div>
       </dl>}

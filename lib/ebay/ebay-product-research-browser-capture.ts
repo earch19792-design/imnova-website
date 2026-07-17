@@ -669,11 +669,12 @@ export async function importProductResearchBrowserCapture(input: {
   const parsed = parseProductResearchBrowserCapture({ capture: input.capture, targets })
   const { data: duplicateBatch, error: duplicateBatchError } = await input.supabase
     .from("marketplace_product_research_capture_batches")
-    .select("id,source_row_count,valid_count,imported_count,duplicate_count,rejected_count,exact_luna_match_count,different_pack_count,different_size_count,different_variant_count,ambiguous_count,no_luna_match_count,candidates_enriched_count,captured_at")
+    .select("id,search_query_hash,source_row_count,valid_count,imported_count,duplicate_count,rejected_count,exact_luna_match_count,different_pack_count,different_size_count,different_variant_count,ambiguous_count,no_luna_match_count,candidates_enriched_count,captured_at")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
     .eq("capture_hash", parsed.captureHash).maybeSingle()
   if (duplicateBatchError) throw new Error("PRODUCT_RESEARCH_CAPTURE_DEDUP_READ_FAILED")
   if (duplicateBatch) return { duplicate: true, batchId: duplicateBatch.id,
+    searchQueryHash: duplicateBatch.search_query_hash,
     rowCount: duplicateBatch.source_row_count, validCount: duplicateBatch.valid_count,
     importedCount: duplicateBatch.imported_count, duplicateCount: duplicateBatch.duplicate_count,
     rejectedCount: duplicateBatch.rejected_count,
@@ -749,7 +750,8 @@ export async function importProductResearchBrowserCapture(input: {
       .eq("id", runId).eq("marketplace_account_key", input.accountKey)
     if (error) throw new Error("PRODUCT_RESEARCH_CAPTURE_RUN_MARK_FAILED")
   }
-  return { duplicate: false, batchId, rowCount: parsed.sourceRowCount,
+  return { duplicate: false, batchId, searchQueryHash: parsed.searchQueryHash,
+    rowCount: parsed.sourceRowCount,
     validCount: parsed.validCount, importedCount: fresh.length, duplicateCount,
     rejectedCount: parsed.rejectedCount, matchCounts: parsed.matchCounts,
     candidatesEnriched, capturedAt: parsed.capturedAt, reanalysisRequired: fresh.length > 0,

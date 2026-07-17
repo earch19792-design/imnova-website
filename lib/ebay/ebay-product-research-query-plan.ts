@@ -1,0 +1,278 @@
+import { createHash, randomUUID } from "node:crypto"
+
+import type { SupabaseClient } from "@supabase/supabase-js"
+
+export const PRODUCT_RESEARCH_QUERY_PLAN_VERSION =
+  "PRODUCT_RESEARCH_QUERY_PLAN_V1_2026_07_17"
+
+type JsonRecord = Record<string, unknown>
+
+export type ProductResearchQueryCandidate = {
+  supplierVariantId: string
+  productName: string
+  brand?: string | null
+  categoryId?: string | null
+  priorityScore?: number | null
+}
+
+export type ProductResearchPlannedQuery = {
+  ordinal: number
+  searchQuery: string
+  queryHash: string
+  clusterKeyHash: string
+  categoryId: string | null
+  candidateCount: number
+  candidateVariantHashes: string[]
+}
+
+const STOP_WORDS = new Set([
+  "and", "the", "for", "with", "from", "new", "pack", "packs", "lot", "set",
+  "count", "ct", "each", "per", "unit", "units", "piece", "pieces", "size",
+  "default", "title", "assorted", "various", "of", "a", "an", "in", "on",
+])
+
+function record(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonRecord : {}
+}
+
+function text(value: unknown, maximum = 160) {
+  return typeof value === "string"
+    ? value.normalize("NFKC").trim().replace(/\s+/g, " ").slice(0, maximum)
+    : ""
+}
+
+function normalizedTokens(value: unknown) {
+  return (text(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("en-US").match(/[a-z0-9]+/g) ?? [])
+    .filter((token) => token.length >= 2 && !STOP_WORDS.has(token) &&
+      !/^\d+(?:oz|ml|g|kg|lb|ct)?$/.test(token))
+}
+
+function sha256(value: unknown) {
+  return `sha256:${createHash("sha256").update(
+    typeof value === "string" ? value : JSON.stringify(value),
+  ).digest("hex")}`
+}
+
+function queryHash(value: string) {
+  return sha256(text(value).toLocaleLowerCase("en-US"))
+}
+
+function explicitBrand(metadata: JsonRecord) {
+  return text(metadata.manufacturerBrand ?? metadata.brand, 80) || null
+}
+
+function queryForCandidate(candidate: ProductResearchQueryCandidate) {
+  const brandTokens = normalizedTokens(candidate.brand)
+  const nameTokens = normalizedTokens(candidate.productName)
+    .filter((token) => !brandTokens.includes(token))
+  const selected = [...brandTokens.slice(0, 2), ...nameTokens.slice(0, 4)]
+  return [...new Set(selected)].join(" ").slice(0, 100).trim()
+}
+
+export function buildProductResearchQueryPlan(
+  candidates: ProductResearchQueryCandidate[],
+): { inputHash: string; candidateCount: number; queries: ProductResearchPlannedQuery[] } {
+  const unique = [...new Map(candidates.filter((candidate) =>
+    text(candidate.supplierVariantId) && text(candidate.productName))
+    .map((candidate) => [candidate.supplierVariantId, candidate] as const)).values()]
+  const groups = new Map<string, {
+    query: string
+    categoryId: string | null
+    candidates: ProductResearchQueryCandidate[]
+    score: number
+  }>()
+  for (const candidate of unique) {
+    const query = queryForCandidate(candidate)
+    if (query.length < 3) continue
+    const categoryId = /^\d+$/.test(text(candidate.categoryId, 30))
+      ? text(candidate.categoryId, 30) : null
+    const clusterKey = `${categoryId ?? "uncategorized"}:${query}`
+    const group = groups.get(clusterKey) ?? { query, categoryId, candidates: [], score: 0 }
+    group.candidates.push(candidate)
+    group.score = Math.max(group.score, Number(candidate.priorityScore ?? 0))
+    groups.set(clusterKey, group)
+  }
+  const selected = [...groups.entries()].sort(([, left], [, right]) =>
+    right.score - left.score || right.candidates.length - left.candidates.length ||
+    left.query.localeCompare(right.query)).slice(0, 15)
+  const queries = selected.map(([clusterKey, group], index): ProductResearchPlannedQuery => ({
+    ordinal: index + 1,
+    searchQuery: group.query,
+    queryHash: queryHash(group.query),
+    clusterKeyHash: sha256(clusterKey),
+    categoryId: group.categoryId,
+    candidateCount: group.candidates.length,
+    candidateVariantHashes: group.candidates.map((candidate) =>
+      sha256(text(candidate.supplierVariantId))).sort(),
+  }))
+  const coveredCandidateCount = new Set(selected.flatMap(([, group]) =>
+    group.candidates.map((candidate) => text(candidate.supplierVariantId)))).size
+  return {
+    inputHash: sha256({ version: PRODUCT_RESEARCH_QUERY_PLAN_VERSION,
+      candidates: unique.map((candidate) => ({
+        supplierVariantId: text(candidate.supplierVariantId),
+        productName: text(candidate.productName),
+        brand: text(candidate.brand) || null,
+        categoryId: text(candidate.categoryId) || null,
+        priorityScore: Number(candidate.priorityScore ?? 0),
+      })).sort((left, right) => left.supplierVariantId.localeCompare(right.supplierVariantId)) }),
+    candidateCount: coveredCandidateCount,
+    queries,
+  }
+}
+
+async function candidateRows(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  runId: string
+}) {
+  const { data: targets, error: targetError } = await input.supabase
+    .from("marketplace_listing_approval_queue_scan_targets")
+    .select("market_radar_product_id,supplier_variant_id,discovery_score,discovery_snapshot")
+    .eq("run_id", input.runId).eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US").eq("preselected", true)
+    .order("discovery_score", { ascending: false }).limit(100)
+  if (targetError) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_TARGETS_READ_FAILED")
+  const productIds = [...new Set((targets ?? []).map((target) => text(target.market_radar_product_id))
+    .filter(Boolean))]
+  const { data: variants, error: variantError } = productIds.length
+    ? await input.supabase.from("market_radar_latest_variants")
+      .select("product_id,supplier_variant_id,title,metadata")
+      .eq("source_key", "lunaportex").in("product_id", productIds)
+    : { data: [], error: null }
+  if (variantError) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_VARIANTS_READ_FAILED")
+  const variantByKey = new Map((variants ?? []).map((variant) => [
+    `${variant.product_id}:${variant.supplier_variant_id}`, variant,
+  ]))
+  return (targets ?? []).flatMap((target): ProductResearchQueryCandidate[] => {
+    const variant = variantByKey.get(
+      `${target.market_radar_product_id}:${target.supplier_variant_id}`,
+    )
+    if (!variant) return []
+    const metadata = record(variant.metadata)
+    const discovery = record(target.discovery_snapshot)
+    return [{
+      supplierVariantId: text(variant.supplier_variant_id),
+      productName: text(variant.title),
+      brand: explicitBrand(metadata),
+      categoryId: text(discovery.categoryId) || text(metadata.categoryId) || null,
+      priorityScore: Number(target.discovery_score ?? 0),
+    }]
+  })
+}
+
+export async function prepareProductResearchQueryPlan(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  runId: string
+}) {
+  const candidates = await candidateRows(input)
+  const plan = buildProductResearchQueryPlan(candidates)
+  if (!plan.queries.length) return null
+  const planId = randomUUID()
+  const { data, error } = await input.supabase.rpc("create_product_research_query_plan_v1", {
+    p_plan_id: planId,
+    p_marketplace_account_key: input.accountKey,
+    p_run_id: input.runId,
+    p_plan_version: PRODUCT_RESEARCH_QUERY_PLAN_VERSION,
+    p_input_hash: plan.inputHash,
+    p_candidate_count: plan.candidateCount,
+    p_queries: plan.queries.map((query) => ({
+      ordinal: query.ordinal,
+      search_query: query.searchQuery,
+      query_hash: query.queryHash,
+      cluster_key_hash: query.clusterKeyHash,
+      category_id: query.categoryId,
+      candidate_count: query.candidateCount,
+      candidate_variant_hashes: query.candidateVariantHashes,
+    })),
+  })
+  if (error || !data) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_PERSIST_FAILED")
+  return getProductResearchQueryPlanStatus({ ...input, planId: String(data) })
+}
+
+export async function getProductResearchQueryPlanStatus(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  runId?: string | null
+  planId?: string | null
+}) {
+  let query = input.supabase.from("marketplace_product_research_query_plans")
+    .select("id,run_id,plan_version,status,query_count,candidate_count,created_at,completed_at")
+    .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+  if (input.planId) query = query.eq("id", input.planId)
+  else if (input.runId) query = query.eq("run_id", input.runId)
+  const { data: plan, error } = await query.order("created_at", { ascending: false })
+    .limit(1).maybeSingle()
+  if (error) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_STATUS_READ_FAILED")
+  if (!plan) return null
+  const { data: tasks, error: taskError } = await input.supabase
+    .from("marketplace_product_research_query_tasks")
+    .select("id,ordinal,search_query,category_id,candidate_count,status,captured_at,processed_at")
+    .eq("plan_id", plan.id).eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US").order("ordinal", { ascending: true })
+  if (taskError) throw new Error("PRODUCT_RESEARCH_QUERY_TASK_STATUS_READ_FAILED")
+  const pending = (tasks ?? []).find((task) => task.status === "PENDING") ?? null
+  const capturedCount = (tasks ?? []).filter((task) =>
+    ["CAPTURED", "PROCESSED"].includes(task.status)).length
+  return {
+    id: plan.id,
+    runId: plan.run_id,
+    version: plan.plan_version,
+    status: plan.status,
+    queryCount: plan.query_count,
+    candidateCount: plan.candidate_count,
+    capturedCount,
+    pendingCount: Math.max(0, plan.query_count - capturedCount),
+    nextQuery: pending ? {
+      ordinal: pending.ordinal,
+      searchQuery: pending.search_query,
+      categoryId: pending.category_id,
+      candidateCount: pending.candidate_count,
+    } : null,
+    tasks: tasks ?? [],
+    createdAt: plan.created_at,
+    completedAt: plan.completed_at,
+    rawCompetitorContentStored: false,
+    openAiCalls: 0,
+    ebayWrites: 0,
+  }
+}
+
+export async function markProductResearchQueryCaptured(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  searchQueryHash: string
+  captureBatchId: string
+  now?: Date
+}) {
+  const now = (input.now ?? new Date()).toISOString()
+  const { data: plan, error: planError } = await input.supabase
+    .from("marketplace_product_research_query_plans").select("id,run_id")
+    .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+    .eq("status", "ACTIVE").order("created_at", { ascending: false }).limit(1).maybeSingle()
+  if (planError) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_STATUS_READ_FAILED")
+  if (!plan) return null
+  const { error: updateError } = await input.supabase
+    .from("marketplace_product_research_query_tasks")
+    .update({ status: "PROCESSED", capture_batch_id: input.captureBatchId,
+      captured_at: now, processed_at: now, last_error_code: null, updated_at: now })
+    .eq("plan_id", plan.id).eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US").eq("query_hash", input.searchQueryHash)
+    .eq("status", "PENDING")
+  if (updateError) throw new Error("PRODUCT_RESEARCH_QUERY_TASK_UPDATE_FAILED")
+  const status = await getProductResearchQueryPlanStatus({
+    supabase: input.supabase, accountKey: input.accountKey, planId: plan.id,
+  })
+  if (status && status.pendingCount === 0) {
+    const { error: completeError } = await input.supabase
+      .from("marketplace_product_research_query_plans")
+      .update({ status: "COMPLETED", completed_at: now, updated_at: now })
+      .eq("id", plan.id).eq("status", "ACTIVE")
+    if (completeError) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_COMPLETE_FAILED")
+    return { ...status, status: "COMPLETED", completedAt: now }
+  }
+  return status
+}

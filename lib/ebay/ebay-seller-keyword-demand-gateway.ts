@@ -6,7 +6,14 @@ import {
   type EbaySellerComparableInput,
   type EbaySellerKeywordCandidate,
 } from "./ebay-seller-keyword-demand-validation"
-import { createEbayReadonlyRateLimitError } from "./ebay-readonly-rate-limit"
+import {
+  createEbayReadonlyQuotaLimitError,
+  createEbayReadonlyRateLimitError,
+} from "./ebay-readonly-rate-limit"
+import {
+  parseEbayApplicationBrowseQuota,
+  type EbayApplicationBrowseQuota,
+} from "./ebay-application-rate-limit"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const BROWSE_SEARCH_ENDPOINT =
@@ -18,15 +25,19 @@ const BUY_MARKETING_ENDPOINT =
   "https://api.ebay.com/buy/marketing/v1_beta/merchandised_product"
 const TAXONOMY_ENDPOINT = "https://api.ebay.com/commerce/taxonomy/v1"
 const CATALOG_ENDPOINT = "https://api.ebay.com/commerce/catalog/v1_beta/product_summary/search"
+const DEVELOPER_RATE_LIMIT_ENDPOINT =
+  "https://api.ebay.com/developer/analytics/v1_beta/rate_limit/"
 const BROWSE_SCOPE = "https://api.ebay.com/oauth/api_scope"
 const MARKETPLACE_INSIGHTS_SCOPE =
   "https://api.ebay.com/oauth/api_scope/buy.marketplace.insights"
 const MARKETPLACE_ID = "EBAY_US"
-const DETAIL_SAMPLE_LIMIT = 20
-const DETAIL_CONCURRENCY = 5
+const DEFAULT_DETAIL_SAMPLE_LIMIT = 6
+const DETAIL_CONCURRENCY = 2
 const EBAY_REQUEST_TIMEOUT_MS = 8_000
 const EBAY_MAX_RETRIES = 3
 const TAXONOMY_CACHE_TTL_MS = 6 * 60 * 60 * 1_000
+const RATE_LIMIT_CACHE_TTL_MS = 5 * 60 * 1_000
+const BROWSE_QUOTA_RESERVE = 50
 
 export type EbayCatalogIdentityProduct = {
   epid: string | null
@@ -59,6 +70,7 @@ type TaxonomyCacheEntry = {
 
 const tokenCache = new Map<string, TokenCacheEntry>()
 const taxonomyCache = new Map<string, TaxonomyCacheEntry>()
+let rateLimitCache: { value: EbayApplicationBrowseQuota; expiresAt: number } | null = null
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -78,6 +90,43 @@ function numberOrNull(value: unknown) {
   if (value === null || value === undefined || value === "") return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function detailSampleLimit() {
+  const configured = Number(process.env.EBAY_LISTING_INTELLIGENCE_DETAIL_SAMPLE_LIMIT)
+  return Number.isInteger(configured) ? Math.max(1, Math.min(configured, 10))
+    : DEFAULT_DETAIL_SAMPLE_LIMIT
+}
+
+export async function getEbayApplicationBrowseQuota(): Promise<EbayApplicationBrowseQuota> {
+  if (rateLimitCache && rateLimitCache.expiresAt > Date.now()) return rateLimitCache.value
+  const unavailable = () => parseEbayApplicationBrowseQuota(null)
+  let token = ""
+  try {
+    token = await getApplicationToken(BROWSE_SCOPE)
+    const response = await fetch(DEVELOPER_RATE_LIMIT_ENDPOINT, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
+    })
+    if (!response.ok) return unavailable()
+    const value = parseEbayApplicationBrowseQuota(await response.json())
+    rateLimitCache = { value, expiresAt: Date.now() + RATE_LIMIT_CACHE_TTL_MS }
+    return value
+  } catch {
+    return unavailable()
+  } finally {
+    token = ""
+  }
+}
+
+async function enforceBrowseQuota(expectedCalls: number) {
+  const quota = await getEbayApplicationBrowseQuota()
+  if (quota.status === "AVAILABLE" && quota.remaining !== null &&
+    quota.remaining <= BROWSE_QUOTA_RESERVE + expectedCalls && quota.resetAt) {
+    throw createEbayReadonlyQuotaLimitError(quota.resetAt)
+  }
 }
 
 function firstCategory(value: unknown) {
@@ -351,6 +400,7 @@ export async function discoverEbayListingSignals(
   if (query.length < 3) throw new Error("EBAY_SEARCH_QUERY_TOO_SHORT")
   let token = ""
   try {
+    await enforceBrowseQuota(1)
     token = await getApplicationToken(BROWSE_SCOPE)
     let search = await searchActiveListings(candidate, query, token)
     if (!search.items.length && normalizedGtin(candidate.gtin)) {
@@ -462,6 +512,7 @@ export async function runEbaySellerKeywordDemandValidation(
   let browseToken = ""
   let insightsToken = ""
   try {
+    await enforceBrowseQuota(1 + detailSampleLimit())
     browseToken = await getApplicationToken(BROWSE_SCOPE)
     let activeSearch = await searchActiveListings(candidate, query, browseToken)
     if (activeSearch.items.length === 0 && normalizedGtin(candidate.gtin)) {
@@ -472,7 +523,7 @@ export async function runEbaySellerKeywordDemandValidation(
       )
     }
     const activeDetails = await mapWithConcurrency(
-      activeSearch.items.slice(0, DETAIL_SAMPLE_LIMIT),
+      activeSearch.items.slice(0, detailSampleLimit()),
       DETAIL_CONCURRENCY,
       (item) => enrichActiveListing(item, browseToken)
     )

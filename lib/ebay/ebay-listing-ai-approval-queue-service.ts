@@ -88,6 +88,7 @@ import {
   type Top20TargetCandidate,
 } from "./ebay-listing-ai-top20-automation"
 import type { Top20DispatchDiagnostic } from "./ebay-listing-ai-top20-dispatch"
+import { prepareProductResearchQueryPlan } from "./ebay-product-research-query-plan"
 import {
   ebayFirstEvidenceSnapshot,
   matchEbayFirstProductsToLuna,
@@ -1350,6 +1351,14 @@ export async function startListingAiApprovalQueueScan(input: {
     .order("created_at", { ascending: false }).limit(1).maybeSingle()
   if (error) throw new Error("TOP20_SCAN_STATUS_READ_FAILED")
 
+  if (latest?.id && Number(latest.preselected_count ?? 0) > 0) {
+    await prepareProductResearchQueryPlan({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      runId: latest.id,
+    })
+  }
+
   const leaseActive = latest && Date.parse(latest.lease_expires_at ?? "") > now.getTime()
   if (latest && isTop20AutomationActive(latest.automation_status) && leaseActive) {
     return { runId: latest.id, status: latest.automation_status as Top20AutomationStatus,
@@ -1707,6 +1716,13 @@ async function preselectTop20DiscoveryTargets(input: {
       last_activity_at: input.now.toISOString(), updated_at: input.now.toISOString() })
     .eq("id", input.runId).eq("marketplace_account_key", input.accountKey)
   if (runError) throw new Error("TOP20_PRESELECTION_RUN_UPDATE_FAILED")
+  if (selectedIds.length) {
+    await prepareProductResearchQueryPlan({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      runId: input.runId,
+    })
+  }
   return { selected: selectedIds.length, excluded: skippedIds.length }
 }
 

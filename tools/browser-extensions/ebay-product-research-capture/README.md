@@ -9,7 +9,12 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Ejecuta una búsqueda y usa **Capturar resultados para Seller OS**.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión corregida es 1.0.6.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión optimizada es 1.0.7.
+
+La captura rápida usa un único snapshot de la cuadrícula visible, reutiliza geometría
+y procesa primero las filas ancladas a Item IDs. Después de importar, Seller OS puede
+entregar la siguiente consulta agrupada; la extensión nunca navega ni inicia sesión
+automáticamente.
 
 La extensión sólo se inyecta en la ruta oficial Product Research. No lee cookies,
 tokens, contraseñas, datos de comprador, HTML completo ni archivos de imagen. La

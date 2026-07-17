@@ -53,6 +53,19 @@ export function createEbayReadonlyRateLimitError(
   })
 }
 
+export function createEbayReadonlyQuotaLimitError(resetAt: string, nowMs = Date.now()) {
+  const parsedReset = Date.parse(resetAt)
+  const retryAfterSeconds = Number.isFinite(parsedReset) && parsedReset > nowMs
+    ? Math.min(Math.ceil((parsedReset - nowMs) / 1_000), 7 * 24 * 60 * 60)
+    : null
+  return new EbayReadonlyRateLimitError("EBAY_READONLY_GET_429", {
+    httpStatus: 429,
+    retryAfterSeconds,
+    retryAfterSource: retryAfterSeconds === null ? "UNAVAILABLE" : "RETRY_AFTER_HTTP_DATE",
+    observedAt: new Date(nowMs).toISOString(),
+  })
+}
+
 export function getEbayReadonlyRateLimitMetadata(
   error: unknown,
 ): EbayReadonlyRateLimitMetadata | null {

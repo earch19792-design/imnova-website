@@ -17,16 +17,27 @@ import {
 } from "@/lib/ebay/ebay-product-research-browser-capture"
 import { reconcileProductResearchObservations } from "@/lib/ebay/ebay-product-research-identity-reconciliation"
 import { enqueueListingAiTop20Continuation } from "@/lib/ebay/ebay-listing-ai-top20-queue"
+import {
+  getProductResearchQueryPlanStatus,
+  markProductResearchQueryCaptured,
+} from "@/lib/ebay/ebay-product-research-query-plan"
+import { getEbayApplicationBrowseQuota } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 
 export async function GET(req: Request) {
   const auth = await authorizeListingAiRequest(req)
   if (!auth.ok) return auth.response
   try {
     enforceListingAiRouteRateLimit(auth.actorId, "READ")
-    return listingAiResponse({ success: true,
-      status: await getProductResearchBrowserCaptureStatus({
+    const [status, queryPlan, browseQuota] = await Promise.all([
+      getProductResearchBrowserCaptureStatus({
         supabase: auth.supabase, accountKey: auth.accountKey,
-      }) })
+      }),
+      getProductResearchQueryPlanStatus({
+        supabase: auth.supabase, accountKey: auth.accountKey,
+      }),
+      getEbayApplicationBrowseQuota(),
+    ])
+    return listingAiResponse({ success: true, status: { ...status, queryPlan, browseQuota } })
   } catch (error) {
     return listingAiFailure(error)
   }
@@ -45,6 +56,12 @@ export async function POST(req: Request) {
       accountKey: auth.accountKey,
       actorId: auth.actorId,
       capture: body.capture as ProductResearchBrowserCapture,
+    })
+    const queryPlan = await markProductResearchQueryCaptured({
+      supabase: auth.supabase,
+      accountKey: auth.accountKey,
+      searchQueryHash: result.searchQueryHash,
+      captureBatchId: result.batchId,
     })
     let scan: Record<string, unknown> | null = null
     if (result.reanalysisRequired) {
@@ -68,7 +85,7 @@ export async function POST(req: Request) {
         affectedTargets: reconciled.reanalysis.affectedTargets,
         sameRunResumed: true, discoveryRepeated: false }
     }
-    return listingAiResponse({ success: true, result: { ...result, scan,
+    return listingAiResponse({ success: true, result: { ...result, scan, queryPlan,
       source: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
       rawHtmlStored: false, temporaryTitlesStored: false,
       competitorImagesDownloaded: 0, piiStored: false,
