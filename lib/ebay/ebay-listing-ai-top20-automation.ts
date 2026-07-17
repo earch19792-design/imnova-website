@@ -170,6 +170,12 @@ export function top20ProgressPercent(examined: number, total: number) {
   return Math.max(0, Math.min(100, Math.round(examined / total * 1_000) / 10))
 }
 
+export function top20ReleasedTargetStatus(
+  phase: "DISCOVERY" | "LOOP1_ANALYSIS",
+) {
+  return phase === "LOOP1_ANALYSIS" ? "PRESELECTED" as const : "PENDING" as const
+}
+
 /**
  * Discovery is deliberately provisional. Luna frequently has no verified GTIN or
  * manufacturer brand, so the 35-point strong-identity threshold cannot be a hard

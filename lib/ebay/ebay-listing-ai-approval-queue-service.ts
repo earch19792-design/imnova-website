@@ -71,6 +71,7 @@ import {
   shouldRecoverIncompleteTop20Completion,
   shouldReanalyzeTop20ForPolicyUpgrade,
   top20ProgressPercent,
+  top20ReleasedTargetStatus,
   verifyTop20ContinuationToken,
   type Top20AutomationStatus,
   type Top20TargetCandidate,
@@ -2130,7 +2131,8 @@ export async function runListingAiApprovalQueueBatch(input: {
   }
   if (releasedTargetIds.length) {
     const { error } = await input.supabase.from("marketplace_listing_approval_queue_scan_targets")
-      .update({ status: "PENDING", lease_owner: null, lease_expires_at: null,
+      .update({ status: top20ReleasedTargetStatus("LOOP1_ANALYSIS"),
+        lease_owner: null, lease_expires_at: null,
         processing_phase: null, updated_at: now.toISOString() })
       .in("id", releasedTargetIds).eq("lease_owner", workerId)
     if (error) throw new Error("TOP20_TARGET_RELEASE_FAILED")
