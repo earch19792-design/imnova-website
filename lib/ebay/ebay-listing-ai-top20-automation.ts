@@ -219,3 +219,13 @@ export function shouldRecoverIncompleteTop20Completion(input: {
   return input.automationStatus === "COMPLETED" && input.preselected > 0 &&
     input.deepAnalyzed < input.preselected
 }
+
+export function shouldReanalyzeTop20ForPolicyUpgrade(input: {
+  automationStatus: unknown
+  preselected: number
+  persistedVersion: unknown
+  currentVersion: string
+}) {
+  return input.automationStatus === "COMPLETED" && input.preselected > 0 &&
+    input.persistedVersion !== input.currentVersion
+}

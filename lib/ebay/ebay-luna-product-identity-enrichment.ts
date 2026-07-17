@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 
 export const LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION =
-  "LUNA_PRODUCT_IDENTITY_ENRICHMENT_V1_2026_07_16"
+  "LUNA_PRODUCT_IDENTITY_ENRICHMENT_V2_2026_07_17"
 
 export type ProductIdentityAttribute =
   | "manufacturer" | "brand" | "validGtin" | "mpn" | "model"
@@ -196,7 +196,8 @@ function explicitPackFromText(value: unknown) {
   const candidate = text(value)
   if (!candidate) return null
   const match = candidate.match(/\bpack\s+of\s+(\d{1,3})\b/i) ??
-    candidate.match(/\b(\d{1,3})\s*(?:-|\s)?(?:pack|pk)\b/i)
+    candidate.match(/\b(?:set|case)\s+of\s+(\d{1,3})\b/i) ??
+    candidate.match(/\b(\d{1,3})\s*(?:-|\s)?(?:pack|pk|pieces?|pcs?)\b/i)
   return positiveInteger(match?.[1])
 }
 
@@ -204,6 +205,16 @@ function unitCountFromText(value: unknown) {
   const candidate = text(value)
   if (!candidate) return null
   return positiveInteger(candidate.match(/\b(\d{1,4})\s*(?:ct|count)\b/i)?.[1])
+}
+
+export function canonicalContentsFromPack(input: {
+  productName: string | null
+  packCount: number | null
+}) {
+  if (!input.productName || !input.packCount) return []
+  return explicitPackFromText(input.productName) === input.packCount
+    ? [input.productName]
+    : [`${input.packCount} x ${input.productName}`]
 }
 
 function fieldFromAspects(row: EbayComparableIdentityObservation, names: string[]) {
@@ -233,8 +244,14 @@ export function classifyComparableAgainstLunaSupply(input: {
     return { classification: "INVALID", reasons: ["PRODUCT_NAME_EVIDENCE_INSUFFICIENT"], nameSimilarity }
   }
   const pack = comparablePack(comparable)
+  if (!input.supplyPackCount) {
+    return { classification: "NEAR_MATCH", reasons: ["SUPPLY_PACK_UNRESOLVED"], nameSimilarity }
+  }
   if (input.supplyPackCount && pack && input.supplyPackCount !== pack) {
     return { classification: "DIFFERENT_PACK", reasons: ["PACK_MISMATCH"], nameSimilarity }
+  }
+  if (input.supplyPackCount > 1 && !pack) {
+    return { classification: "NEAR_MATCH", reasons: ["COMPARABLE_PACK_UNRESOLVED"], nameSimilarity }
   }
   for (const [name, supply, observed] of [
     ["SIZE", input.supplySize, comparable.size], ["COLOR", input.supplyColor, comparable.color],
@@ -403,6 +420,9 @@ export function buildLunaStructuredIdentityEvidence(input: LunaStructuredIdentit
     normalizedValue: titlePack, ...common, confidence: .55,
     verifiedByRule: optionPack ? "LUNA_STRUCTURED_OPTION_PACK" : "EXPLICIT_PACK_TEXT_REQUIRES_CORROBORATION",
     conflictStatus: optionPack ? "CLEAR" : "UNVERIFIED" }))
+  else output.push(evidence({ attribute: "packCount", rawValue: 1,
+    normalizedValue: 1, ...common, confidence: .9,
+    verifiedByRule: "LUNA_SINGLE_SUPPLIER_OFFER_NO_MULTIPACK_SIGNAL", conflictStatus: "CLEAR" }))
 
   const explicitUnitCount = positiveInteger(metadata.unitCount ?? metadata.unit_count ?? metadata.countPerItem)
   const unitCount = explicitUnitCount ?? unitCountFromText(input.variantTitle) ?? unitCountFromText(input.title)

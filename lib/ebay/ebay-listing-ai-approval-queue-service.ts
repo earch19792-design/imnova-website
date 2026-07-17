@@ -35,6 +35,7 @@ import {
   buildEbayCatalogIdentityEvidence,
   buildExactComparableConsensus,
   buildLunaStructuredIdentityEvidence,
+  canonicalContentsFromPack,
   classifyComparableAgainstLunaSupply,
   conservativeLogistics,
   resolveProductIdentity,
@@ -64,6 +65,7 @@ import {
   isTop20RateLimitError,
   shouldRecoverEmptyTop20Completion,
   shouldRecoverIncompleteTop20Completion,
+  shouldReanalyzeTop20ForPolicyUpgrade,
   top20ProgressPercent,
   verifyTop20ContinuationToken,
   type Top20AutomationStatus,
@@ -286,8 +288,9 @@ function sourceCoverage(rows: IdentityAttributeEvidence[]) {
 
 function mergeNumericCoverage(current: unknown, increment: Record<string, number>) {
   const existing = record(current)
-  return Object.fromEntries(Object.entries(increment).map(([key, value]) =>
-    [key, (number(existing[key]) ?? 0) + value]))
+  const keys = new Set([...Object.keys(existing), ...Object.keys(increment)])
+  return Object.fromEntries([...keys].map((key) =>
+    [key, (number(existing[key]) ?? 0) + (increment[key] ?? 0)]))
 }
 
 function evidenceHash(row: IdentityAttributeEvidence) {
@@ -387,7 +390,10 @@ async function enrichFromOfficialSources(input: {
   const logistics = conservativeLogistics({ weight: identity.weight, dimensions: identity.dimensions,
     outboundReserveUsd: DEFAULT_CONSERVATIVE_OUTBOUND_RESERVE_USD })
   if (!identity.totalContents.length && identity.packCount && identity.normalizedProductName) {
-    identity.totalContents = [`${identity.packCount} x ${identity.normalizedProductName}`]
+    identity.totalContents = canonicalContentsFromPack({
+      productName: identity.normalizedProductName,
+      packCount: identity.packCount,
+    })
   }
   const candidate = candidateFromRows(input.variant, input.queue, input.environment, {
     identity, logistics, requiredAspects, conflicts: resolved.conflicts,
@@ -403,8 +409,10 @@ async function enrichFromOfficialSources(input: {
 function winnerInput(candidate: ApprovalQueueCatalogCandidate, accountKey: string): WinnerEvidenceInput {
   const shipping = (candidate.outboundShippingCost ?? 0) + (candidate.supplierShippingReserveUsd ?? 0)
   const includedContents = candidate.exactContents
-  const offerCapacity = candidate.inventoryQuantity !== null && candidate.packCount
-    ? Math.floor(candidate.inventoryQuantity / candidate.packCount) : null
+  // Luna price and inventory belong to one supplier offer. `packCount` is the
+  // customer-visible content of that offer, not a multiplier for cost/stock.
+  const supplierUnitsPerOffer = 1
+  const offerCapacity = candidate.inventoryQuantity
   return {
     marketplaceAccountKey: accountKey,
     candidateId: candidate.marketRadarProductId,
@@ -424,8 +432,7 @@ function winnerInput(candidate: ApprovalQueueCatalogCandidate, accountKey: strin
       variant: candidate.variant,
       condition: candidate.condition,
     },
-    supplierPackageCost: candidate.supplierCost !== null && candidate.packCount !== null
-      ? candidate.supplierCost * candidate.packCount : null,
+    supplierPackageCost: candidate.supplierCost,
     packagingCost: candidate.packagingCost,
     outboundShippingCost: shipping,
     fixedFulfillmentCost: candidate.fixedFulfillmentCost,
@@ -463,10 +470,9 @@ function winnerInput(candidate: ApprovalQueueCatalogCandidate, accountKey: strin
         exactContents: includedContents,
         offerGtin: candidate.packCount === 1 && candidate.gtinValid ? candidate.gtin : null,
         offerGtinVerified: candidate.packCount === 1 && candidate.gtinValid,
-        cost: candidate.supplierCost !== null && candidate.packCount !== null
-          ? candidate.supplierCost * candidate.packCount : null,
+        cost: candidate.supplierCost,
         shippingCost: shipping,
-        stockRequired: 1,
+        stockRequired: supplierUnitsPerOffer,
         stockAvailable: offerCapacity,
         packageWeight: candidate.weight,
         packageDimensions: candidate.dimensions,
@@ -1119,8 +1125,16 @@ export async function startListingAiApprovalQueueScan(input: {
       preselected: Number(latest.preselected_count ?? 0),
       deepAnalyzed: Number(latest.deep_analyzed_count ?? 0),
     }))
+  const policyUpgradeNeedsReanalysis = Boolean(latest &&
+    shouldReanalyzeTop20ForPolicyUpgrade({
+      automationStatus: latest.automation_status,
+      preselected: Number(latest.preselected_count ?? 0),
+      persistedVersion: latest.enrichment_version,
+      currentVersion: LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION,
+    }))
   const latestFresh = latest?.automation_status === "COMPLETED" &&
     !emptyCompletionNeedsRecovery && !incompleteLoop1NeedsRecovery &&
+    !policyUpgradeNeedsReanalysis &&
     Date.parse(latest.updated_at ?? "") > now.getTime() - FRESHNESS_MS
   if (latestFresh) {
     return { runId: latest.id, status: "COMPLETED" as const, shouldSchedule: false,
@@ -1135,10 +1149,22 @@ export async function startListingAiApprovalQueueScan(input: {
     RECOVERABLE_DISPATCH_ERRORS.has(String(latest.last_error_code ?? ""))
   ))
   let run = latest && (["RUNNING", "PARTIAL"].includes(latest.status) || recoverableDispatch ||
-    emptyCompletionNeedsRecovery || incompleteLoop1NeedsRecovery)
+    emptyCompletionNeedsRecovery || incompleteLoop1NeedsRecovery || policyUpgradeNeedsReanalysis)
     ? latest
     : null
   if (run) {
+    if (policyUpgradeNeedsReanalysis) {
+      // Restore work before advancing the run version. If the optimistic run
+      // update loses a race, this update is safe to repeat on the next click.
+      const { error: restorePolicyError } = await input.supabase
+        .from("marketplace_listing_approval_queue_scan_targets")
+        .update({ status: "PRESELECTED", processing_phase: null,
+          lease_owner: null, lease_expires_at: null, processed_at: null,
+          next_retry_at: null, last_error_code: null, updated_at: now.toISOString() })
+        .eq("run_id", run.id).eq("marketplace_account_key", input.accountKey)
+        .eq("marketplace", MARKETPLACE).eq("preselected", true).eq("status", "PROCESSED")
+      if (restorePolicyError) throw new Error("TOP20_POLICY_REANALYSIS_RESTORE_FAILED")
+    }
     const nextGeneration = Number(run.continuation_generation ?? 0) + 1
     const { data, error: updateError } = await input.supabase
       .from("marketplace_listing_approval_queue_runs").update({
@@ -1152,7 +1178,18 @@ export async function startListingAiApprovalQueueScan(input: {
         lease_owner: null, lease_expires_at: null, next_continuation_at: now.toISOString(),
         last_error_code: null, completed_at: null,
         ebay_first_status: emptyCompletionNeedsRecovery ? "NOT_STARTED" : run.ebay_first_status,
-        scan_phase: incompleteLoop1NeedsRecovery ? "LOOP1_ANALYSIS" : run.scan_phase,
+        scan_phase: incompleteLoop1NeedsRecovery || policyUpgradeNeedsReanalysis
+          ? "LOOP1_ANALYSIS" : run.scan_phase,
+        ...(policyUpgradeNeedsReanalysis ? {
+          deep_analyzed_count: 0, candidates_analyzed: 0, ready_count: 0,
+          needs_data_count: 0, rejected_count: 0, go_count: 0,
+          go_with_changes_count: 0, no_go_count: 0, exact_match_count: 0,
+          excluded_internal_count: 0, retry_count: 0,
+          identity_enriched_count: 0, identity_conflict_count: 0,
+          catalog_read_count: 0, browse_read_count: 0,
+          coverage_before: {}, coverage_after: {}, source_coverage: {},
+          enrichment_version: LUNA_PRODUCT_IDENTITY_ENRICHMENT_VERSION,
+        } : {}),
         last_checkpoint_at: run.last_checkpoint_at ?? run.last_activity_at ?? run.updated_at,
         last_activity_at: now.toISOString(), updated_at: now.toISOString(),
       }).eq("id", run.id).eq("lock_version", run.lock_version).select("*").maybeSingle()
@@ -1233,7 +1270,8 @@ export async function startListingAiApprovalQueueScan(input: {
     catalogTotal: total, shouldSchedule: true, continuationToken: token,
     continuationGeneration: Number(run.continuation_generation ?? 1),
     expectedBatch: Number(run.current_batch ?? 0) + 1,
-    recovered: recoverableDispatch || emptyCompletionRecovered || incompleteLoop1NeedsRecovery,
+    recovered: recoverableDispatch || emptyCompletionRecovered || incompleteLoop1NeedsRecovery ||
+      policyUpgradeNeedsReanalysis,
     recoveredEmptyCompletion: emptyCompletionRecovered,
     batchSize: configuration.batchSize, timeBudgetSeconds: configuration.timeBudgetSeconds,
     openAiCalls: 0, ebayWrites: 0, canPublish: false }
@@ -2487,6 +2525,7 @@ export async function confirmListingAiQueueLunaObservation(input: {
   const pack = record(record(snapshot.packStrategy).recommendedPack)
   const recommendedPackCount = positiveInteger(pack.packCount)
   if (!recommendedPackCount) throw new Error("TOP10_RECOMMENDED_PACK_REQUIRED")
+  const supplierUnitsPerOffer = positiveInteger(pack.stockRequired) ?? 1
   const reserve = number(item.supplier_shipping_reserve_usd) ??
     supplierReserve(input.environment ?? process.env)
   const confirmation = buildLunaOperatorConfirmation({
@@ -2494,6 +2533,7 @@ export async function confirmListingAiQueueLunaObservation(input: {
     availability: input.availability,
     exactQuantity: input.exactQuantity,
     recommendedPackCount,
+    supplierUnitsPerOffer,
     supplierShippingReserveUsd: reserve,
   })
   const idempotencyHash = hash({ accountKey: input.accountKey, key: input.idempotencyKey })
@@ -2556,7 +2596,7 @@ export async function confirmListingAiQueueLunaObservation(input: {
       scent: text(identity.scent), variant: text(identity.variant), condition: text(identity.condition),
     },
     comparables: comparableInputFromPackage(payload),
-    supplierPackageCost: confirmation.supplierPriceObserved * confirmation.recommendedPackCount,
+    supplierPackageCost: confirmation.supplierPriceObserved * confirmation.supplierUnitsPerOffer,
     packagingCost,
     outboundShippingCost: outbound + confirmation.supplierShippingReserveUsd,
     fixedFulfillmentCost,
@@ -2573,9 +2613,10 @@ export async function confirmListingAiQueueLunaObservation(input: {
       exactContents: strings(intake.includedContents),
       offerGtin: confirmation.recommendedPackCount === 1 && identity.gtinValid === true ? text(identity.gtin) : null,
       offerGtinVerified: confirmation.recommendedPackCount === 1 && identity.gtinValid === true,
-      cost: confirmation.supplierPriceObserved * confirmation.recommendedPackCount,
+      cost: confirmation.supplierPriceObserved * confirmation.supplierUnitsPerOffer,
       shippingCost: outbound + confirmation.supplierShippingReserveUsd,
-      stockRequired: 1, stockAvailable: confirmation.availableOfferPackCapacity,
+      stockRequired: confirmation.supplierUnitsPerOffer,
+      stockAvailable: confirmation.supplierUnitQuantity ?? confirmation.availableOfferPackCapacity,
       packageWeight: number(logistics.weight), packageDimensions: dims,
     }] },
     now,

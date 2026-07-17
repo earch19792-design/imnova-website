@@ -346,6 +346,7 @@ export function buildLunaOperatorConfirmation(input: {
   availability: LunaAvailabilityConfirmation
   exactQuantity?: number | null
   recommendedPackCount: number
+  supplierUnitsPerOffer?: number
   supplierShippingReserveUsd: number
 }) {
   if (!Number.isFinite(input.priceObserved) || input.priceObserved < 0) {
@@ -353,6 +354,10 @@ export function buildLunaOperatorConfirmation(input: {
   }
   if (!Number.isInteger(input.recommendedPackCount) || input.recommendedPackCount <= 0) {
     throw new Error("RECOMMENDED_PACK_COUNT_INVALID")
+  }
+  const supplierUnitsPerOffer = input.supplierUnitsPerOffer ?? input.recommendedPackCount
+  if (!Number.isInteger(supplierUnitsPerOffer) || supplierUnitsPerOffer <= 0) {
+    throw new Error("SUPPLIER_UNITS_PER_OFFER_INVALID")
   }
   if (!Number.isFinite(input.supplierShippingReserveUsd) || input.supplierShippingReserveUsd < 0) {
     throw new Error("SUPPLIER_SHIPPING_RESERVE_INVALID")
@@ -365,7 +370,7 @@ export function buildLunaOperatorConfirmation(input: {
     ? input.exactQuantity as number : null
   const availableOfferPackCapacity = input.availability === "OUT_OF_STOCK"
     ? 0 : input.availability === "AVAILABLE_QUANTITY_NOT_SHOWN"
-      ? 1 : Math.floor((supplierUnitQuantity ?? 0) / input.recommendedPackCount)
+      ? 1 : Math.floor((supplierUnitQuantity ?? 0) / supplierUnitsPerOffer)
   const stockConfidence = input.availability === "OUT_OF_STOCK"
     ? "OUT_OF_STOCK" as const : input.availability === "AVAILABLE_QUANTITY_NOT_SHOWN"
       ? "UNKNOWN_QUANTITY" as const : "EXACT_QUANTITY" as const
@@ -375,6 +380,7 @@ export function buildLunaOperatorConfirmation(input: {
     supplierUnitQuantity,
     stockConfidence,
     recommendedPackCount: input.recommendedPackCount,
+    supplierUnitsPerOffer,
     availableOfferPackCapacity,
     ebayListingQuantity: availableOfferPackCapacity > 0 ? 1 : 0,
     supplierShippingCostStatus: "ESTIMATED" as const,
@@ -387,6 +393,7 @@ export function buildLunaOperatorConfirmation(input: {
       availability: input.availability,
       supplierUnitQuantity,
       recommendedPackCount: input.recommendedPackCount,
+      supplierUnitsPerOffer,
       availableOfferPackCapacity,
       ebayListingQuantity: availableOfferPackCapacity > 0 ? 1 : 0,
       supplierShippingReserveUsd: Math.round(input.supplierShippingReserveUsd * 100) / 100,
