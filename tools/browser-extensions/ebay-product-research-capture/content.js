@@ -7,6 +7,18 @@
   const RECEIVER_READY_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_RECEIVER_READY_V1"
   const CAPTURE_RESULT_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_CAPTURE_RESULT_V1"
   const REQUIRED_FIELDS = ["temporaryTitle", "averageSoldPrice", "totalSold", "lastSoldDate"]
+  const HEADER_SELECTOR = [
+    "th", '[role="columnheader"]', '[data-testid*="header" i]',
+    '[data-testid*="column" i]', '[class*="header" i]', '[class*="column" i]',
+  ].join(",")
+  const ROW_SELECTOR = [
+    "tbody tr", '[role="row"]', '[data-testid*="row" i]',
+    '[data-testid*="result" i]', '[class*="row" i]', '[class*="result" i]',
+  ].join(",")
+  const CELL_SELECTOR = [
+    "td", '[role="cell"]', '[role="gridcell"]', '[data-testid*="cell" i]',
+    '[class*="cell" i]',
+  ].join(",")
   const HEADER_ALIASES = {
     temporaryTitle: ["title", "listing title", "item title", "product"],
     listingId: ["item id", "listing id", "ebay item id"],
@@ -64,6 +76,42 @@
     return Object.entries(HEADER_ALIASES).find(([, aliases]) =>
       aliases.some((alias) => normalized === key(alias) || normalized.includes(key(alias))))?.[0] ?? null
   }
+
+  function smallestVisibleMatches(container, selector) {
+    return [...container.querySelectorAll(selector)].filter(visible).filter((element) => {
+      const own = text(element.innerText || element.textContent)
+      if (!own) return false
+      return ![...element.querySelectorAll(selector)].some((child) =>
+        child !== element && visible(child) &&
+        text(child.innerText || child.textContent) === own)
+    })
+  }
+
+  function headerElementsFor(container) {
+    const matches = smallestVisibleMatches(container, HEADER_SELECTOR)
+      .filter((element) => canonicalHeader(text(element.innerText || element.textContent)))
+    const byField = new Map()
+    for (const element of matches) {
+      const field = canonicalHeader(text(element.innerText || element.textContent))
+      if (field && !byField.has(field)) byField.set(field, element)
+    }
+    return [...byField.values()].sort((left, right) =>
+      left.getBoundingClientRect().left - right.getBoundingClientRect().left)
+  }
+
+  function rowCells(row, expectedCount) {
+    const semantic = smallestVisibleMatches(row, CELL_SELECTOR)
+    if (semantic.length >= expectedCount) return semantic
+    const direct = [...row.children].filter(visible).filter((element) =>
+      text(element.innerText || element.textContent))
+    if (direct.length >= expectedCount) return direct
+    for (const child of direct) {
+      const nested = [...child.children].filter(visible).filter((element) =>
+        text(element.innerText || element.textContent))
+      if (nested.length >= expectedCount) return nested
+    }
+    return []
+  }
   const offerFacts = (title) => {
     const normalized = text(title).toLowerCase()
     const pack = normalized.match(/\b(?:lot|pack|set)\s+of\s+(\d{1,3})\b/) ??
@@ -88,17 +136,17 @@
     const semanticTable = container.matches("table")
     const headerElements = semanticTable
       ? [...container.querySelectorAll("thead th")]
-      : [...container.querySelectorAll('[role="columnheader"]')]
+      : headerElementsFor(container)
     const headers = headerElements.map((element) => text(element.innerText || element.textContent))
     const mapped = headers.map(canonicalHeader)
     if (!REQUIRED_FIELDS.every((field) => mapped.includes(field))) return null
     const rowElements = semanticTable
       ? [...container.querySelectorAll("tbody tr")]
-      : [...container.querySelectorAll('[role="row"]')].filter((row) =>
-        !row.querySelector('[role="columnheader"]'))
+      : [...container.querySelectorAll(ROW_SELECTOR)].filter((row) =>
+        !headerElements.includes(row) && !row.querySelector(HEADER_SELECTOR))
     const rows = rowElements.filter(visible).flatMap((row) => {
       const cells = semanticTable ? [...row.querySelectorAll("td")]
-        : [...row.querySelectorAll('[role="cell"],[role="gridcell"]')]
+        : rowCells(row, headers.length)
       if (!cells.length) return []
       const values = Object.fromEntries(mapped.flatMap((field, index) => field
         ? [[field, text(cells[index]?.innerText || cells[index]?.textContent)]] : []))
@@ -125,9 +173,27 @@
   }
 
   function findVisibleResults() {
-    const containers = [...document.querySelectorAll('table,[role="table"],[role="grid"]')]
-      .filter(visible)
-    for (const container of containers) {
+    const containers = [...document.querySelectorAll([
+      "table", '[role="table"]', '[role="grid"]', '[data-testid*="table" i]',
+      '[data-testid*="grid" i]', '[class*="table" i]', '[class*="grid" i]',
+    ].join(","))].filter(visible)
+    const headerCandidates = [...document.querySelectorAll(HEADER_SELECTOR)].filter(visible)
+      .filter((element) => canonicalHeader(text(element.innerText || element.textContent)))
+    for (const header of headerCandidates) {
+      let ancestor = header.parentElement
+      for (let depth = 0; ancestor && depth < 8; depth += 1, ancestor = ancestor.parentElement) {
+        if (!visible(ancestor)) continue
+        const fields = new Set(headerElementsFor(ancestor).map((element) =>
+          canonicalHeader(text(element.innerText || element.textContent))))
+        if (REQUIRED_FIELDS.every((field) => fields.has(field))) containers.push(ancestor)
+      }
+    }
+    const uniqueContainers = [...new Set(containers)].sort((left, right) => {
+      const leftBox = left.getBoundingClientRect()
+      const rightBox = right.getBoundingClientRect()
+      return leftBox.width * leftBox.height - rightBox.width * rightBox.height
+    })
+    for (const container of uniqueContainers) {
       const result = tableParts(container)
       if (result) return result
     }
@@ -243,7 +309,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.0.1"
+  title.textContent = "Seller OS · Product Research · v1.0.2"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar resultados para Seller OS"

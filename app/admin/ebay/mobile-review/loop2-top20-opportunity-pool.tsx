@@ -567,7 +567,7 @@ export function Loop2Top20OpportunityPool() {
               <p className="mt-1 text-white/60">Para cuentas sin export CSV/JSON: la extensión captura con un clic únicamente la tabla visible en la página oficial autenticada. No comparte cookies ni credenciales con Seller OS.</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.0.1.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión segura v1.0.1</a>
+              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.0.2.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión segura v1.0.2</a>
               <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
             </div>
             <p className="text-white/55">Instálala localmente una vez. Después ejecuta la búsqueda, revisa la tabla visible y pulsa “Capturar resultados para Seller OS” dentro de Product Research.</p>
