@@ -162,6 +162,32 @@ function numberOrNull(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+export function buildOfficialEbayVisualMetadata(
+  value: unknown,
+  observedAt = new Date().toISOString(),
+) {
+  const item = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {}
+  const primary = item.image && typeof item.image === "object" && !Array.isArray(item.image)
+    ? cleanText((item.image as Record<string, unknown>).imageUrl) : ""
+  const additional = (Array.isArray(item.additionalImages) ? item.additionalImages : [])
+    .map((entry) => entry && typeof entry === "object" && !Array.isArray(entry)
+      ? cleanText((entry as Record<string, unknown>).imageUrl) : "")
+    .filter(Boolean)
+  const imageCount = new Set([primary, ...additional].filter(Boolean)).size
+  return {
+    imageCount: imageCount || null,
+    evidenceLevel: imageCount ? "LOW" as const : "INSUFFICIENT" as const,
+    observedAt: Number.isFinite(Date.parse(observedAt))
+      ? new Date(Date.parse(observedAt)).toISOString() : null,
+    sourceType: "OFFICIAL_EBAY_METADATA" as const,
+    rawImageStored: false,
+    imageDownloaded: false,
+    imageCopied: false,
+    pixelAnalysisPerformed: false,
+  }
+}
+
 function booleanOrNull(value: unknown) {
   return value === true ? true : value === false ? false : null
 }

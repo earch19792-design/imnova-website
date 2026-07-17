@@ -1,5 +1,6 @@
 import {
   assertEbaySellerKeywordReadonlyRequest,
+  buildOfficialEbayVisualMetadata,
   buildEbaySellerKeywordDemandValidation,
   buildEbaySellerKeywordSearchQuery,
   type EbaySellerComparableInput,
@@ -255,6 +256,7 @@ function mapComparable(
     returnsAccepted: returnTerms.returnsAccepted === true,
     itemOriginDate: text(item.itemOriginDate),
     itemEndDate: text(item.itemEndDate),
+    visualEvidence: buildOfficialEbayVisualMetadata(item),
     source,
   }
 }

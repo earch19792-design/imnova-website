@@ -5,12 +5,14 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import {
   approvalQueueEconomicsHash,
   approvalQueueRankingScore,
+  buildDualSourceOpportunityIntelligence,
   buildLunaOperatorConfirmation,
   evaluateApprovalQueueCatalogCandidate,
   evaluateApprovalQueueDecision,
   evaluateApprovalQueueLoop1Eligibility,
   rankApprovalQueue,
   rankTop20OpportunityPool,
+  resolveLunaPortexImageAuthorization,
   type ApprovalQueueCatalogCandidate,
   type ApprovalQueueDecisionEvidence,
   type ApprovalQueueRankedCandidate,
@@ -52,6 +54,7 @@ import {
 import {
   EBAY_WINNER_EVIDENCE_V2_VERSION,
   buildProductIdentityFingerprint,
+  classifyWinnerComparable,
   validateGtinChecksum,
   type WinnerComparableInput,
   type WinnerEvidenceInput,
@@ -199,15 +202,24 @@ function candidateFromRows(
   const restrictions = safeCodes(metadata.restrictionGuards ?? metadata.restriction_guards)
   const productName = text(variant.title)
   const supplierShippingReserveUsd = supplierReserve(environment)
+  const productUrl = text(variant.product_url)
+  const imageUrl = text(variant.featured_image_url)
+  const imageAuthorization = resolveLunaPortexImageAuthorization({
+    metadataAuthorized: metadata.imageAuthorized === true || metadata.image_authorized === true ||
+      imageProvenance.authorized === true,
+    imageUrl,
+    productUrl,
+    environment,
+  })
   return {
     marketRadarProductId: text(variant.product_id),
     supplierProductId: text(variant.supplier_product_id),
     supplierVariantId: text(variant.supplier_variant_id),
     supplierSku: text(variant.sku),
-    productUrl: text(variant.product_url),
-    imageUrl: text(variant.featured_image_url),
-    imageAuthorized: metadata.imageAuthorized === true || metadata.image_authorized === true ||
-      imageProvenance.authorized === true,
+    productUrl,
+    imageUrl,
+    imageAuthorized: imageAuthorization.authorized,
+    imageAuthorizationSource: imageAuthorization.source,
     supplierCost: number(variant.price),
     available: variant.available === true,
     inventoryQuantity: number(variant.inventory_quantity),
@@ -409,9 +421,122 @@ async function enrichFromOfficialSources(input: {
     sourceCoverage: sourceCoverage([...resolved.evidence, ...taxonomyEvidence]) }
 }
 
-function winnerInput(candidate: ApprovalQueueCatalogCandidate, accountKey: string): WinnerEvidenceInput {
+function sanitizedMarketPatterns(input: {
+  candidate: ApprovalQueueCatalogCandidate
+  report?: unknown
+  discovery?: {
+    origin: "EBAY_FIRST" | "LUNA_FIRST"
+    lunaMatchStatus: string | null
+    ebayFirstEvidence?: unknown
+  }
+}) {
+  const root = record(input.report)
+  const rawById = new Map(records(root.comparableEvidence).map((row) => [text(row.comparableId), row]))
+  const exact = winnerComparablesFromKeywordReport(input.report).filter((comparable) =>
+    classifyWinnerComparable({
+      manufacturerBrand: input.candidate.manufacturerBrand,
+      gtin: input.candidate.gtin,
+      mpn: input.candidate.mpn,
+      model: input.candidate.model,
+      productName: input.candidate.productName,
+      packCount: input.candidate.packCount,
+      unitCount: input.candidate.unitCount,
+      size: input.candidate.size,
+      color: input.candidate.color,
+      scent: input.candidate.scent,
+      variant: input.candidate.variant,
+      condition: input.candidate.condition,
+    }, comparable.identity).classification === "EXACT_MATCH")
+  const exactRows = exact.map((entry) => ({ comparable: entry,
+    raw: rawById.get(entry.sourceListingId ?? null) ?? {} }))
+  const active = exactRows.filter(({ comparable }) => comparable.source !==
+    "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY")
+  const sold = exactRows.filter(({ comparable }) => comparable.source ===
+    "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY")
+  const sellerKey = (row: JsonRecord) => text(row.sellerUsername)?.toLocaleLowerCase("en-US") ?? null
+  const sellerCounts = new Map<string, number>()
+  for (const { raw } of active) {
+    const key = sellerKey(raw)
+    if (key) sellerCounts.set(key, (sellerCounts.get(key) ?? 0) + 1)
+  }
+  const activeSellerCount = sellerCounts.size
+  const verifiedSoldSellerCount = new Set(sold.map(({ raw }) => sellerKey(raw)).filter(Boolean)).size
+  const estimated = active.filter(({ comparable }) =>
+    comparable.source === "EBAY_BROWSE_ESTIMATED_SALES")
+  const estimatedSoldSellerCount = new Set(estimated.map(({ raw }) => sellerKey(raw)).filter(Boolean)).size
+  const totalVerifiedSoldQuantity = sold.reduce((sum, { comparable }) =>
+    sum + (comparable.confirmedSoldQuantity ?? 0), 0)
+  const totalEstimatedSoldQuantity = estimated.reduce((sum, { comparable }) =>
+    sum + (comparable.estimatedSoldQuantity ?? 0), 0)
+  const percent = (count: number, total: number) => total
+    ? Math.round(count / total * 10_000) / 100 : null
+  const freeShipping = active.filter(({ raw }) => number(raw.shippingCost) === 0).length
+  const returns = active.filter(({ raw }) => raw.returnsAccepted === true).length
+  const sellerConcentrationPercent = active.length && sellerCounts.size
+    ? percent(Math.max(...sellerCounts.values()), active.length) : null
+  const titles = exactRows.map(({ raw }) => text(raw.title)).filter((value): value is string => Boolean(value))
+  const brand = input.candidate.manufacturerBrand?.toLocaleLowerCase("en-US") ?? ""
+  const structuralPatterns = [
+    brand && titles.some((title) => title.toLocaleLowerCase("en-US").startsWith(brand))
+      ? "BRAND_EARLY_IN_EXACT_TITLES" : null,
+    titles.some((title) => /\b(?:pack|set|case)\s+of\s+\d+|\b\d+\s*(?:pack|pk|set)\b/i.test(title))
+      ? "PACK_COUNT_EXPLICIT_IN_EXACT_TITLES" : null,
+    titles.some((title) => /\b\d+(?:\.\d+)?\s*(?:oz|ml|lb|in|ct|count)\b/i.test(title))
+      ? "SIZE_OR_COUNT_EXPLICIT_IN_EXACT_TITLES" : null,
+  ].filter((value): value is string => Boolean(value))
+  const ebayFirst = record(input.discovery?.ebayFirstEvidence)
+  const crossSourceCorroborated = input.discovery?.origin === "EBAY_FIRST" &&
+    input.discovery.lunaMatchStatus === "EXACT_LUNA_MATCH" && active.length > 0
+  const evidenceBasis = sold.length
+    ? "CONFIRMED_SOLD_EXACT"
+    : estimated.length
+      ? "ESTIMATED_MOVEMENT_EXACT_SEPARATED"
+      : active.length ? "ACTIVE_EXACT_ONLY" : "INSUFFICIENT_EVIDENCE"
+  return {
+    marketEvidence: {
+      activeSellerCount,
+      verifiedSoldSellerCount,
+      estimatedSoldSellerCount,
+      totalVerifiedSoldQuantity,
+      totalEstimatedSoldQuantity,
+      evidenceBasis,
+      discoveryOrigin: input.discovery?.origin ?? "LUNA_FIRST",
+      ebayFirstDemandEvidence: text(ebayFirst.demandEvidence),
+      crossSourceCorroborated,
+      activeAndSoldSeparated: true,
+    },
+    sellerPatterns: {
+      activeSellerCount,
+      verifiedSoldSellerCount,
+      freeShippingPrevalencePercent: percent(freeShipping, active.length),
+      returnsPrevalencePercent: percent(returns, active.length),
+      sellerConcentrationPercent,
+      handlingPatterns: [],
+      quantityDiscountPatterns: [],
+      offerPatterns: [],
+      visibleTrustElements: [
+        activeSellerCount >= 2 ? "MULTI_SELLER_ACTIVE_MARKET" : null,
+        active.some(({ raw }) => (number(raw.sellerFeedbackPercentage) ?? 0) >= 98)
+          ? "HIGH_SELLER_FEEDBACK_VISIBLE" : null,
+      ].filter((value): value is string => Boolean(value)),
+    },
+    titleStructurePatterns: structuralPatterns,
+  }
+}
+
+function winnerInput(
+  candidate: ApprovalQueueCatalogCandidate,
+  accountKey: string,
+  report?: unknown,
+  discovery?: {
+    origin: "EBAY_FIRST" | "LUNA_FIRST"
+    lunaMatchStatus: string | null
+    ebayFirstEvidence?: unknown
+  },
+): WinnerEvidenceInput {
   const shipping = (candidate.outboundShippingCost ?? 0) + (candidate.supplierShippingReserveUsd ?? 0)
   const includedContents = candidate.exactContents
+  const marketPatterns = sanitizedMarketPatterns({ candidate, report, discovery })
   // Luna price and inventory belong to one supplier offer. `packCount` is the
   // customer-visible content of that offer, not a multiplier for cost/stock.
   const supplierUnitsPerOffer = 1
@@ -464,8 +589,12 @@ function winnerInput(candidate: ApprovalQueueCatalogCandidate, accountKey: strin
         candidate.variant,
         candidate.packCount ? `${candidate.packCount} pack` : null,
       ].filter((entry): entry is string => Boolean(entry)),
+      titleStructurePatterns: marketPatterns.titleStructurePatterns,
+      unsupportedTerms: [],
+      sellerPatterns: marketPatterns.sellerPatterns,
       locale: "en-US",
     },
+    marketEvidence: marketPatterns.marketEvidence,
     packStrategyEvidence: {
       offers: [{
         packCount: candidate.packCount,
@@ -590,6 +719,7 @@ function safeEvidenceSnapshot(input: {
   evidence?: ApprovalQueueDecisionEvidence
   pack?: ReturnType<typeof buildListingAiPackStrategy>
   productName?: string | null
+  strategicIntelligence?: ReturnType<typeof buildDualSourceOpportunityIntelligence>
 }) {
   return {
     product: {
@@ -599,6 +729,7 @@ function safeEvidenceSnapshot(input: {
       supplierProductId: input.candidate.supplierProductId,
       lunaUrl: input.candidate.productUrl,
       authorizedImageUrl: input.candidate.imageAuthorized ? input.candidate.imageUrl : null,
+      imageAuthorizationSource: input.candidate.imageAuthorizationSource ?? null,
       variant: input.candidate.variant,
       categoryId: input.candidate.categoryId,
       categoryName: input.candidate.categoryName,
@@ -635,6 +766,7 @@ function safeEvidenceSnapshot(input: {
       alternativePack: input.pack.alternativePack,
       matrix: input.pack.packMatrix,
     } : null,
+    strategicIntelligence: input.strategicIntelligence ?? null,
     operatorConfirmationRequired: true,
     technicalDataRequestedFromOperator: false,
     canPublish: false,
@@ -658,10 +790,14 @@ async function analyzeCandidate(input: {
   candidate: ApprovalQueueCatalogCandidate
   now: Date
   comparables?: WinnerComparableInput[]
+  marketReport?: unknown
+  discovery?: { origin: "EBAY_FIRST" | "LUNA_FIRST"; lunaMatchStatus: string | null;
+    ebayFirstEvidence?: unknown }
 }) {
   const generated = await createWinnerEvidenceDecisionPackage(
     input.supabase,
-    { ...winnerInput(input.candidate, input.accountKey), comparables: input.comparables },
+    { ...winnerInput(input.candidate, input.accountKey, input.marketReport, input.discovery),
+      comparables: input.comparables },
     {
       useOfficialRead: input.comparables === undefined,
       persist: true,
@@ -671,8 +807,40 @@ async function analyzeCandidate(input: {
   if (!generated.packageId) throw new Error("TOP10_DECISION_PACKAGE_PERSIST_REQUIRED")
   const row = await readDecisionRow(input.supabase, input.accountKey, generated.packageId)
   const { evidence, pack } = evidenceFromPackage(row, input.candidate, input.now)
+  const strategicIntelligence = buildDualSourceOpportunityIntelligence({
+    origin: input.discovery?.origin ?? "LUNA_FIRST",
+    lunaMatchStatus: input.discovery?.lunaMatchStatus,
+    activeExactCount: evidence.activeExactCount,
+    soldExactCount: evidence.soldExactCount,
+    estimatedDemandCount: evidence.estimatedDemandCount,
+    activeSellerCount: number(record(input.marketReport).sellersAnalyzed),
+  })
+  evidence.scores.crossSourceCorroboration = strategicIntelligence.score
+  const packagePayload = record(row.package_payload)
+  const visualAnalysis = record(packagePayload.visualEvidenceAnalysis)
+  const visualSummary = record(visualAnalysis.visualEvidenceSummary)
+  const visualConfidence = record(visualAnalysis.visualPatternConfidence)
+  const listingAiIntake = record(packagePayload.listingAiIntake)
+  const optimizationEvidence = {
+    marketEvidence: record(packagePayload.marketEvidence),
+    sellerPatterns: record(listingAiIntake.sellerPatterns),
+    titleStructurePatterns: strings(listingAiIntake.titleStructurePatterns),
+    visualEvidence: {
+      status: text(visualAnalysis.status) ?? "N/D",
+      activeExactSampleSize: number(visualSummary.activeExactSampleSize) ?? 0,
+      soldExactSampleSize: number(visualSummary.soldOrCompletedExactSampleSize) ?? 0,
+      usableSampleSize: number(visualConfidence.sampleSize) ?? 0,
+      confidence: text(visualConfidence.level) ?? "INSUFFICIENT",
+      imageMetadataOnly: true,
+      competitorImagesDownloaded: 0,
+      competitorImagesCopied: 0,
+    },
+    competitorTitlesStored: false,
+    competitorDescriptionsStored: false,
+    competitorImagesStored: false,
+  }
   const classification = evaluateApprovalQueueDecision(evidence)
-  return { row, evidence, pack, classification }
+  return { row, evidence, pack, classification, strategicIntelligence, optimizationEvidence }
 }
 
 async function loadQueueRows(supabase: SupabaseClient, productIds: string[]) {
@@ -1294,6 +1462,7 @@ async function recomputeRanks(supabase: SupabaseClient, accountKey: string, runI
     const economics = record(snapshot.economics)
     const pack = record(snapshot.packStrategy)
     const recommended = record(pack.recommendedPack)
+    const strategic = record(snapshot.strategicIntelligence)
     return {
       id: row.id,
       marketRadarProductId: row.market_radar_product_id,
@@ -1334,6 +1503,8 @@ async function recomputeRanks(supabase: SupabaseClient, accountKey: string, runI
         competitionPressure: number(scores.competitionPressure) ?? 100,
         freshness: number(scores.freshness) ?? 0,
         operationalSimplicity: number(scores.operationalSimplicity) ?? 0,
+        crossSourceCorroboration: number(strategic.score) ??
+          number(scores.crossSourceCorroboration) ?? 0,
       },
       rankingScore: number(row.ranking_score) ?? 0,
       cohort: row.cohort as ApprovalQueueRankedCandidate["cohort"],
@@ -1808,6 +1979,12 @@ export async function runListingAiApprovalQueueBatch(input: {
           const result = await analyzeCandidate({
             supabase: input.supabase, accountKey: input.accountKey, candidate, now,
             comparables: separateActiveAndEstimatedComparables(enriched.report),
+            marketReport: enriched.report,
+            discovery: {
+              origin: entry.target.discovery_strategy === "EBAY_FIRST" ? "EBAY_FIRST" : "LUNA_FIRST",
+              lunaMatchStatus: text(entry.target.ebay_first_luna_match_status),
+              ebayFirstEvidence: entry.target.ebay_first_evidence_snapshot,
+            },
           })
           analyzed += 1
           const preliminarySafe = result.evidence.estimatedProfit !== null && result.evidence.estimatedProfit >= 5 &&
@@ -1830,7 +2007,9 @@ export async function runListingAiApprovalQueueBatch(input: {
           baseFingerprint = result.pack.baseProductFingerprint
           offerFingerprint = result.pack.recommendedPack?.offerPackFingerprint ?? result.pack.currentOfferPackFingerprint
           rankingScore = approvalQueueRankingScore(result.evidence.scores)
-          snapshot = { ...safeEvidenceSnapshot({ candidate, evidence: result.evidence, pack: result.pack }),
+          snapshot = { ...safeEvidenceSnapshot({ candidate, evidence: result.evidence,
+            pack: result.pack, strategicIntelligence: result.strategicIntelligence }),
+            optimizationEvidence: result.optimizationEvidence,
             discovery: {
               origin: entry.target.discovery_strategy === "EBAY_FIRST" ? "EBAY_FIRST" : "LUNA_FIRST",
               lunaMatchStatus: entry.target.discovery_strategy === "EBAY_FIRST"
@@ -2580,6 +2759,7 @@ export async function confirmListingAiQueueLunaObservation(input: {
   const payload = record(previous.package_payload)
   const identity = record(record(payload.productIdentity).identity)
   const intake = record(payload.listingAiIntake)
+  const marketEvidence = record(payload.marketEvidence)
   const logistics = record(snapshot.logistics)
   const dims = dimensions(logistics.dimensions)
   const outbound = number(logistics.outboundShippingCost)
@@ -2611,6 +2791,19 @@ export async function confirmListingAiQueueLunaObservation(input: {
     stockAvailable: confirmation.availableOfferPackCapacity,
     stockObservedAt: now.toISOString(), costObservedAt: now.toISOString(),
     listingAiIntake: intake as WinnerEvidenceInput["listingAiIntake"],
+    marketEvidence: {
+      activeSellerCount: number(marketEvidence.activeSellerCount),
+      verifiedSoldSellerCount: number(marketEvidence.verifiedSoldSellerCount),
+      estimatedSoldSellerCount: number(marketEvidence.estimatedSoldSellerCount),
+      totalVerifiedSoldQuantity: number(marketEvidence.totalVerifiedSoldQuantity),
+      totalEstimatedSoldQuantity: number(marketEvidence.totalEstimatedSoldQuantity),
+      evidenceBasis: text(marketEvidence.evidenceBasis),
+      discoveryOrigin: marketEvidence.discoveryOrigin === "EBAY_FIRST"
+        ? "EBAY_FIRST" : marketEvidence.discoveryOrigin === "LUNA_FIRST" ? "LUNA_FIRST" : null,
+      ebayFirstDemandEvidence: text(marketEvidence.ebayFirstDemandEvidence),
+      crossSourceCorroborated: marketEvidence.crossSourceCorroborated === true,
+      activeAndSoldSeparated: marketEvidence.activeAndSoldSeparated !== false,
+    },
     packStrategyEvidence: { offers: [{
       packCount: confirmation.recommendedPackCount,
       unitCountPerItem: number(identity.unitCount),
@@ -2636,6 +2829,10 @@ export async function confirmListingAiQueueLunaObservation(input: {
     supplierSku: item.supplier_sku,
     productUrl: text(record(snapshot.product).lunaUrl), imageUrl: text(record(snapshot.product).authorizedImageUrl),
     imageAuthorized: Boolean(record(snapshot.product).authorizedImageUrl),
+    imageAuthorizationSource: record(snapshot.product).imageAuthorizationSource === "PRODUCT_METADATA"
+      ? "PRODUCT_METADATA"
+      : record(snapshot.product).imageAuthorizationSource === "LUNA_PORTEX_PREVIEW_OPERATOR_AUTHORIZATION"
+        ? "LUNA_PORTEX_PREVIEW_OPERATOR_AUTHORIZATION" : null,
     supplierCost: confirmation.supplierPriceObserved, available: true,
     inventoryQuantity: confirmation.availableOfferPackCapacity, capturedAt: now.toISOString(),
     manufacturerBrand: text(identity.manufacturerBrand), gtin: text(identity.gtin), gtinValid: identity.gtinValid === true,
@@ -2655,7 +2852,12 @@ export async function confirmListingAiQueueLunaObservation(input: {
   }
   const { evidence, pack: refreshedPack } = evidenceFromPackage(refreshed, candidate, now)
   const classification = evaluateApprovalQueueDecision(evidence)
-  const refreshedSnapshot = safeEvidenceSnapshot({ candidate, evidence, pack: refreshedPack })
+  const refreshedSnapshot = {
+    ...safeEvidenceSnapshot({ candidate, evidence, pack: refreshedPack }),
+    strategicIntelligence: snapshot.strategicIntelligence ?? null,
+    optimizationEvidence: snapshot.optimizationEvidence ?? null,
+    discovery: snapshot.discovery ?? null,
+  }
   const { error: eventError } = await input.supabase.from("marketplace_listing_supplier_confirmations").insert({
     marketplace_account_key: input.accountKey, marketplace: MARKETPLACE,
     queue_item_id: item.id, decision_package_id: refreshed.id, package_hash: refreshed.package_hash,

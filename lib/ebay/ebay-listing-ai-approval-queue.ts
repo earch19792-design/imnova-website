@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto"
 
 export const LISTING_AI_APPROVAL_QUEUE_VERSION =
-  "EBAY_LISTING_AI_TOP20_OPPORTUNITY_POOL_V1_2026_07_16"
+  "EBAY_LISTING_AI_TOP20_OPPORTUNITY_POOL_V2_2026_07_17"
+export const LUNA_PORTEX_IMAGE_AUTHORIZATION_POLICY_VERSION =
+  "LUNA_PORTEX_MARKETPLACE_IMAGE_AUTHORIZATION_V1_2026_07_17"
+const LISTING_AI_STAGING_REF = "vsfthqydfrdzulldbfbe"
+const LISTING_AI_PREVIEW_BRANCH = "feature/centralize-ebay-mobile-command-center"
 
 export type ApprovalQueueCohort =
   | "READY_FOR_OPERATOR_APPROVAL"
@@ -21,6 +25,8 @@ export type ApprovalQueueCatalogCandidate = {
   productUrl: string | null
   imageUrl: string | null
   imageAuthorized: boolean
+  imageAuthorizationSource?: "PRODUCT_METADATA" |
+    "LUNA_PORTEX_PREVIEW_OPERATOR_AUTHORIZATION" | null
   supplierCost: number | null
   available: boolean | null
   inventoryQuantity: number | null
@@ -91,7 +97,22 @@ export type ApprovalQueueDecisionEvidence = {
     competitionPressure: number
     freshness: number
     operationalSimplicity: number
+    crossSourceCorroboration?: number
   }
+}
+
+export type DualSourceOpportunityIntelligence = {
+  evidenceClass: "CONFIRMED_SOLD_EXACT_SUPPLY_MATCH" |
+    "DUAL_SOURCE_ACTIVE_EXACT_SUPPLY_MATCH" |
+    "ACTIVE_EXACT_WITH_ESTIMATED_MOVEMENT" |
+    "ACTIVE_EXACT_SUPPLY_MATCH" | "INSUFFICIENT_EVIDENCE"
+  score: number
+  confirmedSoldEvidence: boolean
+  estimatedMovementSeparated: boolean
+  activeExactEvidence: boolean
+  ebayFirstCorroborated: boolean
+  rationaleCodes: string[]
+  causalityClaimed: false
 }
 
 export type ApprovalQueueRankedCandidate = ApprovalQueueDecisionEvidence & {
@@ -148,6 +169,100 @@ function urlAllowed(value: string | null) {
     return hostname === "lunaportex.com" || hostname.endsWith(".lunaportex.com")
   } catch {
     return false
+  }
+}
+
+function httpsUrl(value: string | null) {
+  if (!value) return false
+  try {
+    return new URL(value).protocol === "https:"
+  } catch {
+    return false
+  }
+}
+
+export function resolveLunaPortexImageAuthorization(input: {
+  metadataAuthorized: boolean
+  imageUrl: string | null
+  productUrl: string | null
+  environment?: NodeJS.ProcessEnv
+}) {
+  const environment = input.environment ?? process.env
+  let detectedRef: string | null = null
+  try {
+    detectedRef = new URL(environment.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "")
+      .hostname.split(".")[0] || null
+  } catch {
+    detectedRef = null
+  }
+  const operatorPolicyConfigured =
+    environment.LUNA_PORTEX_MARKETPLACE_IMAGE_USE_AUTHORIZED?.trim() === "true"
+  const operatorPolicyBound = operatorPolicyConfigured &&
+    environment.VERCEL_ENV === "preview" &&
+    environment.VERCEL_GIT_COMMIT_REF === LISTING_AI_PREVIEW_BRANCH &&
+    detectedRef === LISTING_AI_STAGING_REF
+  const assetAvailable = httpsUrl(input.imageUrl) && urlAllowed(input.productUrl)
+  const metadataAuthorized = input.metadataAuthorized && assetAvailable
+  const operatorAuthorized = operatorPolicyBound && assetAvailable
+  return {
+    authorized: metadataAuthorized || operatorAuthorized,
+    source: metadataAuthorized
+      ? "PRODUCT_METADATA" as const
+      : operatorAuthorized
+        ? "LUNA_PORTEX_PREVIEW_OPERATOR_AUTHORIZATION" as const
+        : null,
+    policyVersion: LUNA_PORTEX_IMAGE_AUTHORIZATION_POLICY_VERSION,
+    operatorPolicyConfigured,
+    previewBound: operatorPolicyBound,
+    productionAllowed: false,
+  }
+}
+
+export function buildDualSourceOpportunityIntelligence(input: {
+  origin: "EBAY_FIRST" | "LUNA_FIRST"
+  lunaMatchStatus?: string | null
+  activeExactCount: number
+  soldExactCount: number
+  estimatedDemandCount: number
+  activeSellerCount?: number | null
+}) : DualSourceOpportunityIntelligence {
+  const activeExactEvidence = input.activeExactCount > 0
+  const confirmedSoldEvidence = input.soldExactCount > 0
+  const estimatedMovementSeparated = input.estimatedDemandCount > 0
+  const ebayFirstCorroborated = input.origin === "EBAY_FIRST" &&
+    input.lunaMatchStatus === "EXACT_LUNA_MATCH" && activeExactEvidence
+  const multiSeller = (input.activeSellerCount ?? 0) >= 2
+  const score = round(
+    (confirmedSoldEvidence ? 45 : 0) +
+    (ebayFirstCorroborated ? 25 : 0) +
+    (activeExactEvidence ? Math.min(20, input.activeExactCount * 4) : 0) +
+    (estimatedMovementSeparated ? 5 : 0) +
+    (multiSeller ? 5 : 0),
+  )
+  const evidenceClass = confirmedSoldEvidence
+    ? "CONFIRMED_SOLD_EXACT_SUPPLY_MATCH" as const
+    : ebayFirstCorroborated
+      ? "DUAL_SOURCE_ACTIVE_EXACT_SUPPLY_MATCH" as const
+      : activeExactEvidence && estimatedMovementSeparated
+        ? "ACTIVE_EXACT_WITH_ESTIMATED_MOVEMENT" as const
+        : activeExactEvidence
+          ? "ACTIVE_EXACT_SUPPLY_MATCH" as const
+          : "INSUFFICIENT_EVIDENCE" as const
+  return {
+    evidenceClass,
+    score,
+    confirmedSoldEvidence,
+    estimatedMovementSeparated,
+    activeExactEvidence,
+    ebayFirstCorroborated,
+    rationaleCodes: [
+      confirmedSoldEvidence ? "CONFIRMED_SOLD_EXACT_PRESENT" : null,
+      ebayFirstCorroborated ? "EBAY_FIRST_AND_LOOP1_CORROBORATED" : null,
+      activeExactEvidence ? "ACTIVE_EXACT_PRESENT" : null,
+      estimatedMovementSeparated ? "ESTIMATED_MOVEMENT_PRESENT_NOT_CONFIRMED_SALE" : null,
+      multiSeller ? "MULTI_SELLER_ACTIVE_EVIDENCE" : null,
+    ].filter((entry): entry is string => Boolean(entry)),
+    causalityClaimed: false,
   }
 }
 
@@ -275,16 +390,17 @@ export function evaluateApprovalQueueDecision(evidence: ApprovalQueueDecisionEvi
 
 export function approvalQueueRankingScore(scores: ApprovalQueueDecisionEvidence["scores"]) {
   return round(
-    scores.overallOpportunity * 0.22 +
-    scores.demandConfidence * 0.14 +
-    scores.marginSafety * 0.16 +
-    scores.packStrategy * 0.12 +
-    scores.keywordOpportunity * 0.09 +
+    scores.overallOpportunity * 0.20 +
+    scores.demandConfidence * 0.13 +
+    scores.marginSafety * 0.15 +
+    scores.packStrategy * 0.11 +
+    scores.keywordOpportunity * 0.08 +
     scores.visualOpportunity * 0.08 +
     scores.listingReadiness * 0.09 +
     (100 - scores.competitionPressure) * 0.04 +
     scores.freshness * 0.03 +
-    scores.operationalSimplicity * 0.03,
+    scores.operationalSimplicity * 0.03 +
+    (scores.crossSourceCorroboration ?? 0) * 0.06,
   )
 }
 

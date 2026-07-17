@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 
 export const EBAY_WINNER_EVIDENCE_V2_VERSION =
-  "EBAY_WINNER_EVIDENCE_PRODUCT_DECISION_VISUAL_V2_5_2026_07_17"
+  "EBAY_WINNER_EVIDENCE_PRODUCT_DECISION_VISUAL_V2_6_2026_07_17"
 export const PRODUCT_IDENTITY_FINGERPRINT_VERSION =
   "EBAY_PRODUCT_IDENTITY_FINGERPRINT_V2"
 export const WINNER_ECONOMICS_CONFIG_VERSION =
@@ -132,7 +132,34 @@ export type WinnerEvidenceInput = {
     complianceRestrictions?: string[] | null
     blockedClaims?: string[] | null
     allowedImageFacts?: string[] | null
+    allowedClaims?: string[] | null
+    missingFacts?: string[] | null
+    titleStructurePatterns?: string[] | null
+    unsupportedTerms?: string[] | null
+    sellerPatterns?: {
+      activeSellerCount?: number | null
+      verifiedSoldSellerCount?: number | null
+      freeShippingPrevalencePercent?: number | null
+      returnsPrevalencePercent?: number | null
+      sellerConcentrationPercent?: number | null
+      handlingPatterns?: string[] | null
+      quantityDiscountPatterns?: string[] | null
+      offerPatterns?: string[] | null
+      visibleTrustElements?: string[] | null
+    } | null
     locale?: string | null
+  } | null
+  marketEvidence?: {
+    activeSellerCount?: number | null
+    verifiedSoldSellerCount?: number | null
+    estimatedSoldSellerCount?: number | null
+    totalVerifiedSoldQuantity?: number | null
+    totalEstimatedSoldQuantity?: number | null
+    evidenceBasis?: string | null
+    discoveryOrigin?: "EBAY_FIRST" | "LUNA_FIRST" | null
+    ebayFirstDemandEvidence?: string | null
+    crossSourceCorroborated?: boolean | null
+    activeAndSoldSeparated?: boolean | null
   } | null
   packStrategyEvidence?: {
     offers?: Array<{
@@ -220,7 +247,42 @@ function normalizedListingAiIntake(value: WinnerEvidenceInput["listingAiIntake"]
     complianceRestrictions: normalizeArray(value.complianceRestrictions),
     blockedClaims: normalizeArray(value.blockedClaims),
     allowedImageFacts: normalizeArray(value.allowedImageFacts),
+    allowedClaims: normalizeArray(value.allowedClaims),
+    missingFacts: normalizeArray(value.missingFacts),
+    titleStructurePatterns: normalizeArray(value.titleStructurePatterns),
+    unsupportedTerms: normalizeArray(value.unsupportedTerms),
+    sellerPatterns: value.sellerPatterns ? {
+      activeSellerCount: finiteNonNegative(value.sellerPatterns.activeSellerCount),
+      verifiedSoldSellerCount: finiteNonNegative(value.sellerPatterns.verifiedSoldSellerCount),
+      freeShippingPrevalencePercent: normalizedPercent(
+        value.sellerPatterns.freeShippingPrevalencePercent,
+      ),
+      returnsPrevalencePercent: normalizedPercent(value.sellerPatterns.returnsPrevalencePercent),
+      sellerConcentrationPercent: normalizedPercent(value.sellerPatterns.sellerConcentrationPercent),
+      handlingPatterns: normalizeArray(value.sellerPatterns.handlingPatterns),
+      quantityDiscountPatterns: normalizeArray(value.sellerPatterns.quantityDiscountPatterns),
+      offerPatterns: normalizeArray(value.sellerPatterns.offerPatterns),
+      visibleTrustElements: normalizeArray(value.sellerPatterns.visibleTrustElements),
+      sellerIdentitiesIncluded: false,
+    } : null,
     locale: normalizedText(value.locale),
+  }
+}
+
+function normalizedMarketEvidence(value: WinnerEvidenceInput["marketEvidence"]) {
+  return {
+    activeSellerCount: finiteNonNegative(value?.activeSellerCount),
+    verifiedSoldSellerCount: finiteNonNegative(value?.verifiedSoldSellerCount),
+    estimatedSoldSellerCount: finiteNonNegative(value?.estimatedSoldSellerCount),
+    totalVerifiedSoldQuantity: finiteNonNegative(value?.totalVerifiedSoldQuantity),
+    totalEstimatedSoldQuantity: finiteNonNegative(value?.totalEstimatedSoldQuantity),
+    evidenceBasis: normalizedText(value?.evidenceBasis),
+    discoveryOrigin: value?.discoveryOrigin === "EBAY_FIRST" ? "EBAY_FIRST" as const
+      : value?.discoveryOrigin === "LUNA_FIRST" ? "LUNA_FIRST" as const : null,
+    ebayFirstDemandEvidence: normalizedText(value?.ebayFirstDemandEvidence),
+    crossSourceCorroborated: value?.crossSourceCorroborated === true,
+    activeAndSoldSeparated: value?.activeAndSoldSeparated !== false,
+    competitorSellerIdentitiesStored: false,
   }
 }
 
@@ -1175,6 +1237,7 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
       costObservedAt: normalizedText(input.costObservedAt),
     },
     listingAiIntake: normalizedListingAiIntake(input.listingAiIntake),
+    marketEvidence: normalizedMarketEvidence(input.marketEvidence),
     packStrategyEvidence: normalizedPackStrategyEvidence(input.packStrategyEvidence),
     decision: {
       verdict,
