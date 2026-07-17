@@ -12,6 +12,11 @@ export function GET() {
     {
       status:
         501,
+      headers: {
+        "Cache-Control": "no-store, max-age=0",
+        "Referrer-Policy": "no-referrer",
+        "X-Robots-Tag": "noindex",
+      },
     }
   )
 }

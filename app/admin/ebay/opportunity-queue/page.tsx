@@ -19,6 +19,7 @@ type ScanRun = {
 type QueueRow = {
   id: string
   candidate_key: string
+  market_radar_product_id: string | null
   product_title: string
   variant_title: string | null
   supplier_sku: string | null
@@ -43,6 +44,33 @@ type QueueRow = {
   hard_gates: string[]
   evidence_guards: string[]
   last_scanned_at: string
+  ebay_candidate_count: number
+  exact_comparable_count: number
+  seller_priority_score: number
+  seller_lane: string
+  next_seller_action: string
+  can_prepare_listing_package: boolean
+  can_open_listing_workspace: boolean
+  listing_workspace_blockers: string[]
+  listing_workspace_resolvable_gates: string[]
+  listing_intake_url: string | null
+  winning_structure: {
+    strategyConfidence: string | null
+    primarySearchPhrase: string | null
+    secondarySearchTerms: string[]
+    confirmedAttributes: string[]
+    titleFormula: string | null
+    categoryId: string | null
+    categoryName: string | null
+  }
+  top_ebay_candidates: Array<{
+    title: string
+    price: number | null
+    currency: string
+    identityMatchScore: number
+    identityMatchQuality: string
+    professionalReferenceScore: number
+  }>
 }
 
 type Dashboard = {
@@ -88,6 +116,19 @@ function tone(status: string) {
   return "border-amber-200/25 bg-amber-200/[0.06] text-amber-50"
 }
 
+function sellerLaneLabel(value: string) {
+  const labels: Record<string, string> = {
+    LISTING_PACKAGE_READY: "Listo para preparar listing",
+    FAST_TRACK_NEEDS_ECONOMICS: "Validar margen",
+    FAST_TRACK_NEEDS_FACTS: "Completar datos",
+    HIGH_POTENTIAL_NEEDS_IDENTITY: "Alto potencial · validar identidad",
+    MARKET_SIGNAL_NEEDS_IDENTITY: "Señal eBay · validar identidad",
+    SUPPLY_HOLD: "Pausa por stock",
+    REFINE_EBAY_SEARCH: "Refinar búsqueda eBay",
+  }
+  return labels[value] ?? label(value)
+}
+
 function humanError(code: string) {
   const messages: Record<string, string> = {
     AUTH_REQUIRED: "La sesión Admin expiró. Inicia sesión nuevamente.",
@@ -112,6 +153,13 @@ export default function EbayLunaOpportunityQueuePage() {
   const filteredQueue = useMemo(() => dashboard?.queue.filter((row) =>
     filter === "all" || row.queue_status === filter,
   ) ?? [], [dashboard, filter])
+  const topPotential = useMemo(() => [...(dashboard?.queue ?? [])]
+    .filter((row) => row.supplier_available !== false && row.ebay_candidate_count > 0)
+    .sort((left, right) =>
+      right.seller_priority_score - left.seller_priority_score ||
+      right.opportunity_score - left.opportunity_score,
+    )
+    .slice(0, 5), [dashboard])
 
   async function adminRequest(path: string, init?: RequestInit) {
     const { data, error: sessionError } = await supabase.auth.getSession()
@@ -225,13 +273,48 @@ export default function EbayLunaOpportunityQueuePage() {
             {Object.entries({ Total: dashboard.summary.total, Listas: dashboard.summary.ready, Revisar: dashboard.summary.review, Observación: dashboard.summary.watchlist, "Stock/Hold": dashboard.summary.supplierHolds, "Riesgos activos": dashboard.summary.activeListingRisks }).map(([name, value]) => <article key={name} className="rounded-2xl border border-white/10 bg-black/25 p-4"><p className="text-xs text-white/45">{name}</p><p className="mt-2 text-2xl font-black">{value}</p></article>)}
           </section>
 
+          <section className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.045] p-5 md:p-7">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-100/60">Fast lane del vendedor</p>
+                <h2 className="mt-2 text-2xl font-black md:text-3xl">Top potencial para preparar listing</h2>
+                <p className="mt-2 max-w-4xl text-sm leading-6 text-white/60">Prioriza stock Luna, señal eBay y estructura disponible. El score ordena trabajo; no promete ventas ni sustituye la validación de identidad y margen.</p>
+              </div>
+              <span className="w-fit rounded-full border border-emerald-200/20 bg-black/25 px-4 py-2 text-xs font-black text-emerald-50">Top {topPotential.length} actual</span>
+            </div>
+            <div className="mt-5 grid gap-3 lg:grid-cols-5">
+              {topPotential.map((row, index) => <article key={row.id} className="flex min-w-0 flex-col rounded-3xl border border-white/10 bg-black/25 p-4">
+                <div className="flex items-center justify-between gap-3"><span className="text-xs font-black text-emerald-100/65">#{index + 1}</span><strong className="rounded-xl bg-emerald-100 px-2 py-1 text-sm text-black">{row.seller_priority_score}</strong></div>
+                <h3 className="mt-3 text-sm font-black leading-5">{row.product_title}</h3>
+                <p className="mt-2 text-xs leading-5 text-white/55">{row.ebay_candidate_count} candidatos eBay · {row.exact_comparable_count} exactos</p>
+                <p className="mt-3 text-xs font-black text-emerald-100">{sellerLaneLabel(row.seller_lane)}</p>
+                <p className="mt-2 text-xs leading-5 text-white/60">{row.next_seller_action}</p>
+                <a href={`#opportunity-${row.id}`} className="mt-auto pt-4 text-xs font-black text-cyan-100 underline decoration-cyan-200/35 underline-offset-4">Ver evidencia y estructura</a>
+              </article>)}
+              {!topPotential.length && <p className="text-sm text-white/55">Procesa más lotes para encontrar candidatos con señal eBay.</p>}
+            </div>
+          </section>
+
           <section className="rounded-3xl border border-white/10 bg-black/25 p-4 md:p-6">
             <div className="flex flex-wrap gap-2">{["all", "ready", "review", "watchlist", "hold"].map((value) => <button key={value} onClick={() => setFilter(value)} className={`rounded-full px-4 py-2 text-xs font-black uppercase ${filter === value ? "bg-white text-black" : "border border-white/15 text-white/65"}`}>{value === "all" ? "Todas" : label(value)}</button>)}</div>
             <div className="mt-5 grid gap-4 lg:grid-cols-2">
-              {filteredQueue.map((row, index) => <article key={row.id} className={`rounded-3xl border p-5 ${tone(row.queue_status)}`}>
+              {filteredQueue.map((row, index) => <article id={`opportunity-${row.id}`} key={row.id} className={`scroll-mt-5 rounded-3xl border p-5 ${tone(row.queue_status)}`}>
                 <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wider">#{index + 1} · {label(row.queue_status)}</p><h2 className="mt-2 text-xl font-black">{row.product_title}</h2><p className="mt-1 text-xs opacity-65">{row.variant_title ?? "Variante general"} · SKU {row.supplier_sku ?? "pendiente"}</p></div><span className="rounded-2xl bg-white px-3 py-2 text-xl font-black text-black">{Math.round(Number(row.opportunity_score))}</span></div>
                 <div className="mt-4 grid grid-cols-3 gap-2 text-xs"><div><span className="opacity-55">Demanda</span><strong className="block">{Math.round(Number(row.demand_score))}</strong></div><div><span className="opacity-55">Economía</span><strong className="block">{Math.round(Number(row.economics_score))}</strong></div><div><span className="opacity-55">Identidad</span><strong className="block">{Math.round(Number(row.identity_score))}</strong></div><div><span className="opacity-55">Velocidad/sem</span><strong className="block">{row.estimated_weekly_velocity ?? "Baseline"}</strong></div><div><span className="opacity-55">Precio eBay</span><strong className="block">{money(row.median_total_buyer_price)}</strong></div><div><span className="opacity-55">Beneficio</span><strong className="block">{money(row.estimated_net_profit)}</strong></div></div>
-                <p className="mt-4 text-xs font-bold">{row.active_comparables} comparables · {row.sellers_with_movement} vendedores con movimiento · match BEST_SELLING {row.best_selling_match_score ?? "pendiente"}</p>
+                <div className="mt-4 grid grid-cols-2 gap-2 text-xs"><div className="rounded-2xl border border-white/15 p-3"><span className="opacity-55">Candidatos encontrados en eBay</span><strong className="mt-1 block text-lg">{row.ebay_candidate_count}</strong></div><div className="rounded-2xl border border-white/15 p-3"><span className="opacity-55">Comparables exactos</span><strong className="mt-1 block text-lg">{row.exact_comparable_count}</strong></div></div>
+                <p className="mt-3 text-xs font-bold">{row.sellers_with_movement} vendedores con movimiento · match BEST_SELLING {row.best_selling_match_score ?? "pendiente"}</p>
+                <details className="mt-3 rounded-2xl border border-emerald-200/20 bg-black/15 p-3" open={index < 2}>
+                  <summary className="cursor-pointer text-sm font-black">Evidencia eBay y estructura profesional</summary>
+                  <div className="mt-3 grid gap-3 text-xs md:grid-cols-2">
+                    <div><span className="opacity-55">Prioridad vendedor</span><strong className="block text-lg">{row.seller_priority_score}/100</strong><p className="mt-1 font-bold text-emerald-100">{sellerLaneLabel(row.seller_lane)}</p></div>
+                    <div><span className="opacity-55">Siguiente acción</span><p className="mt-1 leading-5">{row.next_seller_action}</p></div>
+                    <div><span className="opacity-55">Frase principal</span><strong className="mt-1 block">{row.winning_structure.primarySearchPhrase ?? "Pendiente de evidencia multi-vendedor"}</strong><p className="mt-1 opacity-65">{row.winning_structure.secondarySearchTerms.join(" · ") || "Sin términos secundarios confirmados"}</p></div>
+                    <div><span className="opacity-55">Categoría sugerida</span><strong className="mt-1 block">{row.winning_structure.categoryName ?? "Pendiente"}</strong><p className="mt-1 opacity-65">ID {row.winning_structure.categoryId ?? "pendiente"}</p></div>
+                  </div>
+                  {row.winning_structure.titleFormula && <p className="mt-3 rounded-xl border border-white/10 p-3 text-xs leading-5"><span className="opacity-55">Fórmula de título:</span> {row.winning_structure.titleFormula}</p>}
+                  <div className="mt-3 space-y-2">{row.top_ebay_candidates.map((candidate, candidateIndex) => <div key={`${candidate.title}-${candidateIndex}`} className="rounded-xl border border-white/10 p-3 text-xs"><strong>Referencia {candidateIndex + 1} · {candidate.title}</strong><p className="mt-1 opacity-65">{candidate.price === null ? "Precio pendiente" : `${candidate.currency} ${numberFormatter.format(candidate.price)}`} · match {candidate.identityMatchScore} · {label(candidate.identityMatchQuality)}</p></div>)}</div>
+                  {row.listing_intake_url ? <a href={row.listing_intake_url} className="mt-4 inline-flex min-h-11 items-center justify-center rounded-2xl bg-emerald-100 px-4 py-2 text-xs font-black text-black">Preparar paquete de listing</a> : <p className="mt-4 rounded-xl border border-amber-200/15 bg-amber-200/[0.05] p-3 text-xs leading-5 text-amber-50">El paquete se desbloquea al confirmar identidad, margen, stock y datos obligatorios.</p>}
+                </details>
                 <details className="mt-3 rounded-2xl border border-white/15 p-3"><summary className="cursor-pointer text-sm font-black">Guardas y decisión</summary><p className="mt-2 text-xs">{label(row.decision)}</p><ul className="mt-2 list-disc space-y-1 pl-5 text-xs">{[...row.hard_gates, ...row.evidence_guards].map((guard) => <li key={guard}>{label(guard)}</li>)}</ul></details>
               </article>)}
               {!loading && !filteredQueue.length && <p className="rounded-2xl border border-white/10 p-6 text-white/55">La cola todavía está vacía. Inicia el primer scan.</p>}

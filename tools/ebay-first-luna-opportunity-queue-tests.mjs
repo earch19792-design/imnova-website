@@ -6,6 +6,8 @@ import {
   buildBestSellingSignalKey,
   buildOpportunityChangeEvents,
   buildOpportunityQueueRow,
+  buildProfessionalSellerQueueView,
+  evaluateEbayListingWorkspaceEligibility,
   mapLatestVariantToLunaCandidate,
 } from "../lib/ebay/ebay-first-luna-opportunity-queue.ts"
 
@@ -129,12 +131,150 @@ test("mobile command center centralizes scan, queue and candidate review", () =>
   const mobilePage = readFileSync(new URL("../app/admin/ebay/mobile-review/page.tsx", import.meta.url), "utf8")
   const commandCenter = readFileSync(new URL("../app/admin/ebay/mobile-review/opportunity-command-center.tsx", import.meta.url), "utf8")
   assert.match(mobilePage, /Seller Command Center/)
-  assert.match(mobilePage, /id: "opportunities"/)
+  assert.match(mobilePage, /SellerOsMobileNav/)
   assert.match(mobilePage, /OpportunityCommandCenter/)
-  assert.match(commandCenter, /Nuevo scan/)
-  assert.match(commandCenter, /Procesar 5 lotes/)
+  assert.match(commandCenter, /Iniciar scan prioritario/)
+  assert.match(commandCenter, /Acelerar 20 productos/)
+  assert.match(commandCenter, /Actualizar Luna/)
+  assert.match(commandCenter, /Top para trabajar ahora/)
+  assert.match(commandCenter, /comparables exactos/)
   assert.match(commandCenter, /onReviewCandidate/)
-  assert.match(commandCenter, /Monitoreo y riesgos/)
+  assert.match(commandCenter, /Operación y riesgos de listings/)
+  assert.match(mobilePage, /scans y cola guardados en Supabase/)
+  assert.match(mobilePage, /radarCandidates\.find/)
+  assert.match(mobilePage, /loadMarketRadarReadonlyProductById/)
+})
+
+test("priority-first automation scans the strongest Radar signals before catalog coverage", () => {
+  const service = readFileSync(new URL("../lib/ebay/ebay-first-luna-scan-service.ts", import.meta.url), "utf8")
+  const adminRoute = readFileSync(new URL("../app/api/admin/ebay/luna-opportunity-queue/route.ts", import.meta.url), "utf8")
+  const cronRoute = readFileSync(new URL("../app/api/cron/ebay-luna-opportunity-scan/route.ts", import.meta.url), "utf8")
+  const radarCronRoute = readFileSync(new URL("../app/api/cron/market-radar-luna-sync/route.ts", import.meta.url), "utf8")
+  const vercelConfig = readFileSync(new URL("../vercel.json", import.meta.url), "utf8")
+  assert.match(service, /EBAY_LUNA_SCAN_STRATEGY = "priority_first"/)
+  const migration = readFileSync(new URL("../supabase/migrations/20260713022000_add_luna_seller_scan_priority.sql", import.meta.url), "utf8")
+  const automationMigration = readFileSync(new URL("../supabase/migrations/20260713040000_create_ebay_seller_command_center_v2.sql", import.meta.url), "utf8")
+  assert.match(automationMigration, /latest\.seller_scan_priority_score desc nulls last/)
+  assert.match(automationMigration, /for update skip locked/i)
+  assert.match(migration, /seller_scan_priority_score/)
+  assert.match(migration, /score\.opportunity_score, 0\) \* 0\.55/)
+  assert.match(migration, /snapshot\.inventory_quantity > 0/)
+  assert.match(migration, /snapshot\.barcode/)
+  assert.match(migration, /PRE_SCAN_RESTRICTION_REVIEW/)
+  assert.match(migration, /then 25 else 0 end/)
+  assert.match(adminRoute, /action === "restart_priority"/)
+  assert.match(adminRoute, /status: "paused"/)
+  assert.match(cronRoute, /CRON_MAX_CANDIDATES = 5/)
+  assert.match(cronRoute, /CRON_TIME_BUDGET_MS = 45_000/)
+  assert.match(radarCronRoute, /runLunaPortexMarketRadarSync/)
+  assert.match(radarCronRoute, /CRON_SECRET/)
+  assert.match(vercelConfig, /market-radar-luna-sync/)
+  assert.match(vercelConfig, /"schedule": "0 9 \* \* \*"/)
+  assert.match(vercelConfig, /"schedule": "17 9 \* \* \*"/)
+})
+
+test("latest Luna variants use a maintained current-snapshot pointer", () => {
+  const migration = readFileSync(
+    new URL("../supabase/migrations/20260713012000_optimize_ebay_luna_latest_variants.sql", import.meta.url),
+    "utf8",
+  )
+  assert.match(migration, /create table if not exists public\.market_radar_current_variant_snapshots/)
+  assert.match(migration, /after insert on public\.market_radar_snapshots/)
+  assert.match(migration, /from public\.market_radar_current_variant_snapshots latest/)
+  const optimizedView = migration.slice(migration.indexOf("create or replace view public.market_radar_latest_variants"))
+  assert.doesNotMatch(optimizedView, /select distinct on/)
+})
+
+test("separates eBay candidates from exact comparables and builds a seller fast lane", () => {
+  const row = buildProfessionalSellerQueueView({
+    id: "queue-1",
+    market_radar_product_id: "00000000-0000-0000-0000-000000000001",
+    opportunity_score: 42,
+    demand_score: 50,
+    listing_readiness_score: 45,
+    active_comparables: 0,
+    supplier_available: true,
+    supplier_inventory_quantity: 20,
+    supplier_price: 4,
+    hard_gates: ["NEED_EXACT_GTIN_OR_BRAND_MPN_MATCH"],
+    evidence_guards: ["NEED_7D_OR_30D_ROTATION_BASELINE"],
+    assessment: {
+      identity: {
+        exactIdentityConfirmed: false,
+        comparables: [
+          { title: "Reference A", price: 18, identityMatchScore: 70 },
+          { title: "Reference B", price: 19, identityMatchScore: 66 },
+          { title: "Reference C", price: 17, identityMatchScore: 62 },
+        ],
+      },
+      economics: { ready: false },
+      scores: { supplyScore: 100 },
+      canProceedToListingPackage: false,
+      listingIntelligencePackage: {
+        titleStrategy: {
+          primarySearchPhrase: "cable organizer",
+          secondarySearchTerms: ["desk cable holder"],
+          titleFormula: "Marca + frase principal + variante",
+        },
+        categoryRecommendation: { categoryId: "123", categoryName: "Cable Management" },
+      },
+    },
+  })
+  assert.equal(row.ebay_candidate_count, 3)
+  assert.equal(row.exact_comparable_count, 0)
+  assert.equal(row.seller_lane, "HIGH_POTENTIAL_NEEDS_IDENTITY")
+  assert.equal(row.can_prepare_listing_package, false)
+  assert.equal(row.winning_structure.primarySearchPhrase, "cable organizer")
+  assert.equal(row.top_ebay_candidates.length, 3)
+  assert.equal(row.assessment, undefined)
+  assert.ok(row.seller_priority_score > 0)
+})
+
+test("opens preparation only for package-resolvable facts and keeps market guards closed", () => {
+  const resolvable = evaluateEbayListingWorkspaceEligibility({
+    opportunity_score: 82,
+    identity_score: 80,
+    supplier_available: true,
+    supplier_inventory_quantity: 20,
+    supplier_price: 4,
+    hard_gates: ["NEED_AUTHORIZED_PRODUCT_IMAGES", "NEED_PACKAGE_WEIGHT"],
+    evidence_guards: [],
+    assessment: {
+      identity: { exactIdentityConfirmed: true },
+      economics: { ready: true },
+      scores: { potentialScore: 82, confidenceScore: 80 },
+    },
+  })
+  assert.equal(resolvable.allowed, true)
+  assert.deepEqual(resolvable.resolvableHardGates, [
+    "NEED_AUTHORIZED_PRODUCT_IMAGES",
+    "NEED_PACKAGE_WEIGHT",
+  ])
+
+  const marketBlocked = evaluateEbayListingWorkspaceEligibility({
+    opportunity_score: 82,
+    identity_score: 80,
+    supplier_available: true,
+    supplier_inventory_quantity: 20,
+    supplier_price: 4,
+    hard_gates: ["NEED_AUTHORIZED_PRODUCT_IMAGES"],
+    evidence_guards: ["NEED_MULTI_SELLER_DEMAND_EVIDENCE"],
+    assessment: {
+      identity: { exactIdentityConfirmed: true },
+      economics: { ready: true },
+      scores: { potentialScore: 82, confidenceScore: 80 },
+    },
+  })
+  assert.equal(marketBlocked.allowed, false)
+  assert.ok(marketBlocked.blockers.includes("EVIDENCE_GUARD:NEED_MULTI_SELLER_DEMAND_EVIDENCE"))
+})
+
+test("opportunity queue explains professional seller evidence in the UI", () => {
+  const page = readFileSync(new URL("../app/admin/ebay/opportunity-queue/page.tsx", import.meta.url), "utf8")
+  assert.match(page, /Top potencial para preparar listing/)
+  assert.match(page, /Candidatos encontrados en eBay/)
+  assert.match(page, /Comparables exactos/)
+  assert.match(page, /El paquete se desbloquea al confirmar identidad, margen, stock y datos obligatorios/)
 })
 
 test("best-selling signal keys are deterministic and contain no secrets", () => {

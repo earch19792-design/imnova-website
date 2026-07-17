@@ -1,4 +1,8 @@
 import type { MarketRadarProductRow } from "@/lib/market-radar-types"
+import {
+  getMobileReviewPayloadError,
+  readMobileReviewJson,
+} from "./ebay-mobile-review-http.mjs"
 
 export const EBAY_MOBILE_REVIEW_REAL_RADAR_CONNECTOR_VERSION =
   "EBAY_MOBILE_REVIEW_REAL_RADAR_CONNECTOR_V1"
@@ -65,21 +69,52 @@ export type RealRadarConnectorInput = {
   mode?: RadarConnectorMode
 }
 
-export async function loadMarketRadarReadonlyDashboard(authorization: string) {
+export async function loadMarketRadarReadonlyDashboard(
+  authorization: string,
+  search?: string,
+) {
   const request = globalThis["fetch"]
-  const response = await request("/api/admin/market-radar", {
+  const endpoint = search
+    ? `/api/admin/market-radar?search=${encodeURIComponent(search)}`
+    : "/api/admin/market-radar"
+  const response = await request(endpoint, {
     method: "GET",
     cache: "no-store",
     headers: { Authorization: authorization },
   })
-  const payload = (await response.json()) as {
+  const payload = await readMobileReviewJson<{
     success?: boolean
+    error?: string
     dashboard?: { products?: RadarProductInput[] }
-  }
-  if (!response.ok || !payload.success) {
-    throw new Error("Market Radar read-only no está disponible.")
+  }>(response, "Market Radar read-only no está disponible")
+  if (!payload.success) {
+    throw new Error(getMobileReviewPayloadError(payload, "Market Radar read-only no está disponible"))
   }
   return payload.dashboard?.products ?? []
+}
+
+export function findMarketRadarProductById(
+  products: RadarProductInput[],
+  productId: string,
+) {
+  const normalizedProductId = productId.trim()
+  if (!normalizedProductId) return null
+  return products.find(
+    (product) => text(product.product_id) === normalizedProductId,
+  ) ?? null
+}
+
+export async function loadMarketRadarReadonlyProductById(
+  authorization: string,
+  productId: string,
+) {
+  const normalizedProductId = productId.trim()
+  if (!normalizedProductId) return null
+  const products = await loadMarketRadarReadonlyDashboard(
+    authorization,
+    normalizedProductId,
+  )
+  return findMarketRadarProductById(products, normalizedProductId)
 }
 
 const numberOrNull = (value: unknown) => {
@@ -190,7 +225,9 @@ export function buildMobileReviewRealRadarConnector(
       (numberOrNull(right.opportunity_score) ?? 0) -
       (numberOrNull(left.opportunity_score) ?? 0)
   )
-  const allCandidates = ranked.map(mapMarketRadarProductToMobileCandidate)
+  const allCandidates = ranked.map((product, index) =>
+    mapMarketRadarProductToMobileCandidate(product, index + 1)
+  )
   const unavailableCandidates = allCandidates.filter(
     (candidate) => candidate.routeRecommendation === "STOCK_HOLD"
   )

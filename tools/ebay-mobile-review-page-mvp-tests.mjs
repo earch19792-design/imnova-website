@@ -29,7 +29,7 @@ test("mobile review page loads exactly the Top 5 and recommends rank 1", () => {
   assert.equal(input.top5Visible, true)
   assert.equal(report.top5Visible, true)
   assert.equal(report.recommendedCandidateRank, 1)
-  assert.match(pageSource, /Top 5 móvil/)
+  assert.match(pageSource, /Top 5 actual/)
   assert.match(pageSource, /Fuente actual: fixture modelado · no es data viva/)
   assert.match(pageSource, /score modelado/)
   assert.match(pageSource, /Fixture · no precio runtime/)
@@ -88,6 +88,23 @@ test("selection with same product, stock and image enables only preflight", () =
   assert.equal(decision.canPublish, false)
 })
 
+test("a directed product with candidateRank zero keeps every confirmation", () => {
+  const directedFixture = {
+    ...fixture,
+    top5Candidates: [{ ...fixture.top5Candidates[0], candidateRank: 0 }],
+  }
+  let state = buildInitialMobileReviewState(directedFixture)
+  state = applyMobileReviewAction(state, { type: "SELECT_CANDIDATE", rank: 0 })
+  state = applyMobileReviewAction(state, { type: "CONFIRM_SAME_PRODUCT" })
+  state = applyMobileReviewAction(state, { type: "CONFIRM_STOCK_QTY", quantity: 4 })
+  state = applyMobileReviewAction(state, { type: "CONFIRM_IMAGE_OK" })
+  state = applyMobileReviewAction(state, { type: "APPROVE_B2_RUN_PREFLIGHT" })
+  const decision = buildMobileReviewDecision(state)
+  assert.equal(decision.selectedCandidateRank, 0)
+  assert.equal(decision.imageConfirmed, true)
+  assert.equal(decision.canProceedToB2RunPreflight, true)
+})
+
 test("editing identity, stock or Luna evidence invalidates stale confirmations", () => {
   let state = buildInitialMobileReviewState(fixture)
   state = applyMobileReviewAction(state, { type: "SELECT_CANDIDATE", rank: 2 })
@@ -117,12 +134,9 @@ test("an unavailable candidate does not prevent reviewing another Top 5 candidat
   assert.equal(decision.canProceedToB2RunPreflight, true)
 })
 
-test("MVP remains local-only and contains no external or write capability", () => {
+test("mobile decisions remain local and contain no direct marketplace write capability", () => {
   const combined = `${moduleSource}\n${pageSource}`
   for (const forbidden of [
-    /fetch\s*\(/,
-    /createClient\s*\(/,
-    /\.from\s*\(/,
     /\.insert\s*\(/,
     /\.update\s*\(/,
     /\.upsert\s*\(/,

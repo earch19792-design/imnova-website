@@ -2,8 +2,14 @@ import {
   buildEbaySellerTrafficReportUrl,
   type EbaySellerTrafficPerformanceInput,
 } from "./ebay-seller-traffic-report"
+import {
+  ebayProductionAccountFingerprint,
+  getEbayProductionIdentityBindingConfiguration,
+} from "./ebay-seller-account-scope"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
+const TRADING_ENDPOINT = "https://api.ebay.com/ws/api.dll"
+const TRADING_COMPATIBILITY_LEVEL = "1423"
 const ANALYTICS_SCOPE = [
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
@@ -24,6 +30,61 @@ function array(value: unknown) {
 
 function text(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
+}
+
+function tradingXmlValue(xml: string, tag: string) {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const match = xml.match(new RegExp(
+    `<(?:[A-Za-z0-9_-]+:)?${escaped}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:[A-Za-z0-9_-]+:)?${escaped}>`,
+    "i",
+  ))
+  return match?.[1]
+    ?.replace(/<[^>]*>/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim() || null
+}
+
+async function assertAnalyticsSellerAccount(accessToken: string) {
+  const identity = getEbayProductionIdentityBindingConfiguration()
+  if (!identity.bound) {
+    throw new Error("EBAY_ANALYTICS_ACCOUNT_IDENTITY_REQUIRED")
+  }
+  const response = await fetch(TRADING_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/xml",
+      "X-EBAY-API-CALL-NAME": "GetUser",
+      "X-EBAY-API-COMPATIBILITY-LEVEL": TRADING_COMPATIBILITY_LEVEL,
+      "X-EBAY-API-SITEID": "0",
+      "X-EBAY-API-IAF-TOKEN": accessToken,
+    },
+    body: "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+      "<GetUserRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
+      "<OutputSelector>User.UserID</OutputSelector>" +
+      "</GetUserRequest>",
+    cache: "no-store",
+    signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
+  })
+  const xml = await response.text()
+  const ack = tradingXmlValue(xml, "Ack")?.toLowerCase()
+  const userId = tradingXmlValue(xml, "UserID")
+  if (!response.ok || !["success", "warning"].includes(ack ?? "") || !userId) {
+    throw new Error("EBAY_ANALYTICS_ACCOUNT_IDENTITY_UNAVAILABLE")
+  }
+  const fingerprintMatches =
+    ebayProductionAccountFingerprint(userId) ===
+      identity.expectedAccountFingerprint
+  const userIdMatches = !identity.expectedUserId ||
+    userId.toLocaleLowerCase("en-US") ===
+      identity.expectedUserId.toLocaleLowerCase("en-US")
+  if (!fingerprintMatches || !userIdMatches) {
+    throw new Error("EBAY_ANALYTICS_ACCOUNT_IDENTITY_MISMATCH")
+  }
 }
 
 function assertReadonlyAnalyticsUrl(url: URL) {
@@ -69,6 +130,7 @@ export async function getEbaySellerTrafficPerformance(
   let token = ""
   try {
     token = await getSellerAnalyticsAccessToken()
+    await assertAnalyticsSellerAccount(token)
     assertReadonlyAnalyticsUrl(url)
     const response = await fetch(url, {
       method: "GET",
@@ -112,9 +174,25 @@ export async function getEbaySellerTrafficPerformance(
 }
 
 export function getEbaySellerAnalyticsConfigurationState() {
+  const clientIdConfigured = Boolean(process.env.EBAY_CLIENT_ID?.trim())
+  const clientSecretConfigured = Boolean(process.env.EBAY_CLIENT_SECRET?.trim())
+  const refreshTokenConfigured = Boolean(process.env.EBAY_SELLER_REFRESH_TOKEN?.trim())
+  const identity = getEbayProductionIdentityBindingConfiguration()
   return {
-    configured: Boolean(process.env.EBAY_SELLER_REFRESH_TOKEN?.trim()),
+    configured:
+      clientIdConfigured && clientSecretConfigured && refreshTokenConfigured &&
+      identity.bound,
+    officialAccountIdentityBound: identity.bound,
+    officialAccountIdentityConsistent: identity.consistent,
     requiredScope: "sell.analytics.readonly",
+    requiredScopes: ["api_scope", "sell.analytics.readonly"],
+    refreshTokenMustAlreadyContainRequiredScopes: true,
+    missingConfiguration: [
+      ...(!clientIdConfigured ? ["EBAY_CLIENT_ID"] : []),
+      ...(!clientSecretConfigured ? ["EBAY_CLIENT_SECRET"] : []),
+      ...(!refreshTokenConfigured ? ["EBAY_SELLER_REFRESH_TOKEN"] : []),
+      ...(!identity.bound ? ["EBAY_OFFICIAL_ACCOUNT_IDENTITY"] : []),
+    ],
     refreshTokenReturnedToBrowser: false,
     refreshTokenLogged: false,
     ebayWriteUsed: false,

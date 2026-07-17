@@ -1,6 +1,10 @@
 import type { EbayLunaOpportunityAssessment } from "./ebay-luna-demand-opportunity-engine"
 import type { EbayBestSellingProductSignal } from "./ebay-seller-keyword-demand-gateway"
 import type { LunaOpportunityCandidateInput } from "./ebay-luna-opportunity-types"
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+import { isDirectedLunaManualPackAssessment } from "./ebay-luna-directed-product-import.ts"
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+import { detectEbayProductRestrictionGuards } from "./ebay-product-restriction-guards.ts"
 
 type JsonRecord = Record<string, unknown>
 
@@ -37,6 +41,32 @@ export type ExistingOpportunityQueueRow = {
   queue_status: string
 }
 
+type ProfessionalQueueRow = Record<string, unknown> & {
+  active_comparables?: unknown
+  demand_score?: unknown
+  listing_readiness_score?: unknown
+  market_radar_product_id?: unknown
+  opportunity_score?: unknown
+  supplier_available?: unknown
+  supplier_inventory_quantity?: unknown
+  supplier_price?: unknown
+  assessment?: unknown
+}
+
+// These facts can only be completed and reviewed inside the listing workspace.
+// They may open preparation, but they never bypass draft-only readiness.
+const LISTING_WORKSPACE_RESOLVABLE_HARD_GATES = new Set([
+  "NEED_AUTHORIZED_PRODUCT_IMAGES",
+  "NEED_PACKAGE_WEIGHT",
+  "NEED_PACKAGE_DIMENSIONS",
+  "NEED_PACKAGE_WEIGHT_AND_DIMENSIONS",
+  "NEED_EBAY_TAXONOMY_CATEGORY",
+  "NEED_REQUIRED_EBAY_ITEM_ASPECTS",
+  "NEED_EXACT_PACK_INVENTORY_CONFIRMATION",
+  "NEED_EBAY_EXACT_IDENTITY_CONFIRMATION",
+  "NEED_UNIT_ECONOMICS_VALIDATION",
+])
+
 function numberOrNull(value: unknown) {
   if (value === null || value === undefined || value === "") return null
   const parsed = Number(value)
@@ -53,11 +83,187 @@ function record(value: unknown): JsonRecord {
     : {}
 }
 
+function records(value: unknown) {
+  return Array.isArray(value) ? value.map(record) : []
+}
+
+function number(value: unknown) {
+  return numberOrNull(value) ?? 0
+}
+
+export function evaluateEbayListingWorkspaceEligibility(row: ProfessionalQueueRow) {
+  const assessment = record(row.assessment)
+  const identity = record(assessment.identity)
+  const economics = record(assessment.economics)
+  const scores = record(assessment.scores)
+  const hardGates = Array.isArray(row.hard_gates)
+    ? row.hard_gates.filter((value): value is string => typeof value === "string")
+    : []
+  const evidenceGuards = Array.isArray(row.evidence_guards)
+    ? row.evidence_guards.filter((value): value is string => typeof value === "string")
+    : []
+  const supplierInventory = numberOrNull(row.supplier_inventory_quantity)
+  const supplierCost = numberOrNull(row.supplier_price)
+  const potentialScore = numberOrNull(scores.potentialScore)
+    ?? numberOrNull(row.opportunity_score)
+    ?? 0
+  const confidenceScore = numberOrNull(scores.confidenceScore)
+    ?? numberOrNull(row.identity_score)
+    ?? 0
+  const directedPackIntake = isDirectedLunaManualPackAssessment(row.assessment)
+  const blockers = [
+    ...(identity.exactIdentityConfirmed === true || directedPackIntake ? [] : ["EXACT_IDENTITY_REQUIRED"]),
+    ...(economics.ready === true || directedPackIntake ? [] : ["UNIT_ECONOMICS_REQUIRED"]),
+    ...(row.supplier_available === true && (directedPackIntake || (supplierInventory !== null && supplierInventory > 0))
+      ? []
+      : ["LUNA_STOCK_UNAVAILABLE"]),
+    ...(supplierCost !== null && supplierCost > 0 ? [] : ["LUNA_COST_REQUIRED"]),
+    ...(potentialScore >= 70 || directedPackIntake ? [] : ["POTENTIAL_SCORE_BELOW_70"]),
+    ...(confidenceScore >= 70 || directedPackIntake ? [] : ["CONFIDENCE_SCORE_BELOW_70"]),
+    ...hardGates
+      .filter((gate) => !LISTING_WORKSPACE_RESOLVABLE_HARD_GATES.has(gate))
+      .map((gate) => `HARD_GATE:${gate}`),
+    ...evidenceGuards.map((guard) => `EVIDENCE_GUARD:${guard}`),
+    ...(["hold", "rejected", "listed", "archived"].includes(text(row.queue_status) ?? "")
+      ? ["OPPORTUNITY_STATUS_BLOCKED"]
+      : []),
+  ]
+  return {
+    allowed: blockers.length === 0,
+    blockers: [...new Set(blockers)],
+    resolvableHardGates: hardGates.filter((gate) => LISTING_WORKSPACE_RESOLVABLE_HARD_GATES.has(gate)),
+  }
+}
+
+export function buildProfessionalSellerQueueView(row: ProfessionalQueueRow) {
+  const assessment = record(row.assessment)
+  const identity = record(assessment.identity)
+  const economics = record(assessment.economics)
+  const listingPackage = record(assessment.listingIntelligencePackage)
+  const titleStrategy = record(listingPackage.titleStrategy)
+  const category = record(listingPackage.categoryRecommendation)
+  const comparableCandidates = records(identity.comparables)
+  const market = record(assessment.market)
+  const candidateCount = numberOrNull(market.candidateListingsFound) ?? comparableCandidates.length
+  const exactComparableCount = number(row.active_comparables)
+  const exactIdentityConfirmed = identity.exactIdentityConfirmed === true
+  const canProceedToListingPackage = assessment.canProceedToListingPackage === true
+  const supplierAvailable = row.supplier_available === true
+  const supplierInventory = numberOrNull(row.supplier_inventory_quantity)
+  const supplierCost = numberOrNull(row.supplier_price)
+  const opportunityScore = number(row.opportunity_score)
+  const assessmentScores = record(assessment.scores)
+  // V2 calculates this once in the canonical engine. Re-weighting demand,
+  // readiness and identity here counted the same evidence twice and could make
+  // the mobile ranking disagree with the persisted opportunity ranking.
+  const sellerPriorityScore = Math.min(100, Math.round(
+    numberOrNull(assessmentScores.sellerPriorityScore) ??
+    numberOrNull(row.seller_priority_score) ??
+    opportunityScore,
+  ))
+  const hardGates = Array.isArray(row.hard_gates)
+    ? row.hard_gates.filter((value): value is string => typeof value === "string")
+    : []
+  const evidenceGuards = Array.isArray(row.evidence_guards)
+    ? row.evidence_guards.filter((value): value is string => typeof value === "string")
+    : []
+  const workspaceEligibility = evaluateEbayListingWorkspaceEligibility(row)
+
+  let sellerLane = "REFINE_EBAY_SEARCH"
+  let nextSellerAction = "Refina la frase de búsqueda o confirma la categoría antes de invertir tiempo en el listing."
+  if (!supplierAvailable || supplierInventory === 0) {
+    sellerLane = "SUPPLY_HOLD"
+    nextSellerAction = "Confirma stock real en Luna antes de preparar el listing."
+  } else if (canProceedToListingPackage) {
+    sellerLane = "LISTING_PACKAGE_READY"
+    nextSellerAction = "Prepara el paquete de listing y envíalo a revisión humana."
+  } else if (workspaceEligibility.allowed) {
+    sellerLane = "LISTING_PACKAGE_INTAKE_READY"
+    nextSellerAction = "Abre el Workspace para completar fotos, peso, dimensiones o aspectos; la aprobación final seguirá bloqueada hasta validarlos."
+  } else if (!exactIdentityConfirmed) {
+    sellerLane = candidateCount >= 3
+      ? "HIGH_POTENTIAL_NEEDS_IDENTITY"
+      : candidateCount > 0
+        ? "MARKET_SIGNAL_NEEDS_IDENTITY"
+        : "REFINE_EBAY_SEARCH"
+    nextSellerAction = candidateCount > 0
+      ? "Confirma GTIN o Brand + MPN. Los candidatos eBay son referencias de mercado, no el producto exacto todavía."
+      : nextSellerAction
+  } else if (supplierCost === null || economics.ready !== true) {
+    sellerLane = "FAST_TRACK_NEEDS_ECONOMICS"
+    nextSellerAction = "Confirma precio comparable exacto, costo y margen antes de preparar el listing."
+  } else if (hardGates.length || evidenceGuards.length) {
+    sellerLane = "FAST_TRACK_NEEDS_FACTS"
+    nextSellerAction = "Completa los datos obligatorios y las guardas visibles para desbloquear el paquete de listing."
+  }
+
+  return {
+    ...row,
+    assessment: undefined,
+    ebay_candidate_count: candidateCount,
+    exact_comparable_count: exactComparableCount,
+    seller_priority_score: sellerPriorityScore,
+    score_axes: {
+      potential: numberOrNull(assessmentScores.potentialScore) ?? opportunityScore,
+      confidence: numberOrNull(assessmentScores.confidenceScore) ?? 0,
+      urgency: numberOrNull(assessmentScores.urgencyScore) ?? 0,
+    },
+    seller_lane: sellerLane,
+    next_seller_action: nextSellerAction,
+    can_prepare_listing_package: canProceedToListingPackage,
+    can_open_listing_workspace: workspaceEligibility.allowed,
+    listing_workspace_blockers: workspaceEligibility.blockers,
+    listing_workspace_resolvable_gates: workspaceEligibility.resolvableHardGates,
+    listing_intake_url: typeof row.id === "string" && workspaceEligibility.allowed
+      ? `/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(row.id)}&candidate=${encodeURIComponent(text(row.candidate_key) ?? "")}`
+      : null,
+    winning_structure: {
+      strategyConfidence: text(titleStrategy.strategyConfidence),
+      primarySearchPhrase: text(titleStrategy.primarySearchPhrase),
+      secondarySearchTerms: Array.isArray(titleStrategy.secondarySearchTerms)
+        ? titleStrategy.secondarySearchTerms.filter((value): value is string => typeof value === "string").slice(0, 5)
+        : [],
+      confirmedAttributes: Array.isArray(titleStrategy.confirmedAttributes)
+        ? titleStrategy.confirmedAttributes.filter((value): value is string => typeof value === "string").slice(0, 6)
+        : [],
+      titleFormula: text(titleStrategy.titleFormula),
+      categoryId: text(category.categoryId),
+      categoryName: text(category.categoryName),
+    },
+    top_ebay_candidates: comparableCandidates.slice(0, 3).map((candidate) => ({
+      title: text(candidate.title) ?? "Referencia eBay",
+      price: numberOrNull(candidate.price),
+      currency: text(candidate.currency) ?? "USD",
+      identityMatchScore: number(candidate.identityMatchScore),
+      identityMatchQuality: text(candidate.identityMatchQuality) ?? "REVIEW",
+      professionalReferenceScore: number(candidate.professionalReferenceScore),
+    })),
+  }
+}
+
 export function mapLatestVariantToLunaCandidate(
   row: LunaLatestVariantRow,
 ): LunaOpportunityCandidateInput {
   const metadata = record(row.metadata)
   const dimensions = record(metadata.dimensions)
+  const imageProvenance = record(metadata.imageProvenance ?? metadata.image_provenance)
+  const detectedRestrictions = detectEbayProductRestrictionGuards({
+    title: row.title,
+    productName: row.variant_title,
+    category: text(metadata.category),
+    categoryText: text(metadata.categoryText ?? metadata.category_text),
+    categoryName: text(metadata.categoryName ?? metadata.category_name),
+    handle: text(metadata.handle) ?? row.product_url,
+    productType: row.product_type,
+    description: text(metadata.description),
+    imageAlt: text(metadata.imageAlt ?? metadata.image_alt),
+    imageReference: row.featured_image_url,
+  })
+  const suppliedRestrictions = Array.isArray(metadata.restrictionGuards)
+    ? metadata.restrictionGuards.filter(
+        (value): value is string => typeof value === "string" && value.trim().length > 0,
+      )
+    : []
   return {
     candidateKey: `luna-portex:${row.supplier_product_id ?? row.product_id}:${row.supplier_variant_id ?? row.sku ?? "default"}`,
     marketRadarProductId: row.product_id,
@@ -66,7 +272,9 @@ export function mapLatestVariantToLunaCandidate(
     sku: row.sku,
     title: row.title,
     variantTitle: row.variant_title,
-    brand: row.vendor,
+    // Luna's vendor can be a distributor and is not automatically the product
+    // manufacturer. Only explicit catalog provenance may satisfy Brand + MPN.
+    brand: text(metadata.brand ?? metadata.manufacturerBrand ?? metadata.manufacturer_brand),
     mpn: text(metadata.mpn),
     gtin: row.barcode,
     color: text(metadata.color),
@@ -94,7 +302,15 @@ export function mapLatestVariantToLunaCandidate(
       : null,
     imageUrls: [row.featured_image_url, ...(row.image_urls ?? [])]
       .filter((value): value is string => Boolean(value)),
-    imageAuthorized: Boolean(row.featured_image_url || row.image_urls?.length),
+    // A reachable supplier URL proves availability, not reuse authorization.
+    // Authorization must be an explicit supplier/provenance fact and can later
+    // be confirmed by the human review workspace.
+    imageAuthorized: metadata.imageAuthorized === true ||
+      metadata.image_authorized === true || imageProvenance.authorized === true,
+    restrictionGuards: [...new Set([
+      ...suppliedRestrictions,
+      ...detectedRestrictions.pendingRestrictionGuards,
+    ])],
     metadata,
   }
 }

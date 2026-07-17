@@ -1,10 +1,19 @@
 import {
   assertEbaySellerKeywordReadonlyRequest,
+  buildOfficialEbayVisualMetadata,
   buildEbaySellerKeywordDemandValidation,
   buildEbaySellerKeywordSearchQuery,
   type EbaySellerComparableInput,
   type EbaySellerKeywordCandidate,
 } from "./ebay-seller-keyword-demand-validation"
+import {
+  createEbayReadonlyQuotaLimitError,
+  createEbayReadonlyRateLimitError,
+} from "./ebay-readonly-rate-limit"
+import {
+  parseEbayApplicationBrowseQuota,
+  type EbayApplicationBrowseQuota,
+} from "./ebay-application-rate-limit"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const BROWSE_SEARCH_ENDPOINT =
@@ -15,15 +24,53 @@ const MARKETPLACE_INSIGHTS_ENDPOINT =
 const BUY_MARKETING_ENDPOINT =
   "https://api.ebay.com/buy/marketing/v1_beta/merchandised_product"
 const TAXONOMY_ENDPOINT = "https://api.ebay.com/commerce/taxonomy/v1"
+const CATALOG_ENDPOINT = "https://api.ebay.com/commerce/catalog/v1_beta/product_summary/search"
+const DEVELOPER_RATE_LIMIT_ENDPOINT =
+  "https://api.ebay.com/developer/analytics/v1_beta/rate_limit/"
 const BROWSE_SCOPE = "https://api.ebay.com/oauth/api_scope"
 const MARKETPLACE_INSIGHTS_SCOPE =
   "https://api.ebay.com/oauth/api_scope/buy.marketplace.insights"
 const MARKETPLACE_ID = "EBAY_US"
-const DETAIL_SAMPLE_LIMIT = 20
-const DETAIL_CONCURRENCY = 5
+const DEFAULT_DETAIL_SAMPLE_LIMIT = 6
+const DETAIL_CONCURRENCY = 2
 const EBAY_REQUEST_TIMEOUT_MS = 8_000
+const EBAY_MAX_RETRIES = 3
+const TAXONOMY_CACHE_TTL_MS = 6 * 60 * 60 * 1_000
+const RATE_LIMIT_CACHE_TTL_MS = 5 * 60 * 1_000
+const BROWSE_QUOTA_RESERVE = 50
+
+export type EbayCatalogIdentityProduct = {
+  epid: string | null
+  title: string | null
+  brand: string | null
+  gtins: string[]
+  mpns: string[]
+  aspects: Array<{ name: string; values: string[] }>
+  categoryId: string | null
+}
+
+export type EbayCatalogIdentityResult = {
+  status: "AVAILABLE" | "NO_MATCH" | "REQUEST_FAILED" | "NOT_CONFIGURED"
+  products: EbayCatalogIdentityProduct[]
+  observedAt: string
+  source: "EBAY_CATALOG_OFFICIAL_READONLY"
+}
 
 type JsonRecord = Record<string, unknown>
+
+type TokenCacheEntry = {
+  token: string
+  expiresAt: number
+}
+
+type TaxonomyCacheEntry = {
+  value: EbayTaxonomyListingIntelligence
+  expiresAt: number
+}
+
+const tokenCache = new Map<string, TokenCacheEntry>()
+const taxonomyCache = new Map<string, TaxonomyCacheEntry>()
+let rateLimitCache: { value: EbayApplicationBrowseQuota; expiresAt: number } | null = null
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -40,8 +87,46 @@ function text(value: unknown) {
 }
 
 function numberOrNull(value: unknown) {
+  if (value === null || value === undefined || value === "") return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function detailSampleLimit() {
+  const configured = Number(process.env.EBAY_LISTING_INTELLIGENCE_DETAIL_SAMPLE_LIMIT)
+  return Number.isInteger(configured) ? Math.max(1, Math.min(configured, 10))
+    : DEFAULT_DETAIL_SAMPLE_LIMIT
+}
+
+export async function getEbayApplicationBrowseQuota(): Promise<EbayApplicationBrowseQuota> {
+  if (rateLimitCache && rateLimitCache.expiresAt > Date.now()) return rateLimitCache.value
+  const unavailable = () => parseEbayApplicationBrowseQuota(null)
+  let token = ""
+  try {
+    token = await getApplicationToken(BROWSE_SCOPE)
+    const response = await fetch(DEVELOPER_RATE_LIMIT_ENDPOINT, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
+    })
+    if (!response.ok) return unavailable()
+    const value = parseEbayApplicationBrowseQuota(await response.json())
+    rateLimitCache = { value, expiresAt: Date.now() + RATE_LIMIT_CACHE_TTL_MS }
+    return value
+  } catch {
+    return unavailable()
+  } finally {
+    token = ""
+  }
+}
+
+async function enforceBrowseQuota(expectedCalls: number) {
+  const quota = await getEbayApplicationBrowseQuota()
+  if (quota.status === "AVAILABLE" && quota.remaining !== null &&
+    quota.remaining <= BROWSE_QUOTA_RESERVE + expectedCalls && quota.resetAt) {
+    throw createEbayReadonlyQuotaLimitError(quota.resetAt)
+  }
 }
 
 function firstCategory(value: unknown) {
@@ -91,45 +176,101 @@ function safeErrorCode(error: unknown) {
     : "EBAY_READONLY_MARKET_VALIDATION_FAILED"
 }
 
+async function wait(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function retryDelay(response: Response, attempt: number) {
+  const retryAfter = Number(response.headers.get("retry-after"))
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return Math.min(retryAfter * 1_000, 8_000)
+  }
+  return Math.min(400 * (2 ** attempt), 3_200) + Math.floor(Math.random() * 200)
+}
+
 async function getApplicationToken(scope: string) {
+  const cached = tokenCache.get(scope)
+  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token
   const clientId = process.env.EBAY_CLIENT_ID?.trim() ?? ""
   const clientSecret = process.env.EBAY_CLIENT_SECRET?.trim() ?? ""
   if (!clientId || !clientSecret) {
     throw new Error("EBAY_READONLY_ENV_MISSING")
   }
   const credentials = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")
-  const response = await fetch(TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${credentials}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({ grant_type: "client_credentials", scope }),
-    cache: "no-store",
-    signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
-  })
-  if (!response.ok) throw new Error(`EBAY_OAUTH_${response.status}`)
-  const payload = record(await response.json())
-  const accessToken = text(payload.access_token)
-  if (!accessToken) throw new Error("EBAY_OAUTH_TOKEN_MISSING")
-  return accessToken
+  for (let attempt = 0; attempt < EBAY_MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(TOKEN_ENDPOINT, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${credentials}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ grant_type: "client_credentials", scope }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
+      })
+      if (response.ok) {
+        const payload = record(await response.json())
+        const accessToken = text(payload.access_token)
+        if (!accessToken) throw new Error("EBAY_OAUTH_TOKEN_MISSING")
+        const expiresIn = Math.max(120, numberOrNull(payload.expires_in) ?? 7_200)
+        tokenCache.set(scope, {
+          token: accessToken,
+          expiresAt: Date.now() + expiresIn * 1_000,
+        })
+        return accessToken
+      }
+      if (response.status === 429) {
+        throw createEbayReadonlyRateLimitError("EBAY_OAUTH_429", response)
+      }
+      if (![429, 500, 502, 503, 504].includes(response.status) || attempt === EBAY_MAX_RETRIES - 1) {
+        throw new Error(`EBAY_OAUTH_${response.status}`)
+      }
+      await wait(retryDelay(response, attempt))
+    } catch (error) {
+      const code = error instanceof Error ? error.message : ""
+      if (code.startsWith("EBAY_OAUTH_") || attempt === EBAY_MAX_RETRIES - 1) throw error
+      await wait(Math.min(400 * (2 ** attempt), 3_200) + Math.floor(Math.random() * 200))
+    }
+  }
+  throw new Error("EBAY_OAUTH_FAILED")
 }
 
 async function getEbayJson(url: URL, accessToken: string) {
   assertEbaySellerKeywordReadonlyRequest(url.href, "GET")
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-      "X-EBAY-C-ENDUSERCTX":
-        "contextualLocation=country%3DUS%2Czip%3D33487",
-    },
-    cache: "no-store",
-    signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
-  })
-  if (!response.ok) throw new Error(`EBAY_READONLY_GET_${response.status}`)
-  return record(await response.json())
+  for (let attempt = 0; attempt < EBAY_MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+          "X-EBAY-C-ENDUSERCTX":
+            "contextualLocation=country%3DUS%2Czip%3D33487",
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
+      })
+      if (response.ok) return record(await response.json())
+      if (response.status === 401) {
+        for (const [scope, cached] of tokenCache) {
+          if (cached.token === accessToken) tokenCache.delete(scope)
+        }
+      }
+      if (response.status === 429) {
+        throw createEbayReadonlyRateLimitError("EBAY_READONLY_GET_429", response)
+      }
+      if (![429, 500, 502, 503, 504].includes(response.status) || attempt === EBAY_MAX_RETRIES - 1) {
+        throw new Error(`EBAY_READONLY_GET_${response.status}`)
+      }
+      await wait(retryDelay(response, attempt))
+    } catch (error) {
+      const code = error instanceof Error ? error.message : ""
+      if (code.startsWith("EBAY_READONLY_GET_") || attempt === EBAY_MAX_RETRIES - 1) throw error
+      await wait(Math.min(400 * (2 ** attempt), 3_200) + Math.floor(Math.random() * 200))
+    }
+  }
+  throw new Error("EBAY_READONLY_GET_FAILED")
 }
 
 function mapComparable(
@@ -171,6 +312,7 @@ function mapComparable(
     returnsAccepted: returnTerms.returnsAccepted === true,
     itemOriginDate: text(item.itemOriginDate),
     itemEndDate: text(item.itemEndDate),
+    visualEvidence: buildOfficialEbayVisualMetadata(item),
     source,
   }
 }
@@ -202,6 +344,124 @@ async function searchActiveListings(
   return {
     payload,
     items: array(payload.itemSummaries),
+  }
+}
+
+export type EbayListingDiscoverySignals = {
+  status: "AVAILABLE" | "NO_MATCH"
+  observedAt: string
+  source: "EBAY_BROWSE_DISCOVERY_READONLY"
+  candidateFoundCount: number
+  returnedCandidateCount: number
+  sellerCount: number
+  landedPriceRange: { minimum: number; maximum: number } | null
+  packsObserved: number[]
+  estimatedMovementSignals: number
+  demandSignalClass: "ESTIMATED_DEMAND_SIGNALS" | "NONE"
+  categoryId: string | null
+  identitySignalScore: number
+  discoveryScore: number
+  basicRiskCodes: string[]
+  fullCompetitorContentStored: false
+  ebayWrites: 0
+}
+
+function normalizedWords(value: unknown) {
+  return new Set(text(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ")
+    .filter((word) => word.length >= 3))
+}
+
+function wordOverlap(left: unknown, right: unknown) {
+  const expected = normalizedWords(left)
+  const observed = normalizedWords(right)
+  if (!expected.size || !observed.size) return 0
+  const matches = [...expected].filter((word) => observed.has(word)).length
+  return matches / expected.size
+}
+
+function structuredPackCount(item: JsonRecord) {
+  for (const aspect of normalizeAspects(item.localizedAspects)) {
+    if (!/^(number in pack|pack quantity|pack size)$/i.test(aspect.name)) continue
+    const parsed = Number(aspect.value.match(/^\s*(\d{1,3})\s*$/)?.[1])
+    if (Number.isInteger(parsed) && parsed > 0 && parsed <= 100) return parsed
+  }
+  return null
+}
+
+/**
+ * One Browse search per Luna variant. This is deliberately shallower than Loop 1:
+ * it stores aggregate signals only and never enriches individual listings.
+ */
+export async function discoverEbayListingSignals(
+  candidate: EbaySellerKeywordCandidate,
+): Promise<EbayListingDiscoverySignals> {
+  const observedAt = new Date().toISOString()
+  const query = buildEbaySellerKeywordSearchQuery(candidate)
+  if (query.length < 3) throw new Error("EBAY_SEARCH_QUERY_TOO_SHORT")
+  let token = ""
+  try {
+    await enforceBrowseQuota(1)
+    token = await getApplicationToken(BROWSE_SCOPE)
+    let search = await searchActiveListings(candidate, query, token)
+    if (!search.items.length && normalizedGtin(candidate.gtin)) {
+      search = await searchActiveListings({ ...candidate, gtin: null }, query, token)
+    }
+    const items = search.items.map(record)
+    const sellers = new Set(items.map((item) => text(record(item.seller).username ??
+      record(item.seller).userId)).filter(Boolean))
+    const landedPrices = items.map((item) => {
+      const price = numberOrNull(record(item.price).value)
+      const shipping = numberOrNull(record(firstShippingOption(item.shippingOptions).shippingCost).value) ?? 0
+      return price === null ? null : price + shipping
+    }).filter((value): value is number => value !== null)
+    const packsObserved = [...new Set(items.map(structuredPackCount)
+      .filter((value): value is number => value !== null))].sort((left, right) => left - right)
+    const estimatedMovementSignals = items.reduce((sum, item) =>
+      sum + Math.max(0, numberOrNull(firstAvailability(item.estimatedAvailabilities)
+        .estimatedSoldQuantity) ?? 0), 0)
+    const candidateGtin = normalizedGtin(candidate.gtin)
+    const exactGtinObserved = Boolean(candidateGtin && items.some((item) =>
+      normalizedGtin(item.gtin) === candidateGtin))
+    const candidateBrand = text(candidate.brand).toLowerCase()
+    const brandAgreement = candidateBrand && items.length
+      ? items.filter((item) => text(item.brand).toLowerCase() === candidateBrand).length / items.length : 0
+    const titleAgreement = items.length
+      ? Math.max(...items.map((item) => wordOverlap(candidate.productName, item.title))) : 0
+    const identitySignalScore = Math.min(100, Math.round(
+      (exactGtinObserved ? 55 : 0) + brandAgreement * 20 + titleAgreement * 25,
+    ))
+    const basicRiskCodes = [
+      ...items.length ? [] : ["NO_EBAY_CANDIDATES"],
+      ...landedPrices.length ? [] : ["MARKET_PRICE_UNAVAILABLE"],
+      ...identitySignalScore < 35 ? ["WEAK_DISCOVERY_IDENTITY_SIGNAL"] : [],
+      ...sellers.size <= 1 ? ["SELLER_CONCENTRATION"] : [],
+    ]
+    const discoveryScore = Math.max(0, Math.min(100, Math.round(
+      identitySignalScore * .4 + Math.min(20, items.length / 2) +
+      Math.min(15, sellers.size * 3) + Math.min(15, estimatedMovementSignals * 2) +
+      (landedPrices.length ? 10 : 0) - basicRiskCodes.length * 3,
+    )))
+    return {
+      status: items.length ? "AVAILABLE" : "NO_MATCH",
+      observedAt,
+      source: "EBAY_BROWSE_DISCOVERY_READONLY",
+      candidateFoundCount: numberOrNull(search.payload.total) ?? items.length,
+      returnedCandidateCount: items.length,
+      sellerCount: sellers.size,
+      landedPriceRange: landedPrices.length
+        ? { minimum: Math.min(...landedPrices), maximum: Math.max(...landedPrices) } : null,
+      packsObserved,
+      estimatedMovementSignals,
+      demandSignalClass: estimatedMovementSignals > 0 ? "ESTIMATED_DEMAND_SIGNALS" : "NONE",
+      categoryId: inferCategoryId(candidate, search.payload, items) || null,
+      identitySignalScore,
+      discoveryScore,
+      basicRiskCodes,
+      fullCompetitorContentStored: false,
+      ebayWrites: 0,
+    }
+  } finally {
+    token = ""
   }
 }
 
@@ -252,6 +512,7 @@ export async function runEbaySellerKeywordDemandValidation(
   let browseToken = ""
   let insightsToken = ""
   try {
+    await enforceBrowseQuota(1 + detailSampleLimit())
     browseToken = await getApplicationToken(BROWSE_SCOPE)
     let activeSearch = await searchActiveListings(candidate, query, browseToken)
     if (activeSearch.items.length === 0 && normalizedGtin(candidate.gtin)) {
@@ -262,7 +523,7 @@ export async function runEbaySellerKeywordDemandValidation(
       )
     }
     const activeDetails = await mapWithConcurrency(
-      activeSearch.items.slice(0, DETAIL_SAMPLE_LIMIT),
+      activeSearch.items.slice(0, detailSampleLimit()),
       DETAIL_CONCURRENCY,
       (item) => enrichActiveListing(item, browseToken)
     )
@@ -296,7 +557,7 @@ export async function runEbaySellerKeywordDemandValidation(
         insightsAvailability = "AVAILABLE"
       } catch (error) {
         const code = safeErrorCode(error)
-        insightsAvailability = /403|401|OAUTH/.test(code)
+        insightsAvailability = /(?:OAUTH|READONLY_GET)_(?:401|403)$/.test(code)
           ? "NOT_ENTITLED"
           : "REQUEST_FAILED"
       }
@@ -310,6 +571,10 @@ export async function runEbaySellerKeywordDemandValidation(
     return buildEbaySellerKeywordDemandValidation({
       candidate,
       comparables: [...byId.values()],
+      candidateFoundCount:
+        numberOrNull(activeSearch.payload.total) ?? activeSearch.items.length,
+      returnedCandidateCount: activeSearch.items.length,
+      enrichedSampleCount: activeDetails.length,
       insightsAvailability,
     })
   } finally {
@@ -344,21 +609,7 @@ export async function discoverEbayBestSellingProducts(
     const url = new URL(BUY_MARKETING_ENDPOINT)
     url.searchParams.set("category_id", categoryId)
     url.searchParams.set("metric_name", "BEST_SELLING")
-    assertEbaySellerKeywordReadonlyRequest(url.href, "GET")
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-      },
-      cache: "no-store",
-      signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
-    })
-    if (response.status === 401 || response.status === 403) {
-      return { status: "NOT_AUTHORIZED", products: [] }
-    }
-    if (!response.ok) return { status: "REQUEST_FAILED", products: [] }
-    const payload = record(await response.json())
+    const payload = await getEbayJson(url, token)
     const products = array(payload.merchandisedProducts).map(record).map((product) => ({
       categoryId,
       epid: text(product.epid) || null,
@@ -370,6 +621,92 @@ export async function discoverEbayBestSellingProducts(
       evidenceClass: "EBAY_MARKETING_BEST_SELLING_PRODUCT" as const,
     })).filter((product) => product.title)
     return { status: "AVAILABLE", products }
+  } catch (error) {
+    const code = safeErrorCode(error)
+    if (/(?:OAUTH|READONLY_GET)_(?:401|403)$/.test(code)) {
+      return { status: "NOT_AUTHORIZED", products: [] }
+    }
+    return { status: "REQUEST_FAILED", products: [] }
+  } finally {
+    token = ""
+  }
+}
+
+export type EbayTaxonomyAspectValueIntelligence = {
+  value: string
+  valueConstraints: Array<{
+    applicableForAspectName: string
+    applicableForAspectValues: string[]
+  }>
+}
+
+export type EbayTaxonomyAspectIntelligence = {
+  name: string
+  mode: string | null
+  cardinality: string | null
+  maxLength: number | null
+  dataType: string | null
+  format: string | null
+  advancedDataType: string | null
+  expectedRequiredByDate: string | null
+  suggestedValues: string[]
+  values: EbayTaxonomyAspectValueIntelligence[]
+  valuesComplete: boolean
+  constraintsComplete: boolean
+}
+
+function catalogStrings(value: unknown) {
+  return [...new Set(array(value).map(text).filter(Boolean))]
+}
+
+function mapCatalogProduct(value: unknown): EbayCatalogIdentityProduct {
+  const product = record(value)
+  const aspects = array(product.aspects).map(record).map((aspect) => ({
+    name: text(aspect.localizedName ?? aspect.name),
+    values: catalogStrings(aspect.localizedValues ?? aspect.values),
+  })).filter((aspect) => aspect.name && aspect.values.length)
+  const category = record(array(product.categories)[0])
+  return {
+    epid: text(product.epid ?? product.ePID) || null,
+    title: text(product.title) || null,
+    brand: text(product.brand) || null,
+    gtins: catalogStrings(product.gtins ?? product.gtin),
+    mpns: catalogStrings(product.mpns ?? product.mpn),
+    aspects,
+    categoryId: text(product.primaryCategoryId ?? category.categoryId) || null,
+  }
+}
+
+/** Official, read-only Catalog lookup. It never returns tokens or request headers. */
+export async function searchEbayCatalogIdentity(input: {
+  query: string
+  gtin?: string | null
+  mpn?: string | null
+  categoryId?: string | null
+}): Promise<EbayCatalogIdentityResult> {
+  const observedAt = new Date().toISOString()
+  if (!process.env.EBAY_CLIENT_ID?.trim() || !process.env.EBAY_CLIENT_SECRET?.trim()) {
+    return { status: "NOT_CONFIGURED", products: [], observedAt,
+      source: "EBAY_CATALOG_OFFICIAL_READONLY" }
+  }
+  let token = ""
+  try {
+    token = await getApplicationToken(BROWSE_SCOPE)
+    const url = new URL(CATALOG_ENDPOINT)
+    const gtin = normalizedGtin(input.gtin)
+    if (gtin) url.searchParams.set("gtin", gtin)
+    else if (text(input.mpn)) url.searchParams.set("mpn", text(input.mpn))
+    else url.searchParams.set("q", text(input.query).slice(0, 350))
+    if (/^\d+$/.test(text(input.categoryId))) url.searchParams.set("category_ids", text(input.categoryId))
+    url.searchParams.set("limit", "10")
+    const payload = await getEbayJson(url, token)
+    const products = array(payload.productSummaries).map(mapCatalogProduct)
+      .filter((product) => Boolean(product.epid || product.gtins.length || product.title))
+    return { status: products.length ? "AVAILABLE" : "NO_MATCH", products,
+      observedAt, source: "EBAY_CATALOG_OFFICIAL_READONLY" }
+  } catch {
+    return { status: "REQUEST_FAILED", products: [], observedAt,
+      source: "EBAY_CATALOG_OFFICIAL_READONLY" }
   } finally {
     token = ""
   }
@@ -378,40 +715,65 @@ export async function discoverEbayBestSellingProducts(
 export type EbayTaxonomyListingIntelligence = {
   status: "AVAILABLE" | "CATEGORY_NOT_RESOLVED" | "REQUEST_FAILED"
   categoryTreeId: string | null
+  categoryTreeVersion: string | null
   categoryId: string | null
   categoryName: string | null
-  requiredAspects: Array<{
-    name: string
-    mode: string | null
-    cardinality: string | null
-    expectedRequiredByDate: string | null
-    suggestedValues: string[]
-  }>
-  recommendedAspects: Array<{
-    name: string
-    mode: string | null
-    cardinality: string | null
-    expectedRequiredByDate: string | null
-    suggestedValues: string[]
-  }>
+  observedAt: string | null
+  /** Complete aspect metadata used for server-side validation. */
+  aspects: EbayTaxonomyAspectIntelligence[]
+  requiredAspects: EbayTaxonomyAspectIntelligence[]
+  recommendedAspects: EbayTaxonomyAspectIntelligence[]
   source: "EBAY_TAXONOMY_OFFICIAL_READONLY"
 }
 
 function mapTaxonomyAspect(value: unknown) {
   const aspect = record(value)
   const constraint = record(aspect.aspectConstraint)
+  const rawValues = array(aspect.aspectValues)
+  const mappedValues = rawValues.map((rawValue) => {
+    const aspectValue = record(rawValue)
+    const rawValueConstraints = array(aspectValue.valueConstraints)
+    const valueConstraints = rawValueConstraints.map((rawConstraint) => {
+      const valueConstraint = record(rawConstraint)
+      return {
+        applicableForAspectName: text(valueConstraint.applicableForLocalizedAspectName),
+        applicableForAspectValues: array(valueConstraint.applicableForLocalizedAspectValues)
+          .map(text)
+          .filter(Boolean),
+      }
+    })
+    return {
+      value: text(aspectValue.localizedValue),
+      valueConstraints,
+      constraintsComplete: valueConstraints.length === rawValueConstraints.length
+        && valueConstraints.every((entry) =>
+          Boolean(entry.applicableForAspectName)
+          && entry.applicableForAspectValues.length > 0
+        ),
+    }
+  })
+  const values = mappedValues
+    .filter((entry) => entry.value)
+    .map(({ constraintsComplete: _complete, ...entry }) => entry)
+  const parsedMaxLength = numberOrNull(constraint.aspectMaxLength)
   return {
     name: text(aspect.localizedAspectName),
     mode: text(constraint.aspectMode) || null,
     cardinality: text(constraint.itemToAspectCardinality) || null,
+    maxLength: parsedMaxLength !== null && Number.isInteger(parsedMaxLength) && parsedMaxLength > 0
+      ? parsedMaxLength
+      : null,
+    dataType: text(constraint.aspectDataType) || null,
+    format: text(constraint.aspectFormat) || null,
+    advancedDataType: text(constraint.aspectAdvancedDataType) || null,
     expectedRequiredByDate: text(constraint.expectedRequiredByDate) || null,
     required: constraint.aspectRequired === true,
     usage: text(constraint.aspectUsage),
-    suggestedValues: array(aspect.aspectValues)
-      .map(record)
-      .map((entry) => text(entry.localizedValue))
-      .filter(Boolean)
-      .slice(0, 25),
+    suggestedValues: values.map((entry) => entry.value).slice(0, 25),
+    values,
+    valuesComplete: values.length === rawValues.length,
+    constraintsComplete: mappedValues.length === rawValues.length
+      && mappedValues.every((entry) => entry.constraintsComplete),
   }
 }
 
@@ -420,11 +782,22 @@ export async function getEbayTaxonomyListingIntelligence(
   knownCategoryId?: string | null
 ): Promise<EbayTaxonomyListingIntelligence> {
   let token = ""
+  const normalizedKnownCategory = /^\d+$/.test(text(knownCategoryId))
+    ? text(knownCategoryId)
+    : ""
+  const cacheKey = normalizedKnownCategory
+    ? `category:${normalizedKnownCategory}`
+    : `query:${query.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 160)}`
+  const cached = taxonomyCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
   const empty = (status: EbayTaxonomyListingIntelligence["status"]): EbayTaxonomyListingIntelligence => ({
     status,
     categoryTreeId: null,
+    categoryTreeVersion: null,
     categoryId: null,
     categoryName: null,
+    observedAt: null,
+    aspects: [],
     requiredAspects: [],
     recommendedAspects: [],
     source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
@@ -435,9 +808,10 @@ export async function getEbayTaxonomyListingIntelligence(
     treeUrl.searchParams.set("marketplace_id", MARKETPLACE_ID)
     const treePayload = await getEbayJson(treeUrl, token)
     const categoryTreeId = text(treePayload.categoryTreeId)
+    const categoryTreeVersion = text(treePayload.categoryTreeVersion) || null
     if (!categoryTreeId) return empty("REQUEST_FAILED")
 
-    let categoryId = /^\d+$/.test(text(knownCategoryId)) ? text(knownCategoryId) : ""
+    let categoryId = normalizedKnownCategory
     let categoryName = ""
     if (!categoryId) {
       const suggestionUrl = new URL(
@@ -451,7 +825,7 @@ export async function getEbayTaxonomyListingIntelligence(
       categoryName = text(category.categoryName)
     }
     if (!categoryId) {
-      return { ...empty("CATEGORY_NOT_RESOLVED"), categoryTreeId }
+      return { ...empty("CATEGORY_NOT_RESOLVED"), categoryTreeId, categoryTreeVersion }
     }
     const aspectsUrl = new URL(
       `${TAXONOMY_ENDPOINT}/category_tree/${encodeURIComponent(categoryTreeId)}/get_item_aspects_for_category`
@@ -459,15 +833,23 @@ export async function getEbayTaxonomyListingIntelligence(
     aspectsUrl.searchParams.set("category_id", categoryId)
     const aspectsPayload = await getEbayJson(aspectsUrl, token)
     const aspects = array(aspectsPayload.aspects).map(mapTaxonomyAspect).filter((aspect) => aspect.name)
-    return {
+    const value: EbayTaxonomyListingIntelligence = {
       status: "AVAILABLE",
       categoryTreeId,
+      categoryTreeVersion,
       categoryId,
       categoryName: categoryName || null,
+      observedAt: new Date().toISOString(),
+      aspects: aspects.map(({ required: _required, usage: _usage, ...aspect }) => aspect),
       requiredAspects: aspects.filter((aspect) => aspect.required).map(({ required: _required, usage: _usage, ...aspect }) => aspect),
       recommendedAspects: aspects.filter((aspect) => !aspect.required && aspect.usage === "RECOMMENDED").map(({ required: _required, usage: _usage, ...aspect }) => aspect),
       source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
     }
+    taxonomyCache.set(cacheKey, {
+      value,
+      expiresAt: Date.now() + TAXONOMY_CACHE_TTL_MS,
+    })
+    return value
   } catch {
     return empty("REQUEST_FAILED")
   } finally {

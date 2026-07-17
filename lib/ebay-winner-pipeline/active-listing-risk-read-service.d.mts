@@ -39,22 +39,26 @@ export type ActiveListingRiskSummary = {
 
 export function getOpenActiveListingRisks(args?: {
   supabase: any
+  accountKey: string
   limit?: number
 }): Promise<ActiveListingRiskRow[]>
 
 export function getActiveListingRiskSummary(args?: {
   supabase: any
+  accountKey: string
   limit?: number
 }): Promise<ActiveListingRiskSummary>
 
 export function getRisksByEbaySku(args?: {
   supabase: any
+  accountKey: string
   sku: string
   limit?: number
 }): Promise<ActiveListingRiskRow[]>
 
 export function getRisksBySupplierSku(args?: {
   supabase: any
+  accountKey: string
   supplierSku: string
   limit?: number
 }): Promise<ActiveListingRiskRow[]>

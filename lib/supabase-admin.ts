@@ -148,6 +148,7 @@ export async function validateAdminApiRequest(
       status: 401,
       error:
         "admin_token_required",
+      userId: null,
     }
   }
 
@@ -162,6 +163,8 @@ export async function validateAdminApiRequest(
       ok: true,
       status: 200,
       error: null,
+      userId: null,
+      authenticationMode: "service_role" as const,
     }
   }
 
@@ -187,6 +190,7 @@ export async function validateAdminApiRequest(
       status: 401,
       error:
         "admin_unauthorized",
+      userId: null,
     }
   }
 
@@ -199,6 +203,8 @@ export async function validateAdminApiRequest(
       ok: true,
       status: 200,
       error: null,
+      userId: userData.user.id,
+      authenticationMode: "admin_user" as const,
     }
   }
 
@@ -219,6 +225,7 @@ export async function validateAdminApiRequest(
       status: 403,
       error:
         "admin_forbidden",
+      userId: userData.user.id,
     }
   }
 
@@ -226,5 +233,7 @@ export async function validateAdminApiRequest(
     ok: true,
     status: 200,
     error: null,
+    userId: userData.user.id,
+    authenticationMode: "admin_user" as const,
   }
 }

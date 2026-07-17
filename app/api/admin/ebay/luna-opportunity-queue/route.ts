@@ -60,6 +60,18 @@ export async function POST(req: Request) {
       const batch = await processNextEbayFirstLunaBatch(supabase, run.id)
       return NextResponse.json({ success: true, action, run, batch })
     }
+    if (action === "restart_priority") {
+      const pausedAt = new Date().toISOString()
+      const { error: pauseError } = await supabase
+        .from("ebay_luna_scan_runs")
+        .update({ status: "paused", last_batch_at: pausedAt })
+        .eq("status", "running")
+      if (pauseError) throw new Error("EBAY_LUNA_SCAN_RESTART_FAILED")
+      const run = await startEbayFirstLunaScan(supabase, body.categoryIds)
+      runId = run.id
+      const batch = await processNextEbayFirstLunaBatch(supabase, run.id)
+      return NextResponse.json({ success: true, action, run, batch })
+    }
     if (action === "process_next") {
       runId = typeof body.runId === "string" ? body.runId : ""
       if (!/^[0-9a-f-]{36}$/i.test(runId)) {

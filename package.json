@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:seller-os": "node --test lib/ebay/*.test.mjs tools/ebay-*-tests.mjs",
+    "audit:seller-os": "node tools/ebay-seller-os-ci-guards.mjs",
+    "market-intelligence:ebay": "node tools/ebay-market-intelligence-loop.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -39,6 +42,7 @@
     "@radix-ui/react-tooltip": "1.2.8",
     "@supabase/supabase-js": "^2.106.1",
     "@vercel/analytics": "1.6.1",
+    "@vercel/queue": "0.1.6",
     "autoprefixer": "^10.4.20",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -56,6 +60,7 @@
     "react-hook-form": "^7.54.1",
     "react-resizable-panels": "^2.1.7",
     "recharts": "2.15.0",
+    "sharp": "0.34.5",
     "sonner": "^1.7.1",
     "tailwind-merge": "^3.3.1",
     "twilio": "^6.0.2",

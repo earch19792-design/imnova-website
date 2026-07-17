@@ -119,7 +119,7 @@ export function applyMobileReviewAction(
     }
   }
 
-  if (action.type === "CONFIRM_SAME_PRODUCT" && state.selectedCandidateRank) {
+  if (action.type === "CONFIRM_SAME_PRODUCT" && state.selectedCandidateRank !== null) {
     return { ...state, sameProductConfirmed: true }
   }
 
@@ -131,7 +131,7 @@ export function applyMobileReviewAction(
     }
   }
 
-  if (action.type === "CONFIRM_STOCK_QTY" && state.selectedCandidateRank) {
+  if (action.type === "CONFIRM_STOCK_QTY" && state.selectedCandidateRank !== null) {
     if (!Number.isInteger(action.quantity) || action.quantity < 1) return state
     return {
       ...state,
@@ -153,7 +153,7 @@ export function applyMobileReviewAction(
     }
   }
 
-  if (action.type === "CONFIRM_IMAGE_OK" && state.selectedCandidateRank) {
+  if (action.type === "CONFIRM_IMAGE_OK" && state.selectedCandidateRank !== null) {
     return {
       ...state,
       mobileReviewState: "IMAGE_CONFIRMED",

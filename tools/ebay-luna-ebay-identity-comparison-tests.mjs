@@ -99,8 +99,8 @@ test("search URL uses only the Luna candidate text", () => {
 })
 
 test("mobile UI explains and enforces the two-source comparison", () => {
-  assert.match(pageSource, /Listings y keywords que están vendiendo/)
-  assert.match(pageSource, /Analizar listings y ventas en eBay/)
+  assert.match(pageSource, /eBay: comparables y señales de demanda/)
+  assert.match(pageSource, /Analizar comparables y demanda en eBay/)
   assert.match(pageSource, /Confirmación humana final/)
   assert.match(pageSource, /análisis oficial eBay read-only/)
   assert.match(pageSource, /sameProductAndBrand/)

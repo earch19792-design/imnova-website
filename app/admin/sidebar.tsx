@@ -401,7 +401,7 @@ export function Sidebar({
             Centro de venta
           </span>
           <span className="mt-1 block text-xs leading-5 text-white/45">
-            Radar → Pipeline → Listing → Review
+            Inicio → Oportunidades → En curso → Operación
           </span>
           <span className="mt-3 grid grid-cols-2 gap-1.5 text-[10px] font-black uppercase tracking-[0.08em] text-cyan-50/70">
             <span className="rounded-md border border-cyan-300/15 bg-black/20 px-2 py-1">
@@ -418,7 +418,7 @@ export function Sidebar({
             </span>
           </span>
           <span className="mt-3 block rounded-md border border-red-300/20 bg-red-300/[0.08] px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-red-50/75">
-            eBay real bloqueado
+            publicación automática bloqueada
           </span>
         </a>
 
@@ -440,13 +440,13 @@ export function Sidebar({
           "
         >
           <span className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/50">
-            Image Dry Run
+            Optimizador de imágenes
           </span>
           <span className="mt-2 block text-sm font-black text-white">
             Image Dry Run
           </span>
           <span className="mt-1 block text-xs leading-5 text-white/45">
-            PromptPlan + safety check | No image generated
+            Fondo blanco 1600×1600 | QA y aprobación humana
           </span>
         </a>
 

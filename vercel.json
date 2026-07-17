@@ -1,6 +1,22 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "app/api/queues/ebay-listing-top20-continuation/route.ts": {
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "ebay-listing-top20-continuation",
+          "retryAfterSeconds": 15,
+          "initialDelaySeconds": 0
+        }
+      ]
+    }
+  },
   "crons": [
+    {
+      "path": "/api/cron/market-radar-luna-sync",
+      "schedule": "0 9 * * *"
+    },
     {
       "path": "/api/cron/ebay-luna-opportunity-scan",
       "schedule": "17 9 * * *"

@@ -127,6 +127,28 @@ export type OpportunityEngineOptions = {
   minimumNetProfit?: number
   minimumNetMarginPercent?: number
   minimumRoiPercent?: number
+  categoryLearningAdjustment?: EbayCategoryLearningAdjustmentInput | null
+}
+
+/**
+ * A small, portfolio-level correction learned exclusively from the authenticated
+ * seller account. The engine validates every evidence threshold again before it
+ * can affect ranking; callers cannot bypass those checks with this object.
+ */
+export type EbayCategoryLearningAdjustmentInput = {
+  accountKey: string
+  marketplaceId: "EBAY_US"
+  categoryId: string
+  modelVersion: string
+  predictionEngineVersion: string
+  status: "COLLECTING" | "ELIGIBLE_APPLIED"
+  eligible: boolean
+  adjustmentPoints: number
+  sampleListingCount: number
+  totalImpressions: number
+  minimumObservationDays: number
+  source: "EBAY_SELL_ANALYTICS_READONLY"
+  computedAt: string
 }
 
 export type EbayLunaCandidateMarketInput = {

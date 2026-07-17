@@ -1,0 +1,46 @@
+name: eBay commercial Preview monitor
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ebay-commercial-preview-monitor
+  cancel-in-progress: false
+
+jobs:
+  commercial-monitor:
+    if: vars.EBAY_COMMERCIAL_PREVIEW_MONITOR_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Run due commercial readers in Preview
+        env:
+          PREVIEW_URL: ${{ secrets.EBAY_COMMERCIAL_PREVIEW_URL }}
+          CRON_SECRET: ${{ secrets.EBAY_COMMERCIAL_CRON_SECRET }}
+        run: |
+          test -n "$PREVIEW_URL"
+          test -n "$CRON_SECRET"
+          curl --fail --silent --show-error --max-time 55 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$PREVIEW_URL/api/cron/ebay-commercial-monitor"
+
+  whatsapp-dispatcher:
+    if: vars.EBAY_COMMERCIAL_PREVIEW_MONITOR_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch one leased WhatsApp alert in Preview
+        env:
+          PREVIEW_URL: ${{ secrets.EBAY_COMMERCIAL_PREVIEW_URL }}
+          CRON_SECRET: ${{ secrets.EBAY_COMMERCIAL_CRON_SECRET }}
+        run: |
+          test -n "$PREVIEW_URL"
+          test -n "$CRON_SECRET"
+          curl --fail --silent --show-error --max-time 55 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$PREVIEW_URL/api/cron/commercial-alert-dispatcher"

@@ -62,7 +62,8 @@ export function normalizeLunaOpportunityCandidate(
   const now = nowValue instanceof Date ? nowValue : new Date(nowValue)
   const metadata = input.metadata ?? {}
   const title = text(input.title) ?? text(input.productName) ?? "Untitled Luna Portex product"
-  const brand = text(input.brand) ?? text(input.vendor) ?? text(metadata.brand)
+  // Luna vendor identifies the supplier/distributor, not necessarily the manufacturer brand.
+  const brand = text(input.brand) ?? text(metadata.manufacturerBrand) ?? text(metadata.brand)
   const mpn = text(input.mpn) ?? text(metadata.mpn) ?? text(metadata.model)
   const gtin = normalizedGtin(input.gtin) ?? normalizedGtin(input.upc) ??
     normalizedGtin(input.barcode) ?? normalizedGtin(metadata.gtin) ??

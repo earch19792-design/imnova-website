@@ -1,119 +1,94 @@
-const queuePriority =
-  "Sin stock → Proteger → Revisar stock → Margen → Bloqueados → Vender ahora → Monitorear"
+import { SellerOsMobileNav } from "../ebay/components/seller-os-mobile-nav"
 
-const cards = [
-  "Colas del vendedor",
-  "Vender ahora",
-  "Revisar stock",
-  "Margen",
-  "Bloqueados",
-  "Rescates / packs",
-  "Proteger",
+const actions = [
+  {
+    href: "/admin/ebay/mobile-review",
+    eyebrow: "Empieza aquí · móvil",
+    title: "Seller Command Center",
+    copy: "Descubre, valida y prepara el producto con mayor prioridad desde una sola cola.",
+    tone: "border-emerald-200/25 bg-emerald-200/[0.08]",
+    cta: "Abrir centro →",
+  },
+  {
+    href: "/admin/ebay/opportunity-queue",
+    eyebrow: "Vista técnica",
+    title: "Opportunity Queue",
+    copy: "Inspecciona scans, evidencia, guardas y orden canónico con más detalle.",
+    tone: "border-violet-200/20 bg-violet-200/[0.06]",
+    cta: "Ver cola →",
+  },
+]
+
+const operationLinks = [
+  {
+    href: "/admin/ebay/listing-optimization",
+    title: "Optimizar listing",
+    copy: "Convierte un reporte de mercado y hechos verificados en título, descripción, briefs, score e iteraciones auditables.",
+    cta: "Abrir Optimization Loop →",
+  },
+  {
+    href: "/admin/ebay/listings/register",
+    title: "Vincular listing activo",
+    copy: "El asistente te ayuda a elegir el producto, confirmar su SKU y verificar el Item ID sin perderte entre pantallas.",
+    cta: "Abrir asistente guiado →",
+  },
+  {
+    href: "/admin/ebay/mobile-review?section=in-progress",
+    title: "Drafts y revisiones en curso",
+    copy: "Continúa validaciones y prepara un draft únicamente cuando todas las guardas estén resueltas.",
+    cta: "Ver en curso →",
+  },
+  {
+    href: "/admin/ebay/mobile-review?section=alerts",
+    title: "Listings activos y alertas",
+    copy: "Sincroniza eBay, revisa vínculos con Luna y atiende riesgos de stock o costo.",
+    cta: "Abrir operación →",
+  },
+  {
+    href: "/admin/ebay/seller-performance",
+    title: "Rendimiento de listings",
+    copy: "Consulta impresiones, CTR, conversión y ventas oficiales para mejorar el ranking.",
+    cta: "Ver rendimiento →",
+  },
 ]
 
 export default function EbaySellerOsHubPage() {
   return (
-    <main className="min-h-screen bg-[#05070d] px-6 py-10 text-white md:px-10">
-      <section className="mx-auto flex max-w-6xl flex-col gap-8">
-        <a
-          href="/admin"
-          className="w-fit rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-cyan-100/70"
-        >
-          Volver a Admin
-        </a>
+    <main className="min-h-screen bg-[#05070d] px-4 pb-28 pt-4 text-white sm:px-6">
+      <section className="mx-auto max-w-xl space-y-4">
+        <header className="rounded-3xl border border-white/10 bg-gradient-to-br from-emerald-200/[0.10] via-cyan-200/[0.04] to-black p-5">
+          <div className="flex items-center justify-between gap-3"><a href="/admin" className="inline-flex min-h-11 items-center rounded-full border border-white/15 px-4 text-sm font-bold">← Admin</a><span className="rounded-full border border-emerald-200/25 bg-emerald-200/[0.07] px-3 py-2 text-[11px] font-black text-emerald-50">MODO SEGURO</span></div>
+          <p className="mt-6 text-xs font-black uppercase tracking-[0.24em] text-emerald-100/60">eBay Seller OS</p>
+          <h1 className="mt-2 text-3xl font-black leading-tight">Tu operación de ventas, en el teléfono</h1>
+          <p className="mt-3 text-sm leading-6 text-white/65">Luna informa disponibilidad y costo; eBay aporta evidencia de mercado. El sistema te muestra la siguiente acción sin publicar automáticamente.</p>
+        </header>
 
-        <div className="rounded-2xl border border-emerald-300/15 bg-emerald-300/[0.05] p-7">
-          <p className="text-xs font-black uppercase tracking-[0.3em] text-emerald-100/55">
-            Módulo ligero
-          </p>
-          <h1 className="mt-4 text-4xl font-black text-white">
-            eBay Seller OS
-          </h1>
-          <p className="mt-4 max-w-3xl text-sm leading-7 text-white/65">
-            Organiza el flujo operativo del vendedor. Este hub no prepara
-            listings ni publica; organiza decisiones operativas.
-          </p>
-        </div>
+        <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4">
+          <p className="text-xs font-black uppercase tracking-widest text-amber-100/65">Ruta rápida</p>
+          <ol className="mt-3 grid grid-cols-4 gap-1 text-center text-[10px] font-black uppercase"><li className="rounded-xl bg-violet-200 px-1 py-3 text-black">1<br />Descubrir</li><li className="rounded-xl bg-cyan-200 px-1 py-3 text-black">2<br />Validar</li><li className="rounded-xl bg-emerald-200 px-1 py-3 text-black">3<br />Preparar</li><li className="rounded-xl border border-white/15 px-1 py-3 text-white/65">4<br />Draft / manual</li></ol>
+        </section>
 
-        <div className="rounded-2xl border border-white/10 bg-black/25 p-5">
-          <p className="text-xs font-black uppercase tracking-[0.24em] text-white/45">
-            Cola prioritaria
-          </p>
-          <p className="mt-3 text-lg font-black text-white">
-            {queuePriority}
-          </p>
-        </div>
+        <div className="space-y-3">{actions.map((action, index) => <a key={action.href} href={action.href} className={`block rounded-3xl border p-5 transition active:scale-[0.99] ${action.tone}`}><div className="flex items-start gap-4"><span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-white text-lg font-black text-black">{index + 1}</span><div className="min-w-0"><p className="text-xs font-black uppercase tracking-widest text-white/50">{action.eyebrow}</p><h2 className="mt-2 text-xl font-black">{action.title}</h2><p className="mt-2 text-sm leading-6 text-white/65">{action.copy}</p><span className="mt-4 inline-flex min-h-11 items-center rounded-full bg-white px-4 text-xs font-black text-black">{action.cta}</span></div></div></a>)}</div>
 
-        <a
-          href="/admin/ebay/opportunity-queue"
-          className="group rounded-3xl border border-violet-200/20 bg-violet-200/[0.07] p-6 transition hover:border-violet-200/40 hover:bg-violet-200/[0.10]"
-        >
-          <p className="text-xs font-black uppercase tracking-[0.24em] text-violet-100/55">
-            eBay-first × Luna Portex
-          </p>
-          <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
-            <div>
-              <h2 className="text-2xl font-black text-white">
-                Cola automática de oportunidades
-              </h2>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">
-                Recorre todas las variantes Luna, cruza demanda y comparables de
-                eBay, acumula velocidad y vigila cambios de precio y stock.
-              </p>
-            </div>
-            <span className="rounded-full bg-violet-200 px-4 py-2 text-xs font-black uppercase tracking-wider text-black">
-              Abrir cola →
-            </span>
+        <section id="operacion" aria-labelledby="operation-heading" className="scroll-mt-4 rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.05] p-4">
+          <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Operación · listings</p>
+          <h2 id="operation-heading" className="mt-1 text-xl font-black">Del primer listing manual a drafts reutilizables</h2>
+          <p className="mt-2 text-sm leading-6 text-white/65">Registra lo que eBay aceptó una sola vez; el OS podrá proponer esos campos en productos compatibles, siempre con revisión humana.</p>
+          <div className="mt-4 grid gap-3">
+            {operationLinks.map((item) => (
+              <a key={item.href} href={item.href} className="rounded-2xl border border-white/10 bg-black/25 p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
+                <h3 className="font-black">{item.title}</h3>
+                <p className="mt-1 text-sm leading-6 text-white/60">{item.copy}</p>
+                <span className="mt-3 inline-flex min-h-11 items-center text-sm font-black text-cyan-50">{item.cta}</span>
+              </a>
+            ))}
           </div>
-        </a>
+        </section>
 
-        <a
-          href="/admin/ebay/seller-performance"
-          className="group rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.07] p-6 transition hover:border-cyan-200/40 hover:bg-cyan-200/[0.10]"
-        >
-          <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-100/55">
-            Analytics oficial · read-only
-          </p>
-          <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
-            <div>
-              <h2 className="text-2xl font-black text-white">
-                Estadísticas de Seller Performance
-              </h2>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">
-                Consulta impresiones, vistas, CTR, transacciones y conversión de
-                tu propia cuenta mediante eBay Traffic Report.
-              </p>
-            </div>
-            <span className="rounded-full bg-cyan-200 px-4 py-2 text-xs font-black uppercase tracking-wider text-black">
-              Abrir panel →
-            </span>
-          </div>
-        </a>
-
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {cards.map((card) => (
-            <article
-              key={card}
-              className="rounded-2xl border border-white/10 bg-white/[0.035] p-5"
-            >
-              <h2 className="text-lg font-black text-white">
-                {card}
-              </h2>
-              <p className="mt-3 text-sm leading-6 text-white/60">
-                Ruta operativa para decidir el siguiente paso sin ejecutar
-                acciones externas.
-              </p>
-            </article>
-          ))}
-        </div>
-
-        <a
-          href="/admin"
-          className="w-fit rounded-full border border-emerald-300/20 px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-emerald-100/80"
-        >
-          Abrir Pipeline actual
-        </a>
+        <aside className="rounded-3xl border border-white/10 bg-white/[0.035] p-4"><h2 className="font-black">Regla de seguridad</h2><p className="mt-2 text-sm leading-6 text-white/60">Los scans, revisiones y paquetes internos pueden automatizarse. Crear o publicar un listing en eBay requiere una autorización separada y revisión humana.</p></aside>
       </section>
+
+      <SellerOsMobileNav active="home" />
     </main>
   )
 }

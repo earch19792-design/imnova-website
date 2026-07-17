@@ -1,0 +1,51 @@
+export const runtime = "nodejs"
+export const dynamic = "force-dynamic"
+export const maxDuration = 60
+
+import { randomUUID } from "node:crypto"
+
+import { NextResponse } from "next/server"
+
+import { getCommercialMonitorScheduleConfiguration } from "@/lib/ebay/ebay-commercial-monitor-service"
+import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
+import { commercialPreviewCronAuthorized } from "@/lib/ebay/ebay-commercial-preview-pilot"
+import { dispatchCommercialAlertOutbox } from "@/lib/marketplace/commercial-alert-dispatcher"
+import { getSupabaseAdminClient } from "@/lib/supabase-admin"
+
+export async function GET(req: Request) {
+  if (!commercialPreviewCronAuthorized(req)) return NextResponse.json(
+    { success: false, error: "CRON_UNAUTHORIZED" },
+    { status: 401 },
+  )
+  const schedule = getCommercialMonitorScheduleConfiguration()
+  if (process.env.VERCEL_ENV !== "preview" || !schedule.enabled) {
+    return NextResponse.json({
+      success: true,
+      status: "disabled",
+      schedule,
+      safety: { previewOnly: true, productionUnchanged: true },
+    })
+  }
+  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!accountKey) return NextResponse.json(
+    { success: false, error: "COMMERCIAL_MONITOR_ACCOUNT_SCOPE_REQUIRED" },
+    { status: 503 },
+  )
+  try {
+    const result = await dispatchCommercialAlertOutbox(
+      getSupabaseAdminClient(),
+      {
+        marketplaceAccountKey: accountKey,
+        workerId: `commercial-dispatch-schedule:${randomUUID()}`,
+        limit: 1,
+        dryRun: false,
+      },
+    )
+    return NextResponse.json({ success: true, result })
+  } catch {
+    return NextResponse.json(
+      { success: false, error: "COMMERCIAL_ALERT_DISPATCH_CRON_FAILED" },
+      { status: 502 },
+    )
+  }
+}

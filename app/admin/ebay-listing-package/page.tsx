@@ -3136,7 +3136,7 @@ export default function EbayListingPackagePage() {
           </div>
         </Section>
 
-        <Section title="eBay Only Connection Design">
+        <Section title="LOOP 108 — eBay Only Connection Design">
           <div className="grid gap-5">
             <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">

@@ -6,6 +6,8 @@ import demoRadarJson from "@/tools/fixtures/ebay-mobile-review-real-radar-connec
 import {
   buildMobileReviewRealRadarConnector,
   loadMarketRadarReadonlyDashboard,
+  loadMarketRadarReadonlyProductById,
+  mapMarketRadarProductToMobileCandidate,
   type RadarProductInput,
   type RealRadarCandidate,
 } from "@/lib/ebay/ebay-mobile-review-real-radar-connector"
@@ -32,15 +34,81 @@ import {
 } from "@/lib/ebay/ebay-luna-ebay-identity-comparison"
 import type { EbaySellerKeywordDemandReport } from "@/lib/ebay/ebay-seller-keyword-demand-validation"
 import type { EbayLunaOpportunityAssessment } from "@/lib/ebay/ebay-luna-demand-opportunity-engine"
+import type { WinnerEvidenceDecisionPackage } from "@/lib/ebay/ebay-winner-evidence-v2"
+import type {
+  SanitizedWinnerEvidenceDecisionPackage,
+  WinnerEvidenceClientInput,
+} from "@/lib/ebay/ebay-winner-evidence-v2-service"
+import {
+  getLoop1LunaCatalogUrl,
+  getLoop1PackageSaveDisabledReason,
+  getLoop1SafeProductImageUrl,
+  getLoop1WinnerAnalysisGate,
+  LOOP1_ACTIVE_LOOP,
+  LOOP1_BACKGROUND_MONITOR_STATUS,
+  LOOP1_VALIDATION_STATUS,
+  verifyLoop1DecisionPackageReadback,
+} from "@/lib/ebay/ebay-loop1-winner-analysis-ux"
+import {
+  getMobileReviewPayloadError,
+  getMobileReviewRequestError,
+  readMobileReviewJson,
+} from "@/lib/ebay/ebay-mobile-review-http"
 import {
   MOBILE_REVIEW_PINNED_STORAGE_KEY,
   parsePinnedCandidates,
   serializePinnedCandidates,
 } from "@/lib/ebay/ebay-mobile-review-local-state"
-import { OpportunityCommandCenter } from "./opportunity-command-center"
+import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
+import { OpportunityCommandCenter, type Opportunity } from "./opportunity-command-center"
+import { CommercialMonitorPanel } from "./commercial-monitor-panel"
+import { MarketplaceFulfillmentPanel } from "./marketplace-fulfillment-panel"
+import { Loop1WinnerAnalysisSummary } from "./loop1-winner-analysis-summary"
+import { Loop2ListingAiPanel } from "./loop2-listing-ai-panel"
 
 const emptyReport = buildMobileReviewRealRadarConnector({ products: [] })
-type View = "opportunities" | "top5" | "pinned" | "blocked" | "decision"
+type View = "loop1" | "loop2" | "opportunities" | "top5" | "pinned" | "blocked"
+
+type ServerReview = {
+  id: string
+  opportunity_id: string
+  candidate_key: string
+  status: string
+  current_step: string
+  form_data: Record<string, unknown>
+  updated_at: string
+  opportunity?: Opportunity
+}
+
+type ServerAlerts = {
+  activeListingRisks: Array<{ id: string; risk_priority: string; risk_type: string; risk_summary: string; recommended_action?: string }>
+  outbox: Array<{ id: string; priority: string; alert_type: string; status: string; payload: Record<string, unknown>; created_at: string }>
+}
+
+type SellerWhatsAppStatus = {
+  configuration?: {
+    status: "READY" | "DISABLED" | "NOT_READY"
+    enabled: boolean
+    ready: boolean
+    recipientConfigured: boolean
+    immediateTemplateConfigured: boolean
+    digestTemplateConfigured: boolean
+    preflightStatus?: "NOT_RUN" | "PASSED" | "FAILED" | "EXPIRED"
+  }
+  health?: { pending: number; failed: number; deadLetter: number }
+  preflight?: {
+    success: boolean
+    status: "PASSED" | "FAILED"
+    phoneNumberAccessible: boolean
+    errorCodes: string[]
+  } | null
+  previews?: Array<{
+    alertId: string
+    priority: string
+    deliveryClass: string
+    message: { title: string; summary: string; action: string }
+  }>
+}
 
 function toMobileFixture(candidates: RealRadarCandidate[]): MobileReviewFixture {
   return {
@@ -115,37 +183,6 @@ const formatStockAge = (hours: number | null) => hours === null ? "edad pendient
 const routeLabel = (route: string | null) => route ? humanRouteLabels[route] ?? route.replaceAll("_", " ") : "Sin ruta"
 const guardLabel = (guard: string) => humanGuardLabels[guard] ?? humanRouteLabels[guard] ?? guard
 
-function getLunaCatalogUrl(value: string | null | undefined) {
-  if (!value) return null
-  try {
-    const url = new URL(value)
-    const isLunaHost =
-      url.hostname === "lunaportex.com" ||
-      url.hostname.endsWith(".lunaportex.com")
-    return url.protocol === "https:" && isLunaHost
-      ? url.href
-      : null
-  } catch {
-    return null
-  }
-}
-
-function getSafeProductImageUrl(value: string | null | undefined) {
-  if (!value) return null
-  try {
-    const url = new URL(value)
-    const isTrustedImageHost =
-      url.hostname === "cdn.shopify.com" ||
-      url.hostname === "lunaportex.com" ||
-      url.hostname.endsWith(".lunaportex.com")
-    return url.protocol === "https:" && isTrustedImageHost
-      ? url.href
-      : null
-  } catch {
-    return null
-  }
-}
-
 function StatusPill({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "good" | "warning" | "danger" }) {
   const colors = { neutral: "border-white/20 bg-white/10 text-white", good: "border-emerald-200/30 bg-emerald-200/10 text-emerald-50", warning: "border-amber-200/30 bg-amber-200/10 text-amber-50", danger: "border-rose-200/30 bg-rose-200/10 text-rose-50" }
   return <span className={`rounded-full border px-3 py-1.5 text-[11px] font-bold ${colors[tone]}`}>{children}</span>
@@ -179,7 +216,7 @@ function CandidateCard({ candidate, selected, pinned, provisional, onSelect, onU
         </dl>
       </details>
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        <button type="button" onClick={onSelect} className="min-h-12 rounded-2xl bg-emerald-200 px-4 py-3 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white">Revisar producto</button>
+        <button type="button" aria-pressed={selected} onClick={onSelect} className="min-h-12 rounded-2xl bg-emerald-200 px-4 py-3 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white">{selected ? "✓ Producto seleccionado" : "Revisar producto"}</button>
         <button type="button" onClick={() => { if (window.confirm(`¿Marcar “${candidate.productTitle}” como no disponible?`)) onUnavailable() }} className="min-h-12 rounded-2xl border border-rose-200/35 px-4 py-3 font-bold text-rose-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-rose-200">Marcar no disponible</button>
       </div>
     </article>
@@ -203,6 +240,13 @@ export default function EbayMobileReviewPage() {
   })
   const [sellerKeywordDemand, setSellerKeywordDemand] = useState<EbaySellerKeywordDemandReport | null>(null)
   const [opportunityAssessment, setOpportunityAssessment] = useState<EbayLunaOpportunityAssessment | null>(null)
+  const [visualWinnerEvidence, setVisualWinnerEvidence] = useState<WinnerEvidenceDecisionPackage["visualEvidenceAnalysis"] | null>(null)
+  const [winnerDecisionPackage, setWinnerDecisionPackage] = useState<SanitizedWinnerEvidenceDecisionPackage | null>(null)
+  const [winnerDecisionPackageInput, setWinnerDecisionPackageInput] = useState<WinnerEvidenceClientInput | null>(null)
+  const [decisionPackageId, setDecisionPackageId] = useState<string | null>(null)
+  const [decisionPackageSaveState, setDecisionPackageSaveState] = useState<"IDLE" | "SAVING" | "SAVED" | "READING" | "VERIFIED" | "ERROR">("IDLE")
+  const [decisionPackageSaveError, setDecisionPackageSaveError] = useState("")
+  const [decisionPackageReadbackVerified, setDecisionPackageReadbackVerified] = useState(false)
   const [sellerKeywordDemandLoading, setSellerKeywordDemandLoading] = useState(false)
   const [sellerKeywordDemandError, setSellerKeywordDemandError] = useState("")
   const [loading, setLoading] = useState(true)
@@ -211,10 +255,30 @@ export default function EbayMobileReviewPage() {
   const [lastActionMessage, setLastActionMessage] = useState("Todavía no realizaste ninguna acción.")
   const [pinnedCandidates, setPinnedCandidates] = useState<PinnedCandidate[]>([])
   const [storageRestored, setStorageRestored] = useState(false)
-  const [view, setView] = useState<View>("opportunities")
+  const [view, setView] = useState<View>("loop2")
+  const [selectedQueueCandidate, setSelectedQueueCandidate] = useState<RealRadarCandidate | null>(null)
+  const [selectedQueueOpportunity, setSelectedQueueOpportunity] = useState<Opportunity | null>(null)
+  const [serverReviews, setServerReviews] = useState<ServerReview[]>([])
+  const [serverAlerts, setServerAlerts] = useState<ServerAlerts>({ activeListingRisks: [], outbox: [] })
+  const [serverReviewsLoadState, setServerReviewsLoadState] = useState<"LOADING" | "READY" | "ERROR">("LOADING")
+  const [serverReviewsError, setServerReviewsError] = useState("")
+  const [whatsappStatus, setWhatsappStatus] = useState<SellerWhatsAppStatus>({})
+  const [whatsappLoadState, setWhatsappLoadState] = useState<"LOADING" | "READY" | "ERROR">("LOADING")
+  const [whatsappLoadError, setWhatsappLoadError] = useState("")
+  const [whatsappPreflightRunning, setWhatsappPreflightRunning] = useState(false)
+  const [serverSaveState, setServerSaveState] = useState("Sin cambios pendientes")
   const [blockedVisible, setBlockedVisible] = useState(5)
   const [copied, setCopied] = useState(false)
   const confirmationRef = useRef<HTMLElement>(null)
+
+  const resetWinnerDecisionState = useCallback(() => {
+    setWinnerDecisionPackage(null)
+    setWinnerDecisionPackageInput(null)
+    setDecisionPackageId(null)
+    setDecisionPackageSaveState("IDLE")
+    setDecisionPackageSaveError("")
+    setDecisionPackageReadbackVerified(false)
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true); setLoadState("LOADING")
@@ -226,18 +290,121 @@ export default function EbayMobileReviewPage() {
         return loadMarketRadarReadonlyDashboard(`Bearer ${data.session.access_token}`)
       })()
       const nextReport = buildMobileReviewRealRadarConnector({ products, mode: demoRequested ? "DEMO_FIXTURE_ONLY" : "REAL_READONLY" })
-      setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError("")
+      setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setSelectedQueueCandidate(null); setSelectedQueueOpportunity(null); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState()
       if (nextReport.realRadarCandidatesCount === 0) { setLoadState("RADAR_EMPTY"); setLoadMessage("Radar respondió, pero no devolvió productos. Ejecuta o revisa el scan antes de decidir.") }
-      else { setLoadState("READY"); setLoadMessage(`${nextReport.top5Candidates.length} candidatos disponibles de ${nextReport.realRadarCandidatesCount} productos observados.`) }
+      else { setLoadState("READY"); setLoadMessage(`Radar anterior: ${nextReport.top5Candidates.length} candidatos disponibles de ${nextReport.realRadarCandidatesCount} productos observados. No son el Top 20 automatizado.`) }
+      return nextReport.allCandidates
     } catch (error) {
       setReport(emptyReport); setState(buildInitialMobileReviewState(toMobileFixture([])))
       const auth = error instanceof Error && error.message === "AUTH_REQUIRED"
       setLoadState(auth ? "AUTH_REQUIRED" : "RADAR_REQUEST_FAILED")
-      setLoadMessage(auth ? "La sesión admin expiró. Vuelve a iniciar sesión para leer Market Radar." : "No se pudo consultar Market Radar. Revisa la conexión e intenta nuevamente.")
+      setLoadMessage(auth
+        ? "La sesión admin expiró. Vuelve a iniciar sesión para leer Market Radar."
+        : getMobileReviewRequestError(error, "No se pudo consultar Market Radar. Revisa la conexión e intenta nuevamente."))
+      return []
     } finally { setLoading(false) }
+  }, [resetWinnerDecisionState])
+
+  const lookupRadarCandidateByProductId = useCallback(async (
+    productId: string,
+  ) => {
+    const { data, error } = await supabase.auth.getSession()
+    if (error || !data.session) throw new Error("AUTH_REQUIRED")
+    const product = await loadMarketRadarReadonlyProductById(
+      `Bearer ${data.session.access_token}`,
+      productId,
+    )
+    return product
+      ? mapMarketRadarProductToMobileCandidate(product, 0)
+      : null
   }, [])
 
   useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    const section = new URLSearchParams(window.location.search).get("section")
+    if (section === "in-progress") setView("pinned")
+    if (section === "alerts") setView("blocked")
+  }, [])
+  const loadServerReviews = useCallback(async () => {
+    setServerReviewsLoadState("LOADING")
+    setServerReviewsError("")
+    try {
+      const { data, error } = await supabase.auth.getSession()
+      if (error || !data.session) throw new Error("AUTH_REQUIRED")
+      const response = await fetch("/api/admin/ebay/command-center", { cache: "no-store", headers: { Authorization: `Bearer ${data.session.access_token}` } })
+      const payload = await readMobileReviewJson<{
+        success?: boolean
+        dashboard?: { queue?: Opportunity[] }
+        reviews?: ServerReview[]
+        alerts?: ServerAlerts
+      }>(response, "No se pudo cargar el estado guardado del Command Center")
+      if (!payload.success) throw new Error(getMobileReviewPayloadError(payload, "No se pudo cargar el estado guardado del Command Center"))
+      const queue = (payload.dashboard?.queue ?? []) as Opportunity[]
+      setServerReviews((payload.reviews ?? []).map((review: ServerReview) => ({ ...review, opportunity: queue.find((row) => row.id === review.opportunity_id) })))
+      setServerAlerts(payload.alerts ?? { activeListingRisks: [], outbox: [] })
+      setServerReviewsLoadState("READY")
+    } catch (requestError) {
+      setServerReviewsLoadState("ERROR")
+      setServerReviewsError(getMobileReviewRequestError(requestError, "No se pudieron cargar las revisiones y alertas guardadas."))
+    }
+  }, [])
+  useEffect(() => { void loadServerReviews() }, [loadServerReviews])
+  const loadWhatsAppStatus = useCallback(async () => {
+    setWhatsappLoadState("LOADING")
+    setWhatsappLoadError("")
+    try {
+      const { data, error } = await supabase.auth.getSession()
+      if (error || !data.session) throw new Error("AUTH_REQUIRED")
+      const response = await fetch("/api/admin/ebay/seller-whatsapp-alerts", {
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${data.session.access_token}` },
+      })
+      const payload = await readMobileReviewJson<SellerWhatsAppStatus & { success?: boolean }>(
+        response,
+        "No se pudo cargar el estado de WhatsApp",
+      )
+      if (!payload.success) throw new Error(getMobileReviewPayloadError(payload, "No se pudo cargar el estado de WhatsApp"))
+      setWhatsappStatus(payload)
+      setWhatsappLoadState("READY")
+    } catch (requestError) {
+      setWhatsappLoadState("ERROR")
+      setWhatsappLoadError(getMobileReviewRequestError(requestError, "No se pudo cargar el estado de WhatsApp."))
+    }
+  }, [])
+  useEffect(() => { void loadWhatsAppStatus() }, [loadWhatsAppStatus])
+  const runWhatsAppPreflight = useCallback(async () => {
+    setWhatsappPreflightRunning(true)
+    setWhatsappLoadError("")
+    try {
+      const { data, error } = await supabase.auth.getSession()
+      if (error || !data.session) throw new Error("AUTH_REQUIRED")
+      const response = await fetch("/api/admin/ebay/seller-whatsapp-alerts", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "preflight", force: true }),
+      })
+      const payload = await readMobileReviewJson<SellerWhatsAppStatus & { success?: boolean }>(
+        response,
+        "No se pudo validar la configuración de WhatsApp",
+      )
+      setWhatsappStatus((current) => ({ ...current, ...payload }))
+      setWhatsappLoadState("READY")
+      setLastActionMessage(payload.success
+        ? "WhatsApp validado: número emisor y plantillas aprobadas están listos."
+        : `WhatsApp sigue bloqueado: ${(payload.preflight?.errorCodes ?? ["configuración incompleta"]).join(", ")}.`)
+    } catch (error) {
+      const message = getMobileReviewRequestError(error, "No se pudo ejecutar el preflight de WhatsApp.")
+      setWhatsappLoadState("ERROR")
+      setWhatsappLoadError(message)
+      setLastActionMessage(message)
+    } finally {
+      setWhatsappPreflightRunning(false)
+    }
+  }, [])
   useEffect(() => {
     const restored = parsePinnedCandidates(window.localStorage.getItem(MOBILE_REVIEW_PINNED_STORAGE_KEY))
     setPinnedCandidates(restored.candidates); setStorageRestored(true)
@@ -250,9 +417,61 @@ export default function EbayMobileReviewPage() {
   }, [pinnedCandidates, storageRestored])
 
   const decision = useMemo(() => buildMobileReviewDecision(state), [state])
-  const selectedRadarCandidate = report.top5Candidates.find((candidate) => candidate.candidateRank === state.selectedCandidateRank) ?? null
-  const lunaCatalogUrl = getLunaCatalogUrl(selectedRadarCandidate?.productUrl)
-  const safeProductImageUrl = getSafeProductImageUrl(selectedRadarCandidate?.imageReference)
+  const selectedRadarCandidate = selectedQueueCandidate?.candidateRank === state.selectedCandidateRank
+    ? selectedQueueCandidate
+    : report.top5Candidates.find((candidate) => candidate.candidateRank === state.selectedCandidateRank) ?? null
+  const loop1CandidateOptions = useMemo(() => {
+    const options = new Map<string, { id: string; label: string }>()
+    for (const candidate of report.allCandidates) {
+      options.set(candidate.marketRadarProductId, {
+        id: candidate.marketRadarProductId,
+        label: `${candidate.productTitle} · SKU ${candidate.supplierSku ?? "N/D"}`,
+      })
+    }
+    for (const review of serverReviews) {
+      const opportunity = review.opportunity
+      if (!opportunity?.market_radar_product_id) continue
+      if (!options.has(opportunity.market_radar_product_id)) {
+        options.set(opportunity.market_radar_product_id, {
+          id: opportunity.market_radar_product_id,
+          label: `${opportunity.product_title} · SKU ${opportunity.supplier_sku ?? "N/D"}`,
+        })
+      }
+    }
+    return [...options.values()]
+  }, [report.allCandidates, serverReviews])
+  const hasReviewInProgress = Boolean(
+    selectedRadarCandidate ||
+    selectedQueueOpportunity ||
+    stockQuantity ||
+    lunaPrice ||
+    ebayListingUrl ||
+    ebayObservedTitle ||
+    sellerKeywordDemand ||
+    opportunityAssessment,
+  )
+  const hasUnsavedReview = Boolean(
+    hasReviewInProgress &&
+    (!selectedQueueOpportunity || !serverSaveState.startsWith("Guardado ")),
+  )
+  const confirmReviewReset = useCallback(() => {
+    if (!hasReviewInProgress) return true
+    return window.confirm("Actualizar Radar reiniciará el formulario visible. La revisión guardada en servidor seguirá disponible en En curso. ¿Actualizar ahora?")
+  }, [hasReviewInProgress])
+  const refreshRadarSafely = useCallback(async () => {
+    if (!confirmReviewReset()) return report.allCandidates
+    return load()
+  }, [confirmReviewReset, load, report.allCandidates])
+  useEffect(() => {
+    if (!hasUnsavedReview) return
+    const protectInProgressReview = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+    }
+    window.addEventListener("beforeunload", protectInProgressReview)
+    return () => window.removeEventListener("beforeunload", protectInProgressReview)
+  }, [hasUnsavedReview])
+  const lunaCatalogUrl = getLoop1LunaCatalogUrl(selectedRadarCandidate?.productUrl)
+  const safeProductImageUrl = getLoop1SafeProductImageUrl(selectedRadarCandidate?.imageReference)
   const ebayIdentitySearchUrl = buildEbayIdentitySearchUrl(selectedRadarCandidate)
   const identityComparison = useMemo(() => buildLunaEbayIdentityComparison({ lunaCandidate: selectedRadarCandidate, ebayListingUrl, ebayObservedTitle, ebayReferenceOpened, checklist: identityChecks, confirmationRecorded: state.sameProductConfirmed, ebayApiUsed: Boolean(sellerKeywordDemand) }), [selectedRadarCandidate, ebayListingUrl, ebayObservedTitle, ebayReferenceOpened, identityChecks, state.sameProductConfirmed, sellerKeywordDemand])
   const pinnedContinuity = useMemo(() => buildPinnedCandidateContinuityReport(report.top5Candidates, pinnedCandidates, report.allCandidates), [report, pinnedCandidates])
@@ -262,6 +481,25 @@ export default function EbayMobileReviewPage() {
     Boolean(state.stockQuantityConfirmed),
     Boolean(state.imageConfirmed && lunaPriceConfirmed),
   ].filter(Boolean).length
+  const loop1AnalysisGate = useMemo(() => getLoop1WinnerAnalysisGate(
+    selectedRadarCandidate
+      ? {
+          ...selectedRadarCandidate,
+          lunaPrice: Number(lunaPrice) > 0 ? Number(lunaPrice) : selectedRadarCandidate.lunaPrice,
+          stockQuantity: state.stockQuantityConfirmed ?? selectedRadarCandidate.stockQuantity,
+        }
+      : null,
+    {
+      stockConfirmed: Boolean(state.stockQuantityConfirmed),
+      costConfirmed: lunaPriceConfirmed,
+      imageConfirmed: state.imageConfirmed,
+    },
+  ), [selectedRadarCandidate, lunaPrice, state.stockQuantityConfirmed, state.imageConfirmed, lunaPriceConfirmed])
+  const decisionPackageSaveDisabledReason = getLoop1PackageSaveDisabledReason({
+    analysisEnabled: loop1AnalysisGate.analysisEnabled,
+    analysisAvailable: Boolean(winnerDecisionPackage && winnerDecisionPackageInput),
+    saving: decisionPackageSaveState === "SAVING" || decisionPackageSaveState === "READING",
+  })
   const radarGuards = useMemo(() => buildMobileReviewRadarGuardEnforcement({ dataSource: report.dataSource, realRadarTop5Loaded: report.realRadarTop5Loaded, top5Candidates: report.top5Candidates, selectedCandidate: selectedRadarCandidate, localConfirmationsComplete, manualConfirmations: { sameProductConfirmed: identityComparison.identityComparisonComplete, stockConfirmed: (state.stockQuantityConfirmed ?? 0) > 0, stockQuantityConfirmed: state.stockQuantityConfirmed, imageConfirmed: state.imageConfirmed, lunaPriceConfirmed, lunaPrice: lunaPriceConfirmed ? Number(lunaPrice) : null } }), [report, selectedRadarCandidate, localConfirmationsComplete, identityComparison.identityComparisonComplete, state.stockQuantityConfirmed, state.imageConfirmed, lunaPriceConfirmed, lunaPrice])
   const demandAwareRadarGuards = useMemo(() => {
     const guards = sellerKeywordDemand?.demandValidationPassed
@@ -274,7 +512,7 @@ export default function EbayMobileReviewPage() {
   }, [radarGuards.pendingGuards, sellerKeywordDemand])
   const marketValidation = useMemo(() => buildEbayMarketValidationSelectedCandidate({ selectedCandidate: selectedRadarCandidate, humanConfirmationsComplete: localConfirmationsComplete, pendingGuards: [...demandAwareRadarGuards, ...(selectedRadarCandidate && !identityComparison.identityComparisonComplete ? identityComparison.pendingGuards : [])] }), [selectedRadarCandidate, localConfirmationsComplete, demandAwareRadarGuards, identityComparison.identityComparisonComplete, identityComparison.pendingGuards])
   const effectiveDecision = useMemo(() => buildMobileReviewEffectiveDecision({ dataSource: report.dataSource, selectedCandidateName: decision.selectedCandidateName, pendingGuards: marketValidation.pendingGuards, primaryBlockingReason: localConfirmationsComplete ? marketValidation.nextRecommendedRoute : radarGuards.primaryBlockingReason, localConfirmationsComplete, holdForReview: state.holdForReview, refreshRequested: state.refreshRequested }), [report.dataSource, decision.selectedCandidateName, marketValidation, radarGuards.primaryBlockingReason, localConfirmationsComplete, state.holdForReview, state.refreshRequested])
-  const summary = useMemo(() => JSON.stringify({ ...JSON.parse(buildMobileReviewCopyPasteSummary(state)), dataSource: report.dataSource, mobileDecisionPersistence: "BROWSER_STATE_ONLY", decisionPersistence: "BROWSER_STATE_OR_LOCAL_STORAGE", officialApprovalRecord: false, effectiveDecision, lunaEbayIdentityComparison: identityComparison, ebaySellerKeywordDemand: sellerKeywordDemand, ebayLunaOpportunityAssessment: opportunityAssessment, marketValidationSelectedCandidate: marketValidation, pendingGuards: selectedRadarCandidate ? marketValidation.pendingGuards : null, guardsEvaluated: Boolean(selectedRadarCandidate), manualConfirmationReconciliation: radarGuards.reconciliation, pinnedCandidateContinuity: pinnedContinuity, canPublish: false }, null, 2), [state, report.dataSource, effectiveDecision, identityComparison, sellerKeywordDemand, opportunityAssessment, marketValidation, selectedRadarCandidate, radarGuards.reconciliation, pinnedContinuity])
+  const summary = useMemo(() => JSON.stringify({ ...JSON.parse(buildMobileReviewCopyPasteSummary(state)), dataSource: report.dataSource, mobileDecisionPersistence: selectedQueueOpportunity ? "SERVER_AUTOSAVE" : "BROWSER_STATE_ONLY", decisionPersistence: selectedQueueOpportunity ? "SERVER_AUTOSAVE_WITH_BROWSER_FALLBACK" : "BROWSER_STATE_OR_LOCAL_STORAGE", officialApprovalRecord: false, effectiveDecision, lunaEbayIdentityComparison: identityComparison, ebaySellerKeywordDemand: sellerKeywordDemand, ebayLunaOpportunityAssessment: opportunityAssessment, visualWinnerEvidence, winnerDecisionPackage, decisionPackageId, decisionPackageReadbackVerified, marketValidationSelectedCandidate: marketValidation, pendingGuards: selectedRadarCandidate ? marketValidation.pendingGuards : null, guardsEvaluated: Boolean(selectedRadarCandidate), manualConfirmationReconciliation: radarGuards.reconciliation, pinnedCandidateContinuity: pinnedContinuity, canPublish: false }, null, 2), [state, report.dataSource, selectedQueueOpportunity, effectiveDecision, identityComparison, sellerKeywordDemand, opportunityAssessment, visualWinnerEvidence, winnerDecisionPackage, decisionPackageId, decisionPackageReadbackVerified, marketValidation, selectedRadarCandidate, radarGuards.reconciliation, pinnedContinuity])
 
   useEffect(() => {
     if (!selectedRadarCandidate || !localConfirmationsComplete) return
@@ -329,22 +567,204 @@ export default function EbayMobileReviewPage() {
 
   const actPinned = (action: PinnedCandidateAction) => { setPinnedCandidates((current) => applyPinnedCandidateAction(current, action, report.allCandidates)); setLastActionMessage(`Acción de candidato en revisión: ${action.type}. Guardada solo en este navegador.`) }
   const act = (action: Parameters<typeof applyMobileReviewAction>[1]) => {
-    if (action.type === "SELECT_CANDIDATE" || action.type === "MARK_UNAVAILABLE") { setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError("") }
+    if (action.type === "SELECT_CANDIDATE" || action.type === "MARK_UNAVAILABLE") { setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState() }
     if (action.type === "APPROVE_B2_RUN_PREFLIGHT") { setLastActionMessage(`B2-RUN continúa bloqueado. Próximo paso: ${routeLabel(effectiveDecision.nextRecommendedRoute)}.`); return }
     setState((current) => applyMobileReviewAction(current, action))
     const messages: Record<string, string> = { MARK_UNAVAILABLE: "Producto marcado no disponible en este navegador. Puedes deshacer recargando antes de persistir otro estado.", SELECT_CANDIDATE: "Producto seleccionado para evaluar; todavía no es una recomendación. Completa las tres confirmaciones.", CONFIRM_SAME_PRODUCT: "Identidad del producto confirmada localmente.", CONFIRM_STOCK_QTY: `Stock confirmado: ${stockQuantity} unidades.`, CONFIRM_IMAGE_OK: "Precio e imagen de Luna confirmados localmente.", REQUEST_LUNA_SCAN_REFRESH: "Se marcó localmente que Radar necesita un refresco; todavía no se envió una solicitud.", HOLD_FOR_REVIEW: "La revisión quedó pausada en esta sesión." }
     setLastActionMessage(messages[action.type] ?? "Acción local registrada.")
-    if (action.type === "SELECT_CANDIDATE") { setView("decision"); window.setTimeout(() => confirmationRef.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 50) }
+    if (action.type === "SELECT_CANDIDATE") { setView("loop1"); window.setTimeout(() => confirmationRef.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 50) }
   }
 
-  const reviewOpportunityCandidate = (marketRadarProductId: string) => {
-    const candidate = report.top5Candidates.find(
+  const reviewOpportunityCandidate = (
+    opportunity: Opportunity,
+    radarCandidates: RealRadarCandidate[] = report.allCandidates,
+  ) => {
+    const marketRadarProductId = opportunity.market_radar_product_id
+    if (!marketRadarProductId) return false
+    const candidate = radarCandidates.find(
       (entry) => entry.marketRadarProductId === marketRadarProductId,
     )
     if (!candidate) return false
-    act({ type: "SELECT_CANDIDATE", rank: candidate.candidateRank })
+    const continuesSameLocalCandidate = !selectedQueueOpportunity &&
+      selectedRadarCandidate?.marketRadarProductId === marketRadarProductId
+    if (!continuesSameLocalCandidate) {
+      setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState()
+      const initial = buildInitialMobileReviewState(toMobileFixture([candidate]))
+      setState(applyMobileReviewAction(initial, { type: "SELECT_CANDIDATE", rank: candidate.candidateRank }))
+    }
+    setSelectedQueueCandidate(candidate)
+    setSelectedQueueOpportunity(opportunity)
+    const saved = serverReviews.find((review) => review.candidate_key === opportunity.candidate_key)
+    const savedForm = saved?.form_data ?? {}
+    const savedStock = Number(savedForm.stockQuantity)
+    const savedLunaPrice = Number(savedForm.lunaPrice)
+    if (savedForm.sellerKeywordDemand && typeof savedForm.sellerKeywordDemand === "object") {
+      setSellerKeywordDemand(savedForm.sellerKeywordDemand as EbaySellerKeywordDemandReport)
+    }
+    if (savedForm.opportunityAssessment && typeof savedForm.opportunityAssessment === "object") {
+      setOpportunityAssessment(savedForm.opportunityAssessment as EbayLunaOpportunityAssessment)
+    }
+    if (savedForm.visualWinnerEvidence && typeof savedForm.visualWinnerEvidence === "object") {
+      setVisualWinnerEvidence(
+        savedForm.visualWinnerEvidence as WinnerEvidenceDecisionPackage["visualEvidenceAnalysis"],
+      )
+    }
+    if (savedForm.winnerDecisionPackage && typeof savedForm.winnerDecisionPackage === "object") {
+      setWinnerDecisionPackage(
+        savedForm.winnerDecisionPackage as SanitizedWinnerEvidenceDecisionPackage,
+      )
+    }
+    if (savedForm.winnerDecisionPackageInput && typeof savedForm.winnerDecisionPackageInput === "object") {
+      setWinnerDecisionPackageInput(
+        savedForm.winnerDecisionPackageInput as WinnerEvidenceClientInput,
+      )
+    }
+    if (typeof savedForm.decisionPackageId === "string" && savedForm.decisionPackageId) {
+      setDecisionPackageId(savedForm.decisionPackageId)
+      setDecisionPackageSaveState("SAVED")
+    }
+    if (typeof savedForm.ebayListingUrl === "string" && savedForm.ebayListingUrl) {
+      setEbayListingUrl(savedForm.ebayListingUrl)
+      setEbayObservedTitle(typeof savedForm.ebayObservedTitle === "string" ? savedForm.ebayObservedTitle : "")
+      setEbayReferenceOpened(true)
+    }
+    if (savedForm.identityConfirmed === true) {
+      setIdentityChecks({ sameProductAndBrand: true, sameVariantSizeOrPack: true, compatibleReference: true })
+      setState((current) => applyMobileReviewAction(current, { type: "CONFIRM_SAME_PRODUCT" }))
+    }
+    if (Number.isInteger(savedStock) && savedStock > 0) {
+      setStockQuantity(String(savedStock))
+      setState((current) => applyMobileReviewAction(current, { type: "CONFIRM_STOCK_QTY", quantity: savedStock }))
+    }
+    if (savedForm.lunaPriceConfirmed === true && savedLunaPrice > 0) {
+      setLunaPrice(String(savedLunaPrice)); setLunaPriceConfirmed(true); setCatalogCheckOpened(true)
+      setState((current) => applyMobileReviewAction(current, { type: "CONFIRM_IMAGE_OK" }))
+    }
+    setLastActionMessage(saved
+      ? "Continuaste la validación guardada en el servidor."
+      : continuesSameLocalCandidate
+        ? "La oportunidad canónica quedó vinculada. Tus confirmaciones locales se conservaron y ahora se guardarán en el servidor."
+        : "Producto abierto desde el ranking canónico. Confirma Luna, eBay y economía antes de preparar el listing.")
+    setView("loop1")
+    window.setTimeout(() => confirmationRef.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 50)
     return true
   }
+
+  const selectLoop1Candidate = async (marketRadarProductId: string) => {
+    if (!marketRadarProductId) return
+    try {
+      const savedReview = serverReviews.find(
+        (review) => review.opportunity?.market_radar_product_id === marketRadarProductId,
+      )
+      let candidate = report.allCandidates.find(
+        (entry) => entry.marketRadarProductId === marketRadarProductId,
+      ) ?? null
+      if (!candidate) candidate = await lookupRadarCandidateByProductId(marketRadarProductId)
+      if (!candidate) throw new Error("LOOP1_LUNA_CANDIDATE_NOT_FOUND")
+      if (savedReview?.opportunity) {
+        reviewOpportunityCandidate(savedReview.opportunity, [candidate, ...report.allCandidates])
+        return
+      }
+      setStockQuantity("")
+      setLunaPrice("")
+      setLunaPriceConfirmed(false)
+      setCatalogCheckOpened(false)
+      setEbayListingUrl("")
+      setEbayObservedTitle("")
+      setEbayReferenceOpened(false)
+      setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false })
+      setSellerKeywordDemand(null)
+      setOpportunityAssessment(null)
+      setVisualWinnerEvidence(null)
+      setSellerKeywordDemandError("")
+      resetWinnerDecisionState()
+      const initial = buildInitialMobileReviewState(toMobileFixture([candidate]))
+      setState(applyMobileReviewAction(initial, {
+        type: "SELECT_CANDIDATE",
+        rank: candidate.candidateRank,
+      }))
+      setSelectedQueueCandidate(candidate)
+      setSelectedQueueOpportunity(null)
+      setView("loop1")
+      setLastActionMessage("Candidato Luna seleccionado. Confirma stock, costo e imagen antes de analizar eBay.")
+    } catch (error) {
+      setLastActionMessage(
+        getMobileReviewRequestError(error, "No se pudo abrir el candidato Luna seleccionado."),
+      )
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedQueueOpportunity || !selectedRadarCandidate) return
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setServerSaveState("Guardando en servidor…")
+        try {
+          const { data, error } = await supabase.auth.getSession()
+          if (error || !data.session) throw new Error("AUTH_REQUIRED")
+          const confirmedFields = [
+            ...(identityComparison.identityComparisonComplete ? ["identity"] : []),
+            ...(state.stockQuantityConfirmed ? ["stock"] : []),
+            ...(lunaPriceConfirmed && state.imageConfirmed ? ["luna_catalog"] : []),
+            ...(sellerKeywordDemand ? ["ebay_evidence"] : []),
+            ...(opportunityAssessment?.economics?.estimatedNetProfit != null ? ["economics"] : []),
+          ]
+          const currentStep = !state.stockQuantityConfirmed || !lunaPriceConfirmed
+            ? "luna"
+            : !sellerKeywordDemand
+              ? "ebay"
+              : opportunityAssessment?.economics?.estimatedNetProfit == null
+                ? "economics"
+                : "listing"
+          const response = await fetch("/api/admin/ebay/command-center", {
+            method: "POST",
+            cache: "no-store",
+            headers: { Authorization: `Bearer ${data.session.access_token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "save_review",
+              opportunityId: selectedQueueOpportunity.id,
+              candidateKey: selectedQueueOpportunity.candidate_key,
+              status: opportunityAssessment?.canProceedToListingPackage === true && !marketValidation.pendingGuards.length
+                ? "ready_for_package"
+                : "in_progress",
+              currentStep,
+              confirmedFields,
+              blockers: marketValidation.pendingGuards,
+              formData: {
+                productTitle: selectedRadarCandidate.productTitle,
+                marketRadarProductId: selectedRadarCandidate.marketRadarProductId,
+                stockQuantity: state.stockQuantityConfirmed,
+                lunaPrice: lunaPrice ? Number(lunaPrice) : null,
+                lunaPriceConfirmed,
+                imageConfirmed: state.imageConfirmed,
+                identityConfirmed: identityComparison.identityComparisonComplete,
+                ebayListingUrl,
+                ebayObservedTitle,
+                sellerKeywordDemand,
+                opportunityAssessment,
+                visualWinnerEvidence,
+                winnerDecisionPackage,
+                winnerDecisionPackageInput,
+                decisionPackageId,
+              },
+            }),
+          })
+          const payload = await readMobileReviewJson<{
+            success?: boolean
+            error?: string
+            savedAt?: string
+          }>(response, "No se pudo guardar la revisión")
+          if (!payload.success) throw new Error(getMobileReviewPayloadError(payload, "No se pudo guardar la revisión"))
+          const savedAt = payload.savedAt ? new Date(payload.savedAt) : new Date()
+          setServerSaveState(`Guardado ${new Intl.DateTimeFormat("es", { timeStyle: "short" }).format(savedAt)}`)
+          void loadServerReviews()
+        } catch {
+          setServerSaveState("No se pudo guardar · reintenta con conexión")
+        }
+      })()
+    }, 800)
+    return () => window.clearTimeout(timer)
+  }, [selectedQueueOpportunity, selectedRadarCandidate, state.stockQuantityConfirmed, state.imageConfirmed, lunaPrice, lunaPriceConfirmed, identityComparison.identityComparisonComplete, ebayListingUrl, ebayObservedTitle, sellerKeywordDemand, opportunityAssessment, visualWinnerEvidence, winnerDecisionPackage, winnerDecisionPackageInput, decisionPackageId, marketValidation.pendingGuards, loadServerReviews])
 
   const resetIdentityConfirmation = () => {
     setState((current) =>
@@ -363,11 +783,13 @@ export default function EbayMobileReviewPage() {
   }
 
   const runSellerKeywordDemandValidation = async () => {
-    if (!selectedRadarCandidate || sellerKeywordDemandLoading) return
+    if (!selectedRadarCandidate || sellerKeywordDemandLoading || !loop1AnalysisGate.analysisEnabled) return
     setSellerKeywordDemandLoading(true)
     setSellerKeywordDemandError("")
     setSellerKeywordDemand(null)
     setOpportunityAssessment(null)
+    setVisualWinnerEvidence(null)
+    resetWinnerDecisionState()
     setEbayListingUrl("")
     setEbayObservedTitle("")
     setEbayReferenceOpened(false)
@@ -393,7 +815,8 @@ export default function EbayMobileReviewPage() {
           marketRadarProductId: selectedRadarCandidate.marketRadarProductId,
           supplierProductId: selectedRadarCandidate.supplierProductId,
           supplierVariantId: selectedRadarCandidate.supplierVariantId,
-          brand: selectedRadarCandidate.brand,
+          manufacturerBrand: null,
+          supplierVendor: selectedRadarCandidate.brand,
           gtin: selectedRadarCandidate.gtin,
           productType: selectedRadarCandidate.productType,
           supplierCost: lunaPriceConfirmed ? Number(lunaPrice) : selectedRadarCandidate.lunaPrice,
@@ -407,31 +830,127 @@ export default function EbayMobileReviewPage() {
           restrictionGuards: marketValidation.restrictionGuards,
         }),
       })
-      const payload = await response.json() as {
+      const payload = await readMobileReviewJson<{
         success?: boolean
         error?: string
         report?: EbaySellerKeywordDemandReport
         opportunityAssessment?: EbayLunaOpportunityAssessment
-      }
-      if (!response.ok || !payload.success || !payload.report) {
-        throw new Error(payload.error || "EBAY_READONLY_MARKET_VALIDATION_FAILED")
+        visualWinnerEvidence?: WinnerEvidenceDecisionPackage["visualEvidenceAnalysis"] | null
+        winnerDecisionPackage?: SanitizedWinnerEvidenceDecisionPackage | null
+        winnerDecisionPackageInput?: WinnerEvidenceClientInput | null
+      }>(response, "No se pudo consultar la evidencia read-only de eBay")
+      if (!payload.success || !payload.report) {
+        throw new Error(getMobileReviewPayloadError(payload, "EBAY_READONLY_MARKET_VALIDATION_FAILED"))
       }
       setSellerKeywordDemand(payload.report)
       setOpportunityAssessment(payload.opportunityAssessment ?? null)
+      setVisualWinnerEvidence(payload.visualWinnerEvidence ?? null)
+      setWinnerDecisionPackage(payload.winnerDecisionPackage ?? null)
+      setWinnerDecisionPackageInput(payload.winnerDecisionPackageInput ?? null)
       setLastActionMessage(
         `eBay analizado en modo read-only: ${payload.report.eligibleComparableListings} comparables y ${payload.report.sellersAnalyzed} vendedores.`
       )
     } catch (error) {
-      const code = error instanceof Error ? error.message : "EBAY_READONLY_MARKET_VALIDATION_FAILED"
+      const code = getMobileReviewRequestError(error, "EBAY_READONLY_MARKET_VALIDATION_FAILED")
       setSellerKeywordDemandError(
         code === "EBAY_READONLY_ENV_MISSING"
           ? "EBAY_READONLY_ENV_MISSING · Las credenciales read-only de eBay todavía no están configuradas en este Preview."
           : code === "AUTH_REQUIRED"
             ? "La sesión admin expiró. Inicia sesión y vuelve a intentar."
-            : "No se pudo consultar la evidencia de eBay. No se registró ninguna validación."
+            : `No se pudo consultar la evidencia de eBay. No se registró ninguna validación. ${code}`
       )
     } finally {
       setSellerKeywordDemandLoading(false)
+    }
+  }
+
+  const readPersistedDecisionPackage = async (
+    packageId: string,
+    expectedPackage = winnerDecisionPackage,
+  ) => {
+    if (!expectedPackage) return
+    setDecisionPackageSaveState("READING")
+    setDecisionPackageSaveError("")
+    try {
+      const { data, error } = await supabase.auth.getSession()
+      if (error || !data.session) throw new Error("AUTH_REQUIRED")
+      const response = await fetch(
+        `/api/admin/ebay/winner-evidence-v2?packageId=${encodeURIComponent(packageId)}`,
+        {
+          cache: "no-store",
+          headers: { Authorization: `Bearer ${data.session.access_token}` },
+        },
+      )
+      const payload = await readMobileReviewJson<{
+        success?: boolean
+        error?: string
+        packageId?: string
+        package?: SanitizedWinnerEvidenceDecisionPackage
+      }>(response, "No se pudo releer el paquete de decisión")
+      if (!payload.success || !payload.package || !payload.packageId) {
+        throw new Error(getMobileReviewPayloadError(payload, "WINNER_EVIDENCE_PACKAGE_READ_FAILED"))
+      }
+      if (!verifyLoop1DecisionPackageReadback(expectedPackage, payload.package)) {
+        throw new Error("WINNER_EVIDENCE_PACKAGE_INTEGRITY_MISMATCH")
+      }
+      setWinnerDecisionPackage(payload.package)
+      setDecisionPackageId(payload.packageId)
+      setDecisionPackageReadbackVerified(true)
+      setDecisionPackageSaveState("VERIFIED")
+      setLastActionMessage("Paquete de decisión releído: hash, versión y controles de seguridad coinciden.")
+    } catch (error) {
+      setDecisionPackageReadbackVerified(false)
+      setDecisionPackageSaveState("ERROR")
+      setDecisionPackageSaveError(
+        getMobileReviewRequestError(error, "No se pudo releer el paquete de decisión."),
+      )
+    }
+  }
+
+  const saveWinnerDecisionPackage = async () => {
+    if (!winnerDecisionPackage || !winnerDecisionPackageInput || !loop1AnalysisGate.analysisEnabled) return
+    setDecisionPackageSaveState("SAVING")
+    setDecisionPackageSaveError("")
+    setDecisionPackageReadbackVerified(false)
+    try {
+      const { data, error } = await supabase.auth.getSession()
+      if (error || !data.session) throw new Error("AUTH_REQUIRED")
+      const response = await fetch("/api/admin/ebay/winner-evidence-v2", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "analyze",
+          input: winnerDecisionPackageInput,
+          useOfficialRead: false,
+          persist: true,
+        }),
+      })
+      const payload = await readMobileReviewJson<{
+        success?: boolean
+        error?: string
+        packageId?: string
+        package?: SanitizedWinnerEvidenceDecisionPackage
+      }>(response, "No se pudo guardar el paquete de decisión")
+      if (!payload.success || !payload.packageId || !payload.package) {
+        throw new Error(getMobileReviewPayloadError(payload, "WINNER_EVIDENCE_PACKAGE_PERSIST_FAILED"))
+      }
+      if (!verifyLoop1DecisionPackageReadback(winnerDecisionPackage, payload.package)) {
+        throw new Error("WINNER_EVIDENCE_PACKAGE_INTEGRITY_MISMATCH")
+      }
+      setWinnerDecisionPackage(payload.package)
+      setDecisionPackageId(payload.packageId)
+      setDecisionPackageSaveState("SAVED")
+      setLastActionMessage("Paquete de decisión guardado. Verificando lectura server-side…")
+      await readPersistedDecisionPackage(payload.packageId, payload.package)
+    } catch (error) {
+      setDecisionPackageSaveState("ERROR")
+      setDecisionPackageSaveError(
+        getMobileReviewRequestError(error, "No se pudo guardar el paquete de decisión."),
+      )
     }
   }
 
@@ -455,6 +974,10 @@ export default function EbayMobileReviewPage() {
 
   const resetStockConfirmation = (value: string) => {
     setStockQuantity(value)
+    setSellerKeywordDemand(null)
+    setOpportunityAssessment(null)
+    setVisualWinnerEvidence(null)
+    resetWinnerDecisionState()
     setState((current) =>
       applyMobileReviewAction(
         current,
@@ -466,6 +989,10 @@ export default function EbayMobileReviewPage() {
   const resetLunaCatalogConfirmation = (value: string) => {
     setLunaPrice(value)
     setLunaPriceConfirmed(false)
+    setSellerKeywordDemand(null)
+    setOpportunityAssessment(null)
+    setVisualWinnerEvidence(null)
+    resetWinnerDecisionState()
     setState((current) =>
       applyMobileReviewAction(
         current,
@@ -498,41 +1025,118 @@ export default function EbayMobileReviewPage() {
   const professionalKeywordSignalsAreVerified = Boolean(
     sellerKeywordDemand?.keywordEvidenceGroups.verifiedHistoricalMultiSeller.length
   )
-  const tabs: { id: View; label: string; count?: number }[] = [{ id: "opportunities", label: "Oportunid." }, { id: "top5", label: "Top 5", count: report.top5Candidates.length }, { id: "pinned", label: "Revisión", count: pinnedCandidates.length }, { id: "blocked", label: "Bloqueos", count: report.stockHoldCandidates.length }, { id: "decision", label: "Decisión" }]
+  const alertCount = serverAlerts.activeListingRisks.length + serverAlerts.outbox.length + report.stockHoldCandidates.length
 
   return (
-    <main className="min-h-screen bg-[#05070d] px-4 pb-28 pt-4 text-white sm:px-6">
+    <main className="min-h-screen bg-[#05070d] px-4 pb-48 pt-4 text-white sm:px-6">
       <section className="mx-auto flex max-w-xl flex-col gap-4">
         <header className="sticky top-0 z-30 -mx-4 border-b border-white/10 bg-[#05070d]/95 px-4 pb-3 pt-2 backdrop-blur">
-          <div className="flex items-center justify-between gap-3"><a href="/admin/ebay-seller-os" className="min-h-11 rounded-full border border-white/20 px-4 py-3 text-sm font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200">← Seller OS</a><button type="button" onClick={() => void load()} disabled={loading} className="min-h-11 rounded-full border border-cyan-200/35 px-4 py-3 text-sm font-bold text-cyan-50 disabled:opacity-50">{loading ? "Cargando…" : "↻ Actualizar"}</button></div>
-          <div className="mt-3 flex items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-cyan-100">Revisión privada · read-only</p><h1 className="mt-1 text-2xl font-black">Seller Command Center</h1></div><StatusPill tone={report.dataSource === "MARKET_RADAR_READONLY" ? "good" : report.fixtureUsed ? "warning" : "danger"}>{sourceLabel}</StatusPill></div>
+          <div className="flex items-center justify-between gap-3"><a href="/admin/ebay-seller-os" className="min-h-11 rounded-full border border-white/20 px-4 py-3 text-sm font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200">← Seller OS</a><button type="button" onClick={() => void refreshRadarSafely()} disabled={loading} className="min-h-11 rounded-full border border-cyan-200/35 px-4 py-3 text-sm font-bold text-cyan-50 disabled:opacity-50">{loading ? "Cargando…" : "↻ Actualizar"}</button></div>
+          <div className="mt-3 flex items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-cyan-100">eBay read-only · progreso sincronizado</p><h1 className="mt-1 text-2xl font-black">Seller Command Center</h1></div><StatusPill tone={report.dataSource === "MARKET_RADAR_READONLY" ? "good" : report.fixtureUsed ? "warning" : "danger"}>{sourceLabel}</StatusPill></div>
         </header>
 
         <section className={`rounded-3xl border p-4 ${loadState === "READY" ? "border-emerald-200/25 bg-emerald-200/[0.07]" : "border-amber-200/25 bg-amber-200/[0.07]"}`}>
-          <p className="font-black">{loadMessage}</p><p className="mt-2 text-sm text-white/75">Publicación desactivada · sin eBay write · sin Supabase write.</p>
+          <p className="font-black">{loadMessage}</p><p className="mt-2 text-sm text-white/75">eBay read-only · scans y cola guardados en Supabase · publicación separada y desactivada.</p>
           <p className="sr-only">Radar observó {report.realRadarCandidatesCount} productos y muestra {report.top5Candidates.length} candidatos seleccionables. La fuente y antigüedad del stock están disponibles en los detalles.</p>
           {loadState === "AUTH_REQUIRED" ? <a href="/admin/login?returnTo=%2Fadmin%2Febay%2Fmobile-review" className="mt-3 inline-flex min-h-11 items-center rounded-2xl bg-white px-4 py-2 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200">Iniciar sesión</a> : loadState !== "READY" && <button type="button" onClick={() => void load()} className="mt-3 min-h-11 rounded-2xl bg-white px-4 py-2 font-black text-black">Reintentar lectura</button>}
         </section>
-        {loadState === "READY" && <dl className="grid grid-cols-3 gap-2 rounded-2xl border border-white/15 bg-black/30 p-2 text-center"><div className="rounded-xl bg-white/[0.04] px-2 py-3"><dt className="text-[10px] font-bold uppercase tracking-wide text-white/55">Observados</dt><dd className="mt-1 text-xl font-black">{report.realRadarCandidatesCount}</dd></div><div className="rounded-xl bg-emerald-200/[0.07] px-2 py-3"><dt className="text-[10px] font-bold uppercase tracking-wide text-emerald-50/70">Top 5</dt><dd className="mt-1 text-xl font-black">{report.top5Candidates.length}</dd></div><div className="rounded-xl bg-rose-200/[0.07] px-2 py-3"><dt className="text-[10px] font-bold uppercase tracking-wide text-rose-50/70">Bloqueados</dt><dd className="mt-1 text-xl font-black">{report.stockHoldCandidates.length}</dd></div></dl>}
+        <nav aria-label="Loops activos" className="grid grid-cols-2 gap-2">
+          <button type="button" aria-pressed={view === "loop1"} onClick={() => setView("loop1")} className={`min-h-12 rounded-2xl px-3 text-sm font-black ${view === "loop1" ? "bg-violet-200 text-black" : "border border-violet-200/30 text-violet-50"}`}>Loop 1 · Evidencia</button>
+          <button type="button" aria-pressed={view === "loop2"} onClick={() => setView("loop2")} className={`min-h-12 rounded-2xl px-3 text-sm font-black ${view === "loop2" ? "bg-fuchsia-200 text-black" : "border border-fuchsia-200/30 text-fuchsia-50"}`}>Loop 2 · Listing IA</button>
+        </nav>
+        {view === "loop1" && (
+          <section aria-labelledby="loop1-main-heading" className="rounded-3xl border border-violet-200/35 bg-violet-200/[0.08] p-4">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-100/70">Validación humana unificada</p>
+            <h2 id="loop1-main-heading" className="mt-1 text-xl font-black">Loop 1 — Analizar producto ganador</h2>
+            <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+              <div className="rounded-xl bg-black/25 p-2"><span className="block text-white/50">ACTIVE LOOP</span><strong>{LOOP1_ACTIVE_LOOP}</strong></div>
+              <div className="rounded-xl bg-black/25 p-2"><span className="block text-white/50">STATUS</span><strong>{LOOP1_VALIDATION_STATUS}</strong></div>
+              <div className="rounded-xl bg-black/25 p-2"><span className="block text-white/50">BACKGROUND MONITOR</span><strong>{LOOP1_BACKGROUND_MONITOR_STATUS}</strong></div>
+            </div>
+            <label className="mt-4 block text-sm font-black" htmlFor="loop1-candidate-select">Seleccionar candidato Luna</label>
+            <select id="loop1-candidate-select" value={selectedRadarCandidate?.marketRadarProductId ?? ""} onChange={(event) => void selectLoop1Candidate(event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-[#101526] px-3 text-sm text-white">
+              <option value="">Selecciona un producto…</option>
+              {loop1CandidateOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </select>
+            {selectedRadarCandidate ? (
+              <div className="mt-4 space-y-3">
+                <dl className="grid gap-2 text-xs sm:grid-cols-2">
+                  <div><dt className="text-white/50">Producto</dt><dd className="font-black">{selectedRadarCandidate.productTitle}</dd></div>
+                  <div><dt className="text-white/50">SKU Luna</dt><dd className="break-all font-black">{selectedRadarCandidate.supplierSku ?? "N/D"}</dd></div>
+                  <div><dt className="text-white/50">Variante</dt><dd className="font-black">{selectedRadarCandidate.variantTitle ?? "N/D"}</dd></div>
+                  <div><dt className="text-white/50">ID variante</dt><dd className="break-all font-black">{selectedRadarCandidate.supplierVariantId ?? "N/D"}</dd></div>
+                  <div><dt className="text-white/50">Stock Luna</dt><dd className="font-black">{selectedRadarCandidate.stockQuantity ?? "N/D"}</dd></div>
+                  <div><dt className="text-white/50">Costo Luna</dt><dd className="font-black">{selectedRadarCandidate.lunaPrice == null ? "N/D" : `$${selectedRadarCandidate.lunaPrice.toFixed(2)}`}</dd></div>
+                  <div><dt className="text-white/50">URL Luna</dt><dd className="font-black">{lunaCatalogUrl ? "DISPONIBLE" : "N/D"}</dd></div>
+                  <div><dt className="text-white/50">Imagen Luna</dt><dd className="font-black">{safeProductImageUrl ? "DISPONIBLE" : "N/D"}</dd></div>
+                </dl>
+                <div className="flex flex-wrap gap-2">
+                  <StatusPill tone={state.stockQuantityConfirmed ? "good" : "warning"}>{state.stockQuantityConfirmed ? "Stock confirmado" : "Falta confirmar stock"}</StatusPill>
+                  <StatusPill tone={lunaPriceConfirmed ? "good" : "warning"}>{lunaPriceConfirmed ? "Costo confirmado" : "Falta confirmar costo"}</StatusPill>
+                  <StatusPill tone={state.imageConfirmed ? "good" : "warning"}>{state.imageConfirmed ? "Imagen confirmada" : "Falta confirmar imagen"}</StatusPill>
+                </div>
+                {!loop1AnalysisGate.mappingComplete && <div role="alert" className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50"><p className="font-black">Vínculo Luna incompleto</p><ul className="mt-2 list-disc pl-5">{loop1AnalysisGate.missingMapping.map((reason) => <li key={reason}>{reason}</li>)}</ul><p className="mt-2">Elige otro candidato para continuar sin inventar datos.</p></div>}
+                <p className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm font-bold">Paso actual: {loop1AnalysisGate.disabledReason ?? (winnerDecisionPackage ? "Revisar y guardar el paquete de decisión" : "Listo para analizar mercado eBay")}</p>
+              </div>
+            ) : <p className="mt-3 text-sm text-white/65">Selecciona un candidato para comenzar. No necesitas salir de esta página.</p>}
+          </section>
+        )}
+        {view === "loop2" && <Loop2ListingAiPanel />}
+        {loadState === "READY" && <div className="grid grid-cols-3 gap-2 rounded-2xl border border-white/15 bg-black/30 p-2 text-center"><div className="rounded-xl bg-white/[0.04] px-2 py-3"><span className="text-[10px] font-bold uppercase tracking-wide text-white/55">Observados</span><strong className="mt-1 block text-xl font-black">{report.realRadarCandidatesCount}</strong></div><button type="button" onClick={() => setView("pinned")} className="rounded-xl bg-emerald-200/[0.07] px-2 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200"><span className="text-[10px] font-bold uppercase tracking-wide text-emerald-50/70">En curso</span><strong className="mt-1 block text-xl font-black">{serverReviewsLoadState === "READY" ? serverReviews.length : "—"}</strong></button><button type="button" onClick={() => setView("blocked")} className="rounded-xl bg-rose-200/[0.07] px-2 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-200"><span className="text-[10px] font-bold uppercase tracking-wide text-rose-50/70">Operación</span><strong className="mt-1 block text-xl font-black">{serverReviewsLoadState === "READY" ? alertCount : "—"}</strong></button></div>}
+        <ol aria-label="Flujo seguro de listing" className="grid grid-cols-4 gap-1 rounded-2xl border border-white/10 bg-black/25 p-2 text-center text-[10px] font-black uppercase tracking-wide text-white/60"><li className={view === "opportunities" ? "rounded-xl bg-violet-200 px-1 py-2 text-black" : "px-1 py-2"}>1 Descubrir</li><li className={view === "loop1" || view === "top5" || view === "pinned" ? "rounded-xl bg-cyan-200 px-1 py-2 text-black" : "px-1 py-2"}>2 Validar Loop 1</li><li className={view === "loop2" ? "rounded-xl bg-fuchsia-200 px-1 py-2 text-black" : "px-1 py-2 text-white/45"}>3 Loop 2</li><li className={view === "blocked" ? "rounded-xl bg-amber-100 px-1 py-2 text-black" : "px-1 py-2 text-white/45"}>4 Draft / manual</li></ol>
         {report.fixtureUsed && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4 text-sm"><p className="font-black">FIXTURE/DEMO · no usar para aprobación real</p><p className="mt-2 text-white/80">Fuente actual: fixture modelado · no es data viva. score modelado · Fixture · no precio runtime · Fixture · no Category ID.</p></aside>}
 
         <div role="status" aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.07] p-3 text-sm text-cyan-50">{lastActionMessage}</div>
-        {radarGuards.showScoreTieWarning && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4"><p className="font-black">Orden provisional</p><p className="mt-1 text-sm text-white/80">Los cinco scores son iguales. Ningún producto se considera recomendado hasta desempatar el ranking.</p></aside>}
+        {view === "top5" && radarGuards.showScoreTieWarning && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4"><p className="font-black">Orden provisional</p><p className="mt-1 text-sm text-white/80">Los cinco scores son iguales. Ningún producto se considera recomendado hasta desempatar el ranking.</p></aside>}
 
-        <nav aria-label="Secciones de Mobile Review" className="grid grid-cols-5 gap-1 rounded-2xl border border-white/15 bg-black/40 p-1">
-          {tabs.map((tab) => <button key={tab.id} type="button" aria-current={view === tab.id ? "page" : undefined} onClick={() => setView(tab.id)} className={`min-h-12 rounded-xl px-1 py-2 text-[11px] font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${view === tab.id ? "bg-white text-black" : "text-white/75"}`}>{tab.label}{tab.count !== undefined && <span className="block">{tab.count}</span>}</button>)}
-        </nav>
+        {(view === "opportunities" || view === "top5") && <nav aria-label="Vistas de oportunidades" className="grid grid-cols-2 gap-1 rounded-2xl border border-white/15 bg-black/40 p-1"><button type="button" aria-pressed={view === "opportunities"} onClick={() => setView("opportunities")} className={`min-h-12 rounded-xl px-3 py-2 text-xs font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${view === "opportunities" ? "bg-white text-black" : "text-white/75"}`}>Cola eBay-first</button><button type="button" aria-pressed={view === "top5"} onClick={() => setView("top5")} className={`min-h-12 rounded-xl px-3 py-2 text-xs font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${view === "top5" ? "bg-white text-black" : "text-white/75"}`}>Top 5 Radar</button></nav>}
         <p className="sr-only">{report.stockHoldCandidates.length} productos están bloqueados por stock. B2-RUN continúa desactivado hasta completar todas las validaciones.</p>
 
-        {view === "opportunities" && <OpportunityCommandCenter onReviewCandidate={reviewOpportunityCandidate} />}
+        {serverReviewsLoadState === "ERROR" && <div role="alert" className="rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-3 text-sm text-rose-50"><strong>No pudimos cargar En curso y Operación.</strong><span className="mt-1 block">{serverReviewsError}</span><button type="button" onClick={() => void loadServerReviews()} className="mt-3 min-h-11 rounded-xl border border-rose-100/30 px-3 font-black">Reintentar</button></div>}
 
-        {view === "top5" && <section aria-labelledby="top5-heading"><h2 id="top5-heading" className="mb-3 text-xl font-black">Top 5 actual</h2><div className="space-y-4">{report.top5Candidates.map((candidate) => <CandidateCard key={candidate.candidateId} candidate={candidate} selected={state.selectedCandidateRank === candidate.candidateRank} pinned={pinnedCandidates.some((item) => pinnedCandidateMatchesRadar(item, candidate))} provisional={radarGuards.needsScoreDisambiguation} onSelect={() => act({ type: "SELECT_CANDIDATE", rank: candidate.candidateRank })} onUnavailable={() => act({ type: "MARK_UNAVAILABLE", rank: candidate.candidateRank })} />)}{!loading && report.top5Candidates.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/75">No hay candidatos seleccionables.</p>}</div></section>}
+        {view === "opportunities" && <>
+          <CommercialMonitorPanel />
+          <MarketplaceFulfillmentPanel />
+          <OpportunityCommandCenter onReviewCandidate={reviewOpportunityCandidate} onRadarRefresh={load} onRadarLookup={lookupRadarCandidateByProductId} confirmDestructiveRefresh={confirmReviewReset} preferredMarketRadarProductId={!selectedQueueOpportunity ? selectedRadarCandidate?.marketRadarProductId ?? null : null} />
+        </>}
 
-        {view === "pinned" && <section aria-labelledby="pinned-heading"><h2 id="pinned-heading" className="text-xl font-black">En revisión / Pinned Candidates</h2><p className="mt-1 text-sm text-white/75">Continuidad local validada y con vencimiento. No es una aprobación oficial.</p><div className="mt-4 space-y-4">{pinnedContinuity.pinnedCandidates.map((candidate) => <article key={candidate.pinnedCandidateId} className="rounded-3xl border border-violet-200/25 bg-violet-200/[0.07] p-4"><StatusPill tone={candidate.supplierDrift.supplierDriftDetected ? "warning" : "good"}>{routeLabel(candidate.nextRecommendedRoute)}</StatusPill><h3 className="mt-3 text-lg font-black">{candidate.productName}</h3><dl className="mt-3 grid gap-2 text-sm"><div className="flex justify-between"><dt>Presencia Radar</dt><dd className="font-bold">{candidate.radarPresenceStatus}</dd></div><div className="flex justify-between"><dt>Stock humano</dt><dd className="font-bold">{formatValue(candidate.stockQuantityConfirmed)}</dd></div><div className="flex justify-between"><dt>Precio Luna</dt><dd className="font-bold">{candidate.lunaPrice ? `$${candidate.lunaPrice.toFixed(2)}` : "Pendiente"}</dd></div><div className="flex justify-between"><dt>Supplier drift</dt><dd className="font-bold">{candidate.supplierDrift.supplierDriftDetected ? "Detectado" : "Sin cambios"}</dd></div></dl><details className="mt-3 rounded-2xl border border-white/15 p-3"><summary className="cursor-pointer font-bold">Comparación y trazabilidad</summary><pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-xs text-white/80">{JSON.stringify(candidate.supplierDrift, null, 2)}</pre></details><div className="mt-4 grid gap-2"><button type="button" onClick={() => actPinned({ type: "RECHECK_PINNED_CANDIDATE", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl border border-cyan-200/35 font-bold">Revisar contra Radar<span className="block text-[10px]">RECHECK_PINNED_CANDIDATE</span></button><button type="button" disabled={!candidate.canContinueEbayMarketValidation} onClick={() => actPinned({ type: "CONTINUE_EBAY_MARKET_VALIDATION", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl bg-violet-200 px-3 font-black text-black disabled:opacity-40">Continuar validación eBay<span className="block text-[10px]">CONTINUE_EBAY_MARKET_VALIDATION</span></button><details className="rounded-2xl border border-white/15 p-3"><summary className="cursor-pointer font-bold">Más acciones</summary><div className="mt-3 grid gap-2"><button type="button" onClick={() => actPinned({ type: "MARK_PINNED_UNAVAILABLE", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl border border-rose-200/35">Marcar no disponible · MARK_PINNED_UNAVAILABLE</button><button type="button" onClick={() => actPinned({ type: "HOLD_PINNED_FOR_REVIEW", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl border border-amber-200/35">Poner en espera · HOLD_PINNED_FOR_REVIEW</button><button type="button" onClick={() => actPinned({ type: "UNPIN_CANDIDATE", pinnedCandidateId: candidate.pinnedCandidateId })} className="min-h-12 rounded-2xl border border-white/25">Quitar de revisión · UNPIN_CANDIDATE</button></div></details></div></article>)}{pinnedCandidates.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/75">No hay productos guardados en revisión.</p>}</div></section>}
+        {view === "top5" && <section aria-labelledby="top5-heading"><h2 id="top5-heading" className="mb-3 text-xl font-black">Top 5 actual</h2><div className="space-y-4">{report.top5Candidates.map((candidate) => <CandidateCard key={candidate.candidateId} candidate={candidate} selected={!selectedQueueCandidate && state.selectedCandidateRank === candidate.candidateRank} pinned={pinnedCandidates.some((item) => pinnedCandidateMatchesRadar(item, candidate))} provisional={radarGuards.needsScoreDisambiguation} onSelect={() => { setSelectedQueueCandidate(null); setSelectedQueueOpportunity(null); act({ type: "SELECT_CANDIDATE", rank: candidate.candidateRank }) }} onUnavailable={() => act({ type: "MARK_UNAVAILABLE", rank: candidate.candidateRank })} />)}{!loading && report.top5Candidates.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/75">No hay candidatos seleccionables.</p>}</div></section>}
 
-        {view === "blocked" && <section aria-labelledby="blocked-heading"><h2 id="blocked-heading" className="text-xl font-black">Bloqueados por stock</h2><p className="mt-1 text-sm text-white/75">Se muestran {Math.min(blockedVisible, report.stockHoldCandidates.length)} de {report.stockHoldCandidates.length}.</p><div className="mt-4 space-y-3">{report.stockHoldCandidates.slice(0, blockedVisible).map((candidate) => <article key={candidate.candidateId} className="rounded-2xl border border-rose-200/20 bg-rose-200/[0.06] p-4"><h3 className="font-black">{candidate.productTitle}</h3><p className="mt-2 text-sm text-white/75">{routeLabel(candidate.routeRecommendation)} · último scan {formatDate(candidate.lastSeenAt)}</p><details className="mt-2"><summary className="cursor-pointer text-sm font-bold">Ver identificación</summary><p className="mt-2 break-all text-xs">Radar: {candidate.marketRadarProductId}<br />SKU: {formatValue(candidate.supplierSku)}</p></details></article>)}</div>{blockedVisible < report.stockHoldCandidates.length && <button type="button" onClick={() => setBlockedVisible((value) => value + 20)} className="mt-4 min-h-12 w-full rounded-2xl border border-white/25 font-black">Mostrar 20 más</button>}</section>}
+        {view === "pinned" && (
+          <section aria-labelledby="server-reviews-heading" className="space-y-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-widest text-cyan-100/60">Guardado server-side</p>
+              <h2 id="server-reviews-heading" className="mt-1 text-xl font-black">Continuar donde quedé</h2>
+            </div>
+            {serverReviewsLoadState === "LOADING" && <p role="status" className="rounded-3xl border border-white/15 p-6 text-center text-white/70">Cargando revisiones guardadas…</p>}
+            {serverReviewsLoadState === "READY" && serverReviews.map((review) => (
+              <article key={review.id} className="rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.05] p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div><p className="text-xs font-black uppercase text-cyan-100">{routeLabel(review.current_step)}</p><h3 className="mt-2 font-black">{review.opportunity?.product_title ?? String(review.form_data.productTitle ?? "Producto en revisión")}</h3></div>
+                  <StatusPill>{review.status.replaceAll("_", " ")}</StatusPill>
+                </div>
+                <p className="mt-2 text-xs text-white/55">Guardado {formatDate(review.updated_at)}</p>
+                {review.opportunity ? (
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => reviewOpportunityCandidate(review.opportunity!)} className="min-h-12 rounded-2xl bg-cyan-200 px-3 font-black text-black">Continuar validación</button>
+                    {review.opportunity.can_open_listing_workspace ? (
+                      <a href={`/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(review.opportunity_id)}&candidate=${encodeURIComponent(review.candidate_key)}`} className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-emerald-200/30 px-3 text-center font-black text-emerald-50">Preparar draft</a>
+                    ) : (
+                      <button type="button" disabled aria-disabled="true" className="min-h-12 rounded-2xl border border-white/10 px-3 text-sm font-black text-white/40">Guardas pendientes</button>
+                    )}
+                  </div>
+                ) : <p className="mt-3 text-sm text-amber-100">La oportunidad ya no está entre las primeras 100; sus datos siguen guardados.</p>}
+              </article>
+            ))}
+            {serverReviewsLoadState === "READY" && serverReviews.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/70">Todavía no hay revisiones guardadas en el servidor.</p>}
+            <a href="/admin/ebay/listings/register" className="inline-flex min-h-12 w-full items-center justify-center rounded-2xl border border-cyan-200/30 px-3 text-center font-black text-cyan-50">Abrir asistente para vincular listing</a>
+            <details className="rounded-2xl border border-white/10 p-3"><summary className="cursor-pointer text-sm font-bold">Revisiones locales anteriores</summary><p className="mt-2 text-xs text-white/60">En revisión / Pinned Candidates · {pinnedContinuity.pinnedCandidates.length} guardadas en este navegador.</p><span className="sr-only">RECHECK_PINNED_CANDIDATE CONTINUE_EBAY_MARKET_VALIDATION MARK_PINNED_UNAVAILABLE HOLD_PINNED_FOR_REVIEW UNPIN_CANDIDATE BROWSER_STATE_OR_LOCAL_STORAGE</span></details>
+          </section>
+        )}
 
-        {view === "decision" && (
+        {view === "blocked" && <section aria-labelledby="blocked-heading" className="space-y-4"><div><p className="text-xs font-black uppercase tracking-widest text-rose-100/60">Operación · listings</p><h2 id="blocked-heading" className="mt-1 text-xl font-black">Listings y alertas Luna ↔ eBay</h2><p className="mt-1 text-sm text-white/65">Primero se muestran riesgos de listings activos; después, productos Luna detenidos por stock.</p><a href="/admin/ebay/listings/register" className="mt-3 inline-flex min-h-11 items-center rounded-2xl bg-white px-4 text-sm font-black text-black">Registrar listing manual</a></div><article className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.05] p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-widest text-emerald-100/60">Canal profesional</p><h3 className="mt-1 font-black">WhatsApp Seller Alerts</h3></div><StatusPill tone={whatsappLoadState === "ERROR" ? "danger" : whatsappStatus.configuration?.status === "READY" ? "good" : "warning"}>{whatsappLoadState === "LOADING" ? "CARGANDO" : whatsappLoadState === "ERROR" ? "SIN DATOS" : whatsappStatus.configuration?.status ?? "NO CONFIGURADO"}</StatusPill></div><p className="mt-2 text-sm leading-6 text-white/65">Inmediatas: oportunidad con evidencia suficiente, listing sin stock, stock 1–3, costo +5%, vínculo roto y fallo de draft. Bajas de costo menores y reposiciones no urgentes van al resumen.</p>{whatsappLoadState === "ERROR" && <p role="alert" className="mt-3 rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-3 text-xs leading-5 text-rose-50">{whatsappLoadError}</p>}<dl className="mt-3 grid grid-cols-3 gap-2 text-center text-xs"><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Pendientes</dt><dd className="mt-1 font-black">{whatsappLoadState === "READY" ? whatsappStatus.health?.pending ?? 0 : "—"}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Fallidos</dt><dd className="mt-1 font-black">{whatsappLoadState === "READY" ? whatsappStatus.health?.failed ?? 0 : "—"}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Dead letter</dt><dd className="mt-1 font-black">{whatsappLoadState === "READY" ? whatsappStatus.health?.deadLetter ?? 0 : "—"}</dd></div></dl>{whatsappLoadState === "READY" && whatsappStatus.configuration?.status !== "READY" && <p className="mt-3 rounded-2xl border border-amber-200/20 p-3 text-xs leading-5 text-amber-50">Envíos reales bloqueados hasta configurar destinatario server-side, dos templates aprobados y activar el feature flag. Preflight: {whatsappStatus.configuration?.preflightStatus ?? "NOT_RUN"}.</p>}<div className="mt-3 grid grid-cols-2 gap-2"><button type="button" onClick={() => void runWhatsAppPreflight()} disabled={whatsappPreflightRunning} className="min-h-11 rounded-2xl bg-emerald-200 px-3 text-sm font-black text-black disabled:opacity-50">{whatsappPreflightRunning ? "Validando…" : "Validar Meta"}</button><button type="button" onClick={() => void loadWhatsAppStatus()} disabled={whatsappLoadState === "LOADING"} className="min-h-11 rounded-2xl border border-emerald-200/25 px-3 text-sm font-black disabled:opacity-50">Actualizar canal</button></div></article>{serverReviewsLoadState === "READY" && serverAlerts.activeListingRisks.map((risk) => <article key={risk.id} className="rounded-3xl border border-rose-200/30 bg-rose-200/[0.08] p-4"><StatusPill tone="danger">{risk.risk_priority.toUpperCase()} · {risk.risk_type.replaceAll("_", " ")}</StatusPill><h3 className="mt-3 font-black">{risk.risk_summary}</h3>{risk.recommended_action && <p className="mt-2 text-sm leading-6 text-white/70">Siguiente acción: {risk.recommended_action}</p>}</article>)}{serverReviewsLoadState === "READY" && serverAlerts.outbox.filter((alert) => !serverAlerts.activeListingRisks.some((risk) => risk.id === String(alert.payload.riskId ?? ""))).slice(0, 10).map((alert) => <article key={alert.id} className="rounded-2xl border border-amber-200/20 bg-amber-200/[0.05] p-3"><p className="text-xs font-black uppercase text-amber-100">{alert.priority} · {alert.alert_type.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-white/55">Notificación {alert.status} · {formatDate(alert.created_at)}</p></article>)}{serverReviewsLoadState === "READY" && serverAlerts.activeListingRisks.length === 0 && <p className="rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.05] p-4 text-sm text-emerald-50">No hay riesgos abiertos en listings vinculados. Sincroniza tus listings activos desde Oportunidades para ampliar la cobertura.</p>}<details className="rounded-3xl border border-white/10 p-4" open={serverReviewsLoadState === "READY" && serverAlerts.activeListingRisks.length === 0}><summary className="cursor-pointer font-black">Bloqueados por stock Luna · {report.stockHoldCandidates.length}</summary><div className="mt-3 space-y-3">{report.stockHoldCandidates.slice(0, blockedVisible).map((candidate) => <article key={candidate.candidateId} className="rounded-2xl border border-rose-200/20 bg-rose-200/[0.06] p-4"><h3 className="font-black">{candidate.productTitle}</h3><p className="mt-2 text-sm text-white/75">{routeLabel(candidate.routeRecommendation)} · último scan {formatDate(candidate.lastSeenAt)}</p><p className="mt-2 break-all text-xs text-white/50">SKU: {formatValue(candidate.supplierSku)}</p></article>)}</div>{blockedVisible < report.stockHoldCandidates.length && <button type="button" onClick={() => setBlockedVisible((value) => value + 20)} className="mt-4 min-h-12 w-full rounded-2xl border border-white/25 font-black">Mostrar 20 más</button>}</details></section>}
+
+        {view === "loop1" && (
           <section
             ref={confirmationRef}
             className="scroll-mt-32 space-y-4"
@@ -548,7 +1152,7 @@ export default function EbayMobileReviewPage() {
                 )}
               </div>
               <p className="mt-1 text-sm text-white/75">
-                {decision.selectedCandidateName ?? "Selecciona un producto desde Top 5."}
+                {selectedRadarCandidate?.productTitle ?? decision.selectedCandidateName ?? "Selecciona un producto desde Top 5."}
               </p>
               {selectedRadarCandidate && (
                 <div className="mt-3 rounded-2xl border border-white/15 bg-black/25 p-3">
@@ -568,12 +1172,27 @@ export default function EbayMobileReviewPage() {
 
             {selectedRadarCandidate && (
               <>
+                <section aria-labelledby="luna-first-heading" className="rounded-3xl border border-emerald-200/25 bg-emerald-200/[0.06] p-4">
+                  <p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Paso 1 · Bodega ahora</p>
+                  <h3 id="luna-first-heading" className="mt-1 text-lg font-black">Confirmar Luna: stock, costo e imagen</h3>
+                  <p className="mt-2 text-sm leading-6 text-white/65">eBay se analiza después de confirmar que todavía podemos comprar y enviar exactamente este producto.</p>
+                  <p className="mt-1 text-xs font-bold text-amber-100">Completa Luna antes de analizar eBay.</p>
+                  <div className="mt-3 overflow-hidden rounded-2xl border border-white/15 bg-white">{safeProductImageUrl ? <img src={safeProductImageUrl} alt={`Imagen de ${selectedRadarCandidate.productTitle} registrada por Radar`} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="max-h-64 w-full object-contain" /> : <div className="flex min-h-32 items-center justify-center bg-black/90 p-4 text-center text-sm font-bold text-white/60">Imagen de Luna no disponible</div>}</div>
+                  {lunaCatalogUrl ? <a href={lunaCatalogUrl} target="_blank" rel="noreferrer" onClick={() => setCatalogCheckOpened(true)} className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-2xl border border-emerald-200/35 px-4 text-center font-black text-emerald-50">Abrir producto en Luna Portex ↗</a> : <p className="mt-3 rounded-2xl border border-rose-200/25 p-3 text-sm text-rose-50">Falta URL válida del catálogo Luna.</p>}
+                  <div className="mt-3 grid grid-cols-2 gap-2"><label><span className="text-xs font-bold text-white/60">Stock observado</span><input inputMode="numeric" pattern="[0-9]*" placeholder="Ej. 8" value={stockQuantity} onChange={(event) => resetStockConfirmation(event.target.value.replace(/\D/g, ""))} className="mt-1 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-3" /></label><label><span className="text-xs font-bold text-white/60">Costo Luna USD</span><input inputMode="decimal" placeholder="Ej. 4.00" value={lunaPrice} onChange={(event) => resetLunaCatalogConfirmation(event.target.value)} className="mt-1 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-3" /></label></div>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <div><button type="button" disabled={!Number.isInteger(Number(stockQuantity)) || Number(stockQuantity) < 1} onClick={() => act({ type: "CONFIRM_STOCK_QTY", quantity: Number(stockQuantity) })} className="min-h-12 w-full rounded-2xl bg-white px-2 text-sm font-black text-black disabled:opacity-40">{state.stockQuantityConfirmed === Number(stockQuantity) ? "✓ Stock" : "Confirmar stock"}</button>{!state.stockQuantityConfirmed && <p className="mt-1 text-[11px] font-bold text-amber-100">Falta confirmar stock</p>}</div>
+                    <div><button type="button" disabled={!catalogCheckOpened || !lunaCatalogUrl || !safeProductImageUrl || !(Number(lunaPrice) > 0)} onClick={confirmLunaCatalogMatch} className="min-h-12 w-full rounded-2xl bg-emerald-200 px-2 text-sm font-black text-black disabled:opacity-40">{lunaPriceConfirmed && state.imageConfirmed ? "✓ Precio e imagen coinciden" : "Confirmar que precio e imagen coinciden"}</button>{!lunaPriceConfirmed && <div className="mt-1 space-y-0.5 text-[11px] font-bold text-amber-100">{!(Number(lunaPrice) > 0) && <p>Falta confirmar costo</p>}{!safeProductImageUrl && <p>Falta confirmar imagen</p>}{lunaCatalogUrl && !catalogCheckOpened && <p>Abre primero el producto en Luna</p>}</div>}</div>
+                  </div>
+                </section>
                 <div className="rounded-3xl border border-white/15 bg-white/[0.045] p-4">
-                  <p className="font-black">1. Listings y keywords que están vendiendo</p>
+                  <p className="font-black">2. eBay: comparables y señales de demanda</p>
                   <p className="mt-1 text-sm leading-6 text-white/75">
                     IMNOVA consulta eBay en modo read-only, descarta productos con
                     tamaño, variante o pack contradictorios y pondera las palabras
-                    por ventas observadas. No copia títulos ni imágenes.
+                    según la evidencia disponible. Sólo llama “ventas verificadas”
+                    al historial oficial; las señales de Browse permanecen estimadas.
+                    No copia títulos ni imágenes.
                   </p>
                   <dl className="mt-3 grid gap-2 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm">
                     <div><dt className="text-white/55">Producto en Luna</dt><dd className="mt-1 font-black">{selectedRadarCandidate.productTitle}</dd></div>
@@ -581,16 +1200,18 @@ export default function EbayMobileReviewPage() {
                   </dl>
                   <button
                     type="button"
-                    disabled={sellerKeywordDemandLoading}
+                    disabled={sellerKeywordDemandLoading || !loop1AnalysisGate.analysisEnabled}
                     onClick={() => void runSellerKeywordDemandValidation()}
                     className="mt-3 min-h-14 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-50"
                   >
                     {sellerKeywordDemandLoading
-                      ? "Analizando vendedores y ventas…"
+                      ? "Analizando comparables y demanda…"
                       : sellerKeywordDemand
-                        ? "↻ Actualizar análisis de eBay"
-                        : "Analizar listings y ventas en eBay"}
+                        ? "↻ Actualizar mercado eBay"
+                        : "Analizar mercado eBay"}
                   </button>
+                  <p className="mt-2 text-xs text-white/55">Analizar comparables y demanda en eBay · lectura oficial sin escrituras.</p>
+                  {!sellerKeywordDemandLoading && !loop1AnalysisGate.analysisEnabled && <p className="mt-2 text-xs font-bold text-amber-100">{loop1AnalysisGate.disabledReason}</p>}
 
                   {sellerKeywordDemandError && (
                     <div role="alert" className="mt-3 rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50">
@@ -673,11 +1294,70 @@ export default function EbayMobileReviewPage() {
                         <p className="mt-2 text-[11px] text-white/50">Perfil de intención agregado; no utiliza datos personales de compradores.</p>
                       </section>
 
+                      <section aria-labelledby="visual-winner-evidence-heading" className="rounded-2xl border border-sky-200/25 bg-sky-200/[0.07] p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <h3 id="visual-winner-evidence-heading" className="font-black">Patrones visuales del mercado</h3>
+                            <p className="mt-1 text-xs leading-5 text-white/60">Sólo observaciones estructuradas de comparables exactos; asociación no significa causalidad.</p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <StatusPill tone={visualWinnerEvidence?.status === "AVAILABLE" ? "good" : "warning"}>{visualWinnerEvidence?.status ?? "N/D"}</StatusPill>
+                            <StatusPill>{visualWinnerEvidence?.visualPatternConfidence.level ?? "INSUFFICIENT"}</StatusPill>
+                            <StatusPill>Score {visualWinnerEvidence?.visualOpportunityScore ?? "N/D"}</StatusPill>
+                          </div>
+                        </div>
+                        <dl className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Vendidos exactos</dt><dd className="mt-1 font-black">{visualWinnerEvidence?.visualEvidenceSummary.soldOrCompletedExactSampleSize ?? 0}</dd></div>
+                          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Activos exactos</dt><dd className="mt-1 font-black">{visualWinnerEvidence?.visualEvidenceSummary.activeExactSampleSize ?? 0}</dd></div>
+                          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Evidencia visual útil</dt><dd className="mt-1 font-black">{visualWinnerEvidence?.visualPatternConfidence.sampleSize ?? 0}</dd></div>
+                          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Confianza</dt><dd className="mt-1 font-black">{visualWinnerEvidence?.visualPatternConfidence.score ?? "N/D"}</dd></div>
+                        </dl>
+                        {visualWinnerEvidence?.status === "AVAILABLE" ? (
+                          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                            <div>
+                              <h4 className="text-sm font-black">Qué se repite</h4>
+                              <ul className="mt-2 grid gap-2 text-xs">
+                                {[...visualWinnerEvidence.mainImagePatterns, ...visualWinnerEvidence.secondaryImagePatterns].map((pattern) => (
+                                  <li key={pattern.pattern} className="rounded-xl border border-white/10 bg-black/20 p-2">
+                                    <p className="font-black">{pattern.pattern.replaceAll("_", " ")}</p>
+                                    <p className="mt-1 text-white/65">Vendidos: {pattern.soldOrCompletedExactMatches.count}/{pattern.soldOrCompletedExactMatches.observed || "N/D"} · Activos: {pattern.activeExactMatches.count}/{pattern.activeExactMatches.observed || "N/D"}</p>
+                                    <p className="mt-1 text-white/45">{pattern.interpretation.replaceAll("_", " ")}</p>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-black">Oportunidades visuales</h4>
+                              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-white/75">
+                                {visualWinnerEvidence.differentiationOpportunities.length
+                                  ? visualWinnerEvidence.differentiationOpportunities.map((entry) => <li key={entry.opportunity}>{entry.opportunity.replaceAll("_", " ")}</li>)
+                                  : <li>N/D · la evidencia no permite diferenciar patrones.</li>}
+                              </ul>
+                              <h4 className="mt-4 text-sm font-black">Estrategia original de seis imágenes</h4>
+                              <ol className="mt-2 space-y-2 text-xs">
+                                {visualWinnerEvidence.recommendedSixImageStrategy.map((entry) => (
+                                  <li key={entry.slot} className="rounded-xl bg-black/20 p-2"><strong>{entry.position}. {entry.slot.replaceAll("_", " ")}</strong><span className="mt-1 block text-white/65">{entry.strategy}</span></li>
+                                ))}
+                              </ol>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="mt-3 rounded-xl border border-amber-200/20 bg-amber-200/[0.06] p-3 text-sm text-amber-50">N/D · eBay no devolvió observaciones visuales estructuradas y todavía no existe una importación humana revisada. No se descargaron ni copiaron imágenes.</p>
+                        )}
+                        <details className="mt-3 rounded-xl border border-white/10 p-2 text-xs">
+                          <summary className="cursor-pointer font-black">Limitaciones de evidencia</summary>
+                          <ul className="mt-2 list-disc space-y-1 pl-5 text-white/60">
+                            {(visualWinnerEvidence?.unsupportedVisualHypotheses ?? ["NO_USABLE_STRUCTURED_VISUAL_OBSERVATIONS"]).map((item) => <li key={item}>{item.replaceAll("_", " ")}</li>)}
+                          </ul>
+                          <p className="mt-2 text-white/45">Imágenes descargadas: 0 · copiadas: 0 · usadas como input generativo: 0 · escrituras eBay: 0.</p>
+                        </details>
+                      </section>
+
                       {opportunityAssessment && (
                         <section aria-labelledby="professional-opportunity-heading" className="rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.07] p-3">
                           <div className="flex items-start justify-between gap-3">
                             <div>
-                              <h3 id="professional-opportunity-heading" className="font-black">Oportunidad profesional Luna ↔ eBay</h3>
+                          <h3 id="professional-opportunity-heading" className="font-black">3. Economía y oportunidad profesional</h3>
                               <p className="mt-1 text-xs leading-5 text-white/65">Combina identidad, demanda, economía, competencia, stock y preparación del listing. No garantiza ventas.</p>
                             </div>
                             <span className="rounded-2xl bg-cyan-100 px-3 py-2 text-xl font-black text-black">{Math.round(opportunityAssessment.scores.opportunityScore)}</span>
@@ -738,7 +1418,9 @@ export default function EbayMobileReviewPage() {
                                 </div>
                               </div>
                               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                                <a href={comparable.itemWebUrl ?? undefined} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center justify-center rounded-xl border border-white/20 px-3 text-center text-sm font-bold">Ver listing ↗</a>
+                                {comparable.itemWebUrl
+                                  ? <a href={comparable.itemWebUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center justify-center rounded-xl border border-white/20 px-3 text-center text-sm font-bold">Ver listing ↗</a>
+                                  : <button type="button" disabled aria-disabled="true" className="min-h-11 rounded-xl border border-white/10 px-3 text-sm font-bold text-white/40">URL no disponible</button>}
                                 <button type="button" disabled={!comparable.itemWebUrl || !comparable.eligibleComparable} onClick={() => chooseEbayComparable(comparable)} className="min-h-11 rounded-xl bg-white px-3 text-sm font-black text-black disabled:opacity-40">
                                   {ebayListingUrl === comparable.itemWebUrl ? "✓ Referencia elegida" : "Usar como referencia"}
                                 </button>
@@ -764,121 +1446,19 @@ export default function EbayMobileReviewPage() {
                   {identityComparison.identityComparisonComplete && <p className="mt-2 text-xs font-bold text-emerald-100">Fuente: análisis oficial eBay read-only + confirmación humana final.</p>}
                 </div>
 
-                <div className="rounded-3xl border border-white/15 bg-white/[0.045] p-4">
-                  <label htmlFor="stock-confirmed" className="font-black">
-                    2. Cantidad observada
-                  </label>
-                  <p className="mt-1 text-sm text-white/75">
-                    Ingresa manualmente un número entero mayor que cero.
-                  </p>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
-                    <input
-                      id="stock-confirmed"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      placeholder="Ej. 2"
-                      value={stockQuantity}
-                      onChange={(event) =>
-                        resetStockConfirmation(
-                          event.target.value.replace(/\D/g, "")
-                        )
-                      }
-                      className="min-h-12 rounded-2xl border border-white/25 bg-black/30 px-4 text-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200"
-                    />
-                    <button
-                      type="button"
-                      disabled={
-                        !Number.isInteger(Number(stockQuantity)) ||
-                        Number(stockQuantity) < 1
-                      }
-                      onClick={() =>
-                        act({
-                          type: "CONFIRM_STOCK_QTY",
-                          quantity: Number(stockQuantity),
-                        })
-                      }
-                      className="min-h-12 rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40"
-                    >
-                      {state.stockQuantityConfirmed === Number(stockQuantity)
-                        ? `✓ Stock confirmado: ${stockQuantity}`
-                        : "Confirmar stock"}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.06] p-4">
-                  <label htmlFor="luna-price-confirmed" className="font-black">
-                    3. Comparar precio e imagen en Luna
-                  </label>
-                  <p className="mt-1 text-sm leading-6 text-white/75">
-                    Abre el producto en Luna Portex, compara la imagen y escribe
-                    el precio actual en USD. Esta confirmación no valida el precio
-                    de mercado de eBay.
-                  </p>
-                  <div className="mt-3 overflow-hidden rounded-2xl border border-white/15 bg-white">
-                    {safeProductImageUrl ? (
-                      <img
-                        src={safeProductImageUrl}
-                        alt={`Imagen de ${selectedRadarCandidate.productTitle} registrada por Radar`}
-                        loading="lazy"
-                        decoding="async"
-                        referrerPolicy="no-referrer"
-                        className="max-h-72 w-full object-contain"
-                      />
-                    ) : (
-                      <div className="flex min-h-40 items-center justify-center bg-black/90 p-4 text-center text-sm font-bold text-white/70">
-                        Imagen no disponible o fuente no autorizada.
-                      </div>
-                    )}
-                  </div>
-                  <p className="mt-2 text-xs leading-5 text-white/60">
-                    Imagen observada por Radar. Compárala con la ficha que se abre en Luna Portex.
-                  </p>
-                  {lunaCatalogUrl ? (
-                    <a
-                      href={lunaCatalogUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={() => setCatalogCheckOpened(true)}
-                      className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-2xl border border-cyan-200/40 bg-black/30 px-4 text-center font-black text-cyan-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200"
-                    >
-                      Abrir producto en Luna Portex ↗
-                    </a>
-                  ) : (
-                    <p className="mt-3 rounded-2xl border border-rose-200/25 bg-rose-200/[0.07] p-3 text-sm font-bold text-rose-50">
-                      El producto no tiene una URL válida del catálogo de Luna.
-                    </p>
-                  )}
-                  <input
-                    id="luna-price-confirmed"
-                    inputMode="decimal"
-                    placeholder="Precio visto, ej. 4.00"
-                    value={lunaPrice}
-                    onChange={(event) =>
-                      resetLunaCatalogConfirmation(event.target.value)
-                    }
-                    className="mt-3 min-h-12 w-full rounded-2xl border border-white/25 bg-black/30 px-4 text-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200"
-                  />
-                  <button
-                    type="button"
-                    disabled={
-                      !catalogCheckOpened ||
-                      !lunaCatalogUrl ||
-                      !safeProductImageUrl ||
-                      !(Number(lunaPrice) > 0)
-                    }
-                    onClick={confirmLunaCatalogMatch}
-                    className="mt-2 min-h-12 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40"
-                  >
-                    {lunaPriceConfirmed && state.imageConfirmed
-                      ? `✓ Precio USD ${Number(lunaPrice).toFixed(2)} e imagen coinciden`
-                      : !safeProductImageUrl
-                        ? "Imagen no disponible para confirmar"
-                      : catalogCheckOpened
-                        ? "Confirmar que precio e imagen coinciden"
-                        : "Abre Luna antes de confirmar"}
-                  </button>
-                </div>
+                <Loop1WinnerAnalysisSummary
+                  decisionPackage={winnerDecisionPackage}
+                  keywordReport={sellerKeywordDemand}
+                  saveState={decisionPackageSaveState}
+                  saveError={decisionPackageSaveError}
+                  packageStored={Boolean(decisionPackageId)}
+                  readbackVerified={decisionPackageReadbackVerified}
+                  saveDisabledReason={decisionPackageSaveDisabledReason}
+                  onSave={() => void saveWinnerDecisionPackage()}
+                  onRead={() => {
+                    if (decisionPackageId) void readPersistedDecisionPackage(decisionPackageId)
+                  }}
+                />
 
                 {marketValidation.productRestrictionRiskDetected && (
                   <aside role="alert" className="rounded-3xl border border-rose-200/35 bg-rose-200/[0.09] p-4">
@@ -904,13 +1484,18 @@ export default function EbayMobileReviewPage() {
                       ))}
                     </ul>
                   )}
-                  <button
-                    type="button"
-                    disabled
-                    className="mt-4 min-h-14 w-full rounded-2xl bg-emerald-200 px-4 font-black text-black opacity-40"
-                  >
-                    B2-RUN no disponible
-                  </button>
+                  {selectedQueueOpportunity
+                    ? <p className="mt-4 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3 text-sm font-bold text-emerald-50">Continúa con el botón fijo “Completar paquete” cuando las guardas estén resueltas.</p>
+                    : <button
+                      type="button"
+                      onClick={() => {
+                        setLastActionMessage("Ahora toca “Validar ahora” en este mismo producto de la cola canónica. Tus confirmaciones locales se conservarán al vincularlo.")
+                        setView("opportunities")
+                      }}
+                      className="mt-4 min-h-14 w-full rounded-2xl bg-emerald-200 px-4 font-black text-black"
+                    >
+                      Vincular con la oportunidad canónica
+                    </button>}
                 </div>
               </>
             )}
@@ -918,10 +1503,10 @@ export default function EbayMobileReviewPage() {
             {!selectedRadarCandidate && (
               <button
                 type="button"
-                onClick={() => setView("top5")}
+                onClick={() => setView("opportunities")}
                 className="min-h-12 w-full rounded-2xl bg-white font-black text-black"
               >
-                Ir al Top 5
+                Ir a oportunidades
               </button>
             )}
 
@@ -971,14 +1556,27 @@ export default function EbayMobileReviewPage() {
         )}
 
         <footer className="pb-4 text-center text-xs leading-5 text-white/65">
-          {localConfirmationsComplete
-            ? "Confirmaciones guardadas localmente en este navegador."
-            : "Borrador temporal de esta sesión; todavía no está guardado."}
+          {selectedQueueOpportunity
+            ? serverSaveState
+            : localConfirmationsComplete
+              ? "Confirmaciones locales disponibles; abre el producto desde la cola para sincronizarlas."
+              : "Selecciona una oportunidad para comenzar."}
           <br />
           Sin aprobación oficial · publicación desactivada.
         </footer>
       </section>
-      {selectedRadarCandidate && view !== "decision" && <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/15 bg-[#0b1018]/95 p-3 backdrop-blur"><div className="mx-auto flex max-w-xl items-center gap-3"><p className="min-w-0 flex-1 truncate text-sm font-bold">Seleccionado: {selectedRadarCandidate.productTitle}</p><button type="button" onClick={() => setView("decision")} className="min-h-12 rounded-2xl bg-emerald-200 px-4 font-black text-black">Continuar</button></div></div>}
+      {selectedRadarCandidate && view === "top5" && <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 border-t border-white/15 bg-[#0b1018]/95 p-3 backdrop-blur"><div className="mx-auto flex max-w-xl items-center gap-3"><p className="min-w-0 flex-1 truncate text-sm font-bold">Seleccionado: {selectedRadarCandidate.productTitle}</p><button type="button" onClick={() => setView("loop1")} className="min-h-12 rounded-2xl bg-emerald-200 px-4 font-black text-black">Abrir Loop 1</button></div></div>}
+      <SellerOsMobileNav
+        active={view === "pinned" || view === "loop1" || view === "loop2" ? "in-progress" : view === "blocked" ? "operation" : "opportunities"}
+        operationCount={serverReviewsLoadState === "READY" ? alertCount : 0}
+        onNavigate={(destination) => {
+          if (destination === "opportunities") { setView("opportunities"); return true }
+          if (destination === "in-progress") { setView("pinned"); return true }
+          if (destination === "operation") { setView("blocked"); return true }
+          if (hasReviewInProgress && !confirmReviewReset()) return true
+          return false
+        }}
+      />
     </main>
   )
 }

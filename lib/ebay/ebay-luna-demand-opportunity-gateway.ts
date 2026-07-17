@@ -16,6 +16,7 @@ import {
 // @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
 } from "./ebay-seller-keyword-demand-gateway.ts"
 import type {
+  EbayCategoryLearningAdjustmentInput,
   EbayListingObservation,
   LunaOpportunityCandidateInput,
   OpportunityEngineOptions,
@@ -29,6 +30,10 @@ export type EbayLunaOpportunityScanInput = {
   observationHistoryByCandidate?: Record<string, EbayListingObservation[]>
   bestSellingCategoryIds?: string[]
   options?: OpportunityEngineOptions
+  categoryLearningAdjustmentsByCategory?: Record<
+    string,
+    EbayCategoryLearningAdjustmentInput
+  >
 }
 
 export async function runEbayLunaOpportunityScan(
@@ -48,13 +53,23 @@ export async function runEbayLunaOpportunityScan(
       demandReport.searchQuery,
       demandReport.topSellingListings[0]?.categoryId ?? normalized.categoryId
     )
+    const resolvedCategoryId = taxonomyIntelligence.categoryId ??
+      demandReport.topSellingListings[0]?.categoryId ?? normalized.categoryId
+    const categoryLearningAdjustment = input.categoryLearningAdjustmentsByCategory
+      ? resolvedCategoryId
+        ? input.categoryLearningAdjustmentsByCategory[resolvedCategoryId] ?? null
+        : null
+      : input.options?.categoryLearningAdjustment
     assessments.push(buildEbayLunaOpportunityAssessment({
       candidate: rawCandidate,
       demandReport,
       observationHistory:
         input.observationHistoryByCandidate?.[normalized.candidateKey] ?? [],
       taxonomyIntelligence,
-    }, input.options))
+    }, {
+      ...input.options,
+      categoryLearningAdjustment,
+    }))
   }
 
   const bestSellingDiscovery = []
@@ -73,7 +88,7 @@ export async function runEbayLunaOpportunityScan(
   }
 
   return {
-    scanVersion: "EBAY-LUNA-DEMAND-TO-INVENTORY-OPPORTUNITY-SCAN-V1",
+    scanVersion: "EBAY-LUNA-DEMAND-TO-INVENTORY-OPPORTUNITY-SCAN-V2",
     requestedCandidateCount: input.candidates.length,
     processedCandidateCount: candidates.length,
     hasMoreCandidates: input.candidates.length > candidates.length,
@@ -88,6 +103,17 @@ export async function runEbayLunaOpportunityScan(
       marketplaceInsightsRequired: false,
       singleSellerCanProveMarketDemand: false,
       humanApprovalRequired: true,
+    },
+    categoryLearningPolicy: {
+      source: "EBAY_SELL_ANALYTICS_READONLY",
+      ownSellerAccountOnly: true,
+      competitorPerformanceUsed: false,
+      minimumLinkedListings: 10,
+      minimumObservationDays: 14,
+      minimumTotalImpressions: 500,
+      maximumAbsoluteAdjustmentPoints: 5,
+      adjustsRankingOnly: true,
+      safetyGatesChanged: false,
     },
     safety: {
       ebayMode: "OFFICIAL_READ_ONLY_GET",

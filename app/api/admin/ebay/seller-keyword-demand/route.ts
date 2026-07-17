@@ -7,6 +7,13 @@ import {
   runEbaySellerKeywordDemandValidation,
 } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import { buildEbayLunaOpportunityAssessment } from "@/lib/ebay/ebay-luna-demand-opportunity-engine"
+import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
+import { buildWinnerEvidenceDecisionPackage } from "@/lib/ebay/ebay-winner-evidence-v2"
+import {
+  sanitizeWinnerEvidencePackage,
+  winnerComparablesFromKeywordReport,
+  type WinnerEvidenceClientInput,
+} from "@/lib/ebay/ebay-winner-evidence-v2-service"
 
 function text(value: unknown, maxLength: number) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : ""
@@ -43,7 +50,8 @@ export async function POST(req: Request) {
       supplierSku: text(raw.supplierSku, 100),
       categoryId: text(raw.categoryId, 20),
       gtin: text(raw.gtin, 20),
-      brand: text(raw.brand, 120),
+      brand: text(raw.manufacturerBrand, 120),
+      supplierVendor: text(raw.supplierVendor, 120),
       mpn: text(raw.mpn, 120),
       color: text(raw.color, 80),
       size: text(raw.size, 80),
@@ -102,17 +110,79 @@ export async function POST(req: Request) {
       observationHistory: [],
       taxonomyIntelligence,
     })
+    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    const keywordTerms = [
+      ...report.keywordEvidenceGroups.verifiedHistoricalMultiSeller,
+      ...report.keywordEvidenceGroups.estimatedMultiSellerSignal,
+      ...report.keywordEvidenceGroups.activeListingFrequencyOnly,
+    ].map((entry) => entry.term).filter(Boolean).slice(0, 30)
+    const restrictionGuards = Array.isArray(raw.restrictionGuards)
+      ? raw.restrictionGuards.filter((entry): entry is string => typeof entry === "string").slice(0, 20)
+      : []
+    const winnerDecisionPackageInput: WinnerEvidenceClientInput | null = candidate.supplierSku
+      ? {
+          candidateId: null,
+          supplierSku: candidate.supplierSku,
+          supplierVariantId: text(raw.supplierVariantId, 120) || null,
+          identity: {
+            manufacturerBrand: candidate.brand || null,
+            distributor: "Luna Portex",
+            vendor: candidate.supplierVendor || null,
+            gtin: candidate.gtin || null,
+            mpn: candidate.mpn || null,
+            model: candidate.mpn || null,
+            productName: candidate.productName || candidate.productTitle,
+            packCount: candidate.packQuantity,
+            unitCount: null,
+            size: candidate.size || null,
+            color: candidate.color || null,
+            scent: null,
+            variant: candidate.variantTitle || null,
+            condition: "New",
+          },
+          comparables: winnerComparablesFromKeywordReport(report),
+          supplierPackageCost: numberOrNull(raw.supplierCost),
+          packagingCost: null,
+          outboundShippingCost: opportunityAssessment.economics.estimatedOutboundShipping,
+          fixedFulfillmentCost: null,
+          authorizedKeywords: keywordTerms,
+          requiredKeywordCount: 5,
+          stockAvailable: numberOrNull(raw.inventoryQuantity),
+          stockObservedAt: text(raw.stockCapturedAt, 80) || null,
+          costObservedAt: text(raw.stockCapturedAt, 80) || null,
+          complianceBlocked: restrictionGuards.length > 0,
+          complianceFindings: restrictionGuards,
+          now: report.evidenceAsOf,
+        }
+      : null
+    const winnerDecisionPackage = accountKey && winnerDecisionPackageInput
+      ? buildWinnerEvidenceDecisionPackage({
+          ...winnerDecisionPackageInput,
+          marketplaceAccountKey: accountKey,
+        })
+      : null
+    const visualWinnerEvidence = winnerDecisionPackage?.visualEvidenceAnalysis ?? null
     return NextResponse.json({
       success: true,
       report,
       taxonomyIntelligence,
       opportunityAssessment,
+      visualWinnerEvidence,
+      winnerDecisionPackage: winnerDecisionPackage
+        ? sanitizeWinnerEvidencePackage(winnerDecisionPackage)
+        : null,
+      winnerDecisionPackageInput,
       safety: {
         mode: "EBAY_OFFICIAL_READ_ONLY",
         ebayWriteUsed: false,
         supabaseWriteUsed: false,
         tokenReturnedToBrowser: false,
         imagesCopied: false,
+        competitorImagesDownloaded: 0,
+        imageGenerationStarted: false,
+        openAiCalls: 0,
+        draftsCreated: 0,
+        publicationsCreated: 0,
         canPublish: false,
       },
     })

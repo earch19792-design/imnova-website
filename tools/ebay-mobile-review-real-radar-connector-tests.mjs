@@ -4,7 +4,9 @@ import test from "node:test"
 
 import {
   buildMobileReviewRealRadarConnector,
+  findMarketRadarProductById,
   getRealRadarCandidateRoute,
+  loadMarketRadarReadonlyProductById,
 } from "../lib/ebay/ebay-mobile-review-real-radar-connector.ts"
 
 const fixture = JSON.parse(readFileSync("tools/fixtures/ebay-mobile-review-real-radar-connector-v1.json", "utf8"))
@@ -43,6 +45,39 @@ test("empty Radar data does not silently use a fixture", () => {
   assert.equal(report.canProceedToB2RunPreflight, false)
 })
 
+test("directed Radar lookup keeps only the exact productId outside Top 50", async () => {
+  const originalFetch = globalThis.fetch
+  const requestedUrls = []
+  globalThis.fetch = async (url) => {
+    requestedUrls.push(String(url))
+    return new Response(JSON.stringify({
+      success: true,
+      dashboard: {
+        products: [
+          fixture.products[0],
+          { ...fixture.products[1], product_id: "radar-product-directed" },
+        ],
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } })
+  }
+  try {
+    const product = await loadMarketRadarReadonlyProductById(
+      "Bearer test-only",
+      "radar-product-directed",
+    )
+    assert.equal(product?.product_id, "radar-product-directed")
+    assert.match(requestedUrls[0], /search=radar-product-directed/)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+
+  assert.equal(
+    findMarketRadarProductById(fixture.products, "radar-product-101")?.product_id,
+    "radar-product-101",
+  )
+  assert.equal(findMarketRadarProductById(fixture.products, "missing-product"), null)
+})
+
 test("real Radar stock holds stay visible and explain a missing Top 5", () => {
   const blockedProducts = fixture.products.filter((product) =>
     ["radar-product-106", "radar-product-107"].includes(product.product_id)
@@ -79,7 +114,7 @@ test("mobile UI exposes source, Radar fields and browser-only persistence", () =
     /REAL RADAR/, /FIXTURE\/DEMO/, /MARKET_RADAR_READONLY/, /marketRadarProductId/,
     /marketRadarSnapshotId/, /supplierSku/, /supplierVariantId/, /lastSeenAt/,
     /lastSnapshotAt/, /candidate\.stockSource/, /candidate\.stockConfirmationAgeHours/, /BROWSER_STATE_ONLY/,
-    /officialApprovalRecord: false/, /canPublish: false/, /sin eBay write/,
+    /officialApprovalRecord: false/, /canPublish: false/, /eBay read-only/,
     /productos observados/, /candidatos seleccionables/, /B2-RUN continúa desactivado/,
   ]) assert.match(pageSource, expected)
 })

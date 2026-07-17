@@ -74,17 +74,31 @@ test("builds an official read-only URL with compact dates and listing filters", 
   const { url, listingIds } = buildEbaySellerTrafficReportUrl({
     dateFrom: "2026-06-12",
     dateTo: "2026-07-12",
-    listingIds: ["123", "456", "123", "invalid"],
+    listingIds: ["123456789012", "987654321098", "123456789012", "invalid"],
   })
   assert.equal(url.origin, "https://api.ebay.com")
   assert.equal(url.pathname, "/sell/analytics/v1/traffic_report")
   assert.equal(url.searchParams.get("dimension"), "LISTING")
   assert.equal(
     url.searchParams.get("filter"),
-    "marketplace_ids:{EBAY_US},date_range:[20260612..20260712],listing_ids:{123|456}",
+    "marketplace_ids:{EBAY_US},date_range:[20260612..20260712],listing_ids:{123456789012|987654321098}",
   )
   assert.ok(url.searchParams.get("metric")?.includes("LISTING_VIEWS_SOURCE_SEARCH_RESULTS_PAGE"))
-  assert.deepEqual(listingIds, ["123", "456"])
+  assert.deepEqual(listingIds, ["123456789012", "987654321098"])
+})
+
+test("builds closed UTC windows with an explicit ISO 8601 offset", () => {
+  const { url, timeZone } = buildEbaySellerTrafficReportUrl({
+    dateFrom: "2026-07-08",
+    dateTo: "2026-07-14",
+    listingIds: ["366543596425"],
+    timeZone: "UTC",
+  })
+  assert.equal(timeZone, "UTC")
+  assert.equal(
+    url.searchParams.get("filter"),
+    "marketplace_ids:{EBAY_US},date_range:[2026-07-08T00:00:00.000Z..2026-07-14T23:59:59.999Z],listing_ids:{366543596425}",
+  )
 })
 
 test("rejects impossible dates and ranges over 90 days", () => {
@@ -98,6 +112,20 @@ test("rejects impossible dates and ranges over 90 days", () => {
   )
 })
 
+test("treats the official 90-day range as inclusive", () => {
+  assert.doesNotThrow(() => buildEbaySellerTrafficReportUrl({
+    dateFrom: "2026-01-01",
+    dateTo: "2026-03-31",
+  }))
+  assert.throws(
+    () => buildEbaySellerTrafficReportUrl({
+      dateFrom: "2026-01-01",
+      dateTo: "2026-04-01",
+    }),
+    /EBAY_ANALYTICS_DATE_RANGE_INVALID/,
+  )
+})
+
 test("admin panel keeps OAuth server-only and calls the protected route with Admin auth", () => {
   const page = readFileSync(
     new URL("../app/admin/ebay/seller-performance/page.tsx", import.meta.url),
@@ -105,6 +133,10 @@ test("admin panel keeps OAuth server-only and calls the protected route with Adm
   )
   const gateway = readFileSync(
     new URL("../lib/ebay/ebay-seller-analytics-readonly-gateway.ts", import.meta.url),
+    "utf8",
+  )
+  const route = readFileSync(
+    new URL("../app/api/admin/ebay/seller-performance/route.ts", import.meta.url),
     "utf8",
   )
   assert.match(page, /supabase\.auth\.getSession\(\)/)
@@ -116,5 +148,29 @@ test("admin panel keeps OAuth server-only and calls the protected route with Adm
   assert.doesNotMatch(page, /process\.env/)
   assert.match(gateway, /tokenReturned: false/)
   assert.match(gateway, /tokenStoredByApplication: false/)
+  assert.match(gateway, /X-EBAY-API-CALL-NAME": "GetUser"/)
+  assert.match(gateway, /ebayProductionAccountFingerprint/)
+  assert.match(gateway, /EBAY_ANALYTICS_ACCOUNT_IDENTITY_MISMATCH/)
+  assert.match(gateway, /await assertAnalyticsSellerAccount\(token\)/)
+  assert.match(gateway, /officialAccountIdentityBound/)
   assert.doesNotMatch(gateway, /console\.(log|error)/)
+  assert.match(route, /loadStoredEbayCategoryLearningState/)
+  assert.match(route, /reportRequestAffectsLearning: false/)
+  assert.doesNotMatch(route, /persistOwnEbayPerformanceSnapshots/)
+})
+
+test("empty selection never falls through to an account-wide DAY report", () => {
+  const page = readFileSync(
+    new URL("../app/admin/ebay/seller-performance/page.tsx", import.meta.url),
+    "utf8",
+  )
+  const route = readFileSync(
+    new URL("../app/api/admin/ebay/seller-performance/route.ts", import.meta.url),
+    "utf8",
+  )
+  assert.match(route, /EBAY_VERIFIED_LISTING_LINKS_READ_FAILED/)
+  assert.match(route, /EBAY_VERIFIED_LISTING_REQUIRED/)
+  assert.match(route, /status: 409/)
+  assert.match(page, /Vacío = sólo listings propios verificados/)
+  assert.match(page, /Registrar primer listing/)
 })

@@ -11,6 +11,7 @@ import {
   getRisksByEbaySku,
   getRisksBySupplierSku,
 } from "@/lib/ebay-winner-pipeline/active-listing-risk-read-service.mjs"
+import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 
 const DEFAULT_LIMIT =
   25
@@ -206,11 +207,29 @@ export async function GET(
 
     const supabase =
       getSupabaseAdminClient()
+    const accountScope =
+      getEbaySellerAccountScopeConfiguration()
+
+    if (!accountScope.accountKey) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "active_listing_account_scope_required",
+          accountScopeReason: accountScope.reason,
+        },
+        {
+          status: 503,
+        }
+      )
+    }
+    const accountKey =
+      accountScope.accountKey
 
     if (summary) {
       const riskSummary =
         await getActiveListingRiskSummary({
           supabase,
+          accountKey,
         })
 
       return NextResponse.json({
@@ -227,6 +246,7 @@ export async function GET(
       const risks =
         await getRisksByEbaySku({
           supabase,
+          accountKey,
           sku,
           limit:
             limitResult.limit,
@@ -247,6 +267,7 @@ export async function GET(
       const risks =
         await getRisksBySupplierSku({
           supabase,
+          accountKey,
           supplierSku,
           limit:
             limitResult.limit,
@@ -266,6 +287,7 @@ export async function GET(
     const risks =
       await getOpenActiveListingRisks({
         supabase,
+        accountKey,
         limit:
           limitResult.limit,
       })
