@@ -84,6 +84,9 @@ export default function ProductResearchCaptureReceiverPage() {
         setStatus("READY")
         opener.postMessage({ type: "IMNOVA_PRODUCT_RESEARCH_CAPTURE_RESULT_V1",
           success: true, captureId, importedCount: payload.result.importedCount ?? 0,
+          validCount: payload.result.validCount ?? 0,
+          duplicateCount: payload.result.duplicateCount ?? 0,
+          rejectedCount: payload.result.rejectedCount ?? 0,
           exactLunaMatches: payload.result.matchCounts?.exactLuna ?? 0 }, EBAY_PRODUCT_RESEARCH_ORIGIN)
       } catch (captureError) {
         const code = safeCode(captureError instanceof Error ? captureError.message : "")

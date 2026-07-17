@@ -484,12 +484,12 @@
       const rightBox = right.getBoundingClientRect()
       return leftBox.width * leftBox.height - rightBox.width * rightBox.height
     })
-    for (const container of uniqueContainers) {
-      const result = tableParts(container)
-      if (result) return result
-    }
+    const results = uniqueContainers.map((container) => tableParts(container)).filter(Boolean)
     const coordinateResult = coordinateTableParts()
-    if (coordinateResult) return coordinateResult
+    if (coordinateResult) results.push(coordinateResult)
+    results.sort((left, right) => right.rows.length - left.rows.length ||
+      right.headers.length - left.headers.length)
+    if (results[0]) return results[0]
     throw new Error("PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND")
   }
 
@@ -611,7 +611,7 @@
     }
     if (event.data.type === CAPTURE_RESULT_MESSAGE && event.data.captureId === pending?.captureId) {
       setStatus(event.data.success
-        ? `Captura completada: ${event.data.importedCount || 0} filas importadas.`
+        ? `Captura procesada: ${event.data.validCount || 0} válidas; ${event.data.importedCount || 0} nuevas; ${event.data.duplicateCount || 0} duplicadas; ${event.data.rejectedCount || 0} rechazadas.`
         : `Captura rechazada: ${event.data.error || "ERROR"}`,
       event.data.success ? "success" : "error")
       pending = null
@@ -626,7 +626,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.0.5"
+  title.textContent = "Seller OS · Product Research · v1.0.6"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar resultados para Seller OS"
