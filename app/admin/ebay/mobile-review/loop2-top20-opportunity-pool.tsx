@@ -355,6 +355,25 @@ type MarketplaceInsightsPreflight = {
   }
 }
 
+function rateLimitWaitLabel(nextAt: string | null | undefined, nowMs: number) {
+  const nextMs = Date.parse(nextAt ?? "")
+  if (!Number.isFinite(nextMs) || !nowMs) return null
+  const remainingMinutes = Math.max(0, Math.ceil((nextMs - nowMs) / 60_000))
+  const hours = Math.floor(remainingMinutes / 60)
+  const minutes = remainingMinutes % 60
+  const now = new Date(nowMs)
+  const next = new Date(nextMs)
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const nextDay = new Date(next.getFullYear(), next.getMonth(), next.getDate()).getTime()
+  const day = nextDay === today ? "hoy" : nextDay - today === 86_400_000 ? "mañana" :
+    next.toLocaleDateString("es")
+  return {
+    remaining: hours ? `${hours} h ${minutes} min` : `${minutes} min`,
+    day,
+    ready: nextMs <= nowMs,
+  }
+}
+
 function money(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? `$${value.toFixed(2)}` : "N/D"
 }
@@ -441,6 +460,7 @@ export function Loop2Top20OpportunityPool() {
     useState<ProductIdentityReconciliationStatus | null>(null)
   const [marketplaceInsightsPreflight, setMarketplaceInsightsPreflight] =
     useState<MarketplaceInsightsPreflight | null>(null)
+  const [clockMs, setClockMs] = useState(0)
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
@@ -490,11 +510,18 @@ export function Loop2Top20OpportunityPool() {
   useEffect(() => { void load(); void loadSoldEvidence(); void loadBrowserCapture(); void loadIdentityReconciliation() },
     [load, loadSoldEvidence, loadBrowserCapture, loadIdentityReconciliation])
   const scanActive = ["RUNNING", "PARTIAL_AUTO_CONTINUING"].includes(payload?.run?.status ?? "")
+  const rateLimitPaused = payload?.run?.status === "PAUSED_RATE_LIMIT"
   useEffect(() => {
     if (!scanActive) return
     const timer = window.setInterval(() => void load(true), 2_500)
     return () => window.clearInterval(timer)
   }, [load, scanActive])
+  useEffect(() => {
+    if (!rateLimitPaused) return
+    setClockMs(Date.now())
+    const timer = window.setInterval(() => setClockMs(Date.now()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [rateLimitPaused])
 
   const pool = payload?.pool ?? []
   const discoveryDiagnostics = payload?.run?.diagnostic_counts ?? {}
@@ -510,15 +537,19 @@ export function Loop2Top20OpportunityPool() {
       (payload?.internalCounts?.stale ?? 0) +
       (payload?.internalCounts?.reanalysisRequired ?? 0),
   }), [payload])
+  const rateLimitWait = rateLimitWaitLabel(payload?.run?.next_continuation_at, clockMs)
 
   const scan = async () => {
     setWorkingId("scan"); setError(""); setMessage("")
     try {
-      await adminFetch("/api/admin/ebay/listing-ai/approval-queue", {
+      const response = await adminFetch<{ result: { status: string } }>(
+        "/api/admin/ebay/listing-ai/approval-queue", {
         method: "POST", body: JSON.stringify({ action: "scan" }),
       })
       await load()
-      setMessage("Escaneo iniciado. Puedes cerrar esta página; Seller OS continuará automáticamente.")
+      setMessage(response.result.status === "PAUSED_RATE_LIMIT"
+        ? "La pausa oficial continúa. El checkpoint está guardado y Seller OS no repetirá productos."
+        : "Escaneo iniciado. Puedes cerrar esta página; Seller OS continuará automáticamente.")
     } catch (scanError) {
       setError(scanError instanceof Error ? scanError.message : "TOP20_SCAN_FAILED")
     } finally {
@@ -692,7 +723,9 @@ export function Loop2Top20OpportunityPool() {
     <section aria-labelledby="top20-heading" className="space-y-4 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Discovery → Loop 1 automático → Top 20</p><h3 id="top20-heading" className="text-lg font-black">Top 20 automatizado</h3></div>
-        <button type="button" onClick={() => void scan()} disabled={workingId === "scan" || scanActive} className="min-h-11 rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">{workingId === "scan" ? "Iniciando…" : scanActive ? "Análisis en progreso" : "Analizar y actualizar oportunidades"}</button>
+        <button type="button" onClick={() => void scan()}
+          disabled={workingId === "scan" || scanActive || Boolean(rateLimitWait && !rateLimitWait.ready)}
+          className="min-h-11 rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">{workingId === "scan" ? "Iniciando…" : scanActive ? "Análisis en progreso" : rateLimitWait && !rateLimitWait.ready ? `Pausa eBay · ${rateLimitWait.remaining}` : rateLimitPaused ? "Reanudar desde checkpoint" : "Analizar y actualizar oportunidades"}</button>
       </div>
       {loading ? <p role="status">Cargando pool…</p> : (
         <>
@@ -713,7 +746,10 @@ export function Loop2Top20OpportunityPool() {
             <p className="text-white/55">Continuación: {payload?.run?.dispatch_status ?? "NOT_SCHEDULED"} · intentos {payload?.run?.dispatch_attempt_count ?? 0} · recuperaciones {payload?.run?.dispatch_recovery_count ?? 0} · próxima: {payload?.run?.next_continuation_at ? new Date(payload.run.next_continuation_at).toLocaleString("es") : "N/D"}</p>
             {scanActive && <p className="font-bold text-cyan-50">Puedes cerrar esta página. Seller OS continuará automáticamente.</p>}
             {payload?.run?.status === "PAUSED_RATE_LIMIT" && <div className="space-y-1 font-bold text-amber-100">
-              <p>Pausado por límite oficial de eBay. El progreso está guardado y no se repetirán productos ya procesados.</p>
+              <p>Pausa ordenada por eBay, no fallo de Seller OS. El progreso está guardado y no se repetirán productos ya procesados.</p>
+              {rateLimitWait && <p>{rateLimitWait.ready
+                ? "El tiempo indicado por eBay ya terminó; usa el mismo botón para reanudar desde el checkpoint."
+                : `eBay indicó reanudar ${rateLimitWait.day}. Faltan aproximadamente ${rateLimitWait.remaining}; Seller OS no hará llamadas antes.`}</p>}
               <p>Backoff adaptativo: {payload.run.rate_limit?.backoffSeconds
                 ? `${Math.ceil(payload.run.rate_limit.backoffSeconds / 60)} min` : "N/D"} · fuente {payload.run.rate_limit?.source ?? "N/D"} · intentos consecutivos {payload.run.rate_limit?.consecutiveCount ?? 0}.</p>
             </div>}
@@ -782,8 +818,10 @@ export function Loop2Top20OpportunityPool() {
                     className="mt-1 min-h-11 w-full rounded-xl border border-white/20 bg-black/30 px-3 text-white" />
                 </label>
                 <p className="text-white/45">Cubre {browserCaptureStatus.queryPlan.nextQuery.candidateCount} candidato(s) · categoría {browserCaptureStatus.queryPlan.nextQuery.categoryId ?? "general"}.</p>
-                <button type="button" onClick={() => void copyResearchQuery(browserCaptureStatus.queryPlan!.nextQuery!.searchQuery)}
-                  className="min-h-11 w-full rounded-xl border border-cyan-100/30 px-4 font-black text-cyan-50">Copiar próxima consulta</button>
+                <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer"
+                  onClick={() => void copyResearchQuery(browserCaptureStatus.queryPlan!.nextQuery!.searchQuery)}
+                  className="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-cyan-100 px-4 text-center font-black text-cyan-950">Abrir próxima búsqueda · consulta copiada</a>
+                <p className="text-white/45">Al abrir eBay, pega la consulta copiada y ejecuta Search. Seller OS eligió el producto; no necesitas decidir qué buscar.</p>
               </> : <p className="font-bold text-emerald-100">Todas las consultas agrupadas del plan fueron capturadas.</p>}
             </div>}
             <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
