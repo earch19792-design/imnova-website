@@ -230,7 +230,26 @@
 
   function dateText(value) {
     const normalized = text(value)
-    return normalized && Number.isFinite(Date.parse(normalized)) ? normalized : null
+    if (!normalized) return null
+    const lowered = normalized.toLowerCase()
+    const now = new Date()
+    const toIsoDate = (date) => date.toISOString().slice(0, 10)
+    if (lowered === "today" || lowered === "hoy") return toIsoDate(now)
+    if (lowered === "yesterday" || lowered === "ayer") {
+      return toIsoDate(new Date(now.getTime() - 86_400_000))
+    }
+    const relative = lowered.match(/^(\d{1,3})\s*(?:d|day|days|dia|dias|w|week|weeks|h|hour|hours)\s*(?:ago)?$/)
+    if (relative) {
+      const amount = Number(relative[1])
+      const unit = lowered.match(/\b(?:d|day|days|dia|dias|w|week|weeks|h|hour|hours)\b/)?.[0] ?? ""
+      const offset = unit.startsWith("w") ? amount * 7 * 86_400_000
+        : unit.startsWith("h") ? amount * 3_600_000
+        : amount * 86_400_000
+      return toIsoDate(new Date(now.getTime() - offset))
+    }
+    const parsed = new Date(normalized)
+    return Number.isFinite(parsed.getTime()) && parsed.getTime() <= now.getTime() + 86_400_000
+      ? toIsoDate(parsed) : null
   }
 
   function requiredFieldValid(field, value) {
@@ -279,7 +298,8 @@
         return { element, value, score, area: box.width * box.height }
       }).sort((left, right) => right.score - left.score || left.area - right.area ||
         left.value.length - right.value.length)
-      if (matches[0]) values[field] = matches[0].value
+      if (matches[0]) values[field] = field === "lastSoldDate"
+        ? dateText(matches[0].value) ?? matches[0].value : matches[0].value
     })
     const itemLink = deepQueryAll('a[href*="/itm/"]', row).filter(visible)[0]
     const itemTitle = accessibleLinkText(itemLink)
@@ -294,7 +314,7 @@
       text(element.getAttribute?.("title")),
       text(element.getAttribute?.("data-value")),
     ]
-    if (field === "lastSoldDate") values.push(text(element.getAttribute?.("datetime")))
+    if (field === "lastSoldDate") values.push(dateText(element.getAttribute?.("datetime")))
     if (field === "temporaryTitle" && element.matches?.('a[href*="/itm/"]')) {
       values.push(accessibleLinkText(element))
     }
@@ -334,7 +354,8 @@
         })
       }).sort((left, right) => right.score - left.score || left.area - right.area ||
         left.value.length - right.value.length)
-      if (matches[0]) values[field] = matches[0].value
+      if (matches[0]) values[field] = field === "lastSoldDate"
+        ? dateText(matches[0].value) ?? matches[0].value : matches[0].value
     })
     const itemTitle = accessibleLinkText(itemLink)
     if (itemTitle) values.temporaryTitle = itemTitle
@@ -484,7 +505,7 @@
         averageShipping: values.averageShipping ? money(values.averageShipping) : null,
         totalSold: integer(values.totalSold),
         itemSales: values.itemSales ? money(values.itemSales) : null,
-        lastSoldDate: values.lastSoldDate,
+        lastSoldDate: dateText(values.lastSoldDate) ?? values.lastSoldDate,
         listingFormat: values.listingFormat || "UNKNOWN",
         freeShippingPercent: values.freeShippingPercent ? percentage(values.freeShippingPercent) : null,
         bids: values.bids ? integer(values.bids) : null,
@@ -528,7 +549,7 @@
           averageShipping: values.averageShipping ? money(values.averageShipping) : null,
           totalSold: integer(values.totalSold),
           itemSales: values.itemSales ? money(values.itemSales) : null,
-          lastSoldDate: values.lastSoldDate,
+          lastSoldDate: dateText(values.lastSoldDate) ?? values.lastSoldDate,
           listingFormat: values.listingFormat || "UNKNOWN",
           freeShippingPercent: values.freeShippingPercent ? percentage(values.freeShippingPercent) : null,
           bids: values.bids ? integer(values.bids) : null,
