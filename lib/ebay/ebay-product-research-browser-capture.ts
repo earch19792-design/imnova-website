@@ -240,8 +240,15 @@ function validateContext(input: ProductResearchBrowserCapture) {
   }
   const columns = (Array.isArray(input.visibleColumns) ? input.visibleColumns : [])
     .map((column) => canonicalKey(String(column)))
-  if (columns.some((column) => FORBIDDEN_KEYS.has(column)) ||
-    REQUIRED_COLUMN_GROUPS.some((aliases) => !aliases.some((alias) => columns.includes(alias)))) {
+  const visibleColumnsMatch = REQUIRED_COLUMN_GROUPS.every((aliases) =>
+    aliases.some((alias) => columns.some((column) => column === alias || column.includes(alias))))
+  const structuredColumnsMatch = input.rows.every((value) => {
+    const row = record(value)
+    return Object.hasOwn(row, "temporaryTitle") && Object.hasOwn(row, "averageSoldPrice") &&
+      Object.hasOwn(row, "totalSold") && Object.hasOwn(row, "lastSoldDate")
+  })
+  if (!columns.length || columns.some((column) => FORBIDDEN_KEYS.has(column)) ||
+    !visibleColumnsMatch && !structuredColumnsMatch) {
     throw new Error("PRODUCT_RESEARCH_CAPTURE_REQUIRED_COLUMNS_MISSING")
   }
   return { query, capturedAt, rangeLabel, rangeStart, rangeEnd }
