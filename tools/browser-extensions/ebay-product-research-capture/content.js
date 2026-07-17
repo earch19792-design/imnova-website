@@ -182,7 +182,83 @@
     return []
   }
 
-  function genericRowElements(container, headerElements, expectedCount) {
+  function dateText(value) {
+    const normalized = text(value)
+    return normalized && Number.isFinite(Date.parse(normalized)) ? normalized : null
+  }
+
+  function requiredFieldValid(field, value) {
+    if (field === "temporaryTitle") return text(value).length >= 4
+    if (field === "averageSoldPrice") return money(value) !== null
+    if (field === "totalSold") return (integer(value) ?? 0) > 0
+    if (field === "lastSoldDate") return dateText(value) !== null
+    return true
+  }
+
+  function valuesFromCells(cells, mapped) {
+    return Object.fromEntries(mapped.flatMap((field, index) => field
+      ? [[field, text(cells[index]?.innerText || cells[index]?.textContent)]] : []))
+  }
+
+  function coordinateValuesForRow(row, headerElements, mapped) {
+    const headerCenters = headerElements.map((element) => {
+      const box = element.getBoundingClientRect()
+      return box.left + box.width / 2
+    })
+    const boundaries = headerCenters.slice(0, -1).map((center, index) =>
+      (center + headerCenters[index + 1]) / 2)
+    const candidates = smallestVisibleMatches(row,
+      `${CELL_SELECTOR},div,span,p,a`).filter((element) => {
+      const value = text(element.innerText || element.textContent)
+      const box = element.getBoundingClientRect()
+      return value && value.length <= 500 && box.width < row.getBoundingClientRect().width * 0.9
+    })
+    const values = {}
+    mapped.forEach((field, index) => {
+      if (!field) return
+      const lower = index === 0 ? Number.NEGATIVE_INFINITY : boundaries[index - 1]
+      const upper = index === mapped.length - 1 ? Number.POSITIVE_INFINITY : boundaries[index]
+      const matches = candidates.filter((element) => {
+        const box = element.getBoundingClientRect()
+        const center = box.left + box.width / 2
+        return center >= lower && center < upper
+      }).map((element) => {
+        const value = text(element.innerText || element.textContent)
+        const box = element.getBoundingClientRect()
+        let score = requiredFieldValid(field, value) ? 100 : 0
+        if (field === "temporaryTitle" && element.matches('a[href*="/itm/"]')) score += 100
+        if (field === "averageSoldPrice" && /[$€£]|\bfree\b/i.test(value)) score += 30
+        if (field === "totalSold" && /^\s*[\d,]+(?:\s+sold)?\s*$/i.test(value)) score += 30
+        if (field === "lastSoldDate" && dateText(value)) score += 30
+        return { element, value, score, area: box.width * box.height }
+      }).sort((left, right) => right.score - left.score || left.area - right.area ||
+        left.value.length - right.value.length)
+      if (matches[0]) values[field] = matches[0].value
+    })
+    const itemLink = deepQueryAll('a[href*="/itm/"]', row).filter(visible)[0]
+    const itemTitle = text(itemLink?.innerText || itemLink?.textContent)
+    if (itemTitle) values.temporaryTitle = itemTitle
+    return values
+  }
+
+  function requiredValuesValid(values) {
+    return REQUIRED_FIELDS.every((field) => requiredFieldValid(field, values[field]))
+  }
+
+  function valuesForRow(row, headerElements, mapped, semanticTable) {
+    const attempts = []
+    if (semanticTable) attempts.push(valuesFromCells([...row.querySelectorAll("td")], mapped))
+    else {
+      attempts.push(coordinateValuesForRow(row, headerElements, mapped))
+      const cells = rowCells(row, mapped.length)
+      if (cells.length) attempts.push(valuesFromCells(cells, mapped))
+    }
+    return attempts.sort((left, right) =>
+      REQUIRED_FIELDS.filter((field) => requiredFieldValid(field, right[field])).length -
+      REQUIRED_FIELDS.filter((field) => requiredFieldValid(field, left[field])).length)[0] ?? {}
+  }
+
+  function genericRowElements(container, headerElements, mapped) {
     const headerBottom = Math.max(...headerElements.map((element) =>
       element.getBoundingClientRect().bottom))
     const itemLinks = deepQueryAll('a[href*="/itm/"]', container).filter(visible)
@@ -190,7 +266,12 @@
     for (const link of itemLinks) {
       let ancestor = link.parentElement
       for (let depth = 0; ancestor && depth < 7; depth += 1, ancestor = ancestor.parentElement) {
-        candidates.push(ancestor)
+        if (ancestor.getBoundingClientRect().top < headerBottom - 4) continue
+        const values = valuesForRow(ancestor, headerElements, mapped, false)
+        if (requiredValuesValid(values)) {
+          candidates.push(ancestor)
+          break
+        }
       }
     }
     if (!candidates.length) {
@@ -199,7 +280,7 @@
     return [...new Set(candidates)].filter(visible)
       .filter((element) => element.getBoundingClientRect().top >= headerBottom - 4)
       .filter((element) => !element.querySelector?.(HEADER_SELECTOR))
-      .filter((element) => rowCells(element, expectedCount).length >= expectedCount)
+      .filter((element) => requiredValuesValid(valuesForRow(element, headerElements, mapped, false)))
       .sort((left, right) => {
         const leftBox = left.getBoundingClientRect()
         const rightBox = right.getBoundingClientRect()
@@ -238,15 +319,11 @@
       ? deepQueryAll("tbody tr", container)
       : [...new Set([
         ...deepQueryAll(ROW_SELECTOR, container),
-        ...genericRowElements(container, headerElements, headers.length),
+        ...genericRowElements(container, headerElements, mapped),
       ])].filter((row) => !headerElements.includes(row) && !row.querySelector?.(HEADER_SELECTOR))
     const rows = rowElements.filter(visible).flatMap((row) => {
-      const cells = semanticTable ? [...row.querySelectorAll("td")]
-        : rowCells(row, headers.length)
-      if (!cells.length) return []
-      const values = Object.fromEntries(mapped.flatMap((field, index) => field
-        ? [[field, text(cells[index]?.innerText || cells[index]?.textContent)]] : []))
-      if (!values.temporaryTitle) return []
+      const values = valuesForRow(row, headerElements, mapped, semanticTable)
+      if (!requiredValuesValid(values)) return []
       const itemLink = deepQueryAll('a[href*="/itm/"]', row)[0]
       const listingId = values.listingId || itemLink?.getAttribute("href")?.match(/\/itm\/(?:[^/]+\/)?(\d{9,20})/)?.[1] || null
       const facts = offerFacts(values.temporaryTitle)
@@ -428,7 +505,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.0.3"
+  title.textContent = "Seller OS · Product Research · v1.0.4"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar resultados para Seller OS"

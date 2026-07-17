@@ -416,7 +416,11 @@ export function parseProductResearchBrowserCapture(input: {
     return counts
   }, {})
   const valid = normalized.filter((row): row is NormalizedCaptureRow => !("error" in row))
-  if (!valid.length) throw new Error("PRODUCT_RESEARCH_CAPTURE_NO_VALID_SOLD_ROWS")
+  if (!valid.length) {
+    const reasons = Object.entries(errorCounts).sort((left, right) => right[1] - left[1])
+      .map(([code]) => code).slice(0, 3)
+    throw new Error(`PRODUCT_RESEARCH_CAPTURE_NO_VALID_SOLD_ROWS:${reasons.join(":") || "UNKNOWN"}`)
+  }
   const tokenFrequency = valid.reduce<Map<string, number>>((counts, row) => {
     for (const token of row.keywordSignals) counts.set(token, (counts.get(token) ?? 0) + 1)
     return counts
