@@ -6,6 +6,8 @@
   const CAPTURE_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_VISIBLE_CAPTURE_V1"
   const RECEIVER_READY_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_RECEIVER_READY_V1"
   const CAPTURE_RESULT_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_CAPTURE_RESULT_V1"
+  const VISUAL_PATTERN_SCHEMA_VERSION = "PRODUCT_RESEARCH_VISUAL_PATTERN_V1_2026_07_17"
+  const VISUAL_PATTERN_ALGORITHM_VERSION = "PR_VISIBLE_THUMBNAIL_LOCAL_V1"
   const MAX_ITEM_LINKS = 200
   const MAX_COORDINATE_CONTAINERS = 6
   const MAX_FALLBACK_HEADERS = 200
@@ -695,6 +697,163 @@
     }
   }
 
+  function visibleInViewport(element) {
+    if (!visible(element)) return false
+    const box = elementRect(element)
+    return box.bottom > 0 && box.right > 0 && box.top < window.innerHeight && box.left < window.innerWidth
+  }
+
+  function thumbnailForListing(row, itemLink) {
+    let ancestor = itemLink ?? row ?? null
+    for (let depth = 0; ancestor && depth < 6; depth += 1, ancestor = ancestor.parentElement) {
+      const images = deepQueryAll("img", ancestor).filter(visibleInViewport)
+      if (images.length) return images[0]
+    }
+    return row ? deepQueryAll("img", row).filter(visibleInViewport)[0] ?? null : null
+  }
+
+  function thumbnailResolutionBucket(image) {
+    const area = Math.max(0, Number(image?.naturalWidth ?? 0) * Number(image?.naturalHeight ?? 0))
+    if (!area) return "UNKNOWN"
+    if (area < 10_000) return "LOW"
+    if (area < 90_000) return "MEDIUM"
+    return "HIGH"
+  }
+
+  function unavailableVisualPattern(image, facts, status = "UNAVAILABLE") {
+    const naturalWidth = Number(image?.naturalWidth ?? 0)
+    const naturalHeight = Number(image?.naturalHeight ?? 0)
+    const ratio = naturalWidth > 0 && naturalHeight > 0 ? Number((naturalWidth / naturalHeight).toFixed(3)) : null
+    return {
+      imagePresent: Boolean(image),
+      thumbnailAspectRatio: ratio,
+      thumbnailResolutionBucket: thumbnailResolutionBucket(image),
+      backgroundType: "UNKNOWN", backgroundConfidence: "UNKNOWN", frameCoverage: "UNKNOWN",
+      visualComplexity: "UNKNOWN", textOverlayLikelihood: "UNKNOWN", badgeOrCalloutLikelihood: "UNKNOWN",
+      presentationType: "UNKNOWN", productCountVisible: null, packClarity: "UNKNOWN",
+      dominantComposition: "UNKNOWN", visualPatternConfidence: "UNKNOWN", analysisStatus: status,
+      algorithmVersion: VISUAL_PATTERN_ALGORITHM_VERSION, analyzedAt: new Date().toISOString(),
+      evidence: {
+        visual: { presentationType: "UNKNOWN", confidence: "UNKNOWN" },
+        titleDerived: { detectedPackCount: facts.detectedOfferPackCount, detectedUnitCount: facts.detectedUnitCount },
+        combinedConclusion: { presentationType: "UNKNOWN", confidence: "UNKNOWN", basis: [] },
+      },
+    }
+  }
+
+  function rgbStats(data, width, height) {
+    const total = Math.max(1, width * height)
+    const samples = []
+    const step = Math.max(1, Math.floor(Math.min(width, height) / 18))
+    for (let y = 0; y < height; y += step) for (let x = 0; x < width; x += step) {
+      if (x > step && y > step && x < width - step && y < height - step) continue
+      const offset = (y * width + x) * 4
+      samples.push([data[offset], data[offset + 1], data[offset + 2]])
+    }
+    const edge = samples.length ? samples : [[255, 255, 255]]
+    const average = edge.reduce((sum, color) => [sum[0] + color[0], sum[1] + color[1], sum[2] + color[2]], [0, 0, 0])
+      .map((value) => value / edge.length)
+    let neutralEdge = 0
+    let coloredEdge = 0
+    for (const color of edge) {
+      const spread = Math.max(...color) - Math.min(...color)
+      const brightness = (color[0] + color[1] + color[2]) / 3
+      if (spread < 26 && brightness > 155) neutralEdge += 1
+      if (spread > 48) coloredEdge += 1
+    }
+    let foreground = 0
+    let transitions = 0
+    let centerX = 0
+    let centerY = 0
+    const scanStep = Math.max(1, Math.floor(Math.sqrt(total / 3_600)))
+    for (let y = 0; y < height; y += scanStep) for (let x = 0; x < width; x += scanStep) {
+      const offset = (y * width + x) * 4
+      const red = data[offset], green = data[offset + 1], blue = data[offset + 2]
+      const distance = Math.abs(red - average[0]) + Math.abs(green - average[1]) + Math.abs(blue - average[2])
+      if (distance > 76) { foreground += 1; centerX += x; centerY += y }
+      if (x >= scanStep) {
+        const previous = offset - scanStep * 4
+        if (Math.abs(red - data[previous]) + Math.abs(green - data[previous + 1]) + Math.abs(blue - data[previous + 2]) > 90) transitions += 1
+      }
+    }
+    const scanned = Math.max(1, Math.ceil(width / scanStep) * Math.ceil(height / scanStep))
+    return {
+      neutralEdgeRatio: neutralEdge / edge.length, coloredEdgeRatio: coloredEdge / edge.length,
+      foregroundRatio: foreground / scanned, transitionRatio: transitions / scanned,
+      foregroundCenterX: foreground ? centerX / foreground / width : .5,
+      foregroundCenterY: foreground ? centerY / foreground / height : .5,
+    }
+  }
+
+  function analyzedVisualPattern(image, facts) {
+    if (!image || !Number(image.naturalWidth) || !Number(image.naturalHeight)) {
+      return unavailableVisualPattern(image, facts)
+    }
+    const maxDimension = 128
+    const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight))
+    const width = Math.max(1, Math.round(image.naturalWidth * scale))
+    const height = Math.max(1, Math.round(image.naturalHeight * scale))
+    const canvas = document.createElement("canvas")
+    let pixelData = null
+    try {
+      canvas.width = width
+      canvas.height = height
+      const context = canvas.getContext("2d", { willReadFrequently: true })
+      if (!context) return unavailableVisualPattern(image, facts, "PARTIAL")
+      context.drawImage(image, 0, 0, width, height)
+      pixelData = context.getImageData(0, 0, width, height)
+      const stats = rgbStats(pixelData.data, width, height)
+      const backgroundType = stats.neutralEdgeRatio >= .72 ? "WHITE_OR_NEUTRAL"
+        : stats.coloredEdgeRatio >= .72 && stats.transitionRatio > .28 ? "LIFESTYLE_LIKELY"
+          : stats.coloredEdgeRatio >= .48 ? "COLORED" : "MIXED"
+      const backgroundConfidence = stats.neutralEdgeRatio >= .82 || stats.coloredEdgeRatio >= .78 ? "MEDIUM" : "LOW"
+      const frameCoverage = stats.foregroundRatio < .24 ? "LOW" : stats.foregroundRatio < .58 ? "MEDIUM" : "HIGH"
+      const visualComplexity = stats.transitionRatio < .12 ? "LOW" : stats.transitionRatio < .3 ? "MEDIUM" : "HIGH"
+      const composition = stats.foregroundRatio > .76 ? "FULL_FRAME"
+        : stats.foregroundCenterX < .39 ? "LEFT_WEIGHTED"
+          : stats.foregroundCenterX > .61 ? "RIGHT_WEIGHTED" : "CENTERED"
+      const presentationType = backgroundType === "LIFESTYLE_LIKELY" ? "LIFESTYLE_LIKELY"
+        : backgroundType === "WHITE_OR_NEUTRAL" && frameCoverage !== "LOW" ? "PRODUCT_ONLY" : "UNKNOWN"
+      const confidence = backgroundConfidence === "MEDIUM" && visualComplexity !== "HIGH" ? "MEDIUM" : "LOW"
+      // The title may corroborate a pack-oriented presentation, but never supplies a
+      // visual unit count. Keep visual and title-derived evidence separate.
+      const combinedPresentation = facts.detectedOfferPackCount && facts.detectedOfferPackCount > 1 &&
+        presentationType !== "UNKNOWN" ? "MULTIPACK_LIKELY" : presentationType
+      const combinedConfidence = combinedPresentation === "MULTIPACK_LIKELY" && confidence === "MEDIUM"
+        ? "MEDIUM" : confidence
+      const combinedBasis = combinedPresentation === "MULTIPACK_LIKELY"
+        ? ["VISUAL", "TITLE_DERIVED"] : ["VISUAL"]
+      return {
+        ...unavailableVisualPattern(image, facts, "ANALYZED"),
+        backgroundType, backgroundConfidence, frameCoverage, visualComplexity,
+        textOverlayLikelihood: "UNKNOWN", badgeOrCalloutLikelihood: "UNKNOWN",
+        presentationType, productCountVisible: null, packClarity: "UNKNOWN",
+        dominantComposition: composition, visualPatternConfidence: confidence,
+        evidence: {
+          visual: { presentationType, confidence },
+          titleDerived: { detectedPackCount: facts.detectedOfferPackCount, detectedUnitCount: facts.detectedUnitCount },
+          combinedConclusion: { presentationType: combinedPresentation, confidence: combinedConfidence, basis: combinedBasis },
+        },
+      }
+    } catch {
+      return unavailableVisualPattern(image, facts)
+    } finally {
+      if (pixelData?.data) pixelData.data.fill(0)
+      pixelData = null
+      canvas.width = 0
+      canvas.height = 0
+    }
+  }
+
+  function visibleVisualPatternForRow(row, itemLink, title) {
+    const facts = offerFacts(title)
+    try {
+      return analyzedVisualPattern(thumbnailForListing(row, itemLink), facts)
+    } catch {
+      return unavailableVisualPattern(null, facts, "REJECTED")
+    }
+  }
+
   function tableParts(container) {
     const semanticTable = container.matches("table")
     const headerElements = semanticTable
@@ -727,6 +886,8 @@
     const rows = [...elementRows, ...coordinateRows, ...relaxedRows, ...bestEffortRows, ...syntheticRows].map(({ values, itemLink, row }) => {
       const listingId = values.listingId || listingIdFromLink(itemLink)
       const facts = offerFacts(values.temporaryTitle)
+      const visualRow = row ?? itemLink?.parentElement ?? null
+      const visualPattern = visibleVisualPatternForRow(visualRow, itemLink, values.temporaryTitle)
       return {
         temporaryTitle: values.temporaryTitle,
         listingId,
@@ -738,7 +899,8 @@
         listingFormat: values.listingFormat || "UNKNOWN",
         freeShippingPercent: values.freeShippingPercent ? percentage(values.freeShippingPercent) : null,
         bids: values.bids ? integer(values.bids) : null,
-        visibleImageCount: row ? deepQueryAll("img", row).length : 0,
+        visibleImageCount: visualPattern.imagePresent ? 1 : 0,
+        visualPattern,
         ...facts,
       }
     })
@@ -777,6 +939,8 @@
         ? [] : bestEffortCardRows(container, headerElements)
       const rows = [...coordinateRows, ...relaxedRows, ...bestEffortRows, ...syntheticRows].map(({ values, itemLink, row }) => {
         const listingId = values.listingId || listingIdFromLink(itemLink)
+        const visualRow = row ?? itemLink?.parentElement ?? null
+        const visualPattern = visibleVisualPatternForRow(visualRow, itemLink, values.temporaryTitle)
         return {
           temporaryTitle: values.temporaryTitle,
           listingId,
@@ -788,7 +952,8 @@
           listingFormat: values.listingFormat || "UNKNOWN",
           freeShippingPercent: values.freeShippingPercent ? percentage(values.freeShippingPercent) : null,
           bids: values.bids ? integer(values.bids) : null,
-          visibleImageCount: row ? deepQueryAll("img", row).length : 0,
+          visibleImageCount: visualPattern.imagePresent ? 1 : 0,
+          visualPattern,
           ...offerFacts(values.temporaryTitle),
         }
       })
@@ -977,6 +1142,7 @@
     const result = findVisibleResults()
     return {
       source: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
+      visualPatternSchemaVersion: VISUAL_PATTERN_SCHEMA_VERSION,
       captureId: crypto.randomUUID(),
       listingSite: window.location.hostname,
       pagePath: window.location.pathname,
@@ -1102,7 +1268,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.1.0"
+  title.textContent = "Seller OS · Product Research · v1.2.0"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"

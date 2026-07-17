@@ -297,6 +297,44 @@ type ProductResearchCaptureStatus = {
     secretsExposed: false
     ebayWrites: 0
   }
+  visual?: {
+    configured: boolean
+    error?: string
+    visualPatternSchemaVersion?: string
+    commercialObservationCount?: number
+    visualObservationCount?: number
+    legacyWithoutVisualCount?: number
+    visualNotCapturedLegacyStatus?: "VISUAL_NOT_CAPTURED_LEGACY"
+    thumbnailDetectedCount?: number
+    analyzedCount?: number
+    partialCount?: number
+    unavailableCount?: number
+    rejectedCount?: number
+    latestBrief?: {
+      exactCohortSize?: number
+      relatedPackCohortSize?: number
+      relatedSizeCohortSize?: number
+      confidence?: string
+      supportingSignals?: {
+        sampleSize?: number
+        whiteOrNeutralPercent?: number
+        highCoveragePercent?: number
+        lowComplexityPercent?: number
+        lowOrNoTextOverlayPercent?: number
+        clearMultipackPercent?: number
+      }
+    } | null
+    rawImageBytesStored: false
+    imageUrlsStored: false
+    screenshotsStored: false
+    base64Stored: false
+    blobsStored: false
+    rawHtmlStored: false
+    piiStored: false
+    openAiCalls: 0
+    ebayWrites: 0
+    productionChanged: false
+  }
   rawHtmlStored: false
   temporaryTitlesStored: false
   competitorImagesDownloaded: 0
@@ -804,10 +842,10 @@ export function Loop2Top20OpportunityPool() {
               <p className="mt-1 text-white/60">Para cuentas sin export CSV/JSON: la extensión captura con un clic únicamente la tabla visible en la página oficial autenticada. No comparte cookies ni credenciales con Seller OS.</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.1.0.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.1.0</a>
+              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.0.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.0</a>
               <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
             </div>
-            <p className="text-white/55">Instálala localmente una vez. La versión 1.1.0 adapta la captura a la cuadrícula y al diseño responsivo de Product Research, aplica la próxima consulta con un clic y espera la tabla nueva antes de permitir la captura.</p>
+            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.0 adapta la captura a la cuadrícula y al diseño responsivo, aplica la próxima consulta y analiza únicamente las miniaturas ya visibles de forma local. Nunca descarga ni transmite imágenes.</p>
             <div className="rounded-xl border border-amber-100/20 bg-amber-100/[0.04] p-3">
               <p className="font-black">Cuota oficial Browse</p>
               <p className="mt-1 text-white/55">Estado {browserCaptureStatus?.browseQuota?.status ?? "SIN VERIFICAR"} · restantes {browserCaptureStatus?.browseQuota?.remaining ?? "N/D"} de {browserCaptureStatus?.browseQuota?.limit ?? "N/D"} · reset {browserCaptureStatus?.browseQuota?.resetAt ? new Date(browserCaptureStatus.browseQuota.resetAt).toLocaleString("es") : "N/D"}.</p>
@@ -840,6 +878,29 @@ export function Loop2Top20OpportunityPool() {
               <div><dt className="text-white/45">Candidatos enriquecidos</dt><dd>{browserCaptureStatus?.latest?.candidates_enriched_count ?? 0}</dd></div>
               <div><dt className="text-white/45">READY resultantes</dt><dd>{browserCaptureStatus?.readyResultCount ?? 0}</dd></div>
             </dl>
+            <div className="space-y-2 rounded-xl border border-violet-100/20 bg-violet-100/[0.04] p-3">
+              <div>
+                <p className="font-black">Patrones visuales observados</p>
+                <p className="mt-1 text-white/55">Sólo analiza localmente miniaturas que ya son visibles en Product Research. Es enriquecimiento de presentación: no prueba demanda, no sustituye identidad ni rentabilidad y nunca cambia por sí solo NO_GO a READY.</p>
+              </div>
+              <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div><dt className="text-white/45">Miniaturas visibles</dt><dd>{browserCaptureStatus?.visual?.thumbnailDetectedCount ?? 0}</dd></div>
+                <div><dt className="text-white/45">Analizados / parciales</dt><dd>{browserCaptureStatus?.visual?.analyzedCount ?? 0} / {browserCaptureStatus?.visual?.partialCount ?? 0}</dd></div>
+                <div><dt className="text-white/45">No disponibles</dt><dd>{browserCaptureStatus?.visual?.unavailableCount ?? 0}</dd></div>
+                <div><dt className="text-white/45">Legacy sin visual</dt><dd>{browserCaptureStatus?.visual?.legacyWithoutVisualCount ?? 0}</dd></div>
+              </dl>
+              {browserCaptureStatus?.visual?.latestBrief ? <dl className="grid grid-cols-2 gap-2 text-white/70 sm:grid-cols-3">
+                <div><dt className="text-white/45">Fondo blanco/neutro</dt><dd>{browserCaptureStatus.visual.latestBrief.supportingSignals?.whiteOrNeutralPercent ?? 0}%</dd></div>
+                <div><dt className="text-white/45">Cobertura alta</dt><dd>{browserCaptureStatus.visual.latestBrief.supportingSignals?.highCoveragePercent ?? 0}%</dd></div>
+                <div><dt className="text-white/45">Complejidad baja</dt><dd>{browserCaptureStatus.visual.latestBrief.supportingSignals?.lowComplexityPercent ?? 0}%</dd></div>
+                <div><dt className="text-white/45">Texto bajo o inexistente</dt><dd>{browserCaptureStatus.visual.latestBrief.supportingSignals?.lowOrNoTextOverlayPercent ?? 0}%</dd></div>
+                <div><dt className="text-white/45">Multipack claro</dt><dd>{browserCaptureStatus.visual.latestBrief.supportingSignals?.clearMultipackPercent ?? 0}%</dd></div>
+                <div><dt className="text-white/45">Muestra / confianza</dt><dd>{browserCaptureStatus.visual.latestBrief.supportingSignals?.sampleSize ?? 0} / {browserCaptureStatus.visual.latestBrief.confidence ?? "UNKNOWN"}</dd></div>
+                <div><dt className="text-white/45">Exact / pack / tamaño</dt><dd>{browserCaptureStatus.visual.latestBrief.exactCohortSize ?? 0} / {browserCaptureStatus.visual.latestBrief.relatedPackCohortSize ?? 0} / {browserCaptureStatus.visual.latestBrief.relatedSizeCohortSize ?? 0}</dd></div>
+              </dl> : <p className="text-white/45">No hay brief visual todavía; las observaciones existentes quedan como VISUAL_NOT_CAPTURED_LEGACY hasta una nueva captura visible.</p>}
+              {browserCaptureStatus?.visual?.error && <p className="text-amber-100">Estado visual: {browserCaptureStatus.visual.error}. La evidencia comercial no se bloquea.</p>}
+              <p className="text-white/45">Estos patrones representan correlaciones de la muestra capturada. No prueban causalidad y no autorizan copiar imágenes de otros vendedores.</p>
+            </div>
             <div className="space-y-2 rounded-xl border border-emerald-200/20 bg-emerald-100/[0.04] p-3">
               <div>
                 <p className="font-black">Reconciliación automática de identidad</p>

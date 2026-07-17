@@ -9,7 +9,13 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Ejecuta una búsqueda y usa **Capturar resultados para Seller OS**.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión optimizada es 1.1.0.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión optimizada es 1.2.0.
+
+## Patrones visuales locales (v1.2.0)
+
+La misma captura analiza únicamente miniaturas que ya estén visibles en el viewport de Product Research. Chrome intenta leer un recorte temporal de la representación renderizada en memoria para derivar rasgos agregados (fondo, cobertura, complejidad y composición). El recorte y su buffer se eliminan inmediatamente.
+
+La extensión no descarga imágenes, no abre versiones completas, no guarda ni lee URLs de imagen, no genera screenshots/base64/blobs y no transmite píxeles. Si Chrome bloquea la lectura por seguridad de origen, marca el análisis como no disponible y continúa la captura comercial normal.
 
 La captura rápida usa un único snapshot de la cuadrícula visible, reutiliza geometría
 y procesa primero las filas ancladas a Item IDs, incluso cuando eBay representa el

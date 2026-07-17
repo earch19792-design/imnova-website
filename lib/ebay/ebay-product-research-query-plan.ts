@@ -251,14 +251,14 @@ export async function assertProductResearchCaptureMatchesNextQuery(input: {
   searchQuery: unknown
 }) {
   const { data: plan, error: planError } = await input.supabase
-    .from("marketplace_product_research_query_plans").select("id")
+    .from("marketplace_product_research_query_plans").select("id,run_id")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
     .eq("status", "ACTIVE").order("created_at", { ascending: false }).limit(1).maybeSingle()
   if (planError) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_STATUS_READ_FAILED")
   if (!plan) return null
   const { data: task, error: taskError } = await input.supabase
     .from("marketplace_product_research_query_tasks")
-    .select("id,ordinal,query_hash")
+    .select("id,ordinal,query_hash,category_id")
     .eq("plan_id", plan.id).eq("marketplace_account_key", input.accountKey)
     .eq("marketplace", "EBAY_US").eq("status", "PENDING")
     .order("ordinal", { ascending: true }).limit(1).maybeSingle()
@@ -267,7 +267,13 @@ export async function assertProductResearchCaptureMatchesNextQuery(input: {
   if (productResearchPlannedQueryHash(input.searchQuery) !== task.query_hash) {
     throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_NEXT_QUERY_REQUIRED")
   }
-  return { planId: plan.id, taskId: task.id, ordinal: task.ordinal }
+  return {
+    planId: plan.id,
+    taskId: task.id,
+    runId: plan.run_id,
+    ordinal: task.ordinal,
+    categoryId: task.category_id ?? null,
+  }
 }
 
 export async function markProductResearchQueryCaptured(input: {

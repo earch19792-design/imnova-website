@@ -5,6 +5,15 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { normalizeProductIdentity } from "./ebay-winner-evidence-v2.ts"
 import type { ProductIdentityInput } from "./ebay-winner-evidence-v2.ts"
+import {
+  PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION,
+  persistProductResearchVisualPatterns,
+  rejectedProductResearchVisualPattern,
+  sanitizeProductResearchVisualPattern,
+  type ProductResearchVisualPattern,
+  type VisualComparableRow,
+// @ts-ignore Node's native TypeScript runner requires explicit extensions.
+} from "./ebay-product-research-visual-pattern.ts"
 
 export const PRODUCT_RESEARCH_BROWSER_CAPTURE_VERSION =
   "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE_V1_2026_07_17"
@@ -37,6 +46,7 @@ export type ProductResearchCaptureTarget = {
 
 export type ProductResearchBrowserCapture = {
   source: typeof PRODUCT_RESEARCH_BROWSER_CAPTURE_SOURCE
+  visualPatternSchemaVersion?: string | null
   captureId: string
   listingSite: string
   pagePath: string
@@ -53,6 +63,7 @@ type NormalizedCaptureRow = {
   sourceListingReferenceHash: string
   titleFingerprint: string
   identityHash: string
+  productFamilyFingerprint: string
   detectedOfferPackCount: number | null
   detectedUnitCount: number | null
   detectedSize: string | null
@@ -66,6 +77,7 @@ type NormalizedCaptureRow = {
   freeShippingPercent: number | null
   bids: number | null
   visibleImageCount: number | null
+  visualPattern: ProductResearchVisualPattern | null
   keywordSignals: string[]
   transientTitle: string
 }
@@ -85,6 +97,8 @@ const FORBIDDEN_KEYS = new Set([
   "billingaddress", "postaladdress", "orderid", "ebayorderid", "cookie", "cookies",
   "authorization", "accesstoken", "refreshtoken", "jwt", "password", "payment",
   "card", "pagehtml", "outerhtml", "innerhtml", "imagesrc", "imageurl",
+  "thumbnailurl", "base64", "blob", "screenshot", "imagebytes", "imagedata",
+  "pixels", "pixeldata", "canvas", "binary", "buffer",
 ])
 
 const STOP_WORDS = new Set([
@@ -252,10 +266,19 @@ function validateContext(input: ProductResearchBrowserCapture) {
     !visibleColumnsMatch && !structuredColumnsMatch) {
     throw new Error("PRODUCT_RESEARCH_CAPTURE_REQUIRED_COLUMNS_MISSING")
   }
-  return { query, capturedAt, rangeLabel, rangeStart, rangeEnd }
+  const visualPatternSchemaVersion = normalizedText(input.visualPatternSchemaVersion, 120)
+  if (visualPatternSchemaVersion &&
+    visualPatternSchemaVersion !== PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION) {
+    throw new Error("PRODUCT_RESEARCH_VISUAL_SCHEMA_VERSION_INVALID")
+  }
+  return { query, capturedAt, rangeLabel, rangeStart, rangeEnd, visualPatternSchemaVersion }
 }
 
-function normalizeCaptureRow(value: unknown, capturedAt: Date): NormalizedCaptureRow | { error: string } {
+function normalizeCaptureRow(
+  value: unknown,
+  capturedAt: Date,
+  visualCaptureEnabled: boolean,
+): NormalizedCaptureRow | { error: string } {
   const row = record(value)
   const transientTitle = normalizedText(row.temporaryTitle)
   const sourceListingId = normalizedText(row.listingId, 30)
@@ -288,11 +311,23 @@ function normalizeCaptureRow(value: unknown, capturedAt: Date): NormalizedCaptur
   const variant = normalizedText(row.detectedVariant, 80)?.toLocaleLowerCase("en-US") ?? null
   const keywords = titleTokens(transientTitle)
   const identityHash = sha256({ keywords, packCount, unitCount, size, variant })
+  const productFamilyFingerprint = sha256({ keywords })
+  // A malformed or unavailable visual feature must never reject otherwise valid sold evidence.
+  // The extension sends no pixels or image references; the receiver retains only this safe schema.
+  const visualPattern = visualCaptureEnabled
+    ? sanitizeProductResearchVisualPattern(row.visualPattern, capturedAt) ??
+      rejectedProductResearchVisualPattern({
+        detectedPackCount: packCount,
+        detectedUnitCount: unitCount,
+        analyzedAt: capturedAt,
+      })
+    : null
   return {
     sourceListingId,
     sourceListingReferenceHash: sha256(sourceListingId ?? identityHash),
     titleFingerprint: sha256(transientTitle.toLocaleLowerCase("en-US")),
     identityHash,
+    productFamilyFingerprint,
     detectedOfferPackCount: packCount,
     detectedUnitCount: unitCount,
     detectedSize: size,
@@ -306,6 +341,7 @@ function normalizeCaptureRow(value: unknown, capturedAt: Date): NormalizedCaptur
     freeShippingPercent: percent(row.freeShippingPercent),
     bids: nonNegativeInteger(row.bids),
     visibleImageCount: nonNegativeInteger(row.visibleImageCount),
+    visualPattern,
     keywordSignals: keywords,
     transientTitle,
   }
@@ -416,7 +452,11 @@ export function parseProductResearchBrowserCapture(input: {
   }
   rejectForbiddenKeys(input.capture)
   const context = validateContext(input.capture)
-  const normalized = input.capture.rows.map((row) => normalizeCaptureRow(row, context.capturedAt))
+  const normalized = input.capture.rows.map((row) => normalizeCaptureRow(
+    row,
+    context.capturedAt,
+    context.visualPatternSchemaVersion === PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION,
+  ))
   const errorCounts = normalized.reduce<Record<string, number>>((counts, row) => {
     if ("error" in row) counts[row.error] = (counts[row.error] ?? 0) + 1
     return counts
@@ -463,6 +503,7 @@ export function parseProductResearchBrowserCapture(input: {
   return {
     source: PRODUCT_RESEARCH_BROWSER_CAPTURE_SOURCE,
     importVersion: PRODUCT_RESEARCH_BROWSER_CAPTURE_VERSION,
+    visualPatternSchemaVersion: context.visualPatternSchemaVersion,
     captureId: input.capture.captureId,
     captureHash: sha256({ captureId: input.capture.captureId, captureWindowHash,
       queryHash: sha256(context.query), rows: uniqueRows.map((row) => row.deduplicationKey) }),
@@ -673,11 +714,70 @@ async function latestCaptureTargets(supabase: SupabaseClient, accountKey: string
   return { runId: run?.id ?? null, targets: [...byVariant.values()] }
 }
 
+function visualComparableRows(rows: ClassifiedProductResearchCapture[]): VisualComparableRow[] {
+  return rows.flatMap((row) => row.visualPattern ? [{
+    evidenceDeduplicationKey: row.deduplicationKey,
+    identityHash: row.identityHash,
+    productFamilyFingerprint: row.productFamilyFingerprint,
+    matchClassification: row.matchClassification,
+    detectedOfferPackCount: row.detectedOfferPackCount,
+    confirmedSoldQuantity: row.totalSold,
+    visualPattern: row.visualPattern,
+  }] : [])
+}
+
+function visualImportUnavailable(rows: VisualComparableRow[], error: string | null) {
+  const count = (status: ProductResearchVisualPattern["analysisStatus"]) => rows.filter((row) =>
+    row.visualPattern.analysisStatus === status).length
+  return {
+    captureSupported: rows.length > 0,
+    thumbnailDetectedCount: rows.filter((row) => row.visualPattern.imagePresent).length,
+    analyzedCount: count("ANALYZED"),
+    partialCount: count("PARTIAL"),
+    unavailableCount: count("UNAVAILABLE"),
+    rejectedCount: count("REJECTED"),
+    persistedCount: 0,
+    existingVisualCount: 0,
+    visualBriefs: [],
+    error,
+  }
+}
+
+async function persistVisualEnrichment(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  batchId: string
+  runId: string | null
+  parsed: ReturnType<typeof parseProductResearchBrowserCapture>
+  categoryId: string | null
+}) {
+  const rows = visualComparableRows(input.parsed.rows)
+  if (input.parsed.visualPatternSchemaVersion !== PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION) {
+    return visualImportUnavailable([], null)
+  }
+  try {
+    return await persistProductResearchVisualPatterns({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      captureBatchId: input.batchId,
+      captureRunId: input.runId,
+      queryContextHash: input.parsed.searchQueryHash,
+      categoryId: input.categoryId,
+      capturedAt: input.parsed.capturedAt,
+      rows,
+    })
+  } catch {
+    // Commercial evidence has already been durably imported. Visual enrichment is additive only.
+    return visualImportUnavailable(rows, "VISUAL_PATTERN_PERSIST_UNAVAILABLE")
+  }
+}
+
 export async function importProductResearchBrowserCapture(input: {
   supabase: SupabaseClient
   accountKey: string
   actorId: string
   capture: ProductResearchBrowserCapture
+  visualContext?: { categoryId?: string | null }
   now?: Date
 }) {
   const { runId, targets } = await latestCaptureTargets(input.supabase, input.accountKey)
@@ -688,7 +788,16 @@ export async function importProductResearchBrowserCapture(input: {
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
     .eq("capture_hash", parsed.captureHash).maybeSingle()
   if (duplicateBatchError) throw new Error("PRODUCT_RESEARCH_CAPTURE_DEDUP_READ_FAILED")
-  if (duplicateBatch) return { duplicate: true, batchId: duplicateBatch.id,
+  if (duplicateBatch) {
+    const visual = await persistVisualEnrichment({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      batchId: duplicateBatch.id,
+      runId,
+      parsed,
+      categoryId: input.visualContext?.categoryId ?? null,
+    })
+    return { duplicate: true, batchId: duplicateBatch.id,
     searchQueryHash: duplicateBatch.search_query_hash,
     rowCount: duplicateBatch.source_row_count, validCount: duplicateBatch.valid_count,
     importedCount: duplicateBatch.imported_count, duplicateCount: duplicateBatch.duplicate_count,
@@ -700,8 +809,10 @@ export async function importProductResearchBrowserCapture(input: {
       ambiguous: duplicateBatch.ambiguous_count, noLunaMatch: duplicateBatch.no_luna_match_count },
     candidatesEnriched: duplicateBatch.candidates_enriched_count,
     capturedAt: duplicateBatch.captured_at, reanalysisRequired: false,
+    visual,
     rawHtmlStored: false, temporaryTitlesStored: false, competitorImagesDownloaded: 0,
     piiStored: false, openAiCalls: 0, ebayWrites: 0 }
+  }
 
   const keys = parsed.rows.map((row) => row.deduplicationKey)
   const existing = new Set<string>()
@@ -765,11 +876,20 @@ export async function importProductResearchBrowserCapture(input: {
       .eq("id", runId).eq("marketplace_account_key", input.accountKey)
     if (error) throw new Error("PRODUCT_RESEARCH_CAPTURE_RUN_MARK_FAILED")
   }
+  const visual = await persistVisualEnrichment({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    batchId,
+    runId,
+    parsed,
+    categoryId: input.visualContext?.categoryId ?? null,
+  })
   return { duplicate: false, batchId, searchQueryHash: parsed.searchQueryHash,
     rowCount: parsed.sourceRowCount,
     validCount: parsed.validCount, importedCount: fresh.length, duplicateCount,
     rejectedCount: parsed.rejectedCount, matchCounts: parsed.matchCounts,
     candidatesEnriched, capturedAt: parsed.capturedAt, reanalysisRequired: fresh.length > 0,
+    visual,
     rawHtmlStored: false, temporaryTitlesStored: false, competitorImagesDownloaded: 0,
     piiStored: false, openAiCalls: 0, ebayWrites: 0 }
 }
