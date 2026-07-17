@@ -63,6 +63,7 @@ import {
   isTop20AutomationActive,
   isTop20RateLimitError,
   shouldRecoverEmptyTop20Completion,
+  shouldRecoverIncompleteTop20Completion,
   top20ProgressPercent,
   verifyTop20ContinuationToken,
   type Top20AutomationStatus,
@@ -652,7 +653,11 @@ async function analyzeCandidate(input: {
   const generated = await createWinnerEvidenceDecisionPackage(
     input.supabase,
     { ...winnerInput(input.candidate, input.accountKey), comparables: input.comparables },
-    { useOfficialRead: input.comparables === undefined, persist: true },
+    {
+      useOfficialRead: input.comparables === undefined,
+      persist: true,
+      candidateRecordId: null,
+    },
   )
   if (!generated.packageId) throw new Error("TOP10_DECISION_PACKAGE_PERSIST_REQUIRED")
   const row = await readDecisionRow(input.supabase, input.accountKey, generated.packageId)
@@ -1108,7 +1113,14 @@ export async function startListingAiApprovalQueueScan(input: {
       deepAnalyzed: Number(latest.deep_analyzed_count ?? 0),
       ready: Number(latest.ready_count ?? 0),
     }))
-  const latestFresh = latest?.automation_status === "COMPLETED" && !emptyCompletionNeedsRecovery &&
+  const incompleteLoop1NeedsRecovery = Boolean(latest &&
+    shouldRecoverIncompleteTop20Completion({
+      automationStatus: latest.automation_status,
+      preselected: Number(latest.preselected_count ?? 0),
+      deepAnalyzed: Number(latest.deep_analyzed_count ?? 0),
+    }))
+  const latestFresh = latest?.automation_status === "COMPLETED" &&
+    !emptyCompletionNeedsRecovery && !incompleteLoop1NeedsRecovery &&
     Date.parse(latest.updated_at ?? "") > now.getTime() - FRESHNESS_MS
   if (latestFresh) {
     return { runId: latest.id, status: "COMPLETED" as const, shouldSchedule: false,
@@ -1123,7 +1135,7 @@ export async function startListingAiApprovalQueueScan(input: {
     RECOVERABLE_DISPATCH_ERRORS.has(String(latest.last_error_code ?? ""))
   ))
   let run = latest && (["RUNNING", "PARTIAL"].includes(latest.status) || recoverableDispatch ||
-    emptyCompletionNeedsRecovery)
+    emptyCompletionNeedsRecovery || incompleteLoop1NeedsRecovery)
     ? latest
     : null
   if (run) {
@@ -1140,6 +1152,7 @@ export async function startListingAiApprovalQueueScan(input: {
         lease_owner: null, lease_expires_at: null, next_continuation_at: now.toISOString(),
         last_error_code: null, completed_at: null,
         ebay_first_status: emptyCompletionNeedsRecovery ? "NOT_STARTED" : run.ebay_first_status,
+        scan_phase: incompleteLoop1NeedsRecovery ? "LOOP1_ANALYSIS" : run.scan_phase,
         last_checkpoint_at: run.last_checkpoint_at ?? run.last_activity_at ?? run.updated_at,
         last_activity_at: now.toISOString(), updated_at: now.toISOString(),
       }).eq("id", run.id).eq("lock_version", run.lock_version).select("*").maybeSingle()
@@ -1166,6 +1179,26 @@ export async function startListingAiApprovalQueueScan(input: {
     run = data
   }
   const total = await ensureTop20RunTargets(input.supabase, input.accountKey, run.id, now)
+  if (incompleteLoop1NeedsRecovery) {
+    const { data: retryItems, error: retryReadError } = await input.supabase
+      .from("marketplace_listing_approval_queue_items")
+      .select("market_radar_product_id,supplier_variant_id,retry_count")
+      .eq("run_id", run.id).eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", MARKETPLACE).eq("internal_status", "REANALYSIS_REQUIRED")
+      .lt("retry_count", 3).limit(100)
+    if (retryReadError) throw new Error("TOP20_REANALYSIS_RECOVERY_READ_FAILED")
+    for (const item of retryItems ?? []) {
+      const { error: retryRestoreError } = await input.supabase
+        .from("marketplace_listing_approval_queue_scan_targets")
+        .update({ status: "PRESELECTED", preselected: true, processing_phase: null,
+          lease_owner: null, lease_expires_at: null, processed_at: null,
+          next_retry_at: null, last_error_code: null, updated_at: now.toISOString() })
+        .eq("run_id", run.id).eq("marketplace_account_key", input.accountKey)
+        .eq("market_radar_product_id", item.market_radar_product_id)
+        .eq("supplier_variant_id", item.supplier_variant_id).eq("status", "PROCESSED")
+      if (retryRestoreError) throw new Error("TOP20_REANALYSIS_RECOVERY_PERSIST_FAILED")
+    }
+  }
   let emptyCompletionRecovered = false
   if (emptyCompletionNeedsRecovery) {
     const { error: restoreError } = await input.supabase
@@ -1200,7 +1233,7 @@ export async function startListingAiApprovalQueueScan(input: {
     catalogTotal: total, shouldSchedule: true, continuationToken: token,
     continuationGeneration: Number(run.continuation_generation ?? 1),
     expectedBatch: Number(run.current_batch ?? 0) + 1,
-    recovered: recoverableDispatch || emptyCompletionRecovered,
+    recovered: recoverableDispatch || emptyCompletionRecovered || incompleteLoop1NeedsRecovery,
     recoveredEmptyCompletion: emptyCompletionRecovered,
     batchSize: configuration.batchSize, timeBudgetSeconds: configuration.timeBudgetSeconds,
     openAiCalls: 0, ebayWrites: 0, canPublish: false }
@@ -1667,6 +1700,7 @@ export async function runListingAiApprovalQueueBatch(input: {
   const sources: Record<string, number> = {}
   const itemPayloads: JsonRecord[] = []
   const processedTargetIds: string[] = []
+  const retryTargetIds: string[] = []
   const skippedTargetIds: string[] = []
   const releasedTargetIds: string[] = []
   let rateLimitedTarget: JsonRecord | null = null
@@ -1704,6 +1738,7 @@ export async function runListingAiApprovalQueueBatch(input: {
       number(variant.seller_scan_priority_score) ?? 0
     let snapshot: JsonRecord = safeEvidenceSnapshot({ candidate })
     let lastError: string | null = null
+    let retryTarget = false
     let identityEnrichmentId: string | null = null
     const hasPriorIntelligence = Boolean(candidate.supplierProductId && candidate.supplierVariantId &&
       candidate.supplierSku && candidate.productName && candidate.productUrl)
@@ -1792,6 +1827,8 @@ export async function runListingAiApprovalQueueBatch(input: {
         cohort = "NEEDS_DATA"
         reasons = [code]
         lastError = code
+        retryTarget = code === "WINNER_EVIDENCE_PACKAGE_PERSIST_FAILED" &&
+          Number(entry.target.attempt_count ?? 1) < 3
         retries += 1
       }
     } else {
@@ -1827,8 +1864,8 @@ export async function runListingAiApprovalQueueBatch(input: {
         ranking_score: rankingScore,
         reason_codes: safeCodes(reasons),
         evidence_snapshot: snapshot,
-        retry_count: lastError ? 1 : 0,
-        next_retry_at: lastError ? new Date(now.getTime() + 15 * 60_000).toISOString() : null,
+        retry_count: lastError ? Number(entry.target.attempt_count ?? 1) : 0,
+        next_retry_at: retryTarget ? now.toISOString() : null,
         last_error_code: lastError,
         identity_enrichment_id: identityEnrichmentId,
         stale_after: new Date(now.getTime() + FRESHNESS_MS).toISOString(),
@@ -1838,7 +1875,7 @@ export async function runListingAiApprovalQueueBatch(input: {
         updated_at: now.toISOString(),
       })
     const targetId = text(entry.target.id)
-    if (targetId) processedTargetIds.push(targetId)
+    if (targetId) (retryTarget ? retryTargetIds : processedTargetIds).push(targetId)
   }
   if (itemPayloads.length) {
     const { error: itemError } = await input.supabase.from("marketplace_listing_approval_queue_items")
@@ -1852,6 +1889,15 @@ export async function runListingAiApprovalQueueBatch(input: {
         processing_phase: null, last_error_code: null, updated_at: now.toISOString() })
       .in("id", processedTargetIds).eq("lease_owner", workerId)
     if (error) throw new Error("TOP20_TARGET_COMPLETE_FAILED")
+  }
+  if (retryTargetIds.length) {
+    const { error } = await input.supabase.from("marketplace_listing_approval_queue_scan_targets")
+      .update({ status: "RETRY_REQUIRED", lease_owner: null, lease_expires_at: null,
+        processing_phase: "LOOP1_ANALYSIS", next_retry_at: now.toISOString(),
+        last_error_code: "WINNER_EVIDENCE_PACKAGE_PERSIST_FAILED",
+        updated_at: now.toISOString() })
+      .in("id", retryTargetIds).eq("lease_owner", workerId)
+    if (error) throw new Error("TOP20_TARGET_RETRY_PERSIST_FAILED")
   }
   if (skippedTargetIds.length) {
     const { error } = await input.supabase.from("marketplace_listing_approval_queue_scan_targets")
@@ -1914,7 +1960,7 @@ export async function runListingAiApprovalQueueBatch(input: {
   const { count: remainingCount, error: remainingError } = await input.supabase
     .from("marketplace_listing_approval_queue_scan_targets")
     .select("id", { count: "exact", head: true }).eq("run_id", run.id)
-    .in("status", ["PENDING", "CLAIMED", "RETRY_REQUIRED"])
+    .in("status", ["PENDING", "PRESELECTED", "CLAIMED", "RETRY_REQUIRED"])
   if (remainingError) throw new Error("TOP20_TARGET_REMAINING_COUNT_FAILED")
   const { count: deepAnalyzedCount, error: examinedError } = await input.supabase
     .from("marketplace_listing_approval_queue_scan_targets")

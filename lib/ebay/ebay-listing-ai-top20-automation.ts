@@ -210,3 +210,12 @@ export function shouldRecoverEmptyTop20Completion(input: {
     input.discoveryExamined >= input.catalogTotal && input.preselected === 0 &&
     input.deepAnalyzed === 0 && input.ready === 0
 }
+
+export function shouldRecoverIncompleteTop20Completion(input: {
+  automationStatus: unknown
+  preselected: number
+  deepAnalyzed: number
+}) {
+  return input.automationStatus === "COMPLETED" && input.preselected > 0 &&
+    input.deepAnalyzed < input.preselected
+}

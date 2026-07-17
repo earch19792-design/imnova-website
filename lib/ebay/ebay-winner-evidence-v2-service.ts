@@ -207,7 +207,11 @@ export async function readWinnerEvidenceDecisionPackage(
 export async function createWinnerEvidenceDecisionPackage(
   supabase: SupabaseClient,
   input: WinnerEvidenceInput,
-  options: { useOfficialRead?: boolean; persist?: boolean } = {},
+  options: {
+    useOfficialRead?: boolean
+    persist?: boolean
+    candidateRecordId?: string | null
+  } = {},
 ) {
   const configuration = winnerEvidencePreviewConfiguration()
   if (!configuration.configured) throw new Error("WINNER_EVIDENCE_PREVIEW_STAGING_REQUIRED")
@@ -249,7 +253,12 @@ export async function createWinnerEvidenceDecisionPackage(
     const payload = {
       marketplace_account_key: decisionPackage.marketplaceAccountKey,
       marketplace: "EBAY_US",
-      candidate_id: uuidOrNull(decisionPackage.candidateId),
+      // `candidate_id` belongs exclusively to ebay_product_candidates. Other
+      // source identities remain versioned in package_payload and their own
+      // marketplace-neutral mapping tables.
+      candidate_id: options.candidateRecordId === undefined
+        ? uuidOrNull(decisionPackage.candidateId)
+        : uuidOrNull(options.candidateRecordId),
       supplier_sku: decisionPackage.supplierSku,
       supplier_variant_id: decisionPackage.supplierVariantId,
       product_identity_fingerprint: decisionPackage.productIdentity.fingerprint,
