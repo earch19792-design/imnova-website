@@ -1,4 +1,5 @@
 import { SellerOsMobileNav } from "../ebay/components/seller-os-mobile-nav"
+import { SellerOsDisasterRecoveryCard } from "../ebay/components/seller-os-disaster-recovery-card"
 import { CommercialMonitorPanel } from "../ebay/mobile-review/commercial-monitor-panel"
 
 const actions = [
@@ -93,6 +94,7 @@ export default function EbaySellerOsHubPage() {
           <div className="mt-4">
             <CommercialMonitorPanel />
           </div>
+          <SellerOsDisasterRecoveryCard />
           <details className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-4"><summary className="cursor-pointer font-black">Ver detalles de seguridad</summary><ul className="mt-3 space-y-2 text-sm text-white/60"><li>OpenAI: apagado</li><li>Escrituras eBay: desactivadas</li><li>Producción: sin cambios</li><li>Publicación: requiere autorización separada</li></ul></details>
         </section>
 
