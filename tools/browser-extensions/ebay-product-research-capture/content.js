@@ -59,9 +59,13 @@
   let nextQueryPanel = null
   let nextQueryField = null
   let nextQueryProgress = null
+  let nextQueryInstruction = null
+  let applyNextQueryButton = null
+  let copyNextQueryButton = null
   let nextQueryState = null
   let nextQueryWatchTimer = null
   let nextQueryCheckPending = false
+  let nextQueryApplyPending = false
 
   const ERROR_MESSAGES = {
     PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND:
@@ -76,8 +80,6 @@
       "La búsqueda visible no coincide con la próxima consulta de Seller OS. Usa Aplicar y buscar próxima consulta.",
     PRODUCT_RESEARCH_NEXT_QUERY_RESULTS_PENDING:
       "Estoy esperando los resultados de la próxima consulta. No captures todavía.",
-    PRODUCT_RESEARCH_QUERY_FIELD_NOT_FOUND:
-      "No encontré el campo de búsqueda de Product Research. Pega la consulta preparada y ejecuta Search.",
     PRODUCT_RESEARCH_SAFE_SUBMIT_NOT_FOUND:
       "La consulta quedó preparada, pero eBay no expuso un control seguro dentro de Product Research. Pulsa Search en esta misma página; Seller OS nunca usará la búsqueda pública.",
   }
@@ -1036,7 +1038,7 @@
   function isOfficialResearchTarget(value) {
     try {
       const target = new URL(value || window.location.href, window.location.href)
-      return target.protocol === "https:" && target.hostname === "www.ebay.com" &&
+      return target.origin === "https://www.ebay.com" &&
         OFFICIAL_RESEARCH_PATH.test(target.pathname)
     } catch {
       return false
@@ -1090,10 +1092,44 @@
 
   function isProductResearchInput(input) {
     if (!input || isGlobalEbaySearchInput(input)) return false
+    if (input.disabled || input.readOnly || input.type === "hidden") return false
     if (closestAcrossOpenRoots(input, 'main,[role="main"]')) return true
     const form = input.form || input.closest?.("form")
     const rawAction = text(form?.getAttribute?.("action"))
     return Boolean(rawAction && isOfficialResearchTarget(rawAction))
+  }
+
+  function researchInputHint(input) {
+    const labels = [...(input?.labels ?? [])]
+      .map((label) => text(label.innerText || label.textContent))
+    const labelledBy = text(input?.getAttribute?.("aria-labelledby"))
+      .split(" ").filter(Boolean).map((id) => {
+        const label = input?.ownerDocument?.getElementById?.(id)
+        return text(label?.innerText || label?.textContent)
+      })
+    return text([
+      input?.id,
+      input?.getAttribute?.("name"),
+      input?.getAttribute?.("role"),
+      input?.getAttribute?.("aria-label"),
+      input?.getAttribute?.("placeholder"),
+      input?.getAttribute?.("data-testid"),
+      ...labels,
+      ...labelledBy,
+    ].filter(Boolean).join(" ")).toLowerCase()
+  }
+
+  function isLikelyResearchQueryInput(input) {
+    if (!isProductResearchInput(input)) return false
+    const hint = researchInputHint(input)
+    if (/categor|seller|vendedor|date|fecha|condition|condici[oó]n|filter|filtro/.test(hint)) {
+      return false
+    }
+    const name = text(input.getAttribute?.("name")).toLowerCase()
+    const role = text(input.getAttribute?.("role")).toLowerCase()
+    return input.type === "search" || role === "searchbox" ||
+      ["q", "query", "keyword", "keywords"].includes(name) ||
+      /search|keyword|query|item|product|buscar|palabra|art[ií]culo|producto/.test(hint)
   }
 
   function researchSearchInputs() {
@@ -1101,19 +1137,20 @@
       'input[type="search"]', 'input[aria-label*="search" i]',
       'input[placeholder*="search" i]', 'input[aria-label*="keyword" i]',
       'input[placeholder*="keyword" i]', 'input[aria-label*="buscar" i]',
-      'input[placeholder*="buscar" i]',
+      'input[placeholder*="buscar" i]', 'input[role="searchbox"]',
+      'input[name="q" i]', 'input[name="query" i]',
+      'input[name="keyword" i]', 'input[name="keywords" i]',
+      'input[data-testid*="search" i]', 'input[data-testid*="keyword" i]',
     ].join(",")
     return deepQueryAll(selector).filter(visible)
-      .filter((input) => isProductResearchInput(input))
+      .filter((input) => isLikelyResearchQueryInput(input))
   }
 
   function researchSearchInput() {
     const inputs = researchSearchInputs()
     return inputs.sort((left, right) => {
       const score = (input) => {
-        const hint = text([
-          input.value, input.getAttribute?.("aria-label"), input.getAttribute?.("placeholder"),
-        ].filter(Boolean).join(" ")).toLowerCase()
+        const hint = `${researchInputHint(input)} ${text(input.value).toLowerCase()}`
         return (officialResearchFormFor(input) ? 200 : 0) +
           (closestAcrossOpenRoots(input, 'main,[role="main"]') ? 100 : 0) +
           (/product|research|keyword|item|producto|palabra/.test(hint) ? 30 : 0) +
@@ -1123,7 +1160,37 @@
     })[0] ?? null
   }
 
+  const delay = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+
+  async function waitForResearchSearchInput() {
+    // Product Research occasionally remounts its controls while a receiver
+    // popup closes. Wait briefly for the verified in-page control instead of
+    // immediately presenting a contradictory manual-action error.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const input = researchSearchInput()
+      if (input) return input
+      await delay(350)
+    }
+    return null
+  }
+
   const normalizedQuery = (value) => text(value).toLocaleLowerCase("en-US")
+
+  function positivePlanInteger(value) {
+    if (value === null || value === undefined || value === "") return null
+    const parsed = Number(value)
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+  }
+
+  function nextQueryTransitionLead() {
+    if (nextQueryState?.transitionSource === "CAPTURE_ACCEPTED") {
+      return "La captura anterior quedó guardada."
+    }
+    if (nextQueryState?.transitionSource === "CAPTURE_DISCARDED") {
+      return "La tabla anterior fue descartada y no se guardó."
+    }
+    return "Seller OS preparó esta consulta para Product Research."
+  }
 
   async function resultsFingerprint(value) {
     const bytes = new TextEncoder().encode(value)
@@ -1182,9 +1249,47 @@
     if (!captureButton) return
     const waitingForResults = Boolean(nextQueryState && !nextQueryState.resultsReady)
     captureButton.disabled = waitingForResults
-    captureButton.textContent = waitingForResults
-      ? "Esperando resultados nuevos…" : "Capturar y continuar"
+    captureButton.textContent = nextQueryState
+      ? waitingForResults ? "3. Capturar cuando carguen resultados" : "3. Capturar y continuar"
+      : "Capturar y continuar"
     captureButton.style.opacity = waitingForResults ? ".65" : "1"
+    captureButton.style.cursor = waitingForResults ? "not-allowed" : "pointer"
+  }
+
+  function setNextQueryWorkflowStage(stage) {
+    if (!nextQueryState) return
+    nextQueryState.workflowStage = stage
+    const ordinal = nextQueryState.ordinal ?? "siguiente"
+    const applying = stage === "APPLYING_QUERY"
+    const manualCopy = stage === "MANUAL_COPY_REQUIRED"
+    const manualSearch = stage === "MANUAL_SEARCH_REQUIRED"
+    const waiting = stage === "WAITING_RESULTS"
+    const ready = stage === "READY_TO_CAPTURE"
+    if (applyNextQueryButton) {
+      applyNextQueryButton.hidden = !applying
+      applyNextQueryButton.disabled = true
+      applyNextQueryButton.textContent = `1. Aplicando consulta ${ordinal}…`
+    }
+    if (copyNextQueryButton) {
+      copyNextQueryButton.hidden = !manualCopy
+      copyNextQueryButton.disabled = false
+      copyNextQueryButton.textContent = `1. Copiar consulta ${ordinal}`
+    }
+    if (nextQueryInstruction) {
+      nextQueryInstruction.textContent = applying
+        ? "Seller OS está buscando el control seguro dentro de Product Research."
+        : manualCopy
+          ? "2. Pega la consulta en Product Research y pulsa Search. Capturar se habilitará cuando cargue una tabla nueva."
+          : manualSearch
+            ? "2. La consulta ya está colocada. Pulsa Search dentro de Product Research."
+            : waiting
+              ? "2. Esperando que eBay cargue resultados nuevos…"
+              : ready
+                ? "Resultados nuevos confirmados. Completa el paso 3."
+                : ""
+      nextQueryInstruction.hidden = !nextQueryInstruction.textContent
+    }
+    updateCaptureAvailability()
   }
 
   async function confirmNextQueryResults() {
@@ -1202,7 +1307,7 @@
         nextQueryState.query, nextQueryState.previousResultsFingerprint, "RESULTS_READY",
       )
       stopNextQueryWatch()
-      updateCaptureAvailability()
+      setNextQueryWorkflowStage("READY_TO_CAPTURE")
       setStatus("Resultados nuevos listos. Revísalos y pulsa Capturar y continuar.", "success")
       return true
     } finally {
@@ -1263,42 +1368,66 @@
   }
 
   async function applyAndSearchNextQuery() {
+    if (nextQueryApplyPending) return
     const query = nextQueryState?.query ?? ""
     if (query.length < 3) return
-    const input = researchSearchInput()
-    if (!input) {
-      setStatus("PRODUCT_RESEARCH_QUERY_FIELD_NOT_FOUND", "error")
-      return
+    const applyingState = nextQueryState
+    nextQueryApplyPending = true
+    try {
+      setNextQueryWorkflowStage("APPLYING_QUERY")
+      // Persist the expected query before looking for the eBay control. The
+      // manual fallback must retain the same capture gate even if Product
+      // Research remounts its SPA while the operator completes Search.
+      nextQueryState.previousResultsSignature = visibleResultsSignature()
+      nextQueryState.previousResultsFingerprint = nextQueryState.previousResultsSignature
+        ? await resultsFingerprint(nextQueryState.previousResultsSignature) : null
+      nextQueryState.resultsReady = false
+      persistGuidedQueryFragment(
+        query, nextQueryState.previousResultsFingerprint, "AWAITING_RESULTS",
+      )
+      const input = await waitForResearchSearchInput()
+      if (nextQueryState !== applyingState) return
+      if (!input) {
+        setNextQueryWorkflowStage("MANUAL_COPY_REQUIRED")
+        setStatus(
+          `${nextQueryTransitionLead()} Para continuar con la consulta ${nextQueryState?.ordinal ?? "siguiente"}, usa el paso 1 habilitado.`,
+          "warning",
+        )
+        return
+      }
+      const form = officialResearchFormFor(input)
+      setSearchInputValue(input, query)
+      input.focus()
+      setNextQueryWorkflowStage(form ? "WAITING_RESULTS" : "MANUAL_SEARCH_REQUIRED")
+      watchForNextQueryResults()
+      if (!form || typeof form.requestSubmit !== "function") {
+        setStatus(
+          `${nextQueryTransitionLead()} La consulta ${nextQueryState?.ordinal ?? "siguiente"} ya está colocada. Pulsa Search dentro de Product Research.`,
+          "warning",
+        )
+        return
+      }
+      // Fail closed: requestSubmit is permitted only after the candidate input and
+      // its resolved form action both prove that they belong to /sh/research.
+      // Never fall back to Enter because eBay's global header handles it by
+      // navigating to the public /sch search surface.
+      if (!requestResearchSubmitWithGuidedFragment(form)) {
+        setNextQueryWorkflowStage("MANUAL_SEARCH_REQUIRED")
+        setStatus(
+          `${nextQueryTransitionLead()} La consulta ${nextQueryState?.ordinal ?? "siguiente"} ya está colocada. Pulsa Search dentro de Product Research.`,
+          "warning",
+        )
+        return
+      }
+      setNextQueryWorkflowStage("WAITING_RESULTS")
+      setStatus("Próxima consulta aplicada. Esperando resultados nuevos de eBay…")
+    } finally {
+      nextQueryApplyPending = false
     }
-    const form = officialResearchFormFor(input)
-    nextQueryState.previousResultsSignature = visibleResultsSignature()
-    nextQueryState.previousResultsFingerprint = nextQueryState.previousResultsSignature
-      ? await resultsFingerprint(nextQueryState.previousResultsSignature) : null
-    nextQueryState.resultsReady = false
-    persistGuidedQueryFragment(
-      query, nextQueryState.previousResultsFingerprint, "AWAITING_RESULTS",
-    )
-    setSearchInputValue(input, query)
-    input.focus()
-    updateCaptureAvailability()
-    watchForNextQueryResults()
-    if (!form || typeof form.requestSubmit !== "function") {
-      setStatus("PRODUCT_RESEARCH_SAFE_SUBMIT_NOT_FOUND", "error")
-      return
-    }
-    // Fail closed: requestSubmit is permitted only after the candidate input and
-    // its resolved form action both prove that they belong to /sh/research.
-    // Never fall back to Enter because eBay's global header handles it by
-    // navigating to the public /sch search surface.
-    if (!requestResearchSubmitWithGuidedFragment(form)) {
-      setStatus("PRODUCT_RESEARCH_SAFE_SUBMIT_NOT_FOUND", "error")
-      return
-    }
-    setStatus("Próxima consulta aplicada. Esperando resultados nuevos de eBay…")
   }
 
   function advanceAfterAcceptedCapture(value, ordinal, total) {
-    showNextQuery(value, ordinal, total)
+    showNextQuery(value, ordinal, total, null, "CAPTURE_ACCEPTED")
     if (!nextQueryState) return
     setStatus("Captura aceptada. Cambiando automáticamente a la próxima consulta…", "success")
     // The capture itself is the user's authorization for this guided plan.
@@ -1309,7 +1438,7 @@
   }
 
   function advanceAfterCorrectedCapture(value, ordinal, total) {
-    showNextQuery(value, ordinal, total)
+    showNextQuery(value, ordinal, total, null, "CAPTURE_DISCARDED")
     if (!nextQueryState) return
     setStatus("La tabla anterior fue descartada. Aplicando la consulta correcta dentro de Product Research…", "success")
     window.setTimeout(() => void applyAndSearchNextQuery(), 0)
@@ -1357,7 +1486,7 @@
     if (!statusElement) return
     statusElement.textContent = ERROR_MESSAGES[message] ?? message
     statusElement.style.color = tone === "error" ? "#fecaca"
-      : tone === "success" ? "#bbf7d0" : "#cffafe"
+      : tone === "success" ? "#bbf7d0" : tone === "warning" ? "#fde68a" : "#cffafe"
   }
 
   function resetReceiverTimeout() {
@@ -1370,21 +1499,27 @@
     updateCaptureAvailability()
   }
 
-  function showNextQuery(value, ordinal, total, restored = null) {
+  function showNextQuery(value, ordinal, total, restored = null, transitionSource = "INITIAL") {
     const query = text(value).slice(0, 100)
     if (query.length < 3 || !nextQueryPanel || !nextQueryField || !nextQueryProgress) return
+    const parsedOrdinal = positivePlanInteger(ordinal)
+    const parsedTotal = positivePlanInteger(total)
     nextQueryState = {
       query,
+      ordinal: parsedOrdinal,
+      total: parsedTotal,
+      transitionSource,
       previousResultsSignature: restored?.applied ? "" : visibleResultsSignature(),
       previousResultsFingerprint: restored?.previousResultsFingerprint ?? null,
       resultsReady: false,
+      workflowStage: "APPLYING_QUERY",
     }
     nextQueryField.value = query
-    nextQueryProgress.textContent = Number.isInteger(Number(ordinal)) && Number.isInteger(Number(total))
-      ? `Próxima consulta: ${Number(ordinal)} de ${Number(total)}` : "Próxima consulta preparada"
+    nextQueryProgress.textContent = parsedOrdinal && parsedTotal
+      ? `Próxima consulta: ${parsedOrdinal} de ${parsedTotal}` : "Consulta preparada"
     nextQueryPanel.hidden = false
     watchForNextQueryResults()
-    updateCaptureAvailability()
+    setNextQueryWorkflowStage(restored?.applied ? "WAITING_RESULTS" : "APPLYING_QUERY")
   }
 
   function clearNextQuery() {
@@ -1392,6 +1527,7 @@
     stopNextQueryWatch()
     clearGuidedQueryFragment()
     if (nextQueryPanel) nextQueryPanel.hidden = true
+    if (nextQueryInstruction) nextQueryInstruction.hidden = true
   }
 
   function startCapture() {
@@ -1477,7 +1613,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.3"
+  title.textContent = "Seller OS · Product Research · v1.2.4"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"
@@ -1498,26 +1634,33 @@
   nextQueryField.rows = 2
   nextQueryField.setAttribute("aria-label", "Próxima consulta de Product Research")
   nextQueryField.style.cssText = "box-sizing:border-box;width:100%;resize:none;border:1px solid rgba(255,255,255,.2);border-radius:8px;background:#020617;color:white;padding:7px;font:11px/1.35 system-ui,sans-serif"
-  const copyNextQuery = document.createElement("button")
-  copyNextQuery.type = "button"
-  copyNextQuery.textContent = "Copiar próxima consulta"
-  copyNextQuery.style.cssText = "display:block;width:100%;margin-top:7px;padding:8px;border:1px solid rgba(165,243,252,.45);border-radius:8px;background:transparent;color:#cffafe;font-weight:800;cursor:pointer"
-  copyNextQuery.addEventListener("click", async () => {
+  nextQueryInstruction = document.createElement("p")
+  nextQueryInstruction.style.cssText = "margin:7px 0 0;color:#fde68a;font-size:11px"
+  copyNextQueryButton = document.createElement("button")
+  copyNextQueryButton.type = "button"
+  copyNextQueryButton.textContent = "1. Copiar consulta"
+  copyNextQueryButton.style.cssText = "display:block;width:100%;margin-top:7px;padding:8px;border:1px solid rgba(165,243,252,.45);border-radius:8px;background:transparent;color:#cffafe;font-weight:800;cursor:pointer"
+  copyNextQueryButton.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(nextQueryField?.value ?? "")
-      setStatus("Próxima consulta copiada. Ejecútala en Product Research y vuelve a capturar.", "success")
+      copyNextQueryButton.disabled = true
+      copyNextQueryButton.textContent = "1. Consulta copiada ✓"
+      setStatus("Consulta copiada. Completa el paso 2 dentro de Product Research.", "success")
     } catch {
       nextQueryField?.focus()
       nextQueryField?.select()
       setStatus("Seleccioné la consulta. Usa Ctrl+C para copiarla.")
     }
   })
-  const applyNextQueryButton = document.createElement("button")
+  applyNextQueryButton = document.createElement("button")
   applyNextQueryButton.type = "button"
   applyNextQueryButton.textContent = "Aplicar y buscar próxima consulta"
   applyNextQueryButton.style.cssText = "display:block;width:100%;margin-top:7px;padding:9px;border:0;border-radius:8px;background:#a5f3fc;color:#082f49;font-weight:800;cursor:pointer"
   applyNextQueryButton.addEventListener("click", () => void applyAndSearchNextQuery())
-  nextQueryPanel.append(nextQueryProgress, nextQueryField, applyNextQueryButton, copyNextQuery)
+  nextQueryPanel.append(
+    nextQueryProgress, nextQueryField, applyNextQueryButton,
+    copyNextQueryButton, nextQueryInstruction,
+  )
   panel.append(title, captureButton, status, nextQueryPanel)
   shadow.append(panel)
   document.documentElement.append(host)
