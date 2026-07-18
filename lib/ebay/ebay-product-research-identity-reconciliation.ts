@@ -11,6 +11,8 @@ import { targetFromCatalogRow, targetFromVerifiedActiveListingLink, type Product
 import { readEbayTradingItemIdentityReadonly } from "./ebay-trading-item-identity-readonly.ts"
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { createTop20ContinuationToken, hashTop20ContinuationToken } from "./ebay-listing-ai-top20-automation.ts"
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit.ts"
 
 export const PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_VERSION =
   "PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_V1_2026_07_17"
@@ -385,6 +387,14 @@ function safeReaderStatus(error: unknown) {
   return "UNAVAILABLE"
 }
 
+function readerStatusOrThrow(error: unknown) {
+  // A 429 is control-plane state, not an ordinary missing source. Stop the
+  // current batch immediately so the durable worker can persist Retry-After
+  // and resume this exact checkpoint without consuming more calls.
+  if (getEbayReadonlyRateLimitMetadata(error)) throw error
+  return safeReaderStatus(error)
+}
+
 async function loadTargets(supabase: SupabaseClient, accountKey: string) {
   const [catalogResult, linksResult] = await Promise.all([
     supabase.from("market_radar_latest_variants")
@@ -568,7 +578,7 @@ export async function reconcileProductResearchObservations(input: {
     let trading: JsonRecord | null = null
     if (observation.source_listing_id) {
       try { trading = record(await tradingReader(observation.source_listing_id)); outcomes.trading = "READY" }
-      catch (error) { outcomes.trading = safeReaderStatus(error) }
+      catch (error) { outcomes.trading = readerStatusOrThrow(error) }
     } else outcomes.trading = "NOT_APPLICABLE_ITEM_ID_MISSING"
     let browse: JsonRecord | null = null
     sourcesConsulted.push("EBAY_BROWSE_OFFICIAL_READONLY")
@@ -578,7 +588,7 @@ export async function reconcileProductResearchObservations(input: {
       outcomes.browse = "READY"
       outcomes.browseComparableCount = Array.isArray(browse.comparableEvidence)
         ? browse.comparableEvidence.length : 0
-    } catch (error) { outcomes.browse = safeReaderStatus(error) }
+    } catch (error) { outcomes.browse = readerStatusOrThrow(error) }
     let catalog: JsonRecord | null = null
     sourcesConsulted.push("EBAY_CATALOG_OFFICIAL_READONLY")
     try {
@@ -586,14 +596,14 @@ export async function reconcileProductResearchObservations(input: {
         gtin: captured.gtin, mpn: captured.mpn }))
       outcomes.catalog = text(catalog.status) ?? "UNAVAILABLE"
       outcomes.catalogProductCount = Array.isArray(catalog.products) ? catalog.products.length : 0
-    } catch (error) { outcomes.catalog = safeReaderStatus(error) }
+    } catch (error) { outcomes.catalog = readerStatusOrThrow(error) }
     const preliminary = officialFactsFromSources({ capture: captured, trading, browse, catalog, taxonomy: null })
     let taxonomy: JsonRecord | null = null
     sourcesConsulted.push("EBAY_TAXONOMY_OFFICIAL_READONLY")
     try {
       taxonomy = record(await taxonomyReader(preliminary.productName ?? queryText, preliminary.categoryId))
       outcomes.taxonomy = text(taxonomy.status) ?? "UNAVAILABLE"
-    } catch (error) { outcomes.taxonomy = safeReaderStatus(error) }
+    } catch (error) { outcomes.taxonomy = readerStatusOrThrow(error) }
     const facts = officialFactsFromSources({ capture: captured, trading, browse, catalog, taxonomy })
     const decision = reconcileProductResearchIdentity({ observation: facts, queryTokens, targets })
     const previous = previousByObservation.get(observation.id) ?? null

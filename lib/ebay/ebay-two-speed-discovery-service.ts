@@ -128,7 +128,13 @@ export async function runLightweightFamilyDiscovery(
         checkpoint: { familyFingerprint: family, queryFingerprint: query },
       })
       if (persisted && error && typeof error === "object") {
-        Object.assign(error, { quotaPersisted: true, quotaResumeAt: persisted.resumeAt })
+        Object.assign(error, {
+          quotaPersisted: true,
+          quotaResumeAt: persisted.resumeAt,
+          quotaApiFamily: "BROWSE",
+          quotaOperation: "LIGHTWEIGHT_DISCOVERY",
+          quotaLane: "P2_DISCOVERY",
+        })
       }
       throw error
     }

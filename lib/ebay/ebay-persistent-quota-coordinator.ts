@@ -62,6 +62,7 @@ export async function recordPersistentEbayRateLimit(
     affected_lane: input.lane,
     checkpoint: input.checkpoint ?? {},
     retry_count: input.retryCount ?? 0,
+    retry_after_source: rateLimit.retryAfterSource,
   })
   if (eventError) throw new Error("EBAY_QUOTA_429_EVENT_PERSIST_FAILED")
   return { ...rateLimit, resumeAt, affectedLane: input.lane }
@@ -75,7 +76,7 @@ export async function assertEbayLaneAvailable(
 ) {
   const { data, error } = await supabase
     .from("ebay_api_quota_states")
-    .select("status,reset_at,available_budget,reserved_budget,owner_lane")
+    .select("id,status,reset_at,available_budget,reserved_budget,owner_lane,last_refreshed_at")
     .eq("marketplace", "EBAY_US")
     .eq("api_family", apiFamily)
     .eq("operation", operation)
@@ -83,6 +84,25 @@ export async function assertEbayLaneAvailable(
   if (error) throw new Error("EBAY_QUOTA_STATE_READ_FAILED")
   if (!data) return { available: true, status: "UNKNOWN", resumeAt: null }
   const decision = evaluateEbayQuotaLaneState(data, now)
+  if (!decision.available && decision.status === "PAUSED_429") {
+    const { data: event } = await supabase
+      .from("ebay_api_quota_events")
+      .select("http_status,retry_after_seconds,retry_after_source,observed_at,resume_at,affected_lane")
+      .eq("quota_state_id", data.id)
+      .eq("resume_at", data.reset_at)
+      .order("observed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    return {
+      ...decision,
+      httpStatus: event?.http_status === 429 ? 429 as const : 429 as const,
+      retryAfterSeconds: event?.retry_after_seconds ?? null,
+      retryAfterSource: event?.retry_after_source ?? "UNAVAILABLE",
+      observedAt: event?.observed_at ?? data.last_refreshed_at ?? now.toISOString(),
+      resumeAt: event?.resume_at ?? decision.resumeAt,
+      affectedLane: event?.affected_lane ?? decision.ownerLane,
+    }
+  }
   if (decision.resetReached) {
     // The first request after eBay's authorized reset may probe the lane once.
     // A new 429 will persist a new pause; a successful request resumes normal work.

@@ -29,6 +29,7 @@ import {
   type FactVerificationStatus,
   type ResolvedFact,
 } from "./ebay-product-facts-readiness"
+import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
 
 export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V1_2026_07_17"
 const MARKETPLACE = "EBAY_US"
@@ -285,13 +286,19 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
           productType: text(variant.product_type) || null }))
         browseStatus = "AVAILABLE"
         browseComparableCount = array(browse.comparableEvidence).length
-      } catch (error) { browseStatus = safeCode(error) }
+      } catch (error) {
+        if (getEbayReadonlyRateLimitMetadata(error)) throw error
+        browseStatus = safeCode(error)
+      }
       let trading: JsonRecord | null = null
       let tradingStatus = "NOT_APPLICABLE_ITEM_ID_MISSING"
       const tradingItemId = await officialCapturedItemId(input.supabase, input.accountKey, text(candidate.supplier_variant_id))
       if (tradingItemId) {
         try { trading = record(await readEbayTradingItemIdentityReadonly(tradingItemId)); tradingStatus = "AVAILABLE" }
-        catch (error) { tradingStatus = safeCode(error) }
+        catch (error) {
+          if (getEbayReadonlyRateLimitMetadata(error)) throw error
+          tradingStatus = safeCode(error)
+        }
       }
       const sourceSnapshots = [
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
@@ -338,7 +345,10 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
         exception: targetedFactException({ readiness, requirements }), sourceSnapshots, taxonomy: taxonomyRecord,
         sourceAttempts: { browse: browseStatus, trading: tradingStatus } })
       candidateResults.push({ candidateId: text(candidate.id), status: "PREPARED", openAiInputReady: readiness.gates.OPENAI_INPUT_READY })
-    } catch (error) { candidateResults.push({ candidateId: text(candidate.id), status: "PARTIAL", openAiInputReady: false, reason: safeCode(error) }) }
+    } catch (error) {
+      if (getEbayReadonlyRateLimitMetadata(error)) throw error
+      candidateResults.push({ candidateId: text(candidate.id), status: "PARTIAL", openAiInputReady: false, reason: safeCode(error) })
+    }
   }
   const sourceReads = { lunaExactVariant: prepared.length, ebayCatalog: prepared.length, ebayTaxonomy: prepared.length,
     ebayBrowse: prepared.filter((entry) => entry.sourceAttempts.browse === "AVAILABLE").length,

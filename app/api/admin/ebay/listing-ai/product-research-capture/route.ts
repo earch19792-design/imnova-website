@@ -101,35 +101,60 @@ export async function POST(req: Request) {
       searchQueryHash: result.searchQueryHash, captureBatchId: result.batchId,
       planId: plannedTask.planId, taskId: plannedTask.taskId,
     }) : null
-    let scan: Record<string, unknown> | null = null
-    if (result.reanalysisRequired) {
-      const reconciled = await reconcileProductResearchObservations({
-        supabase: auth.supabase, accountKey: auth.accountKey,
-      })
-      let dispatchStatus: string | null = null
-      if (reconciled.reanalysis.shouldSchedule && reconciled.reanalysis.runId) {
-        const dispatched = await enqueueListingAiTop20Continuation({
-          supabase: auth.supabase,
-          runId: reconciled.reanalysis.runId,
-          continuationGeneration: reconciled.reanalysis.continuationGeneration,
-          expectedBatch: reconciled.reanalysis.expectedBatch,
-        })
-        dispatchStatus = dispatched.status
-      }
-      scan = { runId: reconciled.reanalysis.runId,
-        status: dispatchStatus ?? (reconciled.reanalysis.shouldSchedule
-          ? "PARTIAL_AUTO_CONTINUING" : "NO_AFFECTED_TARGETS"),
-        observationsReconciled: reconciled.observationsProcessed,
-        affectedTargets: reconciled.reanalysis.affectedTargets,
-        sameRunResumed: true, discoveryRepeated: false }
-    }
-    const visualStatus = await visualStatusOrUnavailable({
-      supabase: auth.supabase, accountKey: auth.accountKey,
-    })
+    // Resume the durable same-day state machine immediately after the safe
+    // commercial import. Official reconciliation can be long-running and must
+    // never make the browser receipt fail after evidence was already stored.
     const sameDayPilot = await resumeSameDayPilotAfterProductResearchCapture({
       supabase: auth.supabase, accountKey: auth.accountKey,
       searchQuery: capture.searchQuery, batchId: result.batchId,
-      exactLunaMatches: result.matchCounts.exactLuna,
+      capturedAt: result.capturedAt, exactLunaMatches: result.matchCounts.exactLuna,
+    })
+    let scan: Record<string, unknown> | null = null
+    if (result.reanalysisRequired) {
+      if (sameDayPilot.resumed > 0) {
+        scan = { status: "DURABLE_RECONCILIATION_QUEUED", observationsReconciled: 0,
+          maximumReferencesPerCandidate: 10, sameRunResumed: true,
+          browserMayClose: true, discoveryRepeated: false }
+      } else {
+        // Preserve the legacy non-pilot continuation, but constrain it to the
+        // current capture instead of rereading up to 200 historical rows.
+        const { data: currentRows, error: currentRowsError } = await auth.supabase
+          .from("marketplace_product_research_capture_observations")
+          .select("id").eq("capture_batch_id", result.batchId)
+          .eq("marketplace_account_key", auth.accountKey).eq("marketplace", "EBAY_US")
+          .eq("evidence_reviewed", true).order("confirmed_sold_quantity", { ascending: false }).limit(10)
+        if (currentRowsError) throw new Error("PRODUCT_RESEARCH_CAPTURE_CURRENT_ROWS_READ_FAILED")
+        try {
+          const reconciled = await reconcileProductResearchObservations({
+            supabase: auth.supabase, accountKey: auth.accountKey,
+            observationIds: (currentRows ?? []).map((row) => row.id),
+          })
+          let dispatchStatus: string | null = null
+          if (reconciled.reanalysis.shouldSchedule && reconciled.reanalysis.runId) {
+            const dispatched = await enqueueListingAiTop20Continuation({
+              supabase: auth.supabase, runId: reconciled.reanalysis.runId,
+              continuationGeneration: reconciled.reanalysis.continuationGeneration,
+              expectedBatch: reconciled.reanalysis.expectedBatch,
+            })
+            dispatchStatus = dispatched.status
+          }
+          scan = { runId: reconciled.reanalysis.runId,
+            status: dispatchStatus ?? (reconciled.reanalysis.shouldSchedule
+              ? "PARTIAL_AUTO_CONTINUING" : "NO_AFFECTED_TARGETS"),
+            observationsReconciled: reconciled.observationsProcessed,
+            affectedTargets: reconciled.reanalysis.affectedTargets,
+            sameRunResumed: true, discoveryRepeated: false }
+        } catch (error) {
+          const code = error instanceof Error && /^[A-Z0-9_:-]+$/.test(error.message)
+            ? error.message : "PRODUCT_RESEARCH_RECONCILIATION_DEFERRED"
+          scan = { status: "CAPTURE_SAVED_RECONCILIATION_DEFERRED", error: code,
+            observationsReconciled: 0, sameRunResumed: true,
+            commercialEvidencePreserved: true, discoveryRepeated: false }
+        }
+      }
+    }
+    const visualStatus = await visualStatusOrUnavailable({
+      supabase: auth.supabase, accountKey: auth.accountKey,
     })
     return listingAiResponse({ success: true, result: { ...result, scan, queryPlan,
       visualStatus, sameDayPilot,

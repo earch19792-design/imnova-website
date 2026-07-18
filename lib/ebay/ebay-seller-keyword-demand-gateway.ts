@@ -13,6 +13,7 @@ import {
 import {
   createEbayReadonlyQuotaLimitError,
   createEbayReadonlyRateLimitError,
+  getEbayReadonlyRateLimitMetadata,
 } from "./ebay-readonly-rate-limit"
 import {
   parseEbayApplicationBrowseQuota,
@@ -157,11 +158,13 @@ export async function getEbayApplicationBrowseQuota(): Promise<EbayApplicationBr
       cache: "no-store",
       signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
     })
+    if (response.status === 429) throw createEbayReadonlyRateLimitError("EBAY_READONLY_GET_429", response)
     if (!response.ok) return unavailable()
     const value = parseEbayApplicationBrowseQuota(await response.json())
     rateLimitCache = { value, expiresAt: Date.now() + RATE_LIMIT_CACHE_TTL_MS }
     return value
-  } catch {
+  } catch (error) {
+    throwIfRateLimited(error)
     return unavailable()
   } finally {
     token = ""
@@ -221,6 +224,10 @@ function safeErrorCode(error: unknown) {
   return /^[A-Z0-9_]+$/.test(message)
     ? message
     : "EBAY_READONLY_MARKET_VALIDATION_FAILED"
+}
+
+function throwIfRateLimited(error: unknown) {
+  if (getEbayReadonlyRateLimitMetadata(error)) throw error
 }
 
 async function wait(ms: number) {
@@ -519,7 +526,8 @@ async function enrichActiveListing(value: unknown, token: string) {
     const url = new URL(`${BROWSE_ITEM_ENDPOINT}/${encodeURIComponent(itemId)}`)
     const detail = await getEbayJson(url, token)
     return { ...summary, ...detail }
-  } catch {
+  } catch (error) {
+    throwIfRateLimited(error)
     return summary
   }
 }
@@ -619,6 +627,7 @@ export async function runEbaySellerKeywordDemandValidation(
         )
         insightsAvailability = "AVAILABLE"
       } catch (error) {
+        throwIfRateLimited(error)
         const code = safeErrorCode(error)
         insightsAvailability = /(?:OAUTH|READONLY_GET)_(?:401|403)$/.test(code)
           ? "NOT_ENTITLED"
@@ -685,6 +694,7 @@ export async function discoverEbayBestSellingProducts(
     })).filter((product) => product.title)
     return { status: "AVAILABLE", products }
   } catch (error) {
+    throwIfRateLimited(error)
     const code = safeErrorCode(error)
     if (/(?:OAUTH|READONLY_GET)_(?:401|403)$/.test(code)) {
       return { status: "NOT_AUTHORIZED", products: [] }
@@ -767,7 +777,8 @@ export async function searchEbayCatalogIdentity(input: {
       .filter((product) => Boolean(product.epid || product.gtins.length || product.title))
     return { status: products.length ? "AVAILABLE" : "NO_MATCH", products,
       observedAt, source: "EBAY_CATALOG_OFFICIAL_READONLY" }
-  } catch {
+  } catch (error) {
+    throwIfRateLimited(error)
     return { status: "REQUEST_FAILED", products: [], observedAt,
       source: "EBAY_CATALOG_OFFICIAL_READONLY" }
   } finally {
@@ -924,7 +935,8 @@ export async function getEbayTaxonomyListingIntelligence(
       TAXONOMY_CACHE_TTL_MS,
     )
     return value
-  } catch {
+  } catch (error) {
+    throwIfRateLimited(error)
     return empty("REQUEST_FAILED")
   } finally {
     token = ""

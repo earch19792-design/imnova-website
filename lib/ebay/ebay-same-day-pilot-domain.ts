@@ -60,6 +60,20 @@ export type SameDayCandidateDecision = SameDayCandidateInput & {
   nextHumanAction: string
 }
 
+const TODAY_RESOLVABLE_HARD_GATES = new Set([
+  "NEED_AUTHORIZED_PRODUCT_IMAGES",
+  "NEED_PACKAGE_WEIGHT",
+  "NEED_PACKAGE_DIMENSIONS",
+  "NEED_PACKAGE_WEIGHT_AND_DIMENSIONS",
+  "NEED_EBAY_TAXONOMY_CATEGORY",
+  "NEED_REQUIRED_EBAY_ITEM_ASPECTS",
+  "NEED_CONFIRMED_LUNA_STOCK_QUANTITY",
+  "NEED_EXACT_GTIN_OR_BRAND_MPN_MATCH",
+  "NEED_EBAY_EXACT_IDENTITY_CONFIRMATION",
+  "NEED_EXACT_PACK_INVENTORY_CONFIRMATION",
+  "NEED_UNIT_ECONOMICS_VALIDATION",
+])
+
 function normalized(value: unknown) {
   return typeof value === "string" || typeof value === "number"
     ? String(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
@@ -85,12 +99,12 @@ export function buildSameDayProductResearchQuery(input: SameDayCandidateInput) {
   }
   const identity = normalized([input.productTitle, input.variantTitle].filter(Boolean).join(" "))
   return {
-    strategy: "EXACT_NORMALIZED_IDENTITY", query: identity,
+    strategy: "EXACT_NORMALIZED_IDENTITY", query: identity.slice(0, 100),
     reason: "No existe GTIN o MPN confiable; se requiere corroborar la identidad normalizada antes de avanzar.",
   }
 }
 
-export function evaluateSameDayCandidate(input: SameDayCandidateInput): SameDayCandidateDecision {
+export function evaluateSameDayCandidate(input: SameDayCandidateInput, now = new Date()): SameDayCandidateDecision {
   const queryPlan = buildSameDayProductResearchQuery(input)
   const familyFingerprint = fingerprint([
     normalized(input.brand), normalized(input.mpn || input.model),
@@ -101,18 +115,19 @@ export function evaluateSameDayCandidate(input: SameDayCandidateInput): SameDayC
   const stockUnknown = input.supplierAvailable === true && input.supplierQuantity == null
   const economicsPlausible = input.economicsReady === true || Number(input.estimatedProfit ?? 0) > 0
   const supplierObservedAt = Date.parse(input.supplierObservedAt ?? "")
-  const lunaFresh = Number.isFinite(supplierObservedAt) && Date.now() - supplierObservedAt <= 72 * 60 * 60_000
-  const criticalHardGates = (input.hardGates ?? []).filter((gate) => ![
-    "NEED_AUTHORIZED_PRODUCT_IMAGES", "NEED_PACKAGE_WEIGHT", "NEED_PACKAGE_DIMENSIONS",
-    "NEED_PACKAGE_WEIGHT_AND_DIMENSIONS", "NEED_EBAY_TAXONOMY_CATEGORY",
-    "NEED_REQUIRED_EBAY_ITEM_ASPECTS",
-  ].includes(gate))
+  const lunaFresh = Number.isFinite(supplierObservedAt) && now.getTime() - supplierObservedAt <= 72 * 60 * 60_000
+  const normalizedIdentity = normalized([input.productTitle, input.variantTitle].filter(Boolean).join(" "))
+  const researchIdentitySufficient = /^\d{8,14}$/.test(normalized(input.gtin).replace(/\s/g, "")) ||
+    Boolean(normalized(input.brand) && normalized(input.mpn || input.model)) ||
+    normalizedIdentity.split(" ").filter((token) => token.length > 1).length >= 3
+  const criticalHardGates = (input.hardGates ?? []).filter((gate) => !TODAY_RESOLVABLE_HARD_GATES.has(gate))
   const localBlockers = [
     input.supplierAvailable === false ? "LUNA_OUT_OF_STOCK" : "",
     !(Number(input.supplierPrice) > 0) ? "LUNA_COST_MISSING" : "",
     !normalized(input.supplierSku) ? "SUPPLIER_SKU_MISSING" : "",
+    !normalized(input.supplierVariantId) ? "SUPPLIER_VARIANT_ID_MISSING" : "",
     !lunaFresh ? "LUNA_RECORD_STALE" : "",
-    Number(input.identityConfidence ?? 0) < 35 ? "IDENTITY_INSUFFICIENT" : "",
+    !researchIdentitySufficient ? "IDENTITY_INSUFFICIENT" : "",
     input.regulatedWithoutPath ? "REGULATORY_PATH_MISSING" : "",
     ["listed", "rejected", "archived"].includes(input.queueStatus ?? "") ? "OPPORTUNITY_NOT_ELIGIBLE" : "",
     ...criticalHardGates.map((gate) => `HARD_GATE:${gate}`),
@@ -149,8 +164,8 @@ export function evaluateSameDayCandidate(input: SameDayCandidateInput): SameDayC
     priority: Math.round(priority * 100) / 100, nextAutomatedAction, nextHumanAction }
 }
 
-export function selectSameDayQueue(inputs: SameDayCandidateInput[]) {
-  const evaluated = inputs.map(evaluateSameDayCandidate)
+export function selectSameDayQueue(inputs: SameDayCandidateInput[], now = new Date()) {
+  const evaluated = inputs.map((input) => evaluateSameDayCandidate(input, now))
     .filter((entry) => entry.eligibleForQueue)
     .sort((left, right) => right.priority - left.priority || left.candidateKey.localeCompare(right.candidateKey))
   const families = new Set<string>()
@@ -192,4 +207,45 @@ export function evaluateReadyForContent(input: {
 export function listingQuantityFromLuna(quantity: number | null, available: boolean) {
   if (!available) return { quantity: 0, recheckAfterSale: false }
   return { quantity: quantity && quantity > 0 ? Math.max(1, Math.floor(quantity)) : 1, recheckAfterSale: quantity == null }
+}
+
+export function buildSameDayLocalPreparationPackage(candidate: SameDayCandidateDecision, observedAt: string) {
+  const quantity = listingQuantityFromLuna(candidate.supplierQuantity ?? null, candidate.supplierAvailable === true)
+  return {
+    schemaVersion: "SELLER_HUB_LOCAL_PREPARATION_V1",
+    status: "BLOCKED_PENDING_VERIFIED_GATES" as const,
+    preparedAt: observedAt,
+    product: {
+      lunaProductName: candidate.productTitle,
+      variant: candidate.variantTitle ?? null,
+      supplierSku: candidate.supplierSku ?? null,
+      supplierVariantId: candidate.supplierVariantId ?? null,
+      gtin: candidate.gtin ?? null,
+    },
+    offer: {
+      listingQuantity: quantity.quantity || 1,
+      recheckAfterSale: quantity.recheckAfterSale,
+      supplierUnitCost: candidate.supplierPrice ?? null,
+      targetPrice: null,
+      finalPackIdentity: null,
+    },
+    market: {
+      activeExactCount: candidate.activeExactCount ?? 0,
+      soldExactCount: candidate.soldExactCount ?? 0,
+      evidenceFresh: candidate.evidenceFresh === true,
+      productResearchQuery: candidate.queryPlan.query,
+      broadSearchPresentedAsDemand: false,
+    },
+    unresolved: candidate.blockers,
+    intentionallyOmitted: [
+      "FINAL_TITLE", "DESCRIPTION", "ITEM_SPECIFICS", "FINAL_PRICE",
+      "SHIPPING_FACTS", "REGULATORY_CLAIMS", "IMAGE_PACKAGE",
+    ],
+    safety: {
+      openAiUsed: false,
+      ebayWriteUsed: false,
+      publishable: false,
+      competitorContentCopied: false,
+    },
+  }
 }

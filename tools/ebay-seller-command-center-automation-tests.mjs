@@ -65,10 +65,12 @@ test("queue RPCs are server-only and cannot be claimed by a normal authenticated
 })
 
 test("candidate failures are isolated and acknowledged independently", () => {
-  assert.match(scanService, /for \(const task of tasks\)/)
+  assert.match(scanService, /for \(let taskIndex = 0; taskIndex < tasks\.length; taskIndex \+= 1\)/)
   assert.match(scanService, /completeSellerScanTask\(supabase, task\.id, workerId/)
   assert.match(scanService, /failSellerScanTask\(supabase, task, workerId, error\)/)
   assert.match(scanService, /failures\.push/)
+  assert.match(scanService, /if \("quotaPause" in processed && processed\.quotaPause\)/)
+  assert.match(scanService, /pause_ebay_seller_scan_tasks_for_quota/)
   assert.match(scanService, /processClaimedCandidate\(supabase, run, task\)/)
   assert.match(scanService, /bestSellingCategoriesDue/)
   assert.match(scanService, /24 \* 60 \* 60 \* 1000/)
