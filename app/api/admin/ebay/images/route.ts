@@ -1,5 +1,5 @@
 export const runtime = "nodejs"
-export const maxDuration = 60
+export const maxDuration = 180
 
 import { createHash } from "node:crypto"
 import { NextResponse } from "next/server"
@@ -13,9 +13,12 @@ import {
   validateImageRightsEvidence,
 } from "@/lib/ebay/ebay-image-optimization-service"
 import {
+  buildSafeOpenAiBackgroundPlatePlan,
   composeAuthorizedEbayListingImageSet,
+  EBAY_LISTING_IMAGE_SLOTS,
   EBAY_LISTING_IMAGE_SET_VERSION,
   getListingImageFactoryConfiguration,
+  requestSafeOpenAiBackgroundPlate,
 } from "@/lib/ebay/ebay-listing-image-factory"
 import {
   EBAY_IMAGE_SOURCE_BUCKET,
@@ -66,6 +69,77 @@ function databaseErrorCode(error: unknown, fallback: string) {
 
 function candidatePath(candidateKey: string) {
   return createHash("sha256").update(candidateKey).digest("hex").slice(0, 24)
+}
+
+function sha256Text(value: string) {
+  return createHash("sha256").update(value).digest("hex")
+}
+
+function openAiImageRuntime() {
+  const capabilities = getListingImageFactoryConfiguration()
+  if (capabilities.aiGeneration !== "READY") {
+    throw new Error("EBAY_IMAGE_OPENAI_CONTEXT_NOT_READY")
+  }
+  const apiKey = process.env.OPENAI_API_KEY?.trim() ?? ""
+  const model = process.env.OPENAI_IMAGE_MODEL?.trim() ?? ""
+  if (!apiKey || !model) throw new Error("EBAY_IMAGE_OPENAI_CONTEXT_NOT_READY")
+  return { apiKey, model, dailyCallLimit: capabilities.dailyCallLimit }
+}
+
+function retryableOpenAiImageError(error: unknown) {
+  const code = safeError(error)
+  return code === "EBAY_IMAGE_OPENAI_TIMEOUT"
+    || code === "EBAY_IMAGE_OPENAI_NETWORK_FAILED"
+    || /^EBAY_IMAGE_OPENAI_HTTP_(429|5[0-9]{2})$/.test(code)
+}
+
+async function existingOpenAiImageSet(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  input: {
+    accountKey: string
+    actor: string
+    packageId: string
+    generationId: string
+    requestHash: string
+  },
+) {
+  const { data: contextAsset, error: contextError } = await supabase
+    .from("ebay_listing_image_assets")
+    .select("*")
+    .eq("account_key", input.accountKey)
+    .eq("created_by", input.actor)
+    .eq("listing_package_id", input.packageId)
+    .in("status", ["pending_review", "approved"])
+    .contains("transformation", {
+      listingGenerationId: input.generationId,
+      backgroundPlateRequestHash: input.requestHash,
+    })
+    .limit(1)
+    .maybeSingle()
+  if (contextError) throw new Error("EBAY_IMAGE_OPENAI_IDEMPOTENCY_CHECK_FAILED")
+  if (!contextAsset) return null
+  const { data: assets, error: assetsError } = await supabase
+    .from("ebay_listing_image_assets")
+    .select("*")
+    .eq("account_key", input.accountKey)
+    .eq("created_by", input.actor)
+    .eq("listing_package_id", input.packageId)
+    .eq("transformation_version", EBAY_LISTING_IMAGE_SET_VERSION)
+    .in("status", ["pending_review", "approved"])
+    .contains("transformation", { listingGenerationId: input.generationId })
+    .order("position", { ascending: true })
+    .limit(24)
+  if (assetsError) throw new Error("EBAY_IMAGE_OPENAI_IDEMPOTENCY_CHECK_FAILED")
+  const selected = EBAY_LISTING_IMAGE_SLOTS.map((slot) => {
+    if (slot === "USE_CONTEXT") return contextAsset
+    return (assets ?? []).find((asset) =>
+      record(asset.transformation).slot === slot
+    ) ?? null
+  })
+  if (selected.some((asset) => !asset)) {
+    throw new Error("EBAY_IMAGE_OPENAI_PARTIAL_SET_REVIEW_REQUIRED")
+  }
+  return selected as JsonRecord[]
 }
 
 function supportedUpload(file: File) {
@@ -239,7 +313,8 @@ export async function GET(req: Request) {
         authorizedUrl: true,
         humanApprovalRequired: true,
         pendingOutputsPrivate: true,
-        generativeAiEnabled: false,
+        generativeAiEnabled:
+          getListingImageFactoryConfiguration().aiGeneration === "READY",
         sixImageComposition: true,
         listingImageFactory: getListingImageFactoryConfiguration(),
         reviewActions: ["APPROVE", "REGENERATE", "CORRECT", "REJECT"],
@@ -272,7 +347,15 @@ export async function POST(req: Request) {
     const action = text(body.action, 40)
     const supabase = getSupabaseAdminClient()
 
-    if (action === "compose_set_url" || action === "compose_set_upload") {
+    const composeSetAction = [
+      "compose_set_url",
+      "compose_set_upload",
+      "compose_ai_set_url",
+      "compose_ai_set_upload",
+    ].includes(action)
+    if (composeSetAction) {
+      const aiContextRequested = action === "compose_ai_set_url"
+        || action === "compose_ai_set_upload"
       const candidateKey = text(body.candidateKey, 300)
       const packageId = uuid(body.listingPackageId)
       const generationId = uuid(body.generationId)
@@ -297,7 +380,7 @@ export async function POST(req: Request) {
       let sourceUrl: string | null = null
       let sourceContentType = "image/jpeg"
       let sourceKind: "authorized_url" | "owned_upload"
-      if (action === "compose_set_url") {
+      if (action === "compose_set_url" || action === "compose_ai_set_url") {
         const fetched = await fetchAuthorizedImageSource(body.sourceUrl)
         sourceBuffer = fetched.buffer
         sourceUrl = fetched.sourceUrl
@@ -316,10 +399,137 @@ export async function POST(req: Request) {
         sourceKind = "owned_upload"
       }
       const sourceMetadata = await sharp(sourceBuffer).metadata()
-      const compositions = await composeAuthorizedEbayListingImageSet(
-        sourceBuffer,
-        approved.factoryInput,
-      )
+      const aiRuntime = aiContextRequested ? openAiImageRuntime() : null
+      const aiPlan = aiRuntime
+        ? buildSafeOpenAiBackgroundPlatePlan(approved.factoryInput, aiRuntime.model)
+        : null
+      const generationIdForPlan = uuid(approved.generation.id)
+      if (!generationIdForPlan) throw new Error("EBAY_IMAGE_GENERATION_ID_INVALID")
+      if (aiPlan) {
+        const existing = await existingOpenAiImageSet(supabase, {
+          accountKey,
+          actor,
+          packageId,
+          generationId: generationIdForPlan,
+          requestHash: aiPlan.requestHash,
+        })
+        if (existing) {
+          return NextResponse.json({
+            success: true,
+            setVersion: EBAY_LISTING_IMAGE_SET_VERSION,
+            assets: existing,
+            created: 0,
+            reused: existing.length,
+            expected: 6,
+            status: "PENDING_HUMAN_REVIEW",
+            sourcePolicy: "AUTHORIZED_PRODUCT_IMAGE_ONLY",
+            openAiBackgroundPlates: 0,
+            openAiResult: "REUSED_IDEMPOTENT_SET",
+            competitorImagesUsed: 0,
+            ebayWrites: 0,
+          })
+        }
+      }
+      let aiRunId = ""
+      let aiLeaseToken = ""
+      let providerOutputReceived = false
+      let backgroundOutputSha256: string | null = null
+      let backgroundProviderRequestId: string | null = null
+      let backgroundUsage = {
+        inputTokens: null as number | null,
+        outputTokens: null as number | null,
+        totalTokens: null as number | null,
+      }
+      let compositions
+      try {
+        if (aiPlan && aiRuntime) {
+          aiLeaseToken = crypto.randomUUID()
+          const idempotencyKeyHash = sha256Text([
+            accountKey,
+            actor,
+            packageId,
+            generationIdForPlan,
+            aiPlan.requestHash,
+          ].join(":"))
+          const { data: claimData, error: claimError } = await supabase.rpc(
+            "claim_ebay_openai_image_context_run",
+            {
+              p_account_key: accountKey,
+              p_actor: actor,
+              p_listing_package_id: packageId,
+              p_listing_generation_id: generationIdForPlan,
+              p_identity_fingerprint: approved.factoryInput.identityFingerprint,
+              p_context_kind: aiPlan.context,
+              p_model: aiPlan.model,
+              p_plate_version: aiPlan.version,
+              p_prompt_hash: aiPlan.promptHash,
+              p_request_hash: aiPlan.requestHash,
+              p_idempotency_key_hash: idempotencyKeyHash,
+              p_lease_token: aiLeaseToken,
+              p_daily_call_limit: aiRuntime.dailyCallLimit,
+            },
+          )
+          if (claimError) {
+            throw new Error(databaseErrorCode(
+              claimError,
+              "EBAY_IMAGE_OPENAI_CLAIM_FAILED",
+            ))
+          }
+          const claim = record(claimData)
+          aiRunId = uuid(claim.runId)
+          if (claim.claimed !== true || !aiRunId) {
+            if (claim.status === "COMPLETED") {
+              const existing = await existingOpenAiImageSet(supabase, {
+                accountKey,
+                actor,
+                packageId,
+                generationId: generationIdForPlan,
+                requestHash: aiPlan.requestHash,
+              })
+              if (existing) {
+                return NextResponse.json({
+                  success: true,
+                  setVersion: EBAY_LISTING_IMAGE_SET_VERSION,
+                  assets: existing,
+                  created: 0,
+                  reused: existing.length,
+                  expected: 6,
+                  status: "PENDING_HUMAN_REVIEW",
+                  sourcePolicy: "AUTHORIZED_PRODUCT_IMAGE_ONLY",
+                  openAiBackgroundPlates: 0,
+                  openAiResult: "REUSED_IDEMPOTENT_SET",
+                  competitorImagesUsed: 0,
+                  ebayWrites: 0,
+                })
+              }
+            }
+            throw new Error("EBAY_IMAGE_OPENAI_RUN_NOT_CLAIMED")
+          }
+          const backgroundPlate = await requestSafeOpenAiBackgroundPlate({
+            plan: aiPlan,
+            apiKey: aiRuntime.apiKey,
+          })
+          providerOutputReceived = true
+          backgroundOutputSha256 = backgroundPlate.outputSha256
+          backgroundProviderRequestId = backgroundPlate.providerRequestId
+          backgroundUsage = backgroundPlate.usage
+          try {
+            compositions = await composeAuthorizedEbayListingImageSet(
+              sourceBuffer,
+              approved.factoryInput,
+              backgroundPlate,
+            )
+          } finally {
+            // The standalone provider output is never persisted or returned.
+            // Only the locally composited review asset survives.
+            backgroundPlate.output.fill(0)
+          }
+        } else {
+          compositions = await composeAuthorizedEbayListingImageSet(
+            sourceBuffer,
+            approved.factoryInput,
+          )
+        }
       const roleBySlot: Record<string, string> = {
         MAIN_WHITE_BACKGROUND: "main",
         PACK_AND_COUNT: "detail",
@@ -402,6 +612,27 @@ export async function POST(req: Request) {
         }
         created.push(row)
       }
+      if (aiRunId && aiLeaseToken && backgroundOutputSha256) {
+        const { error: completionError } = await supabase.rpc(
+          "complete_ebay_openai_image_context_run",
+          {
+            p_run_id: aiRunId,
+            p_actor: actor,
+            p_lease_token: aiLeaseToken,
+            p_output_sha256: backgroundOutputSha256,
+            p_provider_request_id: backgroundProviderRequestId ?? "",
+            p_input_tokens: backgroundUsage.inputTokens,
+            p_output_tokens: backgroundUsage.outputTokens,
+            p_total_tokens: backgroundUsage.totalTokens,
+          },
+        )
+        if (completionError) {
+          throw new Error(databaseErrorCode(
+            completionError,
+            "EBAY_IMAGE_OPENAI_COMPLETION_FAILED",
+          ))
+        }
+      }
       return NextResponse.json({
         success: true,
         setVersion: EBAY_LISTING_IMAGE_SET_VERSION,
@@ -411,9 +642,29 @@ export async function POST(req: Request) {
         expected: 6,
         status: "PENDING_HUMAN_REVIEW",
         sourcePolicy: "AUTHORIZED_PRODUCT_IMAGE_ONLY",
+        openAiBackgroundPlates: aiContextRequested ? 1 : 0,
+        openAiResult: aiContextRequested ? "GENERATED_BACKGROUND_ONLY" : "NOT_USED",
         competitorImagesUsed: 0,
         ebayWrites: 0,
       })
+      } catch (error) {
+        if (aiRunId && aiLeaseToken) {
+          try {
+            await supabase.rpc("fail_ebay_openai_image_context_run", {
+              p_run_id: aiRunId,
+              p_actor: actor,
+              p_lease_token: aiLeaseToken,
+              p_error_code: safeError(error),
+              // Once pixels were returned, fail closed instead of silently
+              // purchasing a duplicate generation on retry.
+              p_retryable: !providerOutputReceived && retryableOpenAiImageError(error),
+            })
+          } catch {
+            // The original sanitized pipeline failure remains authoritative.
+          }
+        }
+        throw error
+      }
     }
 
     if (action === "optimize_url" || action === "optimize_upload") {

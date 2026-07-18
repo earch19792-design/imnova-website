@@ -9,6 +9,15 @@ import { EBAY_IMAGE_OUTPUT_SIZE, optimizeAuthorizedEbayMainImage } from "./ebay-
 
 export const EBAY_LISTING_IMAGE_SET_VERSION =
   "EBAY_LISTING_IMAGE_COMPOSITION_SET_V1"
+export const EBAY_OPENAI_BACKGROUND_PLATE_VERSION =
+  "EBAY_OPENAI_BACKGROUND_PLATE_V1"
+export const EBAY_OPENAI_IMAGE_PREVIEW_BRANCH =
+  "feature/centralize-ebay-mobile-command-center"
+
+const OPENAI_IMAGE_GENERATION_ENDPOINT =
+  "https://api.openai.com/v1/images/generations"
+const OPENAI_BACKGROUND_PLATE_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+const OPENAI_IMAGE_MODELS = new Set(["gpt-image-2"])
 
 export const EBAY_LISTING_IMAGE_SLOTS = [
   "MAIN_WHITE_BACKGROUND",
@@ -58,13 +67,17 @@ export type EbayListingImageComposition = {
   transformation: {
     version: string
     slot: EbayListingImageSlot
-    generativeAiUsed: false
+    generativeAiUsed: boolean
     originalPackagePixelsPreserved: true
     competitorImageUsed: false
     verifiedFactsOnly: true
+    backgroundPlateVersion?: string
+    backgroundPlateRequestHash?: string
+    backgroundPlateOutputSha256?: string
+    backgroundPlateProviderRequestId?: string | null
   }
   qa: {
-    automaticStatus: "PASSED"
+    automaticStatus: "PASSED" | "PARTIAL"
     format: "jpeg"
     dimensionsValid: true
     sourceHashRecorded: true
@@ -76,7 +89,39 @@ export type EbayListingImageComposition = {
   }
 }
 
+export type EbayOpenAiBackgroundPlatePlan = {
+  version: typeof EBAY_OPENAI_BACKGROUND_PLATE_VERSION
+  context: "CLEAN_TECHNICAL_WORKBENCH" | "NEUTRAL_VANITY" |
+    "CLEAN_HOME_SHELF" | "CLEAN_KITCHEN_COUNTER" | "NEUTRAL_STUDIO"
+  prompt: string
+  promptHash: string
+  requestHash: string
+  model: string
+  imageCount: 1
+  quality: "low"
+  size: "1024x1024"
+  sendsProductBytes: false
+  sendsProductUrl: false
+  sendsCompetitorData: false
+}
+
+export type EbayOpenAiBackgroundPlate = {
+  output: Buffer
+  outputSha256: string
+  providerRequestId: string | null
+  usage: {
+    inputTokens: number | null
+    outputTokens: number | null
+    totalTokens: number | null
+  }
+  plan: EbayOpenAiBackgroundPlatePlan
+}
+
 function sha256(value: Buffer) {
+  return createHash("sha256").update(value).digest("hex")
+}
+
+function sha256Text(value: string) {
   return createHash("sha256").update(value).digest("hex")
 }
 
@@ -171,6 +216,263 @@ async function composeInformationImage(
     .toBuffer()
 }
 
+function safeContextForFacts(facts: EbayListingImageFactoryInput["facts"]) {
+  const identity = facts.normalizedProductName.toLocaleLowerCase("en-US")
+  if (/battery|switch|adapter|connector|charger|cable|automotive|marine/.test(identity)) {
+    return "CLEAN_TECHNICAL_WORKBENCH" as const
+  }
+  if (/skin|face|beauty|cosmetic|hair|shave|derma/.test(identity)) {
+    return "NEUTRAL_VANITY" as const
+  }
+  if (/clean|wipe|household|laundry|kitchen|home/.test(identity)) {
+    return "CLEAN_HOME_SHELF" as const
+  }
+  if (/food|coffee|drink|nutrition|supplement|snack/.test(identity)) {
+    return "CLEAN_KITCHEN_COUNTER" as const
+  }
+  return "NEUTRAL_STUDIO" as const
+}
+
+function contextDescription(context: EbayOpenAiBackgroundPlatePlan["context"]) {
+  return ({
+    CLEAN_TECHNICAL_WORKBENCH:
+      "a clean neutral technical workbench with soft daylight",
+    NEUTRAL_VANITY:
+      "a clean neutral vanity surface with soft natural daylight",
+    CLEAN_HOME_SHELF:
+      "a clean neutral home shelf with soft natural daylight",
+    CLEAN_KITCHEN_COUNTER:
+      "a clean neutral kitchen counter with soft natural daylight",
+    NEUTRAL_STUDIO:
+      "a clean neutral commercial studio surface with soft daylight",
+  } satisfies Record<EbayOpenAiBackgroundPlatePlan["context"], string>)[context]
+}
+
+export function buildSafeOpenAiBackgroundPlatePlan(
+  value: unknown,
+  model: string,
+) {
+  const input = validateListingImageFactoryInput(value)
+  if (!OPENAI_IMAGE_MODELS.has(model)) {
+    throw new Error("EBAY_IMAGE_OPENAI_MODEL_NOT_ALLOWED")
+  }
+  const context = safeContextForFacts(input.facts)
+  // Intentionally omit product name, brand, pack, variant and all source data.
+  // The provider creates only an empty scene; authorized product pixels are
+  // composited locally after the response is discarded.
+  const prompt = [
+    "Create a square unbranded commercial-photography BACKGROUND PLATE ONLY.",
+    `Scene: ${contextDescription(context)}.`,
+    "Keep the central 60 percent empty with a matte-white display surface.",
+    "Do not include any product, package, container, label, logo, brand, text,",
+    "symbol, watermark, person, hand, food, medicine, claim, measurement or quantity.",
+    "Use realistic neutral lighting and a restrained professional composition.",
+    "An exact authorized product photograph will be composited locally later.",
+  ].join(" ")
+  const promptHash = sha256Text(prompt)
+  const requestHash = sha256Text(JSON.stringify({
+    version: EBAY_OPENAI_BACKGROUND_PLATE_VERSION,
+    identityFingerprint: input.identityFingerprint,
+    context,
+    model,
+    promptHash,
+    imageCount: 1,
+    quality: "low",
+    size: "1024x1024",
+  }))
+  return {
+    version: EBAY_OPENAI_BACKGROUND_PLATE_VERSION,
+    context,
+    prompt,
+    promptHash,
+    requestHash,
+    model,
+    imageCount: 1,
+    quality: "low",
+    size: "1024x1024",
+    sendsProductBytes: false,
+    sendsProductUrl: false,
+    sendsCompetitorData: false,
+  } satisfies EbayOpenAiBackgroundPlatePlan
+}
+
+function finiteUsage(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : null
+}
+
+async function readOpenAiResponseWithLimit(response: Response) {
+  const declared = Number(response.headers.get("content-length"))
+  if (Number.isFinite(declared) && declared > OPENAI_BACKGROUND_PLATE_MAX_RESPONSE_BYTES) {
+    throw new Error("EBAY_IMAGE_OPENAI_RESPONSE_TOO_LARGE")
+  }
+  if (!response.body) throw new Error("EBAY_IMAGE_OPENAI_RESPONSE_MISSING")
+  const reader = response.body.getReader()
+  const chunks: Buffer[] = []
+  let total = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value?.byteLength) continue
+      total += value.byteLength
+      if (total > OPENAI_BACKGROUND_PLATE_MAX_RESPONSE_BYTES) {
+        await reader.cancel("EBAY_IMAGE_OPENAI_RESPONSE_TOO_LARGE")
+        throw new Error("EBAY_IMAGE_OPENAI_RESPONSE_TOO_LARGE")
+      }
+      chunks.push(Buffer.from(value))
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  return Buffer.concat(chunks, total).toString("utf8")
+}
+
+export async function requestSafeOpenAiBackgroundPlate(input: {
+  plan: EbayOpenAiBackgroundPlatePlan
+  apiKey: string
+  fetchImpl?: typeof fetch
+}) {
+  if (!OPENAI_IMAGE_MODELS.has(input.plan.model)) {
+    throw new Error("EBAY_IMAGE_OPENAI_MODEL_NOT_ALLOWED")
+  }
+  if (!/^sk-[A-Za-z0-9_-]{8,}$/.test(input.apiKey.trim())) {
+    throw new Error("EBAY_IMAGE_OPENAI_KEY_MISSING")
+  }
+  const controller = new AbortController()
+  const timeout = setTimeout(
+    () => controller.abort("EBAY_IMAGE_OPENAI_TIMEOUT"),
+    130_000,
+  )
+  try {
+    const response = await (input.fetchImpl ?? fetch)(
+      OPENAI_IMAGE_GENERATION_ENDPOINT,
+      {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${input.apiKey.trim()}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: input.plan.model,
+          prompt: input.plan.prompt,
+          n: 1,
+          size: "1024x1024",
+          quality: "low",
+          output_format: "jpeg",
+          output_compression: 85,
+          background: "opaque",
+          moderation: "auto",
+        }),
+        signal: controller.signal,
+      },
+    )
+    const responseText = await readOpenAiResponseWithLimit(response)
+    if (!response.ok) {
+      throw new Error(`EBAY_IMAGE_OPENAI_HTTP_${response.status}`)
+    }
+    let payload: unknown
+    try {
+      payload = JSON.parse(responseText)
+    } catch {
+      throw new Error("EBAY_IMAGE_OPENAI_RESPONSE_INVALID")
+    }
+    const responseRecord = payload && typeof payload === "object"
+      ? payload as Record<string, unknown>
+      : {}
+    const data = Array.isArray(responseRecord.data) ? responseRecord.data : []
+    const first = data[0] && typeof data[0] === "object"
+      ? data[0] as Record<string, unknown>
+      : {}
+    if (data.length !== 1 || typeof first.b64_json !== "string" || first.url) {
+      throw new Error("EBAY_IMAGE_OPENAI_RESPONSE_INVALID")
+    }
+    const raw = Buffer.from(first.b64_json, "base64")
+    if (!raw.length || raw.length > 12 * 1024 * 1024) {
+      raw.fill(0)
+      throw new Error("EBAY_IMAGE_OPENAI_OUTPUT_INVALID")
+    }
+    let output: Buffer
+    try {
+      const metadata = await sharp(raw).metadata()
+      if (!metadata.width || !metadata.height || metadata.width !== metadata.height) {
+        throw new Error("EBAY_IMAGE_OPENAI_OUTPUT_INVALID")
+      }
+      output = await sharp(raw)
+        .resize(1600, 1600, { fit: "cover" })
+        .jpeg({ quality: 90, chromaSubsampling: "4:4:4", mozjpeg: true })
+        .toBuffer()
+    } finally {
+      raw.fill(0)
+    }
+    const usage = responseRecord.usage && typeof responseRecord.usage === "object"
+      ? responseRecord.usage as Record<string, unknown>
+      : {}
+    const providerRequestId = response.headers.get("x-request-id")
+    return {
+      output,
+      outputSha256: sha256(output),
+      providerRequestId: providerRequestId && /^[A-Za-z0-9_-]{1,200}$/.test(providerRequestId)
+        ? providerRequestId
+        : null,
+      usage: {
+        inputTokens: finiteUsage(usage.input_tokens),
+        outputTokens: finiteUsage(usage.output_tokens),
+        totalTokens: finiteUsage(usage.total_tokens),
+      },
+      plan: input.plan,
+    } satisfies EbayOpenAiBackgroundPlate
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("EBAY_IMAGE_OPENAI_TIMEOUT")
+    if (error instanceof Error && /^[A-Z0-9_:.-]+$/.test(error.message)) {
+      throw error
+    }
+    throw new Error("EBAY_IMAGE_OPENAI_NETWORK_FAILED")
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function contextOverlaySvg(facts: EbayListingImageFactoryInput["facts"]) {
+  const product = wrap(titleCase(facts.normalizedProductName) ?? facts.normalizedProductName)
+  const lines = product.map((line, index) =>
+    `<text x="800" y="${1370 + index * 58}" text-anchor="middle" ` +
+    `font-family="Arial,Helvetica,sans-serif" font-size="42" font-weight="600" ` +
+    `fill="#172033">${escapeXml(line)}</text>`,
+  ).join("")
+  return Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1600">` +
+    `<rect x="170" y="1260" width="1260" height="280" rx="40" fill="#ffffff" ` +
+    `fill-opacity="0.96" stroke="#d8e0ed" stroke-width="4"/>${lines}</svg>`,
+  )
+}
+
+async function composeContextImage(
+  normalizedMain: Buffer,
+  facts: EbayListingImageFactoryInput["facts"],
+  background: EbayOpenAiBackgroundPlate,
+) {
+  const packageLayer = await sharp(normalizedMain)
+    .resize(860, 860, { fit: "contain", background: "#ffffff" })
+    .jpeg({ quality: 94, chromaSubsampling: "4:4:4" })
+    .toBuffer()
+  const productPanel = Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000">' +
+    '<rect x="0" y="0" width="1000" height="1000" rx="52" fill="#ffffff" ' +
+    'fill-opacity="0.96" stroke="#d8e0ed" stroke-width="4"/></svg>',
+  )
+  return sharp(background.output)
+    .composite([
+      { input: productPanel, left: 300, top: 130 },
+      { input: packageLayer, left: 370, top: 200 },
+      { input: contextOverlaySvg(facts), left: 0, top: 0 },
+    ])
+    .jpeg({ quality: 92, chromaSubsampling: "4:4:4", mozjpeg: true })
+    .toBuffer()
+}
+
 export function validateListingImageFactoryInput(value: unknown) {
   const input = inputSchema.parse(value)
   const slots = input.briefs.map((brief) => brief.slot)
@@ -186,6 +488,7 @@ export function validateListingImageFactoryInput(value: unknown) {
 export async function composeAuthorizedEbayListingImageSet(
   source: Buffer,
   value: unknown,
+  backgroundPlate: EbayOpenAiBackgroundPlate | null = null,
 ): Promise<EbayListingImageComposition[]> {
   const input = validateListingImageFactoryInput(value)
   const main = await optimizeAuthorizedEbayMainImage(source)
@@ -193,7 +496,9 @@ export async function composeAuthorizedEbayListingImageSet(
   for (const slot of EBAY_LISTING_IMAGE_SLOTS) {
     const output = slot === "MAIN_WHITE_BACKGROUND"
       ? main.output
-      : await composeInformationImage(main.output, slot, input.facts)
+      : slot === "USE_CONTEXT" && backgroundPlate
+        ? await composeContextImage(main.output, input.facts, backgroundPlate)
+        : await composeInformationImage(main.output, slot, input.facts)
     const metadata = await sharp(output).metadata()
     if (
       metadata.format !== "jpeg" ||
@@ -211,13 +516,21 @@ export async function composeAuthorizedEbayListingImageSet(
       transformation: {
         version: EBAY_LISTING_IMAGE_SET_VERSION,
         slot,
-        generativeAiUsed: false,
+        generativeAiUsed: slot === "USE_CONTEXT" && Boolean(backgroundPlate),
         originalPackagePixelsPreserved: true,
         competitorImageUsed: false,
         verifiedFactsOnly: true,
+        ...(slot === "USE_CONTEXT" && backgroundPlate ? {
+          backgroundPlateVersion: backgroundPlate.plan.version,
+          backgroundPlateRequestHash: backgroundPlate.plan.requestHash,
+          backgroundPlateOutputSha256: backgroundPlate.outputSha256,
+          backgroundPlateProviderRequestId: backgroundPlate.providerRequestId,
+        } : {}),
       },
       qa: {
-        automaticStatus: "PASSED",
+        automaticStatus: slot === "USE_CONTEXT" && backgroundPlate
+          ? "PARTIAL"
+          : "PASSED",
         format: "jpeg",
         dimensionsValid: true,
         sourceHashRecorded: true,
@@ -232,6 +545,9 @@ export async function composeAuthorizedEbayListingImageSet(
           "NO_LABEL_OR_LOGO_ALTERATION",
           "NO_UNINCLUDED_ELEMENTS",
           "CLAIMS_AND_TEXT_APPROVED",
+          ...(slot === "USE_CONTEXT" && backgroundPlate
+            ? ["GENERATED_BACKGROUND_HAS_NO_PRODUCT_BRAND_TEXT_OR_PEOPLE"]
+            : []),
         ],
       },
     })
@@ -248,18 +564,40 @@ export function getListingImageFactoryConfiguration(environment = process.env) {
     staging = false
   }
   const preview = environment.VERCEL_ENV === "preview"
+  const authorizedBranch =
+    environment.VERCEL_GIT_COMMIT_REF === EBAY_OPENAI_IMAGE_PREVIEW_BRANCH
   const keyPresent = Boolean(environment.OPENAI_API_KEY?.trim())
   const enabled = environment.OPENAI_IMAGE_FACTORY_ENABLED?.trim() === "true"
-  const modelPresent = Boolean(environment.OPENAI_IMAGE_MODEL?.trim())
+    && environment.OPENAI_IMAGE_CONTEXT_PLATE_ENABLED?.trim() === "true"
+  const model = environment.OPENAI_IMAGE_MODEL?.trim() ?? ""
+  const modelPresent = Boolean(model)
+  const modelAllowed = OPENAI_IMAGE_MODELS.has(model)
+  const parsedDailyLimit = Number(environment.OPENAI_IMAGE_DAILY_CALL_LIMIT)
+  const dailyCallLimit = Number.isInteger(parsedDailyLimit)
+    ? Math.min(20, Math.max(1, parsedDailyLimit))
+    : 5
+  const aiGeneration = !enabled
+    ? "DISABLED" as const
+    : !preview || !staging || !authorizedBranch
+      ? "BLOCKED_ENVIRONMENT" as const
+      : !keyPresent || !modelAllowed
+        ? "MISSING" as const
+        : "READY" as const
   return {
     deterministicComposition: preview && staging ? "READY" as const : "BLOCKED" as const,
-    aiGeneration: preview && staging && keyPresent && enabled && modelPresent
-      ? "READY" as const
-      : enabled ? "MISSING" as const : "DISABLED" as const,
+    aiGeneration,
     openAiKey: keyPresent ? "PRESENT" as const : "MISSING" as const,
-    model: modelPresent ? "PRESENT" as const : "MISSING" as const,
+    model: modelPresent
+      ? modelAllowed ? "ALLOWED" as const : "NOT_ALLOWED" as const
+      : "MISSING" as const,
+    dailyCallLimit,
+    maxContextPlatesPerSet: 1,
+    imageQuality: "low" as const,
+    contextPlateFeatureEnabled: enabled,
     preview,
     staging,
+    authorizedBranch,
+    expectedBranch: EBAY_OPENAI_IMAGE_PREVIEW_BRANCH,
     sourceRequired: true,
     humanApprovalRequired: true,
     competitorImagesAllowed: false,
