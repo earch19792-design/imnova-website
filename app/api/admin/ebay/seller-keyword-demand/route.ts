@@ -6,6 +6,7 @@ import {
   getEbayTaxonomyListingIntelligence,
   runEbaySellerKeywordDemandValidation,
 } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
+import { getEbayReadonlyRateLimitMetadata } from "@/lib/ebay/ebay-readonly-rate-limit"
 import { buildEbayLunaOpportunityAssessment } from "@/lib/ebay/ebay-luna-demand-opportunity-engine"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { buildWinnerEvidenceDecisionPackage } from "@/lib/ebay/ebay-winner-evidence-v2"
@@ -232,6 +233,16 @@ export async function POST(req: Request) {
     })
   } catch (error) {
     const code = safeErrorCode(error)
+    const rateLimit = getEbayReadonlyRateLimitMetadata(error)
+    if (rateLimit) {
+      const retryAfterSeconds = rateLimit.retryAfterSeconds ?? 60
+      return NextResponse.json({
+        success: false,
+        error: code,
+        retryAfterSeconds,
+        retryAt: new Date(Date.now() + retryAfterSeconds * 1_000).toISOString(),
+      }, { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } })
+    }
     const status = code === "EBAY_READONLY_ENV_MISSING" ? 503 : 502
     return NextResponse.json(
       { success: false, error: code },

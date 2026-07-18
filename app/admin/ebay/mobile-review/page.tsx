@@ -260,6 +260,7 @@ export default function EbayMobileReviewPage() {
   const [decisionPackageReadbackVerified, setDecisionPackageReadbackVerified] = useState(false)
   const [sellerKeywordDemandLoading, setSellerKeywordDemandLoading] = useState(false)
   const [sellerKeywordDemandError, setSellerKeywordDemandError] = useState("")
+  const [sellerKeywordRetryAt, setSellerKeywordRetryAt] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadState, setLoadState] = useState("LOADING")
   const [loadMessage, setLoadMessage] = useState("Cargando Market Radar read-only…")
@@ -808,7 +809,8 @@ export default function EbayMobileReviewPage() {
   }
 
   const runSellerKeywordDemandValidation = async () => {
-    if (!selectedRadarCandidate || sellerKeywordDemandLoading || !loop1AnalysisGate.analysisEnabled) return
+    if (!selectedRadarCandidate || sellerKeywordDemandLoading || !loop1AnalysisGate.analysisEnabled ||
+      sellerKeywordRetryAt && Date.parse(sellerKeywordRetryAt) > Date.now()) return
     setSellerKeywordDemandLoading(true)
     setSellerKeywordDemandError("")
     setSellerKeywordDemand(null)
@@ -855,6 +857,15 @@ export default function EbayMobileReviewPage() {
           restrictionGuards: marketValidation.restrictionGuards,
         }),
       })
+      if (response.status === 429) {
+        const retryAfterHeader = Number(response.headers.get("Retry-After"))
+        const retryAfterSeconds = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+          ? retryAfterHeader : 60
+        const retryAt = new Date(Date.now() + retryAfterSeconds * 1_000).toISOString()
+        setSellerKeywordRetryAt(retryAt)
+        setSellerKeywordDemandError(`eBay alcanzó su límite temporal de lectura. Seller OS pausó los reintentos hasta ${new Intl.DateTimeFormat("es", { timeStyle: "short" }).format(new Date(retryAt))}. No se perdió el producto ni debes usar la búsqueda pública como sustituto.`)
+        return
+      }
       const payload = await readMobileReviewJson<{
         success?: boolean
         error?: string
@@ -869,6 +880,7 @@ export default function EbayMobileReviewPage() {
         throw new Error(getMobileReviewPayloadError(payload, "EBAY_READONLY_MARKET_VALIDATION_FAILED"))
       }
       setSellerKeywordDemand(payload.report)
+      setSellerKeywordRetryAt(null)
       setOpportunityAssessment(payload.opportunityAssessment ?? null)
       setVisualWinnerEvidence(payload.visualWinnerEvidence ?? null)
       setWinnerDecisionPackage(payload.winnerDecisionPackage ?? null)
@@ -879,6 +891,12 @@ export default function EbayMobileReviewPage() {
       )
     } catch (error) {
       const code = getMobileReviewRequestError(error, "EBAY_READONLY_MARKET_VALIDATION_FAILED")
+      if (code.includes("EBAY_READONLY_GET_429")) {
+        const retryAt = new Date(Date.now() + 60_000).toISOString()
+        setSellerKeywordRetryAt(retryAt)
+        setSellerKeywordDemandError("eBay alcanzó su límite temporal de lectura. Seller OS esperará un minuto antes de permitir otro intento.")
+        return
+      }
       setSellerKeywordDemandError(
         code === "EBAY_READONLY_ENV_MISSING"
           ? "EBAY_READONLY_ENV_MISSING · Las credenciales read-only de eBay todavía no están configuradas en este Preview."
@@ -890,6 +908,17 @@ export default function EbayMobileReviewPage() {
       setSellerKeywordDemandLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (!sellerKeywordRetryAt) return
+    const delay = Math.max(0, Date.parse(sellerKeywordRetryAt) - Date.now())
+    const timer = window.setTimeout(() => {
+      setSellerKeywordRetryAt(null)
+      setSellerKeywordDemandError("")
+      setLastActionMessage("La pausa de eBay terminó. Ya puedes reintentar el análisis read-only.")
+    }, Math.min(delay, 2_147_000_000))
+    return () => window.clearTimeout(timer)
+  }, [sellerKeywordRetryAt])
 
   const readPersistedDecisionPackage = async (
     packageId: string,
@@ -1070,6 +1099,8 @@ export default function EbayMobileReviewPage() {
   const lunaMissingCount = selectedRadarCandidate
     ? Number(!state.stockQuantityConfirmed) + Number(!lunaPriceConfirmed) + Number(!state.imageConfirmed)
     : 0
+  const ebayRateLimitActive = Boolean(sellerKeywordRetryAt &&
+    Date.parse(sellerKeywordRetryAt) > Date.now())
   const journeyStep: SellerJourneyStep = !selectedRadarCandidate
     ? 1
     : lunaMissingCount > 0
@@ -1083,7 +1114,9 @@ export default function EbayMobileReviewPage() {
       ? { title: "Confirma los datos de Luna", instruction: "Ahora completa únicamente los campos rojos. La validación de eBay seguirá bloqueada hasta terminar este paso.", actionLabel: "Ir a los campos de Luna", missingCount: lunaMissingCount, pendingLabel: `${lunaMissingCount} dato${lunaMissingCount === 1 ? "" : "s"} de Luna pendiente${lunaMissingCount === 1 ? "" : "s"}`, systemTask: "Mantiene vinculada la variante exacta y protege contra cambios de pack o tamaño.", userTask: "Confirma stock, costo e imagen en Luna." }
       : journeyStep === 3
         ? !sellerKeywordDemand
-          ? { title: "Valida el mercado en eBay", instruction: "Luna ya está completo. Seller OS puede consultar los comparables oficiales sin escribir ni publicar.", actionLabel: "Analizar mercado eBay", missingCount: 1, pendingLabel: "Falta analizar eBay", systemTask: "Comparará identidad, demanda, precio, categoría y economía.", userTask: "Pulsa una vez para iniciar el análisis automático." }
+          ? ebayRateLimitActive
+            ? { title: "eBay está en pausa temporal", instruction: `eBay limitó las lecturas. Seller OS bloqueó nuevos intentos hasta ${new Intl.DateTimeFormat("es", { timeStyle: "short" }).format(new Date(sellerKeywordRetryAt!))} para no agravar la cuota.`, actionLabel: "Esperando a eBay", missingCount: 1, pendingLabel: "Pausa por límite eBay", systemTask: "Conserva el producto y detiene reintentos repetidos.", userTask: "Espera; el botón se habilitará automáticamente." }
+            : { title: "Valida el mercado en eBay", instruction: "Luna ya está completo. Seller OS puede consultar los comparables oficiales sin escribir ni publicar.", actionLabel: "Analizar mercado eBay", missingCount: 1, pendingLabel: "Falta analizar eBay", systemTask: "Comparará identidad, demanda, precio, categoría y economía.", userTask: "Pulsa una vez para iniciar el análisis automático." }
           : productResearchEvidence?.status !== "AVAILABLE"
             ? { title: "Captura ventas en Product Research", instruction: "La búsqueda activa no sustituye el historial vendido. Abre Product Research, ejecuta la consulta preparada y usa la extensión para capturar la tabla visible.", actionLabel: productResearchCaptureOpened ? "Verificar captura" : "Abrir Product Research", missingCount: 1, pendingLabel: "Falta evidencia vendida", systemTask: "Preparó la misma consulta y mantendrá la captura vinculada a la variante Luna.", userTask: productResearchCaptureOpened ? "Termina la captura y pulsa verificar." : "Abre Product Research y autoriza una captura visible." }
           : !ebayListingUrl
@@ -1126,7 +1159,7 @@ export default function EbayMobileReviewPage() {
           <div className="mt-3 flex items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-cyan-100">eBay read-only · progreso sincronizado</p><h1 className="mt-1 text-2xl font-black">Seller Command Center</h1></div><StatusPill tone={report.dataSource === "MARKET_RADAR_READONLY" ? "good" : report.fixtureUsed ? "warning" : "danger"}>{sourceLabel}</StatusPill></div>
         </header>
 
-        <SellerJourneyGuide currentStep={journeyStep} title={journey.title} instruction={journey.instruction} actionLabel={journey.actionLabel} missingCount={journey.missingCount} pendingLabel={journey.pendingLabel} systemTask={journey.systemTask} userTask={journey.userTask} onAction={followJourney} />
+        <SellerJourneyGuide currentStep={journeyStep} title={journey.title} instruction={journey.instruction} actionLabel={journey.actionLabel} missingCount={journey.missingCount} pendingLabel={journey.pendingLabel} systemTask={journey.systemTask} userTask={journey.userTask} actionDisabled={ebayRateLimitActive} onAction={followJourney} />
 
         <details open={loadState !== "READY"} className={`rounded-2xl border p-3 ${loadState === "READY" ? "border-emerald-200/20 bg-emerald-200/[0.05]" : "border-amber-200/25 bg-amber-200/[0.07]"}`}>
           <summary className="cursor-pointer text-sm font-black">{loadState === "READY" ? "Sistema listo · ver estado" : loadMessage}</summary><p className="mt-2 text-xs leading-5 text-white/65">eBay read-only · scans y cola guardados · publicación separada y desactivada.</p>
@@ -1290,12 +1323,14 @@ export default function EbayMobileReviewPage() {
                   </dl>
                   <button
                     type="button"
-                    disabled={sellerKeywordDemandLoading || !loop1AnalysisGate.analysisEnabled}
+                    disabled={sellerKeywordDemandLoading || ebayRateLimitActive || !loop1AnalysisGate.analysisEnabled}
                     onClick={() => void runSellerKeywordDemandValidation()}
                     className="mt-3 min-h-14 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-50"
                   >
                     {sellerKeywordDemandLoading
                       ? "Analizando comparables y demanda…"
+                      : ebayRateLimitActive
+                        ? "eBay en pausa temporal"
                       : sellerKeywordDemand
                         ? "↻ Actualizar mercado eBay"
                         : "Analizar mercado eBay"}
@@ -1308,7 +1343,7 @@ export default function EbayMobileReviewPage() {
                   {sellerKeywordDemandError && (
                     <div role="alert" className="mt-3 rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50">
                       <p className="font-bold">{sellerKeywordDemandError}</p>
-                      <a href={ebayIdentitySearchUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex min-h-11 items-center underline">Abrir búsqueda de respaldo en eBay ↗</a>
+                      {!ebayRateLimitActive && <a href={ebayIdentitySearchUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex min-h-11 items-center underline">Abrir búsqueda de respaldo en eBay ↗</a>}
                     </div>
                   )}
 

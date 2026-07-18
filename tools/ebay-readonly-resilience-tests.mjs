@@ -6,6 +6,14 @@ const gateway = readFileSync(
   new URL("../lib/ebay/ebay-seller-keyword-demand-gateway.ts", import.meta.url),
   "utf8",
 )
+const route = readFileSync(
+  new URL("../app/api/admin/ebay/seller-keyword-demand/route.ts", import.meta.url),
+  "utf8",
+)
+const mobileReview = readFileSync(
+  new URL("../app/admin/ebay/mobile-review/page.tsx", import.meta.url),
+  "utf8",
+)
 
 test("eBay read-only gateway caches short-lived OAuth and taxonomy data", () => {
   assert.match(gateway, /tokenCache = new Map/)
@@ -24,4 +32,14 @@ test("eBay read-only gateway retries transient failures with Retry-After", () =>
   assert.match(gateway, /returnedCandidateCount: activeSearch\.items\.length/)
   assert.match(gateway, /enrichedSampleCount: activeDetails\.length/)
   assert.match(gateway, /value === null \|\| value === undefined \|\| value === ""/)
+})
+
+test("seller market analysis preserves eBay 429 and prevents repeated browser retries", () => {
+  assert.match(route, /getEbayReadonlyRateLimitMetadata\(error\)/)
+  assert.match(route, /status: 429/)
+  assert.match(route, /headers: \{ "Retry-After": String\(retryAfterSeconds\) \}/)
+  assert.match(mobileReview, /if \(response\.status === 429\)/)
+  assert.match(mobileReview, /setSellerKeywordRetryAt\(retryAt\)/)
+  assert.match(mobileReview, /sellerKeywordDemandLoading \|\| ebayRateLimitActive/)
+  assert.match(mobileReview, /!ebayRateLimitActive && <a href=\{ebayIdentitySearchUrl\}/)
 })

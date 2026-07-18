@@ -153,9 +153,18 @@ test("wires the read-only analysis into the phone menu without manual title or U
   assert.match(route, /EXACT_LUNA_MATCH/)
   assert.match(route, /productResearchEvidence/)
   assert.match(route, /productResearchEvidence\.status === "AVAILABLE"/)
+  assert.match(route, /getEbayReadonlyRateLimitMetadata/)
+  assert.match(route, /status: 429/)
+  assert.match(route, /"Retry-After"/)
+  assert.match(route, /retryAfterSeconds/)
   assert.doesNotMatch(route, /\.insert\(|\.update\(|\.delete\(|\.upsert\(/)
   assert.match(page, /Captura ventas en Product Research/)
   assert.match(page, /https:\/\/www\.ebay\.com\/sh\/research#seller-os-query=/)
+  assert.match(page, /sellerKeywordRetryAt/)
+  assert.match(page, /ebayRateLimitActive/)
+  assert.match(page, /eBay está en pausa temporal/)
+  assert.match(page, /!ebayRateLimitActive && <a href=\{ebayIdentitySearchUrl\}/)
+  assert.match(page, /actionDisabled=\{ebayRateLimitActive\}/)
   const gateway = readFileSync(
     new URL("../lib/ebay/ebay-seller-keyword-demand-gateway.ts", import.meta.url),
     "utf8"

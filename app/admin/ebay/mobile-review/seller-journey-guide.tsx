@@ -9,7 +9,7 @@ const steps = [
   { id: 4, label: "Preparar" },
 ] as const
 
-export function SellerJourneyGuide({ currentStep, title, instruction, actionLabel, onAction, missingCount = 0, systemTask, userTask, pendingLabel }: { currentStep: SellerJourneyStep; title: string; instruction: string; actionLabel: string; onAction: () => void; missingCount?: number; systemTask: string; userTask: string; pendingLabel: string }) {
+export function SellerJourneyGuide({ currentStep, title, instruction, actionLabel, onAction, missingCount = 0, systemTask, userTask, pendingLabel, actionDisabled = false }: { currentStep: SellerJourneyStep; title: string; instruction: string; actionLabel: string; onAction: () => void; missingCount?: number; systemTask: string; userTask: string; pendingLabel: string; actionDisabled?: boolean }) {
   return (
     <section aria-labelledby="seller-journey-heading" className="rounded-3xl border border-cyan-200/35 bg-gradient-to-br from-cyan-200/[0.12] via-[#101722] to-[#101722] p-4 shadow-lg shadow-black/20">
       <div className="flex items-center justify-between gap-3">
@@ -33,7 +33,7 @@ export function SellerJourneyGuide({ currentStep, title, instruction, actionLabe
         <div className="rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.06] p-3"><p className="text-[10px] font-black uppercase tracking-wider text-emerald-100/60">Seller OS hace</p><p className="mt-1 text-sm font-bold leading-5 text-emerald-50">{systemTask}</p></div>
         <div className="rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.07] p-3"><p className="text-[10px] font-black uppercase tracking-wider text-cyan-100/60">Te toca ahora</p><p className="mt-1 text-sm font-black leading-5 text-white">{userTask}</p></div>
       </div>
-      <button type="button" onClick={onAction} className="mt-4 min-h-12 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white">{actionLabel} →</button>
+      <button type="button" onClick={onAction} disabled={actionDisabled} className="mt-4 min-h-12 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white disabled:cursor-not-allowed disabled:opacity-45">{actionLabel}{actionDisabled ? "" : " →"}</button>
       <details className="mt-3 border-t border-white/10 pt-3"><summary className="cursor-pointer text-xs font-bold text-white/50">Ver la ruta completa</summary><p className="mt-2 text-xs leading-5 text-white/55">1. Elegir producto · 2. Confirmar Luna · 3. Validar eBay · 4. Revisar y preparar. Los pasos futuros permanecen bloqueados hasta completar el actual.</p></details>
     </section>
   )
