@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+import { evaluateEbayQuotaLaneState } from "./ebay-quota-lane-domain.ts"
 
 export const EBAY_QUOTA_COORDINATOR_VERSION = "EBAY-QUOTA-COORDINATOR-V1"
 
@@ -80,10 +82,8 @@ export async function assertEbayLaneAvailable(
     .maybeSingle()
   if (error) throw new Error("EBAY_QUOTA_STATE_READ_FAILED")
   if (!data) return { available: true, status: "UNKNOWN", resumeAt: null }
-  const reset = Date.parse(data.reset_at ?? "")
-  const paused = data.status === "PAUSED_429" && (!Number.isFinite(reset) || reset > now.getTime())
-  const resetReached = data.status === "PAUSED_429" && Number.isFinite(reset) && reset <= now.getTime()
-  if (resetReached) {
+  const decision = evaluateEbayQuotaLaneState(data, now)
+  if (decision.resetReached) {
     // The first request after eBay's authorized reset may probe the lane once.
     // A new 429 will persist a new pause; a successful request resumes normal work.
     await supabase.from("ebay_api_quota_states").update({
@@ -98,15 +98,9 @@ export async function assertEbayLaneAvailable(
       available: true,
       status: "RESET_REACHED",
       resumeAt: null,
-      ownerLane: data.owner_lane,
-      reservedBudget: Number(data.reserved_budget ?? 0),
+      ownerLane: decision.ownerLane,
+      reservedBudget: decision.reservedBudget,
     }
   }
-  return {
-    available: !paused && (data.available_budget === null || Number(data.available_budget) > 0 || data.status === "UNKNOWN"),
-    status: paused ? "PAUSED_429" : data.status,
-    resumeAt: paused ? data.reset_at : null,
-    ownerLane: data.owner_lane,
-    reservedBudget: Number(data.reserved_budget ?? 0),
-  }
+  return decision
 }
