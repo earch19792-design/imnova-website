@@ -61,8 +61,6 @@ import {
 } from "@/lib/ebay/ebay-mobile-review-local-state"
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 import { OpportunityCommandCenter, type Opportunity } from "./opportunity-command-center"
-import { CommercialMonitorPanel } from "./commercial-monitor-panel"
-import { MarketplaceFulfillmentPanel } from "./marketplace-fulfillment-panel"
 import { Loop1WinnerAnalysisSummary } from "./loop1-winner-analysis-summary"
 import { Loop2ListingAiPanel } from "./loop2-listing-ai-panel"
 import { SellerJourneyGuide, type SellerJourneyStep } from "./seller-journey-guide"
@@ -271,6 +269,9 @@ export default function EbayMobileReviewPage() {
   const [blockedVisible, setBlockedVisible] = useState(5)
   const [copied, setCopied] = useState(false)
   const confirmationRef = useRef<HTMLElement>(null)
+  const opportunityRef = useRef<HTMLDivElement>(null)
+  const comparablesRef = useRef<HTMLElement>(null)
+  const identityConfirmationRef = useRef<HTMLDivElement>(null)
 
   const resetWinnerDecisionState = useCallback(() => {
     setWinnerDecisionPackage(null)
@@ -1034,21 +1035,38 @@ export default function EbayMobileReviewPage() {
     ? 1
     : lunaMissingCount > 0
       ? 2
-      : !sellerKeywordDemand
+      : !sellerKeywordDemand || !identityComparison.identityComparisonComplete
         ? 3
         : 4
   const journey = journeyStep === 1
-    ? { title: "Elige una oportunidad", instruction: "Comienza en la cola. Abre un solo producto con match Luna para evitar revisar información que todavía no corresponde.", actionLabel: "Ver oportunidades", missingCount: 1 }
+    ? { title: "Elige una oportunidad", instruction: "No llenes ningún campo todavía. Primero selecciona un solo producto de la lista priorizada.", actionLabel: "Elegir producto", missingCount: 1, pendingLabel: "Falta elegir producto", systemTask: "Ordena las oportunidades por evidencia y match Luna.", userTask: "Pulsa “Validar ahora” en un producto." }
     : journeyStep === 2
-      ? { title: "Confirma los datos de Luna", instruction: "Completa únicamente stock, costo e imagen. Los campos pendientes aparecen en rojo y explican qué falta.", actionLabel: "Continuar con Luna", missingCount: lunaMissingCount }
+      ? { title: "Confirma los datos de Luna", instruction: "Ahora completa únicamente los campos rojos. La validación de eBay seguirá bloqueada hasta terminar este paso.", actionLabel: "Ir a los campos de Luna", missingCount: lunaMissingCount, pendingLabel: `${lunaMissingCount} dato${lunaMissingCount === 1 ? "" : "s"} de Luna pendiente${lunaMissingCount === 1 ? "" : "s"}`, systemTask: "Mantiene vinculada la variante exacta y protege contra cambios de pack o tamaño.", userTask: "Confirma stock, costo e imagen en Luna." }
       : journeyStep === 3
-        ? { title: "Valida el mercado en eBay", instruction: "Con Luna confirmado, ejecuta la lectura oficial de comparables. Seller OS no escribe ni publica.", actionLabel: "Ir a validación eBay", missingCount: 1 }
+        ? !sellerKeywordDemand
+          ? { title: "Valida el mercado en eBay", instruction: "Luna ya está completo. Seller OS puede consultar los comparables oficiales sin escribir ni publicar.", actionLabel: "Analizar mercado eBay", missingCount: 1, pendingLabel: "Falta analizar eBay", systemTask: "Comparará identidad, demanda, precio, categoría y economía.", userTask: "Pulsa una vez para iniciar el análisis automático." }
+          : !ebayListingUrl
+            ? { title: "Elige el comparable exacto", instruction: "El análisis automático terminó. Revisa únicamente las referencias compatibles y elige la que representa el mismo producto.", actionLabel: "Ver comparables", missingCount: 1, pendingLabel: "Falta elegir comparable", systemTask: "Descartó packs, tamaños y variantes incompatibles.", userTask: "Selecciona una referencia exacta de eBay." }
+            : { title: "Confirma la identidad", instruction: "Ya elegiste una referencia. Falta confirmar que corresponde exactamente al producto de Luna.", actionLabel: "Confirmar identidad", missingCount: 1, pendingLabel: "Falta confirmar identidad", systemTask: "Contrastó marca, producto, variante, tamaño y pack.", userTask: "Confirma el vínculo Luna ↔ eBay." }
         : winnerDecisionPackage
-          ? { title: "Continúa a preparación", instruction: "La evidencia y el producto ya están vinculados. Revisa la ficha antes de preparar contenido o draft.", actionLabel: "Abrir Loop 2", missingCount: 0 }
-          : { title: "Cierra la decisión", instruction: "Revisa los resultados y guarda el paquete de decisión antes de preparar el listing.", actionLabel: "Revisar decisión", missingCount: 1 }
+          ? { title: "Continúa a preparación", instruction: "Producto, Luna y evidencia eBay ya están vinculados. Revisa la ficha antes de preparar contenido o draft.", actionLabel: "Preparar listing", missingCount: 0, pendingLabel: "Listo para continuar", systemTask: "Construyó el paquete trazable y mantuvo publicación desactivada.", userTask: "Abre la preparación del listing." }
+          : { title: "Revisa la decisión", instruction: "Los análisis terminaron. Revisa el resumen y guarda la decisión antes de preparar el listing.", actionLabel: "Revisar resultado", missingCount: 1, pendingLabel: "Falta guardar decisión", systemTask: "Resume evidencia, riesgos, rentabilidad y campos pendientes.", userTask: "Revisa el resultado y guarda la decisión." }
 
   const followJourney = () => {
-    if (journeyStep === 1) setView("opportunities")
+    if (journeyStep === 1) {
+      setView("opportunities")
+      window.setTimeout(() => opportunityRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50)
+      return
+    }
+    if (journeyStep === 3 && !sellerKeywordDemand) {
+      void runSellerKeywordDemandValidation()
+      return
+    }
+    if (journeyStep === 3) {
+      const target = ebayListingUrl ? identityConfirmationRef.current : comparablesRef.current
+      target?.scrollIntoView({ behavior: "smooth", block: "start" })
+      return
+    }
     else if (journeyStep === 4 && winnerDecisionPackage) setView("loop2")
     else setView("loop1")
     window.setTimeout(() => confirmationRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50)
@@ -1062,21 +1080,19 @@ export default function EbayMobileReviewPage() {
           <div className="mt-3 flex items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-cyan-100">eBay read-only · progreso sincronizado</p><h1 className="mt-1 text-2xl font-black">Seller Command Center</h1></div><StatusPill tone={report.dataSource === "MARKET_RADAR_READONLY" ? "good" : report.fixtureUsed ? "warning" : "danger"}>{sourceLabel}</StatusPill></div>
         </header>
 
-        <SellerJourneyGuide currentStep={journeyStep} title={journey.title} instruction={journey.instruction} actionLabel={journey.actionLabel} missingCount={journey.missingCount} onAction={followJourney} />
+        <SellerJourneyGuide currentStep={journeyStep} title={journey.title} instruction={journey.instruction} actionLabel={journey.actionLabel} missingCount={journey.missingCount} pendingLabel={journey.pendingLabel} systemTask={journey.systemTask} userTask={journey.userTask} onAction={followJourney} />
 
         <details open={loadState !== "READY"} className={`rounded-2xl border p-3 ${loadState === "READY" ? "border-emerald-200/20 bg-emerald-200/[0.05]" : "border-amber-200/25 bg-amber-200/[0.07]"}`}>
           <summary className="cursor-pointer text-sm font-black">{loadState === "READY" ? "Sistema listo · ver estado" : loadMessage}</summary><p className="mt-2 text-xs leading-5 text-white/65">eBay read-only · scans y cola guardados · publicación separada y desactivada.</p>
           <p className="sr-only">Radar observó {report.realRadarCandidatesCount} productos y muestra {report.top5Candidates.length} candidatos seleccionables. La fuente y antigüedad del stock están disponibles en los detalles.</p>
           {loadState === "AUTH_REQUIRED" ? <a href="/admin/login?returnTo=%2Fadmin%2Febay%2Fmobile-review" className="mt-3 inline-flex min-h-11 items-center rounded-2xl bg-white px-4 py-2 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200">Iniciar sesión</a> : loadState !== "READY" && <button type="button" onClick={() => void load()} className="mt-3 min-h-11 rounded-2xl bg-white px-4 py-2 font-black text-black">Reintentar lectura</button>}
         </details>
-        <details className="rounded-2xl border border-white/10 bg-black/20 p-3"><summary className="cursor-pointer text-sm font-bold text-white/60">Cambiar de etapa manualmente</summary><nav aria-label="Loops activos" className="mt-3 grid grid-cols-2 gap-2">
-          <button type="button" aria-pressed={view === "loop1"} onClick={() => setView("loop1")} className={`min-h-12 rounded-2xl px-3 text-sm font-black ${view === "loop1" ? "bg-violet-200 text-black" : "border border-violet-200/30 text-violet-50"}`}>Loop 1 · Evidencia</button>
-          <button type="button" aria-pressed={view === "loop2"} onClick={() => setView("loop2")} className={`min-h-12 rounded-2xl px-3 text-sm font-black ${view === "loop2" ? "bg-fuchsia-200 text-black" : "border border-fuchsia-200/30 text-fuchsia-50"}`}>Loop 2 · Listing IA</button>
-        </nav></details>
         {view === "loop1" && (
-          <section aria-labelledby="loop1-main-heading" className="rounded-3xl border border-violet-200/35 bg-violet-200/[0.08] p-4">
+          <details className="rounded-2xl border border-white/10 bg-black/20 p-3">
+            <summary className="cursor-pointer text-sm font-bold text-white/55">Cambiar el producto seleccionado</summary>
+            <div className="mt-3">
             <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-100/70">Validación humana unificada</p>
-            <h2 id="loop1-main-heading" className="mt-1 text-xl font-black">Loop 1 — Analizar producto ganador</h2>
+            <h2 className="mt-1 text-lg font-black">Producto en revisión</h2>
             <details className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3"><summary className="cursor-pointer text-xs font-bold text-white/55">Ver detalles técnicos del loop</summary><div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
               <div className="rounded-xl bg-black/25 p-2"><span className="block text-white/50">ACTIVE LOOP</span><strong>{LOOP1_ACTIVE_LOOP}</strong></div>
               <div className="rounded-xl bg-black/25 p-2"><span className="block text-white/50">STATUS</span><strong>{LOOP1_VALIDATION_STATUS}</strong></div>
@@ -1108,25 +1124,22 @@ export default function EbayMobileReviewPage() {
                 <p className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm font-bold">Paso actual: {loop1AnalysisGate.disabledReason ?? (winnerDecisionPackage ? "Revisar y guardar el paquete de decisión" : "Listo para analizar mercado eBay")}</p>
               </div>
             ) : <p id="candidate-required-help" role="alert" className="mt-2 text-sm font-bold text-rose-300">Campo requerido: selecciona un candidato para comenzar.</p>}
-          </section>
+            </div>
+          </details>
         )}
         {view === "loop2" && <Loop2ListingAiPanel />}
-        {loadState === "READY" && <div className="grid grid-cols-3 gap-2 rounded-2xl border border-white/15 bg-black/30 p-2 text-center"><div className="rounded-xl bg-white/[0.04] px-2 py-3"><span className="text-[10px] font-bold uppercase tracking-wide text-white/55">Observados</span><strong className="mt-1 block text-xl font-black">{report.realRadarCandidatesCount}</strong></div><button type="button" onClick={() => setView("pinned")} className="rounded-xl bg-emerald-200/[0.07] px-2 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200"><span className="text-[10px] font-bold uppercase tracking-wide text-emerald-50/70">En curso</span><strong className="mt-1 block text-xl font-black">{serverReviewsLoadState === "READY" ? serverReviews.length : "—"}</strong></button><button type="button" onClick={() => setView("blocked")} className="rounded-xl bg-rose-200/[0.07] px-2 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-200"><span className="text-[10px] font-bold uppercase tracking-wide text-rose-50/70">Operación</span><strong className="mt-1 block text-xl font-black">{serverReviewsLoadState === "READY" ? alertCount : "—"}</strong></button></div>}
+        {loadState === "READY" && <details className="rounded-2xl border border-white/10 bg-black/20 p-3"><summary className="cursor-pointer text-sm font-bold text-white/50">Ver resumen operativo</summary><div className="mt-3 grid grid-cols-3 gap-2 text-center"><div className="rounded-xl bg-white/[0.04] px-2 py-3"><span className="text-[10px] font-bold uppercase tracking-wide text-white/55">Observados</span><strong className="mt-1 block text-xl font-black">{report.realRadarCandidatesCount}</strong></div><button type="button" onClick={() => setView("pinned")} className="rounded-xl bg-emerald-200/[0.07] px-2 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200"><span className="text-[10px] font-bold uppercase tracking-wide text-emerald-50/70">En curso</span><strong className="mt-1 block text-xl font-black">{serverReviewsLoadState === "READY" ? serverReviews.length : "—"}</strong></button><button type="button" onClick={() => setView("blocked")} className="rounded-xl bg-rose-200/[0.07] px-2 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-200"><span className="text-[10px] font-bold uppercase tracking-wide text-rose-50/70">Operación</span><strong className="mt-1 block text-xl font-black">{serverReviewsLoadState === "READY" ? alertCount : "—"}</strong></button></div></details>}
         {report.fixtureUsed && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4 text-sm"><p className="font-black">FIXTURE/DEMO · no usar para aprobación real</p><p className="mt-2 text-white/80">Fuente actual: fixture modelado · no es data viva. score modelado · Fixture · no precio runtime · Fixture · no Category ID.</p></aside>}
 
-        <div role="status" aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.07] p-3 text-sm text-cyan-50">{lastActionMessage}</div>
+        {lastActionMessage !== "Todavía no realizaste ninguna acción." && <div role="status" aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.07] p-3 text-sm text-cyan-50">{lastActionMessage}</div>}
         {view === "top5" && radarGuards.showScoreTieWarning && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4"><p className="font-black">Orden provisional</p><p className="mt-1 text-sm text-white/80">Los cinco scores son iguales. Ningún producto se considera recomendado hasta desempatar el ranking.</p></aside>}
 
-        {(view === "opportunities" || view === "top5") && <nav aria-label="Vistas de oportunidades" className="grid grid-cols-2 gap-1 rounded-2xl border border-white/15 bg-black/40 p-1"><button type="button" aria-pressed={view === "opportunities"} onClick={() => setView("opportunities")} className={`min-h-12 rounded-xl px-3 py-2 text-xs font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${view === "opportunities" ? "bg-white text-black" : "text-white/75"}`}>Cola eBay-first</button><button type="button" aria-pressed={view === "top5"} onClick={() => setView("top5")} className={`min-h-12 rounded-xl px-3 py-2 text-xs font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${view === "top5" ? "bg-white text-black" : "text-white/75"}`}>Top 5 Radar</button></nav>}
+        {(view === "opportunities" || view === "top5") && <details className="rounded-2xl border border-white/10 bg-black/20 p-3"><summary className="cursor-pointer text-sm font-bold text-white/50">Cambiar vista de oportunidades</summary><nav aria-label="Vistas de oportunidades" className="mt-3 grid grid-cols-2 gap-1 rounded-xl border border-white/10 p-1"><button type="button" aria-pressed={view === "opportunities"} onClick={() => setView("opportunities")} className={`min-h-12 rounded-xl px-3 py-2 text-xs font-black ${view === "opportunities" ? "bg-white text-black" : "text-white/75"}`}>Cola priorizada</button><button type="button" aria-pressed={view === "top5"} onClick={() => setView("top5")} className={`min-h-12 rounded-xl px-3 py-2 text-xs font-black ${view === "top5" ? "bg-white text-black" : "text-white/75"}`}>Radar alternativo</button></nav></details>}
         <p className="sr-only">{report.stockHoldCandidates.length} productos están bloqueados por stock. B2-RUN continúa desactivado hasta completar todas las validaciones.</p>
 
         {serverReviewsLoadState === "ERROR" && <div role="alert" className="rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-3 text-sm text-rose-50"><strong>No pudimos cargar En curso y Operación.</strong><span className="mt-1 block">{serverReviewsError}</span><button type="button" onClick={() => void loadServerReviews()} className="mt-3 min-h-11 rounded-xl border border-rose-100/30 px-3 font-black">Reintentar</button></div>}
 
-        {view === "opportunities" && <>
-          <CommercialMonitorPanel />
-          <MarketplaceFulfillmentPanel />
-          <OpportunityCommandCenter onReviewCandidate={reviewOpportunityCandidate} onRadarRefresh={load} onRadarLookup={lookupRadarCandidateByProductId} confirmDestructiveRefresh={confirmReviewReset} preferredMarketRadarProductId={!selectedQueueOpportunity ? selectedRadarCandidate?.marketRadarProductId ?? null : null} />
-        </>}
+        {view === "opportunities" && <div ref={opportunityRef} className="scroll-mt-32"><OpportunityCommandCenter guided onReviewCandidate={reviewOpportunityCandidate} onRadarRefresh={load} onRadarLookup={lookupRadarCandidateByProductId} confirmDestructiveRefresh={confirmReviewReset} preferredMarketRadarProductId={!selectedQueueOpportunity ? selectedRadarCandidate?.marketRadarProductId ?? null : null} /></div>}
 
         {view === "top5" && <section aria-labelledby="top5-heading"><h2 id="top5-heading" className="mb-3 text-xl font-black">Top 5 actual</h2><div className="space-y-4">{report.top5Candidates.map((candidate) => <CandidateCard key={candidate.candidateId} candidate={candidate} selected={!selectedQueueCandidate && state.selectedCandidateRank === candidate.candidateRank} pinned={pinnedCandidates.some((item) => pinnedCandidateMatchesRadar(item, candidate))} provisional={radarGuards.needsScoreDisambiguation} onSelect={() => { setSelectedQueueCandidate(null); setSelectedQueueOpportunity(null); act({ type: "SELECT_CANDIDATE", rank: candidate.candidateRank }) }} onUnavailable={() => act({ type: "MARK_UNAVAILABLE", rank: candidate.candidateRank })} />)}{!loading && report.top5Candidates.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/75">No hay candidatos seleccionables.</p>}</div></section>}
 
@@ -1200,8 +1213,8 @@ export default function EbayMobileReviewPage() {
 
             {selectedRadarCandidate && (
               <>
-                <section aria-labelledby="luna-first-heading" className="rounded-3xl border border-emerald-200/25 bg-emerald-200/[0.06] p-4">
-                  <p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Paso 1 · Bodega ahora</p>
+                {journeyStep === 2 && <section aria-labelledby="luna-first-heading" className="rounded-3xl border border-emerald-200/25 bg-emerald-200/[0.06] p-4">
+                  <p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Paso 2 · Luna</p>
                   <h3 id="luna-first-heading" className="mt-1 text-lg font-black">Confirmar Luna: stock, costo e imagen</h3>
                   <p className="mt-2 text-sm leading-6 text-white/65">eBay se analiza después de confirmar que todavía podemos comprar y enviar exactamente este producto.</p>
                   <p className="mt-1 text-xs font-bold text-amber-100">Completa Luna antes de analizar eBay.</p>
@@ -1215,9 +1228,9 @@ export default function EbayMobileReviewPage() {
                     <div><button type="button" disabled={!Number.isInteger(Number(stockQuantity)) || Number(stockQuantity) < 1} onClick={() => act({ type: "CONFIRM_STOCK_QTY", quantity: Number(stockQuantity) })} className="min-h-12 w-full rounded-2xl bg-white px-2 text-sm font-black text-black disabled:opacity-40">{state.stockQuantityConfirmed === Number(stockQuantity) ? "✓ Stock confirmado" : "Confirmar stock"}</button></div>
                     <div><button type="button" disabled={!catalogCheckOpened || !lunaCatalogUrl || !safeProductImageUrl || !(Number(lunaPrice) > 0)} onClick={confirmLunaCatalogMatch} className="min-h-12 w-full rounded-2xl bg-emerald-200 px-2 text-sm font-black text-black disabled:opacity-40">{lunaPriceConfirmed && state.imageConfirmed ? "✓ Precio e imagen coinciden" : "Confirmar que precio e imagen coinciden"}</button>{!lunaPriceConfirmed && <div className="mt-1 space-y-0.5 text-[11px] font-bold text-amber-100">{!(Number(lunaPrice) > 0) && <p>Falta confirmar costo</p>}{!safeProductImageUrl && <p>Falta confirmar imagen</p>}{lunaCatalogUrl && !catalogCheckOpened && <p>Abre primero el producto en Luna</p>}</div>}</div>
                   </div>
-                </section>
-                <div className="rounded-3xl border border-white/15 bg-white/[0.045] p-4">
-                  <p className="font-black">2. eBay: comparables y señales de demanda</p>
+                </section>}
+                {journeyStep === 3 && <div className="rounded-3xl border border-white/15 bg-white/[0.045] p-4">
+                  <p className="font-black">Paso 3 · eBay: comparables y señales de demanda</p>
                   <p className="mt-1 text-sm leading-6 text-white/75">
                     IMNOVA consulta eBay en modo read-only, descarta productos con
                     tamaño, variante o pack contradictorios y pondera las palabras
@@ -1388,7 +1401,7 @@ export default function EbayMobileReviewPage() {
                         <section aria-labelledby="professional-opportunity-heading" className="rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.07] p-3">
                           <div className="flex items-start justify-between gap-3">
                             <div>
-                          <h3 id="professional-opportunity-heading" className="font-black">3. Economía y oportunidad profesional</h3>
+                          <h3 id="professional-opportunity-heading" className="font-black">Resultado económico y oportunidad profesional</h3>
                               <p className="mt-1 text-xs leading-5 text-white/65">Combina identidad, demanda, economía, competencia, stock y preparación del listing. No garantiza ventas.</p>
                             </div>
                             <span className="rounded-2xl bg-cyan-100 px-3 py-2 text-xl font-black text-black">{Math.round(opportunityAssessment.scores.opportunityScore)}</span>
@@ -1422,7 +1435,7 @@ export default function EbayMobileReviewPage() {
                         </section>
                       )}
 
-                      <section aria-labelledby="top-selling-heading">
+                      <section ref={comparablesRef} aria-labelledby="top-selling-heading" className="scroll-mt-32">
                         <h3 id="top-selling-heading" className="font-black">Comparables para escoger la mejor referencia</h3>
                         <p className="mt-1 text-xs leading-5 text-white/65">El orden combina identidad, calidad de evidencia, señal comercial y reputación. La cantidad estimada por sí sola no decide.</p>
                         <div className="mt-2 grid gap-3">
@@ -1464,7 +1477,7 @@ export default function EbayMobileReviewPage() {
                   )}
 
                   {identityComparison.ebayIdentity.listingUrl && (
-                    <div className="mt-4 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
+                    <div ref={identityConfirmationRef} className="mt-4 scroll-mt-32 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
                       <p className="text-sm font-black">Confirmación humana final</p>
                       <p className="mt-1 text-xs leading-5 text-white/70">El sistema ya comparó marca/producto, variante, tamaño y pack. Confirma que la referencia elegida corresponde al producto de Luna.</p>
                       <button type="button" disabled={!identityComparison.canConfirmSameProduct} onClick={confirmIdentityComparison} className="mt-3 min-h-12 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">
@@ -1475,8 +1488,9 @@ export default function EbayMobileReviewPage() {
                     </div>
                   )}
                   {identityComparison.identityComparisonComplete && <p className="mt-2 text-xs font-bold text-emerald-100">Fuente: análisis oficial eBay read-only + confirmación humana final.</p>}
-                </div>
+                </div>}
 
+                {journeyStep === 4 && <>
                 <Loop1WinnerAnalysisSummary
                   decisionPackage={winnerDecisionPackage}
                   keywordReport={sellerKeywordDemand}
@@ -1528,6 +1542,7 @@ export default function EbayMobileReviewPage() {
                       Vincular con la oportunidad canónica
                     </button>}
                 </div>
+                </>}
               </>
             )}
 
