@@ -52,13 +52,20 @@ export function TodayLaunchPanel() {
   const readyCandidates = candidates.filter((candidate: Row) => candidate.machine_state === "READY_FOR_MANUAL_PUBLICATION")
   const runStatus = String(pilot?.run?.status ?? "")
   const pausedJobs = (pilot?.jobs ?? []).filter((job: Row) => job.status === "WAITING_RETRY" && /429|QUOTA/.test(String(job.last_error_code ?? "")))
-  const quotaPaused = pausedJobs.length > 0
-  const quotaResumeAt = pausedJobs.map((job: Row) => String(job.rate_limit_resume_at || job.available_at || "")).filter(Boolean).sort()[0]
+  const quotaLanes = Array.isArray(pilot?.run?.quota_snapshot?.lanes)
+    ? pilot.run.quota_snapshot.lanes : []
+  const pausedQuotaLanes = quotaLanes.filter((lane: Row) => lane.status === "PAUSED_429" &&
+    (!lane.reset_at || Date.parse(String(lane.reset_at)) > Date.now()))
+  const quotaPaused = pausedJobs.length > 0 || pausedQuotaLanes.length > 0
+  const quotaResumeAt = [
+    ...pausedJobs.map((job: Row) => String(job.rate_limit_resume_at || job.available_at || "")),
+    ...pausedQuotaLanes.map((lane: Row) => String(lane.reset_at || "")),
+  ].filter(Boolean).sort()[0]
   const currentBusinessState = !pilot ? "NO INICIADO" : runStatus === "BLOCKED" ? "BLOQUEADO" :
     runStatus === "COMPLETED" ? "PUBLICADO Y VERIFICADO" :
-      quotaPaused ? "PAUSADO POR EBAY" :
-    candidates.some((candidate: Row) => candidate.machine_state === "READY_FOR_MANUAL_PUBLICATION") ? "LISTO PARA PUBLICAR" :
-      openTasks.length ? "ESPERANDO TU CONFIRMACIÓN" :
+      candidates.some((candidate: Row) => candidate.machine_state === "READY_FOR_MANUAL_PUBLICATION") ? "LISTO PARA PUBLICAR" :
+        openTasks.length ? "ESPERANDO TU CONFIRMACIÓN" :
+          quotaPaused ? "PAUSADO POR EBAY" :
         candidates.some((candidate: Row) => candidate.machine_state === "BLOCKED") ? "BLOQUEADO" : "TRABAJANDO"
   return <section className="mt-5 min-w-0 overflow-hidden rounded-3xl border border-cyan-200/20 bg-gradient-to-br from-cyan-200/[0.10] to-emerald-200/[0.04] p-5 sm:p-7">
     <div className="flex flex-wrap items-start justify-between gap-4">

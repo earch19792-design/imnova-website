@@ -109,9 +109,9 @@ function scannerQuotaPause(
     resumeAt,
     rateLimit: {
       httpStatus: 429,
-      retryAfterSeconds: persistedSeconds !== null && Number.isFinite(persistedSeconds)
-        ? persistedSeconds
-        : derivedSeconds,
+      retryAfterSeconds: derivedSeconds !== null
+        ? derivedSeconds
+        : persistedSeconds !== null && Number.isFinite(persistedSeconds) ? persistedSeconds : null,
       retryAfterSource: typeof row.retryAfterSource === "string"
         ? row.retryAfterSource
         : derivedSeconds === null ? "UNAVAILABLE" : "RETRY_AFTER_HTTP_DATE",

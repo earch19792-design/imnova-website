@@ -9,7 +9,7 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Ejecuta una búsqueda y usa **Capturar resultados para Seller OS**.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión optimizada es 1.2.0.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.1.
 
 ## Consulta guiada y patrones locales (v1.2.1)
 

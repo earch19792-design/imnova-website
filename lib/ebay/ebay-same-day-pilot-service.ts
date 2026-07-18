@@ -392,21 +392,23 @@ async function bootstrapCandidate(supabase: SupabaseClient, runId: string, candi
 
 async function repairSameDayPilotBootstrap(supabase: SupabaseClient, state: Awaited<ReturnType<typeof currentState>>) {
   if (!state) return false
-  const active = state.candidates.find((candidate) =>
-    !["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(text(candidate.machine_state)))
-  if (!active) return false
-  const machineState = text(active.machine_state)
-  const partialBootstrap = ["RUN_CREATED", "LOCAL_FILTERING", "CANDIDATE_SELECTION", "PRODUCT_RESEARCH_PLAN_READY"].includes(machineState)
   const gateByState: Record<string, string> = {
     WAITING_PRODUCT_RESEARCH_CAPTURE: "PRODUCT_RESEARCH_CAPTURE_REQUIRED",
     WAITING_LUNA_CONFIRMATION: "LUNA_CONFIRMATION_REQUIRED",
     WAITING_PRODUCT_APPROVAL: "PRODUCT_APPROVAL_REQUIRED",
     WAITING_IMAGE_APPROVAL: "IMAGE_APPROVAL_REQUIRED",
   }
-  const expectedGate = gateByState[machineState]
-  const missingGateTask = Boolean(expectedGate && !state.tasks.some((task) =>
-    task.candidate_id === active.id && task.gate_type === expectedGate && task.status === "OPEN"))
-  if (!partialBootstrap && !missingGateTask) return false
+  const bootstrapStates = ["RUN_CREATED", "LOCAL_FILTERING", "CANDIDATE_SELECTION", "PRODUCT_RESEARCH_PLAN_READY"]
+  const active = state.candidates.find((candidate) => {
+    const machineState = text(candidate.machine_state)
+    if (["REJECTED", "BLOCKED", "READY_FOR_MANUAL_PUBLICATION", "VERIFIED_ACTIVE", "COMPLETED"]
+      .includes(machineState)) return false
+    if (bootstrapStates.includes(machineState)) return true
+    const expectedGate = gateByState[machineState]
+    return Boolean(expectedGate && !state.tasks.some((task) =>
+      task.candidate_id === candidate.id && task.gate_type === expectedGate && task.status === "OPEN"))
+  })
+  if (!active) return false
   await bootstrapCandidate(supabase, state.run.id, record(active))
   return true
 }
@@ -429,6 +431,39 @@ async function promoteNextCandidate(supabase: SupabaseClient, runId: string, ord
   return Boolean(data)
 }
 
+async function promoteImmediateSuccessorDuringQuotaPause(
+  supabase: SupabaseClient,
+  runId: string,
+  ordinal: number,
+) {
+  const { data, error } = await supabase.from("ebay_same_day_pilot_candidates").select("*")
+    .eq("run_id", runId).gt("ordinal", ordinal).order("ordinal").limit(1).maybeSingle()
+  if (error) throw new Error("SAME_DAY_PILOT_QUOTA_SUCCESSOR_READ_FAILED")
+  // Inspect the immediate successor instead of the next RUN_CREATED row. Once
+  // that successor has moved, replaying the same 429 cannot activate another
+  // candidate and overload the operator inbox.
+  if (!data || data.machine_state !== "RUN_CREATED") return false
+  await bootstrapCandidate(supabase, runId, record(data))
+  return true
+}
+
+async function promoteNextCandidateAfterPreparedPackage(
+  supabase: SupabaseClient,
+  runId: string,
+  ordinal: number,
+) {
+  const [{ data: run, error: runError }, { count, error: countError }] = await Promise.all([
+    supabase.from("ebay_same_day_pilot_runs").select("target_new_listings").eq("id", runId).single(),
+    supabase.from("ebay_same_day_pilot_candidates").select("id", { count: "exact", head: true })
+      .eq("run_id", runId)
+      .in("state", ["READY_FOR_MANUAL_PUBLICATION", "PUBLISHED_PENDING_VERIFICATION", "VERIFIED_ACTIVE"]),
+  ])
+  if (runError || countError) throw new Error("SAME_DAY_PILOT_PREPARED_PACKAGE_COUNT_FAILED")
+  const target = Math.max(0, Math.min(2, Number(run?.target_new_listings ?? 2)))
+  if (Number(count ?? 0) >= target) return false
+  return promoteNextCandidate(supabase, runId, ordinal)
+}
+
 async function refreshRunProjection(supabase: SupabaseClient, runId: string, workerHeartbeat = false) {
   const [{ data: candidates, error: candidateError }, { data: tasks, error: taskError },
     { data: jobs, error: jobError }, { data: transitions, error: transitionError }] = await Promise.all([
@@ -441,7 +476,9 @@ async function refreshRunProjection(supabase: SupabaseClient, runId: string, wor
   const rows = candidates ?? []
   const readyCount = rows.filter((row) => row.machine_state === "READY_FOR_MANUAL_PUBLICATION").length
   const verifiedCount = rows.filter((row) => row.machine_state === "VERIFIED_ACTIVE").length
-  const active = rows.find((row) => !["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(row.machine_state))
+  const active = rows.find((row) =>
+    !["REJECTED", "BLOCKED", "READY_FOR_MANUAL_PUBLICATION", "VERIFIED_ACTIVE", "COMPLETED"]
+      .includes(row.machine_state))
   const taskRows = tasks ?? []
   const openTask = taskRows.find((task) => task.status === "OPEN")
   const waitingRetry = (jobs ?? []).some((job) => job.status === "WAITING_RETRY")
@@ -1113,6 +1150,13 @@ async function recoverDeadLetterCandidates(supabase: SupabaseClient, state: NonN
     if (!candidate) continue
     const candidateId = text(candidate.id)
     if (jobEffectAlreadyApplied(text(failed.job_type), text(candidate.machine_state))) {
+      if (text(failed.job_type) === "FINALIZE_MANUAL_HANDOFF") {
+        await promoteNextCandidateAfterPreparedPackage(
+          supabase,
+          state.run.id,
+          Number(candidate.ordinal),
+        )
+      }
       const { error: appliedError } = await supabase.from("ebay_same_day_pilot_jobs").update({
         status: "COMPLETED", last_error_code: "EFFECT_ALREADY_APPLIED_RECOVERED",
         completed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
@@ -1191,6 +1235,13 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
   const candidate = state.candidates.find((entry) => entry.id === leased.candidate_id)
   if (!candidate) throw new Error("SAME_DAY_PILOT_JOB_CANDIDATE_MISSING")
   if (jobEffectAlreadyApplied(text(leased.job_type), text(candidate.machine_state))) {
+    if (text(leased.job_type) === "FINALIZE_MANUAL_HANDOFF") {
+      await promoteNextCandidateAfterPreparedPackage(
+        input.supabase,
+        state.run.id,
+        Number(candidate.ordinal),
+      )
+    }
     await settlePilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId, status: "COMPLETED" })
     await refreshRunProjection(input.supabase, state.run.id, true)
     return { processed: 1, status: "EFFECT_ALREADY_APPLIED", jobType: leased.job_type, replayAvoided: true }
@@ -1202,6 +1253,11 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
         const resumeAt = lane.resumeAt ?? new Date(now.getTime() + 15 * 60_000).toISOString()
         await deferPilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId, availableAt: resumeAt,
           errorCode: "EBAY_QUOTA_PAUSED_429", preserveAttempt: true })
+        await promoteImmediateSuccessorDuringQuotaPause(
+          input.supabase,
+          state.run.id,
+          Number(candidate.ordinal),
+        )
         await refreshRunProjection(input.supabase, state.run.id, true)
         return { processed: 1, status: "PAUSED_429", jobType: leased.job_type, resumeAt,
           checkpointPreserved: true, ebayCalls: 0 }
@@ -1214,6 +1270,11 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           const resumeAt = dependency.resumeAt ?? new Date(now.getTime() + 15 * 60_000).toISOString()
           await deferPilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId,
             availableAt: resumeAt, errorCode: "EBAY_QUOTA_PAUSED_429", preserveAttempt: true })
+          await promoteImmediateSuccessorDuringQuotaPause(
+            input.supabase,
+            state.run.id,
+            Number(candidate.ordinal),
+          )
           await refreshRunProjection(input.supabase, state.run.id, true)
           return { processed: 1, status: "PAUSED_429", jobType: leased.job_type, resumeAt,
             pausedApiFamily: apiFamily, pausedOperation: operation, checkpointPreserved: true, ebayCalls: 0 }
@@ -1557,6 +1618,11 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
         reasonCode: "MANUAL_SELLER_HUB_HANDOFF_READY", triggeredBy: "SYSTEM",
         checkpoint: { packageHash, openAiCalls: 0, ebayWrites: 0 },
         nextAutomaticAction: "Esperar publicación manual y luego Item ID.", nextHumanAction: "Abrir Seller Hub y publicar manualmente." })
+      await promoteNextCandidateAfterPreparedPackage(
+        input.supabase,
+        state.run.id,
+        Number(candidate.ordinal),
+      )
     } else {
       throw new Error("SAME_DAY_PILOT_JOB_TYPE_UNSUPPORTED")
     }
@@ -1581,6 +1647,13 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     await settlePilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId,
       status: canRetry ? "WAITING_RETRY" : "DEAD_LETTER", availableAt, errorCode: code,
       preserveAttempt: rateLimited })
+    if (rateLimited) {
+      await promoteImmediateSuccessorDuringQuotaPause(
+        input.supabase,
+        state.run.id,
+        Number(candidate.ordinal),
+      )
+    }
     if (!canRetry) {
       await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
         previousState: text(candidate.machine_state), reasonCode: code })

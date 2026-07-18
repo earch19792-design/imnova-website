@@ -26,15 +26,33 @@ function safeError(error: unknown) {
   return /^[A-Z0-9_]+$/.test(value) ? value : "EBAY_LUNA_QUEUE_REQUEST_FAILED"
 }
 
+function retryAfterSeconds(value: unknown) {
+  const rateLimit = record(value)
+  const resumeAt = typeof rateLimit.resumeAt === "string"
+    ? Date.parse(rateLimit.resumeAt)
+    : Number.NaN
+  if (Number.isFinite(resumeAt) && resumeAt > Date.now()) {
+    return Math.min(7 * 24 * 60 * 60, Math.max(1, Math.ceil((resumeAt - Date.now()) / 1_000)))
+  }
+  const persistedSeconds = Number(rateLimit.retryAfterSeconds)
+  if (Number.isFinite(persistedSeconds) && persistedSeconds > 0) {
+    return Math.min(7 * 24 * 60 * 60, Math.ceil(persistedSeconds))
+  }
+  return 60
+}
+
 function batchResponse(action: string, run: unknown, batch: Record<string, unknown>) {
-  if (batch.rateLimit) return NextResponse.json({
-    success: false,
-    action,
-    run,
-    batch,
-    error: "EBAY_READONLY_GET_429",
-    rateLimit: batch.rateLimit,
-  }, { status: 429 })
+  if (batch.rateLimit) {
+    const retryAfter = retryAfterSeconds(batch.rateLimit)
+    return NextResponse.json({
+      success: false,
+      action,
+      run,
+      batch,
+      error: "EBAY_READONLY_GET_429",
+      rateLimit: batch.rateLimit,
+    }, { status: 429, headers: { "Retry-After": String(retryAfter) } })
+  }
   return NextResponse.json({ success: true, action, run, batch })
 }
 
@@ -152,10 +170,14 @@ export async function POST(req: Request) {
   } catch (error) {
     if (runId) await recordEbayFirstLunaScanFailure(supabase, runId, error).catch(() => undefined)
     const rateLimit = getEbayReadonlyRateLimitMetadata(error)
+    const retryAfter = rateLimit ? retryAfterSeconds(rateLimit) : null
     return NextResponse.json({
       success: false,
       error: safeError(error),
       ...(rateLimit ? { rateLimit } : {}),
-    }, { status: rateLimit?.httpStatus ?? 502 })
+    }, {
+      status: rateLimit?.httpStatus ?? 502,
+      ...(retryAfter ? { headers: { "Retry-After": String(retryAfter) } } : {}),
+    })
   }
 }
