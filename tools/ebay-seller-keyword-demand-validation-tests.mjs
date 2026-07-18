@@ -139,7 +139,7 @@ test("wires the read-only analysis into the phone menu without manual title or U
     new URL("../app/api/admin/ebay/seller-keyword-demand/route.ts", import.meta.url),
     "utf8"
   )
-  assert.match(page, /Analizar comparables y demanda en eBay/)
+  assert.match(page, /Verificar mercado en eBay/)
   assert.match(page, /keywordEvidenceHeading/)
   assert.match(page, /Usar como referencia/)
   assert.doesNotMatch(page, /URL del listing elegido/)
@@ -162,9 +162,18 @@ test("wires the read-only analysis into the phone menu without manual title or U
   assert.match(page, /https:\/\/www\.ebay\.com\/sh\/research#seller-os-query=/)
   assert.match(page, /sellerKeywordRetryAt/)
   assert.match(page, /ebayRateLimitActive/)
-  assert.match(page, /eBay está en pausa temporal/)
-  assert.match(page, /!ebayRateLimitActive && <a href=\{ebayIdentitySearchUrl\}/)
-  assert.match(page, /actionDisabled=\{ebayRateLimitActive\}/)
+  assert.match(page, /Verificación eBay en espera/)
+  assert.match(page, /sellerKeywordDemandError && !ebayRateLimitActive/)
+  assert.match(page, /actionDisabled=\{false\}/)
+  assert.match(page, /formatQuotaResumeAt/)
+  assert.match(page, /formatQuotaCountdown/)
+  assert.match(page, /Capturar ventas en Product Research/)
+  assert.match(page, /Revisar otra oportunidad/)
+  assert.match(page, /Evidencia anterior conservada/)
+  assert.match(route, /assertEbayLaneAvailable/)
+  assert.match(route, /recordPersistentEbayRateLimit/)
+  assert.match(route, /checkpointPreserved: true/)
+  assert.match(route, /localFlowAvailable: true/)
   const gateway = readFileSync(
     new URL("../lib/ebay/ebay-seller-keyword-demand-gateway.ts", import.meta.url),
     "utf8"

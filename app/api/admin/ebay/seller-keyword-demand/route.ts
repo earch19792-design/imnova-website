@@ -9,6 +9,10 @@ import {
 import { getEbayReadonlyRateLimitMetadata } from "@/lib/ebay/ebay-readonly-rate-limit"
 import { buildEbayLunaOpportunityAssessment } from "@/lib/ebay/ebay-luna-demand-opportunity-engine"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
+import {
+  assertEbayLaneAvailable,
+  recordPersistentEbayRateLimit,
+} from "@/lib/ebay/ebay-persistent-quota-coordinator"
 import { buildWinnerEvidenceDecisionPackage } from "@/lib/ebay/ebay-winner-evidence-v2"
 import {
   sanitizeWinnerEvidencePackage,
@@ -79,6 +83,7 @@ export async function POST(req: Request) {
     )
   }
 
+  let quotaCheckpoint: Record<string, unknown> = {}
   try {
     const raw = await req.json() as Record<string, unknown>
     const candidate = {
@@ -102,6 +107,33 @@ export async function POST(req: Request) {
         { success: false, error: "EBAY_CANDIDATE_NAME_REQUIRED" },
         { status: 400 }
       )
+    }
+
+    quotaCheckpoint = {
+      candidateKey: text(raw.candidateKey, 240),
+      supplierVariantId: text(raw.supplierVariantId, 120),
+      stage: "MANUAL_MARKET_VERIFICATION",
+    }
+    const quotaLane = await assertEbayLaneAvailable(
+      getSupabaseAdminClient(),
+      "BROWSE",
+      "EXACT_VERIFICATION",
+    )
+    if (!quotaLane.available) {
+      const retryAt = quotaLane.resumeAt
+      const retryAfterSeconds = retryAt
+        ? Math.max(1, Math.ceil((Date.parse(retryAt) - Date.now()) / 1_000))
+        : 60
+      return NextResponse.json({
+        success: false,
+        error: "EBAY_READONLY_GET_429",
+        retryAfterSeconds,
+        retryAt,
+        affectedLane: quotaLane.ownerLane ?? "P1_EXACT_VERIFICATION",
+        pauseSource: "PERSISTENT_QUOTA_COORDINATOR",
+        checkpointPreserved: true,
+        localFlowAvailable: true,
+      }, { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } })
     }
 
     const report = await runEbaySellerKeywordDemandValidation(candidate)
@@ -235,12 +267,26 @@ export async function POST(req: Request) {
     const code = safeErrorCode(error)
     const rateLimit = getEbayReadonlyRateLimitMetadata(error)
     if (rateLimit) {
-      const retryAfterSeconds = rateLimit.retryAfterSeconds ?? 60
+      const persisted = await recordPersistentEbayRateLimit(getSupabaseAdminClient(), {
+        error,
+        apiFamily: "BROWSE",
+        endpoint: "BUY_BROWSE_ITEM_SUMMARY_SEARCH",
+        operation: "EXACT_VERIFICATION",
+        lane: "P1_EXACT_VERIFICATION",
+        checkpoint: quotaCheckpoint,
+      }).catch(() => null)
+      const retryAfterSeconds = rateLimit.retryAfterSeconds ?? 15 * 60
+      const retryAt = persisted?.resumeAt ??
+        new Date(Date.now() + retryAfterSeconds * 1_000).toISOString()
       return NextResponse.json({
         success: false,
         error: code,
         retryAfterSeconds,
-        retryAt: new Date(Date.now() + retryAfterSeconds * 1_000).toISOString(),
+        retryAt,
+        affectedLane: persisted?.affectedLane ?? "P1_EXACT_VERIFICATION",
+        pauseSource: persisted ? "PERSISTENT_QUOTA_COORDINATOR" : "RESPONSE_FALLBACK",
+        checkpointPreserved: true,
+        localFlowAvailable: true,
       }, { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } })
     }
     const status = code === "EBAY_READONLY_ENV_MISSING" ? 503 : 502

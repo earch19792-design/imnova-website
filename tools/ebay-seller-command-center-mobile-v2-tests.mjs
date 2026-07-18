@@ -26,8 +26,8 @@ test("mobile command center centralizes the five Seller OS areas", () => {
   assert.match(mobile, /Continuar donde quedé/)
   assert.match(mobile, /save_review/)
   assert.match(mobile, /Guardado server-side/)
-  assert.ok(mobile.indexOf("Paso 2 · Luna") < mobile.indexOf("Paso 3 · eBay:"))
-  assert.ok(mobile.indexOf("Paso 3 · eBay:") < mobile.indexOf("Resultado económico"))
+  assert.ok(mobile.indexOf("Paso 2 · Luna") < mobile.indexOf("Paso 3 · Verificación del mercado activo en eBay"))
+  assert.ok(mobile.indexOf("Paso 3 · Verificación del mercado activo en eBay") < mobile.indexOf("Resultado económico"))
   assert.match(mobile, /SERVER_AUTOSAVE/)
   assert.match(mobile, /Completa Luna antes de analizar eBay/)
   assert.match(mobile, /runWhatsAppPreflight/)
@@ -136,7 +136,7 @@ test("seller handoff has actionable economics, manual publication and valid mobi
     /registrar Item ID/,
     /humanWorkspaceBlocker/,
   ]) assert.match(workspace, signal)
-  assert.match(mobile, /comparables y señales de demanda/)
+  assert.match(mobile, /comparables activos y señales de mercado/i)
   assert.match(mobile, /oportunidad con evidencia suficiente/)
   assert.doesNotMatch(mobile, /ganador verificado/i)
   assert.match(mobile, /Vincular con la oportunidad canónica/)

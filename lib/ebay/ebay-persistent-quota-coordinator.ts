@@ -82,6 +82,26 @@ export async function assertEbayLaneAvailable(
   if (!data) return { available: true, status: "UNKNOWN", resumeAt: null }
   const reset = Date.parse(data.reset_at ?? "")
   const paused = data.status === "PAUSED_429" && (!Number.isFinite(reset) || reset > now.getTime())
+  const resetReached = data.status === "PAUSED_429" && Number.isFinite(reset) && reset <= now.getTime()
+  if (resetReached) {
+    // The first request after eBay's authorized reset may probe the lane once.
+    // A new 429 will persist a new pause; a successful request resumes normal work.
+    await supabase.from("ebay_api_quota_states").update({
+      status: "UNKNOWN",
+      reset_at: null,
+      last_refreshed_at: now.toISOString(),
+      updated_at: now.toISOString(),
+    }).eq("marketplace", "EBAY_US")
+      .eq("api_family", apiFamily)
+      .eq("operation", operation)
+    return {
+      available: true,
+      status: "RESET_REACHED",
+      resumeAt: null,
+      ownerLane: data.owner_lane,
+      reservedBudget: Number(data.reserved_budget ?? 0),
+    }
+  }
   return {
     available: !paused && (data.available_budget === null || Number(data.available_budget) > 0 || data.status === "UNKNOWN"),
     status: paused ? "PAUSED_429" : data.status,
