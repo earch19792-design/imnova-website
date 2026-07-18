@@ -10,6 +10,7 @@ const api = readFileSync("app/api/admin/ebay/command-center/route.ts", "utf8")
 const hub = readFileSync("app/admin/ebay-seller-os/page.tsx", "utf8")
 const mobileNav = readFileSync("app/admin/ebay/components/seller-os-mobile-nav.tsx", "utf8")
 const canonicalNavigation = readFileSync("lib/seller-os/navigation.ts", "utf8")
+const journeyGuide = readFileSync("app/admin/ebay/mobile-review/seller-journey-guide.tsx", "utf8")
 const registration = readFileSync("app/admin/ebay/listings/register/page.tsx", "utf8")
 const registrationApi = readFileSync("app/api/admin/ebay/listings/register/route.ts", "utf8")
 
@@ -32,6 +33,20 @@ test("mobile command center centralizes the five Seller OS areas", () => {
   assert.match(mobile, /runWhatsAppPreflight/)
   assert.match(mobile, /Validar Meta/)
   assert.match(mobile, /action: "preflight"/)
+})
+
+test("seller journey provides one directional route and inline required-field help", () => {
+  assert.match(mobile, /useState<View>\("opportunities"\)/)
+  assert.match(mobile, /SellerJourneyGuide/)
+  assert.match(journeyGuide, /Ruta recomendada/)
+  assert.match(journeyGuide, /Paso \{currentStep\} de 4/)
+  assert.match(journeyGuide, /aria-current=\{current \? "step"/)
+  assert.match(mobile, /aria-invalid=\{!selectedRadarCandidate\}/)
+  assert.match(mobile, /aria-invalid=\{!state\.stockQuantityConfirmed\}/)
+  assert.match(mobile, /aria-invalid=\{!lunaPriceConfirmed\}/)
+  assert.match(mobile, /text-rose-300/)
+  assert.match(mobile, /Ingresa una cantidad mayor que cero/)
+  assert.match(mobile, /Ingresa el costo y abre Luna/)
 })
 
 test("mobile navigation exposes Top 5, protects work and reports dependency failures", () => {

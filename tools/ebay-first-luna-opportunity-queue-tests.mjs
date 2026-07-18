@@ -140,7 +140,7 @@ test("mobile command center centralizes scan, queue and candidate review", () =>
   assert.match(commandCenter, /comparables exactos/)
   assert.match(commandCenter, /onReviewCandidate/)
   assert.match(commandCenter, /Operación y riesgos de listings/)
-  assert.match(mobilePage, /scans y cola guardados en Supabase/)
+  assert.match(mobilePage, /scans y cola guardados/)
   assert.match(mobilePage, /radarCandidates\.find/)
   assert.match(mobilePage, /loadMarketRadarReadonlyProductById/)
 })
