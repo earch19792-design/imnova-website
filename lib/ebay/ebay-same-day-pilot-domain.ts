@@ -99,7 +99,9 @@ export function buildSameDayProductResearchQuery(input: SameDayCandidateInput) {
     strategy: "BRAND_MPN", query: `${brand} ${mpn}`,
     reason: "Marca + MPN/modelo es la identidad exacta disponible más restrictiva.",
   }
-  const identity = normalized([input.productTitle, input.variantTitle].filter(Boolean).join(" "))
+  const variant = normalized(input.variantTitle)
+  const meaningfulVariant = /^(?:default(?: title)?|title)$/i.test(variant) ? "" : variant
+  const identity = normalized([input.productTitle, meaningfulVariant].filter(Boolean).join(" "))
   return {
     strategy: "EXACT_NORMALIZED_IDENTITY", query: identity.slice(0, 100),
     reason: "No existe GTIN o MPN confiable; se requiere corroborar la identidad normalizada antes de avanzar.",

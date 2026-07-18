@@ -98,7 +98,10 @@ export async function POST(req: Request) {
     })
     const queryPlan = plannedTask ? await markProductResearchQueryCaptured({
       supabase: auth.supabase, accountKey: auth.accountKey,
-      searchQueryHash: result.searchQueryHash, captureBatchId: result.batchId,
+      // The assertion above already proved canonical equivalence. Use the
+      // durable task hash so harmless punctuation or Luna's "Default Title"
+      // placeholder cannot prevent the verified task from advancing.
+      searchQueryHash: plannedTask.queryHash, captureBatchId: result.batchId,
       planId: plannedTask.planId, taskId: plannedTask.taskId,
     }) : null
     // Resume the durable same-day state machine immediately after the safe

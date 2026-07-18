@@ -55,8 +55,24 @@ function sha256(value: unknown) {
   ).digest("hex")}`
 }
 
+function canonicalQuery(value: unknown) {
+  const tokens = (text(value, 240).normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("en-US").match(/[a-z0-9]+/g) ?? [])
+  const meaningful: string[] = []
+  for (let index = 0; index < tokens.length; index += 1) {
+    // Luna uses this placeholder when a product has no real variant. It is not
+    // part of the commercial identity and eBay may omit it from the search box.
+    if (tokens[index] === "default" && tokens[index + 1] === "title") {
+      index += 1
+      continue
+    }
+    meaningful.push(tokens[index])
+  }
+  return meaningful.join(" ")
+}
+
 function queryHash(value: string) {
-  return sha256(text(value).toLocaleLowerCase("en-US"))
+  return sha256(canonicalQuery(value))
 }
 
 export function productResearchPlannedQueryHash(value: unknown) {
@@ -258,13 +274,14 @@ export async function assertProductResearchCaptureMatchesNextQuery(input: {
   if (!plan) return null
   const { data: task, error: taskError } = await input.supabase
     .from("marketplace_product_research_query_tasks")
-    .select("id,ordinal,query_hash,category_id")
+    .select("id,ordinal,search_query,query_hash,category_id")
     .eq("plan_id", plan.id).eq("marketplace_account_key", input.accountKey)
     .eq("marketplace", "EBAY_US").eq("status", "PENDING")
     .order("ordinal", { ascending: true }).limit(1).maybeSingle()
   if (taskError) throw new Error("PRODUCT_RESEARCH_QUERY_TASK_STATUS_READ_FAILED")
   if (!task) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_NO_PENDING_TASK")
-  if (productResearchPlannedQueryHash(input.searchQuery) !== task.query_hash) {
+  if (productResearchPlannedQueryHash(input.searchQuery) !==
+    productResearchPlannedQueryHash(task.search_query)) {
     throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_NEXT_QUERY_REQUIRED")
   }
   return {
@@ -273,6 +290,7 @@ export async function assertProductResearchCaptureMatchesNextQuery(input: {
     runId: plan.run_id,
     ordinal: task.ordinal,
     categoryId: task.category_id ?? null,
+    queryHash: task.query_hash,
   }
 }
 

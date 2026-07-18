@@ -42,6 +42,18 @@ function safeCode(value: unknown) {
     ? value : "PRODUCT_RESEARCH_CAPTURE_FAILED"
 }
 
+function captureErrorMessage(code: string) {
+  const messages: Record<string, string> = {
+    PRODUCT_RESEARCH_QUERY_PLAN_NEXT_QUERY_REQUIRED:
+      "La captura pertenece a otra búsqueda. Regresa a Seller OS y abre la consulta preparada para este producto.",
+    PRODUCT_RESEARCH_QUERY_PLAN_NO_PENDING_TASK:
+      "El plan ya no tiene una consulta pendiente. Actualiza Seller OS antes de volver a capturar.",
+    PRODUCT_RESEARCH_CAPTURE_ADMIN_SESSION_REQUIRED:
+      "Tu sesión de administrador venció. Inicia sesión nuevamente y repite la captura.",
+  }
+  return messages[code] ?? "Seller OS no pudo validar esta captura. Regresa al panel y vuelve a intentarlo."
+}
+
 export default function ProductResearchCaptureReceiverPage() {
   const [status, setStatus] = useState<"WAITING" | "IMPORTING" | "READY" | "ERROR">("WAITING")
   const [error, setError] = useState("")
@@ -126,7 +138,13 @@ export default function ProductResearchCaptureReceiverPage() {
       <div className="mt-6 rounded-2xl border border-white/10 bg-black/25 p-4">
         <p className="text-xs uppercase tracking-widest text-white/50">Estado</p>
         <p className="mt-2 text-lg font-black">{status === "WAITING" ? "Esperando captura oficial…" : status === "IMPORTING" ? "Validando e importando…" : status === "READY" ? "CAPTURA COMPLETADA" : "CAPTURA RECHAZADA"}</p>
-        {error && <p className="mt-2 text-sm text-rose-100">Error sanitizado: {error}</p>}
+        {error && <div className="mt-3 rounded-xl border border-rose-300/25 bg-rose-400/10 p-3">
+          <p className="text-sm font-semibold text-rose-50">{captureErrorMessage(error)}</p>
+          <details className="mt-2 text-xs text-rose-100/65">
+            <summary className="cursor-pointer">Ver detalle técnico</summary>
+            <code className="mt-1 block break-all">{error}</code>
+          </details>
+        </div>}
       </div>
       {result && <dl className="mt-5 grid grid-cols-2 gap-3 text-sm">
         <div><dt className="text-white/50">Filas / válidas</dt><dd className="font-black">{result.rowCount ?? 0} / {result.validCount ?? 0}</dd></div>
