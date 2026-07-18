@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto"
+
+import { getSupabaseAdminClient } from "../supabase-admin"
+
 import {
   assertEbaySellerKeywordReadonlyRequest,
   buildOfficialEbayVisualMetadata,
@@ -31,7 +35,9 @@ const BROWSE_SCOPE = "https://api.ebay.com/oauth/api_scope"
 const MARKETPLACE_INSIGHTS_SCOPE =
   "https://api.ebay.com/oauth/api_scope/buy.marketplace.insights"
 const MARKETPLACE_ID = "EBAY_US"
-const DEFAULT_DETAIL_SAMPLE_LIMIT = 6
+// Deep analysis is deliberately bounded. Discovery uses one aggregate Browse
+// search and only promoted candidates may spend detail budget.
+const DEFAULT_DETAIL_SAMPLE_LIMIT = 2
 const DETAIL_CONCURRENCY = 2
 const EBAY_REQUEST_TIMEOUT_MS = 8_000
 const EBAY_MAX_RETRIES = 3
@@ -70,6 +76,47 @@ type TaxonomyCacheEntry = {
 
 const tokenCache = new Map<string, TokenCacheEntry>()
 const taxonomyCache = new Map<string, TaxonomyCacheEntry>()
+
+function cacheFingerprint(value: string) {
+  return createHash("sha256").update(value).digest("hex")
+}
+
+async function readPersistentReadonlyCache<T>(apiFamily: "BROWSE_ITEM_DETAIL" | "TAXONOMY", key: string) {
+  try {
+    const { data, error } = await getSupabaseAdminClient()
+      .from("ebay_readonly_detail_cache")
+      .select("safe_payload")
+      .eq("api_family", apiFamily)
+      .eq("resource_fingerprint", cacheFingerprint(key))
+      .gt("expires_at", new Date().toISOString())
+      .order("observed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    return error ? null : data?.safe_payload as T | null
+  } catch {
+    return null
+  }
+}
+
+async function writePersistentReadonlyCache(
+  apiFamily: "BROWSE_ITEM_DETAIL" | "TAXONOMY",
+  key: string,
+  safePayload: Record<string, unknown>,
+  ttlMs: number,
+) {
+  try {
+    const observedAt = new Date().toISOString()
+    await getSupabaseAdminClient().from("ebay_readonly_detail_cache").insert({
+      api_family: apiFamily,
+      resource_fingerprint: cacheFingerprint(key),
+      safe_payload: safePayload,
+      observed_at: observedAt,
+      expires_at: new Date(Date.parse(observedAt) + ttlMs).toISOString(),
+    })
+  } catch {
+    // Cache failure never blocks the official read-only request.
+  }
+}
 let rateLimitCache: { value: EbayApplicationBrowseQuota; expiresAt: number } | null = null
 
 function record(value: unknown): JsonRecord {
@@ -402,10 +449,9 @@ export async function discoverEbayListingSignals(
   try {
     await enforceBrowseQuota(1)
     token = await getApplicationToken(BROWSE_SCOPE)
-    let search = await searchActiveListings(candidate, query, token)
-    if (!search.items.length && normalizedGtin(candidate.gtin)) {
-      search = await searchActiveListings({ ...candidate, gtin: null }, query, token)
-    }
+    // Exactly one search per family/lightweight pass. A different query may be
+    // scheduled later after cache expiry; it is never an eager fallback here.
+    const search = await searchActiveListings(candidate, query, token)
     const items = search.items.map(record)
     const sellers = new Set(items.map((item) => text(record(item.seller).username ??
       record(item.seller).userId)).filter(Boolean))
@@ -478,6 +524,25 @@ async function enrichActiveListing(value: unknown, token: string) {
   }
 }
 
+async function mappedActiveComparable(value: unknown, token: string) {
+  const summary = record(value)
+  const itemId = text(summary.itemId)
+  const key = itemId ? `item:${itemId}` : ""
+  const cached = key
+    ? await readPersistentReadonlyCache<EbaySellerComparableInput>("BROWSE_ITEM_DETAIL", key)
+    : null
+  if (cached) return cached
+  const mapped = mapComparable(await enrichActiveListing(summary, token), "EBAY_BROWSE_ACTIVE_LISTING")
+  if (key) {
+    await writePersistentReadonlyCache("BROWSE_ITEM_DETAIL", key, {
+      ...mapped,
+      imageUrl: null,
+      itemWebUrl: null,
+    }, 48 * 60 * 60_000)
+  }
+  return mapped
+}
+
 function inferCategoryId(
   candidate: EbaySellerKeywordCandidate,
   searchPayload: JsonRecord,
@@ -522,13 +587,11 @@ export async function runEbaySellerKeywordDemandValidation(
         browseToken
       )
     }
-    const activeDetails = await mapWithConcurrency(
+    const activeComparables = (await mapWithConcurrency(
       activeSearch.items.slice(0, detailSampleLimit()),
       DETAIL_CONCURRENCY,
-      (item) => enrichActiveListing(item, browseToken)
-    )
-    const activeComparables = activeDetails.map((item) => {
-      const mapped = mapComparable(item, "EBAY_BROWSE_ACTIVE_LISTING")
+      (item) => mappedActiveComparable(item, browseToken)
+    )).map((mapped) => {
       return mapped.estimatedSoldQuantity && mapped.estimatedSoldQuantity > 0
         ? { ...mapped, source: "EBAY_BROWSE_ESTIMATED_SALES" as const }
         : mapped
@@ -574,7 +637,7 @@ export async function runEbaySellerKeywordDemandValidation(
       candidateFoundCount:
         numberOrNull(activeSearch.payload.total) ?? activeSearch.items.length,
       returnedCandidateCount: activeSearch.items.length,
-      enrichedSampleCount: activeDetails.length,
+      enrichedSampleCount: activeComparables.length,
       insightsAvailability,
     })
   } finally {
@@ -790,6 +853,11 @@ export async function getEbayTaxonomyListingIntelligence(
     : `query:${query.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 160)}`
   const cached = taxonomyCache.get(cacheKey)
   if (cached && cached.expiresAt > Date.now()) return cached.value
+  const persistentCached = await readPersistentReadonlyCache<EbayTaxonomyListingIntelligence>("TAXONOMY", cacheKey)
+  if (persistentCached) {
+    taxonomyCache.set(cacheKey, { value: persistentCached, expiresAt: Date.now() + TAXONOMY_CACHE_TTL_MS })
+    return persistentCached
+  }
   const empty = (status: EbayTaxonomyListingIntelligence["status"]): EbayTaxonomyListingIntelligence => ({
     status,
     categoryTreeId: null,
@@ -849,6 +917,12 @@ export async function getEbayTaxonomyListingIntelligence(
       value,
       expiresAt: Date.now() + TAXONOMY_CACHE_TTL_MS,
     })
+    await writePersistentReadonlyCache(
+      "TAXONOMY",
+      cacheKey,
+      value as unknown as Record<string, unknown>,
+      TAXONOMY_CACHE_TTL_MS,
+    )
     return value
   } catch {
     return empty("REQUEST_FAILED")

@@ -57,7 +57,7 @@ test("mobile navigation exposes one hybrid opportunity view, protects work and r
   assert.doesNotMatch(mobile, /view === "top5"/)
   assert.match(mobile, /radarCandidates=\{report\.allCandidates\}/)
   assert.match(queue, /Cola canónica \+ Radar actualizado/)
-  assert.match(queue, /Oportunidades recomendadas/)
+  assert.match(queue, /Oportunidades para revisar/)
   assert.match(queue, /Nueva señal · análisis pendiente/)
   assert.match(mobile, /confirmReviewReset/)
   assert.match(mobile, /beforeunload/)

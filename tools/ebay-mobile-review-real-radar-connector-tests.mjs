@@ -122,7 +122,7 @@ test("mobile UI exposes source, Radar fields and browser-only persistence", () =
     /officialApprovalRecord: false/, /canPublish: false/, /eBay read-only/,
     /productos observados/, /candidatos seleccionables/, /B2-RUN continúa desactivado/,
   ]) assert.match(hybridSource, expected)
-  assert.match(hybridSource, /Oportunidades recomendadas/)
+  assert.match(hybridSource, /Oportunidades para revisar/)
   assert.doesNotMatch(hybridSource, /Radar alternativo/)
 })
 

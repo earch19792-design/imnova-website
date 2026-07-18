@@ -30,7 +30,7 @@ test("eBay read-only gateway retries transient failures with Retry-After", () =>
   assert.match(gateway, /assertEbaySellerKeywordReadonlyRequest\(url\.href, "GET"\)/)
   assert.match(gateway, /candidateFoundCount:[\s\S]*activeSearch\.payload\.total/)
   assert.match(gateway, /returnedCandidateCount: activeSearch\.items\.length/)
-  assert.match(gateway, /enrichedSampleCount: activeDetails\.length/)
+  assert.match(gateway, /enrichedSampleCount: activeComparables\.length/)
   assert.match(gateway, /value === null \|\| value === undefined \|\| value === ""/)
 })
 

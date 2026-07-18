@@ -30,7 +30,9 @@ jobs:
             "$PREVIEW_URL/api/cron/ebay-commercial-monitor"
 
   whatsapp-dispatcher:
-    if: vars.EBAY_COMMERCIAL_PREVIEW_MONITOR_ENABLED == 'true'
+    # Delivery is deliberately independent from reader activation. A successful
+    # dry run may enable the monitor without enabling an external message.
+    if: vars.EBAY_COMMERCIAL_PREVIEW_WHATSAPP_DISPATCHER_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -390,6 +390,7 @@ export function evaluateCommercialRules(input: {
 }
 
 export type DailyCommercialSummary = {
+  healthStatus: "ZERO_SALES_HEALTHY" | "ZERO_SALES_DATA_INCOMPLETE" | "SALES_ACTIVITY_CONFIRMED"
   activeListings: number
   impressions: number | null
   views: number | null
@@ -427,6 +428,9 @@ export function buildDailyCommercialSummary(input: {
   const impressions = sumWhenComplete("impressions")
   const views = sumWhenComplete("views")
   return {
+    healthStatus: input.confirmedSales > 0
+      ? "SALES_ACTIVITY_CONFIRMED"
+      : complete ? "ZERO_SALES_HEALTHY" : "ZERO_SALES_DATA_INCOMPLETE",
     activeListings: input.snapshots.filter((row) => row.listingStatus === "active").length,
     impressions,
     views,
@@ -453,6 +457,7 @@ export function renderDailyCommercialSummary(summary: DailyCommercialSummary) {
   return [
     "📊 RESUMEN DIARIO EBAY",
     "",
+    `Estado: ${summary.healthStatus}`,
     `Listings activos: ${summary.activeListings}`,
     `Impresiones: ${value(summary.impressions)}`,
     `Vistas: ${value(summary.views)}`,
