@@ -35,11 +35,14 @@ test("eBay read-only gateway retries transient failures with Retry-After", () =>
 })
 
 test("seller market analysis preserves eBay 429 and prevents repeated browser retries", () => {
+  assert.match(route, /export async function GET\(req: Request\)/)
+  assert.match(route, /ebayCalls: 0/)
   assert.match(route, /getEbayReadonlyRateLimitMetadata\(error\)/)
   assert.match(route, /status: 429/)
   assert.match(route, /headers: \{ "Retry-After": String\(retryAfterSeconds\) \}/)
   assert.match(mobileReview, /if \(response\.status === 429\)/)
   assert.match(mobileReview, /setSellerKeywordRetryAt\(retryAt\)/)
+  assert.match(mobileReview, /payload\.quota\?\.available === false/)
   assert.match(mobileReview, /sellerKeywordDemandLoading \|\| ebayRateLimitActive/)
   assert.match(mobileReview, /sellerKeywordDemandError && !ebayRateLimitActive/)
   assert.match(route, /recordPersistentEbayRateLimit/)

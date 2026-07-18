@@ -37,6 +37,43 @@ function safeErrorCode(error: unknown) {
     : "EBAY_READONLY_MARKET_VALIDATION_FAILED"
 }
 
+export async function GET(req: Request) {
+  const validation = await validateAdminApiRequest(req)
+  if (!validation.ok) {
+    return NextResponse.json(
+      { success: false, error: validation.error ?? "admin_forbidden" },
+      { status: validation.status || 403 },
+    )
+  }
+  try {
+    const quota = await assertEbayLaneAvailable(
+      getSupabaseAdminClient(),
+      "BROWSE",
+      "EXACT_VERIFICATION",
+    )
+    return NextResponse.json({
+      success: true,
+      quota: {
+        available: quota.available,
+        status: quota.status,
+        resumeAt: quota.resumeAt,
+        affectedLane: quota.ownerLane ?? "P1_EXACT_VERIFICATION",
+      },
+      safety: {
+        ebayCalls: 0,
+        ebayWrites: 0,
+        openAiCalls: 0,
+        piiReturned: false,
+      },
+    })
+  } catch {
+    return NextResponse.json(
+      { success: false, error: "EBAY_QUOTA_STATE_READ_FAILED" },
+      { status: 502 },
+    )
+  }
+}
+
 async function getExactProductResearchEvidence(input: {
   accountKey: string | null
   supplierVariantId: string

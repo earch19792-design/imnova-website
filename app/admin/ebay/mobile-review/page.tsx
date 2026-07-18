@@ -260,6 +260,34 @@ export default function EbayMobileReviewPage() {
   const [whatsappLoadError, setWhatsappLoadError] = useState("")
   const [whatsappPreflightRunning, setWhatsappPreflightRunning] = useState(false)
   const [serverSaveState, setServerSaveState] = useState("Sin cambios pendientes")
+
+  useEffect(() => {
+    let active = true
+    void (async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession()
+        if (error || !data.session) return
+        const response = await fetch("/api/admin/ebay/seller-keyword-demand", {
+          cache: "no-store",
+          headers: { Authorization: `Bearer ${data.session.access_token}` },
+        })
+        const payload = await readMobileReviewJson<{
+          success?: boolean
+          quota?: { available?: boolean; resumeAt?: string | null }
+        }>(response, "EBAY_QUOTA_STATE_READ_FAILED")
+        if (!active || !payload.success) return
+        if (payload.quota?.available === false && payload.quota.resumeAt &&
+          Date.parse(payload.quota.resumeAt) > Date.now()) {
+          setSellerKeywordRetryAt(payload.quota.resumeAt)
+          setSellerKeywordDemandError("EBAY_MARKET_VERIFICATION_PAUSED")
+          setQuotaClock(Date.now())
+        }
+      } catch {
+        // Quota status improves guidance but never blocks the rest of Seller OS.
+      }
+    })()
+    return () => { active = false }
+  }, [])
   const [blockedVisible, setBlockedVisible] = useState(5)
   const [copied, setCopied] = useState(false)
   const confirmationRef = useRef<HTMLElement>(null)
