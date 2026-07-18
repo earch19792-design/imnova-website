@@ -168,7 +168,8 @@ export default function ProductResearchCaptureReceiverPage() {
         <div><dt className="text-white/50">OpenAI</dt><dd>0 llamadas</dd></div>
         <div><dt className="text-white/50">Escrituras eBay</dt><dd>0</dd></div>
       </dl>}
-      <p className="mt-6 text-xs text-white/45">Puedes cerrar esta ventana al finalizar. Seller OS continuará únicamente el reanálisis de Loop 1 del mismo run.</p>
+      {result?.queryPlan?.status === "COMPLETED" && <a href="/admin/ebay-seller-os" className="mt-6 grid min-h-12 w-full place-items-center rounded-2xl bg-emerald-200 px-4 text-sm font-black text-emerald-950">VOLVER A SELLER OS</a>}
+      <p className="mt-6 text-xs text-white/45">{result?.queryPlan?.status === "COMPLETED" ? "El plan terminó. Regresa a Seller OS para revisar el resultado y la siguiente acción." : "Puedes cerrar esta ventana al finalizar. Seller OS continuará únicamente el reanálisis de Loop 1 del mismo run."}</p>
     </section>
   </main>
 }

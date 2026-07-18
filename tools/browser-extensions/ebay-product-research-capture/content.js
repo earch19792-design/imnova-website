@@ -3,6 +3,7 @@
 
   const SELLER_OS_ORIGIN = "https://imnova-website-z1qh-git-featur-438554-earch19792-6888s-projects.vercel.app"
   const RECEIVER_URL = `${SELLER_OS_ORIGIN}/admin/ebay/mobile-review/product-research-capture`
+  const SELLER_OS_HOME_URL = `${SELLER_OS_ORIGIN}/admin/ebay-seller-os`
   const CAPTURE_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_VISIBLE_CAPTURE_V1"
   const RECEIVER_READY_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_RECEIVER_READY_V1"
   const CAPTURE_RESULT_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_CAPTURE_RESULT_V1"
@@ -66,6 +67,7 @@
   let nextQueryWatchTimer = null
   let nextQueryCheckPending = false
   let nextQueryApplyPending = false
+  let guidedPlanCompleted = false
 
   const ERROR_MESSAGES = {
     PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND:
@@ -1247,13 +1249,25 @@
 
   function updateCaptureAvailability() {
     if (!captureButton) return
+    if (guidedPlanCompleted) {
+      captureButton.disabled = false
+      captureButton.textContent = "VOLVER A SELLER OS"
+      captureButton.style.opacity = "1"
+      captureButton.style.cursor = "pointer"
+      captureButton.style.background = "#bbf7d0"
+      captureButton.style.color = "#052e16"
+      return
+    }
     const waitingForResults = Boolean(nextQueryState && !nextQueryState.resultsReady)
     captureButton.disabled = waitingForResults
     captureButton.textContent = nextQueryState
       ? waitingForResults ? "3. Capturar cuando carguen resultados" : "3. Capturar y continuar"
       : "Capturar y continuar"
-    captureButton.style.opacity = waitingForResults ? ".65" : "1"
+    captureButton.style.opacity = waitingForResults ? ".72" : "1"
     captureButton.style.cursor = waitingForResults ? "not-allowed" : "pointer"
+    captureButton.style.background = waitingForResults ? "#1e293b" : "#a5f3fc"
+    captureButton.style.color = waitingForResults ? "#94a3b8" : "#082f49"
+    captureButton.setAttribute("aria-current", waitingForResults ? "false" : "step")
   }
 
   function setNextQueryWorkflowStage(stage) {
@@ -1269,23 +1283,30 @@
       applyNextQueryButton.hidden = !applying
       applyNextQueryButton.disabled = true
       applyNextQueryButton.textContent = `1. Aplicando consulta ${ordinal}…`
+      applyNextQueryButton.style.opacity = ".72"
+      applyNextQueryButton.style.cursor = "wait"
+      applyNextQueryButton.setAttribute("aria-current", applying ? "step" : "false")
     }
     if (copyNextQueryButton) {
       copyNextQueryButton.hidden = !manualCopy
       copyNextQueryButton.disabled = false
       copyNextQueryButton.textContent = `1. Copiar consulta ${ordinal}`
+      copyNextQueryButton.style.background = "#a5f3fc"
+      copyNextQueryButton.style.color = "#082f49"
+      copyNextQueryButton.style.opacity = "1"
+      copyNextQueryButton.setAttribute("aria-current", manualCopy ? "step" : "false")
     }
     if (nextQueryInstruction) {
       nextQueryInstruction.textContent = applying
-        ? "Seller OS está buscando el control seguro dentro de Product Research."
+          ? "TRABAJANDO: Seller OS está buscando el control seguro dentro de Product Research."
         : manualCopy
-          ? "2. Pega la consulta en Product Research y pulsa Search. Capturar se habilitará cuando cargue una tabla nueva."
+          ? "AHORA: pulsa el botón 1. Después pega la consulta en Product Research y ejecuta Search."
           : manualSearch
-            ? "2. La consulta ya está colocada. Pulsa Search dentro de Product Research."
+            ? "AHORA · PASO 2: la consulta ya está colocada. Pulsa Search dentro de Product Research."
             : waiting
-              ? "2. Esperando que eBay cargue resultados nuevos…"
+              ? "PASO 2 · TRABAJANDO: esperando que eBay cargue resultados nuevos…"
               : ready
-                ? "Resultados nuevos confirmados. Completa el paso 3."
+                ? "AHORA · PASO 3: resultados confirmados. Pulsa Capturar y continuar."
                 : ""
       nextQueryInstruction.hidden = !nextQueryInstruction.textContent
     }
@@ -1530,6 +1551,19 @@
     if (nextQueryInstruction) nextQueryInstruction.hidden = true
   }
 
+  function completeGuidedPlan(queryCount) {
+    const total = positivePlanInteger(queryCount)
+    guidedPlanCompleted = true
+    clearNextQuery()
+    setStatus(
+      total
+        ? `PROCESO COMPLETADO · ${total} de ${total} consultas. Regresa a Seller OS para revisar el resultado y la siguiente acción.`
+        : "PROCESO COMPLETADO. Regresa a Seller OS para revisar el resultado y la siguiente acción.",
+      "success",
+    )
+    updateCaptureAvailability()
+  }
+
   function startCapture() {
     try {
       assertExpectedQuery(queryContext())
@@ -1601,6 +1635,8 @@
       if (event.data.success && event.data.nextQuery) {
         const advance = navigationOnly ? advanceAfterCorrectedCapture : advanceAfterAcceptedCapture
         advance(event.data.nextQuery, event.data.nextQueryOrdinal, event.data.queryCount)
+      } else if (event.data.success && positivePlanInteger(event.data.queryCount)) {
+        completeGuidedPlan(event.data.queryCount)
       } else if (event.data.success) clearNextQuery()
       finishCapture()
     }
@@ -1613,12 +1649,19 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.4"
+  title.textContent = "Seller OS · Product Research · v1.2.5"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"
   captureButton.style.cssText = "display:block;width:100%;margin-top:10px;padding:11px;border:0;border-radius:11px;background:#a5f3fc;color:#082f49;font-weight:800;cursor:pointer"
-  captureButton.addEventListener("click", startCapture)
+  captureButton.addEventListener("click", () => {
+    if (!guidedPlanCompleted) {
+      startCapture()
+      return
+    }
+    const sellerOsWindow = window.open(SELLER_OS_HOME_URL, "sellerOsDashboard")
+    sellerOsWindow?.focus()
+  })
   const status = document.createElement("p")
   status.id = "imnova-product-research-capture-status"
   status.textContent = "Captura sólo la tabla actualmente visible."
@@ -1645,6 +1688,8 @@
       await navigator.clipboard.writeText(nextQueryField?.value ?? "")
       copyNextQueryButton.disabled = true
       copyNextQueryButton.textContent = "1. Consulta copiada ✓"
+      copyNextQueryButton.style.opacity = ".7"
+      copyNextQueryButton.style.cursor = "not-allowed"
       setStatus("Consulta copiada. Completa el paso 2 dentro de Product Research.", "success")
     } catch {
       nextQueryField?.focus()
@@ -1661,7 +1706,9 @@
     nextQueryProgress, nextQueryField, applyNextQueryButton,
     copyNextQueryButton, nextQueryInstruction,
   )
-  panel.append(title, captureButton, status, nextQueryPanel)
+  // Keep the visual order identical to the operating order. The capture
+  // action is step 3 and must never appear above steps 1 and 2.
+  panel.append(title, status, nextQueryPanel, captureButton)
   shadow.append(panel)
   document.documentElement.append(host)
   const sellerOsSeed = guidedQueryFragment()

@@ -9,9 +9,9 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Ejecuta una búsqueda y usa **Capturar y continuar**.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.4.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.5.
 
-## Consulta guiada y patrones locales (v1.2.4)
+## Consulta guiada y patrones locales (v1.2.5)
 
 Seller OS puede abrir Product Research con una consulta preparada en el fragmento
 local de la URL. La extensión aplica la consulta automáticamente y el usuario sólo
