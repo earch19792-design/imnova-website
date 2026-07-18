@@ -65,6 +65,7 @@ import {
   type WinnerComparableInput,
   type WinnerEvidenceInput,
 } from "./ebay-winner-evidence-v2"
+import { assertProductFactsOpenAiReady, productFactsOpenAiReady } from "./ebay-product-facts-enrichment"
 import {
   buildTop20TargetManifest,
   calculateTop20RateLimitPause,
@@ -3035,14 +3036,18 @@ export async function confirmListingAiQueueLunaObservation(input: {
     actor_id: input.actorId, idempotency_key_hash: idempotencyHash,
   })
   if (eventError) throw new Error("TOP10_LUNA_CONFIRMATION_PERSIST_FAILED")
+  const factsReadyForOpenAi = await productFactsOpenAiReady(input.supabase, input.accountKey, item.id)
   await input.supabase.from("marketplace_listing_approval_queue_items").update({
     decision_package_id: refreshed.id, package_hash: refreshed.package_hash,
     product_identity_fingerprint: refreshed.product_identity_fingerprint,
     base_product_fingerprint: refreshedPack.baseProductFingerprint,
     offer_pack_fingerprint: refreshedPack.recommendedPack?.offerPackFingerprint ?? refreshedPack.currentOfferPackFingerprint,
     cohort: classification.cohort,
+    // Economic readiness is not fact readiness. Keep the candidate visible for its
+    // one targeted exception, but never promote it to the OpenAI approval lane.
     internal_status: classification.cohort === "READY_FOR_OPERATOR_APPROVAL"
-      ? "READY_FOR_OPENAI_APPROVAL" : "REJECTED_AFTER_CONFIRMATION",
+      ? (factsReadyForOpenAi ? "READY_FOR_OPENAI_APPROVAL" : "READY_FOR_OPERATOR_APPROVAL")
+      : "REJECTED_AFTER_CONFIRMATION",
     rank: null, pool_rank: null,
     ranking_score: approvalQueueRankingScore(evidence.scores), reason_codes: classification.reasonCodes,
     evidence_snapshot: refreshedSnapshot,
@@ -3083,6 +3088,7 @@ export async function approveListingAiQueueItem(input: {
   if ((item.ebay_listing_quantity ?? 0) !== 1 || (item.available_offer_pack_capacity ?? 0) < 1) {
     throw new Error("TOP10_OFFER_CAPACITY_REQUIRED")
   }
+  await assertProductFactsOpenAiReady(input.supabase, input.accountKey, item.id)
   const decision = await readDecisionRow(input.supabase, input.accountKey, item.decision_package_id)
   const assessment = assessListingAiDecisionPackage(
     { ...decision, status: "APPROVED", approved_at: now.toISOString() }, now,

@@ -201,6 +201,37 @@ type QueuePayload = {
     stale: number
     reanalysisRequired: number
   }
+  productFacts?: ProductFactsStatus
+}
+
+type ProductFactsCandidateStatus = {
+  gates?: Record<string, boolean>
+  counts?: Record<string, number>
+  requirements?: Record<string, number>
+  exception?: {
+    fieldRequired?: string
+    whyItMatters?: string
+    sourcesAlreadyChecked?: string[]
+    exactEvidenceNeeded?: string
+    blockingStatus?: string
+  } | null
+  observedAt?: string | null
+}
+
+type ProductFactsStatus = {
+  version: string
+  latestRun: {
+    id: string
+    status: string
+    candidatesRequested: number
+    candidatesProcessed: number
+    candidatesExcluded: number
+    sourceReads: Record<string, number>
+    completedAt: string | null
+  } | null
+  byCandidate: Record<string, ProductFactsCandidateStatus>
+  coverage: { candidates: number; openAiInputReady: number; publicationFactsReady: number }
+  safety: { openAiCalls: 0; ebayWrites: 0; productionChanged: false; cookiesStored: false; sourceUrlsStored: false; rawPagesStored: false; competitorImagesStored: false; piiStored: false }
 }
 
 type ConfirmationDraft = {
@@ -563,6 +594,24 @@ export function Loop2Top20OpportunityPool() {
     }
   }
 
+  const enrichProductFacts = async () => {
+    setWorkingId("product-facts"); setError(""); setMessage("")
+    try {
+      const response = await adminFetch<{ result: {
+        candidatesRequested: number; candidatesProcessed: number; candidatesExcluded: number
+      } }>("/api/admin/ebay/listing-ai/product-facts", {
+        method: "POST", headers: { "Idempotency-Key": requestKey("product-facts", "top20") },
+        body: JSON.stringify({ action: "enrich" }),
+      })
+      await load()
+      setMessage(`Ficha técnica automatizada: ${response.result.candidatesProcessed} candidato(s) enriquecido(s), ${response.result.candidatesExcluded} excluido(s) de forma segura. Discovery no se repitió; OpenAI 0 y escrituras eBay 0.`)
+    } catch (factsError) {
+      setError(factsError instanceof Error ? factsError.message : "PRODUCT_FACT_ENRICHMENT_FAILED")
+    } finally {
+      setWorkingId("")
+    }
+  }
+
   const verifyMarketplaceInsights = async () => {
     setWorkingId("marketplace-insights-preflight"); setError(""); setMessage("")
     try {
@@ -770,6 +819,24 @@ export function Loop2Top20OpportunityPool() {
             <p className="mt-1 text-white/65">eBay-first: {payload.run.ebay_first_status ?? "NOT_STARTED"} · categorías {payload.run.ebay_first_category_count ?? 0} · señales {payload.run.ebay_first_signal_count ?? 0} · coincidencias Luna exactas {payload.run.ebay_first_exact_luna_match_count ?? 0}</p>
             <p className="mt-1 text-white/55">Brand {payload.run.coverage_before?.brand ?? 0} → {payload.run.coverage_after?.brand ?? 0} · GTIN/MPN {payload.run.coverage_before?.gtinOrMpn ?? 0} → {payload.run.coverage_after?.gtinOrMpn ?? 0} · pack {payload.run.coverage_before?.pack ?? 0} → {payload.run.coverage_after?.pack ?? 0} · peso {payload.run.coverage_before?.weight ?? 0} → {payload.run.coverage_after?.weight ?? 0} · dimensiones {payload.run.coverage_before?.dimensions ?? 0} → {payload.run.coverage_after?.dimensions ?? 0}</p>
           </div>}
+          <section aria-labelledby="product-facts-heading" className="space-y-3 rounded-xl border border-violet-200/20 bg-violet-100/[0.04] p-3 text-xs">
+            <div>
+              <h4 id="product-facts-heading" className="font-black">Ficha técnica automatizada</h4>
+              <p className="mt-1 text-white/60">Procesa sólo los candidatos exactos Luna del Top 20: unidad física, oferta, paquete de envío y requisitos oficiales eBay. No abre Discovery, no llama OpenAI y no escribe en eBay.</p>
+            </div>
+            <button type="button" onClick={() => void enrichProductFacts()}
+              disabled={workingId === "product-facts" || scanActive || !pool.length}
+              className="min-h-11 w-full rounded-xl bg-violet-100 font-black text-violet-950 disabled:opacity-40">
+              {workingId === "product-facts" ? "Corroborando hechos…" : "Completar ficha técnica automáticamente"}
+            </button>
+            <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div><dt className="text-white/45">Último run</dt><dd>{payload?.productFacts?.latestRun?.status ?? "PENDIENTE"}</dd></div>
+              <div><dt className="text-white/45">Procesados / solicitados</dt><dd>{payload?.productFacts?.latestRun?.candidatesProcessed ?? 0} / {payload?.productFacts?.latestRun?.candidatesRequested ?? 0}</dd></div>
+              <div><dt className="text-white/45">OpenAI input ready</dt><dd>{payload?.productFacts?.coverage.openAiInputReady ?? 0}</dd></div>
+              <div><dt className="text-white/45">Publication facts ready</dt><dd>{payload?.productFacts?.coverage.publicationFactsReady ?? 0}</dd></div>
+            </dl>
+            <p className="text-white/45">Fuentes: Luna exact variant, eBay Catalog y Taxonomy oficiales; Browse/GetItem sólo se conservan como corroboración de identidad ya autorizada. Sin cookies, URLs fuente, HTML, imágenes, PII ni secretos.</p>
+          </section>
           <section aria-labelledby="marketplace-insights-preflight-heading" className="space-y-3 rounded-xl border border-emerald-200/20 bg-emerald-100/[0.04] p-3 text-xs">
             <div>
               <h4 id="marketplace-insights-preflight-heading" className="font-black">API oficial de ventas de mercado</h4>
@@ -908,6 +975,7 @@ export function Loop2Top20OpportunityPool() {
             const alternative = item.evidence_snapshot.packStrategy?.alternativePack
             const strategic = item.evidence_snapshot.strategicIntelligence
             const optimization = item.evidence_snapshot.optimizationEvidence
+            const productFacts = payload?.productFacts?.byCandidate[item.id]
             const draft = drafts[item.id] ?? { priceObserved: item.supplier_price_observed?.toString() ?? "", availability: "AVAILABLE_QUANTITY_NOT_SHOWN" as const, exactQuantity: "" }
             const ready = item.cohort === "READY_FOR_OPERATOR_APPROVAL"
             const confirmationReady = ready && Boolean(item.supplier_confirmed_at) && (item.available_offer_pack_capacity ?? 0) >= 1
@@ -933,8 +1001,22 @@ export function Loop2Top20OpportunityPool() {
                 <p>Patrón visual oficial: {optimization?.visualEvidence?.status ?? "N/D"} · muestra útil {optimization?.visualEvidence?.usableSampleSize ?? 0} · confianza {optimization?.visualEvidence?.confidence ?? "INSUFFICIENT"}.</p>
                 <p className="text-white/45">Sólo metadatos oficiales: imágenes de competidores descargadas 0 · copiadas 0 · causalidad no afirmada.</p>
               </div>
+              <div className="mt-2 rounded-xl border border-violet-200/20 bg-violet-100/[0.04] p-2 text-xs text-white/70">
+                <p className="font-black text-violet-50">Ficha técnica automatizada</p>
+                {productFacts ? <>
+                  <dl className="mt-1 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                    <div><dt className="text-white/45">Facts</dt><dd>{productFacts.counts?.total ?? 0}</dd></div>
+                    <div><dt className="text-white/45">Verificados / corroborados</dt><dd>{productFacts.counts?.VERIFIED ?? 0} / {productFacts.counts?.CORROBORATED ?? 0}</dd></div>
+                    <div><dt className="text-white/45">Derivados / estimados</dt><dd>{productFacts.counts?.DERIVED_VERIFIED ?? 0} / {productFacts.counts?.ESTIMATED_INTERNAL ?? 0}</dd></div>
+                    <div><dt className="text-white/45">Aspects obligatorios</dt><dd>{(productFacts.requirements?.SATISFIED_VERIFIED ?? 0) + (productFacts.requirements?.SATISFIED_CORROBORATED ?? 0)} / {productFacts.requirements?.total ?? 0}</dd></div>
+                    <div><dt className="text-white/45">Readiness</dt><dd>{productFacts.gates?.OPENAI_INPUT_READY ? "OPENAI_INPUT_READY" : "BLOQUEADO SEGURO"}</dd></div>
+                  </dl>
+                  <p className="mt-1 text-white/55">Unidad: {productFacts.gates?.PRODUCT_FACTS_READY ? "lista" : "pendiente"} · Oferta: {productFacts.gates?.OFFER_PACK_READY ? "lista" : "pendiente"} · Envío: {productFacts.gates?.SHIPPING_CONFIRMED ? "confirmado" : productFacts.gates?.SHIPPING_ESTIMATE_READY ? "estimado, no publicable" : "pendiente"} · Regulación: {productFacts.gates?.REGULATORY_READY ? "resuelta" : "pendiente"}.</p>
+                  {productFacts.exception && <p className="mt-2 rounded-lg border border-amber-100/20 bg-amber-100/[0.06] p-2 text-amber-50"><strong>{productFacts.exception.fieldRequired}:</strong> {productFacts.exception.whyItMatters} {productFacts.exception.exactEvidenceNeeded} Fuentes revisadas: {productFacts.exception.sourcesAlreadyChecked?.join(", ")}.</p>}
+                </> : <p className="mt-1 text-white/55">Pendiente de enriquecimiento automático. No se te pedirá completar una ficha técnica completa.</p>}
+              </div>
               {ready && !item.supplier_confirmed_at && !item.operator_action && <div className="mt-3 space-y-3 rounded-xl border border-cyan-200/20 p-3">{product.lunaUrl && <a href={product.lunaUrl} target="_blank" rel="noreferrer" className="grid min-h-11 place-items-center rounded-xl border border-cyan-200/25 font-black">Abrir en Luna</a>}<p className="font-black">Confirmar precio y disponibilidad</p><label className="block text-xs">Precio Luna observado<input type="number" min="0" step="0.01" value={draft.priceObserved} onChange={(event) => updateDraft(item.id, { priceObserved: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><fieldset className="space-y-2 text-xs"><legend className="font-bold">Disponibilidad</legend>{(["EXACT_QUANTITY_VISIBLE", "AVAILABLE_QUANTITY_NOT_SHOWN", "OUT_OF_STOCK"] as const).map((value) => <label key={value} className="flex min-h-9 items-center gap-2"><input type="radio" name={`availability-${item.id}`} checked={draft.availability === value} onChange={() => updateDraft(item.id, { availability: value })} />{availabilityLabel(value)}</label>)}</fieldset>{draft.availability === "EXACT_QUANTITY_VISIBLE" && <label className="block text-xs">Cantidad exacta visible<input type="number" min="0" step="1" value={draft.exactQuantity} onChange={(event) => updateDraft(item.id, { exactQuantity: event.target.value })} className="mt-1 min-h-11 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label>}<button type="button" disabled={Boolean(confirmationBlockedReason) || workingId === item.id} onClick={() => void confirmLuna(item)} className="min-h-11 w-full rounded-xl bg-cyan-100 font-black text-black disabled:opacity-40">Confirmar y recalcular</button>{confirmationBlockedReason && <p className="text-xs text-amber-100">{confirmationBlockedReason}</p>}<p className="text-xs text-white/55">Cantidad no visible: máximo 1 offer pack; se exige nueva comprobación después de una venta.</p></div>}
-              {item.supplier_confirmed_at && <><p className="mt-3 text-xs text-emerald-100">Precio/disponibilidad confirmados · confianza {item.stock_confidence} · capacidad {item.available_offer_pack_capacity ?? 0} offer pack · cantidad eBay {item.ebay_listing_quantity ?? 0}.</p><dl className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5"><div><dt className="text-white/45">Pack / alternativo</dt><dd>{pack?.packCount ?? "N/D"} / {alternative?.packCount ?? "N/D"}</dd></div><div><dt className="text-white/45">Precio / unidad</dt><dd>{money(economics?.targetPrice)} / {money(pack?.medianPricePerUnit)}</dd></div><div><dt className="text-white/45">Beneficio</dt><dd>{money(economics?.estimatedProfit)}</dd></div><div><dt className="text-white/45">ROI / margen</dt><dd>{percent(economics?.roiPercent)} / {percent(economics?.netMarginPercent)}</dd></div><div><dt className="text-white/45">Demanda / competencia</dt><dd>{evidence?.scores?.demandConfidence?.toFixed(0) ?? "N/D"} / {evidence?.scores?.competitionPressure?.toFixed(0) ?? "N/D"}</dd></div></dl><p className="mt-2 text-xs text-white/60">Activos exactos: {evidence?.activeExactCount ?? "N/D"} · vendidos exactos: {evidence?.soldExactCount ?? "N/D"} · confianza: {evidence?.confidence ?? "N/D"}</p><div className="mt-3 grid gap-2 sm:grid-cols-3"><button type="button" disabled={!confirmationReady || item.operator_action === "APPROVED" || workingId === item.id} onClick={() => void approve(item)} className="min-h-12 rounded-xl bg-fuchsia-200 font-black text-black disabled:opacity-40">{item.operator_action === "APPROVED" ? "Aprobado para OpenAI" : "Aprobar para OpenAI"}</button><button type="button" disabled={!item.package_hash || workingId === item.id} onClick={() => void discard(item)} className="min-h-11 rounded-xl border border-rose-200/25 font-black text-rose-50 disabled:opacity-40">Rechazar</button><button type="button" onClick={() => setEvidenceId((value) => value === item.id ? "" : item.id)} className="min-h-11 rounded-xl border border-white/20 font-black">Ver evidencia</button></div>{!confirmationReady && <p className="mt-1 text-xs text-white/55">La economía recalculada no conserva todos los hard gates; no se puede aprobar para OpenAI.</p>}</>}
+              {item.supplier_confirmed_at && <><p className="mt-3 text-xs text-emerald-100">Precio/disponibilidad confirmados · confianza {item.stock_confidence} · capacidad {item.available_offer_pack_capacity ?? 0} offer pack · cantidad eBay {item.ebay_listing_quantity ?? 0}.</p><dl className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5"><div><dt className="text-white/45">Pack / alternativo</dt><dd>{pack?.packCount ?? "N/D"} / {alternative?.packCount ?? "N/D"}</dd></div><div><dt className="text-white/45">Precio / unidad</dt><dd>{money(economics?.targetPrice)} / {money(pack?.medianPricePerUnit)}</dd></div><div><dt className="text-white/45">Beneficio</dt><dd>{money(economics?.estimatedProfit)}</dd></div><div><dt className="text-white/45">ROI / margen</dt><dd>{percent(economics?.roiPercent)} / {percent(economics?.netMarginPercent)}</dd></div><div><dt className="text-white/45">Demanda / competencia</dt><dd>{evidence?.scores?.demandConfidence?.toFixed(0) ?? "N/D"} / {evidence?.scores?.competitionPressure?.toFixed(0) ?? "N/D"}</dd></div></dl><p className="mt-2 text-xs text-white/60">Activos exactos: {evidence?.activeExactCount ?? "N/D"} · vendidos exactos: {evidence?.soldExactCount ?? "N/D"} · confianza: {evidence?.confidence ?? "N/D"}</p><div className="mt-3 grid gap-2 sm:grid-cols-3"><button type="button" disabled={!confirmationReady || !productFacts?.gates?.OPENAI_INPUT_READY || item.operator_action === "APPROVED" || workingId === item.id} onClick={() => void approve(item)} className="min-h-12 rounded-xl bg-fuchsia-200 font-black text-black disabled:opacity-40">{item.operator_action === "APPROVED" ? "Aprobado para OpenAI" : "Aprobar para OpenAI"}</button><button type="button" disabled={!item.package_hash || workingId === item.id} onClick={() => void discard(item)} className="min-h-11 rounded-xl border border-rose-200/25 font-black text-rose-50 disabled:opacity-40">Rechazar</button><button type="button" onClick={() => setEvidenceId((value) => value === item.id ? "" : item.id)} className="min-h-11 rounded-xl border border-white/20 font-black">Ver evidencia y fuentes</button></div>{!confirmationReady && <p className="mt-1 text-xs text-white/55">La economía recalculada no conserva todos los hard gates; no se puede aprobar para OpenAI.</p>}{confirmationReady && !productFacts?.gates?.OPENAI_INPUT_READY && <p className="mt-1 text-xs text-amber-100">La ficha técnica aún tiene un bloqueo verificable. No se aprobará para OpenAI.</p>}</>}
               {item.supplier_confirmed_at && evidenceId === item.id && <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-black/35 p-3 text-xs">{JSON.stringify({ identityFingerprint: item.product_identity_fingerprint, baseProductFingerprint: item.base_product_fingerprint, offerPackFingerprint: item.offer_pack_fingerprint, evidence: item.evidence_snapshot, reasons: item.reason_codes, canPublish: false, openAiCalls: 0, ebayWrites: 0 }, null, 2)}</pre>}
             </article>
           })}</div> : invalidEmptyCompletion
