@@ -22,6 +22,16 @@ import { enqueueListingAiTop20Continuation } from "./ebay-listing-ai-top20-queue
 const MARKETPLACE = "EBAY_US"
 const MAX_RECONCILIATION_REFERENCES = 10
 type JsonRecord = Record<string, unknown>
+type PilotJobSpec = {
+  jobType: string
+  idempotencyKey: string
+  checkpoint?: JsonRecord
+  availableAt?: string
+  maxAttempts?: number
+  apiFamily?: string | null
+  apiOperation?: string | null
+  ownerLane?: string | null
+}
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {}
@@ -97,26 +107,41 @@ async function currentState(supabase: SupabaseClient, accountKey: string, date: 
 }
 
 async function transition(input: {
-  supabase: SupabaseClient; runId: string; candidateId: string; previousState: string | null; nextState: string
+  supabase: SupabaseClient; runId: string; candidateId: string; previousState: string; nextState: string
   reasonCode: string; triggeredBy: "SYSTEM" | "USER" | "SCHEDULER" | "RETRY"; checkpoint?: JsonRecord
-  nextAutomaticAction: string; nextHumanAction: string; attempt?: number
+  nextAutomaticAction: string; nextHumanAction: string; attempt?: number; job?: PilotJobSpec
 }) {
   const startedAt = new Date().toISOString()
+  const completedAt = new Date().toISOString()
   const evidenceHash = hash({ candidateId: input.candidateId, previousState: input.previousState, nextState: input.nextState,
     reasonCode: input.reasonCode, checkpoint: input.checkpoint ?? {} })
   const idempotencyKey = `${input.runId}:${input.candidateId}:${input.nextState}:${evidenceHash}`
-  const { error } = await input.supabase.from("ebay_same_day_pilot_transitions").upsert({
-    run_id: input.runId, candidate_id: input.candidateId, previous_state: input.previousState, next_state: input.nextState,
-    reason_code: input.reasonCode, triggered_by: input.triggeredBy, started_at: startedAt, completed_at: new Date().toISOString(),
-    attempt: input.attempt ?? 1, checkpoint: input.checkpoint ?? {}, evidence_hash: evidenceHash,
-    idempotency_key: idempotencyKey, next_automatic_action: input.nextAutomaticAction, next_human_action: input.nextHumanAction,
-  }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  const { data, error } = await input.supabase.rpc("advance_same_day_pilot_candidate", {
+    p_run_id: input.runId,
+    p_candidate_id: input.candidateId,
+    p_expected_previous_state: input.previousState,
+    p_next_state: input.nextState,
+    p_reason_code: input.reasonCode,
+    p_triggered_by: input.triggeredBy,
+    p_started_at: startedAt,
+    p_completed_at: completedAt,
+    p_attempt: input.attempt ?? 1,
+    p_checkpoint: input.checkpoint ?? {},
+    p_evidence_hash: evidenceHash,
+    p_transition_idempotency_key: idempotencyKey,
+    p_next_automatic_action: input.nextAutomaticAction,
+    p_next_human_action: input.nextHumanAction,
+    p_job_type: input.job?.jobType ?? null,
+    p_job_idempotency_key: input.job?.idempotencyKey ?? null,
+    p_job_checkpoint: input.job?.checkpoint ?? {},
+    p_job_available_at: input.job?.availableAt ?? completedAt,
+    p_job_max_attempts: input.job?.maxAttempts ?? 4,
+    p_api_family: input.job?.apiFamily ?? null,
+    p_api_operation: input.job?.apiOperation ?? null,
+    p_owner_lane: input.job?.ownerLane ?? null,
+  })
   if (error) throw new Error("SAME_DAY_PILOT_TRANSITION_PERSIST_FAILED")
-  const { error: updateError } = await input.supabase.from("ebay_same_day_pilot_candidates").update({
-    machine_state: input.nextState, next_automated_action: input.nextAutomaticAction,
-    next_human_action: input.nextHumanAction, updated_at: new Date().toISOString(),
-  }).eq("id", input.candidateId).eq("run_id", input.runId)
-  if (updateError) throw new Error("SAME_DAY_PILOT_CANDIDATE_TRANSITION_FAILED")
+  if (data === "STALE") throw new Error("SAME_DAY_PILOT_STALE_TRANSITION")
 }
 
 async function createHumanTask(input: {
@@ -134,32 +159,81 @@ async function createHumanTask(input: {
 
 async function bootstrapCandidate(supabase: SupabaseClient, runId: string, candidate: JsonRecord) {
   const id = text(candidate.id)
-  const initial = text(candidate.machine_state) || "RUN_CREATED"
-  await transition({ supabase, runId, candidateId: id, previousState: initial, nextState: "LOCAL_FILTERING",
-    reasonCode: "LOCAL_GATES_EVALUATED", triggeredBy: "SYSTEM", nextAutomaticAction: "Seleccionar candidato.", nextHumanAction: "Ninguna." })
-  await transition({ supabase, runId, candidateId: id, previousState: "LOCAL_FILTERING", nextState: "CANDIDATE_SELECTION",
-    reasonCode: "CANDIDATE_SELECTED_WITHOUT_EBAY_CALL", triggeredBy: "SYSTEM", nextAutomaticAction: "Preparar consulta exacta.", nextHumanAction: "Ninguna." })
-  await transition({ supabase, runId, candidateId: id, previousState: "CANDIDATE_SELECTION", nextState: "PRODUCT_RESEARCH_PLAN_READY",
-    reasonCode: "EXACT_QUERY_PREPARED", triggeredBy: "SYSTEM", checkpoint: record(candidate.product_research_query_plan),
-    nextAutomaticAction: "Esperar autorización de captura visible.", nextHumanAction: "Autorizar una captura Product Research." })
+  let machineState = text(candidate.machine_state) || "RUN_CREATED"
+  if (machineState === "RUN_CREATED") {
+    await transition({ supabase, runId, candidateId: id, previousState: "RUN_CREATED", nextState: "LOCAL_FILTERING",
+      reasonCode: "LOCAL_GATES_EVALUATED", triggeredBy: "SYSTEM", nextAutomaticAction: "Seleccionar candidato.", nextHumanAction: "Ninguna." })
+    machineState = "LOCAL_FILTERING"
+  }
+  if (machineState === "LOCAL_FILTERING") {
+    await transition({ supabase, runId, candidateId: id, previousState: "LOCAL_FILTERING", nextState: "CANDIDATE_SELECTION",
+      reasonCode: "CANDIDATE_SELECTED_WITHOUT_EBAY_CALL", triggeredBy: "SYSTEM", nextAutomaticAction: "Preparar consulta exacta.", nextHumanAction: "Ninguna." })
+    machineState = "CANDIDATE_SELECTION"
+  }
+  if (machineState === "CANDIDATE_SELECTION") {
+    await transition({ supabase, runId, candidateId: id, previousState: "CANDIDATE_SELECTION", nextState: "PRODUCT_RESEARCH_PLAN_READY",
+      reasonCode: "EXACT_QUERY_PREPARED", triggeredBy: "SYSTEM", checkpoint: record(candidate.product_research_query_plan),
+      nextAutomaticAction: "Esperar autorización de captura visible.", nextHumanAction: "Autorizar una captura Product Research." })
+    machineState = "PRODUCT_RESEARCH_PLAN_READY"
+  }
   if (candidate.state === "NEEDS_PRODUCT_RESEARCH_CAPTURE") {
-    await transition({ supabase, runId, candidateId: id, previousState: "PRODUCT_RESEARCH_PLAN_READY", nextState: "WAITING_PRODUCT_RESEARCH_CAPTURE",
-      reasonCode: "PRODUCT_RESEARCH_CAPTURE_REQUIRED", triggeredBy: "SYSTEM", nextAutomaticAction: "Importar, reconciliar y reanalizar al recibir la captura.",
-      nextHumanAction: "Abrir la consulta preparada y pulsar Capturar y continuar una vez." })
+    const reusableCaptureBatchId = text(candidate.product_research_capture_batch_id)
+    if (machineState === "PRODUCT_RESEARCH_PLAN_READY" && reusableCaptureBatchId) {
+      await transition({ supabase, runId, candidateId: id, previousState: "PRODUCT_RESEARCH_PLAN_READY", nextState: "IMPORTING_SOLD_EVIDENCE",
+        reasonCode: "FAMILY_CAPTURE_REUSED_AUTOMATICALLY", triggeredBy: "SYSTEM",
+        checkpoint: { captureBatchId: reusableCaptureBatchId }, nextAutomaticAction: "Reconciliar la evidencia ya autorizada para esta variante.", nextHumanAction: "Ninguna." })
+      await transition({ supabase, runId, candidateId: id, previousState: "IMPORTING_SOLD_EVIDENCE", nextState: "RECONCILING_IDENTITY",
+        reasonCode: "GROUPED_SOLD_EVIDENCE_LINKED", triggeredBy: "SYSTEM",
+        checkpoint: { captureBatchId: reusableCaptureBatchId }, nextAutomaticAction: "Reconciliar sólo las referencias de este candidato.", nextHumanAction: "Ninguna.",
+        job: { jobType: "RECONCILE_PRODUCT_RESEARCH_CAPTURE",
+          idempotencyKey: `${runId}:${id}:RECONCILE_PRODUCT_RESEARCH_CAPTURE:${reusableCaptureBatchId}`,
+          checkpoint: { captureBatchId: reusableCaptureBatchId, supplierVariantId: candidate.supplier_variant_id,
+            capturedAt: new Date().toISOString() }, maxAttempts: 10,
+          apiFamily: "BROWSE", apiOperation: "EXACT_VERIFICATION", ownerLane: "P1_EXACT_VERIFICATION" } })
+      return
+    }
+    if (machineState === "PRODUCT_RESEARCH_PLAN_READY") {
+      await transition({ supabase, runId, candidateId: id, previousState: "PRODUCT_RESEARCH_PLAN_READY", nextState: "WAITING_PRODUCT_RESEARCH_CAPTURE",
+        reasonCode: "PRODUCT_RESEARCH_CAPTURE_REQUIRED", triggeredBy: "SYSTEM", nextAutomaticAction: "Importar, reconciliar y reanalizar al recibir la captura.",
+        nextHumanAction: "Abrir la consulta preparada y pulsar Capturar y continuar una vez." })
+      machineState = "WAITING_PRODUCT_RESEARCH_CAPTURE"
+    }
+    if (machineState !== "WAITING_PRODUCT_RESEARCH_CAPTURE") return
     await createHumanTask({ supabase, runId, candidateId: id, gateType: "PRODUCT_RESEARCH_CAPTURE_REQUIRED",
       title: "Captura Product Research para esta familia", why: "Falta evidencia vendida exacta y fresca para decidir sin confundir resultados amplios con demanda.",
       seconds: 60, impact: "La captura enriquecerá la familia y Seller OS continuará automáticamente.",
       evidence: { product: candidate.product_title, queryPlan: candidate.product_research_query_plan },
       actionSchema: { type: "OPEN_PRODUCT_RESEARCH", query: record(candidate.product_research_query_plan).query }, continuationJobType: "IMPORT_SOLD_EVIDENCE" })
   } else {
-    await transition({ supabase, runId, candidateId: id, previousState: "PRODUCT_RESEARCH_PLAN_READY", nextState: "WAITING_LUNA_CONFIRMATION",
-      reasonCode: "LUNA_CONFIRMATION_REQUIRED", triggeredBy: "SYSTEM", nextAutomaticAction: "Recalcular economía y enriquecer facts.",
-      nextHumanAction: "Confirmar precio y disponibilidad visibles en Luna." })
+    if (machineState === "PRODUCT_RESEARCH_PLAN_READY") {
+      await transition({ supabase, runId, candidateId: id, previousState: "PRODUCT_RESEARCH_PLAN_READY", nextState: "WAITING_LUNA_CONFIRMATION",
+        reasonCode: "LUNA_CONFIRMATION_REQUIRED", triggeredBy: "SYSTEM", nextAutomaticAction: "Recalcular economía y enriquecer facts.",
+        nextHumanAction: "Confirmar precio y disponibilidad visibles en Luna." })
+      machineState = "WAITING_LUNA_CONFIRMATION"
+    }
+    if (machineState !== "WAITING_LUNA_CONFIRMATION") return
     await createHumanTask({ supabase, runId, candidateId: id, gateType: "LUNA_CONFIRMATION_REQUIRED",
       title: "Confirma precio y disponibilidad Luna", why: "El costo y stock actuales son necesarios antes de comprometer margen o cantidad.", seconds: 30,
       impact: "Seller OS recalculará economía y ejecutará Product Facts automáticamente.", evidence: { product: candidate.product_title, sku: candidate.supplier_sku },
       actionSchema: { type: "LUNA_CONFIRMATION", fields: ["price", "availability", "quantityIfVisible"] }, continuationJobType: "CALCULATE_ECONOMICS" })
   }
+}
+
+async function repairSameDayPilotBootstrap(supabase: SupabaseClient, state: Awaited<ReturnType<typeof currentState>>) {
+  if (!state) return false
+  const active = state.candidates.find((candidate) =>
+    !["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(text(candidate.machine_state)))
+  if (!active) return false
+  const machineState = text(active.machine_state)
+  const partialBootstrap = ["RUN_CREATED", "LOCAL_FILTERING", "CANDIDATE_SELECTION", "PRODUCT_RESEARCH_PLAN_READY"].includes(machineState)
+  const missingGateTask = machineState === "WAITING_PRODUCT_RESEARCH_CAPTURE"
+    ? !state.tasks.some((task) => task.candidate_id === active.id && task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" && task.status === "OPEN")
+    : machineState === "WAITING_LUNA_CONFIRMATION"
+      ? !state.tasks.some((task) => task.candidate_id === active.id && task.gate_type === "LUNA_CONFIRMATION_REQUIRED" && task.status === "OPEN")
+      : false
+  if (!partialBootstrap && !missingGateTask) return false
+  await bootstrapCandidate(supabase, state.run.id, record(active))
+  return true
 }
 
 async function createLunaGate(supabase: SupabaseClient, runId: string, candidate: JsonRecord, previousState: string) {
@@ -180,97 +254,118 @@ async function promoteNextCandidate(supabase: SupabaseClient, runId: string, ord
   return Boolean(data)
 }
 
-async function refreshRunProjection(supabase: SupabaseClient, runId: string) {
+async function refreshRunProjection(supabase: SupabaseClient, runId: string, workerHeartbeat = false) {
   const [{ data: candidates, error: candidateError }, { data: tasks, error: taskError },
     { data: jobs, error: jobError }, { data: transitions, error: transitionError }] = await Promise.all([
     supabase.from("ebay_same_day_pilot_candidates").select("machine_state,state,next_automated_action,next_human_action").eq("run_id", runId).order("ordinal"),
-    supabase.from("ebay_same_day_pilot_human_tasks").select("title,status,created_at").eq("run_id", runId).eq("status", "OPEN").order("created_at").limit(1),
-    supabase.from("ebay_same_day_pilot_jobs").select("status").eq("run_id", runId),
-    supabase.from("ebay_same_day_pilot_transitions").select("triggered_by").eq("run_id", runId),
+    supabase.from("ebay_same_day_pilot_human_tasks").select("title,status,gate_type,created_at,completed_at").eq("run_id", runId).order("created_at"),
+    supabase.from("ebay_same_day_pilot_jobs").select("status,attempt,job_type,last_error_code").eq("run_id", runId),
+    supabase.from("ebay_same_day_pilot_transitions").select("triggered_by,started_at,completed_at,next_state,reason_code").eq("run_id", runId),
   ])
   if (candidateError || taskError || jobError || transitionError) throw new Error("SAME_DAY_PILOT_PROJECTION_READ_FAILED")
   const rows = candidates ?? []
   const readyCount = rows.filter((row) => row.machine_state === "READY_FOR_MANUAL_PUBLICATION").length
   const verifiedCount = rows.filter((row) => row.machine_state === "VERIFIED_ACTIVE").length
   const active = rows.find((row) => !["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(row.machine_state))
-  const openTask = tasks?.[0]
+  const taskRows = tasks ?? []
+  const openTask = taskRows.find((task) => task.status === "OPEN")
   const waitingRetry = (jobs ?? []).some((job) => job.status === "WAITING_RETRY")
-  const completed = verifiedCount >= 2 || rows.every((row) => ["REJECTED", "VERIFIED_ACTIVE", "COMPLETED"].includes(row.machine_state))
+  const completed = verifiedCount >= 2
+  const exhausted = rows.length === 0 || rows.every((row) => ["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(row.machine_state))
   const systemTransitions = (transitions ?? []).filter((row) => row.triggered_by !== "USER").length
   const userTransitions = (transitions ?? []).filter((row) => row.triggered_by === "USER").length
-  const status = completed ? "COMPLETED" : readyCount ? "READY_FOR_OPERATOR" : rows.some((row) => row.machine_state === "BLOCKED") ? "PARTIALLY_READY" : "ACTIVE"
-  const { error } = await supabase.from("ebay_same_day_pilot_runs").update({
+  const totalTransitions = (transitions ?? []).length
+  const automaticDurationMs = (transitions ?? []).filter((row) => row.triggered_by !== "USER").reduce((total, row) => {
+    const started = Date.parse(String(row.started_at ?? "")); const ended = Date.parse(String(row.completed_at ?? ""))
+    return total + (Number.isFinite(started) && Number.isFinite(ended) ? Math.max(0, ended - started) : 0)
+  }, 0)
+  const waitingUserMs = taskRows.reduce((total, task) => {
+    const started = Date.parse(String(task.created_at ?? ""))
+    const ended = task.completed_at ? Date.parse(String(task.completed_at)) : Date.now()
+    return total + (Number.isFinite(started) && Number.isFinite(ended) ? Math.max(0, ended - started) : 0)
+  }, 0)
+  const status = completed ? "COMPLETED" : exhausted ? "BLOCKED" : readyCount ? "READY_FOR_OPERATOR" :
+    rows.some((row) => row.machine_state === "BLOCKED") ? "PARTIALLY_READY" : "ACTIVE"
+  const patch: JsonRecord = {
     status,
-    stage: active?.machine_state ?? (completed ? "COMPLETED" : "QUEUE_PREPARED"),
+    stage: active?.machine_state ?? (completed ? "COMPLETED" : exhausted ? "BLOCKED" : "QUEUE_PREPARED"),
     ready_for_manual_publication_count: Math.min(2, readyCount),
     verified_new_listings: Math.min(2, verifiedCount),
     next_automated_action: waitingRetry ? "Reanudar automáticamente desde el checkpoint al terminar la pausa." : active?.next_automated_action ?? "Preservar el trabajo completado.",
     next_human_action: openTask?.title ?? active?.next_human_action ?? "Ninguna.",
-    last_worker_heartbeat_at: new Date().toISOString(),
     automation_metrics: {
-      totalTransitions: (transitions ?? []).length,
+      totalStagesObserved: totalTransitions,
+      totalTransitions,
       automaticTransitions: systemTransitions,
       humanTransitions: userTransitions,
-      openHumanGates: openTask ? 1 : 0,
+      automationCoveragePercent: totalTransitions ? Math.round((systemTransitions / totalTransitions) * 100) : 0,
+      normalHumanGates: taskRows.filter((task) => task.gate_type !== "CRITICAL_EXCEPTION_REQUIRED" && !["CANCELLED", "SUPERSEDED"].includes(task.status)).length,
+      openHumanGates: taskRows.filter((task) => task.status === "OPEN").length,
+      productResearchCaptures: taskRows.filter((task) => task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" && task.status === "COMPLETED").length,
+      exceptions: taskRows.filter((task) => task.gate_type === "CRITICAL_EXCEPTION_REQUIRED").length,
       backgroundJobs: (jobs ?? []).length,
       waitingRetries: (jobs ?? []).filter((job) => job.status === "WAITING_RETRY").length,
+      retries: (jobs ?? []).reduce((total, job) => total + Math.max(0, Number(job.attempt ?? 0) - 1), 0),
+      candidateReplacements: (transitions ?? []).filter((row) => row.next_state === "REJECTED").length,
+      automaticDurationMs,
+      waitingForOperatorMs: waitingUserMs,
+      operatorInterventionsPerVerifiedListing: verifiedCount ? Number((userTransitions / verifiedCount).toFixed(2)) : null,
     },
     updated_at: new Date().toISOString(),
-  }).eq("id", runId)
+  }
+  if (workerHeartbeat) patch.last_worker_heartbeat_at = new Date().toISOString()
+  const { error } = await supabase.from("ebay_same_day_pilot_runs").update(patch).eq("id", runId)
   if (error) throw new Error("SAME_DAY_PILOT_PROJECTION_UPDATE_FAILED")
 }
 
-async function enqueuePilotJob(input: {
+async function settlePilotJob(input: {
   supabase: SupabaseClient
-  runId: string
-  candidateId: string
-  jobType: string
-  idempotencyKey: string
-  checkpoint?: JsonRecord
-  availableAt?: string
-  maxAttempts?: number
-  apiFamily?: string | null
-  apiOperation?: string | null
-  ownerLane?: string | null
+  job: JsonRecord
+  workerId: string
+  status: "COMPLETED" | "WAITING_RETRY" | "DEAD_LETTER"
+  availableAt?: string | null
+  errorCode?: string | null
+  preserveAttempt?: boolean
 }) {
-  const { error } = await input.supabase.from("ebay_same_day_pilot_jobs").upsert({
-    run_id: input.runId,
-    candidate_id: input.candidateId,
-    job_type: input.jobType,
-    idempotency_key: input.idempotencyKey,
-    checkpoint: input.checkpoint ?? {},
-    available_at: input.availableAt ?? new Date().toISOString(),
-    max_attempts: input.maxAttempts ?? 4,
-    api_family: input.apiFamily ?? null,
-    api_operation: input.apiOperation ?? null,
-    owner_lane: input.ownerLane ?? null,
-  }, { onConflict: "idempotency_key", ignoreDuplicates: true })
-  if (error) throw new Error("SAME_DAY_PILOT_JOB_PERSIST_FAILED")
+  const leaseToken = text(input.job.lease_token)
+  if (!leaseToken) throw new Error("SAME_DAY_PILOT_JOB_LEASE_TOKEN_MISSING")
+  const { data, error } = await input.supabase.rpc("settle_same_day_pilot_job", {
+    p_job_id: input.job.id,
+    p_worker_id: input.workerId,
+    p_lease_token: leaseToken,
+    p_status: input.status,
+    p_available_at: input.availableAt ?? null,
+    p_error_code: input.errorCode ?? null,
+    p_preserve_attempt: input.preserveAttempt === true,
+    p_now: new Date().toISOString(),
+  })
+  if (error) throw new Error("SAME_DAY_PILOT_JOB_SETTLEMENT_FAILED")
+  if (data !== true) throw new Error("SAME_DAY_PILOT_JOB_LEASE_LOST")
 }
 
-async function completePilotJob(supabase: SupabaseClient, jobId: string) {
-  const { error } = await supabase.from("ebay_same_day_pilot_jobs").update({
-    status: "COMPLETED", lease_owner: null, lease_expires_at: null,
-    rate_limit_resume_at: null, last_error_code: null, updated_at: new Date().toISOString(),
-  }).eq("id", jobId).eq("status", "LEASED")
-  if (error) throw new Error("SAME_DAY_PILOT_JOB_COMPLETE_FAILED")
+async function heartbeatPilotJob(input: { supabase: SupabaseClient; job: JsonRecord; workerId: string }) {
+  const leaseToken = text(input.job.lease_token)
+  if (!leaseToken) throw new Error("SAME_DAY_PILOT_JOB_LEASE_TOKEN_MISSING")
+  const { data, error } = await input.supabase.rpc("heartbeat_same_day_pilot_job", {
+    p_job_id: input.job.id,
+    p_worker_id: input.workerId,
+    p_lease_token: leaseToken,
+    p_now: new Date().toISOString(),
+  })
+  if (error || data !== true) throw new Error("SAME_DAY_PILOT_JOB_LEASE_LOST")
 }
 
 async function deferPilotJob(input: {
   supabase: SupabaseClient
   job: JsonRecord
+  workerId: string
   availableAt: string
   errorCode: string
   preserveAttempt?: boolean
 }) {
-  const attempt = Math.max(0, Number(input.job.attempt ?? 1) - (input.preserveAttempt ? 1 : 0))
-  const { error } = await input.supabase.from("ebay_same_day_pilot_jobs").update({
-    status: "WAITING_RETRY", available_at: input.availableAt,
-    rate_limit_resume_at: /429|QUOTA_PAUSED/.test(input.errorCode) ? input.availableAt : null,
-    lease_owner: null, lease_expires_at: null, last_error_code: input.errorCode,
-    attempt, updated_at: new Date().toISOString(),
-  }).eq("id", input.job.id).eq("status", "LEASED")
-  if (error) throw new Error("SAME_DAY_PILOT_JOB_DEFER_FAILED")
+  await settlePilotJob({ supabase: input.supabase, job: input.job, workerId: input.workerId,
+    status: "WAITING_RETRY", availableAt: input.availableAt, errorCode: input.errorCode,
+    preserveAttempt: input.preserveAttempt })
 }
 
 async function rejectAndPromote(input: {
@@ -402,7 +497,12 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
   const existing = await currentState(input.supabase, input.accountKey, date)
   const recoverEmptyRun = Boolean(existing && existing.candidates.length === 0 &&
     Number(existing.run.queue_count ?? 0) === 0)
-  if (existing && !recoverEmptyRun) return { ...existing, created: false, idempotent: true }
+  if (existing && !recoverEmptyRun) {
+    const repaired = await repairSameDayPilotBootstrap(input.supabase, existing)
+    if (repaired) await refreshRunProjection(input.supabase, existing.run.id)
+    const current = await currentState(input.supabase, input.accountKey, date)
+    return { ...(current ?? existing), created: false, idempotent: true, repaired }
+  }
   const preview = await previewSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
   const selected = preview.selected
   const queueItemByVariant = preview.queueItemByVariant
@@ -518,10 +618,10 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
         previousState: "WAITING_LUNA_CONFIRMATION", nextState: "CALCULATING_ECONOMICS",
         reasonCode: "LUNA_CONFIRMED_AUTO_RESUME", triggeredBy: "USER",
         checkpoint: { price: input.price, available: true, quantityKnown: input.quantity != null },
-        nextAutomaticAction: "Recalcular economía localmente.", nextHumanAction: "Ninguna." })
-      await enqueuePilotJob({ supabase: input.supabase, runId: state.run.id, candidateId: task.candidate_id,
-        jobType: "CALCULATE_ECONOMICS", idempotencyKey: `${state.run.id}:${task.candidate_id}:CALCULATE_ECONOMICS`,
-        checkpoint: { confirmedLunaPrice: input.price, quantityKnown: input.quantity != null } })
+        nextAutomaticAction: "Recalcular economía localmente.", nextHumanAction: "Ninguna.",
+        job: { jobType: "CALCULATE_ECONOMICS",
+          idempotencyKey: `${state.run.id}:${task.candidate_id}:CALCULATE_ECONOMICS`,
+          checkpoint: { confirmedLunaPrice: input.price, quantityKnown: input.quantity != null } } })
     }
   }
   await refreshRunProjection(input.supabase, state.run.id)
@@ -532,9 +632,12 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
   const state = await getSameDayPilot(input)
   if (!state) return { resumed: 0 }
   const normalizedQuery = input.searchQuery.trim().toLowerCase()
-  const candidates = state.candidates.filter((candidate) => candidate.machine_state === "WAITING_PRODUCT_RESEARCH_CAPTURE" &&
+  const familyCandidates = state.candidates.filter((candidate) =>
+    !["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(text(candidate.machine_state)) &&
     text(record(candidate.product_research_query_plan).query).toLowerCase() === normalizedQuery)
-  for (const candidate of candidates) {
+  let resumed = 0
+  let familyEnriched = 0
+  for (const candidate of familyCandidates) {
     const { count: candidateExactMatches, error: matchError } = await input.supabase
       .from("marketplace_product_research_capture_observations")
       .select("id", { count: "exact", head: true })
@@ -546,6 +649,18 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
       .eq("evidence_reviewed", true)
     if (matchError) throw new Error("SAME_DAY_PILOT_CAPTURE_MATCH_READ_FAILED")
     const exactMatches = candidateExactMatches ?? 0
+    if (exactMatches > 0) {
+      const { error: familyLinkError } = await input.supabase.from("ebay_same_day_pilot_candidates").update({
+        product_research_capture_batch_id: input.batchId,
+        evidence_summary: { ...record(candidate.evidence_summary), groupedCaptureExactMatches: exactMatches,
+          groupedCaptureObservedAt: input.capturedAt ?? new Date().toISOString() },
+        updated_at: new Date().toISOString(),
+      }).eq("id", candidate.id).eq("run_id", state.run.id)
+      if (familyLinkError) throw new Error("SAME_DAY_PILOT_FAMILY_CAPTURE_LINK_FAILED")
+      familyEnriched += 1
+    }
+    if (candidate.machine_state !== "WAITING_PRODUCT_RESEARCH_CAPTURE") continue
+    resumed += 1
     const task = state.tasks.find((entry) => entry.candidate_id === candidate.id && entry.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" && entry.status === "OPEN")
     if (task) await input.supabase.from("ebay_same_day_pilot_human_tasks").update({ status: "COMPLETED", completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", task.id)
     await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id,
@@ -562,47 +677,122 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
       await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id,
         previousState: "IMPORTING_SOLD_EVIDENCE", nextState: "RECONCILING_IDENTITY", reasonCode: "SOLD_EVIDENCE_IMPORTED",
         triggeredBy: "SYSTEM", checkpoint: { captureBatchId: input.batchId, exactLunaMatches: exactMatches },
-        nextAutomaticAction: "Reconciliar sólo las referencias de este candidato.", nextHumanAction: "Ninguna." })
-      await enqueuePilotJob({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id,
-        jobType: "RECONCILE_PRODUCT_RESEARCH_CAPTURE",
-        idempotencyKey: `${state.run.id}:${candidate.id}:RECONCILE_PRODUCT_RESEARCH_CAPTURE:${input.batchId}`,
-        checkpoint: { captureBatchId: input.batchId, supplierVariantId: candidate.supplier_variant_id,
-          capturedAt: input.capturedAt ?? new Date().toISOString() }, maxAttempts: 10,
-        apiFamily: "BROWSE", apiOperation: "EXACT_VERIFICATION", ownerLane: "P1_EXACT_VERIFICATION" })
+        nextAutomaticAction: "Reconciliar sólo las referencias de este candidato.", nextHumanAction: "Ninguna.",
+        job: { jobType: "RECONCILE_PRODUCT_RESEARCH_CAPTURE",
+          idempotencyKey: `${state.run.id}:${candidate.id}:RECONCILE_PRODUCT_RESEARCH_CAPTURE:${input.batchId}`,
+          checkpoint: { captureBatchId: input.batchId, supplierVariantId: candidate.supplier_variant_id,
+            capturedAt: input.capturedAt ?? new Date().toISOString() }, maxAttempts: 10,
+          apiFamily: "BROWSE", apiOperation: "EXACT_VERIFICATION", ownerLane: "P1_EXACT_VERIFICATION" } })
     }
   }
   await refreshRunProjection(input.supabase, state.run.id)
-  return { resumed: candidates.length }
+  return { resumed, familyEnriched }
 }
 
 function retryable(code: string) {
-  return /(?:429|NETWORK|TIMEOUT|HTTP_5\d\d|TEMPORARY|LEASE)/.test(code)
+  return /(?:429|NETWORK|TIMEOUT|(?:^|_)5\d\d(?:$|_)|HTTP_?5\d\d|TEMPORARY|DEPENDENCY|LEASE)/.test(code)
+}
+
+const SAME_DAY_MACHINE_ORDER = [
+  "RUN_CREATED", "LOCAL_FILTERING", "CANDIDATE_SELECTION", "PRODUCT_RESEARCH_PLAN_READY",
+  "WAITING_PRODUCT_RESEARCH_CAPTURE", "IMPORTING_SOLD_EVIDENCE", "RECONCILING_IDENTITY",
+  "MATCHING_LUNA", "RUNNING_LOOP_1", "CALCULATING_ECONOMICS", "WAITING_LUNA_CONFIRMATION",
+  "ENRICHING_PRODUCT_FACTS", "VALIDATING_TAXONOMY", "VALIDATING_REGULATION", "BUILDING_OPENAI_INPUT",
+  "WAITING_PRODUCT_APPROVAL", "GENERATING_LISTING_CONTENT", "VALIDATING_LISTING_CONTENT",
+  "PREPARING_IMAGE_PACKAGE", "WAITING_IMAGE_APPROVAL", "BUILDING_SELLER_HUB_HANDOFF",
+  "READY_FOR_MANUAL_PUBLICATION", "WAITING_ITEM_ID", "VERIFYING_PUBLISHED_LISTING",
+  "REGISTERING_COMMERCIAL_MONITOR", "VERIFIED_ACTIVE", "COMPLETED",
+]
+
+function jobEffectAlreadyApplied(jobType: string, machineState: string) {
+  if (["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(machineState)) return true
+  const minimumState: Record<string, string> = {
+    RECONCILE_PRODUCT_RESEARCH_CAPTURE: "RUNNING_LOOP_1",
+    WAIT_FOR_LOOP1_REANALYSIS: "CALCULATING_ECONOMICS",
+    CALCULATE_ECONOMICS: "ENRICHING_PRODUCT_FACTS",
+    ENRICH_PRODUCT_FACTS: "WAITING_PRODUCT_APPROVAL",
+  }
+  const minimum = minimumState[jobType]
+  if (!minimum) return false
+  return SAME_DAY_MACHINE_ORDER.indexOf(machineState) >= SAME_DAY_MACHINE_ORDER.indexOf(minimum)
+}
+
+async function recoverDeadLetterCandidates(supabase: SupabaseClient, state: NonNullable<Awaited<ReturnType<typeof currentState>>>) {
+  const { data, error } = await supabase.from("ebay_same_day_pilot_jobs")
+    .select("id,candidate_id,job_type,last_error_code").eq("run_id", state.run.id).eq("status", "DEAD_LETTER")
+  if (error) throw new Error("SAME_DAY_PILOT_DEAD_LETTER_READ_FAILED")
+  let recovered = 0
+  const handledCandidates = new Set<string>()
+  for (const failed of data ?? []) {
+    const candidate = state.candidates.find((entry) => entry.id === failed.candidate_id)
+    if (!candidate) continue
+    const candidateId = text(candidate.id)
+    if (jobEffectAlreadyApplied(text(failed.job_type), text(candidate.machine_state))) {
+      const { error: appliedError } = await supabase.from("ebay_same_day_pilot_jobs").update({
+        status: "COMPLETED", last_error_code: "EFFECT_ALREADY_APPLIED_RECOVERED",
+        completed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }).eq("id", failed.id).eq("status", "DEAD_LETTER")
+      if (appliedError) throw new Error("SAME_DAY_PILOT_APPLIED_DEAD_LETTER_RECOVERY_FAILED")
+      continue
+    }
+    if (!handledCandidates.has(candidateId)) {
+      await rejectAndPromote({ supabase, runId: state.run.id, candidate: record(candidate),
+        previousState: text(candidate.machine_state), reasonCode: text(failed.last_error_code) || "BACKGROUND_JOB_ATTEMPTS_EXHAUSTED" })
+      handledCandidates.add(candidateId)
+      recovered += 1
+    }
+    const { error: cancelError } = await supabase.from("ebay_same_day_pilot_jobs").update({
+      status: "CANCELLED", updated_at: new Date().toISOString(),
+    }).eq("id", failed.id).eq("status", "DEAD_LETTER")
+    if (cancelError) throw new Error("SAME_DAY_PILOT_DEAD_LETTER_CANCEL_FAILED")
+  }
+  return recovered
 }
 
 export async function processSameDayPilotJobs(input: { supabase: SupabaseClient; accountKey: string; workerId: string; now?: Date }) {
   const now = input.now ?? new Date()
-  const state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
+  let state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
   if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
+  const { error: heartbeatError } = await input.supabase.from("ebay_same_day_pilot_runs").update({
+    last_worker_heartbeat_at: now.toISOString(), updated_at: now.toISOString(),
+  }).eq("id", state.run.id)
+  if (heartbeatError) throw new Error("SAME_DAY_PILOT_WORKER_HEARTBEAT_FAILED")
+  const repaired = await repairSameDayPilotBootstrap(input.supabase, state)
+  const deadLettersRecovered = await recoverDeadLetterCandidates(input.supabase, state)
+  if (repaired || deadLettersRecovered) {
+    state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
+    if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
+  }
   const { data: claimed, error: leaseError } = await input.supabase.rpc("claim_same_day_pilot_job", {
     p_run_id: state.run.id, p_worker_id: input.workerId, p_now: now.toISOString(),
   })
   if (leaseError) throw new Error("SAME_DAY_PILOT_JOB_LEASE_FAILED")
   const leased = Array.isArray(claimed) ? claimed[0] : claimed
-  if (!leased) return { processed: 0, status: "LEASE_LOST" }
+  if (!leased) {
+    await refreshRunProjection(input.supabase, state.run.id, true)
+    return { processed: 0, status: "IDLE", repaired, deadLettersRecovered }
+  }
   const candidate = state.candidates.find((entry) => entry.id === leased.candidate_id)
   if (!candidate) throw new Error("SAME_DAY_PILOT_JOB_CANDIDATE_MISSING")
+  if (jobEffectAlreadyApplied(text(leased.job_type), text(candidate.machine_state))) {
+    await settlePilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId, status: "COMPLETED" })
+    await refreshRunProjection(input.supabase, state.run.id, true)
+    return { processed: 1, status: "EFFECT_ALREADY_APPLIED", jobType: leased.job_type, replayAvoided: true }
+  }
   try {
     if (leased.api_family && leased.api_operation) {
       const lane = await assertEbayLaneAvailable(input.supabase, leased.api_family, leased.api_operation, now)
       if (!lane.available) {
         const resumeAt = lane.resumeAt ?? new Date(now.getTime() + 15 * 60_000).toISOString()
-        await deferPilotJob({ supabase: input.supabase, job: record(leased), availableAt: resumeAt,
+        await deferPilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId, availableAt: resumeAt,
           errorCode: "EBAY_QUOTA_PAUSED_429", preserveAttempt: true })
-        await refreshRunProjection(input.supabase, state.run.id)
+        await refreshRunProjection(input.supabase, state.run.id, true)
         return { processed: 1, status: "PAUSED_429", jobType: leased.job_type, resumeAt,
           checkpointPreserved: true, ebayCalls: 0 }
       }
     }
+
+    await heartbeatPilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId })
 
     if (leased.job_type === "RECONCILE_PRODUCT_RESEARCH_CAPTURE") {
       const checkpoint = record(leased.checkpoint)
@@ -631,21 +821,20 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             previousState: "RECONCILING_IDENTITY", nextState: "MATCHING_LUNA", reasonCode: "IDENTITY_RECONCILIATION_COMPLETED",
             triggeredBy: "SYSTEM", checkpoint: { captureBatchId: batchId, references: observationIds.length,
               exactLunaMatches: reconciled.aggregates.exact }, nextAutomaticAction: "Ejecutar Loop 1 para este candidato.", nextHumanAction: "Ninguna." })
-          await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id,
-            previousState: "MATCHING_LUNA", nextState: "RUNNING_LOOP_1", reasonCode: "EXACT_LUNA_MATCH_CONFIRMED",
-            triggeredBy: "SYSTEM", checkpoint: { captureBatchId: batchId, queueRunId: reconciled.reanalysis.runId },
-            nextAutomaticAction: "Esperar el resultado candidato-específico de Loop 1.", nextHumanAction: "Ninguna." })
           const dispatched = await enqueueListingAiTop20Continuation({
             supabase: input.supabase, runId: reconciled.reanalysis.runId,
             continuationGeneration: reconciled.reanalysis.continuationGeneration,
             expectedBatch: reconciled.reanalysis.expectedBatch,
           })
-          await enqueuePilotJob({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id,
-            jobType: "WAIT_FOR_LOOP1_REANALYSIS",
-            idempotencyKey: `${state.run.id}:${candidate.id}:WAIT_FOR_LOOP1_REANALYSIS:${batchId}`,
-            checkpoint: { ...checkpoint, queueRunId: reconciled.reanalysis.runId,
-              reconciliationReferences: observationIds.length, dispatchStatus: dispatched.status },
-            availableAt: new Date(now.getTime() + 60_000).toISOString(), maxAttempts: 10 })
+          await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id,
+            previousState: "MATCHING_LUNA", nextState: "RUNNING_LOOP_1", reasonCode: "EXACT_LUNA_MATCH_CONFIRMED",
+            triggeredBy: "SYSTEM", checkpoint: { captureBatchId: batchId, queueRunId: reconciled.reanalysis.runId },
+            nextAutomaticAction: "Esperar el resultado candidato-específico de Loop 1.", nextHumanAction: "Ninguna.",
+            job: { jobType: "WAIT_FOR_LOOP1_REANALYSIS",
+              idempotencyKey: `${state.run.id}:${candidate.id}:WAIT_FOR_LOOP1_REANALYSIS:${batchId}`,
+              checkpoint: { ...checkpoint, queueRunId: reconciled.reanalysis.runId,
+                reconciliationReferences: observationIds.length, dispatchStatus: dispatched.status },
+              availableAt: new Date(now.getTime() + 60_000).toISOString(), maxAttempts: 10 } })
         }
       }
     } else if (leased.job_type === "WAIT_FOR_LOOP1_REANALYSIS") {
@@ -667,9 +856,9 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             previousState: "RUNNING_LOOP_1", reasonCode: "LOOP1_REANALYSIS_TIMEOUT" })
         } else {
           const nextCheck = new Date(now.getTime() + 60_000).toISOString()
-          await deferPilotJob({ supabase: input.supabase, job: record(leased), availableAt: nextCheck,
+          await deferPilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId, availableAt: nextCheck,
             errorCode: "LOOP1_REANALYSIS_PENDING", preserveAttempt: true })
-          await refreshRunProjection(input.supabase, state.run.id)
+          await refreshRunProjection(input.supabase, state.run.id, true)
           return { processed: 1, status: "WAITING_RETRY", jobType: leased.job_type,
             checkpointPreserved: true, nextCheckAt: nextCheck }
         }
@@ -696,11 +885,11 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           if (Number(confirmation.confirmedLunaPrice) > 0 && confirmation.available === true) {
             await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id,
               previousState: "RUNNING_LOOP_1", nextState: "CALCULATING_ECONOMICS", reasonCode: "LOOP1_REANALYSIS_COMPLETED_AUTO_RESUME",
-              triggeredBy: "SYSTEM", nextAutomaticAction: "Calcular economía localmente.", nextHumanAction: "Ninguna." })
-            await enqueuePilotJob({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id,
-              jobType: "CALCULATE_ECONOMICS", idempotencyKey: `${state.run.id}:${candidate.id}:CALCULATE_ECONOMICS`,
-              checkpoint: { confirmedLunaPrice: confirmation.confirmedLunaPrice,
-                quantityKnown: confirmation.quantityUnknown !== true } })
+              triggeredBy: "SYSTEM", nextAutomaticAction: "Calcular economía localmente.", nextHumanAction: "Ninguna.",
+              job: { jobType: "CALCULATE_ECONOMICS",
+                idempotencyKey: `${state.run.id}:${candidate.id}:CALCULATE_ECONOMICS`,
+                checkpoint: { confirmedLunaPrice: confirmation.confirmedLunaPrice,
+                  quantityKnown: confirmation.quantityUnknown !== true } } })
           } else {
             await createLunaGate(input.supabase, state.run.id, record(candidate), "RUNNING_LOOP_1")
           }
@@ -733,54 +922,69 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       } else {
         await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, previousState: "CALCULATING_ECONOMICS",
           nextState: "ENRICHING_PRODUCT_FACTS", reasonCode: "ECONOMICS_GATES_PASSED", triggeredBy: "SYSTEM",
-          checkpoint: { idealProfitReached: economicsGate.idealProfitReached }, nextAutomaticAction: "Resolver Product Facts, Taxonomy y regulación.", nextHumanAction: "Ninguna." })
-        await enqueuePilotJob({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id,
-          jobType: "ENRICH_PRODUCT_FACTS", idempotencyKey: `${state.run.id}:${candidate.id}:ENRICH_PRODUCT_FACTS`,
-          checkpoint: { queueItemId: candidate.queue_item_id }, maxAttempts: 10,
-          apiFamily: "BROWSE", apiOperation: "EXACT_VERIFICATION", ownerLane: "P1_EXACT_VERIFICATION" })
+          checkpoint: { idealProfitReached: economicsGate.idealProfitReached }, nextAutomaticAction: "Resolver Product Facts, Taxonomy y regulación.", nextHumanAction: "Ninguna.",
+          job: { jobType: "ENRICH_PRODUCT_FACTS",
+            idempotencyKey: `${state.run.id}:${candidate.id}:ENRICH_PRODUCT_FACTS`,
+            checkpoint: { queueItemId: candidate.queue_item_id }, maxAttempts: 10,
+            apiFamily: "BROWSE", apiOperation: "EXACT_VERIFICATION", ownerLane: "P1_EXACT_VERIFICATION" } })
       }
     } else if (leased.job_type === "ENRICH_PRODUCT_FACTS") {
       if (!candidate.queue_item_id) throw new Error("SAME_DAY_PILOT_FACT_QUEUE_ITEM_MISSING")
       await runProductFactsEnrichment({ supabase: input.supabase, accountKey: input.accountKey, candidateIds: [candidate.queue_item_id] })
+      await heartbeatPilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId })
       await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, previousState: "ENRICHING_PRODUCT_FACTS",
         nextState: "VALIDATING_TAXONOMY", reasonCode: "PRODUCT_FACTS_ENRICHED", triggeredBy: "SYSTEM",
         nextAutomaticAction: "Validar regulación.", nextHumanAction: "Ninguna." })
-      await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, previousState: "VALIDATING_TAXONOMY",
-        nextState: "VALIDATING_REGULATION", reasonCode: "TAXONOMY_REQUIREMENTS_RESOLVED", triggeredBy: "SYSTEM",
-        nextAutomaticAction: "Construir paquete filtrado para OpenAI.", nextHumanAction: "Ninguna." })
       const facts = await getProductFactsStatus({ supabase: input.supabase, accountKey: input.accountKey, candidateIds: [candidate.queue_item_id] })
       const summary = record(facts.byCandidate[candidate.queue_item_id])
-      const openAiReady = record(summary.gates).OPENAI_INPUT_READY === true
+      const gates = record(summary.gates)
+      const taxonomyReady = gates.EBAY_ASPECTS_READY === true
+      const regulatoryReady = gates.REGULATORY_READY === true
+      const openAiReady = gates.OPENAI_INPUT_READY === true
       const { error: summaryError } = await input.supabase.from("ebay_same_day_pilot_candidates").update({ product_facts_summary: summary }).eq("id", candidate.id)
       if (summaryError) throw new Error("SAME_DAY_PILOT_FACT_SUMMARY_UPDATE_FAILED")
-      if (!openAiReady) {
+      if (!taxonomyReady) {
         await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
-          previousState: "VALIDATING_REGULATION", reasonCode: "PRODUCT_FACTS_NOT_READY_TODAY",
-          blockers: [text(record(summary.exception).blockingStatus) || "OPENAI_INPUT_NOT_READY"] })
+          previousState: "VALIDATING_TAXONOMY", reasonCode: "EBAY_REQUIRED_ASPECTS_NOT_READY_TODAY",
+          blockers: [text(record(summary.exception).blockingStatus) || "EBAY_ASPECTS_READY_FALSE"] })
       } else {
-        await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, previousState: "VALIDATING_REGULATION",
-          nextState: "BUILDING_OPENAI_INPUT", reasonCode: "OPENAI_INPUT_READY", triggeredBy: "SYSTEM",
-          nextAutomaticAction: "Solicitar aprobación del producto.", nextHumanAction: "Aprobar o rechazar el producto." })
-        await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, previousState: "BUILDING_OPENAI_INPUT",
-          nextState: "WAITING_PRODUCT_APPROVAL", reasonCode: "PRODUCT_APPROVAL_REQUIRED", triggeredBy: "SYSTEM",
-          nextAutomaticAction: "Generar versión 1 al aprobar.", nextHumanAction: "Revisar y aprobar el producto." })
-        await createHumanTask({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, gateType: "PRODUCT_APPROVAL_REQUIRED",
-          title: "Revisa el producto preparado", why: "La identidad, economía y ficha técnica pasaron; falta decisión humana antes de generar contenido.",
-          seconds: 180, impact: "Seller OS generará y validará automáticamente una versión de contenido cuando OpenAI sea habilitado explícitamente.",
-          evidence: { economics: candidate.economics_summary, facts: summary },
-          actionSchema: { type: "PRODUCT_APPROVAL", actions: ["APPROVE", "REQUEST_ONE_REVISION", "REJECT"] }, continuationJobType: "GENERATE_LISTING_CONTENT" })
+        await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, previousState: "VALIDATING_TAXONOMY",
+          nextState: "VALIDATING_REGULATION", reasonCode: "TAXONOMY_REQUIREMENTS_RESOLVED", triggeredBy: "SYSTEM",
+          nextAutomaticAction: "Validar regulación con facts resueltos.", nextHumanAction: "Ninguna." })
+        if (!regulatoryReady) {
+          await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
+            previousState: "VALIDATING_REGULATION", reasonCode: "REGULATORY_NOT_READY_TODAY",
+            blockers: [text(record(summary.exception).blockingStatus) || "REGULATORY_READY_FALSE"] })
+        } else if (!openAiReady) {
+          await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
+            previousState: "VALIDATING_REGULATION", reasonCode: "PRODUCT_FACTS_NOT_READY_TODAY",
+            blockers: [text(record(summary.exception).blockingStatus) || "OPENAI_INPUT_NOT_READY"] })
+        } else {
+          await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, previousState: "VALIDATING_REGULATION",
+            nextState: "BUILDING_OPENAI_INPUT", reasonCode: "OPENAI_INPUT_READY", triggeredBy: "SYSTEM",
+            nextAutomaticAction: "Solicitar aprobación del producto.", nextHumanAction: "Aprobar o rechazar el producto." })
+          await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, previousState: "BUILDING_OPENAI_INPUT",
+            nextState: "WAITING_PRODUCT_APPROVAL", reasonCode: "PRODUCT_APPROVAL_REQUIRED", triggeredBy: "SYSTEM",
+            nextAutomaticAction: "Generar versión 1 al aprobar.", nextHumanAction: "Revisar y aprobar el producto." })
+          await createHumanTask({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, gateType: "PRODUCT_APPROVAL_REQUIRED",
+            title: "Revisa el producto preparado", why: "La identidad, economía y ficha técnica pasaron; falta decisión humana antes de generar contenido.",
+            seconds: 180, impact: "Seller OS generará y validará automáticamente una versión de contenido cuando OpenAI sea habilitado explícitamente.",
+            evidence: { economics: candidate.economics_summary, facts: summary },
+            actionSchema: { type: "PRODUCT_APPROVAL", actions: ["APPROVE", "REQUEST_ONE_REVISION", "REJECT"] }, continuationJobType: "GENERATE_LISTING_CONTENT" })
+        }
       }
     } else {
       throw new Error("SAME_DAY_PILOT_JOB_TYPE_UNSUPPORTED")
     }
-    await completePilotJob(input.supabase, leased.id)
-    await refreshRunProjection(input.supabase, state.run.id)
+    await settlePilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId, status: "COMPLETED" })
+    await refreshRunProjection(input.supabase, state.run.id, true)
     return { processed: 1, status: "COMPLETED", jobType: leased.job_type }
   } catch (error) {
     const code = error instanceof Error && /^[A-Z0-9_:-]+$/.test(error.message) ? error.message : "SAME_DAY_PILOT_JOB_FAILED"
-    const canRetry = retryable(code) && Number(leased.attempt) < Number(leased.max_attempts)
+    const rateLimited = /429|QUOTA_PAUSED/.test(code)
+    const canRetry = rateLimited || (retryable(code) && Number(leased.attempt) < Number(leased.max_attempts))
     let availableAt = new Date(now.getTime() + Math.min(900, 30 * 2 ** Number(leased.attempt)) * 1000).toISOString()
-    if (/429/.test(code)) {
+    if (rateLimited) {
       const persisted = await recordPersistentEbayRateLimit(input.supabase, {
         error, apiFamily: text(leased.api_family) || "BROWSE",
         endpoint: text(leased.api_operation) || "EXACT_VERIFICATION",
@@ -789,18 +993,15 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       })
       availableAt = persisted?.resumeAt ?? new Date(now.getTime() + 15 * 60_000).toISOString()
     }
-    const { error: updateError } = await input.supabase.from("ebay_same_day_pilot_jobs").update({
-      status: canRetry ? "WAITING_RETRY" : "DEAD_LETTER", available_at: availableAt,
-      rate_limit_resume_at: /429/.test(code) ? availableAt : null,
-      lease_owner: null, lease_expires_at: null, last_error_code: code, updated_at: new Date().toISOString(),
-    }).eq("id", leased.id).eq("status", "LEASED")
-    if (updateError) throw new Error("SAME_DAY_PILOT_JOB_FAILURE_PERSIST_FAILED")
+    await settlePilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId,
+      status: canRetry ? "WAITING_RETRY" : "DEAD_LETTER", availableAt, errorCode: code,
+      preserveAttempt: rateLimited })
     if (!canRetry) {
       await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
         previousState: text(candidate.machine_state), reasonCode: code })
     }
-    await refreshRunProjection(input.supabase, state.run.id)
+    await refreshRunProjection(input.supabase, state.run.id, true)
     return { processed: 1, status: canRetry ? "WAITING_RETRY" : "DEAD_LETTER", error: code,
-      resumeAt: /429/.test(code) ? availableAt : null, checkpointPreserved: true }
+      resumeAt: rateLimited ? availableAt : null, checkpointPreserved: true }
   }
 }

@@ -44,8 +44,11 @@ export function TodayLaunchPanel() {
   }
   const openTasks = useMemo(() => (pilot?.tasks ?? []).filter((task: Row) => task.status === "OPEN"), [pilot])
   const candidates = pilot?.candidates ?? []
+  const runStatus = String(pilot?.run?.status ?? "")
   const quotaPaused = (pilot?.jobs ?? []).some((job: Row) => job.status === "WAITING_RETRY" && /429|QUOTA/.test(String(job.last_error_code ?? "")))
-  const currentBusinessState = !pilot ? "NO INICIADO" : quotaPaused ? "PAUSADO POR EBAY" :
+  const currentBusinessState = !pilot ? "NO INICIADO" : runStatus === "BLOCKED" ? "BLOQUEADO" :
+    runStatus === "COMPLETED" ? "PUBLICADO Y VERIFICADO" :
+      quotaPaused ? "PAUSADO POR EBAY" :
     candidates.some((candidate: Row) => candidate.machine_state === "READY_FOR_MANUAL_PUBLICATION") ? "LISTO PARA PUBLICAR" :
       openTasks.length ? "ESPERANDO TU CONFIRMACIÓN" :
         candidates.some((candidate: Row) => candidate.machine_state === "BLOCKED") ? "BLOQUEADO" : "TRABAJANDO"
@@ -54,7 +57,7 @@ export function TodayLaunchPanel() {
     {!pilot && !loading && <button type="button" disabled={working} onClick={() => void request({ action: "start" })} className="mt-5 min-h-14 w-full rounded-2xl bg-cyan-200 px-5 text-base font-black text-black disabled:opacity-50 sm:w-auto">{working ? "INICIANDO…" : "INICIAR LANZAMIENTO DE HOY"}</button>}
     {error && <p role="alert" className="mt-4 rounded-2xl border border-red-300/30 bg-red-400/10 p-3 text-sm font-bold text-red-100">{error}</p>}
     {pilot && <>
-      <div className="mt-5 grid gap-3 sm:grid-cols-5"><Metric label="Piloto" value={`${Number(pilot.run.verified_existing_listings) + Number(pilot.run.verified_new_listings)} / 3`} /><Metric label="Cola de hoy" value={`${candidates.length} / 5`} /><Metric label="Preparación local" value={String(candidates.filter((candidate: Row) => candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES").length)} /><Metric label="Listos" value={String(pilot.run.ready_for_manual_publication_count)} /><Metric label="Escrituras eBay" value="0" /></div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-3 lg:grid-cols-6"><Metric label="Piloto" value={`${Number(pilot.run.verified_existing_listings) + Number(pilot.run.verified_new_listings)} / 3`} /><Metric label="Cola de hoy" value={`${candidates.length} / 5`} /><Metric label="Preparación local" value={String(candidates.filter((candidate: Row) => candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES").length)} /><Metric label="Listos" value={String(pilot.run.ready_for_manual_publication_count)} /><Metric label="Automatización" value={`${Number(pilot.run.automation_metrics?.automationCoveragePercent ?? 0)}%`} /><Metric label="Escrituras eBay" value="0" /></div>
       {quotaPaused && <p className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 text-sm text-amber-50">eBay pausó únicamente la lane de verificación. La selección, Luna y los paquetes locales permanecen disponibles; Seller OS retomará el mismo checkpoint automáticamente.</p>}
       <div className="mt-6"><h3 className="text-lg font-black">Tareas para Ernesto</h3>{openTasks.length === 0 ? <p className="mt-2 rounded-2xl border border-white/10 p-4 text-sm text-white/55">Seller OS no necesita una acción humana en este momento.</p> : <div className="mt-3 grid gap-3">{openTasks.map((task: Row) => <HumanTask key={task.id} task={task} candidate={candidates.find((candidate: Row) => candidate.id === task.candidate_id)} working={working} onConfirm={(body) => request(body)} />)}</div>}</div>
       <details className="mt-5 rounded-2xl border border-white/10 p-4"><summary className="cursor-pointer font-black">Ver candidatos y progreso automático</summary><div className="mt-3 grid gap-2">{candidates.map((candidate: Row) => <div key={candidate.id} className="rounded-xl bg-black/20 p-3"><p className="font-bold">{candidate.ordinal}. {candidate.product_title}</p><p className="mt-1 text-xs text-white/55">{businessState(candidate.machine_state)} · SKU {candidate.supplier_sku}</p>{candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES" && <p className="mt-1 text-xs text-cyan-100/75">Paquete local seguro preparado; todavía no es publicable.</p>}<p className="mt-1 text-xs text-amber-100/80">{candidate.next_human_action}</p></div>)}</div></details>
