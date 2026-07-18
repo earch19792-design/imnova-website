@@ -15,7 +15,7 @@ import { createTop20ContinuationToken, hashTop20ContinuationToken } from "./ebay
 import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit.ts"
 
 export const PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_VERSION =
-  "PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_V1_2026_07_17"
+  "PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_V2_2026_07_18"
 
 export type ProductIdentityReconciliationClassification =
   | "EXACT_LUNA_MATCH"
@@ -395,16 +395,34 @@ function readerStatusOrThrow(error: unknown) {
   return safeReaderStatus(error)
 }
 
-async function loadTargets(supabase: SupabaseClient, accountKey: string) {
-  const [catalogResult, linksResult] = await Promise.all([
-    supabase.from("market_radar_latest_variants")
-      .select("product_id,supplier_product_id,supplier_variant_id,sku,barcode,title,variant_title,metadata")
-      .eq("source_key", "lunaportex").limit(5_000),
-    supabase.from("ebay_manual_listing_links")
-      .select("id,opportunity_id,supplier_variant_id,supplier_sku,verification_status,verification_method")
-      .eq("account_key", accountKey).eq("marketplace_id", "EBAY_US")
-      .eq("verification_status", "verified").limit(1_000),
-  ])
+export function normalizeProductResearchTargetVariantScope(values: unknown) {
+  if (!Array.isArray(values)) return null
+  return [...new Set(values.map((value) => text(value, 160))
+    .filter((value): value is string => Boolean(value)))].slice(0, 100)
+}
+
+async function loadTargets(
+  supabase: SupabaseClient,
+  accountKey: string,
+  targetSupplierVariantIds?: string[],
+) {
+  const targetScope = normalizeProductResearchTargetVariantScope(targetSupplierVariantIds)
+  // An explicitly requested but empty scope must never fall back to comparing
+  // against the full Luna catalog. The caller planned a candidate-specific
+  // reconciliation and no deterministic target is currently available.
+  if (targetScope?.length === 0) return []
+  let catalogQuery = supabase.from("market_radar_latest_variants")
+    .select("product_id,supplier_product_id,supplier_variant_id,sku,barcode,title,variant_title,metadata")
+    .eq("source_key", "lunaportex").limit(5_000)
+  let linksQuery = supabase.from("ebay_manual_listing_links")
+    .select("id,opportunity_id,supplier_variant_id,supplier_sku,verification_status,verification_method")
+    .eq("account_key", accountKey).eq("marketplace_id", "EBAY_US")
+    .eq("verification_status", "verified").limit(1_000)
+  if (targetScope) {
+    catalogQuery = catalogQuery.in("supplier_variant_id", targetScope)
+    linksQuery = linksQuery.in("supplier_variant_id", targetScope)
+  }
+  const [catalogResult, linksResult] = await Promise.all([catalogQuery, linksQuery])
   if (catalogResult.error || linksResult.error) throw new Error("PRODUCT_IDENTITY_RECONCILIATION_TARGET_READ_FAILED")
   const opportunityIds = [...new Set((linksResult.data ?? []).map((row) => text(row.opportunity_id))
     .filter((value): value is string => Boolean(value)))]
@@ -518,6 +536,9 @@ export async function reconcileProductResearchObservations(input: {
   supabase: SupabaseClient
   accountKey: string
   observationIds?: string[]
+  targetSupplierVariantIds?: string[]
+  tradingObservationIds?: string[]
+  maxTradingReadsPerBatch?: number
   now?: Date
   environment?: NodeJS.ProcessEnv
   tradingReader?: TradingReader
@@ -546,8 +567,10 @@ export async function reconcileProductResearchObservations(input: {
   if (batchError) throw new Error("PRODUCT_IDENTITY_RECONCILIATION_BATCH_READ_FAILED")
   const batchTokens = new Map((batches ?? []).map((batch) =>
     [batch.id, Array.isArray(batch.search_keyword_patterns) ? batch.search_keyword_patterns : []] as const))
+  const targetScope = normalizeProductResearchTargetVariantScope(input.targetSupplierVariantIds)
   const [targets, previousByObservation] = await Promise.all([
-    loadTargets(input.supabase, input.accountKey), latestEvents(input.supabase, input.accountKey),
+    loadTargets(input.supabase, input.accountKey, targetScope ?? undefined),
+    latestEvents(input.supabase, input.accountKey),
   ])
   let gateway: {
     runEbaySellerKeywordDemandValidation: BrowseReader
@@ -562,6 +585,88 @@ export async function reconcileProductResearchObservations(input: {
   const browseReader = input.browseReader ?? gateway!.runEbaySellerKeywordDemandValidation
   const catalogReader = input.catalogReader ?? gateway!.searchEbayCatalogIdentity
   const taxonomyReader = input.taxonomyReader ?? gateway!.getEbayTaxonomyListingIntelligence
+  const requestedTradingIds = Array.isArray(input.tradingObservationIds)
+    ? new Set(input.tradingObservationIds.map((value) => text(value, 80)).filter(Boolean))
+    : null
+  const maximumTradingReadsPerBatch = Math.max(0, Math.min(2,
+    Number.isInteger(input.maxTradingReadsPerBatch) ? Number(input.maxTradingReadsPerBatch) : 2,
+  ))
+  const tradingReadsByBatch = new Map<string, number>()
+  const officialCallBudget = { trading: 0, browse: 0, catalog: 0, taxonomy: 0 }
+  type SharedOfficialEvidence = {
+    browse: JsonRecord | null
+    catalog: JsonRecord | null
+    taxonomy: JsonRecord | null
+    outcomes: JsonRecord
+  }
+  const sharedEvidenceByBatch = new Map<string, Promise<SharedOfficialEvidence>>()
+  const sharedOfficialEvidence = (
+    observation: Observation,
+    captured: OfficialIdentityFacts,
+    fallbackQueryText: string,
+  ) => {
+    const existing = sharedEvidenceByBatch.get(observation.capture_batch_id)
+    if (existing) return existing
+    const plannedTokens = [...new Set((batchTokens.get(observation.capture_batch_id) ?? [])
+      .flatMap(tokens))]
+    // Shared market readers use only the durable planned-query tokens. Row
+    // keywords can vary and must not multiply Browse/Catalog/Taxonomy calls.
+    const sharedQueryText = plannedTokens.join(" ").slice(0, 240) || fallbackQueryText
+    const pending = (async (): Promise<SharedOfficialEvidence> => {
+      const outcomes: JsonRecord = {}
+      const browsePromise = (async () => {
+        try {
+          officialCallBudget.browse += 1
+          const result = record(await browseReader({ productName: sharedQueryText,
+            packQuantity: null, size: null }))
+          outcomes.browse = "READY"
+          outcomes.browseComparableCount = Array.isArray(result.comparableEvidence)
+            ? result.comparableEvidence.length : 0
+          return result
+        } catch (error) {
+          outcomes.browse = readerStatusOrThrow(error)
+          return null
+        }
+      })()
+      const catalogPromise = (async () => {
+        try {
+          officialCallBudget.catalog += 1
+          const result = record(await catalogReader({ query: sharedQueryText,
+            gtin: null, mpn: null }))
+          outcomes.catalog = text(result.status) ?? "UNAVAILABLE"
+          outcomes.catalogProductCount = Array.isArray(result.products) ? result.products.length : 0
+          return result
+        } catch (error) {
+          outcomes.catalog = readerStatusOrThrow(error)
+          return null
+        }
+      })()
+      const [browse, catalog] = await Promise.all([browsePromise, catalogPromise])
+      const preliminary = officialFactsFromSources({
+        capture: { ...captured, productName: sharedQueryText },
+        trading: null,
+        browse,
+        catalog,
+        taxonomy: null,
+      })
+      let taxonomy: JsonRecord | null = null
+      try {
+        officialCallBudget.taxonomy += 1
+        taxonomy = record(await taxonomyReader(
+          preliminary.productName ?? sharedQueryText,
+          preliminary.categoryId,
+        ))
+        outcomes.taxonomy = text(taxonomy.status) ?? "UNAVAILABLE"
+      } catch (error) {
+        outcomes.taxonomy = readerStatusOrThrow(error)
+      }
+      return { browse, catalog, taxonomy, outcomes }
+    })()
+    // Cache the in-flight promise as well as its resolution/rejection so a
+    // batch can never fan out duplicate shared reads within one attempt.
+    sharedEvidenceByBatch.set(observation.capture_batch_id, pending)
+    return pending
+  }
   const results: JsonRecord[] = []
   const affectedVariants = new Set<string>()
   const eventKeys: string[] = []
@@ -574,36 +679,30 @@ export async function reconcileProductResearchObservations(input: {
       "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
       "EBAY_TRADING_GET_ITEM_READONLY",
     ]
-    const outcomes: JsonRecord = { capture: "READY" }
+    const outcomes: JsonRecord = { capture: "READY",
+      targetScope: targetScope ? "PLANNED_CANDIDATES" : "LATEST_LUNA_CATALOG",
+      targetScopeCandidateCount: targetScope?.length ?? targets.length }
     let trading: JsonRecord | null = null
-    if (observation.source_listing_id) {
-      try { trading = record(await tradingReader(observation.source_listing_id)); outcomes.trading = "READY" }
-      catch (error) { outcomes.trading = readerStatusOrThrow(error) }
-    } else outcomes.trading = "NOT_APPLICABLE_ITEM_ID_MISSING"
-    let browse: JsonRecord | null = null
+    const tradingReads = tradingReadsByBatch.get(observation.capture_batch_id) ?? 0
+    const tradingSelected = observation.source_listing_id && tradingReads < maximumTradingReadsPerBatch &&
+      (!requestedTradingIds || requestedTradingIds.has(observation.id))
+    if (tradingSelected && observation.source_listing_id) {
+      try {
+        officialCallBudget.trading += 1
+        tradingReadsByBatch.set(observation.capture_batch_id, tradingReads + 1)
+        trading = record(await tradingReader(observation.source_listing_id))
+        outcomes.trading = "READY"
+      } catch (error) { outcomes.trading = readerStatusOrThrow(error) }
+    } else if (!observation.source_listing_id) outcomes.trading = "NOT_APPLICABLE_ITEM_ID_MISSING"
+    else outcomes.trading = "NOT_SELECTED_BOUNDED_DETAIL_BUDGET"
+    const shared = await sharedOfficialEvidence(observation, captured, queryText)
+    const browse = shared.browse
+    const catalog = shared.catalog
+    const taxonomy = shared.taxonomy
     sourcesConsulted.push("EBAY_BROWSE_OFFICIAL_READONLY")
-    try {
-      browse = record(await browseReader({ productName: queryText,
-        packQuantity: captured.packCount, size: captured.size }))
-      outcomes.browse = "READY"
-      outcomes.browseComparableCount = Array.isArray(browse.comparableEvidence)
-        ? browse.comparableEvidence.length : 0
-    } catch (error) { outcomes.browse = readerStatusOrThrow(error) }
-    let catalog: JsonRecord | null = null
     sourcesConsulted.push("EBAY_CATALOG_OFFICIAL_READONLY")
-    try {
-      catalog = record(await catalogReader({ query: queryText,
-        gtin: captured.gtin, mpn: captured.mpn }))
-      outcomes.catalog = text(catalog.status) ?? "UNAVAILABLE"
-      outcomes.catalogProductCount = Array.isArray(catalog.products) ? catalog.products.length : 0
-    } catch (error) { outcomes.catalog = readerStatusOrThrow(error) }
-    const preliminary = officialFactsFromSources({ capture: captured, trading, browse, catalog, taxonomy: null })
-    let taxonomy: JsonRecord | null = null
     sourcesConsulted.push("EBAY_TAXONOMY_OFFICIAL_READONLY")
-    try {
-      taxonomy = record(await taxonomyReader(preliminary.productName ?? queryText, preliminary.categoryId))
-      outcomes.taxonomy = text(taxonomy.status) ?? "UNAVAILABLE"
-    } catch (error) { outcomes.taxonomy = readerStatusOrThrow(error) }
+    Object.assign(outcomes, shared.outcomes)
     const facts = officialFactsFromSources({ capture: captured, trading, browse, catalog, taxonomy })
     const decision = reconcileProductResearchIdentity({ observation: facts, queryTokens, targets })
     const previous = previousByObservation.get(observation.id) ?? null
@@ -663,6 +762,7 @@ export async function reconcileProductResearchObservations(input: {
       eventAppended: !alreadySame })
   }
   const version = sha256({ reconciliationVersion: PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_VERSION,
+    targetScope: targetScope?.map((variantId) => sha256(variantId)).sort() ?? null,
     eventKeys: eventKeys.sort() })
   const reanalysis = await reopenTop20RunForReconciledVariants({
     supabase: input.supabase, accountKey: input.accountKey,
@@ -670,6 +770,11 @@ export async function reconcileProductResearchObservations(input: {
   })
   return { observationsProcessed: observations.length, results, reanalysis,
     aggregates: aggregateProductIdentityReconciliation(results),
+    officialCallBudget: { ...officialCallBudget,
+      total: Object.values(officialCallBudget).reduce((sum, value) => sum + value, 0),
+      maximumTradingReadsPerBatch,
+      sharedQueryReadsPerBatch: true,
+      unit: "READER_INVOCATIONS_NOT_HTTP_REQUESTS" },
     rawObservationChanged: false, customLabelComparedToSupplierSku: false,
     competitorSkuComparedToSupplierSku: false, piiStored: false,
     competitorImagesDownloaded: 0, openAiCalls: 0, ebayWrites: 0,

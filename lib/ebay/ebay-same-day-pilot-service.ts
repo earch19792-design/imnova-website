@@ -4,6 +4,9 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import {
   buildSameDayLocalPreparationPackage,
   SAME_DAY_PILOT_VERSION,
+  SAME_DAY_RECONCILIATION_COVERAGE_ROW_LIMIT,
+  SAME_DAY_RECONCILIATION_DECISION_REFERENCE_LIMIT,
+  SAME_DAY_TRADING_DETAIL_READ_LIMIT_PER_BATCH,
   listingQuantityFromLuna,
   selectSameDayQueue,
   type SameDayCandidateInput,
@@ -23,13 +26,15 @@ import {
   assertEbayLaneAvailable,
   recordPersistentEbayRateLimit,
 } from "./ebay-persistent-quota-coordinator"
-import { reconcileProductResearchObservations } from "./ebay-product-research-identity-reconciliation"
+import {
+  PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_VERSION,
+  reconcileProductResearchObservations,
+} from "./ebay-product-research-identity-reconciliation"
 import { productResearchPlannedQueryHash } from "./ebay-product-research-query-plan"
 import { enqueueListingAiTop20Continuation } from "./ebay-listing-ai-top20-queue"
 import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
 
 const MARKETPLACE = "EBAY_US"
-const MAX_RECONCILIATION_REFERENCES = 10
 const PRODUCT_FACT_READ_DEPENDENCIES = [
   ["OAUTH", "APPLICATION_TOKEN"],
   ["BROWSE", "QUOTA_PRECHECK"],
@@ -488,6 +493,94 @@ async function repairProcessedProductResearchCaptureGate(
   return false
 }
 
+const LEGACY_PREMATURE_NO_EXACT_REASON = "NO_EXACT_LUNA_MATCH_IN_AUTHORIZED_CAPTURE"
+
+async function repairLegacyPrematureProductResearchRejections(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  accountKey: string,
+) {
+  const candidates = state.candidates.filter((candidate) => {
+    const blockers = strings(candidate.blockers)
+    return candidate.machine_state === "REJECTED" && candidate.state === "REJECTED_TODAY" &&
+      blockers.length === 1 && blockers[0] === LEGACY_PREMATURE_NO_EXACT_REASON &&
+      text(candidate.product_research_capture_batch_id) && text(candidate.queue_item_id) &&
+      text(candidate.supplier_variant_id)
+  })
+  if (!candidates.length) return 0
+  const planId = text(record(state.run.source_inventory).productResearchPlanId)
+  if (!planId) return 0
+  const { data: plan, error: planError } = await supabase
+    .from("marketplace_product_research_query_plans")
+    .select("id,run_id,status")
+    .eq("id", planId)
+    .eq("marketplace_account_key", accountKey)
+    .eq("marketplace", MARKETPLACE)
+    .eq("status", "COMPLETED")
+    .maybeSingle()
+  if (planError) throw new Error("SAME_DAY_PILOT_LEGACY_REPAIR_PLAN_READ_FAILED")
+  if (!plan?.run_id) return 0
+  const [{ data: tasks, error: taskError }, { data: queueItems, error: queueItemError }] =
+    await Promise.all([
+      supabase.from("marketplace_product_research_query_tasks")
+        .select("id,search_query,capture_batch_id,captured_at")
+        .eq("plan_id", plan.id)
+        .eq("marketplace_account_key", accountKey)
+        .eq("marketplace", MARKETPLACE)
+        .eq("status", "PROCESSED")
+        .not("capture_batch_id", "is", null),
+      supabase.from("marketplace_listing_approval_queue_items")
+        .select("id,run_id,supplier_variant_id")
+        .eq("run_id", plan.run_id)
+        .eq("marketplace_account_key", accountKey)
+        .eq("marketplace", MARKETPLACE)
+        .in("id", candidates.map((candidate) => candidate.queue_item_id)),
+    ])
+  if (taskError || queueItemError) throw new Error("SAME_DAY_PILOT_LEGACY_REPAIR_BINDING_READ_FAILED")
+  const queueItemsById = new Map((queueItems ?? []).map((item) => [text(item.id), item]))
+  let repaired = 0
+  for (const candidate of candidates) {
+    const captureBatchId = text(candidate.product_research_capture_batch_id)
+    const supplierVariantId = text(candidate.supplier_variant_id)
+    const queueItem = queueItemsById.get(text(candidate.queue_item_id))
+    if (!captureBatchId || !supplierVariantId || !queueItem ||
+      text(queueItem.supplier_variant_id) !== supplierVariantId) continue
+    const queryHash = productResearchPlannedQueryHash(
+      record(candidate.product_research_query_plan).query,
+    )
+    const task = (tasks ?? []).find((entry) =>
+      text(entry.capture_batch_id) === captureBatchId &&
+      productResearchPlannedQueryHash(entry.search_query) === queryHash)
+    if (!task) continue
+    await transition({ supabase, runId: state.run.id, candidateId: text(candidate.id),
+      previousState: "REJECTED", nextState: "RECONCILING_IDENTITY",
+      reasonCode: "LEGACY_PREMATURE_NO_EXACT_REPAIR", triggeredBy: "SYSTEM",
+      checkpoint: { planId: plan.id, taskId: task.id, captureBatchId,
+        previousReason: LEGACY_PREMATURE_NO_EXACT_REASON },
+      nextAutomaticAction: "Reconciliar la captura ya importada contra la variante planificada.",
+      nextHumanAction: "Ninguna.",
+      job: { jobType: "RECONCILE_PRODUCT_RESEARCH_CAPTURE",
+        idempotencyKey: `${state.run.id}:${candidate.id}:RECONCILE_PRODUCT_RESEARCH_CAPTURE:${captureBatchId}:${PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_VERSION}`,
+        checkpoint: { captureBatchId, supplierVariantId,
+          capturedAt: text(task.captured_at) || new Date().toISOString(),
+          legacyPrematureRejectionRepair: true }, maxAttempts: 10,
+        apiFamily: "BROWSE", apiOperation: "EXACT_VERIFICATION",
+        ownerLane: "P1_EXACT_VERIFICATION" } })
+    const { error: candidateError } = await supabase.from("ebay_same_day_pilot_candidates")
+      .update({ state: "NEEDS_PRODUCT_RESEARCH_CAPTURE", blockers: [],
+        evidence_summary: { ...record(candidate.evidence_summary),
+          legacyPrematureRejectionRepaired: true,
+          reconciliationVersion: PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_VERSION },
+        updated_at: new Date().toISOString() })
+      .eq("id", candidate.id).eq("run_id", state.run.id)
+      .eq("machine_state", "RECONCILING_IDENTITY")
+    if (candidateError) throw new Error("SAME_DAY_PILOT_LEGACY_REPAIR_CANDIDATE_UPDATE_FAILED")
+    repaired += 1
+  }
+  if (repaired) await refreshRunProjection(supabase, state.run.id)
+  return repaired
+}
+
 async function repairSameDayPilotBootstrap(
   supabase: SupabaseClient,
   state: Awaited<ReturnType<typeof currentState>>,
@@ -547,8 +640,16 @@ async function promoteNextCandidate(supabase: SupabaseClient, runId: string, ord
   const serialized = await serializeOpenHumanTasksForRun(supabase, runId)
   if (serialized.openTask) return false
   const { data, error } = await supabase.from("ebay_same_day_pilot_candidates").select("*")
-    .eq("run_id", runId).gt("ordinal", ordinal).eq("machine_state", "RUN_CREATED").order("ordinal").limit(1).maybeSingle()
+    .eq("run_id", runId).gt("ordinal", ordinal)
+    .in("machine_state", ["RUN_CREATED", "WAITING_PRODUCT_RESEARCH_CAPTURE"])
+    .order("ordinal").limit(1).maybeSingle()
   if (error) throw new Error("SAME_DAY_PILOT_REPLACEMENT_READ_FAILED")
+  // Older runs may already have advanced several candidates to the Product
+  // Research gate before global inbox serialization superseded their extra
+  // OPEN tasks. Re-bootstrap only the first eligible successor: RUN_CREATED
+  // advances normally, while WAITING_PRODUCT_RESEARCH_CAPTURE recreates its
+  // durable gate. Terminal and in-flight states are never reactivated, and
+  // createHumanTask performs a second serialization check against races.
   if (data) await bootstrapCandidate(supabase, runId, record(data))
   return Boolean(data)
 }
@@ -1110,6 +1211,15 @@ export async function decideSameDayImages(input: {
 export async function resumeSameDayPilotAfterProductResearchCapture(input: { supabase: SupabaseClient; accountKey: string; searchQuery: string; batchId: string; capturedAt?: string | null; exactLunaMatches?: number }) {
   const state = await getSameDayPilot(input)
   if (!state) return { resumed: 0, familyEnriched: 0 }
+  const { count: captureObservationCount, error: captureObservationError } = await input.supabase
+    .from("marketplace_product_research_capture_observations")
+    .select("id", { count: "exact", head: true })
+    .eq("capture_batch_id", input.batchId)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", MARKETPLACE)
+    .eq("evidence_reviewed", true)
+  if (captureObservationError) throw new Error("SAME_DAY_PILOT_CAPTURE_MATCH_READ_FAILED")
+  const authorizedObservationCount = Number(captureObservationCount ?? 0)
   const capturedQueryHash = productResearchPlannedQueryHash(input.searchQuery)
   const familyCandidates = state.candidates.filter((candidate) =>
     !["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(text(candidate.machine_state)) &&
@@ -1118,25 +1228,11 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
   let resumed = 0
   let familyEnriched = 0
   for (const candidate of familyCandidates) {
-    const { data: candidateExactRows, error: matchError } = await input.supabase
-      .from("marketplace_product_research_capture_observations")
-      .select("average_sold_price,average_shipping,confirmed_sold_quantity,last_sold_date,listing_format")
-      .eq("capture_batch_id", input.batchId)
-      .eq("marketplace_account_key", input.accountKey)
-      .eq("marketplace", MARKETPLACE)
-      .eq("matched_supplier_variant_id", candidate.supplier_variant_id)
-      .eq("match_classification", "EXACT_LUNA_MATCH")
-      .eq("evidence_reviewed", true)
-      .order("confirmed_sold_quantity", { ascending: false })
-      .limit(MAX_RECONCILIATION_REFERENCES)
-    if (matchError) throw new Error("SAME_DAY_PILOT_CAPTURE_MATCH_READ_FAILED")
-    const exactRows = (candidateExactRows ?? []).map((row) => record(row))
-    const exactMatches = exactRows.length
-    if (exactMatches > 0 && candidate.machine_state !== "WAITING_PRODUCT_RESEARCH_CAPTURE") {
+    if (authorizedObservationCount > 0 && candidate.machine_state !== "WAITING_PRODUCT_RESEARCH_CAPTURE") {
       const { error: familyLinkError } = await input.supabase.from("ebay_same_day_pilot_candidates").update({
         product_research_capture_batch_id: input.batchId,
         evidence_summary: { ...record(candidate.evidence_summary),
-          captureCandidateReferencesPendingReconciliation: exactMatches,
+          captureCandidateReferencesPendingReconciliation: authorizedObservationCount,
           groupedCaptureObservedAt: input.capturedAt ?? new Date().toISOString() },
         updated_at: new Date().toISOString(),
       }).eq("id", candidate.id).eq("run_id", state.run.id)
@@ -1148,16 +1244,17 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
     if (!task) throw new Error("SAME_DAY_PILOT_CAPTURE_GATE_TASK_MISSING")
     resumed += 1
     const evidenceSummary = { ...record(candidate.evidence_summary),
-      captureCandidateReferencesPendingReconciliation: exactMatches,
+      captureCandidateReferencesPendingReconciliation: authorizedObservationCount,
       groupedCaptureObservedAt: input.capturedAt ?? new Date().toISOString() }
-    if (exactMatches <= 0) {
+    if (authorizedObservationCount <= 0) {
       await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
         gateType: "PRODUCT_RESEARCH_CAPTURE_REQUIRED", runId: state.run.id, candidateId: candidate.id,
         previousState: "WAITING_PRODUCT_RESEARCH_CAPTURE", nextState: "REJECTED",
-        reasonCode: "NO_EXACT_LUNA_MATCH_IN_AUTHORIZED_CAPTURE", triggeredBy: "SYSTEM",
-        checkpoint: { captureBatchId: input.batchId, exactLunaMatches: 0, soldEvidenceImported: true },
+        reasonCode: "AUTHORIZED_CAPTURE_OBSERVATIONS_MISSING", triggeredBy: "SYSTEM",
+        checkpoint: { captureBatchId: input.batchId, authorizedObservationCount: 0,
+          soldEvidenceImported: true },
         candidatePatch: { productResearchCaptureBatchId: input.batchId, evidenceSummary,
-          state: "REJECTED_TODAY", blockers: ["NO_EXACT_LUNA_MATCH_IN_AUTHORIZED_CAPTURE"] },
+          state: "REJECTED_TODAY", blockers: ["AUTHORIZED_CAPTURE_OBSERVATIONS_MISSING"] },
         nextAutomaticAction: "Promover el siguiente candidato.", nextHumanAction: "Ninguna." })
       await promoteNextCandidate(input.supabase, state.run.id, Number(candidate.ordinal))
     } else {
@@ -1166,7 +1263,9 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
         gateType: "PRODUCT_RESEARCH_CAPTURE_REQUIRED", runId: state.run.id, candidateId: candidate.id,
         previousState: "WAITING_PRODUCT_RESEARCH_CAPTURE", nextState: "RECONCILING_IDENTITY",
         reasonCode: "AUTHORIZED_SOLD_EVIDENCE_IMPORTED_AUTO_RESUME", triggeredBy: "SYSTEM",
-        checkpoint: { captureBatchId: input.batchId, exactLunaMatches: exactMatches, soldEvidenceImported: true },
+        checkpoint: { captureBatchId: input.batchId, authorizedObservationCount,
+          provisionalExactLunaMatches: Number(input.exactLunaMatches ?? 0),
+          soldEvidenceImported: true },
         candidatePatch: { productResearchCaptureBatchId: input.batchId, evidenceSummary },
         nextAutomaticAction: "Reconciliar sólo las referencias de este candidato.", nextHumanAction: "Ninguna.",
         job: { jobType: "RECONCILE_PRODUCT_RESEARCH_CAPTURE",
@@ -1370,8 +1469,18 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     state,
     input.accountKey,
   )
+  if (repaired) {
+    state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
+    if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
+  }
+  const legacyPrematureRejectionsRepaired =
+    await repairLegacyPrematureProductResearchRejections(
+      input.supabase,
+      state,
+      input.accountKey,
+    )
   const deadLettersRecovered = await recoverDeadLetterCandidates(input.supabase, state)
-  if (repaired || deadLettersRecovered) {
+  if (legacyPrematureRejectionsRepaired || deadLettersRecovered) {
     state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
     if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
   }
@@ -1382,7 +1491,8 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
   const leased = Array.isArray(claimed) ? claimed[0] : claimed
   if (!leased) {
     await refreshRunProjection(input.supabase, state.run.id, true)
-    return { processed: 0, status: "IDLE", repaired, deadLettersRecovered }
+    return { processed: 0, status: "IDLE", repaired,
+      legacyPrematureRejectionsRepaired, deadLettersRecovered }
   }
   const candidate = state.candidates.find((entry) => entry.id === leased.candidate_id)
   if (!candidate) throw new Error("SAME_DAY_PILOT_JOB_CANDIDATE_MISSING")
@@ -1440,36 +1550,99 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       const checkpoint = record(leased.checkpoint)
       const batchId = text(checkpoint.captureBatchId)
       const supplierVariantId = text(checkpoint.supplierVariantId)
-      const { data: observations, error: observationError } = await input.supabase
-        .from("marketplace_product_research_capture_observations")
-        .select("id,average_sold_price,average_shipping,confirmed_sold_quantity,last_sold_date,listing_format")
-        .eq("capture_batch_id", batchId)
-        .eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE)
-        .eq("matched_supplier_variant_id", supplierVariantId).eq("evidence_reviewed", true)
-        .order("confirmed_sold_quantity", { ascending: false }).limit(MAX_RECONCILIATION_REFERENCES)
-      if (observationError) throw new Error("SAME_DAY_PILOT_RECONCILIATION_OBSERVATION_READ_FAILED")
-      const observationIds = (observations ?? []).map((row) => text(row.id)).filter(Boolean)
-      if (!observationIds.length) {
+      if (!batchId || !supplierVariantId || supplierVariantId !== text(candidate.supplier_variant_id)) {
+        throw new Error("SAME_DAY_PILOT_RECONCILIATION_TARGET_BINDING_INVALID")
+      }
+      const candidateQueryHash = productResearchPlannedQueryHash(
+        record(candidate.product_research_query_plan).query,
+      )
+      const plannedTargetVariantIds = [...new Set(state.candidates.filter((entry) =>
+        productResearchPlannedQueryHash(record(entry.product_research_query_plan).query) ===
+          candidateQueryHash)
+        .map((entry) => text(entry.supplier_variant_id)).filter(Boolean))]
+      if (!plannedTargetVariantIds.includes(supplierVariantId)) {
+        throw new Error("SAME_DAY_PILOT_RECONCILIATION_PLANNED_TARGET_MISSING")
+      }
+      const [decisionResult, coverageResult] = await Promise.all([
+        input.supabase.from("marketplace_product_research_capture_observations")
+          .select("id,average_sold_price,average_shipping,confirmed_sold_quantity,last_sold_date,listing_format")
+          .eq("capture_batch_id", batchId)
+          .eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE)
+          .eq("evidence_reviewed", true)
+          .order("confirmed_sold_quantity", { ascending: false })
+          .limit(SAME_DAY_RECONCILIATION_DECISION_REFERENCE_LIMIT),
+        input.supabase.from("marketplace_product_research_capture_observations")
+          .select("id")
+          .eq("capture_batch_id", batchId)
+          .eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE)
+          .eq("evidence_reviewed", true)
+          .order("created_at", { ascending: true })
+          .limit(SAME_DAY_RECONCILIATION_COVERAGE_ROW_LIMIT),
+      ])
+      if (decisionResult.error || coverageResult.error) {
+        throw new Error("SAME_DAY_PILOT_RECONCILIATION_OBSERVATION_READ_FAILED")
+      }
+      const decisionObservations = (decisionResult.data ?? []).map((row) => record(row))
+      const decisionObservationIds = decisionObservations.map((row) => text(row.id)).filter(Boolean)
+      const decisionObservationIdSet = new Set(decisionObservationIds)
+      const coverageObservationIds = (coverageResult.data ?? [])
+        .map((row) => text(row.id)).filter(Boolean)
+      if (!coverageObservationIds.length) {
         await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
           previousState: "RECONCILING_IDENTITY", reasonCode: "CANDIDATE_CAPTURE_REFERENCES_MISSING" })
       } else {
         const reconciled = await reconcileProductResearchObservations({
-          supabase: input.supabase, accountKey: input.accountKey, observationIds, now,
+          supabase: input.supabase, accountKey: input.accountKey,
+          observationIds: coverageObservationIds,
+          targetSupplierVariantIds: plannedTargetVariantIds,
+          tradingObservationIds: decisionObservationIds.slice(
+            0,
+            SAME_DAY_TRADING_DETAIL_READ_LIMIT_PER_BATCH,
+          ),
+          maxTradingReadsPerBatch: SAME_DAY_TRADING_DETAIL_READ_LIMIT_PER_BATCH,
+          now,
         })
         const exactObservationIds = new Set(reconciled.results.filter((result) =>
+          decisionObservationIdSet.has(text(result.observationId)) &&
           result.classification === "EXACT_LUNA_MATCH" &&
           result.supplierVariantId === supplierVariantId &&
           Number(result.soldExactCountImpact ?? 0) > 0,
         ).map((result) => text(result.observationId)).filter(Boolean))
-        const reconciledExactRows = (observations ?? []).map((row) => record(row))
+        const reconciledExactRows = decisionObservations
           .filter((row) => exactObservationIds.has(text(row.id)))
         const marketReference = exactSoldMarketReference(reconciledExactRows)
+        const reconciliationEvidenceSummary = { ...record(candidate.evidence_summary),
+          reconciliationCoverage: {
+            reviewedObservations: coverageObservationIds.length,
+            eventsProcessed: reconciled.observationsProcessed,
+            decisionReferences: decisionObservationIds.length,
+            decisionReferenceLimit: SAME_DAY_RECONCILIATION_DECISION_REFERENCE_LIMIT,
+            targetSupplierVariantScoped: true,
+            plannedTargetVariantCount: plannedTargetVariantIds.length,
+            officialCallBudget: reconciled.officialCallBudget,
+            version: PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_VERSION,
+          } }
+        const { error: coverageUpdateError } = await input.supabase
+          .from("ebay_same_day_pilot_candidates").update({
+            evidence_summary: reconciliationEvidenceSummary,
+            updated_at: now.toISOString(),
+          }).eq("id", candidate.id).eq("run_id", state.run.id)
+        if (coverageUpdateError) throw new Error("SAME_DAY_PILOT_RECONCILIATION_COVERAGE_UPDATE_FAILED")
         if (exactObservationIds.size <= 0 || !reconciled.reanalysis.runId || !reconciled.reanalysis.shouldSchedule) {
+          if (reconciled.reanalysis.runId && reconciled.reanalysis.shouldSchedule) {
+            // Related pack/size evidence can refresh Loop 1 pack intelligence,
+            // but it never promotes the same-day candidate as an exact match.
+            await enqueueListingAiTop20Continuation({
+              supabase: input.supabase, runId: reconciled.reanalysis.runId,
+              continuationGeneration: reconciled.reanalysis.continuationGeneration,
+              expectedBatch: reconciled.reanalysis.expectedBatch,
+            })
+          }
           await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
             previousState: "RECONCILING_IDENTITY", reasonCode: "OFFICIAL_IDENTITY_RECONCILIATION_NOT_EXACT" })
         } else {
           const { error: evidenceUpdateError } = await input.supabase.from("ebay_same_day_pilot_candidates").update({
-            evidence_summary: { ...record(candidate.evidence_summary),
+            evidence_summary: { ...reconciliationEvidenceSummary,
               reconciledExactObservationCount: exactObservationIds.size,
               exactSoldMarketReference: marketReference,
               exactSoldMarketReferenceReconciledAt: now.toISOString(),
@@ -1479,7 +1652,9 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           if (evidenceUpdateError) throw new Error("SAME_DAY_PILOT_RECONCILED_EVIDENCE_UPDATE_FAILED")
           await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id,
             previousState: "RECONCILING_IDENTITY", nextState: "MATCHING_LUNA", reasonCode: "IDENTITY_RECONCILIATION_COMPLETED",
-            triggeredBy: "SYSTEM", checkpoint: { captureBatchId: batchId, references: observationIds.length,
+            triggeredBy: "SYSTEM", checkpoint: { captureBatchId: batchId,
+              references: decisionObservationIds.length,
+              reconciliationCoverage: coverageObservationIds.length,
               exactLunaMatches: exactObservationIds.size }, nextAutomaticAction: "Ejecutar Loop 1 para este candidato.", nextHumanAction: "Ninguna." })
           const dispatched = await enqueueListingAiTop20Continuation({
             supabase: input.supabase, runId: reconciled.reanalysis.runId,
@@ -1493,7 +1668,9 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             job: { jobType: "WAIT_FOR_LOOP1_REANALYSIS",
               idempotencyKey: `${state.run.id}:${candidate.id}:WAIT_FOR_LOOP1_REANALYSIS:${batchId}`,
               checkpoint: { ...checkpoint, queueRunId: reconciled.reanalysis.runId,
-                reconciliationReferences: observationIds.length, dispatchStatus: dispatched.status },
+                reconciliationReferences: decisionObservationIds.length,
+                reconciliationCoverage: coverageObservationIds.length,
+                dispatchStatus: dispatched.status },
               availableAt: new Date(now.getTime() + 60_000).toISOString(), maxAttempts: 10 } })
         }
       }

@@ -2,6 +2,9 @@ import { createHash } from "node:crypto"
 
 export const SAME_DAY_PILOT_VERSION = "PILOT_3_LISTINGS_SAME_DAY_V1"
 export const SAME_DAY_QUEUE_LIMIT = 5
+export const SAME_DAY_RECONCILIATION_DECISION_REFERENCE_LIMIT = 10
+export const SAME_DAY_RECONCILIATION_COVERAGE_ROW_LIMIT = 200
+export const SAME_DAY_TRADING_DETAIL_READ_LIMIT_PER_BATCH = 2
 
 export type SameDayCandidateState =
   | "READY_TO_VALIDATE_TODAY"
@@ -60,6 +63,33 @@ export type SameDayCandidateDecision = SameDayCandidateInput & {
   priority: number
   nextAutomatedAction: string
   nextHumanAction: string
+}
+
+export function projectSameDayProductResearchReconciliationBudget(batchRowCounts: number[]) {
+  const rows = batchRowCounts.map((value) => Number.isInteger(value) && value > 0 ? value : 0)
+  const batchCount = rows.filter((value) => value > 0).length
+  const observationsCovered = rows.reduce((sum, value) =>
+    sum + Math.min(value, SAME_DAY_RECONCILIATION_COVERAGE_ROW_LIMIT), 0)
+  const totalObservations = rows.reduce((sum, value) => sum + value, 0)
+  const decisionReferences = rows.reduce((sum, value) =>
+    sum + Math.min(value, SAME_DAY_RECONCILIATION_DECISION_REFERENCE_LIMIT), 0)
+  const maximumOfficialReaderInvocations = {
+    trading: batchCount * SAME_DAY_TRADING_DETAIL_READ_LIMIT_PER_BATCH,
+    browse: batchCount,
+    catalog: batchCount,
+    taxonomy: batchCount,
+  }
+  return {
+    batchCount,
+    totalObservations,
+    observationsCovered,
+    allRowsCovered: observationsCovered === totalObservations,
+    decisionReferences,
+    maximumOfficialReaderInvocations: { ...maximumOfficialReaderInvocations,
+      total: Object.values(maximumOfficialReaderInvocations)
+        .reduce((sum, value) => sum + value, 0),
+      unit: "READER_INVOCATIONS_NOT_HTTP_REQUESTS" as const },
+  }
 }
 
 const TODAY_RESOLVABLE_HARD_GATES = new Set([
