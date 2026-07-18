@@ -1,7 +1,7 @@
 export const runtime = "nodejs"
 
 import { NextResponse } from "next/server"
-import { validateAdminApiRequest } from "@/lib/supabase-admin"
+import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 import {
   getEbayTaxonomyListingIntelligence,
   runEbaySellerKeywordDemandValidation,
@@ -30,6 +30,43 @@ function safeErrorCode(error: unknown) {
   return /^[A-Z0-9_]+$/.test(message)
     ? message
     : "EBAY_READONLY_MARKET_VALIDATION_FAILED"
+}
+
+async function getExactProductResearchEvidence(input: {
+  accountKey: string | null
+  supplierVariantId: string
+  searchQuery: string
+}) {
+  const base = { source: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE" as const,
+    searchQuery: input.searchQuery, recencyDays: 90 }
+  if (!input.accountKey || !input.supplierVariantId) {
+    return { ...base, status: "CAPTURE_REQUIRED" as const,
+      exactObservationCount: 0, confirmedSoldQuantity: 0, latestSoldAt: null }
+  }
+  try {
+    const since = new Date(Date.now() - 90 * 86_400_000).toISOString()
+    const { data, error } = await getSupabaseAdminClient()
+      .from("marketplace_product_research_capture_observations")
+      .select("confirmed_sold_quantity,last_sold_date")
+      .eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", "EBAY_US")
+      .eq("matched_supplier_variant_id", input.supplierVariantId)
+      .eq("match_classification", "EXACT_LUNA_MATCH")
+      .eq("evidence_reviewed", true)
+      .gte("last_sold_date", since)
+      .order("last_sold_date", { ascending: false })
+      .limit(200)
+    if (error) throw error
+    const rows = data ?? []
+    return { ...base, status: rows.length ? "AVAILABLE" as const : "CAPTURE_REQUIRED" as const,
+      exactObservationCount: rows.length,
+      confirmedSoldQuantity: rows.reduce((total, row) =>
+        total + Math.max(0, Number(row.confirmed_sold_quantity ?? 0)), 0),
+      latestSoldAt: rows[0]?.last_sold_date ?? null }
+  } catch {
+    return { ...base, status: "UNAVAILABLE" as const,
+      exactObservationCount: 0, confirmedSoldQuantity: 0, latestSoldAt: null }
+  }
 }
 
 export async function POST(req: Request) {
@@ -111,6 +148,11 @@ export async function POST(req: Request) {
       taxonomyIntelligence,
     })
     const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    const productResearchEvidence = await getExactProductResearchEvidence({
+      accountKey,
+      supplierVariantId: text(raw.supplierVariantId, 120),
+      searchQuery: report.searchQuery,
+    })
     const keywordTerms = [
       ...report.keywordEvidenceGroups.verifiedHistoricalMultiSeller,
       ...report.keywordEvidenceGroups.estimatedMultiSellerSignal,
@@ -155,7 +197,8 @@ export async function POST(req: Request) {
           now: report.evidenceAsOf,
         }
       : null
-    const winnerDecisionPackage = accountKey && winnerDecisionPackageInput
+    const winnerDecisionPackage = accountKey && winnerDecisionPackageInput &&
+      productResearchEvidence.status === "AVAILABLE"
       ? buildWinnerEvidenceDecisionPackage({
           ...winnerDecisionPackageInput,
           marketplaceAccountKey: accountKey,
@@ -172,6 +215,7 @@ export async function POST(req: Request) {
         ? sanitizeWinnerEvidencePackage(winnerDecisionPackage)
         : null,
       winnerDecisionPackageInput,
+      productResearchEvidence,
       safety: {
         mode: "EBAY_OFFICIAL_READ_ONLY",
         ebayWriteUsed: false,

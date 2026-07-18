@@ -149,7 +149,13 @@ test("wires the read-only analysis into the phone menu without manual title or U
   assert.match(page, /marketplaceInsightsStatus/)
   assert.match(route, /validateAdminApiRequest/)
   assert.match(route, /runEbaySellerKeywordDemandValidation/)
-  assert.doesNotMatch(route, /getSupabaseAdminClient/)
+  assert.match(route, /marketplace_product_research_capture_observations/)
+  assert.match(route, /EXACT_LUNA_MATCH/)
+  assert.match(route, /productResearchEvidence/)
+  assert.match(route, /productResearchEvidence\.status === "AVAILABLE"/)
+  assert.doesNotMatch(route, /\.insert\(|\.update\(|\.delete\(|\.upsert\(/)
+  assert.match(page, /Captura ventas en Product Research/)
+  assert.match(page, /https:\/\/www\.ebay\.com\/sh\/research#seller-os-query=/)
   const gateway = readFileSync(
     new URL("../lib/ebay/ebay-seller-keyword-demand-gateway.ts", import.meta.url),
     "utf8"

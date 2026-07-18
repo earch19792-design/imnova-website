@@ -11,7 +11,12 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
 **Reload** en `chrome://extensions` o `edge://extensions`. La versión optimizada es 1.2.0.
 
-## Patrones visuales locales (v1.2.0)
+## Consulta guiada y patrones locales (v1.2.1)
+
+Seller OS puede abrir Product Research con una consulta preparada en el fragmento
+local de la URL. La extensión muestra esa consulta y requiere que el usuario pulse
+“Aplicar y buscar” y después “Capturar y continuar”. El fragmento no se envía al
+servidor de eBay ni cambia los permisos de la extensión.
 
 La misma captura analiza únicamente miniaturas que ya estén visibles en el viewport de Product Research. Chrome intenta leer un recorte temporal de la representación renderizada en memoria para derivar rasgos agregados (fondo, cobertura, complejidad y composición). El recorte y su buffer se eliminan inmediatamente.
 

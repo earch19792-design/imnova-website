@@ -109,6 +109,16 @@ type SellerWhatsAppStatus = {
   }>
 }
 
+type ProductResearchEvidenceStatus = {
+  status: "AVAILABLE" | "CAPTURE_REQUIRED" | "UNAVAILABLE"
+  source: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE"
+  searchQuery: string
+  recencyDays: number
+  exactObservationCount: number
+  confirmedSoldQuantity: number
+  latestSoldAt: string | null
+}
+
 function toMobileFixture(candidates: RealRadarCandidate[]): MobileReviewFixture {
   return {
     version: "REAL_RADAR_MOBILE_REVIEW_V2",
@@ -238,6 +248,8 @@ export default function EbayMobileReviewPage() {
     compatibleReference: false,
   })
   const [sellerKeywordDemand, setSellerKeywordDemand] = useState<EbaySellerKeywordDemandReport | null>(null)
+  const [productResearchEvidence, setProductResearchEvidence] = useState<ProductResearchEvidenceStatus | null>(null)
+  const [productResearchCaptureOpened, setProductResearchCaptureOpened] = useState(false)
   const [opportunityAssessment, setOpportunityAssessment] = useState<EbayLunaOpportunityAssessment | null>(null)
   const [visualWinnerEvidence, setVisualWinnerEvidence] = useState<WinnerEvidenceDecisionPackage["visualEvidenceAnalysis"] | null>(null)
   const [winnerDecisionPackage, setWinnerDecisionPackage] = useState<SanitizedWinnerEvidenceDecisionPackage | null>(null)
@@ -280,6 +292,7 @@ export default function EbayMobileReviewPage() {
     setDecisionPackageSaveState("IDLE")
     setDecisionPackageSaveError("")
     setDecisionPackageReadbackVerified(false)
+    setProductResearchEvidence(null)
   }, [])
 
   const load = useCallback(async () => {
@@ -292,7 +305,7 @@ export default function EbayMobileReviewPage() {
         return loadMarketRadarReadonlyDashboard(`Bearer ${data.session.access_token}`)
       })()
       const nextReport = buildMobileReviewRealRadarConnector({ products, mode: demoRequested ? "DEMO_FIXTURE_ONLY" : "REAL_READONLY" })
-      setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setSelectedQueueCandidate(null); setSelectedQueueOpportunity(null); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState()
+      setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setSelectedQueueCandidate(null); setSelectedQueueOpportunity(null); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setProductResearchCaptureOpened(false); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState()
       if (nextReport.realRadarCandidatesCount === 0) { setLoadState("RADAR_EMPTY"); setLoadMessage("Radar respondió, pero no devolvió productos. Ejecuta o revisa el scan antes de decidir.") }
       else { setLoadState("READY"); setLoadMessage(`Radar anterior: ${nextReport.top5Candidates.length} candidatos disponibles de ${nextReport.realRadarCandidatesCount} productos observados. No son el Top 20 automatizado.`) }
       return nextReport.allCandidates
@@ -569,7 +582,7 @@ export default function EbayMobileReviewPage() {
 
   const actPinned = (action: PinnedCandidateAction) => { setPinnedCandidates((current) => applyPinnedCandidateAction(current, action, report.allCandidates)); setLastActionMessage(`Acción de candidato en revisión: ${action.type}. Guardada solo en este navegador.`) }
   const act = (action: Parameters<typeof applyMobileReviewAction>[1]) => {
-    if (action.type === "SELECT_CANDIDATE" || action.type === "MARK_UNAVAILABLE") { setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState() }
+    if (action.type === "SELECT_CANDIDATE" || action.type === "MARK_UNAVAILABLE") { setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setProductResearchCaptureOpened(false); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState() }
     if (action.type === "APPROVE_B2_RUN_PREFLIGHT") { setLastActionMessage(`B2-RUN continúa bloqueado. Próximo paso: ${routeLabel(effectiveDecision.nextRecommendedRoute)}.`); return }
     setState((current) => applyMobileReviewAction(current, action))
     const messages: Record<string, string> = { MARK_UNAVAILABLE: "Producto marcado no disponible en este navegador. Puedes deshacer recargando antes de persistir otro estado.", SELECT_CANDIDATE: "Producto seleccionado para evaluar; todavía no es una recomendación. Completa las tres confirmaciones.", CONFIRM_SAME_PRODUCT: "Identidad del producto confirmada localmente.", CONFIRM_STOCK_QTY: `Stock confirmado: ${stockQuantity} unidades.`, CONFIRM_IMAGE_OK: "Precio e imagen de Luna confirmados localmente.", REQUEST_LUNA_SCAN_REFRESH: "Se marcó localmente que Radar necesita un refresco; todavía no se envió una solicitud.", HOLD_FOR_REVIEW: "La revisión quedó pausada en esta sesión." }
@@ -590,7 +603,7 @@ export default function EbayMobileReviewPage() {
     const continuesSameLocalCandidate = !selectedQueueOpportunity &&
       selectedRadarCandidate?.marketRadarProductId === marketRadarProductId
     if (!continuesSameLocalCandidate) {
-      setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState()
+      setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setProductResearchCaptureOpened(false); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState()
       const initial = buildInitialMobileReviewState(toMobileFixture([candidate]))
       setState(applyMobileReviewAction(initial, { type: "SELECT_CANDIDATE", rank: candidate.candidateRank }))
     }
@@ -602,6 +615,9 @@ export default function EbayMobileReviewPage() {
     const savedLunaPrice = Number(savedForm.lunaPrice)
     if (savedForm.sellerKeywordDemand && typeof savedForm.sellerKeywordDemand === "object") {
       setSellerKeywordDemand(savedForm.sellerKeywordDemand as EbaySellerKeywordDemandReport)
+    }
+    if (savedForm.productResearchEvidence && typeof savedForm.productResearchEvidence === "object") {
+      setProductResearchEvidence(savedForm.productResearchEvidence as ProductResearchEvidenceStatus)
     }
     if (savedForm.opportunityAssessment && typeof savedForm.opportunityAssessment === "object") {
       setOpportunityAssessment(savedForm.opportunityAssessment as EbayLunaOpportunityAssessment)
@@ -676,6 +692,7 @@ export default function EbayMobileReviewPage() {
       setEbayReferenceOpened(false)
       setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false })
       setSellerKeywordDemand(null)
+      setProductResearchCaptureOpened(false)
       setOpportunityAssessment(null)
       setVisualWinnerEvidence(null)
       setSellerKeywordDemandError("")
@@ -708,13 +725,16 @@ export default function EbayMobileReviewPage() {
             ...(identityComparison.identityComparisonComplete ? ["identity"] : []),
             ...(state.stockQuantityConfirmed ? ["stock"] : []),
             ...(lunaPriceConfirmed && state.imageConfirmed ? ["luna_catalog"] : []),
-            ...(sellerKeywordDemand ? ["ebay_evidence"] : []),
+            ...(sellerKeywordDemand ? ["ebay_active_market"] : []),
+            ...(productResearchEvidence?.status === "AVAILABLE" ? ["ebay_sold_evidence"] : []),
             ...(opportunityAssessment?.economics?.estimatedNetProfit != null ? ["economics"] : []),
           ]
           const currentStep = !state.stockQuantityConfirmed || !lunaPriceConfirmed
             ? "luna"
             : !sellerKeywordDemand
               ? "ebay"
+              : productResearchEvidence?.status !== "AVAILABLE"
+                ? "product_research"
               : opportunityAssessment?.economics?.estimatedNetProfit == null
                 ? "economics"
                 : "listing"
@@ -726,12 +746,14 @@ export default function EbayMobileReviewPage() {
               action: "save_review",
               opportunityId: selectedQueueOpportunity.id,
               candidateKey: selectedQueueOpportunity.candidate_key,
-              status: opportunityAssessment?.canProceedToListingPackage === true && !marketValidation.pendingGuards.length
+              status: productResearchEvidence?.status === "AVAILABLE" &&
+                opportunityAssessment?.canProceedToListingPackage === true && !marketValidation.pendingGuards.length
                 ? "ready_for_package"
                 : "in_progress",
               currentStep,
               confirmedFields,
-              blockers: marketValidation.pendingGuards,
+              blockers: [...marketValidation.pendingGuards,
+                ...(productResearchEvidence?.status === "AVAILABLE" ? [] : ["PRODUCT_RESEARCH_CAPTURE_REQUIRED"])],
               formData: {
                 productTitle: selectedRadarCandidate.productTitle,
                 marketRadarProductId: selectedRadarCandidate.marketRadarProductId,
@@ -743,6 +765,7 @@ export default function EbayMobileReviewPage() {
                 ebayListingUrl,
                 ebayObservedTitle,
                 sellerKeywordDemand,
+                productResearchEvidence,
                 opportunityAssessment,
                 visualWinnerEvidence,
                 winnerDecisionPackage,
@@ -766,7 +789,7 @@ export default function EbayMobileReviewPage() {
       })()
     }, 800)
     return () => window.clearTimeout(timer)
-  }, [selectedQueueOpportunity, selectedRadarCandidate, state.stockQuantityConfirmed, state.imageConfirmed, lunaPrice, lunaPriceConfirmed, identityComparison.identityComparisonComplete, ebayListingUrl, ebayObservedTitle, sellerKeywordDemand, opportunityAssessment, visualWinnerEvidence, winnerDecisionPackage, winnerDecisionPackageInput, decisionPackageId, marketValidation.pendingGuards, loadServerReviews])
+  }, [selectedQueueOpportunity, selectedRadarCandidate, state.stockQuantityConfirmed, state.imageConfirmed, lunaPrice, lunaPriceConfirmed, identityComparison.identityComparisonComplete, ebayListingUrl, ebayObservedTitle, sellerKeywordDemand, productResearchEvidence, opportunityAssessment, visualWinnerEvidence, winnerDecisionPackage, winnerDecisionPackageInput, decisionPackageId, marketValidation.pendingGuards, loadServerReviews])
 
   const resetIdentityConfirmation = () => {
     setState((current) =>
@@ -840,6 +863,7 @@ export default function EbayMobileReviewPage() {
         visualWinnerEvidence?: WinnerEvidenceDecisionPackage["visualEvidenceAnalysis"] | null
         winnerDecisionPackage?: SanitizedWinnerEvidenceDecisionPackage | null
         winnerDecisionPackageInput?: WinnerEvidenceClientInput | null
+        productResearchEvidence?: ProductResearchEvidenceStatus
       }>(response, "No se pudo consultar la evidencia read-only de eBay")
       if (!payload.success || !payload.report) {
         throw new Error(getMobileReviewPayloadError(payload, "EBAY_READONLY_MARKET_VALIDATION_FAILED"))
@@ -849,6 +873,7 @@ export default function EbayMobileReviewPage() {
       setVisualWinnerEvidence(payload.visualWinnerEvidence ?? null)
       setWinnerDecisionPackage(payload.winnerDecisionPackage ?? null)
       setWinnerDecisionPackageInput(payload.winnerDecisionPackageInput ?? null)
+      setProductResearchEvidence(payload.productResearchEvidence ?? null)
       setLastActionMessage(
         `eBay analizado en modo read-only: ${payload.report.eligibleComparableListings} comparables y ${payload.report.sellersAnalyzed} vendedores.`
       )
@@ -977,6 +1002,7 @@ export default function EbayMobileReviewPage() {
   const resetStockConfirmation = (value: string) => {
     setStockQuantity(value)
     setSellerKeywordDemand(null)
+    setProductResearchCaptureOpened(false)
     setOpportunityAssessment(null)
     setVisualWinnerEvidence(null)
     resetWinnerDecisionState()
@@ -992,6 +1018,7 @@ export default function EbayMobileReviewPage() {
     setLunaPrice(value)
     setLunaPriceConfirmed(false)
     setSellerKeywordDemand(null)
+    setProductResearchCaptureOpened(false)
     setOpportunityAssessment(null)
     setVisualWinnerEvidence(null)
     resetWinnerDecisionState()
@@ -1016,6 +1043,18 @@ export default function EbayMobileReviewPage() {
     setLastActionMessage(
       `Precio USD ${price.toFixed(2)} e imagen confirmados contra el catálogo de Luna Portex.`
     )
+  }
+
+  const openProductResearchCapture = () => {
+    const query = productResearchEvidence?.searchQuery || sellerKeywordDemand?.searchQuery ||
+      selectedRadarCandidate?.productTitle || ""
+    if (!query) return
+    const url = `https://www.ebay.com/sh/research#seller-os-query=${encodeURIComponent(query)}`
+    const researchWindow = window.open(url, "_blank")
+    if (researchWindow) researchWindow.opener = null
+    void navigator.clipboard.writeText(query).catch(() => undefined)
+    setProductResearchCaptureOpened(true)
+    setLastActionMessage("Product Research abierto con la consulta preparada. Ejecuta la búsqueda, pulsa “Capturar y continuar” y regresa para verificar.")
   }
 
   const sourceLabel = report.dataSource === "MARKET_RADAR_READONLY" ? "REAL RADAR" : report.dataSource === "DEMO_FIXTURE_ONLY" ? "DEMO" : loadState === "AUTH_REQUIRED" ? "SESIÓN REQUERIDA" : loadState === "RADAR_REQUEST_FAILED" ? "ERROR DE RADAR" : "SIN DATOS"
@@ -1045,6 +1084,8 @@ export default function EbayMobileReviewPage() {
       : journeyStep === 3
         ? !sellerKeywordDemand
           ? { title: "Valida el mercado en eBay", instruction: "Luna ya está completo. Seller OS puede consultar los comparables oficiales sin escribir ni publicar.", actionLabel: "Analizar mercado eBay", missingCount: 1, pendingLabel: "Falta analizar eBay", systemTask: "Comparará identidad, demanda, precio, categoría y economía.", userTask: "Pulsa una vez para iniciar el análisis automático." }
+          : productResearchEvidence?.status !== "AVAILABLE"
+            ? { title: "Captura ventas en Product Research", instruction: "La búsqueda activa no sustituye el historial vendido. Abre Product Research, ejecuta la consulta preparada y usa la extensión para capturar la tabla visible.", actionLabel: productResearchCaptureOpened ? "Verificar captura" : "Abrir Product Research", missingCount: 1, pendingLabel: "Falta evidencia vendida", systemTask: "Preparó la misma consulta y mantendrá la captura vinculada a la variante Luna.", userTask: productResearchCaptureOpened ? "Termina la captura y pulsa verificar." : "Abre Product Research y autoriza una captura visible." }
           : !ebayListingUrl
             ? { title: "Elige el comparable exacto", instruction: "El análisis automático terminó. Revisa únicamente las referencias compatibles y elige la que representa el mismo producto.", actionLabel: "Ver comparables", missingCount: 1, pendingLabel: "Falta elegir comparable", systemTask: "Descartó packs, tamaños y variantes incompatibles.", userTask: "Selecciona una referencia exacta de eBay." }
             : { title: "Confirma la identidad", instruction: "Ya elegiste una referencia. Falta confirmar que corresponde exactamente al producto de Luna.", actionLabel: "Confirmar identidad", missingCount: 1, pendingLabel: "Falta confirmar identidad", systemTask: "Contrastó marca, producto, variante, tamaño y pack.", userTask: "Confirma el vínculo Luna ↔ eBay." }
@@ -1060,6 +1101,11 @@ export default function EbayMobileReviewPage() {
     }
     if (journeyStep === 3 && !sellerKeywordDemand) {
       void runSellerKeywordDemandValidation()
+      return
+    }
+    if (journeyStep === 3 && productResearchEvidence?.status !== "AVAILABLE") {
+      if (productResearchCaptureOpened) void runSellerKeywordDemandValidation()
+      else openProductResearchCapture()
       return
     }
     if (journeyStep === 3) {
@@ -1255,6 +1301,8 @@ export default function EbayMobileReviewPage() {
                         : "Analizar mercado eBay"}
                   </button>
                   <p className="mt-2 text-xs text-white/55">Analizar comparables y demanda en eBay · lectura oficial sin escrituras.</p>
+                  {sellerKeywordDemand && productResearchEvidence?.status === "AVAILABLE" && <div className="mt-3 rounded-2xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-sm text-emerald-50"><p className="font-black">✓ Product Research capturado</p><p className="mt-1 text-xs">{productResearchEvidence.exactObservationCount} observaciones exactas · {productResearchEvidence.confirmedSoldQuantity} unidades vendidas confirmadas · últimos {productResearchEvidence.recencyDays} días.</p></div>}
+                  {sellerKeywordDemand && productResearchEvidence?.status !== "AVAILABLE" && <div className="mt-3 rounded-2xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-sm text-amber-50"><p className="font-black">Product Research pendiente</p><p className="mt-1 text-xs">La búsqueda pública y Browse no sustituyen la tabla oficial de ventas. Usa el Asistente Seller OS para abrir y verificar la captura.</p></div>}
                   {!sellerKeywordDemandLoading && !loop1AnalysisGate.analysisEnabled && <p className="mt-2 text-xs font-bold text-amber-100">{loop1AnalysisGate.disabledReason}</p>}
 
                   {sellerKeywordDemandError && (
@@ -1264,7 +1312,7 @@ export default function EbayMobileReviewPage() {
                     </div>
                   )}
 
-                  {sellerKeywordDemand && (
+                  {sellerKeywordDemand && productResearchEvidence?.status === "AVAILABLE" && (
                     <div className="mt-4 space-y-4">
                       <div className="rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.07] p-3">
                         <div className="flex flex-wrap gap-2">

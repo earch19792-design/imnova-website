@@ -1268,7 +1268,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.0"
+  title.textContent = "Seller OS · Product Research · v1.2.1"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"
@@ -1312,4 +1312,11 @@
   panel.append(title, captureButton, status, nextQueryPanel)
   shadow.append(panel)
   document.documentElement.append(host)
+  const sellerOsSeedQuery = text(new URLSearchParams(
+    window.location.hash.replace(/^#/, ""),
+  ).get("seller-os-query")).slice(0, 100)
+  if (sellerOsSeedQuery.length >= 3) {
+    showNextQuery(sellerOsSeedQuery, null, null)
+    setStatus("Consulta recibida de Seller OS. Pulsa Aplicar y buscar; después usa Capturar y continuar.")
+  }
 })()
