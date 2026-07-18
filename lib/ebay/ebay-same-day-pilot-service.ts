@@ -158,9 +158,22 @@ function candidateInput(row: JsonRecord, latestVariant: JsonRecord = {}, now = n
 }
 
 async function currentState(supabase: SupabaseClient, accountKey: string, date: string) {
-  const { data: run, error } = await supabase.from("ebay_same_day_pilot_runs").select("*")
+  const { data: datedRun, error } = await supabase.from("ebay_same_day_pilot_runs").select("*")
     .eq("marketplace_account_key", accountKey).eq("operation_date", date).maybeSingle()
   if (error) throw new Error("SAME_DAY_PILOT_RUN_READ_FAILED")
+  let run = datedRun
+  if (!run) {
+    // A launch is durable work, not a disposable calendar view. If Ernesto
+    // pauses overnight, resume the newest unfinished run before offering a
+    // fresh one; this preserves candidates, captures and checkpoints.
+    const { data: carryoverRun, error: carryoverError } = await supabase
+      .from("ebay_same_day_pilot_runs").select("*")
+      .eq("marketplace_account_key", accountKey)
+      .in("status", ["ACTIVE", "PARTIALLY_READY", "READY_FOR_OPERATOR"])
+      .order("operation_date", { ascending: false }).limit(1).maybeSingle()
+    if (carryoverError) throw new Error("SAME_DAY_PILOT_CARRYOVER_RUN_READ_FAILED")
+    run = carryoverRun
+  }
   if (!run) return null
   const [{ data: candidates, error: candidateError }, { data: tasks, error: taskError },
     { data: transitions, error: transitionError }, { data: jobs, error: jobError },
@@ -258,17 +271,59 @@ async function transition(input: {
   if (data === "STALE") throw new Error("SAME_DAY_PILOT_STALE_TRANSITION")
 }
 
+type SerializedOpenHumanTask = {
+  id: string
+  candidate_id: string
+  gate_type: string
+  created_at: string
+}
+
+async function serializeOpenHumanTasksForRun(supabase: SupabaseClient, runId: string) {
+  const { data, error } = await supabase.from("ebay_same_day_pilot_human_tasks")
+    .select("id,candidate_id,gate_type,created_at")
+    .eq("run_id", runId)
+    .eq("status", "OPEN")
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
+  if (error) throw new Error("SAME_DAY_PILOT_OPEN_TASK_SERIALIZATION_READ_FAILED")
+  const openTasks = (data ?? []).map((task) => ({
+    id: text(task.id),
+    candidate_id: text(task.candidate_id),
+    gate_type: text(task.gate_type),
+    created_at: text(task.created_at),
+  })).filter((task) => task.id) as SerializedOpenHumanTask[]
+  const openTask = openTasks[0] ?? null
+  const duplicateIds = openTasks.slice(1).map((task) => task.id)
+  if (duplicateIds.length) {
+    const completedAt = new Date().toISOString()
+    const { error: supersedeError } = await supabase.from("ebay_same_day_pilot_human_tasks").update({
+      status: "SUPERSEDED", completed_at: completedAt, updated_at: completedAt,
+    }).eq("run_id", runId).eq("status", "OPEN").in("id", duplicateIds)
+    if (supersedeError) throw new Error("SAME_DAY_PILOT_OPEN_TASK_SERIALIZATION_FAILED")
+  }
+  return { openTask, superseded: duplicateIds.length }
+}
+
 async function createHumanTask(input: {
   supabase: SupabaseClient; runId: string; candidateId: string; expectedState: string; gateType: string; title: string; why: string
   seconds: number; impact: string; evidence: JsonRecord; actionSchema: JsonRecord; continuationJobType: string
 }) {
-  const { error } = await input.supabase.rpc("ensure_same_day_pilot_human_task", {
+  const before = await serializeOpenHumanTasksForRun(input.supabase, input.runId)
+  if (before.openTask && (before.openTask.candidate_id !== input.candidateId ||
+    before.openTask.gate_type !== input.gateType)) return false
+  const { data, error } = await input.supabase.rpc("ensure_same_day_pilot_human_task", {
     p_run_id: input.runId, p_candidate_id: input.candidateId, p_expected_machine_state: input.expectedState,
     p_gate_type: input.gateType, p_title: input.title, p_why_needed: input.why,
     p_estimated_seconds: input.seconds, p_impact: input.impact, p_evidence_summary: input.evidence,
     p_action_schema: input.actionSchema, p_continuation_job_type: input.continuationJobType,
   })
   if (error) throw new Error("SAME_DAY_PILOT_HUMAN_TASK_PERSIST_FAILED")
+  // The SQL helper serializes per candidate. This second pass closes the
+  // cross-candidate race if a worker and a user continuation both reached a
+  // human gate between the preflight read and the RPC commit.
+  const after = await serializeOpenHumanTasksForRun(input.supabase, input.runId)
+  return Boolean(after.openTask && (after.openTask.id === text(data) ||
+    (after.openTask.candidate_id === input.candidateId && after.openTask.gate_type === input.gateType)))
 }
 
 async function completeAndAdvanceHumanGate(input: {
@@ -439,14 +494,24 @@ async function repairSameDayPilotBootstrap(
   accountKey: string,
 ) {
   if (!state) return false
+  const serialized = await serializeOpenHumanTasksForRun(supabase, state.run.id)
+  const activeState = serialized.superseded > 0
+    ? await currentState(supabase, accountKey, text(state.run.operation_date))
+    : state
+  if (!activeState) return serialized.superseded > 0
   // A capture is durable before the Same-Day transition is attempted. If an
   // older deployment or a transient continuation failure left the query task
   // PROCESSED while its human gate stayed OPEN, consume that exact stored
   // batch now. Insufficient evidence rejects/promotes the candidate; it never
   // asks the operator to repeat the same authorized capture.
-  if (await repairProcessedProductResearchCaptureGate(supabase, state, accountKey)) {
+  if (await repairProcessedProductResearchCaptureGate(supabase, activeState, accountKey)) {
     return true
   }
+  // Normal repair must never widen the operator queue. Quota pauses have one
+  // explicit exception below: promoteImmediateSuccessorDuringQuotaPause may
+  // activate only the immediate successor, and its RUN_CREATED check makes a
+  // replay unable to leapfrog to another candidate.
+  if (activeState.tasks.some((task) => task.status === "OPEN")) return serialized.superseded > 0
   const gateByState: Record<string, string> = {
     WAITING_PRODUCT_RESEARCH_CAPTURE: "PRODUCT_RESEARCH_CAPTURE_REQUIRED",
     WAITING_LUNA_CONFIRMATION: "LUNA_CONFIRMATION_REQUIRED",
@@ -454,17 +519,17 @@ async function repairSameDayPilotBootstrap(
     WAITING_IMAGE_APPROVAL: "IMAGE_APPROVAL_REQUIRED",
   }
   const bootstrapStates = ["RUN_CREATED", "LOCAL_FILTERING", "CANDIDATE_SELECTION", "PRODUCT_RESEARCH_PLAN_READY"]
-  const active = state.candidates.find((candidate) => {
+  const active = activeState.candidates.find((candidate) => {
     const machineState = text(candidate.machine_state)
     if (["REJECTED", "BLOCKED", "READY_FOR_MANUAL_PUBLICATION", "VERIFIED_ACTIVE", "COMPLETED"]
       .includes(machineState)) return false
     if (bootstrapStates.includes(machineState)) return true
     const expectedGate = gateByState[machineState]
-    return Boolean(expectedGate && !state.tasks.some((task) =>
+    return Boolean(expectedGate && !activeState.tasks.some((task) =>
       task.candidate_id === candidate.id && task.gate_type === expectedGate && task.status === "OPEN"))
   })
-  if (!active) return false
-  await bootstrapCandidate(supabase, state.run.id, record(active))
+  if (!active) return serialized.superseded > 0
+  await bootstrapCandidate(supabase, activeState.run.id, record(active))
   return true
 }
 
@@ -479,6 +544,8 @@ async function createLunaGate(supabase: SupabaseClient, runId: string, candidate
 }
 
 async function promoteNextCandidate(supabase: SupabaseClient, runId: string, ordinal: number) {
+  const serialized = await serializeOpenHumanTasksForRun(supabase, runId)
+  if (serialized.openTask) return false
   const { data, error } = await supabase.from("ebay_same_day_pilot_candidates").select("*")
     .eq("run_id", runId).gt("ordinal", ordinal).eq("machine_state", "RUN_CREATED").order("ordinal").limit(1).maybeSingle()
   if (error) throw new Error("SAME_DAY_PILOT_REPLACEMENT_READ_FAILED")
@@ -491,6 +558,27 @@ async function promoteImmediateSuccessorDuringQuotaPause(
   runId: string,
   ordinal: number,
 ) {
+  const serialized = await serializeOpenHumanTasksForRun(supabase, runId)
+  if (serialized.openTask) return false
+  const { data: pausedCandidate, error: pausedCandidateError } = await supabase
+    .from("ebay_same_day_pilot_candidates")
+    .select("id")
+    .eq("run_id", runId)
+    .eq("ordinal", ordinal)
+    .maybeSingle()
+  if (pausedCandidateError) throw new Error("SAME_DAY_PILOT_QUOTA_CANDIDATE_READ_FAILED")
+  if (!pausedCandidate) return false
+  const { data: pausedJob, error: pausedJobError } = await supabase
+    .from("ebay_same_day_pilot_jobs")
+    .select("id,last_error_code")
+    .eq("run_id", runId)
+    .eq("candidate_id", pausedCandidate.id)
+    .eq("status", "WAITING_RETRY")
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (pausedJobError) throw new Error("SAME_DAY_PILOT_QUOTA_JOB_READ_FAILED")
+  if (!pausedJob || !/(?:429|QUOTA_PAUSED)/.test(text(pausedJob.last_error_code))) return false
   const { data, error } = await supabase.from("ebay_same_day_pilot_candidates").select("*")
     .eq("run_id", runId).gt("ordinal", ordinal).order("ordinal").limit(1).maybeSingle()
   if (error) throw new Error("SAME_DAY_PILOT_QUOTA_SUCCESSOR_READ_FAILED")

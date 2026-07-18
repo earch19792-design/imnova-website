@@ -44,8 +44,13 @@ export function TodayLaunchPanel() {
   }
   const openTasks = useMemo(() => (pilot?.tasks ?? []).filter((task: Row) => task.status === "OPEN"), [pilot])
   const candidates = pilot?.candidates ?? []
-  const primaryTask = openTasks[0]
-  const remainingTasks = openTasks.slice(1)
+  const productResearchTasks = openTasks.filter((task: Row) =>
+    task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED")
+  const decisionTasks = openTasks.filter((task: Row) =>
+    task.gate_type !== "PRODUCT_RESEARCH_CAPTURE_REQUIRED")
+  const primaryTask = decisionTasks[0]
+  const queuedDecisionCount = Math.max(0, decisionTasks.length - 1)
+  const deferredDecisionCount = productResearchTasks.length > 0 ? decisionTasks.length : queuedDecisionCount
   const primaryCandidate = primaryTask
     ? candidates.find((candidate: Row) => candidate.id === primaryTask.candidate_id)
     : undefined
@@ -91,17 +96,24 @@ export function TodayLaunchPanel() {
       <section aria-labelledby="operator-task-heading" className="mt-6">
         <p className="text-[10px] font-black uppercase tracking-widest text-amber-100/60">2 · Tu decisión</p>
         <h3 id="operator-task-heading" className="mt-1 text-lg font-black">Tarea para Ernesto</h3>
-        {!primaryTask
+        {productResearchTasks.length > 0
+          ? <div className="mt-3"><ProductResearchQueueTask guidance={pilot.productResearchGuidance} fallbackQuery={productResearchTasks[0]?.action_schema?.query} openTaskCount={productResearchTasks.length} /></div>
+          : !primaryTask
           ? <p className="mt-2 rounded-2xl border border-white/10 p-4 text-sm text-white/55">Seller OS no necesita una acción humana en este momento.</p>
-          : <div className="mt-3"><HumanTask task={primaryTask} candidate={primaryCandidate} productResearchNextQuery={pilot.productResearchGuidance?.nextQuery?.searchQuery} working={working} onConfirm={(body) => request(body)} /></div>}
-        {remainingTasks.length > 0 && <details className="mt-3 rounded-2xl border border-white/10 p-3">
-          <summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver {remainingTasks.length} tarea(s) posterior(es)</summary>
-          <div className="mt-3 grid gap-3">{remainingTasks.map((task: Row) => <HumanTask key={task.id} task={task} candidate={candidates.find((candidate: Row) => candidate.id === task.candidate_id)} productResearchNextQuery={pilot.productResearchGuidance?.nextQuery?.searchQuery} working={working} onConfirm={(body) => request(body)} />)}</div>
-        </details>}
+          : <div className="mt-3"><HumanTask task={primaryTask} candidate={primaryCandidate} working={working} onConfirm={(body) => request(body)} /></div>}
+        {productResearchTasks.length > 0 && primaryTask && <aside aria-label="Próxima decisión en espera" className="mt-3 rounded-2xl border border-violet-200/20 bg-violet-200/[0.04] p-3">
+          <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/60">Próxima decisión protegida</p>
+          <p className="mt-1 break-words text-sm font-black text-violet-50">{primaryTask.title}</p>
+          {primaryCandidate?.product_title && <p className="mt-1 break-words text-xs text-white/55">{primaryCandidate.product_title}</p>}
+          <p className="mt-2 text-xs leading-5 text-white/55">{deferredDecisionCount} decisión(es) pendiente(s). No están ocultas: Seller OS mostrará una sola acción cuando corresponda en el orden del recorrido.</p>
+        </aside>}
+        {productResearchTasks.length === 0 && queuedDecisionCount > 0 && <p className="mt-3 rounded-2xl border border-white/10 p-3 text-sm text-white/55">{queuedDecisionCount} decisión(es) posterior(es) permanecen ordenadas. Seller OS mostrará sólo la siguiente cuando completes la actual.</p>}
       </section>
       <section aria-labelledby="automatic-continuation-heading" className="mt-5 rounded-2xl border border-violet-200/20 bg-violet-200/[0.05] p-4">
         <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/60">3 · Qué continuará</p>
-        <h3 id="automatic-continuation-heading" className="mt-1 text-base font-black text-violet-50">{primaryTask?.impact ?? (readyCandidates.length ? "El paquete queda listo para publicación manual en Seller Hub." : "Seller OS avanzará automáticamente hasta la próxima confirmación indispensable.")}</h3>
+        <h3 id="automatic-continuation-heading" className="mt-1 text-base font-black text-violet-50">{productResearchTasks.length > 0
+          ? "La extensión cargará la próxima consulta validada y Seller OS continuará con cada candidato afectado."
+          : primaryTask?.impact ?? (readyCandidates.length ? "El paquete queda listo para publicación manual en Seller Hub." : "Seller OS avanzará automáticamente hasta la próxima confirmación indispensable.")}</h3>
         <p className="mt-2 text-xs leading-5 text-white/55">No necesitas pulsar otro botón técnico después de confirmar la tarea principal.</p>
       </section>
       {readyCandidates.length > 0 && <div className="mt-6"><h3 className="text-lg font-black">Listos para Seller Hub</h3><div className="mt-3 grid gap-4">{readyCandidates.map((candidate: Row) => <ManualHandoffCard key={candidate.id} candidate={candidate} />)}</div></div>}
@@ -112,13 +124,44 @@ export function TodayLaunchPanel() {
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-2xl border border-white/10 bg-black/20 p-4"><p className="text-xs font-black uppercase text-white/45">{label}</p><p className="mt-2 text-xl font-black">{value}</p></div> }
 
-function HumanTask({ task, candidate, productResearchNextQuery, working, onConfirm }: { task: Row; candidate?: Row; productResearchNextQuery?: unknown; working: boolean; onConfirm: (body: Row) => Promise<void> }) {
+function ProductResearchQueueTask({ guidance, fallbackQuery, openTaskCount }: { guidance?: Row | null; fallbackQuery?: unknown; openTaskCount: number }) {
+  const guidedQuery = typeof guidance?.nextQuery?.searchQuery === "string"
+    ? guidance.nextQuery.searchQuery.trim().slice(0, 100) : ""
+  const durableTaskQuery = typeof fallbackQuery === "string"
+    ? fallbackQuery.trim().slice(0, 100) : ""
+  const nextQuery = guidedQuery || durableTaskQuery
+  const queryCount = Number(guidance?.queryCount ?? 0)
+  const capturedCount = Number(guidance?.capturedCount ?? 0)
+  const pendingCount = Number(guidance?.pendingCount ?? openTaskCount)
+  const nextOrdinal = Number(guidance?.nextQuery?.ordinal ?? capturedCount + 1)
+  const chainedAfterCurrent = Math.max(0, pendingCount - 1)
+  return <article className="min-w-0 overflow-hidden rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-4">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h4 className="font-black">Captura la próxima consulta de Product Research</h4>
+        <p className="mt-1 text-sm leading-6 text-white/65">Una sola consulta está disponible para actuar. Las posteriores permanecen ordenadas y la extensión v1.2.2 las encadena.</p>
+      </div>
+      <span className="rounded-full border border-amber-100/20 px-3 py-1 text-xs font-black text-amber-100">{capturedCount}/{queryCount || capturedCount + pendingCount} capturadas</span>
+    </div>
+    <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-xs leading-5 text-white/65">
+      <p><strong className="text-white">Próxima consulta #{nextOrdinal}:</strong> <span className="break-words">{nextQuery || "Actualizando consulta segura…"}</span></p>
+      <p className="mt-1">Pendientes: {pendingCount}. Después de ésta, {chainedAfterCurrent} consulta(s) quedarán encadenadas automáticamente.</p>
+    </div>
+    <a href={nextQuery ? `https://www.ebay.com/sh/research#seller-os-query=${encodeURIComponent(nextQuery)}` : undefined}
+      target="_blank" rel="noreferrer" aria-disabled={!nextQuery}
+      className={`mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-xl px-4 text-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 sm:w-auto ${nextQuery ? "bg-amber-200 text-black" : "pointer-events-none border border-red-300/30 text-red-100"}`}>
+      ABRIR CONSULTA PREPARADA
+    </a>
+    <p className="mt-2 text-xs leading-5 text-cyan-100/75">La extensión aplica sola la consulta. Captura únicamente cuando habilite “Capturar y continuar”. “Aplicar y buscar” queda como respaldo.</p>
+  </article>
+}
+
+function HumanTask({ task, candidate, working, onConfirm }: { task: Row; candidate?: Row; working: boolean; onConfirm: (body: Row) => Promise<void> }) {
   const [price, setPrice] = useState("")
   const [salePrice, setSalePrice] = useState("")
   const [fulfillmentBasis, setFulfillmentBasis] = useState("")
   const [availability, setAvailability] = useState("unknown")
   const [quantity, setQuantity] = useState("")
-  const schema = task.action_schema ?? {}
   const anchorImage = candidateHeroImage(candidate)
   const parsedQuantity = quantity === "" ? null : Number(quantity)
   const lunaQuantityConflict = parsedQuantity !== null && (
@@ -130,9 +173,6 @@ function HumanTask({ task, candidate, productResearchNextQuery, working, onConfi
   const availabilityMissing = availability === "unknown"
   const salePriceMissing = !(Number(salePrice) > 0)
   const fieldId = String(task.id ?? "task")
-  const canonicalNextQuery = typeof productResearchNextQuery === "string"
-    ? productResearchNextQuery.trim().slice(0, 100) : ""
-  const productResearchQuery = (canonicalNextQuery || String(schema.query ?? "").trim()).slice(0, 100)
 
   return <article className="min-w-0 overflow-hidden rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-4">
     <div className="flex flex-wrap justify-between gap-3">
@@ -150,15 +190,6 @@ function HumanTask({ task, candidate, productResearchNextQuery, working, onConfi
     </div>
     <p className="mt-3 text-sm leading-6 text-white/60">{task.why_needed}</p>
     <p className="mt-2 text-xs leading-5 text-emerald-100/75">Después: {task.impact}</p>
-
-    {task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" && <div className="mt-4">
-      <p className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs leading-5 text-white/65">
-        <strong className="text-white">Consulta que Seller OS validará:</strong>{" "}
-        <span className="break-words">{productResearchQuery || "Consulta no disponible"}</span>
-      </p>
-      <a href={`https://www.ebay.com/sh/research#seller-os-query=${encodeURIComponent(productResearchQuery)}`} target="_blank" rel="noreferrer" aria-disabled={!productResearchQuery} className={`mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-xl px-4 text-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 sm:w-auto ${productResearchQuery ? "bg-amber-200 text-black" : "pointer-events-none border border-red-300/30 text-red-100"}`}>ABRIR CONSULTA PREPARADA</a>
-      <p className="mt-2 text-xs leading-5 text-cyan-100/75">La extensión aplica sola la consulta. Pulsa “Capturar y continuar” cuando habilite la tabla; después de aceptarla también cambia sola a la siguiente. “Aplicar y buscar” queda sólo como fallback.</p>
-    </div>}
 
     {task.gate_type === "LUNA_CONFIRMATION_REQUIRED" && <div className="mt-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">

@@ -266,12 +266,51 @@ export async function assertProductResearchCaptureMatchesNextQuery(input: {
   accountKey: string
   searchQuery: unknown
 }) {
-  const { data: plan, error: planError } = await input.supabase
+  const processedReplayForPlan = async (plan: { id: string; run_id: string | null }) => {
+    const { data: processedTasks, error: processedError } = await input.supabase
+      .from("marketplace_product_research_query_tasks")
+      .select("id,ordinal,search_query,query_hash,category_id,capture_batch_id,captured_at")
+      .eq("plan_id", plan.id).eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", "EBAY_US").eq("status", "PROCESSED")
+      .not("capture_batch_id", "is", null).order("ordinal", { ascending: false })
+    if (processedError) throw new Error("PRODUCT_RESEARCH_QUERY_TASK_STATUS_READ_FAILED")
+    const replay = (processedTasks ?? []).find((processed) =>
+      productResearchPlannedQueryHash(input.searchQuery) ===
+        productResearchPlannedQueryHash(processed.search_query))
+    if (!replay?.capture_batch_id) return null
+    return {
+      planId: plan.id,
+      taskId: replay.id,
+      runId: plan.run_id,
+      ordinal: replay.ordinal,
+      categoryId: replay.category_id ?? null,
+      queryHash: replay.query_hash,
+      searchQuery: replay.search_query,
+      alreadyProcessed: true as const,
+      captureBatchId: replay.capture_batch_id,
+      capturedAt: replay.captured_at ?? null,
+    }
+  }
+  const { data: activePlan, error: planError } = await input.supabase
     .from("marketplace_product_research_query_plans").select("id,run_id")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
     .eq("status", "ACTIVE").order("created_at", { ascending: false }).limit(1).maybeSingle()
   if (planError) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_STATUS_READ_FAILED")
-  if (!plan) return null
+  let plan = activePlan
+  if (!plan) {
+    // Once the final query is processed the plan becomes COMPLETED. A stale
+    // tab from that just-finished plan must still receive safe navigation
+    // recovery instead of falling through to a second commercial import.
+    const replayWindowStart = new Date(Date.now() - 24 * 60 * 60_000).toISOString()
+    const { data: completedPlan, error: completedError } = await input.supabase
+      .from("marketplace_product_research_query_plans").select("id,run_id")
+      .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+      .eq("status", "COMPLETED").gte("completed_at", replayWindowStart)
+      .order("completed_at", { ascending: false }).limit(1).maybeSingle()
+    if (completedError) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_STATUS_READ_FAILED")
+    if (!completedPlan) return null
+    return await processedReplayForPlan(completedPlan)
+  }
   const { data: task, error: taskError } = await input.supabase
     .from("marketplace_product_research_query_tasks")
     .select("id,ordinal,search_query,query_hash,category_id")
@@ -279,9 +318,20 @@ export async function assertProductResearchCaptureMatchesNextQuery(input: {
     .eq("marketplace", "EBAY_US").eq("status", "PENDING")
     .order("ordinal", { ascending: true }).limit(1).maybeSingle()
   if (taskError) throw new Error("PRODUCT_RESEARCH_QUERY_TASK_STATUS_READ_FAILED")
-  if (!task) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_NO_PENDING_TASK")
+  if (!task) {
+    const replay = await processedReplayForPlan(plan)
+    if (replay) return replay
+    throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_NO_PENDING_TASK")
+  }
   if (productResearchPlannedQueryHash(input.searchQuery) !==
     productResearchPlannedQueryHash(task.search_query)) {
+    // A browser tab can remain on the table that was just accepted while the
+    // durable plan has already advanced. Treat only an exact canonical match
+    // to a PROCESSED task in this same active plan as navigation recovery. It
+    // never imports again or advances the pending task; the receiver simply
+    // returns the real next query to the extension.
+    const replay = await processedReplayForPlan(plan)
+    if (replay) return replay
     throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_NEXT_QUERY_REQUIRED")
   }
   return {
@@ -291,6 +341,10 @@ export async function assertProductResearchCaptureMatchesNextQuery(input: {
     ordinal: task.ordinal,
     categoryId: task.category_id ?? null,
     queryHash: task.query_hash,
+    searchQuery: task.search_query,
+    alreadyProcessed: false as const,
+    captureBatchId: null,
+    capturedAt: null,
   }
 }
 

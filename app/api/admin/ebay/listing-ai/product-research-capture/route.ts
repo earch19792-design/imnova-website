@@ -89,6 +89,49 @@ export async function POST(req: Request) {
     const plannedTask = await assertProductResearchCaptureMatchesNextQuery({
       supabase: auth.supabase, accountKey: auth.accountKey, searchQuery: capture.searchQuery,
     })
+    if (plannedTask?.alreadyProcessed && plannedTask.captureBatchId) {
+      const queryPlan = await getProductResearchQueryPlanStatus({
+        supabase: auth.supabase, accountKey: auth.accountKey, planId: plannedTask.planId,
+      })
+      let sameDayPilot: {
+        resumed: number
+        familyEnriched: number
+        deferred?: boolean
+        error?: string
+      }
+      try {
+        sameDayPilot = await resumeSameDayPilotAfterProductResearchCapture({
+          supabase: auth.supabase, accountKey: auth.accountKey,
+          searchQuery: plannedTask.searchQuery,
+          batchId: plannedTask.captureBatchId,
+          capturedAt: plannedTask.capturedAt,
+        })
+      } catch {
+        sameDayPilot = { resumed: 0, familyEnriched: 0, deferred: true,
+          error: "SAME_DAY_PILOT_CAPTURE_RESUME_DEFERRED" }
+      }
+      const visualStatus = await visualStatusOrUnavailable({
+        supabase: auth.supabase, accountKey: auth.accountKey,
+      })
+      return listingAiResponse({ success: true, result: {
+        captureAlreadyProcessed: true,
+        batchId: plannedTask.captureBatchId,
+        capturedAt: plannedTask.capturedAt,
+        rowCount: 0, validCount: 0, importedCount: 0, duplicateCount: 0, rejectedCount: 0,
+        candidatesEnriched: 0,
+        matchCounts: { exactLuna: 0, differentPack: 0, differentSize: 0,
+          differentVariant: 0, ambiguous: 0, noLunaMatch: 0 },
+        reanalysisRequired: false,
+        scan: { status: "PROCESSED_CAPTURE_REPLAY_REDIRECTED",
+          commercialEvidencePreserved: true, browserMayClose: true,
+          observationsImported: 0, discoveryRepeated: false },
+        queryPlan, visualStatus, sameDayPilot,
+        source: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
+        rawHtmlStored: false, temporaryTitlesStored: false,
+        competitorImagesDownloaded: 0, piiStored: false,
+        openAiCalls: 0, ebayWrites: 0, canPublish: false,
+      } }, 200)
+    }
     const result = await importProductResearchBrowserCapture({
       supabase: auth.supabase,
       accountKey: auth.accountKey,
