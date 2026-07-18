@@ -12,8 +12,10 @@ export type DirectedLunaVariant = {
   sku: string
   sourceUnitBarcode: string | null
   sourceUnitPrice: number
+  sourceCompareAtPrice: number | null
   available: boolean
   weight: number | null
+  weightUnit: string | null
 }
 
 export type DirectedLunaProduct = {
@@ -43,7 +45,9 @@ function safeImageUrl(value: unknown) {
   try {
     const url = new URL(candidate.startsWith("//") ? `https:${candidate}` : candidate)
     if (url.protocol !== "https:") return null
-    if (!url.hostname.endsWith("shopify.com") && !LUNA_HOSTS.has(url.hostname)) return null
+    const shopifyHost = url.hostname === "shopify.com" ||
+      url.hostname.endsWith(".shopify.com")
+    if (!shopifyHost && !LUNA_HOSTS.has(url.hostname)) return null
     return url.toString()
   } catch {
     return null
@@ -121,18 +125,30 @@ export async function fetchDirectedLunaProduct(
         const id = String(variant.id ?? "")
         const sku = text(variant.sku)
         const cents = Number(variant.price)
-        if (!/^\d{1,30}$/.test(id) || !sku || sku.length > 120 || !Number.isInteger(cents) || cents <= 0) {
+        if (
+          !/^\d{1,30}$/.test(id) ||
+          !sku ||
+          sku.length > 120 ||
+          !Number.isInteger(cents) ||
+          cents <= 0 ||
+          typeof variant.available !== "boolean"
+        ) {
           return null
         }
         const weight = Number(variant.weight)
+        const compareAtCents = Number(variant.compare_at_price)
         return {
           id,
           title: text(variant.title) ?? "Variante general",
           sku,
           sourceUnitBarcode: text(variant.barcode),
           sourceUnitPrice: cents / 100,
-          available: variant.available === true,
+          sourceCompareAtPrice: Number.isInteger(compareAtCents) && compareAtCents > 0
+            ? compareAtCents / 100
+            : null,
+          available: variant.available,
           weight: Number.isFinite(weight) && weight > 0 ? weight : null,
+          weightUnit: text(variant.weight_unit),
         }
       }).filter((variant): variant is DirectedLunaVariant => Boolean(variant))
     : []

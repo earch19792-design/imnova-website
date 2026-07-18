@@ -108,6 +108,26 @@ type Dashboard = {
     productionRunsCronAutomatically: boolean
     mobileAccelerationBatchCount: number
     variantsPerBatch: number
+    health?: {
+      listingProtectionMonitor: {
+        status: "ACTIVE" | "MANUAL_RECENT" | "DEGRADED" | "NOT_MONITORED" | "NOT_APPLICABLE"
+        reasons: string[]
+        targetedMonitorEnabled: boolean
+        automaticScheduleActive: boolean
+        canonicalActiveListings: number
+        exactMappedActiveListings: number
+        freshlyReviewedActiveListings: number
+        luna: {
+          targetedMonitor: { lastSuccessAt: string | null; fresh: boolean }
+          fullCatalog: { lastSuccessAt: string | null; fresh: boolean }
+        }
+        protection: {
+          oldestCanonicalReviewAt: string | null
+          latestCanonicalReviewAt: string | null
+          allFresh: boolean
+        }
+      }
+    }
   }
   quota: {
     discoveryPaused: boolean
@@ -129,6 +149,13 @@ type ActiveListingSyncStatus = {
 const ACCELERATION_BATCHES = 10
 
 function label(value: string) {
+  const operationalLabels: Record<string, string> = {
+    ACTIVE_LISTING_LUNA_MAPPING_INCOMPLETE: "Falta vincular uno o más listings con la variante exacta de Luna",
+    TARGETED_LUNA_MONITOR_HEARTBEAT_STALE: "El monitor dirigido de Luna no tiene una ejecución reciente",
+    ACTIVE_LISTING_PROTECTION_HEARTBEAT_STALE: "La revisión de protección del listing está vencida",
+    TARGETED_LUNA_MONITOR_FEATURE_DISABLED: "El monitor dirigido de Luna está desactivado en Preview",
+  }
+  if (operationalLabels[value]) return operationalLabels[value]
   return value.replaceAll("_", " ")
 }
 
@@ -526,7 +553,7 @@ export function OpportunityCommandCenter({
         <div className="mt-3 grid grid-cols-[1fr_auto] gap-2"><details className="rounded-2xl border border-white/15 p-3"><summary className="cursor-pointer text-sm font-black">Guardas</summary><ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{[...row.hard_gates, ...row.evidence_guards].map((guard) => <li key={guard}>{label(guard)}</li>)}</ul></details>{row.market_radar_product_id && <button disabled={busy} onClick={() => void openRadarReview(row)} className="min-h-12 rounded-2xl bg-emerald-200 px-3 text-xs font-black text-black disabled:opacity-50">Revisar</button>}</div>
       </article>)}{!rows.length && <p className="rounded-2xl border border-white/10 p-5 text-sm text-white/55">Inicia el scan prioritario para construir la cola.</p>}</div></details>
 
-      <details className="rounded-3xl border border-white/10 p-4"><summary className="cursor-pointer font-black">Operación y riesgos de listings</summary><p className="mt-3 text-sm text-white/65">{dashboard.events.length} cambios Luna recientes · {dashboard.activeListingRisks.length} riesgos abiertos de listings.</p><div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div className="rounded-xl bg-white/[0.05] p-2"><span className="text-white/45">Última ejecución</span><strong className="mt-1 block">{formatDate(activeListingSyncStatus?.latest_started_at ?? null)}</strong></div><div className="rounded-xl bg-white/[0.05] p-2"><span className="text-white/45">Último éxito</span><strong className="mt-1 block">{formatDate(activeListingSyncStatus?.last_success_at ?? null)}</strong></div></div>{activeListingSyncStatus?.last_error_at && <p role="alert" className="mt-2 rounded-xl border border-rose-200/20 p-2 text-xs text-rose-50">Último error {formatDate(activeListingSyncStatus.last_error_at)} · {activeListingSyncStatus.last_error_code ?? "ACTIVE_LISTING_SYNC_FAILED"}</p>}<p className="mt-3 text-xs leading-5 text-cyan-50/70">Piloto manual: ejecuta esta sincronización inmediatamente después de registrar el Item ID y antes de cada revisión operativa.</p><div className="mt-3 grid gap-2 sm:grid-cols-2"><button type="button" disabled={busy || Boolean(activeListingSyncStatus?.active_run_started_at && activeListingSyncStatus?.active_run_lease_expires_at && Date.parse(activeListingSyncStatus.active_run_lease_expires_at) > Date.now())} onClick={() => void syncActiveListings()} className="min-h-12 rounded-2xl border border-cyan-200/30 px-3 font-black text-cyan-50 disabled:opacity-50">Sincronizar listings activos</button><a href="/admin/ebay/listings/register" className="inline-flex min-h-12 items-center justify-center rounded-2xl bg-cyan-200 px-3 text-center font-black text-black">Registrar listing manual</a></div>{dashboard.activeListingRisks.slice(0, 8).map((risk) => <div key={risk.id} className="mt-2 rounded-2xl border border-rose-200/15 p-3 text-xs"><strong>{risk.risk_priority.toUpperCase()} · {label(risk.risk_type)}</strong><p className="mt-1 text-white/65">{risk.risk_summary}</p></div>)}</details>
+      <details className="rounded-3xl border border-white/10 p-4"><summary className="cursor-pointer font-black">Operación y riesgos de listings</summary><p className="mt-3 text-sm text-white/65">{dashboard.events.length} cambios Luna recientes · {dashboard.activeListingRisks.length} riesgos abiertos de listings.</p>{dashboard.automation.health?.listingProtectionMonitor && <div className={`mt-3 rounded-2xl border p-3 text-xs leading-5 ${dashboard.automation.health.listingProtectionMonitor.status === "ACTIVE" ? "border-emerald-200/30 bg-emerald-200/[0.08] text-emerald-50" : dashboard.automation.health.listingProtectionMonitor.status === "MANUAL_RECENT" ? "border-cyan-200/25 bg-cyan-200/[0.06] text-cyan-50" : "border-amber-200/30 bg-amber-200/[0.08] text-amber-50"}`}><strong>Protección Luna: {dashboard.automation.health.listingProtectionMonitor.status === "ACTIVE" ? "automática y vigente" : dashboard.automation.health.listingProtectionMonitor.status === "MANUAL_RECENT" ? "revisión manual reciente" : dashboard.automation.health.listingProtectionMonitor.status === "NOT_APPLICABLE" ? "sin listings activos" : "no confirmada"}</strong><p className="mt-1">Monitor dirigido: {formatDate(dashboard.automation.health.listingProtectionMonitor.luna.targetedMonitor.lastSuccessAt)} · catálogo general: {formatDate(dashboard.automation.health.listingProtectionMonitor.luna.fullCatalog.lastSuccessAt)} · protección: {formatDate(dashboard.automation.health.listingProtectionMonitor.protection.latestCanonicalReviewAt)} · vínculos exactos {dashboard.automation.health.listingProtectionMonitor.exactMappedActiveListings}/{dashboard.automation.health.listingProtectionMonitor.canonicalActiveListings}.</p>{dashboard.automation.health.listingProtectionMonitor.reasons.length > 0 && <p className="mt-1 opacity-75">{dashboard.automation.health.listingProtectionMonitor.reasons.map(label).join(" · ")}</p>}</div>}<div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div className="rounded-xl bg-white/[0.05] p-2"><span className="text-white/45">Última ejecución</span><strong className="mt-1 block">{formatDate(activeListingSyncStatus?.latest_started_at ?? null)}</strong></div><div className="rounded-xl bg-white/[0.05] p-2"><span className="text-white/45">Último éxito</span><strong className="mt-1 block">{formatDate(activeListingSyncStatus?.last_success_at ?? null)}</strong></div></div>{activeListingSyncStatus?.last_error_at && <p role="alert" className="mt-2 rounded-xl border border-rose-200/20 p-2 text-xs text-rose-50">Último error {formatDate(activeListingSyncStatus.last_error_at)} · {activeListingSyncStatus.last_error_code ?? "ACTIVE_LISTING_SYNC_FAILED"}</p>}<p className="mt-3 text-xs leading-5 text-cyan-50/70">Piloto manual: ejecuta esta sincronización inmediatamente después de registrar el Item ID y antes de cada revisión operativa.</p><div className="mt-3 grid gap-2 sm:grid-cols-2"><button type="button" disabled={busy || Boolean(activeListingSyncStatus?.active_run_started_at && activeListingSyncStatus?.active_run_lease_expires_at && Date.parse(activeListingSyncStatus.active_run_lease_expires_at) > Date.now())} onClick={() => void syncActiveListings()} className="min-h-12 rounded-2xl border border-cyan-200/30 px-3 font-black text-cyan-50 disabled:opacity-50">Sincronizar listings activos</button><a href="/admin/ebay/listings/register" className="inline-flex min-h-12 items-center justify-center rounded-2xl bg-cyan-200 px-3 text-center font-black text-black">Registrar listing manual</a></div>{dashboard.activeListingRisks.slice(0, 8).map((risk) => <div key={risk.id} className="mt-2 rounded-2xl border border-rose-200/15 p-3 text-xs"><strong>{risk.risk_priority.toUpperCase()} · {label(risk.risk_type)}</strong><p className="mt-1 text-white/65">{risk.risk_summary}</p></div>)}</details>
     </>}
   </section>
 }

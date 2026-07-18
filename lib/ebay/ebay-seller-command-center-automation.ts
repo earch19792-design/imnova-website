@@ -10,6 +10,8 @@ import type { SellerWhatsAppAlertType } from "./ebay-seller-whatsapp-alert-polic
 import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
 import {
   canonicalizeActiveListingProtectionRows,
+  projectActiveListingProtectionMonitorHealth,
+  resolveExactUniqueCurrentLunaVariant,
   type CanonicalActiveListingProtectionGroup,
 } from "./ebay-active-listing-protection-domain"
 
@@ -193,6 +195,7 @@ type ListingRow = {
   supplier_sku: string | null
   supplier_cost_at_linking: number | string | null
   last_ebay_sync_at: string | null
+  last_radar_review_at: string | null
   raw_payload: Record<string, unknown> | null
 }
 
@@ -200,6 +203,7 @@ type CanonicalListingGroup = CanonicalActiveListingProtectionGroup<ListingRow>
 
 type LatestSupplyRow = {
   product_id: string
+  source_key?: string | null
   supplier_variant_id: string | null
   sku: string | null
   price: number | string | null
@@ -207,6 +211,94 @@ type LatestSupplyRow = {
   inventory_quantity: number | null
   captured_at: string | null
   snapshot_id: string | null
+}
+
+async function exactUniqueLunaMappingForUnlinkedListing(
+  supabase: SupabaseClient,
+  listing: ListingRow,
+) {
+  if (listing.market_radar_product_id || !listing.supplier_sku) return null
+  let query = supabase
+    .from("market_radar_latest_variants")
+    .select("product_id,source_key,supplier_variant_id,sku")
+    .eq("source_key", "lunaportex")
+    // PostgreSQL text equality is case-sensitive. Do not replace this with
+    // ilike: supplier SKUs are identities, not search terms.
+    .eq("sku", listing.supplier_sku)
+  if (listing.supplier_variant_id) {
+    query = query.eq("supplier_variant_id", listing.supplier_variant_id)
+  }
+  const { data, error } = await query.limit(2)
+  if (error) throw new Error("ACTIVE_LISTING_LUNA_MAPPING_READ_FAILED")
+  return resolveExactUniqueCurrentLunaVariant({
+    supplierSku: listing.supplier_sku,
+    supplierVariantId: listing.supplier_variant_id,
+  }, data ?? [])
+}
+
+function groupHasConflictingLunaIdentity(
+  group: CanonicalListingGroup,
+  listingRowsById: Map<string, ListingRow>,
+  mapping: {
+    productId: string
+    supplierVariantId: string
+    supplierSku: string
+  },
+) {
+  return group.memberListingIds.some((id) => {
+    const row = listingRowsById.get(id)
+    if (!row) return true
+    return Boolean(
+      (row.market_radar_product_id &&
+        row.market_radar_product_id !== mapping.productId) ||
+      (row.supplier_variant_id &&
+        row.supplier_variant_id !== mapping.supplierVariantId) ||
+      (row.supplier_sku && row.supplier_sku !== mapping.supplierSku),
+    )
+  })
+}
+
+async function autoLinkCanonicalListingGroup(
+  supabase: SupabaseClient,
+  group: CanonicalListingGroup,
+  listingRowsById: Map<string, ListingRow>,
+) {
+  const listing = group.listing
+  const resolution = await exactUniqueLunaMappingForUnlinkedListing(
+    supabase,
+    listing,
+  )
+  if (!resolution || resolution.status !== "resolved" ||
+      groupHasConflictingLunaIdentity(group, listingRowsById, resolution)) {
+    return { canonicalLinked: false, rowsLinked: 0 }
+  }
+  const { data, error } = await supabase
+    .from("ebay_active_listings")
+    .update({
+      market_radar_product_id: resolution.productId,
+      supplier_variant_id: resolution.supplierVariantId,
+      supplier_sku: resolution.supplierSku,
+      updated_at: new Date().toISOString(),
+    })
+    .in("id", group.memberListingIds)
+    .is("market_radar_product_id", null)
+    .select("id")
+  if (error) throw new Error("ACTIVE_LISTING_LUNA_MAPPING_LINK_FAILED")
+  const rowsLinked = (data ?? []).length
+  if (!rowsLinked) return { canonicalLinked: false, rowsLinked: 0 }
+
+  // Continue the same protection pass with the exact identity just persisted.
+  listing.market_radar_product_id = resolution.productId
+  listing.supplier_variant_id = resolution.supplierVariantId
+  listing.supplier_sku = resolution.supplierSku
+  for (const id of group.memberListingIds) {
+    const row = listingRowsById.get(id)
+    if (!row || row.market_radar_product_id) continue
+    row.market_radar_product_id = resolution.productId
+    row.supplier_variant_id = resolution.supplierVariantId
+    row.supplier_sku = resolution.supplierSku
+  }
+  return { canonicalLinked: true, rowsLinked }
 }
 
 function numeric(value: unknown) {
@@ -463,12 +555,14 @@ export async function reconcileActiveListingProtectionRisks(
       listingsDeferred: 0,
       listingsHealthy: 0,
       risksDetected: 0,
+      listingsAutoLinkedToLuna: 0,
+      listingRowsAutoLinkedToLuna: 0,
       elapsedMs: Date.now() - startedAt,
     }
   }
   const { data: listingData, error: listingError } = await supabase
     .from("ebay_active_listings")
-    .select("id,account_key,source,ebay_item_id,ebay_sku,listing_status,title,market_radar_product_id,supplier_variant_id,supplier_sku,supplier_cost_at_linking,last_ebay_sync_at,raw_payload")
+    .select("id,account_key,source,ebay_item_id,ebay_sku,listing_status,title,market_radar_product_id,supplier_variant_id,supplier_sku,supplier_cost_at_linking,last_ebay_sync_at,last_radar_review_at,raw_payload")
     .eq("account_key", accountScope.accountKey)
     .eq("listing_status", "active")
     .order("last_radar_review_at", { ascending: true, nullsFirst: true })
@@ -481,6 +575,7 @@ export async function reconcileActiveListingProtectionRisks(
     .limit(Math.min(1_000, limit * 3))
   if (listingError) throw new Error("ACTIVE_LISTING_PROTECTION_READ_FAILED")
   const listingRows = (listingData ?? []) as ListingRow[]
+  const listingRowsById = new Map(listingRows.map((row) => [row.id, row]))
   const listings = canonicalizeActiveListingProtectionRows(listingRows)
     .slice(0, limit)
   const activeListingRowsSelected = listings.reduce(
@@ -490,6 +585,8 @@ export async function reconcileActiveListingProtectionRisks(
   let risksDetected = 0
   let listingsHealthy = 0
   let listingsEvaluated = 0
+  let listingsAutoLinkedToLuna = 0
+  let listingRowsAutoLinkedToLuna = 0
 
   for (const group of listings) {
     if (listingsEvaluated > 0 && Date.now() - startedAt >= timeBudgetMs) break
@@ -505,6 +602,15 @@ export async function reconcileActiveListingProtectionRisks(
       canonicalSource: listing.source,
       canonicalListingStatus: listing.listing_status,
       observations: group.observations,
+    }
+    if (!listing.market_radar_product_id) {
+      const linked = await autoLinkCanonicalListingGroup(
+        supabase,
+        group,
+        listingRowsById,
+      )
+      if (linked.canonicalLinked) listingsAutoLinkedToLuna += 1
+      listingRowsAutoLinkedToLuna += linked.rowsLinked
     }
     let latest: LatestSupplyRow | null = null
     if (listing.market_radar_product_id) {
@@ -621,6 +727,8 @@ export async function reconcileActiveListingProtectionRisks(
     listingsDeferred: Math.max(0, listings.length - listingsEvaluated),
     listingsHealthy,
     risksDetected,
+    listingsAutoLinkedToLuna,
+    listingRowsAutoLinkedToLuna,
     elapsedMs: Date.now() - startedAt,
   }
 }
@@ -628,16 +736,47 @@ export async function reconcileActiveListingProtectionRisks(
 export async function getSellerAutomationHealth(supabase: SupabaseClient) {
   const now = new Date().toISOString()
   const accountKey = getEbaySellerAccountScopeConfiguration().accountKey ?? "__unconfigured__"
-  const [due, leased, retries, dead, pendingAlerts, latestRuns] = await Promise.all([
+  const [
+    due, leased, retries, dead, pendingAlerts, latestRuns,
+    fullCatalogLunaSource, targetedLunaState, activeListings, openMappingRisks,
+  ] = await Promise.all([
     supabase.from("ebay_seller_scan_tasks").select("id", { count: "exact", head: true }).in("status", ["queued", "retry"]).lte("due_at", now),
     supabase.from("ebay_seller_scan_tasks").select("id", { count: "exact", head: true }).eq("status", "leased"),
     supabase.from("ebay_seller_scan_tasks").select("id", { count: "exact", head: true }).eq("status", "retry"),
     supabase.from("ebay_seller_scan_tasks").select("id", { count: "exact", head: true }).eq("status", "dead_letter"),
     supabase.from("ebay_seller_alert_outbox").select("id", { count: "exact", head: true }).eq("payload->>accountKey", accountKey).in("status", ["pending", "failed"]),
     supabase.from("ebay_seller_automation_runs").select("id,run_kind,status,started_at,completed_at,last_error_code,metrics").order("started_at", { ascending: false }).limit(8),
+    supabase.from("market_radar_sources").select("last_success_at").eq("key", "lunaportex").maybeSingle(),
+    supabase.from("ebay_active_listing_sync_state")
+      .select("targeted_luna_last_success_at,targeted_luna_last_error_at,targeted_luna_last_error_code")
+      .eq("account_key", accountKey)
+      .maybeSingle(),
+    supabase.from("ebay_active_listings")
+      .select("id,account_key,source,ebay_item_id,ebay_sku,listing_status,last_ebay_sync_at,market_radar_product_id,supplier_variant_id,supplier_sku,last_radar_review_at")
+      .eq("account_key", accountKey)
+      .eq("listing_status", "active"),
+    supabase.from("ebay_active_listing_risk_events")
+      .select("active_listing_id,active_listing:ebay_active_listings!inner(account_key)")
+      .eq("active_listing.account_key", accountKey)
+      .eq("risk_type", "mapping_broken")
+      .is("resolved_at", null),
   ])
-  const firstError = due.error ?? leased.error ?? retries.error ?? dead.error ?? pendingAlerts.error ?? latestRuns.error
+  const firstError = due.error ?? leased.error ?? retries.error ?? dead.error ??
+    pendingAlerts.error ?? latestRuns.error ?? fullCatalogLunaSource.error ??
+    targetedLunaState.error ?? activeListings.error ?? openMappingRisks.error
   if (firstError) throw new Error("SELLER_AUTOMATION_HEALTH_READ_FAILED")
+  const listingProtectionMonitor = projectActiveListingProtectionMonitorHealth({
+    listings: activeListings.data ?? [],
+    targetedMonitorLastSuccessAt:
+      targetedLunaState.data?.targeted_luna_last_success_at ?? null,
+    fullCatalogLastSuccessAt:
+      fullCatalogLunaSource.data?.last_success_at ?? null,
+    openMappingBrokenListingIds: (openMappingRisks.data ?? [])
+      .map((risk) => risk.active_listing_id),
+    targetedMonitorEnabled:
+      process.env.VERCEL_ENV === "preview" &&
+      process.env.EBAY_TARGETED_LUNA_ACTIVE_MONITOR_ENABLED === "true",
+  })
   return {
     dueTasks: due.count ?? 0,
     leasedTasks: leased.count ?? 0,
@@ -645,5 +784,6 @@ export async function getSellerAutomationHealth(supabase: SupabaseClient) {
     deadLetterTasks: dead.count ?? 0,
     pendingAlerts: pendingAlerts.count ?? 0,
     latestRuns: latestRuns.data ?? [],
+    listingProtectionMonitor,
   }
 }
