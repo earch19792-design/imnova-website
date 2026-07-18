@@ -32,4 +32,3 @@ jobs:
             args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")
           fi
           curl "${args[@]}" "$PREVIEW_URL/api/cron/ebay-same-day-pilot"
-
