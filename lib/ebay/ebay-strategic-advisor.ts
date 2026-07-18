@@ -471,6 +471,8 @@ function boundedInteger(
 }
 
 const STRATEGIC_ADVISOR_STAGING_REF = "vsfthqydfrdzulldbfbe"
+export const EBAY_STRATEGIC_ADVISOR_PREVIEW_BRANCH =
+  "feature/centralize-ebay-mobile-command-center"
 
 export function getEbayStrategicAdvisorConfiguration(environment = process.env) {
   let detectedRef: string | null = null
@@ -482,7 +484,13 @@ export function getEbayStrategicAdvisorConfiguration(environment = process.env) 
   }
   const preview = environment.VERCEL_ENV === "preview"
   const staging = detectedRef === STRATEGIC_ADVISOR_STAGING_REF
-  const enabled = environment.EBAY_STRATEGIC_ADVISOR_OPENAI_ENABLED?.trim() === "true"
+  const authorizedBranch =
+    environment.VERCEL_GIT_COMMIT_REF === EBAY_STRATEGIC_ADVISOR_PREVIEW_BRANCH
+  const previewEnabled =
+    environment.EBAY_STRATEGIC_ADVISOR_PREVIEW_ENABLED?.trim() === "true"
+  const previewReady = preview && staging && authorizedBranch && previewEnabled
+  const openAiEnabled =
+    environment.EBAY_STRATEGIC_ADVISOR_OPENAI_ENABLED?.trim() === "true"
   const keyPresent = Boolean(environment.OPENAI_API_KEY?.trim())
   const modelPresent = Boolean(environment.EBAY_STRATEGIC_ADVISOR_MODEL?.trim())
   const maxInputTokens = boundedInteger(
@@ -500,13 +508,24 @@ export function getEbayStrategicAdvisorConfiguration(environment = process.env) 
   const estimatedCallCostMicros = boundedInteger(
     environment.EBAY_STRATEGIC_ADVISOR_ESTIMATED_CALL_COST_MICROS, 0, 0, 10_000_000,
   )
-  const realReady = preview && staging && enabled && keyPresent && modelPresent &&
+  const realReady = previewReady && openAiEnabled && keyPresent && modelPresent &&
     maxCallCostMicros > 0 && dailyBudgetMicros > 0 && estimatedCallCostMicros > 0
   return {
-    status: realReady ? "READY" as const : enabled ? "MISSING" as const : "DISABLED" as const,
+    status: realReady
+      ? "READY" as const
+      : openAiEnabled ? "MISSING" as const : "DISABLED" as const,
+    activationStatus: previewReady
+      ? "ACTIVE_PREVIEW_ONLY" as const
+      : "DISABLED" as const,
     preview,
     staging,
-    enabled,
+    authorizedBranch,
+    previewEnabled,
+    previewReady,
+    enabled: openAiEnabled,
+    openAiEnabled,
+    expectedRef: STRATEGIC_ADVISOR_STAGING_REF,
+    expectedBranch: EBAY_STRATEGIC_ADVISOR_PREVIEW_BRANCH,
     key: keyPresent ? "PRESENT" as const : "MISSING" as const,
     model: modelPresent ? "PRESENT" as const : "MISSING" as const,
     maxInputTokens,
@@ -519,8 +538,21 @@ export function getEbayStrategicAdvisorConfiguration(environment = process.env) 
     toolsEnabled: false as const,
     selfModificationAllowed: false as const,
     ebayWritesAllowed: false as const,
+    automaticPriceChangesAllowed: false as const,
+    automaticDeploymentsAllowed: false as const,
+    proposalsRequireSecondOperatorApproval: true as const,
     secretsReturned: false as const,
   }
+}
+
+export function assertEbayStrategicAdvisorPreviewActivation(
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  const configuration = getEbayStrategicAdvisorConfiguration(environment)
+  if (!configuration.previewReady) {
+    throw new Error("STRATEGIC_ADVISOR_PREVIEW_ACTIVATION_REQUIRED")
+  }
+  return configuration
 }
 
 function buildPrompt() {

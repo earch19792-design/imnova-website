@@ -16,6 +16,9 @@ import {
   decideEbayStrategicAdvisorOpenAiSpend,
   getEbayStrategicAdvisorRun,
 } from "@/lib/ebay/ebay-strategic-advisor-service"
+import {
+  assertEbayStrategicAdvisorPreviewActivation,
+} from "@/lib/ebay/ebay-strategic-advisor"
 
 function hash(value: unknown) {
   const result = listingAiText(value, 80)
@@ -54,6 +57,7 @@ export async function POST(req: Request) {
   const auth = await authorizeListingAiRequest(req)
   if (!auth.ok) return auth.response
   try {
+    assertEbayStrategicAdvisorPreviewActivation()
     enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
     const idempotencyKey = listingAiIdempotencyKey(req)
     const body = await listingAiJson(req)

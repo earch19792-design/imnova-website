@@ -5,8 +5,8 @@ import {
   EBAY_STRATEGIC_ADVISOR_FACT_KEYS,
   EBAY_STRATEGIC_ADVISOR_OUTPUT_SCHEMA_VERSION,
   EBAY_STRATEGIC_ADVISOR_PROMPT_VERSION,
+  assertEbayStrategicAdvisorPreviewActivation,
   ebayStrategicAdvisorHash,
-  getEbayStrategicAdvisorConfiguration,
   prepareEbayStrategicAdvisorEvidence,
   strategicAdvisorEvidenceSchema,
   validateEbayStrategicAdvisorProposal,
@@ -120,6 +120,26 @@ async function loadServerVerifiedEvidence(input: {
   }
   if (!event.sku || event.sku !== queueItem.supplier_sku) {
     throw new Error("STRATEGIC_ADVISOR_QUEUE_ITEM_IDENTITY_MISMATCH")
+  }
+  const { data: ownListingLink, error: ownListingLinkError } = await input.supabase
+    .from("ebay_manual_listing_links")
+    .select("id,ebay_item_id,supplier_sku,verification_status,verification_method,connector_listing_status")
+    .eq("account_key", input.accountKey)
+    .eq("marketplace_id", "EBAY_US")
+    .eq("ebay_item_id", snapshot.listing_id)
+    .eq("verification_status", "verified")
+    .maybeSingle()
+  if (ownListingLinkError) {
+    throw new Error("STRATEGIC_ADVISOR_OWN_LISTING_VERIFICATION_READ_FAILED")
+  }
+  if (
+    !ownListingLink ||
+    ownListingLink.supplier_sku !== queueItem.supplier_sku ||
+    !["EBAY_TRADING_GET_ITEM_READONLY", "EBAY_SELL_INVENTORY_READONLY"]
+      .includes(String(ownListingLink.verification_method)) ||
+    !["active", "paused"].includes(String(ownListingLink.connector_listing_status))
+  ) {
+    throw new Error("STRATEGIC_ADVISOR_VERIFIED_OWN_LISTING_REQUIRED")
   }
   const eventEvidence = record(event.evidence)
   const experiment = record(eventEvidence.experiment)
@@ -236,6 +256,7 @@ async function loadServerVerifiedEvidence(input: {
       performanceSnapshotId: snapshot.id,
       queueItemId: queueItem.id,
       readinessEventId: readiness.id,
+      ownListingLinkId: ownListingLink.id,
     },
   }
 }
@@ -287,12 +308,11 @@ export async function createEbayStrategicAdvisorRun(input: {
   environment?: NodeJS.ProcessEnv
   now?: Date
 }) {
+  const configuration = assertEbayStrategicAdvisorPreviewActivation(
+    input.environment ?? process.env,
+  )
   const verified = await loadServerVerifiedEvidence(input)
   const prepared = prepareEbayStrategicAdvisorEvidence(verified.evidence)
-  const configuration = getEbayStrategicAdvisorConfiguration(input.environment ?? process.env)
-  if (!configuration.preview || !configuration.staging) {
-    throw new Error("STRATEGIC_ADVISOR_PREVIEW_STAGING_REQUIRED")
-  }
   const now = input.now ?? new Date()
   const { data, error } = await input.supabase.rpc("create_ebay_strategic_advisor_run", {
     p_marketplace_account_key: input.accountKey,
@@ -340,8 +360,10 @@ export async function decideEbayStrategicAdvisorOpenAiSpend(input: {
   idempotencyKey: string
   approved: boolean
   confirmed: boolean
+  environment?: NodeJS.ProcessEnv
   now?: Date
 }) {
+  assertEbayStrategicAdvisorPreviewActivation(input.environment ?? process.env)
   if (!input.confirmed) throw new Error("STRATEGIC_ADVISOR_OPENAI_SPEND_CONFIRMATION_REQUIRED")
   const { data, error } = await input.supabase.rpc(
     "decide_ebay_strategic_advisor_openai_spend",
@@ -378,8 +400,10 @@ export async function recordEbayStrategicAdvisorProposal(input: {
   usageSummary: { inputTokens: number | null; outputTokens: number | null }
   estimatedCostMicros: number
   idempotencyKey: string
+  environment?: NodeJS.ProcessEnv
   now?: Date
 }) {
+  assertEbayStrategicAdvisorPreviewActivation(input.environment ?? process.env)
   const { data: run, error: runError } = await input.supabase
     .from("ebay_strategic_advisor_runs")
     .select("id,state,evidence_hash,sanitized_evidence,output_schema_version")
@@ -432,8 +456,10 @@ export async function decideEbayStrategicAdvisorManualExperiment(input: {
   idempotencyKey: string
   approved: boolean
   confirmed: boolean
+  environment?: NodeJS.ProcessEnv
   now?: Date
 }) {
+  assertEbayStrategicAdvisorPreviewActivation(input.environment ?? process.env)
   if (!input.confirmed) throw new Error("STRATEGIC_ADVISOR_EXPERIMENT_CONFIRMATION_REQUIRED")
   const { data, error } = await input.supabase.rpc(
     "decide_ebay_strategic_advisor_manual_experiment",

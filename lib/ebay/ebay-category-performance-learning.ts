@@ -14,6 +14,11 @@ export const EBAY_CATEGORY_LEARNING_MODEL_VERSION =
 export const EBAY_CATEGORY_LEARNING_SOURCE =
   "EBAY_SELL_ANALYTICS_READONLY" as const
 
+export const EBAY_CATEGORY_LEARNING_PREVIEW_BRANCH =
+  "feature/centralize-ebay-mobile-command-center"
+
+const EBAY_CATEGORY_LEARNING_STAGING_REF = "vsfthqydfrdzulldbfbe"
+
 export const EBAY_CATEGORY_LEARNING_POLICY = Object.freeze({
   minimumLinkedListings: 10,
   minimumObservationDays: 14,
@@ -86,6 +91,7 @@ type PersistPerformanceInput = {
   dateTo: string
   listingIds?: string[]
   observedAt?: string | Date
+  environment?: NodeJS.ProcessEnv
 }
 
 function finiteNumber(value: unknown) {
@@ -123,6 +129,47 @@ function validTimestamp(value: unknown) {
   if (typeof value !== "string" || !value.trim()) return null
   const parsed = new Date(value)
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null
+}
+
+export function getEbayCategoryLearningActivationConfiguration(
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  let detectedRef: string | null = null
+  try {
+    detectedRef = new URL(environment.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "")
+      .hostname.split(".")[0] || null
+  } catch {
+    detectedRef = null
+  }
+  const explicitlyEnabled =
+    environment.EBAY_CATEGORY_PERFORMANCE_LEARNING_PREVIEW_ENABLED?.trim() === "true"
+  const preview = environment.VERCEL_ENV === "preview"
+  const staging = detectedRef === EBAY_CATEGORY_LEARNING_STAGING_REF
+  const authorizedBranch =
+    environment.VERCEL_GIT_COMMIT_REF === EBAY_CATEGORY_LEARNING_PREVIEW_BRANCH
+  const active = explicitlyEnabled && preview && staging && authorizedBranch
+  return {
+    status: active ? "ACTIVE_PREVIEW_ONLY" as const : "DISABLED" as const,
+    active,
+    explicitlyEnabled,
+    preview,
+    staging,
+    authorizedBranch,
+    detectedRef,
+    expectedRef: EBAY_CATEGORY_LEARNING_STAGING_REF,
+    expectedBranch: EBAY_CATEGORY_LEARNING_PREVIEW_BRANCH,
+    safety: {
+      previewOnly: true as const,
+      verifiedOwnListingsOnly: true as const,
+      ebayReadOnly: true as const,
+      ebayWrites: 0 as const,
+      openAiCalls: 0 as const,
+      automaticPriceChanges: 0 as const,
+      automaticDeployments: 0 as const,
+      maximumAdjustmentPoints:
+        EBAY_CATEGORY_LEARNING_POLICY.maximumAdjustmentPoints,
+    },
+  }
 }
 
 function validDateOnly(value: unknown) {
@@ -502,6 +549,22 @@ export async function persistOwnEbayPerformanceSnapshots(
   rawReport: unknown,
   input: PersistPerformanceInput,
 ) {
+  const activation = getEbayCategoryLearningActivationConfiguration(
+    input.environment ?? process.env,
+  )
+  if (!activation.active) {
+    return {
+      status: "PREVIEW_LEARNING_DISABLED" as const,
+      snapshotCount: 0,
+      verifiedLinkedListingCount: 0,
+      skippedUnlinkedListingCount: 0,
+      categoryLearning: [] as EbayCategoryLearningEvaluation[],
+      minimums: EBAY_CATEGORY_LEARNING_POLICY,
+      rankingAdjustmentApplied: false as const,
+      persistencePerformed: false as const,
+      activation,
+    }
+  }
   const dashboard = normalizeEbaySellerTrafficReport(rawReport)
   if (dashboard.dimension !== "LISTING") {
     return {
@@ -820,8 +883,12 @@ export async function loadStoredEbayCategoryLearningState(
 export async function loadEbayCategoryLearningAdjustments(
   supabase: SupabaseClient,
   predictionEngineVersion: string,
-  options: { now?: string | Date } = {},
+  options: { now?: string | Date; environment?: NodeJS.ProcessEnv } = {},
 ) {
+  const activation = getEbayCategoryLearningActivationConfiguration(
+    options.environment ?? process.env,
+  )
+  if (!activation.active) return {}
   const accountKey = getEbayCategoryLearningAccountKey()
   const now = options.now instanceof Date
     ? options.now
@@ -912,8 +979,28 @@ export function buildEbayCategoryLearningCollectionWindow(
  */
 export async function collectOwnEbayPerformanceForLearning(
   supabase: SupabaseClient,
-  options: { now?: string | Date; maximumListings?: number } = {},
+  options: {
+    now?: string | Date
+    maximumListings?: number
+    environment?: NodeJS.ProcessEnv
+  } = {},
 ) {
+  const activation = getEbayCategoryLearningActivationConfiguration(
+    options.environment ?? process.env,
+  )
+  if (!activation.active) {
+    return {
+      status: "PREVIEW_LEARNING_DISABLED" as const,
+      requestedListingCount: 0,
+      totalEligibleVerifiedListingCount: 0,
+      hasMoreEligibleVerifiedListings: false,
+      rankingAdjustmentApplied: false as const,
+      persistencePerformed: false as const,
+      externalReadsPerformed: false as const,
+      minimums: EBAY_CATEGORY_LEARNING_POLICY,
+      activation,
+    }
+  }
   const accountKey = getEbayCategoryLearningAccountKey()
   const now = options.now instanceof Date
     ? options.now
@@ -983,7 +1070,13 @@ export async function collectOwnEbayPerformanceForLearning(
   const collection = await persistOwnEbayPerformanceSnapshots(
     supabase,
     report,
-    { dateFrom, dateTo, listingIds, observedAt: now },
+    {
+      dateFrom,
+      dateTo,
+      listingIds,
+      observedAt: now,
+      environment: options.environment ?? process.env,
+    },
   )
   return {
     ...collection,
@@ -992,5 +1085,6 @@ export async function collectOwnEbayPerformanceForLearning(
     hasMoreEligibleVerifiedListings:
       (count ?? listingIds.length) > listingIds.length,
     reportWindow,
+    activation,
   }
 }
