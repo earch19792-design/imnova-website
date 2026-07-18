@@ -391,8 +391,62 @@ async function bootstrapCandidate(supabase: SupabaseClient, runId: string, candi
   }
 }
 
-async function repairSameDayPilotBootstrap(supabase: SupabaseClient, state: Awaited<ReturnType<typeof currentState>>) {
+async function repairProcessedProductResearchCaptureGate(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  accountKey: string,
+) {
+  const waitingQueries = new Set(state.candidates.filter((candidate) =>
+    candidate.machine_state === "WAITING_PRODUCT_RESEARCH_CAPTURE" &&
+    state.tasks.some((task) => task.candidate_id === candidate.id &&
+      task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" && task.status === "OPEN"))
+    .map((candidate) => productResearchPlannedQueryHash(
+      record(candidate.product_research_query_plan).query,
+    )))
+  if (!waitingQueries.size) return false
+  const planId = text(record(state.run.source_inventory).productResearchPlanId)
+  if (!planId) return false
+  const { data: processedTasks, error } = await supabase
+    .from("marketplace_product_research_query_tasks")
+    .select("search_query,capture_batch_id,captured_at")
+    .eq("plan_id", planId)
+    .eq("marketplace_account_key", accountKey)
+    .eq("marketplace", MARKETPLACE)
+    .eq("status", "PROCESSED")
+    .not("capture_batch_id", "is", null)
+    .order("ordinal")
+  if (error) throw new Error("SAME_DAY_PILOT_PROCESSED_CAPTURE_REPAIR_READ_FAILED")
+  for (const task of processedTasks ?? []) {
+    const searchQuery = text(task.search_query, 100)
+    const captureBatchId = text(task.capture_batch_id)
+    if (!searchQuery || !captureBatchId ||
+      !waitingQueries.has(productResearchPlannedQueryHash(searchQuery))) continue
+    const result = await resumeSameDayPilotAfterProductResearchCapture({
+      supabase,
+      accountKey,
+      searchQuery,
+      batchId: captureBatchId,
+      capturedAt: text(task.captured_at) || null,
+    })
+    if (result.resumed > 0) return true
+  }
+  return false
+}
+
+async function repairSameDayPilotBootstrap(
+  supabase: SupabaseClient,
+  state: Awaited<ReturnType<typeof currentState>>,
+  accountKey: string,
+) {
   if (!state) return false
+  // A capture is durable before the Same-Day transition is attempted. If an
+  // older deployment or a transient continuation failure left the query task
+  // PROCESSED while its human gate stayed OPEN, consume that exact stored
+  // batch now. Insufficient evidence rejects/promotes the candidate; it never
+  // asks the operator to repeat the same authorized capture.
+  if (await repairProcessedProductResearchCaptureGate(supabase, state, accountKey)) {
+    return true
+  }
   const gateByState: Record<string, string> = {
     WAITING_PRODUCT_RESEARCH_CAPTURE: "PRODUCT_RESEARCH_CAPTURE_REQUIRED",
     WAITING_LUNA_CONFIRMATION: "LUNA_CONFIRMATION_REQUIRED",
@@ -711,7 +765,11 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
   const recoverEmptyRun = Boolean(existing && existing.candidates.length === 0 &&
     Number(existing.run.queue_count ?? 0) === 0)
   if (existing && !recoverEmptyRun) {
-    const repaired = await repairSameDayPilotBootstrap(input.supabase, existing)
+    const repaired = await repairSameDayPilotBootstrap(
+      input.supabase,
+      existing,
+      input.accountKey,
+    )
     if (repaired) await refreshRunProjection(input.supabase, existing.run.id)
     const current = await currentState(input.supabase, input.accountKey, date)
     return { ...(current ?? existing), created: false, idempotent: true, repaired }
@@ -963,7 +1021,7 @@ export async function decideSameDayImages(input: {
 
 export async function resumeSameDayPilotAfterProductResearchCapture(input: { supabase: SupabaseClient; accountKey: string; searchQuery: string; batchId: string; capturedAt?: string | null; exactLunaMatches?: number }) {
   const state = await getSameDayPilot(input)
-  if (!state) return { resumed: 0 }
+  if (!state) return { resumed: 0, familyEnriched: 0 }
   const capturedQueryHash = productResearchPlannedQueryHash(input.searchQuery)
   const familyCandidates = state.candidates.filter((candidate) =>
     !["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(text(candidate.machine_state)) &&
@@ -1219,7 +1277,11 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     last_worker_heartbeat_at: now.toISOString(), updated_at: now.toISOString(),
   }).eq("id", state.run.id)
   if (heartbeatError) throw new Error("SAME_DAY_PILOT_WORKER_HEARTBEAT_FAILED")
-  const repaired = await repairSameDayPilotBootstrap(input.supabase, state)
+  const repaired = await repairSameDayPilotBootstrap(
+    input.supabase,
+    state,
+    input.accountKey,
+  )
   const deadLettersRecovered = await recoverDeadLetterCandidates(input.supabase, state)
   if (repaired || deadLettersRecovered) {
     state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })

@@ -93,10 +93,10 @@ export function TodayLaunchPanel() {
         <h3 id="operator-task-heading" className="mt-1 text-lg font-black">Tarea para Ernesto</h3>
         {!primaryTask
           ? <p className="mt-2 rounded-2xl border border-white/10 p-4 text-sm text-white/55">Seller OS no necesita una acción humana en este momento.</p>
-          : <div className="mt-3"><HumanTask task={primaryTask} candidate={primaryCandidate} working={working} onConfirm={(body) => request(body)} /></div>}
+          : <div className="mt-3"><HumanTask task={primaryTask} candidate={primaryCandidate} productResearchNextQuery={pilot.productResearchGuidance?.nextQuery?.searchQuery} working={working} onConfirm={(body) => request(body)} /></div>}
         {remainingTasks.length > 0 && <details className="mt-3 rounded-2xl border border-white/10 p-3">
           <summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver {remainingTasks.length} tarea(s) posterior(es)</summary>
-          <div className="mt-3 grid gap-3">{remainingTasks.map((task: Row) => <HumanTask key={task.id} task={task} candidate={candidates.find((candidate: Row) => candidate.id === task.candidate_id)} working={working} onConfirm={(body) => request(body)} />)}</div>
+          <div className="mt-3 grid gap-3">{remainingTasks.map((task: Row) => <HumanTask key={task.id} task={task} candidate={candidates.find((candidate: Row) => candidate.id === task.candidate_id)} productResearchNextQuery={pilot.productResearchGuidance?.nextQuery?.searchQuery} working={working} onConfirm={(body) => request(body)} />)}</div>
         </details>}
       </section>
       <section aria-labelledby="automatic-continuation-heading" className="mt-5 rounded-2xl border border-violet-200/20 bg-violet-200/[0.05] p-4">
@@ -112,7 +112,7 @@ export function TodayLaunchPanel() {
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-2xl border border-white/10 bg-black/20 p-4"><p className="text-xs font-black uppercase text-white/45">{label}</p><p className="mt-2 text-xl font-black">{value}</p></div> }
 
-function HumanTask({ task, candidate, working, onConfirm }: { task: Row; candidate?: Row; working: boolean; onConfirm: (body: Row) => Promise<void> }) {
+function HumanTask({ task, candidate, productResearchNextQuery, working, onConfirm }: { task: Row; candidate?: Row; productResearchNextQuery?: unknown; working: boolean; onConfirm: (body: Row) => Promise<void> }) {
   const [price, setPrice] = useState("")
   const [salePrice, setSalePrice] = useState("")
   const [fulfillmentBasis, setFulfillmentBasis] = useState("")
@@ -130,7 +130,9 @@ function HumanTask({ task, candidate, working, onConfirm }: { task: Row; candida
   const availabilityMissing = availability === "unknown"
   const salePriceMissing = !(Number(salePrice) > 0)
   const fieldId = String(task.id ?? "task")
-  const productResearchQuery = String(schema.query ?? "").trim().slice(0, 100)
+  const canonicalNextQuery = typeof productResearchNextQuery === "string"
+    ? productResearchNextQuery.trim().slice(0, 100) : ""
+  const productResearchQuery = (canonicalNextQuery || String(schema.query ?? "").trim()).slice(0, 100)
 
   return <article className="min-w-0 overflow-hidden rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-4">
     <div className="flex flex-wrap justify-between gap-3">
@@ -155,7 +157,7 @@ function HumanTask({ task, candidate, working, onConfirm }: { task: Row; candida
         <span className="break-words">{productResearchQuery || "Consulta no disponible"}</span>
       </p>
       <a href={`https://www.ebay.com/sh/research#seller-os-query=${encodeURIComponent(productResearchQuery)}`} target="_blank" rel="noreferrer" aria-disabled={!productResearchQuery} className={`mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-xl px-4 text-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 sm:w-auto ${productResearchQuery ? "bg-amber-200 text-black" : "pointer-events-none border border-red-300/30 text-red-100"}`}>ABRIR CONSULTA PREPARADA</a>
-      <p className="mt-2 text-xs leading-5 text-cyan-100/75">En eBay pulsa “Aplicar y buscar próxima consulta”, espera los resultados nuevos y después pulsa “Capturar y continuar”.</p>
+      <p className="mt-2 text-xs leading-5 text-cyan-100/75">La extensión aplica sola la consulta. Pulsa “Capturar y continuar” cuando habilite la tabla; después de aceptarla también cambia sola a la siguiente. “Aplicar y buscar” queda sólo como fallback.</p>
     </div>}
 
     {task.gate_type === "LUNA_CONFIRMATION_REQUIRED" && <div className="mt-4">

@@ -6,6 +6,7 @@ import { NextResponse } from "next/server"
 
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { evaluateEbayProductApprovalFulfillmentBasis } from "@/lib/ebay/ebay-fulfillment-policy-compliance"
+import { getProductResearchQueryPlanStatus } from "@/lib/ebay/ebay-product-research-query-plan"
 import {
   confirmSameDayLuna,
   decideSameDayImages,
@@ -39,7 +40,37 @@ export async function GET(req: Request) {
   const access = await authorization(req)
   if ("response" in access) return access.response
   try {
-    return NextResponse.json({ success: true, pilot: await getSameDayPilot({ supabase: access.supabase, accountKey: access.accountKey }),
+    const pilot = await getSameDayPilot({ supabase: access.supabase, accountKey: access.accountKey })
+    const productResearchPlanId = typeof pilot?.run?.source_inventory?.productResearchPlanId === "string"
+      ? pilot.run.source_inventory.productResearchPlanId : null
+    const productResearchTaskOpen = pilot?.tasks?.some((task) =>
+      task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" && task.status === "OPEN") === true
+    let productResearchGuidance: Record<string, unknown> | null = null
+    if (productResearchPlanId && productResearchTaskOpen) {
+      try {
+        const plan = await getProductResearchQueryPlanStatus({
+          supabase: access.supabase,
+          accountKey: access.accountKey,
+          planId: productResearchPlanId,
+        })
+        productResearchGuidance = plan ? {
+          status: plan.status,
+          queryCount: plan.queryCount,
+          capturedCount: plan.capturedCount,
+          pendingCount: plan.pendingCount,
+          nextQuery: plan.nextQuery ? {
+            ordinal: plan.nextQuery.ordinal,
+            searchQuery: plan.nextQuery.searchQuery,
+            candidateCount: plan.nextQuery.candidateCount,
+          } : null,
+        } : null
+      } catch {
+        // The operating view must remain usable with its candidate-level
+        // fallback if the read-only plan projection is temporarily unavailable.
+        productResearchGuidance = { status: "TEMPORARILY_UNAVAILABLE", nextQuery: null }
+      }
+    }
+    return NextResponse.json({ success: true, pilot: pilot ? { ...pilot, productResearchGuidance } : null,
       safety: { fullCatalogRescan: false, ebayWrites: 0, productionChanged: false } })
   } catch (error) {
     return NextResponse.json({ success: false, error: safeError(error) }, { status: 502 })

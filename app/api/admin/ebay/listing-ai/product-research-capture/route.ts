@@ -107,13 +107,37 @@ export async function POST(req: Request) {
     // Resume the durable same-day state machine immediately after the safe
     // commercial import. Official reconciliation can be long-running and must
     // never make the browser receipt fail after evidence was already stored.
-    const sameDayPilot = await resumeSameDayPilotAfterProductResearchCapture({
-      supabase: auth.supabase, accountKey: auth.accountKey,
-      searchQuery: capture.searchQuery, batchId: result.batchId,
-      capturedAt: result.capturedAt, exactLunaMatches: result.matchCounts.exactLuna,
-    })
+    let sameDayPilot: {
+      resumed: number
+      familyEnriched: number
+      deferred?: boolean
+      error?: string
+    }
+    try {
+      sameDayPilot = await resumeSameDayPilotAfterProductResearchCapture({
+        supabase: auth.supabase, accountKey: auth.accountKey,
+        searchQuery: capture.searchQuery, batchId: result.batchId,
+        capturedAt: result.capturedAt, exactLunaMatches: result.matchCounts.exactLuna,
+      })
+    } catch {
+      // The evidence and its query task are already durable. The background
+      // worker repairs this exact checkpoint, so the receipt must not tell the
+      // operator to capture the same table again.
+      sameDayPilot = { resumed: 0, familyEnriched: 0, deferred: true,
+        error: "SAME_DAY_PILOT_CAPTURE_RESUME_DEFERRED" }
+    }
     let scan: Record<string, unknown> | null = null
-    if (result.reanalysisRequired) {
+    if (sameDayPilot.deferred) {
+      // Import + query-task advancement already committed. Do not enter the
+      // legacy synchronous continuation: any secondary read failure would
+      // otherwise report a false capture rejection and tempt the operator to
+      // resend a query that the durable plan has already completed.
+      scan = { status: "CAPTURE_SAVED_SAME_DAY_RESUME_DEFERRED",
+        error: sameDayPilot.error,
+        observationsReconciled: 0, sameRunResumed: false,
+        commercialEvidencePreserved: true, browserMayClose: true,
+        discoveryRepeated: false }
+    } else if (result.reanalysisRequired) {
       if (sameDayPilot.resumed > 0) {
         scan = { status: "DURABLE_RECONCILIATION_QUEUED", observationsReconciled: 0,
           maximumReferencesPerCandidate: 10, sameRunResumed: true,

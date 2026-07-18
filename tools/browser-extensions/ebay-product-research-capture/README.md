@@ -9,14 +9,15 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Ejecuta una búsqueda y usa **Capturar resultados para Seller OS**.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.1.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.2.
 
-## Consulta guiada y patrones locales (v1.2.1)
+## Consulta guiada y patrones locales (v1.2.2)
 
 Seller OS puede abrir Product Research con una consulta preparada en el fragmento
-local de la URL. La extensión muestra esa consulta y requiere que el usuario pulse
-“Aplicar y buscar” y después “Capturar y continuar”. El fragmento no se envía al
-servidor de eBay ni cambia los permisos de la extensión.
+local de la URL. La extensión aplica la consulta automáticamente y el usuario sólo
+pulsa “Capturar y continuar” cuando la tabla nueva está lista. “Aplicar y buscar” se
+mantiene como fallback si eBay impide el submit automático. El fragmento no se envía
+al servidor de eBay ni cambia los permisos de la extensión.
 
 La misma captura analiza únicamente miniaturas que ya estén visibles en el viewport de Product Research. Chrome intenta leer un recorte temporal de la representación renderizada en memoria para derivar rasgos agregados (fondo, cobertura, complejidad y composición). El recorte y su buffer se eliminan inmediatamente.
 
@@ -25,9 +26,12 @@ La extensión no descarga imágenes, no abre versiones completas, no guarda ni l
 La captura rápida usa un único snapshot de la cuadrícula visible, reutiliza geometría
 y procesa primero las filas ancladas a Item IDs, incluso cuando eBay representa el
 enlace mediante texto accesible o una imagen con `alt`. Después de importar, Seller OS puede
-aplicar y ejecutar la siguiente consulta agrupada con un clic. La extensión espera resultados
+aplicar y ejecutar automáticamente la siguiente consulta agrupada después de cada captura
+aceptada. La extensión espera resultados
 nuevos y verifica que la consulta visible coincida antes de habilitar la siguiente captura;
-nunca inicia sesión automáticamente.
+nunca inicia sesión automáticamente. Si eBay recarga la página, conserva en el fragmento
+local la consulta y una huella SHA-256 no reconstructiva de la tabla anterior; no guarda
+Item IDs ni filas en storage y sólo reactiva la captura cuando prueba que los resultados cambiaron.
 
 La extensión sólo se inyecta en la ruta oficial Product Research. No lee cookies,
 tokens, contraseñas, datos de comprador, HTML completo ni archivos de imagen. La

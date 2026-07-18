@@ -56,6 +56,7 @@
   let nextQueryProgress = null
   let nextQueryState = null
   let nextQueryWatchTimer = null
+  let nextQueryCheckPending = false
 
   const ERROR_MESSAGES = {
     PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND:
@@ -1038,6 +1039,48 @@
 
   const normalizedQuery = (value) => text(value).toLocaleLowerCase("en-US")
 
+  async function resultsFingerprint(value) {
+    const bytes = new TextEncoder().encode(value)
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))
+    bytes.fill(0)
+    const fingerprint = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")
+    digest.fill(0)
+    return fingerprint
+  }
+
+  function guidedQueryFragment() {
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""))
+    const previousResultsFingerprint = text(params.get("seller-os-previous-results"))
+    const stage = text(params.get("seller-os-query-stage"))
+    return {
+      query: text(params.get("seller-os-query")).slice(0, 100),
+      previousResultsFingerprint: /^[0-9a-f]{64}$/.test(previousResultsFingerprint)
+        ? previousResultsFingerprint : null,
+      applied: stage === "AWAITING_RESULTS" || stage === "RESULTS_READY",
+    }
+  }
+
+  function persistGuidedQueryFragment(query, previousResultsFingerprint, stage) {
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""))
+    params.set("seller-os-query", query)
+    params.set("seller-os-query-stage", stage)
+    if (previousResultsFingerprint) {
+      params.set("seller-os-previous-results", previousResultsFingerprint)
+    } else params.delete("seller-os-previous-results")
+    window.history.replaceState(window.history.state, "",
+      `${window.location.pathname}${window.location.search}#${params.toString()}`)
+  }
+
+  function clearGuidedQueryFragment() {
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""))
+    params.delete("seller-os-query")
+    params.delete("seller-os-query-stage")
+    params.delete("seller-os-previous-results")
+    const suffix = params.toString()
+    window.history.replaceState(window.history.state, "",
+      `${window.location.pathname}${window.location.search}${suffix ? `#${suffix}` : ""}`)
+  }
+
   function visibleResultsSignature() {
     const ids = deepQueryAll('a[href*="/itm/"]').filter(visible)
       .map((link) => listingIdFromLink(link)).filter(Boolean).slice(0, 12)
@@ -1058,23 +1101,34 @@
     captureButton.style.opacity = waitingForResults ? ".65" : "1"
   }
 
-  function confirmNextQueryResults() {
-    if (!nextQueryState) return false
-    const current = normalizedQuery(queryContext().searchQuery)
-    if (current !== normalizedQuery(nextQueryState.query)) return false
-    const signature = visibleResultsSignature()
-    if (!signature || signature === nextQueryState.previousResultsSignature) return false
-    nextQueryState.resultsReady = true
-    stopNextQueryWatch()
-    updateCaptureAvailability()
-    setStatus("Resultados nuevos listos. Revísalos y pulsa Capturar y continuar.", "success")
-    return true
+  async function confirmNextQueryResults() {
+    if (!nextQueryState || nextQueryCheckPending) return false
+    nextQueryCheckPending = true
+    try {
+      const current = normalizedQuery(queryContext().searchQuery)
+      if (current !== normalizedQuery(nextQueryState.query)) return false
+      const signature = visibleResultsSignature()
+      if (!signature || signature === nextQueryState.previousResultsSignature) return false
+      const fingerprint = await resultsFingerprint(signature)
+      if (fingerprint === nextQueryState.previousResultsFingerprint) return false
+      nextQueryState.resultsReady = true
+      persistGuidedQueryFragment(
+        nextQueryState.query, nextQueryState.previousResultsFingerprint, "RESULTS_READY",
+      )
+      stopNextQueryWatch()
+      updateCaptureAvailability()
+      setStatus("Resultados nuevos listos. Revísalos y pulsa Capturar y continuar.", "success")
+      return true
+    } finally {
+      nextQueryCheckPending = false
+    }
   }
 
   function watchForNextQueryResults() {
     stopNextQueryWatch()
-    if (!nextQueryState || confirmNextQueryResults()) return
-    nextQueryWatchTimer = window.setInterval(confirmNextQueryResults, 700)
+    if (!nextQueryState) return
+    void confirmNextQueryResults()
+    nextQueryWatchTimer = window.setInterval(() => void confirmNextQueryResults(), 700)
   }
 
   function assertExpectedQuery(context) {
@@ -1095,7 +1149,7 @@
     input.dispatchEvent(new Event("change", { bubbles: true }))
   }
 
-  function applyAndSearchNextQuery() {
+  async function applyAndSearchNextQuery() {
     const query = nextQueryState?.query ?? ""
     if (query.length < 3) return
     const input = researchSearchInput()
@@ -1104,7 +1158,12 @@
       return
     }
     nextQueryState.previousResultsSignature = visibleResultsSignature()
+    nextQueryState.previousResultsFingerprint = nextQueryState.previousResultsSignature
+      ? await resultsFingerprint(nextQueryState.previousResultsSignature) : null
     nextQueryState.resultsReady = false
+    persistGuidedQueryFragment(
+      query, nextQueryState.previousResultsFingerprint, "AWAITING_RESULTS",
+    )
     setSearchInputValue(input, query)
     input.focus()
     const form = input.form || input.closest("form")
@@ -1115,6 +1174,17 @@
     updateCaptureAvailability()
     setStatus("Próxima consulta aplicada. Esperando resultados nuevos de eBay…")
     watchForNextQueryResults()
+  }
+
+  function advanceAfterAcceptedCapture(value, ordinal, total) {
+    showNextQuery(value, ordinal, total)
+    if (!nextQueryState) return
+    setStatus("Captura aceptada. Cambiando automáticamente a la próxima consulta…", "success")
+    // The capture itself is the user's authorization for this guided plan.
+    // Continue with the next prepared query without requiring another button,
+    // while keeping capture disabled until both the visible query and result
+    // signature prove that eBay loaded a different table.
+    window.setTimeout(() => void applyAndSearchNextQuery(), 0)
   }
 
   function queryContext() {
@@ -1172,10 +1242,15 @@
     updateCaptureAvailability()
   }
 
-  function showNextQuery(value, ordinal, total) {
+  function showNextQuery(value, ordinal, total, restored = null) {
     const query = text(value).slice(0, 100)
     if (query.length < 3 || !nextQueryPanel || !nextQueryField || !nextQueryProgress) return
-    nextQueryState = { query, previousResultsSignature: visibleResultsSignature(), resultsReady: false }
+    nextQueryState = {
+      query,
+      previousResultsSignature: restored?.applied ? "" : visibleResultsSignature(),
+      previousResultsFingerprint: restored?.previousResultsFingerprint ?? null,
+      resultsReady: false,
+    }
     nextQueryField.value = query
     nextQueryProgress.textContent = Number.isInteger(Number(ordinal)) && Number.isInteger(Number(total))
       ? `Próxima consulta: ${Number(ordinal)} de ${Number(total)}` : "Próxima consulta preparada"
@@ -1187,6 +1262,7 @@
   function clearNextQuery() {
     nextQueryState = null
     stopNextQueryWatch()
+    clearGuidedQueryFragment()
     if (nextQueryPanel) nextQueryPanel.hidden = true
   }
 
@@ -1255,7 +1331,9 @@
       event.data.success ? "success" : "error")
       pending = null
       if (event.data.success && event.data.nextQuery) {
-        showNextQuery(event.data.nextQuery, event.data.nextQueryOrdinal, event.data.queryCount)
+        advanceAfterAcceptedCapture(
+          event.data.nextQuery, event.data.nextQueryOrdinal, event.data.queryCount,
+        )
       } else if (event.data.success) clearNextQuery()
       finishCapture()
     }
@@ -1268,7 +1346,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.1"
+  title.textContent = "Seller OS · Product Research · v1.2.2"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"
@@ -1307,16 +1385,19 @@
   applyNextQueryButton.type = "button"
   applyNextQueryButton.textContent = "Aplicar y buscar próxima consulta"
   applyNextQueryButton.style.cssText = "display:block;width:100%;margin-top:7px;padding:9px;border:0;border-radius:8px;background:#a5f3fc;color:#082f49;font-weight:800;cursor:pointer"
-  applyNextQueryButton.addEventListener("click", applyAndSearchNextQuery)
+  applyNextQueryButton.addEventListener("click", () => void applyAndSearchNextQuery())
   nextQueryPanel.append(nextQueryProgress, nextQueryField, applyNextQueryButton, copyNextQuery)
   panel.append(title, captureButton, status, nextQueryPanel)
   shadow.append(panel)
   document.documentElement.append(host)
-  const sellerOsSeedQuery = text(new URLSearchParams(
-    window.location.hash.replace(/^#/, ""),
-  ).get("seller-os-query")).slice(0, 100)
-  if (sellerOsSeedQuery.length >= 3) {
-    showNextQuery(sellerOsSeedQuery, null, null)
-    setStatus("Consulta recibida de Seller OS. Pulsa Aplicar y buscar; después usa Capturar y continuar.")
+  const sellerOsSeed = guidedQueryFragment()
+  if (sellerOsSeed.query.length >= 3) {
+    showNextQuery(sellerOsSeed.query, null, null, sellerOsSeed)
+    if (sellerOsSeed.applied) {
+      setStatus("Consulta guiada restaurada. Verificando que eBay cargó resultados nuevos…")
+    } else {
+      setStatus("Consulta recibida de Seller OS. Aplicándola automáticamente…")
+      window.setTimeout(() => void applyAndSearchNextQuery(), 0)
+    }
   }
 })()
