@@ -9,13 +9,15 @@ const workspace = readFileSync("app/admin/ebay/listing-workspace/page.tsx", "utf
 const api = readFileSync("app/api/admin/ebay/command-center/route.ts", "utf8")
 const hub = readFileSync("app/admin/ebay-seller-os/page.tsx", "utf8")
 const mobileNav = readFileSync("app/admin/ebay/components/seller-os-mobile-nav.tsx", "utf8")
+const canonicalNavigation = readFileSync("lib/seller-os/navigation.ts", "utf8")
 const registration = readFileSync("app/admin/ebay/listings/register/page.tsx", "utf8")
 const registrationApi = readFileSync("app/api/admin/ebay/listings/register/route.ts", "utf8")
 
-test("mobile command center centralizes the four seller destinations", () => {
-  for (const label of ["Inicio", "Oportunidades", "En curso", "Operación"]) {
-    assert.match(mobileNav, new RegExp(label))
+test("mobile command center centralizes the five Seller OS areas", () => {
+  for (const label of ["Inicio", "Oportunidades eBay", "Listings", "Operación", "Salud y configuración"]) {
+    assert.match(canonicalNavigation, new RegExp(label))
   }
+  assert.match(mobileNav, /SELLER_OS_NAVIGATION\.map/)
   assert.match(mobile, /SellerOsMobileNav/)
   assert.match(hub, /SellerOsMobileNav/)
   assert.match(mobileNav, /env\(safe-area-inset-bottom\)/)

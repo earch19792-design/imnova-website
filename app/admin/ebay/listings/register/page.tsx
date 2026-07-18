@@ -824,7 +824,7 @@ export default function RegisterManualEbayListingPage() {
           </div>
         </section>
       </section>
-      <SellerOsMobileNav active="operation" />
+      <SellerOsMobileNav active="operations" />
     </main>
   )
 }

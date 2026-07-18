@@ -85,6 +85,13 @@ export default function EbaySellerOsHubPage() {
           </div>
         </section>
 
+        <section id="salud" aria-labelledby="health-heading" className="scroll-mt-4 rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.05] p-4">
+          <p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Salud y configuración</p>
+          <h2 id="health-heading" className="mt-1 text-xl font-black">Conexiones, límites y auditoría</h2>
+          <p className="mt-2 text-sm leading-6 text-white/65">eBay, Luna, Product Research Capture, jobs, pausas y cumplimiento se revisan aquí sin exponer credenciales ni nombres técnicos como experiencia principal.</p>
+          <details className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-4"><summary className="cursor-pointer font-black">Ver detalles de seguridad</summary><ul className="mt-3 space-y-2 text-sm text-white/60"><li>OpenAI: apagado</li><li>Escrituras eBay: desactivadas</li><li>Producción: sin cambios</li><li>Publicación: requiere autorización separada</li></ul></details>
+        </section>
+
         <aside className="rounded-3xl border border-white/10 bg-white/[0.035] p-4"><h2 className="font-black">Regla de seguridad</h2><p className="mt-2 text-sm leading-6 text-white/60">Los scans, revisiones y paquetes internos pueden automatizarse. Crear o publicar un listing en eBay requiere una autorización separada y revisión humana.</p></aside>
       </section>
 

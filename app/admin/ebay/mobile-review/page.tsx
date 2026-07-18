@@ -1567,12 +1567,12 @@ export default function EbayMobileReviewPage() {
       </section>
       {selectedRadarCandidate && view === "top5" && <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 border-t border-white/15 bg-[#0b1018]/95 p-3 backdrop-blur"><div className="mx-auto flex max-w-xl items-center gap-3"><p className="min-w-0 flex-1 truncate text-sm font-bold">Seleccionado: {selectedRadarCandidate.productTitle}</p><button type="button" onClick={() => setView("loop1")} className="min-h-12 rounded-2xl bg-emerald-200 px-4 font-black text-black">Abrir Loop 1</button></div></div>}
       <SellerOsMobileNav
-        active={view === "pinned" || view === "loop1" || view === "loop2" ? "in-progress" : view === "blocked" ? "operation" : "opportunities"}
+        active={view === "blocked" ? "operations" : "ebay-opportunities"}
         operationCount={serverReviewsLoadState === "READY" ? alertCount : 0}
         onNavigate={(destination) => {
-          if (destination === "opportunities") { setView("opportunities"); return true }
-          if (destination === "in-progress") { setView("pinned"); return true }
-          if (destination === "operation") { setView("blocked"); return true }
+          if (destination === "ebay-opportunities") { setView("opportunities"); return true }
+          if (destination === "listings") { setView("pinned"); return true }
+          if (destination === "operations") { setView("blocked"); return true }
           if (hasReviewInProgress && !confirmReviewReset()) return true
           return false
         }}

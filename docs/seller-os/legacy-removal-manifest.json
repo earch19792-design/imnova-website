@@ -1,0 +1,19 @@
+{
+  "version": "SELLER_STAGING_LEGACY_REMOVAL_V1",
+  "generatedAt": "2026-07-18T00:00:00Z",
+  "deploymentScope": "imnova-staging",
+  "branch": "feature/centralize-ebay-mobile-command-center",
+  "removed": [
+    { "domain": "PUBLIC_COMMUNITY", "paths": ["app/api/community/ideas/route.ts", "app/api/community/member/route.ts", "app/api/community/register/route.ts", "app/api/community/vote/route.ts", "app/miembro/page.tsx"], "replacement": "NONE", "action": "REMOVE_FROM_SELLER_BUILD" },
+    { "domain": "PUBLIC_PRODUCTS_STORE", "paths": ["app/store/page.tsx", "app/store/[slug]/page.tsx", "app/api/store/featured/route.ts"], "replacement": "SELLER_OS_PUBLIC_HOME", "action": "REMOVE_FROM_SELLER_BUILD" },
+    { "domain": "IDEA_LAB", "paths": ["app/api/innova-lab/route.ts", "app/admin/products/[slug]/page.tsx"], "replacement": "NONE", "action": "REMOVE_FROM_SELLER_BUILD" },
+    { "domain": "CAMPAIGNS_AND_PRODUCT_DEVELOPMENT", "paths": ["app/admin/campaigns/page.tsx", "app/admin/campaigns/new/page.tsx", "app/admin/self-improvement/page.tsx", "app/admin/self-improvement/codex-gate/page.tsx", "app/admin/marketplace-os/page.tsx"], "replacement": "/admin", "action": "REDIRECT_TO_SELLER_HOME" },
+    { "domain": "LEGACY_PUBLIC_CONTENT", "paths": ["app/about/page.tsx", "app/contact/page.tsx", "app/privacy-policy/page.tsx"], "replacement": ["/", "/privacy"], "action": "REMOVE_OR_REDIRECT" },
+    { "domain": "LEGACY_ADMIN_NAVIGATION", "paths": ["app/admin/page.tsx", "app/admin/market-radar/page.tsx", "app/admin/ebay-pro/page.tsx", "app/admin/ebay-listing/page.tsx", "app/admin/ebay-listing-package/page.tsx", "app/admin/ebay-image-generator/page.tsx", "app/admin/ebay-listings/page.tsx"], "replacement": "FIVE_AREA_SELLER_OS_NAVIGATION", "action": "REPLACE_OR_REDIRECT" },
+    { "domain": "PUBLIC_HOME", "paths": ["app/page.tsx"], "replacement": "SELLER_OS_PUBLIC_HOME", "action": "REPLACE" },
+    { "domain": "GLOBAL_PUBLIC_INSTRUMENTATION", "paths": ["app/layout.tsx imports Analytics", "app/layout.tsx imports ButtonClickNotifier"], "replacement": "NONE", "action": "REMOVE_FROM_RUNTIME" }
+  ],
+  "databaseDataDeleted": false,
+  "historicalMigrationsDeleted": false,
+  "productionChanged": false
+}

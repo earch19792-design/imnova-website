@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
-import { readdirSync, readFileSync, statSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { extname, join, relative } from "node:path"
 
 const root = process.cwd()
@@ -172,6 +172,7 @@ for (const path of trackedPaths) {
   }
   if (/\.(?:png|jpe?g|gif|webp|ico|woff2?|ttf|lock)$/i.test(path)) continue
   const absolute = join(root, path)
+  if (!existsSync(absolute)) continue
   const content = readFileSync(absolute, "utf8")
   for (const pattern of secretPatterns) {
     if (pattern.test(content)) failures.push(`POTENTIAL_SECRET:${path}`)
