@@ -432,7 +432,10 @@ export async function POST(req: Request) {
       }
       let aiRunId = ""
       let aiLeaseToken = ""
+      let providerRequestDispatched = false
       let providerOutputReceived = false
+      const persistedSetAssetIds: string[] = []
+      const uploadedSetObjects: Array<{ bucketId: string; path: string }> = []
       let backgroundOutputSha256: string | null = null
       let backgroundProviderRequestId: string | null = null
       let backgroundUsage = {
@@ -505,6 +508,10 @@ export async function POST(req: Request) {
             }
             throw new Error("EBAY_IMAGE_OPENAI_RUN_NOT_CLAIMED")
           }
+          // From this point onward a timeout is ambiguous: OpenAI may have
+          // accepted the request even if Seller OS never receives the pixels.
+          // Fail closed instead of buying a duplicate generation automatically.
+          providerRequestDispatched = true
           const backgroundPlate = await requestSafeOpenAiBackgroundPlate({
             plan: aiPlan,
             apiKey: aiRuntime.apiKey,
@@ -540,6 +547,7 @@ export async function POST(req: Request) {
       }
       const created: JsonRecord[] = []
       const reused: JsonRecord[] = []
+      const pendingAssets: JsonRecord[] = []
       for (const composition of compositions) {
         const { data: duplicate, error: duplicateError } = await supabase
           .from("ebay_listing_image_assets")
@@ -549,6 +557,10 @@ export async function POST(req: Request) {
           .eq("listing_package_id", packageId)
           .eq("output_sha256", composition.outputSha256)
           .in("status", ["pending_review", "approved"])
+          .contains("transformation", {
+            listingGenerationId: approved.generation.id,
+            slot: composition.slot,
+          })
           .maybeSingle()
         if (duplicateError) throw new Error("EBAY_IMAGE_DUPLICATE_CHECK_FAILED")
         if (duplicate) {
@@ -565,52 +577,68 @@ export async function POST(req: Request) {
           .from(SOURCE_BUCKET)
           .upload(sourcePath, sourceBuffer, { contentType: sourceContentType, upsert: false })
         if (sourceUploadError) throw new Error("EBAY_IMAGE_SOURCE_STORAGE_FAILED")
+        uploadedSetObjects.push({ bucketId: SOURCE_BUCKET, path: sourcePath })
         const { error: outputUploadError } = await supabase.storage
           .from(STAGING_BUCKET)
           .upload(outputPath, composition.output, { contentType: "image/jpeg", upsert: false })
         if (outputUploadError) {
           await supabase.storage.from(SOURCE_BUCKET).remove([sourcePath])
+          uploadedSetObjects.pop()
           throw new Error("EBAY_IMAGE_OUTPUT_STORAGE_FAILED")
         }
-        const { data, error } = await supabase.rpc("ebay_create_pending_listing_image", {
-          p_package_id: packageId,
-          p_account_key: accountKey,
-          p_actor: actor,
-          p_opportunity_id: packageRow.opportunity_id,
-          p_candidate_key: candidateKey,
-          p_asset: {
-            id: assetId,
-            asset_role: roleBySlot[composition.slot],
-            source_kind: sourceKind,
-            source_url: sourceUrl,
-            source_storage_path: sourcePath,
-            output_storage_path: outputPath,
-            source_sha256: composition.sourceSha256,
-            output_sha256: composition.outputSha256,
-            source_width: sourceMetadata.width,
-            source_height: sourceMetadata.height,
-            output_width: composition.width,
-            output_height: composition.height,
-            output_bytes: composition.bytes,
-            rights_basis: rights.rightsBasis,
-            authorization_reference: rights.authorizationReference,
-            rights_evidence_confirmed: rights.rightsEvidenceConfirmed,
-            transformation_version: EBAY_LISTING_IMAGE_SET_VERSION,
-            transformation: {
-              ...composition.transformation,
-              listingGenerationId: approved.generation.id,
-              listingGenerationOutputHash: approved.generation.output_hash,
-            },
-            qa_result: composition.qa,
+        uploadedSetObjects.push({ bucketId: STAGING_BUCKET, path: outputPath })
+        pendingAssets.push({
+          id: assetId,
+          asset_role: roleBySlot[composition.slot],
+          source_kind: sourceKind,
+          source_url: sourceUrl,
+          source_storage_path: sourcePath,
+          output_storage_path: outputPath,
+          source_sha256: composition.sourceSha256,
+          output_sha256: composition.outputSha256,
+          source_width: sourceMetadata.width,
+          source_height: sourceMetadata.height,
+          output_width: composition.width,
+          output_height: composition.height,
+          output_bytes: composition.bytes,
+          rights_basis: rights.rightsBasis,
+          authorization_reference: rights.authorizationReference,
+          rights_evidence_confirmed: rights.rightsEvidenceConfirmed,
+          transformation_version: EBAY_LISTING_IMAGE_SET_VERSION,
+          transformation: {
+            ...composition.transformation,
+            listingGenerationId: approved.generation.id,
+            listingGenerationOutputHash: approved.generation.output_hash,
           },
+          qa_result: composition.qa,
         })
-        const row = Array.isArray(data) ? record(data[0]) : record(data)
-        if (error || !row.id) {
-          await supabase.storage.from(STAGING_BUCKET).remove([outputPath])
-          await supabase.storage.from(SOURCE_BUCKET).remove([sourcePath])
-          throw new Error(databaseErrorCode(error, "EBAY_IMAGE_ASSET_SAVE_FAILED"))
+      }
+      if (pendingAssets.length > 0) {
+        const { data, error } = await supabase.rpc(
+          "ebay_create_pending_listing_image_set",
+          {
+            p_package_id: packageId,
+            p_account_key: accountKey,
+            p_actor: actor,
+            p_opportunity_id: packageRow.opportunity_id,
+            p_candidate_key: candidateKey,
+            p_assets: pendingAssets,
+          },
+        )
+        const rows = (Array.isArray(data) ? data : data ? [data] : [])
+          .map(record)
+        if (
+          error
+          || rows.length !== pendingAssets.length
+          || rows.some((row) => !uuid(row.id))
+        ) {
+          throw new Error(databaseErrorCode(error, "EBAY_IMAGE_ASSET_SET_SAVE_FAILED"))
         }
-        created.push(row)
+        created.push(...rows)
+        persistedSetAssetIds.push(...rows.map((row) => uuid(row.id)))
+      }
+      if (created.length + reused.length !== EBAY_LISTING_IMAGE_SLOTS.length) {
+        throw new Error("EBAY_IMAGE_SET_INCOMPLETE")
       }
       if (aiRunId && aiLeaseToken && backgroundOutputSha256) {
         const { error: completionError } = await supabase.rpc(
@@ -648,22 +676,53 @@ export async function POST(req: Request) {
         ebayWrites: 0,
       })
       } catch (error) {
+        let failureCode = safeError(error)
+        try {
+          if (persistedSetAssetIds.length > 0) {
+            const { error: deleteError } = await supabase
+              .from("ebay_listing_image_assets")
+              .delete()
+              .eq("account_key", accountKey)
+              .eq("created_by", actor)
+              .eq("listing_package_id", packageId)
+              .in("id", persistedSetAssetIds)
+            if (deleteError) {
+              throw new Error("EBAY_IMAGE_PARTIAL_SET_DATABASE_CLEANUP_FAILED")
+            }
+          }
+          for (const bucketId of [SOURCE_BUCKET, STAGING_BUCKET]) {
+            const paths = uploadedSetObjects
+              .filter((object) => object.bucketId === bucketId)
+              .map((object) => object.path)
+            if (paths.length === 0) continue
+            const { error: removalError } = await supabase.storage
+              .from(bucketId)
+              .remove(paths)
+            if (removalError) {
+              throw new Error("EBAY_IMAGE_PARTIAL_SET_STORAGE_CLEANUP_FAILED")
+            }
+          }
+        } catch {
+          failureCode = "EBAY_IMAGE_PARTIAL_SET_CLEANUP_REQUIRED"
+        }
         if (aiRunId && aiLeaseToken) {
           try {
             await supabase.rpc("fail_ebay_openai_image_context_run", {
               p_run_id: aiRunId,
               p_actor: actor,
               p_lease_token: aiLeaseToken,
-              p_error_code: safeError(error),
+              p_error_code: failureCode,
               // Once pixels were returned, fail closed instead of silently
               // purchasing a duplicate generation on retry.
-              p_retryable: !providerOutputReceived && retryableOpenAiImageError(error),
+              p_retryable: !providerRequestDispatched
+                && !providerOutputReceived
+                && retryableOpenAiImageError(error),
             })
           } catch {
             // The original sanitized pipeline failure remains authoritative.
           }
         }
-        throw error
+        throw new Error(failureCode)
       }
     }
 

@@ -248,6 +248,20 @@ function contextDescription(context: EbayOpenAiBackgroundPlatePlan["context"]) {
   } satisfies Record<EbayOpenAiBackgroundPlatePlan["context"], string>)[context]
 }
 
+function safeBackgroundPlatePrompt(
+  context: EbayOpenAiBackgroundPlatePlan["context"],
+) {
+  return [
+    "Create a square unbranded commercial-photography BACKGROUND PLATE ONLY.",
+    `Scene: ${contextDescription(context)}.`,
+    "Keep the central 60 percent empty with a matte-white display surface.",
+    "Do not include any product, package, container, label, logo, brand, text,",
+    "symbol, watermark, person, hand, food, medicine, claim, measurement or quantity.",
+    "Use realistic neutral lighting and a restrained professional composition.",
+    "An exact authorized product photograph will be composited locally later.",
+  ].join(" ")
+}
+
 export function buildSafeOpenAiBackgroundPlatePlan(
   value: unknown,
   model: string,
@@ -260,15 +274,7 @@ export function buildSafeOpenAiBackgroundPlatePlan(
   // Intentionally omit product name, brand, pack, variant and all source data.
   // The provider creates only an empty scene; authorized product pixels are
   // composited locally after the response is discarded.
-  const prompt = [
-    "Create a square unbranded commercial-photography BACKGROUND PLATE ONLY.",
-    `Scene: ${contextDescription(context)}.`,
-    "Keep the central 60 percent empty with a matte-white display surface.",
-    "Do not include any product, package, container, label, logo, brand, text,",
-    "symbol, watermark, person, hand, food, medicine, claim, measurement or quantity.",
-    "Use realistic neutral lighting and a restrained professional composition.",
-    "An exact authorized product photograph will be composited locally later.",
-  ].join(" ")
+  const prompt = safeBackgroundPlatePrompt(context)
   const promptHash = sha256Text(prompt)
   const requestHash = sha256Text(JSON.stringify({
     version: EBAY_OPENAI_BACKGROUND_PLATE_VERSION,
@@ -336,6 +342,19 @@ export async function requestSafeOpenAiBackgroundPlate(input: {
 }) {
   if (!OPENAI_IMAGE_MODELS.has(input.plan.model)) {
     throw new Error("EBAY_IMAGE_OPENAI_MODEL_NOT_ALLOWED")
+  }
+  if (
+    input.plan.version !== EBAY_OPENAI_BACKGROUND_PLATE_VERSION
+    || input.plan.prompt !== safeBackgroundPlatePrompt(input.plan.context)
+    || input.plan.promptHash !== sha256Text(input.plan.prompt)
+    || input.plan.imageCount !== 1
+    || input.plan.quality !== "low"
+    || input.plan.size !== "1024x1024"
+    || input.plan.sendsProductBytes !== false
+    || input.plan.sendsProductUrl !== false
+    || input.plan.sendsCompetitorData !== false
+  ) {
+    throw new Error("EBAY_IMAGE_OPENAI_PLAN_NOT_ALLOWED")
   }
   if (!/^sk-[A-Za-z0-9_-]{8,}$/.test(input.apiKey.trim())) {
     throw new Error("EBAY_IMAGE_OPENAI_KEY_MISSING")
