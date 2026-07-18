@@ -13,6 +13,10 @@ import {
 import {
   getEbayCommercialOrdersCallbackConfiguration,
 } from "./ebay-commercial-orders-oauth-domain"
+import {
+  createEbayReadonlyRateLimitError,
+  getEbayReadonlyRateLimitMetadata,
+} from "./ebay-readonly-rate-limit"
 
 export {
   classifyEbayCommercialOAuthFailure,
@@ -54,7 +58,7 @@ function text(value: unknown) {
 }
 
 function retryable(status: number) {
-  return status === 429 || status >= 500
+  return status >= 500
 }
 
 async function wait(attempt: number) {
@@ -151,6 +155,13 @@ async function tokenRequest(input: {
           expiresIn: Math.max(120, Number(payload.expires_in) || 7_200),
         }
       }
+      if (response.status === 429) {
+        throw createEbayReadonlyRateLimitError("EBAY_OAUTH_429", response, {
+          apiFamily: "OAUTH",
+          operation: "ORDERS_REFRESH_TOKEN",
+          endpoint: "/identity/v1/oauth2/token",
+        })
+      }
       const category = classifyEbayCommercialOAuthFailure(response.status, payload)
       if (retryable(response.status) && attempt < MAX_RETRIES - 1) {
         await wait(attempt)
@@ -159,6 +170,7 @@ async function tokenRequest(input: {
       throw new EbayCommercialOrdersOAuthError(category)
     } catch (error) {
       if (error instanceof EbayCommercialOrdersOAuthError) throw error
+      if (getEbayReadonlyRateLimitMetadata(error)) throw error
       if (attempt === MAX_RETRIES - 1) {
         throw new EbayCommercialOrdersOAuthError("TOKEN_ENDPOINT_UNAVAILABLE")
       }

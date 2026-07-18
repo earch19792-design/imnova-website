@@ -126,7 +126,9 @@ test("canonical links exist and navigation remains mobile accessible", () => {
 
 test("route and bundle surface regress downward", () => {
   assert.ok(countNamed("app", "page.tsx") <= 13, "page route count regressed")
-  assert.ok(countNamed("app/api", "route.ts") <= 65, "API route count regressed")
+  // 68 legacy-era routes -> 65 isolated routes -> one approval-only Seller OS
+  // strategic-advisor route. The old product/community domain remains at zero.
+  assert.ok(countNamed("app/api", "route.ts") <= 66, "API route count regressed")
   assert.equal(countNamed("app/api/community", "route.ts"), 0)
   assert.equal(countNamed("app/api/store", "route.ts"), 0)
 })

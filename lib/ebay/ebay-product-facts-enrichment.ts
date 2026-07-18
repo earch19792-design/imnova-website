@@ -154,7 +154,7 @@ function catalogObservations(input: { candidateId: string; lunaVariantId: string
   const sourceReference = safeSourceReference("EBAY_CATALOG_OFFICIAL_READONLY", text(product.epid) || text(product.title))
   const add = (key: string, value: unknown) => value === null || value === undefined || value === "" ? null : observation({
     candidateId: input.candidateId, lunaVariantId: input.lunaVariantId, scope: "PRODUCT_UNIT", key, value,
-    sourceType: "EBAY_CATALOG_OFFICIAL_READONLY", authority: "MANUFACTURER_OR_LABEL", status: "CORROBORATED",
+    sourceType: "EBAY_CATALOG_OFFICIAL_READONLY", authority: "CORROBORATION", status: "CORROBORATED",
     confidence: .72, observedAt: input.observedAt, sourceReference,
   })
   const aspects = array(product.aspects).map(record)
@@ -190,6 +190,30 @@ async function latestQueueRun(supabase: SupabaseClient, accountKey: string) {
     .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE).order("created_at", { ascending: false }).limit(1).maybeSingle()
   if (error) throw new Error("PRODUCT_FACT_QUEUE_RUN_READ_FAILED")
   return data
+}
+
+async function queueRunForCandidateIds(supabase: SupabaseClient, accountKey: string, candidateIds: string[]) {
+  const boundedIds = [...new Set(candidateIds)].slice(0, MAX_CANDIDATES)
+  const { data: items, error: itemError } = await supabase
+    .from("marketplace_listing_approval_queue_items")
+    .select("id,run_id")
+    .eq("marketplace_account_key", accountKey)
+    .eq("marketplace", MARKETPLACE)
+    .in("id", boundedIds)
+  if (itemError) throw new Error("PRODUCT_FACT_CANDIDATE_QUEUE_RUN_READ_FAILED")
+  if ((items ?? []).length !== boundedIds.length) throw new Error("PRODUCT_FACT_CANDIDATE_QUEUE_RUN_MISSING")
+  const runIds = [...new Set((items ?? []).map((item) => text(item.run_id)).filter(Boolean))]
+  if (runIds.length !== 1) throw new Error("PRODUCT_FACT_CANDIDATES_CROSS_QUEUE_RUN_BLOCKED")
+  const { data: run, error: runError } = await supabase
+    .from("marketplace_listing_approval_queue_runs")
+    .select("id")
+    .eq("id", runIds[0])
+    .eq("marketplace_account_key", accountKey)
+    .eq("marketplace", MARKETPLACE)
+    .maybeSingle()
+  if (runError) throw new Error("PRODUCT_FACT_CANDIDATE_QUEUE_RUN_READ_FAILED")
+  if (!run?.id) throw new Error("PRODUCT_FACT_CANDIDATE_QUEUE_RUN_MISSING")
+  return run
 }
 
 async function eligibleCandidates(supabase: SupabaseClient, accountKey: string, runId: string, candidateIds?: string[]) {
@@ -257,10 +281,28 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
   const boundary = productIdentityReconciliationBoundary(input.environment ?? process.env)
   if (!boundary.preview || !boundary.staging || !boundary.branchMatch) throw new Error("PRODUCT_FACTS_PREVIEW_STAGING_REQUIRED")
   const now = input.now ?? new Date()
-  const queueRun = await latestQueueRun(input.supabase, input.accountKey)
+  // Durable orchestrators keep queue-item IDs across human gates. Resolve the
+  // owning run from those IDs instead of silently jumping to a newer queue run.
+  const queueRun = input.candidateIds?.length
+    ? await queueRunForCandidateIds(input.supabase, input.accountKey, input.candidateIds)
+    : await latestQueueRun(input.supabase, input.accountKey)
   if (!queueRun?.id) throw new Error("PRODUCT_FACT_QUEUE_RUN_MISSING")
   const candidates = await eligibleCandidates(input.supabase, input.accountKey, queueRun.id, input.candidateIds)
-  const candidateResults: Array<{ candidateId: string; status: string; openAiInputReady: boolean; reason?: string }> = []
+  const candidateResults: Array<{
+    candidateId: string
+    status: string
+    openAiInputReady: boolean
+    reason?: string
+    gates?: Record<string, boolean>
+    exception?: JsonRecord | null
+    factCounts?: JsonRecord
+    requirementCounts?: JsonRecord
+    resolvedFacts?: Array<{ scope: string; key: string; value: unknown; unit: string | null; status: string }>
+    resolvedRequirements?: Array<{ aspectName: string; required: boolean; status: string; selectedValue: string | null; allowedValues: string[] }>
+    taxonomy?: { status: string; categoryId: string | null; categoryTreeId: string | null; observedAt: string | null }
+    evidenceBinding?: { factRunId: string; currentRunBound: boolean; sourceSnapshotLinks: number;
+      observationLinks: number; resolutionLinks: number; requirementLinks: number; readinessEventLinks: number }
+  }> = []
   const prepared: Array<{ candidate: JsonRecord; variant: JsonRecord; observations: FactObservation[]; facts: ResolvedFact[]; requirements: ReturnType<typeof mapTaxonomyRequirements>; readiness: ReturnType<typeof calculateReadiness>; exception: ReturnType<typeof targetedFactException>; sourceSnapshots: JsonRecord[]; taxonomy: JsonRecord; sourceAttempts: JsonRecord }> = []
   for (const candidate of candidates) {
     try {
@@ -305,7 +347,7 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
           sourceType: "LUNA_EXACT_VARIANT", authority: "SUPPLIER", observedAt: base.observedAt, status: "AVAILABLE",
           payload: { structuredVariant: true, fieldsObserved: base.entries.map((entry) => entry.factKey) } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
-          sourceType: "EBAY_CATALOG_OFFICIAL_READONLY", authority: "MANUFACTURER_OR_LABEL", observedAt: text(catalogRecord.observedAt) || null,
+          sourceType: "EBAY_CATALOG_OFFICIAL_READONLY", authority: "CORROBORATION", observedAt: text(catalogRecord.observedAt) || null,
           status: text(catalogRecord.status) || "REQUEST_FAILED", payload: { productCount: array(catalogRecord.products).length } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "EBAY_TAXONOMY_OFFICIAL_READONLY", authority: "EBAY_TAXONOMY", observedAt: text(taxonomyRecord.observedAt) || null,
@@ -335,39 +377,74 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
         offerPackCount: number(factKeyValue(firstResolution.facts, "OFFER_PACK", "offerPackCount")), now })
       const observations = [...initial, ...derived, ...(estimate ? [estimate.observation] : [])]
       const resolved = resolveProductFacts(observations, now)
-      const requirements = mapTaxonomyRequirements(array(taxonomyRecord.aspects).map(record).map((aspect) => ({
-        name: text(aspect.name), required: aspect.required === true,
+      const requiredAspectNames = new Set(array(taxonomyRecord.requiredAspects).map(record)
+        .map((aspect) => text(aspect.name).toLocaleLowerCase()).filter(Boolean))
+      const taxonomySourceReady = text(taxonomyRecord.status) === "AVAILABLE" && /^\d+$/.test(text(taxonomyRecord.categoryId)) &&
+        array(taxonomyRecord.aspects).length > 0
+      const taxonomyAspects = taxonomySourceReady ? array(taxonomyRecord.aspects) : []
+      const requirements = mapTaxonomyRequirements(taxonomyAspects.map(record).map((aspect) => ({
+        name: text(aspect.name), required: aspect.required === true || requiredAspectNames.has(text(aspect.name).toLocaleLowerCase()),
         values: array(aspect.suggestedValues).map((value) => text(value)).filter(Boolean), aspectMode: text(aspect.mode) || null,
       })).filter((aspect) => aspect.name), resolved.facts)
       const readiness = calculateReadiness({ identityExact: candidate.luna_match_status === "EXACT_LUNA_MATCH", facts: resolved.facts,
-        requirements, regulated: regulatedCandidate(variant, base.metadata) })
+        requirements, regulated: regulatedCandidate(variant, base.metadata), taxonomySourceReady })
+      const exception = targetedFactException({ readiness, requirements })
       prepared.push({ candidate, variant, observations, facts: resolved.facts, requirements, readiness,
-        exception: targetedFactException({ readiness, requirements }), sourceSnapshots, taxonomy: taxonomyRecord,
-        sourceAttempts: { browse: browseStatus, trading: tradingStatus } })
-      candidateResults.push({ candidateId: text(candidate.id), status: "PREPARED", openAiInputReady: readiness.gates.OPENAI_INPUT_READY })
+        exception, sourceSnapshots, taxonomy: taxonomyRecord,
+        sourceAttempts: { catalog: text(catalogRecord.status) || "REQUEST_FAILED", taxonomy: text(taxonomyRecord.status) || "REQUEST_FAILED",
+          browse: browseStatus, trading: tradingStatus } })
+      const factCounts = resolved.facts.reduce<JsonRecord>((counts, fact) => {
+        counts.total = Number(counts.total ?? 0) + 1
+        counts[fact.verificationStatus] = Number(counts[fact.verificationStatus] ?? 0) + 1
+        return counts
+      }, {})
+      const requirementCounts = requirements.reduce<JsonRecord>((counts, requirement) => {
+        counts.total = Number(counts.total ?? 0) + 1
+        counts[requirement.status] = Number(counts[requirement.status] ?? 0) + 1
+        return counts
+      }, {})
+      candidateResults.push({ candidateId: text(candidate.id), status: "PREPARED",
+        openAiInputReady: readiness.gates.OPENAI_INPUT_READY, gates: readiness.gates,
+        exception: exception ? record(exception) : null, factCounts, requirementCounts,
+        resolvedFacts: resolved.facts.filter((fact) => ["VERIFIED", "CORROBORATED", "DERIVED_VERIFIED"].includes(fact.verificationStatus))
+          .map((fact) => ({ scope: fact.factScope, key: fact.factKey, value: fact.selectedValue,
+            unit: fact.selectedUnit, status: fact.verificationStatus })),
+        resolvedRequirements: requirements.map((requirement) => ({ aspectName: requirement.aspectName,
+          required: requirement.required, status: requirement.status, selectedValue: requirement.selectedValue,
+          allowedValues: requirement.allowedValues })),
+        taxonomy: { status: text(taxonomyRecord.status), categoryId: text(taxonomyRecord.categoryId) || null,
+          categoryTreeId: text(taxonomyRecord.categoryTreeId) || null, observedAt: text(taxonomyRecord.observedAt) || null } })
     } catch (error) {
       if (getEbayReadonlyRateLimitMetadata(error)) throw error
       candidateResults.push({ candidateId: text(candidate.id), status: "PARTIAL", openAiInputReady: false, reason: safeCode(error) })
     }
   }
-  const sourceReads = { lunaExactVariant: prepared.length, ebayCatalog: prepared.length, ebayTaxonomy: prepared.length,
+  const sourceReads = { lunaExactVariant: prepared.length,
+    ebayCatalog: prepared.filter((entry) => ["AVAILABLE", "NO_MATCH"].includes(text(entry.sourceAttempts.catalog))).length,
+    ebayTaxonomy: prepared.filter((entry) => text(entry.sourceAttempts.taxonomy) === "AVAILABLE").length,
     ebayBrowse: prepared.filter((entry) => entry.sourceAttempts.browse === "AVAILABLE").length,
     ebayTradingGetItem: prepared.filter((entry) => entry.sourceAttempts.trading === "AVAILABLE").length,
     manufacturerOfficial: 0, regulatorOfficial: 0 }
   const { data: run, error: runError } = await input.supabase.from("marketplace_product_fact_runs").insert({
     queue_run_id: queueRun.id, marketplace_account_key: input.accountKey, marketplace: MARKETPLACE, engine_version: PRODUCT_FACTS_ENGINE_VERSION,
-    candidate_limit: MAX_CANDIDATES, candidates_requested: candidates.length, candidates_processed: prepared.length,
-    candidates_excluded: candidates.length - prepared.length, source_reads: sourceReads, status: candidateResults.some((result) => result.status === "PARTIAL") ? "PARTIAL" : "COMPLETED",
-    openai_calls: 0, ebay_writes: 0, production_changed: false, started_at: now.toISOString(), completed_at: new Date().toISOString(),
+    candidate_limit: MAX_CANDIDATES, candidates_requested: candidates.length, candidates_processed: 0,
+    candidates_excluded: 0, source_reads: {}, status: "RUNNING",
+    openai_calls: 0, ebay_writes: 0, production_changed: false, started_at: now.toISOString(), completed_at: null,
   }).select("id").single()
   if (runError || !run) throw new Error("PRODUCT_FACT_RUN_PERSIST_FAILED")
-  for (const entry of prepared) {
+  try {
+    for (const entry of prepared) {
     const candidateId = text(entry.candidate.id)
     const sourceRows = entry.sourceSnapshots.map((row) => ({ ...row, fact_run_id: run.id, marketplace_account_key: input.accountKey }))
     await insertIgnoringDuplicates(input.supabase, "marketplace_product_fact_source_snapshots", sourceRows)
+    const sourceHashes = [...new Set(sourceRows.map((row) => text(record(row).evidence_hash)).filter(Boolean))]
+    const { data: persistedSources, error: sourceReadError } = await input.supabase.from("marketplace_product_fact_source_snapshots")
+      .select("id,evidence_hash,fact_run_id").eq("queue_item_id", candidateId).in("evidence_hash", sourceHashes)
+    if (sourceReadError) throw new Error("PRODUCT_FACT_SOURCE_SNAPSHOT_LOOKUP_FAILED")
     await insertIgnoringDuplicates(input.supabase, "marketplace_product_fact_observations", entry.observations.map((row) => persistenceObservation(run.id, input.accountKey, row)))
+    const observationHashes = [...new Set(entry.observations.map((row) => row.evidenceHash ?? factObservationKey(row)))]
     const { data: persisted, error: observationReadError } = await input.supabase.from("marketplace_product_fact_observations")
-      .select("id,evidence_hash").eq("queue_item_id", candidateId).in("evidence_hash", entry.observations.map((row) => row.evidenceHash ?? factObservationKey(row)))
+      .select("id,evidence_hash,fact_run_id").eq("queue_item_id", candidateId).in("evidence_hash", observationHashes)
     if (observationReadError) throw new Error("PRODUCT_FACT_OBSERVATION_LOOKUP_FAILED")
     const ids = new Map((persisted ?? []).map((row) => [row.evidence_hash, row.id] as const))
     const resolutions = entry.facts.map((fact) => ({ fact_run_id: run.id, queue_item_id: candidateId, marketplace_account_key: input.accountKey,
@@ -378,6 +455,10 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
       resolver_version: fact.resolverVersion, resolution_hash: productFactsHash({ candidateId, fact: { scope: fact.factScope, key: fact.factKey,
         value: fact.selectedValue, unit: fact.selectedUnit, status: fact.verificationStatus, rule: fact.resolutionRule } }) }))
     await insertIgnoringDuplicates(input.supabase, "marketplace_product_fact_resolutions", resolutions)
+    const resolutionHashes = [...new Set(resolutions.map((row) => text(row.resolution_hash)).filter(Boolean))]
+    const { data: persistedResolutions, error: resolutionReadError } = await input.supabase.from("marketplace_product_fact_resolutions")
+      .select("id,resolution_hash,fact_run_id").eq("queue_item_id", candidateId).in("resolution_hash", resolutionHashes)
+    if (resolutionReadError) throw new Error("PRODUCT_FACT_RESOLUTION_LOOKUP_FAILED")
     const conflicts = resolveProductFacts(entry.observations, now).conflicts.map((conflict) => ({ fact_run_id: run.id, queue_item_id: candidateId,
       marketplace_account_key: input.accountKey, marketplace: MARKETPLACE, fact_scope: conflict.factScope, fact_key: conflict.factKey,
       observation_ids: conflict.observationIds.map((id) => ids.get(id)).filter(Boolean), conflicting_value_hashes: conflict.values.map(productFactsHash),
@@ -391,6 +472,12 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
       requirement_status: requirement.status, taxonomy_observed_at: text(entry.taxonomy.observedAt) || null,
       requirement_hash: productFactsHash({ candidateId, requirement }) }))
     await insertIgnoringDuplicates(input.supabase, "marketplace_product_fact_requirements", requirementRows)
+    const requirementHashes = [...new Set(requirementRows.map((row) => text(row.requirement_hash)).filter(Boolean))]
+    const { data: persistedRequirements, error: requirementReadError } = requirementHashes.length
+      ? await input.supabase.from("marketplace_product_fact_requirements").select("id,requirement_hash,fact_run_id")
+        .eq("queue_item_id", candidateId).in("requirement_hash", requirementHashes)
+      : { data: [], error: null }
+    if (requirementReadError) throw new Error("PRODUCT_FACT_REQUIREMENT_LOOKUP_FAILED")
     const offerProfile = { fact_run_id: run.id, queue_item_id: candidateId, marketplace_account_key: input.accountKey, marketplace: MARKETPLACE,
       offer_pack_count: number(factKeyValue(entry.facts, "OFFER_PACK", "offerPackCount")), units_per_pack: number(factKeyValue(entry.facts, "OFFER_PACK", "unitsPerPack")),
       total_unit_count: number(factKeyValue(entry.facts, "OFFER_PACK", "totalUnitCount")), manufacturer_multipack: null, seller_created_multipack: true,
@@ -417,7 +504,73 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
       event_hash: productFactsHash({ candidateId, gate, ready, blockers, exception: ready ? null : entry.exception }), observed_at: now.toISOString(),
       openai_calls: 0, ebay_writes: 0, production_changed: false }))
     await insertIgnoringDuplicates(input.supabase, "marketplace_product_fact_readiness_events", gateRows)
+    const readinessEventHashes = [...new Set(gateRows.map((row) => text(row.event_hash)).filter(Boolean))]
+    const { data: persistedReadinessEvents, error: readinessEventReadError } = await input.supabase
+      .from("marketplace_product_fact_readiness_events").select("id,event_hash,fact_run_id")
+      .eq("queue_item_id", candidateId).in("event_hash", readinessEventHashes)
+    if (readinessEventReadError) throw new Error("PRODUCT_FACT_READINESS_EVENT_LOOKUP_FAILED")
+    if ((persistedSources ?? []).length !== sourceHashes.length || (persisted ?? []).length !== observationHashes.length ||
+      (persistedResolutions ?? []).length !== resolutionHashes.length ||
+      (persistedRequirements ?? []).length !== requirementHashes.length ||
+      (persistedReadinessEvents ?? []).length !== readinessEventHashes.length) {
+      throw new Error("PRODUCT_FACT_CURRENT_RUN_EVIDENCE_INCOMPLETE")
+    }
+    const linkBase = { fact_run_id: run.id, queue_item_id: candidateId,
+      marketplace_account_key: input.accountKey, marketplace: MARKETPLACE }
+    const evidenceLinks = [
+      ...(persistedSources ?? []).map((row) => ({ ...linkBase, artifact_type: "SOURCE_SNAPSHOT",
+        source_snapshot_id: row.id, canonical_fact_run_id: row.fact_run_id, artifact_hash: row.evidence_hash })),
+      ...(persisted ?? []).map((row) => ({ ...linkBase, artifact_type: "OBSERVATION",
+        observation_id: row.id, canonical_fact_run_id: row.fact_run_id, artifact_hash: row.evidence_hash })),
+      ...(persistedResolutions ?? []).map((row) => ({ ...linkBase, artifact_type: "RESOLUTION",
+        resolution_id: row.id, canonical_fact_run_id: row.fact_run_id, artifact_hash: row.resolution_hash })),
+      ...(persistedRequirements ?? []).map((row) => ({ ...linkBase, artifact_type: "REQUIREMENT",
+        requirement_id: row.id, canonical_fact_run_id: row.fact_run_id, artifact_hash: row.requirement_hash })),
+      ...(persistedReadinessEvents ?? []).map((row) => ({ ...linkBase, artifact_type: "READINESS_EVENT",
+        readiness_event_id: row.id, canonical_fact_run_id: row.fact_run_id, artifact_hash: row.event_hash })),
+    ]
+    const { error: evidenceLinkError } = await input.supabase.from("marketplace_product_fact_run_evidence_links")
+      .upsert(evidenceLinks, { onConflict: "fact_run_id,artifact_type,artifact_hash", ignoreDuplicates: true })
+    if (evidenceLinkError) throw new Error("PRODUCT_FACT_CURRENT_RUN_EVIDENCE_LINK_FAILED")
+    const expectedHashes = [...sourceHashes, ...observationHashes, ...resolutionHashes, ...requirementHashes, ...readinessEventHashes]
+    const { data: linkedEvidence, error: linkedEvidenceError } = await input.supabase.from("marketplace_product_fact_run_evidence_links")
+      .select("artifact_type,artifact_hash").eq("fact_run_id", run.id).eq("queue_item_id", candidateId)
+      .in("artifact_hash", expectedHashes)
+    if (linkedEvidenceError) throw new Error("PRODUCT_FACT_CURRENT_RUN_EVIDENCE_LINK_READ_FAILED")
+    const linked = (artifactType: string) => new Set((linkedEvidence ?? [])
+      .filter((row) => row.artifact_type === artifactType).map((row) => row.artifact_hash))
+    const linkedSources = linked("SOURCE_SNAPSHOT")
+    const linkedObservations = linked("OBSERVATION")
+    const linkedResolutions = linked("RESOLUTION")
+    const linkedRequirements = linked("REQUIREMENT")
+    const linkedReadinessEvents = linked("READINESS_EVENT")
+    const currentRunBound = sourceHashes.every((hash) => linkedSources.has(hash)) &&
+      observationHashes.every((hash) => linkedObservations.has(hash)) && resolutionHashes.every((hash) => linkedResolutions.has(hash)) &&
+      requirementHashes.every((hash) => linkedRequirements.has(hash)) && readinessEventHashes.every((hash) => linkedReadinessEvents.has(hash))
+    if (!currentRunBound) throw new Error("PRODUCT_FACT_CURRENT_RUN_EVIDENCE_INCOMPLETE")
+      const candidateResult = candidateResults.find((result) => result.candidateId === candidateId)
+      if (candidateResult) candidateResult.evidenceBinding = { factRunId: run.id, currentRunBound,
+        sourceSnapshotLinks: linkedSources.size, observationLinks: linkedObservations.size,
+        resolutionLinks: linkedResolutions.size, requirementLinks: linkedRequirements.size,
+        readinessEventLinks: linkedReadinessEvents.size }
+    }
+  } catch (error) {
+    const candidatesWithCompleteEvidence = candidateResults.filter((result) => result.evidenceBinding?.currentRunBound === true).length
+    const { error: failureFinalizeError } = await input.supabase.rpc("finalize_product_fact_run_v1", {
+      p_run_id: run.id, p_status: "FAILED", p_candidates_processed: candidatesWithCompleteEvidence,
+      p_candidates_excluded: candidates.length - prepared.length, p_source_reads: sourceReads,
+      p_completed_at: new Date().toISOString(),
+    })
+    if (failureFinalizeError) throw new Error("PRODUCT_FACT_RUN_FAILURE_FINALIZATION_FAILED")
+    throw error
   }
+  const terminalStatus = candidateResults.some((result) => result.status === "PARTIAL") ? "PARTIAL" : "COMPLETED"
+  const { error: finalizeError } = await input.supabase.rpc("finalize_product_fact_run_v1", {
+    p_run_id: run.id, p_status: terminalStatus, p_candidates_processed: prepared.length,
+    p_candidates_excluded: candidates.length - prepared.length, p_source_reads: sourceReads,
+    p_completed_at: new Date().toISOString(),
+  })
+  if (finalizeError) throw new Error("PRODUCT_FACT_RUN_FINALIZATION_FAILED")
   return { runId: run.id, candidatesRequested: candidates.length, candidatesProcessed: prepared.length,
     candidatesExcluded: candidates.length - prepared.length, sourceReads, candidateResults, openAiCalls: 0, ebayWrites: 0,
     productionChanged: false, discoveryRepeated: false }

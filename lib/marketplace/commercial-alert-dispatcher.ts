@@ -94,6 +94,7 @@ export async function dispatchCommercialAlertOutbox(
       environment: process.env.VERCEL_ENV ?? "development",
       configuration,
       claimed: 0,
+      metaAccepted: 0,
       delivered: 0,
       failed: 0,
       previews: await previewCommercialAlertOutbox(
@@ -119,7 +120,7 @@ export async function dispatchCommercialAlertOutbox(
   })
   if (error) throw new Error("COMMERCIAL_ALERT_CLAIM_FAILED")
   const rows = (data ?? []) as OutboxRow[]
-  let delivered = 0
+  let metaAccepted = 0
   let failed = 0
   for (const row of rows) {
     let result
@@ -148,7 +149,7 @@ export async function dispatchCommercialAlertOutbox(
         },
       )
       if (completeError || completed !== true) throw new Error("COMMERCIAL_ALERT_COMPLETE_FAILED")
-      delivered += 1
+      metaAccepted += 1
     } else {
       const { data: recorded, error: recordError } = await supabase.rpc(
         "fail_alert_delivery",
@@ -168,7 +169,10 @@ export async function dispatchCommercialAlertOutbox(
     environment: "preview",
     configuration,
     claimed: rows.length,
-    delivered,
+    metaAccepted,
+    // Meta accepting the template request is not proof that the handset
+    // received it. Delivery remains zero until a provider webhook is verified.
+    delivered: 0,
     failed,
     safety: {
       previewOnlyDelivery: true,

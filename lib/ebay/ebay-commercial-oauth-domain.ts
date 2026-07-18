@@ -100,7 +100,7 @@ export function oauthStatusFromCommercialError(code: string) : EbayCommercialOAu
 }
 
 export function getEbayCommercialReaderAuthState(
-  reader: "orders" | "analytics" | "watchers",
+  reader: "orders" | "analytics" | "watchers" | "messages",
   errorCode?: string,
 ) {
   const code = errorCode ?? ""

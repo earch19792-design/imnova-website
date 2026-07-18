@@ -52,9 +52,24 @@ export async function GET(req: Request) {
     })
     return NextResponse.json({ success: true, schedule, lanes, run })
   } catch (error) {
+    const code = safeCode(error)
     return NextResponse.json(
-      { success: false, error: safeCode(error), schedule },
-      { status: 502 },
+      {
+        success: false,
+        error: code,
+        schedule,
+        safety: code === "COMMERCIAL_MONITOR_SCHEDULER_GATE_REQUIRED"
+          ? {
+              externalReadersStarted: false,
+              productionUnchanged: true,
+              ebayWriteUsed: false,
+            }
+          : {
+              productionUnchanged: true,
+              ebayWriteUsed: false,
+            },
+      },
+      { status: code === "COMMERCIAL_MONITOR_SCHEDULER_GATE_REQUIRED" ? 423 : 502 },
     )
   }
 }

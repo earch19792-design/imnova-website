@@ -28,6 +28,9 @@ export async function recordPersistentEbayRateLimit(
 ) {
   const rateLimit = getEbayReadonlyRateLimitMetadata(input.error)
   if (!rateLimit) return null
+  const apiFamily = rateLimit.apiFamily || input.apiFamily
+  const operation = rateLimit.operation || input.operation
+  const endpoint = rateLimit.endpoint || input.endpoint
   const observedAt = rateLimit.observedAt
   const fallbackSeconds = 15 * 60
   const retryAfterSeconds = rateLimit.retryAfterSeconds ?? fallbackSeconds
@@ -36,8 +39,8 @@ export async function recordPersistentEbayRateLimit(
     .from("ebay_api_quota_states")
     .upsert({
       marketplace: "EBAY_US",
-      api_family: input.apiFamily,
-      operation: input.operation,
+      api_family: apiFamily,
+      operation,
       status: "PAUSED_429",
       remaining: 0,
       available_budget: 0,
@@ -51,8 +54,8 @@ export async function recordPersistentEbayRateLimit(
   if (stateError) throw new Error("EBAY_QUOTA_429_STATE_PERSIST_FAILED")
   const { error: eventError } = await supabase.from("ebay_api_quota_events").insert({
     quota_state_id: state.id,
-    api_family: input.apiFamily,
-    endpoint: input.endpoint,
+    api_family: apiFamily,
+    endpoint,
     http_status: rateLimit.httpStatus,
     retry_after_seconds: rateLimit.retryAfterSeconds,
     rate_limit_reset_at: resumeAt,

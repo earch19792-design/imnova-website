@@ -30,5 +30,5 @@ export async function GET(req: Request) {
 
 function safeCode(error: unknown) {
   const value = error instanceof Error ? error.message : ""
-  return /^FULFILLMENT_[A-Z0-9_]+$/.test(value) ? value : "FULFILLMENT_SIMULATOR_FAILED"
+  return /^(?:FULFILLMENT|EBAY_FULFILLMENT)_[A-Z0-9_]+$/.test(value) ? value : "FULFILLMENT_SIMULATOR_FAILED"
 }

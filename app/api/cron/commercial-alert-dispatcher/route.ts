@@ -32,8 +32,25 @@ export async function GET(req: Request) {
     { status: 503 },
   )
   try {
+    const supabase = getSupabaseAdminClient()
+    const { error: gateError } = await supabase.rpc(
+      "require_active_commercial_monitor_scheduler_authorization",
+      {
+        p_marketplace_account_key: accountKey,
+        p_marketplace: "EBAY_US",
+      },
+    )
+    if (gateError) return NextResponse.json({
+      success: false,
+      error: "COMMERCIAL_MONITOR_SCHEDULER_GATE_REQUIRED",
+      safety: {
+        alertClaimed: false,
+        whatsappAttempted: false,
+        productionUnchanged: true,
+      },
+    }, { status: 423 })
     const result = await dispatchCommercialAlertOutbox(
-      getSupabaseAdminClient(),
+      supabase,
       {
         marketplaceAccountKey: accountKey,
         workerId: `commercial-dispatch-schedule:${randomUUID()}`,

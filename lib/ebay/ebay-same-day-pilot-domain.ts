@@ -22,6 +22,8 @@ export type SameDayCandidateInput = {
   variantTitle?: string | null
   supplierSku?: string | null
   supplierVariantId?: string | null
+  supplierProductUrl?: string | null
+  supplierImageUrl?: string | null
   gtin?: string | null
   brand?: string | null
   mpn?: string | null
@@ -205,8 +207,14 @@ export function evaluateReadyForContent(input: {
 }
 
 export function listingQuantityFromLuna(quantity: number | null, available: boolean) {
+  if (quantity !== null && (!Number.isInteger(quantity) || quantity < 0)) {
+    throw new Error("LUNA_QUANTITY_INVALID")
+  }
+  if ((available && quantity === 0) || (!available && Number(quantity ?? 0) > 0)) {
+    throw new Error("LUNA_AVAILABILITY_QUANTITY_CONFLICT")
+  }
   if (!available) return { quantity: 0, recheckAfterSale: false }
-  return { quantity: quantity && quantity > 0 ? Math.max(1, Math.floor(quantity)) : 1, recheckAfterSale: quantity == null }
+  return { quantity: quantity && quantity > 0 ? quantity : 1, recheckAfterSale: quantity == null }
 }
 
 export function buildSameDayLocalPreparationPackage(candidate: SameDayCandidateDecision, observedAt: string) {
@@ -220,6 +228,8 @@ export function buildSameDayLocalPreparationPackage(candidate: SameDayCandidateD
       variant: candidate.variantTitle ?? null,
       supplierSku: candidate.supplierSku ?? null,
       supplierVariantId: candidate.supplierVariantId ?? null,
+      supplierProductUrl: candidate.supplierProductUrl ?? null,
+      supplierImageUrl: candidate.supplierImageUrl ?? null,
       gtin: candidate.gtin ?? null,
     },
     offer: {

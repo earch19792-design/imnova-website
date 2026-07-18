@@ -135,9 +135,17 @@ function assertTaskIdentity(task: TaskRow) {
   return calculated
 }
 
-function approvalContextHash(tasks: TaskRow[], payloadHash: string) {
+function approvalContextHash(
+  tasks: TaskRow[],
+  payloadHash: string,
+  writtenConsentReferenceHash: string,
+) {
   const identities = tasks.map(assertTaskIdentity).sort()
-  return `sha256:${sha256Hex([payloadHash, ...identities].join("\u001f"))}`
+  return `sha256:${sha256Hex([
+    payloadHash,
+    writtenConsentReferenceHash,
+    ...identities,
+  ].join("\u001f"))}`
 }
 
 async function loadTask(supabase: SupabaseClient, taskId: string) {
@@ -177,11 +185,19 @@ async function loadShipment(
   return data as ShipmentRow
 }
 
-async function loadBundle(supabase: SupabaseClient, outbox: OutboxRow) {
+async function loadBundle(
+  supabase: SupabaseClient,
+  outbox: OutboxRow,
+  writtenConsentReferenceHash: string,
+) {
   const task = await loadTask(supabase, outbox.fulfillment_task_id)
   const tasks = await loadOrderTasks(supabase, task)
   const shipment = await loadShipment(supabase, outbox.shipment_id, outbox.payload_hash)
-  const contextHash = approvalContextHash(tasks, outbox.payload_hash)
+  const contextHash = approvalContextHash(
+    tasks,
+    outbox.payload_hash,
+    writtenConsentReferenceHash,
+  )
   return { task, tasks, shipment, contextHash }
 }
 
@@ -217,6 +233,11 @@ export function getMarketplaceFulfillmentV1BReadiness() {
     token: configuration.token,
     requiredScope: configuration.requiredScope,
     identityBound: configuration.identityBound,
+    trackingWriteReadiness: configuration.executable
+      ? "API_TRACKING_WRITE_READY" as const
+      : "MANUAL_SELLER_HUB_TRACKING_REQUIRED" as const,
+    writtenConsentReference: configuration.writtenConsentReference,
+    writtenConsentReferenceExposed: false as const,
     cronConfigured: false as const,
     safety: safety(),
   }
@@ -229,7 +250,9 @@ export async function approveMarketplaceFulfillmentTrackingReal(
   actorId: string | null | undefined,
   idempotencyKey: string,
 ) {
-  assertEbayFulfillmentTrackingWriterEnabled()
+  const configuration = assertEbayFulfillmentTrackingWriterEnabled()
+  const writtenConsentReferenceHash = configuration.writtenConsentReferenceHash
+  if (!writtenConsentReferenceHash) throw new Error("EBAY_FULFILLMENT_WRITTEN_CONSENT_REQUIRED")
   if (input.confirmed !== true || input.submissionMode !== "ebay_real") {
     throw new Error("FULFILLMENT_REAL_EXPLICIT_APPROVAL_REQUIRED")
   }
@@ -240,7 +263,11 @@ export async function approveMarketplaceFulfillmentTrackingReal(
     throw new Error("FULFILLMENT_APPROVAL_PAYLOAD_MISMATCH")
   }
   await loadShipment(supabase, task.current_shipment_id, input.payloadHash)
-  const contextHash = approvalContextHash(tasks, input.payloadHash)
+  const contextHash = approvalContextHash(
+    tasks,
+    input.payloadHash,
+    writtenConsentReferenceHash,
+  )
   const { data, error } = await supabase.rpc("approve_fulfillment_tracking_v1b", {
     p_task_id: task.id,
     p_expected_lock_version: expectedLockVersion(input.lockVersion),
@@ -255,6 +282,8 @@ export async function approveMarketplaceFulfillmentTrackingReal(
     approvedPayloadHash: input.payloadHash,
     adapter: "ebay_real" as const,
     directMarketplaceCall: false as const,
+    writtenConsentReferenceBound: true as const,
+    writtenConsentReferenceExposed: false as const,
     safety: safety(),
   }
 }
@@ -291,10 +320,15 @@ async function runClaim(
   claim: OutboxRow,
   workerId: string,
   adapter: EbayFulfillmentTrackingAdapter,
+  writtenConsentReferenceHash: string,
 ) {
   let postStarted = false
   try {
-    const bundle = await loadBundle(supabase, claim)
+    const bundle = await loadBundle(
+      supabase,
+      claim,
+      writtenConsentReferenceHash,
+    )
     if (claim.approval_context_hash !== bundle.contextHash) {
       return recordOutcome(supabase, {
         outboxId: claim.id, workerId, outcome: "blocked",
@@ -398,7 +432,9 @@ export async function runMarketplaceFulfillmentRealSubmitter(
     adapterFactory?: () => Promise<EbayFulfillmentTrackingAdapter>
   } = {},
 ) {
-  assertEbayFulfillmentTrackingWriterEnabled()
+  const configuration = assertEbayFulfillmentTrackingWriterEnabled()
+  const writtenConsentReferenceHash = configuration.writtenConsentReferenceHash
+  if (!writtenConsentReferenceHash) throw new Error("EBAY_FULFILLMENT_WRITTEN_CONSENT_REQUIRED")
   const workerId = options.workerId ?? `fulfillment-ebay-real:${randomUUID()}`
   const { data, error } = await supabase.rpc("claim_fulfillment_real_submissions_v1b", {
     p_worker_id: workerId,
@@ -413,7 +449,13 @@ export async function runMarketplaceFulfillmentRealSubmitter(
   let ebayWrites = 0
   for (const claim of claims) {
     const before = claim.post_started_at
-    const outcome = await runClaim(supabase, claim, workerId, adapter)
+    const outcome = await runClaim(
+      supabase,
+      claim,
+      workerId,
+      adapter,
+      writtenConsentReferenceHash,
+    )
     if (!before && outcome?.post_started_at) ebayWrites += 1
     outcomes.push({ id: claim.id, status: outcome?.status ?? null })
   }
@@ -444,7 +486,9 @@ export async function runMarketplaceFulfillmentRealReconciler(
     now?: number
   } = {},
 ) {
-  assertEbayFulfillmentTrackingWriterEnabled()
+  const configuration = assertEbayFulfillmentTrackingWriterEnabled()
+  const writtenConsentReferenceHash = configuration.writtenConsentReferenceHash
+  if (!writtenConsentReferenceHash) throw new Error("EBAY_FULFILLMENT_WRITTEN_CONSENT_REQUIRED")
   const workerId = options.workerId ?? `fulfillment-ebay-reconciler:${randomUUID()}`
   const { data, error } = await supabase.rpc("claim_fulfillment_real_reconciliation_v1b", {
     p_worker_id: workerId,
@@ -458,7 +502,11 @@ export async function runMarketplaceFulfillmentRealReconciler(
   const outcomes = []
   for (const claim of claims) {
     try {
-      const bundle = await loadBundle(supabase, claim)
+      const bundle = await loadBundle(
+        supabase,
+        claim,
+        writtenConsentReferenceHash,
+      )
       const request = buildEbayShippingFulfillmentRequest(bundle.shipment.normalized_payload)
       if (claim.remote_fulfillment_id) {
         try {

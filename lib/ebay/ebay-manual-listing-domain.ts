@@ -21,6 +21,31 @@ export type SafeListingDefaults = Partial<
   Record<ReusableListingDefaultField, string>
 >
 
+export const EBAY_US_NEW_CONDITION_ID = "1000" as const
+
+const verifiedConditionContracts = new Map([
+  ["new", { conditionId: EBAY_US_NEW_CONDITION_ID, canonicalLabel: "New" }],
+  ["brand new", { conditionId: EBAY_US_NEW_CONDITION_ID, canonicalLabel: "New" }],
+  ["nuevo", { conditionId: EBAY_US_NEW_CONDITION_ID, canonicalLabel: "New" }],
+])
+
+/**
+ * Maps a verified product-condition fact to eBay's numeric condition contract.
+ *
+ * The mapping is intentionally narrow: Seller OS currently prepares only new
+ * Luna inventory. Used/refurbished condition IDs can be category-specific and
+ * must come from an official condition-policy adapter before being added here.
+ */
+export function ebayConditionContractFromVerifiedFact(value: unknown) {
+  const normalized = stringValue(value)
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .replace(/[\s_-]+/g, " ")
+    .trim()
+  const contract = verifiedConditionContracts.get(normalized)
+  return contract ? { ...contract, marketplaceId: "EBAY_US" as const } : null
+}
+
 export type ManualListingRegistrationInput = {
   ebayItemId: string
   ebayUrl: string

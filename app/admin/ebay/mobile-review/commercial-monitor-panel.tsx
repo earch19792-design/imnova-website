@@ -21,6 +21,9 @@ type MonitorMetrics = Record<string, unknown> & {
   activeListings?: number
   officialOrdersRead?: number
   completedCheckoutLineItems?: number
+  sellerHubMessageHeadersRead?: number
+  sellerHubMessageContentReturned?: boolean
+  sellerHubMessageRawXmlPersisted?: boolean
   analyticsListingsRead?: number
   watcherListingsRead?: number
   newSales?: number
@@ -29,12 +32,21 @@ type MonitorMetrics = Record<string, unknown> & {
   eventsCreated?: number
   alertsGenerated?: number
   alertsEnqueued?: number
+  outboxRowsCreated?: number
+  persistenceWrites?: number
+  buyerPiiFieldsReturned?: number
+  listingIdentityVerified?: boolean
+  lunaExactSupplyLinked?: boolean
+  lunaSupplyFresh?: boolean
+  lunaSupplyObservedAt?: string | null
+  whatsappMetaAccepted?: number
   whatsappDelivered?: number
   ebayWrites?: number
   buyerPiiReturned?: boolean
   commercialDataPersistencePerformed?: boolean
   authentication?: {
     ordersOAuth?: string
+    messagesAuth?: string
     watchersAuth?: string
     analyticsAuth?: string
     fulfillmentScopeConfirmed?: boolean
@@ -46,6 +58,15 @@ type MonitorMetrics = Record<string, unknown> & {
     views?: number | null
     transactions?: number | null
     watchers?: number | null
+  }
+  sellerHubMessages?: {
+    headersRead?: number | null
+    eventsCreated?: number
+    alertsEnqueued?: number
+    duplicatesAvoided?: number
+    contentStored?: false
+    buyerPiiStored?: false
+    rawXmlStored?: false
   }
 }
 
@@ -117,6 +138,13 @@ type Dashboard = {
     salesProcessingBlocked?: boolean
   }
   nextAutomaticRunAt?: string | null
+  schedulerAuthorization?: {
+    status?: "ACTIVE" | "EXPIRED" | "MISSING"
+    authorizedAt?: string | null
+    expiresAt?: string | null
+    lastUsedAt?: string | null
+    useCount?: number
+  }
   pilot24h?: {
     status?: string
     startedAt?: string | null
@@ -129,6 +157,7 @@ type Dashboard = {
     newSales?: number
     fulfillmentTasksCreated?: number
     alertsGenerated?: number
+    whatsappMetaAccepted?: number
     whatsappDelivered?: number
     whatsappFailed?: number
     duplicatesAvoided?: number
@@ -140,6 +169,7 @@ type Dashboard = {
   } | null
   schedule?: {
     enabled?: boolean
+    effectivelyEnabled?: boolean
     previewOnly?: boolean
     pilot?: {
       status?: string
@@ -148,6 +178,43 @@ type Dashboard = {
       automaticCutoff?: boolean
     }
   }
+  optimizationTasks?: Array<{
+    id?: string
+    eventType?: string
+    severity?: "critical" | "high" | "medium" | "low"
+    listingId?: string
+    sku?: string | null
+    detectedAt?: string
+    recommendedAction?: string
+    status?: "AWAITING_HUMAN_APPROVAL"
+    changeApplied?: false
+    whatsappEnqueued?: false
+    evidence?: {
+      notificationTitle?: string
+      whyItNeedsAttention?: string
+      reviewSequence?: string[]
+      nextEligibleAt?: string
+      rulesetVersion?: string
+      listingAgeEvidence?: {
+        startedAt?: string
+        ageHours?: number
+        source?: "EBAY_OFFICIAL_START_TIME" | "SELLER_OS_REGISTRATION_FALLBACK"
+        sourceLabel?: "FUENTE EBAY" | "ESTIMACIÓN CONSERVADORA"
+        conservativeEstimate?: boolean
+        explanation?: string
+      }
+      experiment?: {
+        variable?: string
+        changeCount?: 1
+        proposal?: string
+        measurementPlan?: string
+        guardrail?: string
+        status?: "AWAITING_HUMAN_APPROVAL"
+        automaticChangeAllowed?: false
+        ebayWriteAllowed?: false
+      }
+    }
+  }>
 }
 
 type Payload = {
@@ -156,6 +223,7 @@ type Payload = {
   dashboard?: Dashboard
   run?: MonitorRun
   comparison?: SellerHubComparison
+  action?: string
 }
 
 type AnalyticsAudit = {
@@ -268,9 +336,49 @@ function AnalyticsWindowAudit({ label, audit }: { label: string; audit?: Analyti
   </article>
 }
 
+function OptimizationTaskCard({ task }: {
+  task: NonNullable<Dashboard["optimizationTasks"]>[number]
+}) {
+  const evidence = task.evidence
+  const experiment = evidence?.experiment
+  const listingAgeEvidence = evidence?.listingAgeEvidence
+  const officialListingStart = listingAgeEvidence?.source ===
+    "EBAY_OFFICIAL_START_TIME"
+  const critical = task.severity === "critical" || task.severity === "high"
+  return <article className={`min-w-0 rounded-xl border p-3 ${critical ? "border-rose-200/30 bg-rose-200/[0.06]" : "border-amber-100/20 bg-black/20"}`}>
+    <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="min-w-0">
+        <h4 className={`break-words font-black ${critical ? "text-rose-50" : "text-amber-50"}`}>
+          {evidence?.notificationTitle ?? "Este listing necesita optimización"}
+        </h4>
+        <p className="mt-1 break-words text-[11px] text-white/45">SKU {task.sku ?? "pendiente"} · Detectado {formatDate(task.detectedAt)}</p>
+      </div>
+      <span className="rounded-full border border-white/15 px-2 py-1 text-[10px] font-black uppercase text-white/70">esperando tu aprobación</span>
+    </div>
+    {listingAgeEvidence && <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-bold text-white/70">Inicio usado: {formatDate(listingAgeEvidence.startedAt)} · {typeof listingAgeEvidence.ageHours === "number" ? `${listingAgeEvidence.ageHours} h evaluadas` : "edad pendiente"}</p>
+        <span className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase ${officialListingStart ? "border-emerald-200/25 text-emerald-100" : "border-amber-200/25 text-amber-100"}`}>{officialListingStart ? "FUENTE EBAY" : "ESTIMACIÓN CONSERVADORA"}</span>
+      </div>
+      <p className="mt-1 text-[11px] leading-5 text-white/50">{listingAgeEvidence.explanation ?? (officialListingStart ? "Fecha oficial de inicio informada por eBay." : "Edad mínima desde el registro en Seller OS; el listing puede ser más antiguo.")}</p>
+    </div>}
+    <p className="mt-3 break-words text-sm leading-6 text-white/75"><strong>Por qué:</strong> {evidence?.whyItNeedsAttention ?? "Seller OS detectó una excepción con evidencia propia."}</p>
+    <p className="mt-2 break-words text-sm leading-6 text-cyan-50"><strong>Siguiente revisión:</strong> {task.recommendedAction}</p>
+    {(evidence?.reviewSequence?.length ?? 0) > 0 && <p className="mt-2 break-words text-xs text-white/50">Orden recomendado: {evidence?.reviewSequence?.join(" → ")}</p>}
+    {experiment && <details className="mt-3 rounded-xl border border-cyan-100/20 bg-cyan-100/[0.05] p-3">
+      <summary className="flex min-h-11 cursor-pointer items-center text-sm font-black text-cyan-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver propuesta de una sola variable</summary>
+      <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-cyan-100/60">Experimento propuesto · una sola variable</p>
+      <p className="mt-1 text-sm font-black text-cyan-50">{experiment.variable ?? "REVISIÓN"}</p>
+      <p className="mt-1 break-words text-xs leading-5 text-white/65">{experiment.proposal}</p>
+      <p className="mt-2 break-words text-[11px] text-white/45">{experiment.measurementPlan}</p>
+      <p className="mt-2 text-[11px] font-bold text-amber-100">Requiere aprobación humana. No prueba causalidad y no se aplicó ningún cambio.</p>
+    </details>}
+  </article>
+}
+
 export function CommercialMonitorPanel() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
-  const [busyMode, setBusyMode] = useState<"dry_run" | "persistent" | "comparison" | null>(null)
+  const [busyMode, setBusyMode] = useState<"dry_run" | "persistent" | "comparison" | "scheduler" | null>(null)
   const [dryRunResult, setDryRunResult] = useState<MonitorRun | null>(null)
   const [comparison, setComparison] = useState<SellerHubComparison | null>(null)
   const [gateNow, setGateNow] = useState(0)
@@ -420,6 +528,64 @@ export function CommercialMonitorPanel() {
     }
   }
 
+  async function updateSchedulerAuthorization(action: "authorize_scheduler" | "revoke_scheduler") {
+    if (busyMode) return
+    const dryRunId = displayedDryRun?.runId ?? displayedDryRun?.id
+    if (action === "authorize_scheduler" && (!dryRunSatisfactory || !dryRunId)) return
+    const confirmed = window.confirm(action === "authorize_scheduler"
+      ? "Autorizar el monitor automático únicamente en Preview durante 60 minutos. Seguirá siendo de lectura en eBay y respetará las pausas de cuota. ¿Continuar?"
+      : "Pausar ahora el monitor automático de Preview. ¿Continuar?")
+    if (!confirmed) return
+
+    setBusyMode("scheduler")
+    setError("")
+    setMessage(action === "authorize_scheduler"
+      ? "Registrando autorización temporal y auditable…"
+      : "Pausando el monitor automático…")
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError || !data.session) throw new Error("AUTH_REQUIRED")
+      const response = await fetch("/api/admin/ebay/commercial-monitor", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action,
+          confirmed: true,
+          ...(action === "authorize_scheduler"
+            ? { dryRunId, durationMinutes: 60 }
+            : {}),
+        }),
+      })
+      const payload = await readMobileReviewJson<Payload>(
+        response,
+        action === "authorize_scheduler"
+          ? "No se pudo autorizar el monitor"
+          : "No se pudo pausar el monitor",
+      )
+      if (!payload.success || !payload.dashboard) {
+        throw new Error(getMobileReviewPayloadError(payload, "COMMERCIAL_MONITOR_SCHEDULER_CONTROL_FAILED"))
+      }
+      setDashboard(payload.dashboard)
+      setMessage(action === "authorize_scheduler"
+        ? "Monitor Preview autorizado por 60 minutos. Se detendrá al vencer la autorización."
+        : "Monitor automático de Preview pausado.")
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(
+        requestError,
+        action === "authorize_scheduler"
+          ? "No se pudo autorizar el monitor."
+          : "No se pudo pausar el monitor.",
+      ))
+      await load().catch(() => undefined)
+    } finally {
+      setBusyMode(null)
+    }
+  }
+
   const run = dashboard?.lastPersistentRun ??
     (dashboard?.latestRun?.metrics?.dryRun === true ? null : dashboard?.latestRun)
   const metrics = run?.metrics
@@ -438,15 +604,19 @@ export function CommercialMonitorPanel() {
   const dryRunConsumedAt = displayedDryRun?.consumedAt ?? displayedDryRun?.dry_run_consumed_at
   const dryRunWasSatisfactory = displayedDryRun?.satisfactory === true ||
     displayedDryRun?.dry_run_satisfactory === true || dryRunSatisfactory || Boolean(dryRunConsumedAt)
+  const schedulerAuthorized = dashboard?.schedulerAuthorization?.status === "ACTIVE"
   const dryRunValue = (input: unknown) => displayedDryRun ? value(input) : "—"
+  const optimizationTasks = dashboard?.optimizationTasks ?? []
+  const primaryOptimizationTask = optimizationTasks[0]
+  const additionalOptimizationTasks = optimizationTasks.slice(1, 5)
 
   return (
-    <section aria-labelledby="commercial-monitor-heading" className="rounded-3xl border border-emerald-200/25 bg-gradient-to-br from-emerald-200/[0.10] via-cyan-200/[0.04] to-black p-4">
+    <section aria-labelledby="commercial-monitor-heading" className="min-w-0 overflow-hidden rounded-3xl border border-emerald-200/25 bg-gradient-to-br from-emerald-200/[0.10] via-cyan-200/[0.04] to-black p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Monitoreo comercial · separado de Radar</p>
           <h2 id="commercial-monitor-heading" className="mt-2 text-2xl font-black">Ventas y rendimiento</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-white/65">Lee órdenes con checkout completado, Analytics oficial y WatchCount. No cambia listings, precios, inventario ni órdenes.</p>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-white/65">Lee órdenes, mensajes pendientes de Seller Hub, Analytics oficial y WatchCount. Los mensajes se notifican sin copiar conversaciones ni datos del comprador. No cambia listings, precios, inventario ni órdenes.</p>
         </div>
         <span className={`rounded-full border border-white/15 px-3 py-2 text-xs font-black uppercase ${statusTone(run?.status)}`}>
           {loading ? "cargando" : run?.status ?? dashboard?.status ?? "sin ejecutar"}
@@ -458,7 +628,7 @@ export function CommercialMonitorPanel() {
           type="button"
           disabled={Boolean(busyMode) || loading}
           onClick={() => void executeDryRun()}
-          className="min-h-14 rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-50"
+          className="min-h-14 rounded-2xl bg-cyan-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-100 disabled:opacity-50"
         >
           {busyMode === "dry_run" ? "Ejecutando dry run…" : "Ejecutar dry run"}
         </button>
@@ -467,7 +637,7 @@ export function CommercialMonitorPanel() {
           disabled={Boolean(busyMode) || loading || !dryRunSatisfactory}
           onClick={() => void updatePerformance()}
           aria-describedby="persistent-update-gate"
-          className="min-h-14 rounded-2xl bg-emerald-200 px-4 font-black text-black disabled:cursor-not-allowed disabled:opacity-35"
+          className="min-h-14 rounded-2xl border border-emerald-200/35 bg-emerald-200/[0.08] px-4 font-black text-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-100 disabled:cursor-not-allowed disabled:opacity-35"
         >
           {busyMode === "persistent" ? "Actualizando rendimiento…" : "Actualizar rendimiento"}
         </button>
@@ -480,12 +650,40 @@ export function CommercialMonitorPanel() {
             : "Actualizar rendimiento permanece bloqueado hasta completar un dry run satisfactorio en los últimos 30 minutos."}
       </p>
 
-      <section aria-labelledby="dry-run-results-heading" className="mt-4 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-cyan-100/60">Modo</p>
-            <h3 id="dry-run-results-heading" className="text-lg font-black text-cyan-50">DRY RUN</h3>
+      <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-black text-white">Automatización de Preview</p>
+            <p className="mt-1 text-xs leading-5 text-white/55">
+              {dashboard?.schedule?.effectivelyEnabled
+                ? `Activa temporalmente hasta ${formatDate(dashboard.schedulerAuthorization?.expiresAt)}.`
+                : schedulerAuthorized
+                  ? `Autorización vigente hasta ${formatDate(dashboard?.schedulerAuthorization?.expiresAt)}; el runner de Preview aún está deshabilitado en configuración.`
+                : dryRunSatisfactory
+                  ? "La prueba segura pasó. Puedes autorizar una ventana temporal de 60 minutos."
+                  : "Primero debe pasar un dry run reciente; el sistema no se activará a ciegas."}
+            </p>
           </div>
+          <button
+            type="button"
+            disabled={Boolean(busyMode) || loading || (!schedulerAuthorized && !dryRunSatisfactory)}
+            onClick={() => void updateSchedulerAuthorization(
+              schedulerAuthorized ? "revoke_scheduler" : "authorize_scheduler",
+            )}
+            className={`min-h-11 shrink-0 rounded-xl border px-4 text-sm font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-35 ${schedulerAuthorized ? "border-rose-200/35 bg-rose-200/[0.08] text-rose-50 focus-visible:outline-rose-100" : "border-cyan-200/35 bg-cyan-200/[0.08] text-cyan-50 focus-visible:outline-cyan-100"}`}
+          >
+            {busyMode === "scheduler"
+              ? "Procesando…"
+              : schedulerAuthorized
+                ? "Pausar monitor"
+                : "Autorizar 60 minutos"}
+          </button>
+        </div>
+      </div>
+
+      <details data-technical-details="dry-run" className="mt-4 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
+        <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center justify-between gap-2 font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
+          <span><span className="block text-[10px] uppercase tracking-widest text-cyan-100/60">Ver detalles técnicos</span><span className="text-lg text-cyan-50">DRY RUN</span></span>
           <span className={`rounded-full border border-white/15 px-3 py-1 text-[10px] font-black uppercase ${dryRunSatisfactory ? "text-emerald-100" : "text-white/55"}`}>
             {displayedDryRun
               ? dryRunConsumedAt
@@ -495,7 +693,8 @@ export function CommercialMonitorPanel() {
                   : displayedDryRun.status ?? "requiere revisión"
               : "sin ejecutar"}
           </span>
-        </div>
+        </summary>
+        <div className="min-w-0">
 
         <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-4">
           <div className="rounded-xl border border-white/10 p-2"><dt className="text-white/45">Status</dt><dd className="mt-1 font-black uppercase">{displayedDryRun?.status ?? "sin ejecutar"}</dd></div>
@@ -508,22 +707,25 @@ export function CommercialMonitorPanel() {
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Órdenes leídas</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.officialOrdersRead)}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Line items leídos</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.completedCheckoutLineItems)}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Mensajes pendientes</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.sellerHubMessageHeadersRead)}</strong><span className="mt-1 block text-[10px] text-white/40">sólo encabezados seguros</span></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Listings Analytics</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.analyticsListingsRead)}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Listings Watchers</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.watcherListingsRead)}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Persistencia comercial</span><strong className="mt-1 block text-lg">{dryRunMetrics?.commercialDataPersistencePerformed === false ? "NO" : "—"}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Alertas encoladas</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.alertsEnqueued)}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Tareas de fulfillment creadas</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.fulfillmentTasksCreated)}</strong></div>
-          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">WhatsApp entregados</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.whatsappDelivered)}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">WhatsApp META_ACCEPTED</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.whatsappMetaAccepted)}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Escrituras eBay</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.ebayWrites)}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Última ejecución</span><strong className="mt-1 block text-xs">{formatDate(displayedDryRun?.completedAt ?? displayedDryRun?.completed_at)}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Vínculo Luna exacto</span><strong className="mt-1 block text-lg">{dryRunMetrics?.lunaExactSupplyLinked === true ? "SÍ" : "NO"}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Snapshot Luna fresco</span><strong className="mt-1 block text-lg">{dryRunMetrics?.lunaSupplyFresh === true ? "SÍ" : "NO"}</strong><span className="mt-1 block text-[10px] text-white/40">{formatDate(dryRunMetrics?.lunaSupplyObservedAt)}</span></div>
         </div>
 
-        <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
-          {(["orders", "analytics", "watchers"] as const).map((name) => {
+        <div className="mt-3 grid gap-2 text-xs sm:grid-cols-4">
+          {(["orders", "messages", "analytics", "watchers"] as const).map((name) => {
             const recordedError = displayedDryRun?.errors?.find((item) => item.reader === name)?.code
             const readerError = dryRunReaders[name]?.error ?? recordedError
             return <div key={`dry-${name}`} className="rounded-xl border border-white/10 p-2">
-              <span className="font-black uppercase text-white/45">{name === "orders" ? "Orders" : name === "analytics" ? "Analytics" : "Watchers"}</span>
+              <span className="font-black uppercase text-white/45">{name === "orders" ? "Orders" : name === "messages" ? "Mensajes" : name === "analytics" ? "Analytics" : "Watchers"}</span>
               <span className={`mt-1 block break-words font-bold ${readerError ? "text-rose-100" : "text-emerald-100"}`}>
                 {readerError ?? (displayedDryRun ? "Sin errores" : "Pendiente")}
               </span>
@@ -535,6 +737,10 @@ export function CommercialMonitorPanel() {
           <div className="rounded-xl border border-white/10 p-2">
             <dt className="text-white/45">Orders OAuth</dt>
             <dd className="mt-1 break-words font-black text-cyan-50">{authLabel(dryRunReaders.orders?.auth?.status ?? dryRunAuthentication?.ordersOAuth)}</dd>
+          </div>
+          <div className="rounded-xl border border-white/10 p-2">
+            <dt className="text-white/45">Mensajes auth</dt>
+            <dd className="mt-1 break-words font-black text-cyan-50">{authLabel(dryRunReaders.messages?.auth?.status ?? dryRunAuthentication?.messagesAuth)}</dd>
           </div>
           <div className="rounded-xl border border-white/10 p-2">
             <dt className="text-white/45">Watchers auth</dt>
@@ -558,41 +764,56 @@ export function CommercialMonitorPanel() {
           <span className="text-white/45">Próxima acción</span>
           <p className="mt-1 font-bold text-cyan-50">{dryRunAuthentication?.actionRequired ?? displayedDryRun?.nextAction ?? displayedDryRun?.next_action ?? "Ejecutar el dry run seguro."}</p>
         </div>
-      </section>
-
-      <section aria-labelledby="persistent-run-heading" className="mt-4 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100/60">Última actualización persistente</p>
-            <h3 id="persistent-run-heading" className="text-lg font-black text-emerald-50">
-              Última actualización: {run ? (run.status === "completed" ? "COMPLETADA" : run.status?.toUpperCase()) : "PENDIENTE"}
-            </h3>
-          </div>
-          {dryRunConsumedAt && <span className="rounded-full border border-white/15 px-3 py-1 text-[10px] font-black uppercase text-cyan-100">Dry run anterior: CONSUMIDO</span>}
         </div>
+      </details>
+
+      <details data-technical-details="persistent-run" className="mt-4 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3">
+        <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center justify-between gap-2 font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200">
+          <span><span className="block text-[10px] uppercase tracking-widest text-emerald-100/60">Última actualización persistente · ver detalles técnicos</span><span className="text-lg text-emerald-50">Última actualización: {run ? (run.status === "completed" ? "COMPLETADA" : run.status?.toUpperCase()) : "PENDIENTE"}</span></span>
+          {dryRunConsumedAt && <span className="rounded-full border border-white/15 px-3 py-1 text-[10px] font-black uppercase text-cyan-100">Dry run anterior: CONSUMIDO</span>}
+        </summary>
         <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-4">
           <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Completed at</dt><dd className="mt-1 font-black">{formatDate(run?.completedAt ?? run?.completed_at)}</dd></div>
           <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Snapshots creados</dt><dd className="mt-1 text-lg font-black">{value(metrics?.snapshotsCreated)}</dd></div>
           <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Eventos creados</dt><dd className="mt-1 text-lg font-black">{value(metrics?.eventsCreated)}</dd></div>
           <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Alertas generadas</dt><dd className="mt-1 text-lg font-black">{value(metrics?.alertsGenerated)}</dd></div>
-          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">WhatsApp delivered</dt><dd className="mt-1 text-lg font-black">{value(metrics?.whatsappDelivered)}</dd></div>
+          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">WhatsApp META_ACCEPTED</dt><dd className="mt-1 text-lg font-black">{value(metrics?.whatsappMetaAccepted)}</dd><span className="mt-1 block text-[10px] text-white/40">Aceptado por Meta; entrega final requiere webhook.</span></div>
           <div className="rounded-xl bg-black/25 p-2 sm:col-span-3"><dt className="text-white/45">Próxima acción</dt><dd className="mt-1 font-black text-emerald-50">{run?.nextAction ?? run?.next_action ?? "Ejecuta un dry run nuevo antes de otra actualización."}</dd></div>
         </dl>
         {run && dryRunConsumedAt && <p className="mt-3 text-xs font-bold text-cyan-50">Ejecuta un dry run nuevo antes de otra actualización.</p>}
+      </details>
+
+      <section aria-labelledby="listing-optimization-tasks-heading" className="mt-4 rounded-2xl border border-amber-200/30 bg-amber-200/[0.06] p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-widest text-amber-100/60">Diagnóstico post-publicación</p>
+            <h3 id="listing-optimization-tasks-heading" className="text-lg font-black">Listings que necesitan atención</h3>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-white/60">Seller OS avisa primero y explica la etapa del embudo. No cambia imágenes, títulos, precios, cantidad ni políticas automáticamente.</p>
+          </div>
+          <span className="rounded-full border border-amber-100/25 px-3 py-1 text-xs font-black uppercase text-amber-50">
+            {optimizationTasks.length} detectadas
+          </span>
+        </div>
+        {optimizationTasks.length === 0
+          ? <p className="mt-3 rounded-xl bg-black/20 p-3 text-sm text-white/55">Aún no hay una muestra oficial suficiente que justifique una propuesta de optimización.</p>
+          : <div className="mt-3 grid gap-3">
+            {primaryOptimizationTask && <OptimizationTaskCard task={primaryOptimizationTask} />}
+            {additionalOptimizationTasks.length > 0 && <details className="rounded-xl border border-white/10 p-3">
+              <summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver {additionalOptimizationTasks.length} diagnóstico(s) posterior(es)</summary>
+              <div className="mt-3 grid gap-3">{additionalOptimizationTasks.map((task) => <OptimizationTaskCard key={task.id} task={task} />)}</div>
+            </details>}
+          </div>}
       </section>
 
-      <section aria-labelledby="seller-hub-comparison-heading" className="mt-4 rounded-2xl border border-violet-200/25 bg-violet-200/[0.05] p-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/60">Diagnóstico oficial · listing 366543596425</p>
-            <h3 id="seller-hub-comparison-heading" className="text-lg font-black">Comparar con Seller Hub</h3>
-            <p className="mt-1 text-xs text-white/55">Compara 7 días cerrados contra hasta 90 días. No persiste snapshots, reglas, alertas ni WhatsApp.</p>
-          </div>
+      <details data-technical-details="seller-hub-comparison" className="mt-4 rounded-2xl border border-violet-200/25 bg-violet-200/[0.05] p-3">
+        <summary className="flex min-h-11 cursor-pointer items-center text-lg font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-200">Comparar con Seller Hub · diagnóstico opcional</summary>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="max-w-2xl text-xs leading-5 text-white/55">Compara 7 días cerrados contra hasta 90 días para el listing 366543596425. No persiste snapshots, reglas, alertas ni WhatsApp.</p>
           <button
             type="button"
             disabled={Boolean(busyMode) || loading}
             onClick={() => void compareWithSellerHub()}
-            className="min-h-12 rounded-2xl border border-violet-100/30 bg-violet-100 px-4 font-black text-black disabled:opacity-50"
+            className="min-h-12 w-full rounded-2xl border border-violet-100/30 px-4 font-black text-violet-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-200 disabled:opacity-50 sm:w-auto"
           >
             {busyMode === "comparison" ? "Comparando…" : "Comparar con Seller Hub"}
           </button>
@@ -613,30 +834,24 @@ export function CommercialMonitorPanel() {
             Persistencia: {comparison.safety?.persistencePerformed === false ? "NO" : "—"} · Alertas: {value(comparison.safety?.alertsGenerated)} · Fulfillment: {value(comparison.safety?.fulfillmentTasksCreated)} · WhatsApp: {value(comparison.safety?.whatsappDelivered)} · Escrituras eBay: {value(comparison.safety?.ebayWrites)}
           </p>
         </>}
-      </section>
+      </details>
 
-      <section aria-labelledby="analytics-source-health-heading" className="mt-4 rounded-2xl border border-amber-200/30 bg-amber-200/[0.06] p-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-amber-100/60">Salud de fuentes Analytics</p>
-            <h3 id="analytics-source-health-heading" className="text-lg font-black">
-              {divergence?.healthFlag ?? "SIN DIVERGENCIA ABIERTA"}
-            </h3>
-            <p className="mt-1 text-xs text-white/60">
-              {divergence?.classification ?? "Las fuentes no tienen una discrepancia registrada."}
-            </p>
-          </div>
+      <details data-technical-details="analytics-source-health" className="mt-4 rounded-2xl border border-amber-200/30 bg-amber-200/[0.06] p-3">
+        <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center justify-between gap-3 font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-200">
+          <span><span className="block text-[10px] uppercase tracking-widest text-amber-100/60">Ver salud de fuentes Analytics</span><span className="text-lg">{divergence?.healthFlag ?? "SIN DIVERGENCIA ABIERTA"}</span></span>
           <span className="rounded-full border border-amber-100/25 px-3 py-1 text-xs font-black uppercase">
             {divergence?.status ?? "clear"}
           </span>
-        </div>
+        </summary>
+        <div className="min-w-0">
+        <p className="mt-2 text-xs text-white/60">{divergence?.classification ?? "Las fuentes no tienen una discrepancia registrada."}</p>
         {divergence && <>
           <p className="mt-2 text-[11px] font-black uppercase text-amber-100">Health flag: ANALYTICS_SOURCE_DIVERGENCE</p>
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
             <article className="rounded-xl bg-black/25 p-3">
               <h4 className="font-black text-amber-50">Seller Hub · evidencia manual separada</h4>
               <p className="mt-1 text-xs text-white/50">Fuente: {divergence.manualSource?.source ?? "—"} · Observada: {divergence.manualSource?.observedOn ?? "—"}</p>
-              <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
                 <div><span className="text-white/45">Organic impressions</span><strong className="block">{value(divergence.manualSource?.metrics?.impressions)}</strong></div>
                 <div><span className="text-white/45">Organic listing views</span><strong className="block">{value(divergence.manualSource?.metrics?.views)}</strong></div>
                 <div><span className="text-white/45">Quantity sold</span><strong className="block">{value(divergence.manualSource?.metrics?.transactions)}</strong></div>
@@ -647,7 +862,7 @@ export function CommercialMonitorPanel() {
               <h4 className="font-black text-cyan-50">Traffic API · fuente oficial</h4>
               <p className="mt-1 text-xs text-white/50">Fuente: {divergence.officialSource?.source ?? "—"} · Consultada: {formatDate(divergence.officialSource?.observedAt)}</p>
               <p className="mt-1 text-[11px] text-white/45">Ventana: {divergence.officialSource?.windowStart ?? "—"} → {divergence.officialSource?.windowEnd ?? "—"} · lastUpdated: {divergence.officialSource?.lastUpdatedDate ?? "—"}</p>
-              <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
                 <div><span className="text-white/45">Total impressions</span><strong className="block">{value(divergence.officialSource?.metrics?.impressions)}</strong></div>
                 <div><span className="text-white/45">Listing views total</span><strong className="block">{value(divergence.officialSource?.metrics?.views)}</strong></div>
                 <div><span className="text-white/45">Transaction</span><strong className="block">{value(divergence.officialSource?.metrics?.transactions)}</strong></div>
@@ -669,7 +884,8 @@ export function CommercialMonitorPanel() {
           <p>Estado oficial: {listingIdentity?.observedListingStatus ?? "—"} · Match exacto: {listingIdentity?.activeListingConfirmed ? "SÍ" : "NO"}</p>
           <p className="mt-1 font-black">Procesamiento de ventas: {listingIdentity?.salesProcessingBlocked ? "BLOQUEADO" : "HABILITADO"}</p>
         </div>
-      </section>
+        </div>
+      </details>
 
       <div className="mt-4 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Ventas nuevas</span><strong className="mt-1 block text-xl">{value(metrics?.newSales)}</strong></div>
@@ -678,14 +894,15 @@ export function CommercialMonitorPanel() {
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Watchers</span><strong className="mt-1 block text-xl">{value(analytics?.watchers)}</strong><span className="mt-1 block text-[10px] text-white/40">señales de interés</span></div>
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Transacciones Analytics</span><strong className="mt-1 block text-xl">{value(analytics?.transactions)}</strong><span className="mt-1 block text-[10px] text-white/40">no sustituyen órdenes</span></div>
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Alertas</span><strong className="mt-1 block text-xl">{value(metrics?.alertsGenerated)}</strong></div>
+        <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Mensajes Seller Hub</span><strong className="mt-1 block text-xl">{value(metrics?.sellerHubMessages?.headersRead)}</strong><span className="mt-1 block text-[10px] text-white/40">contenido protegido</span></div>
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Fulfillment</span><strong className="mt-1 block text-xl">{value(health?.fulfillmentTasks)}</strong></div>
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Reintentos</span><strong className="mt-1 block text-xl">{value(health?.retries)}</strong></div>
       </div>
 
-      <dl className="mt-4 grid gap-2 text-xs sm:grid-cols-3">
-        {(["orders", "analytics", "watchers"] as const).map((name) => (
+      <dl className="mt-4 grid gap-2 text-xs sm:grid-cols-4">
+        {(["orders", "messages", "analytics", "watchers"] as const).map((name) => (
           <div key={name} className="rounded-2xl border border-white/10 p-3">
-            <dt className="font-black uppercase text-white/45">{name === "orders" ? "Órdenes" : name === "analytics" ? "Analytics" : "Watchers"}</dt>
+            <dt className="font-black uppercase text-white/45">{name === "orders" ? "Órdenes" : name === "messages" ? "Mensajes" : name === "analytics" ? "Analytics" : "Watchers"}</dt>
             <dd className={`mt-1 font-black uppercase ${statusTone(readers[name]?.status)}`}>{readers[name]?.status ?? "sin ejecutar"}</dd>
             <dd className="mt-1 break-words text-white/45">{readers[name]?.source ?? "Fuente pendiente"}</dd>
             {readers[name]?.error && <dd className="mt-1 break-words text-rose-100">{readers[name]?.error}</dd>}
@@ -694,10 +911,12 @@ export function CommercialMonitorPanel() {
       </dl>
 
       <details className="mt-4 rounded-2xl border border-white/10 p-3">
-        <summary className="cursor-pointer font-black">Salud, errores y próxima acción</summary>
+        <summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Salud, errores y próxima acción</summary>
         <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
           <div><dt className="text-white/45">Última actualización</dt><dd className="font-bold">{formatDate(run?.completed_at ?? run?.started_at)}</dd></div>
-          <div><dt className="text-white/45">Próxima ejecución</dt><dd className="font-bold">{dashboard?.schedule?.enabled ? formatDate(dashboard.nextAutomaticRunAt) : "Scheduler Preview pendiente de activar"}</dd></div>
+          <div><dt className="text-white/45">Scheduler Preview</dt><dd className="font-bold">{dashboard?.schedule?.effectivelyEnabled ? "AUTORIZADO" : `BLOQUEADO · ${dashboard?.schedulerAuthorization?.status ?? "SIN DRY RUN"}`}</dd></div>
+          <div><dt className="text-white/45">Autorización vigente hasta</dt><dd className="font-bold">{formatDate(dashboard?.schedulerAuthorization?.expiresAt)}</dd></div>
+          <div><dt className="text-white/45">Próxima ejecución</dt><dd className="font-bold">{dashboard?.schedule?.effectivelyEnabled ? formatDate(dashboard.nextAutomaticRunAt) : "Requiere dry run satisfactorio y autorización durable"}</dd></div>
           <div><dt className="text-white/45">Pendientes de compra</dt><dd className="font-bold">{value(health?.pendingManualPurchase)}</dd></div>
           <div><dt className="text-white/45">Esperando tracking</dt><dd className="font-bold">{value(health?.awaitingTracking)}</dd></div>
           <div><dt className="text-white/45">Alertas fallidas</dt><dd className="font-bold">{value(health?.alertsFailed)}</dd></div>
@@ -707,8 +926,8 @@ export function CommercialMonitorPanel() {
         {(run?.errors?.length ?? 0) > 0 && <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-rose-100">{run?.errors?.map((item, index) => <li key={`${item.code}-${index}`}>{item.reader}: {item.code}{item.retryable ? " · reintentable" : ""}</li>)}</ul>}
       </details>
 
-      {dashboard?.pilot24h && <details open className="mt-4 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.04] p-3">
-        <summary className="cursor-pointer font-black">Piloto controlado de 24 horas</summary>
+      {dashboard?.pilot24h && <details className="mt-4 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.04] p-3">
+        <summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Piloto controlado de 24 horas</summary>
         <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
           <div><dt className="text-white/45">Estado</dt><dd className="font-black uppercase text-cyan-100">{dashboard.pilot24h.status}</dd></div>
           <div><dt className="text-white/45">Inicio</dt><dd className="font-bold">{formatDate(dashboard.pilot24h.startedAt)}</dd></div>
@@ -718,7 +937,7 @@ export function CommercialMonitorPanel() {
           <div><dt className="text-white/45">Órdenes leídas</dt><dd className="font-bold">{value(dashboard.pilot24h.ordersRead)}</dd></div>
           <div><dt className="text-white/45">Ventas / fulfillment</dt><dd className="font-bold">{value(dashboard.pilot24h.newSales)} / {value(dashboard.pilot24h.fulfillmentTasksCreated)}</dd></div>
           <div><dt className="text-white/45">Alertas</dt><dd className="font-bold">{value(dashboard.pilot24h.alertsGenerated)}</dd></div>
-          <div><dt className="text-white/45">WhatsApp entregados / fallidos</dt><dd className="font-bold">{value(dashboard.pilot24h.whatsappDelivered)} / {value(dashboard.pilot24h.whatsappFailed)}</dd></div>
+          <div><dt className="text-white/45">WhatsApp META_ACCEPTED / fallidos</dt><dd className="font-bold">{value(dashboard.pilot24h.whatsappMetaAccepted)} / {value(dashboard.pilot24h.whatsappFailed)}</dd></div>
           <div><dt className="text-white/45">Duplicados evitados</dt><dd className="font-bold">{value(dashboard.pilot24h.duplicatesAvoided)}</dd></div>
           <div><dt className="text-white/45">Reintentos / dead-letter</dt><dd className="font-bold">{value(dashboard.pilot24h.retries)} / {value(dashboard.pilot24h.deadLetter)}</dd></div>
           <div><dt className="text-white/45">Divergencia Analytics</dt><dd className="font-bold uppercase">{dashboard.pilot24h.analyticsDivergenceStatus ?? "sin evidencia"}</dd></div>

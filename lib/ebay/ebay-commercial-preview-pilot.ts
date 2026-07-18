@@ -138,7 +138,8 @@ export function summarizeCommercialPilotRuns(input: {
     ),
     alertsGenerated: runs.reduce((sum, run) => sum + numberMetric(run.metrics, "alertsGenerated"), 0),
     duplicatesAvoided: runs.reduce((sum, run) => sum + numberMetric(run.metrics, "duplicatesAvoided"), 0),
-    whatsappDelivered: input.deliveryAttempts.filter((attempt) => attempt.status === "delivered").length,
+    whatsappMetaAccepted: input.deliveryAttempts.filter((attempt) => attempt.status === "delivered").length,
+    whatsappDelivered: 0,
     whatsappFailed: input.deliveryAttempts.filter((attempt) => attempt.status === "failed").length,
     retries: input.deliveryAttempts.filter(
       (attempt) => Number(attempt.attempt_number ?? 1) > 1,

@@ -277,6 +277,7 @@ export function assertEbaySellerKeywordReadonlyRequest(
     url.pathname.startsWith("/buy/browse/v1/item/") ||
     url.pathname === "/buy/marketplace-insights/v1_beta/item_sales/search" ||
     url.pathname === "/buy/marketing/v1_beta/merchandised_product" ||
+    url.pathname === "/commerce/catalog/v1_beta/product_summary/search" ||
     url.pathname === "/commerce/taxonomy/v1/get_default_category_tree_id" ||
     /^\/commerce\/taxonomy\/v1\/category_tree\/[^/]+\/(get_category_suggestions|get_item_aspects_for_category)$/.test(url.pathname)
   if (method !== "GET" || url.origin !== "https://api.ebay.com" || !allowedPath) {

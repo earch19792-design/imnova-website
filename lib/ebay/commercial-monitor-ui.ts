@@ -71,15 +71,53 @@ function isZero(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && value === 0
 }
 
+function isNonNegativeNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+}
+
+function isPositiveNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+}
+
 export function isSatisfactoryCommercialDryRun(
   run: CommercialMonitorRunView | null | undefined,
   now = Date.now(),
 ) {
-  if (!run || !["completed", "partial"].includes(run.status ?? "")) return false
+  if (!run || run.status !== "completed") return false
   if (run.consumedAt || run.dry_run_consumed_at || run.authorizedPersistentRunId ||
     run.authorized_persistent_run_id) return false
   const metrics = run.metrics ?? {}
   if (metrics.dryRun !== true) return false
+
+  const requiredReaders = [
+    "orders", "messages", "analytics", "watchers", "listing_identity", "luna_supply",
+  ]
+  if (requiredReaders.some((reader) => run.readers?.[reader]?.status !== "available")) {
+    return false
+  }
+  if (["orders", "messages", "analytics", "watchers"].some((reader) =>
+    run.readers?.[reader]?.auth?.status !== "READY"
+  )) return false
+  if (run.readers?.orders?.auth?.scopeConfirmed !== true) return false
+  if (
+    !isPositiveNumber(metrics.activeListings) ||
+    !isNonNegativeNumber(metrics.officialOrdersRead) ||
+    !isNonNegativeNumber(metrics.sellerHubMessageHeadersRead) ||
+    !isPositiveNumber(metrics.analyticsListingsRead) ||
+    !isPositiveNumber(metrics.watcherListingsRead)
+  ) return false
+  if (
+    metrics.sellerHubMessageContentReturned !== false ||
+    metrics.sellerHubMessageRawXmlPersisted !== false
+  ) return false
+  const listingIdentity = run.readers?.listing_identity?.metrics ?? {}
+  if (
+    metrics.listingIdentityVerified !== true ||
+    listingIdentity.itemIdAndCustomLabelExact !== true ||
+    listingIdentity.supplierSkuLinked !== true ||
+    metrics.lunaExactSupplyLinked !== true ||
+    metrics.lunaSupplyFresh !== true
+  ) return false
 
   const completedAt = run.completedAt ?? run.completed_at
   const completedTime = Date.parse(completedAt ?? "")
@@ -103,14 +141,21 @@ export function isSatisfactoryCommercialDryRun(
     reader.auth?.rawOAuthDescriptionExposed === true
   )) return false
 
+  if (errors.length > 0) return false
+
   const buyerPiiReturned = run.safety?.buyerPiiReturned ?? metrics.buyerPiiReturned
   const ebayWriteUsed = run.safety?.ebayWriteUsed
   const alertDeliveryAttempted = run.safety?.alertDeliveryAttempted
 
   return metrics.commercialDataPersistencePerformed === false
+    && isZero(metrics.persistenceWrites)
+    && isZero(metrics.eventsCreated)
     && isZero(metrics.alertsEnqueued)
+    && isZero(metrics.outboxRowsCreated)
     && isZero(metrics.fulfillmentTasksCreated)
+    && isZero(metrics.whatsappMetaAccepted)
     && isZero(metrics.whatsappDelivered)
+    && isZero(metrics.buyerPiiFieldsReturned)
     && isZero(metrics.ebayWrites)
     && buyerPiiReturned === false
     && (run.safety?.dryRun === undefined || run.safety.dryRun === true)

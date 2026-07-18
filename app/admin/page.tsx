@@ -42,25 +42,28 @@ export default function SellerOsAdminHome() {
   }, [router])
 
   return (
-    <main className="min-h-screen bg-[#05070d] px-4 pb-28 pt-4 text-white sm:px-6">
+    <main className="min-h-screen overflow-x-hidden bg-[#05070d] px-4 pb-28 pt-4 text-white sm:px-6">
       <div className="mx-auto grid max-w-7xl gap-5 lg:grid-cols-[16rem_1fr]">
-        <aside className="hidden rounded-3xl border border-white/10 bg-white/[0.035] p-4 lg:block">
+        <aside className="hidden self-start rounded-3xl border border-white/10 bg-white/[0.035] p-4 lg:sticky lg:top-4 lg:block">
           <p className="px-3 text-xs font-black tracking-[0.24em] text-cyan-200">SELLER OS</p>
-          <nav aria-label="Áreas principales de Seller OS" className="mt-6 space-y-2">{SELLER_OS_NAVIGATION.map((item) => <a key={item.id} href={item.href} title={item.description} className={`block rounded-2xl p-3 ${item.id === "home" ? "bg-white text-black" : "text-white/65 hover:bg-white/10 hover:text-white"}`}><span className="mr-3" aria-hidden="true">{item.icon}</span><span className="text-sm font-black">{item.label}</span></a>)}</nav>
+          <nav aria-label="Áreas principales de Seller OS" className="mt-6 space-y-2">{SELLER_OS_NAVIGATION.map((item) => <a key={item.id} href={item.href} aria-current={item.id === "home" ? "page" : undefined} title={item.description} className={`flex min-h-14 items-center gap-3 rounded-2xl px-3 py-2.5 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200 ${item.id === "home" ? "bg-white text-black" : "text-white/65 hover:bg-white/10 hover:text-white"}`}><span className={`flex size-9 shrink-0 items-center justify-center rounded-xl text-xs font-black ${item.id === "home" ? "bg-black/10" : "bg-white/[0.06] text-cyan-100"}`} aria-hidden="true">0{item.order}</span><span className="min-w-0"><span className="block text-sm font-black leading-5">{item.label}</span><span className={`mt-0.5 block text-[10px] font-bold uppercase tracking-wider ${item.id === "home" ? "text-black/55" : "text-white/35"}`}>{item.status === "ACTIVE" ? "Disponible" : "Limitado"}</span></span></a>)}</nav>
         </aside>
 
-        <section>
+        <section className="min-w-0">
           <header className="rounded-3xl border border-white/10 bg-gradient-to-br from-cyan-200/[0.10] via-white/[0.03] to-emerald-200/[0.06] p-5 sm:p-7">
-            <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-100/60">Inicio operativo</p><h1 className="mt-2 text-3xl font-black">¿Qué necesita atención ahora?</h1></div><span className={`rounded-full px-3 py-2 text-xs font-black ${state === "READY" ? "bg-emerald-200 text-black" : "border border-amber-200/30 text-amber-100"}`}>{state === "LOADING" ? "VALIDANDO SESIÓN" : state === "READY" ? "SESIÓN PROTEGIDA" : "REVISAR CONEXIÓN"}</span></div>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-white/60">Seller OS coordina el piloto de hoy con trabajo automático y confirmaciones humanas puntuales. La publicación continúa siendo manual en Seller Hub; producción y escrituras eBay permanecen intactas.</p>
+            <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-100/60">Inicio operativo</p><h1 className="mt-2 text-2xl font-black leading-tight sm:text-3xl">Tu siguiente decisión, sin ruido</h1></div><span className={`shrink-0 rounded-full px-3 py-2 text-xs font-black ${state === "READY" ? "bg-emerald-200 text-black" : "border border-amber-200/30 text-amber-100"}`}>{state === "LOADING" ? "VALIDANDO SESIÓN" : state === "READY" ? "SESIÓN PROTEGIDA" : "REVISAR CONEXIÓN"}</span></div>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-white/60">Seller OS trabaja en segundo plano, se detiene sólo ante una decisión indispensable y te muestra qué continuará después.</p>
           </header>
 
           <TodayLaunchPanel />
 
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{cards.map(([title, status, detail]) => <article key={title} className="rounded-3xl border border-white/10 bg-white/[0.035] p-5"><p className="text-xs font-black uppercase tracking-wider text-white/45">{title}</p><h2 className="mt-3 text-lg font-black">{status}</h2><p className="mt-2 text-sm leading-6 text-white/55">{detail}</p></article>)}</div>
+          <details className="mt-5 rounded-3xl border border-white/10 bg-white/[0.025] p-4 sm:p-5">
+            <summary className="flex min-h-11 cursor-pointer items-center font-black text-white/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver resumen de las demás áreas</summary>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{cards.map(([title, status, detail]) => <article key={title} className="min-w-0 rounded-2xl border border-white/10 bg-black/20 p-4"><p className="text-xs font-black uppercase tracking-wider text-white/45">{title}</p><h2 className="mt-2 break-words text-base font-black">{status}</h2><p className="mt-2 text-sm leading-6 text-white/55">{detail}</p></article>)}</div>
+          </details>
         </section>
       </div>
-      <SellerOsMobileNav active="home" />
+      <SellerOsMobileNav active="home" hideOnDesktop />
     </main>
   )
 }

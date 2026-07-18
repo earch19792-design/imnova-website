@@ -354,6 +354,7 @@ export function calculateReadiness(input: {
   facts: ResolvedFact[]
   requirements: FactRequirement[]
   regulated: boolean
+  taxonomySourceReady?: boolean
 }) {
   const has = (scope: FactScope, keys: string[]) => keys.every((factKey) => {
     const fact = factByKey(input.facts, scope, factKey)
@@ -364,9 +365,10 @@ export function calculateReadiness(input: {
   const requirementsReady = !input.requirements.some((requirement) =>
     ["MISSING_BLOCKING", "CONFLICTED_BLOCKING"].includes(requirement.status))
   const regulatory = regulatoryReadiness(input.facts, input.regulated)
-  const actualShipping = input.facts.some((fact) => fact.factScope === "SHIPPING_PACKAGE" &&
-    ["shippingWeight", "shippingLength", "shippingWidth", "shippingHeight"].includes(fact.factKey) &&
-    TRUSTED.has(fact.verificationStatus))
+  const actualShipping = ["shippingWeight", "shippingLength", "shippingWidth", "shippingHeight"].every((factKey) => {
+    const fact = factByKey(input.facts, "SHIPPING_PACKAGE", factKey)
+    return Boolean(fact && TRUSTED.has(fact.verificationStatus))
+  })
   const estimate = input.facts.some((fact) => fact.factScope === "SHIPPING_PACKAGE" && fact.factKey === "shippingWeight" &&
     ["ESTIMATED_INTERNAL", "VERIFIED", "CORROBORATED", "DERIVED_VERIFIED"].includes(fact.verificationStatus))
   const productFacts = has("PRODUCT_UNIT", ["exactProductName", "brand", "condition"])
@@ -375,7 +377,7 @@ export function calculateReadiness(input: {
     IDENTITY_READY: input.identityExact && !conflict,
     PRODUCT_FACTS_READY: productFacts && !conflict,
     OFFER_PACK_READY: offerPack && !conflict,
-    EBAY_ASPECTS_READY: requirementsReady && !conflict,
+    EBAY_ASPECTS_READY: input.taxonomySourceReady !== false && requirementsReady && !conflict,
     REGULATORY_READY: !regulatory.blocking,
     SHIPPING_ESTIMATE_READY: estimate,
     SHIPPING_CONFIRMED: actualShipping,

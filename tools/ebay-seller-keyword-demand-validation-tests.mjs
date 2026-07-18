@@ -107,6 +107,18 @@ test("allows only official eBay read-only market endpoints", () => {
     "https://api.ebay.com/buy/marketplace-insights/v1_beta/item_sales/search?q=hair%20spray&category_ids=11860",
     "GET"
   ))
+  assert.doesNotThrow(() => assertEbaySellerKeywordReadonlyRequest(
+    "https://api.ebay.com/commerce/catalog/v1_beta/product_summary/search?gtin=012345678905&category_id=11860",
+    "GET"
+  ))
+  assert.throws(() => assertEbaySellerKeywordReadonlyRequest(
+    "https://api.ebay.com/commerce/catalog/v1_beta/product_summary/search",
+    "POST"
+  ), /BLOCKED_NON_READONLY_EBAY_REQUEST/)
+  assert.throws(() => assertEbaySellerKeywordReadonlyRequest(
+    "https://example.com/commerce/catalog/v1_beta/product_summary/search",
+    "GET"
+  ), /BLOCKED_NON_READONLY_EBAY_REQUEST/)
   assert.throws(() => assertEbaySellerKeywordReadonlyRequest(
     "https://api.ebay.com/sell/inventory/v1/offer",
     "POST"
@@ -179,6 +191,9 @@ test("wires the read-only analysis into the phone menu without manual title or U
     "utf8"
   )
   assert.match(gateway, /EBAY_READONLY_ENV_MISSING/)
+  assert.match(gateway, /url\.searchParams\.set\("category_id", text\(input\.categoryId\)\)/)
+  assert.doesNotMatch(gateway, /url\.searchParams\.set\("category_ids", text\(input\.categoryId\)\)/)
+  assert.match(gateway, /aspects,\s*requiredAspects: aspects\.filter\(\(aspect\) => aspect\.required\)/)
   const validator = readFileSync(
     new URL("../lib/ebay/ebay-seller-keyword-demand-validation.ts", import.meta.url),
     "utf8"

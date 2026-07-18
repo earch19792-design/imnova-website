@@ -1,4 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto"
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+import { createEbayReadonlyRateLimitError } from "./ebay-readonly-rate-limit.ts"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const TRADING_ENDPOINT = "https://api.ebay.com/ws/api.dll"
@@ -136,6 +138,9 @@ async function accessToken(fetchImpl: FetchLike) {
     body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, scope: BASE_SCOPE }),
     cache: "no-store", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
+  if (response.status === 429) throw createEbayReadonlyRateLimitError("EBAY_OAUTH_429", response, {
+    apiFamily: "TRADING", operation: "OAUTH_REFRESH", endpoint: "/identity/v1/oauth2/token",
+  })
   if (!response.ok) throw new Error(`EBAY_TRADING_OAUTH_${response.status}`)
   const payload = await response.json() as Record<string, unknown>
   const token = typeof payload.access_token === "string" ? payload.access_token.trim() : ""
@@ -154,6 +159,9 @@ async function tradingRead(callName: "GetUser" | "GetItem", token: string,
   })
   const xml = await response.text()
   const ack = tagValue(xml, "Ack")?.toLocaleLowerCase("en-US")
+  if (response.status === 429) throw createEbayReadonlyRateLimitError("EBAY_READONLY_GET_429", response, {
+    apiFamily: "TRADING", operation: callName.toUpperCase(), endpoint: "/ws/api.dll",
+  })
   if (!response.ok || !["success", "warning"].includes(ack ?? "")) {
     throw new Error(`EBAY_TRADING_${callName.toLocaleUpperCase("en-US")}_${response.status}`)
   }

@@ -1,0 +1,244 @@
+import { createHash } from "node:crypto"
+
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import { ebayConditionContractFromVerifiedFact } from "./ebay-manual-listing-domain.ts"
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import { normalizeEbayCompliantFulfillmentBasis } from "./ebay-fulfillment-policy-compliance.ts"
+
+export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V2_2026_07_18"
+
+type JsonRecord = Record<string, unknown>
+type SafeFact = { scope: string; key: string; value: unknown; unit: string | null; status: string }
+type SafeRequirement = {
+  aspectName: string
+  required: boolean
+  status: string
+  selectedValue: string | null
+  allowedValues: string[]
+}
+
+function record(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {}
+}
+function text(value: unknown, maximum = 500) {
+  return typeof value === "string" ? value.normalize("NFKC").trim().replace(/\s+/g, " ").slice(0, maximum) : ""
+}
+function number(value: unknown) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical)
+  if (!value || typeof value !== "object") return value
+  return Object.fromEntries(Object.entries(value as JsonRecord).sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => [key, canonical(entry)]))
+}
+function hash(value: unknown) {
+  return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex")
+}
+function unique(values: string[]) {
+  return [...new Set(values.map((value) => text(value)).filter(Boolean))]
+}
+function validImageUrl(value: unknown) {
+  try {
+    const url = new URL(text(value, 2_000))
+    return url.protocol === "https:" ? url.href : null
+  } catch {
+    return null
+  }
+}
+function titleFromFacts(input: { productTitle: string; facts: SafeFact[] }) {
+  const value = (key: string) => text(input.facts.find((fact) => fact.scope === "PRODUCT_UNIT" && fact.key === key)?.value)
+  const exactName = value("exactProductName") || text(input.productTitle)
+  const brand = value("brand")
+  const model = value("model") || value("mpn")
+  const variant = value("variant") || value("scent") || value("flavor") || value("color")
+  const total = input.facts.find((fact) => fact.scope === "OFFER_PACK" && fact.key === "totalUnitCount")
+  const pack = number(total?.value)
+  const packText = pack && pack > 1 ? `${pack} Count` : ""
+  const parts = unique([
+    exactName.toLocaleLowerCase().startsWith(brand.toLocaleLowerCase()) ? "" : brand,
+    exactName, model, variant, packText,
+  ])
+  return text(parts.join(" "), 80)
+}
+
+export function buildVerifiedManualSellerHubHandoff(input: {
+  candidateId: string
+  factRunId: string
+  productTitle: string
+  supplierSku: string
+  listingQuantity: number
+  salePrice: number
+  fulfillmentBasis: unknown
+  economics: JsonRecord
+  factsSummary: JsonRecord
+  lunaImageUrls: string[]
+  policies: {
+    categoryId: string | null
+    conditionId: string | null
+    fulfillmentPolicyId: string | null
+    paymentPolicyId: string | null
+    returnPolicyId: string | null
+    verifiedSourceAt: string | null
+  }
+  generatedAt: string
+}) {
+  const gates = record(input.factsSummary.gates)
+  const facts = Array.isArray(input.factsSummary.resolvedFacts)
+    ? input.factsSummary.resolvedFacts.map(record).map((fact): SafeFact => ({
+      scope: text(fact.scope), key: text(fact.key), value: fact.value, unit: text(fact.unit) || null, status: text(fact.status),
+    }))
+    : []
+  const requirements = Array.isArray(input.factsSummary.resolvedRequirements)
+    ? input.factsSummary.resolvedRequirements.map(record).map((requirement): SafeRequirement => ({
+      aspectName: text(requirement.aspectName), required: requirement.required === true,
+      status: text(requirement.status), selectedValue: text(requirement.selectedValue) || null,
+      allowedValues: Array.isArray(requirement.allowedValues) ? requirement.allowedValues.map(text).filter(Boolean) : [],
+    }))
+    : []
+  const taxonomy = record(input.factsSummary.taxonomy)
+  const categoryId = text(input.policies.categoryId || taxonomy.categoryId)
+  const fulfillmentBasis = normalizeEbayCompliantFulfillmentBasis(
+    input.fulfillmentBasis,
+  )
+  const lunaConfirmation = record(input.economics.lunaConfirmation)
+  const images = unique(input.lunaImageUrls.map(validImageUrl).filter((value): value is string => Boolean(value))).slice(0, 24)
+  const trusted = new Set(["VERIFIED", "CORROBORATED", "DERIVED_VERIFIED"])
+  const fact = (scope: string, key: string) => facts.find((entry) => entry.scope === scope && entry.key === key && trusted.has(entry.status))
+  const blockers: string[] = []
+  if (input.factsSummary.currentRunBound !== true || text(input.factsSummary.factRunId) !== text(input.factRunId)) blockers.push("CURRENT_FACT_RUN_REQUIRED")
+  if (gates.OPENAI_INPUT_READY !== true) blockers.push("VERIFIED_CONTENT_FACTS_NOT_READY")
+  if (!/^\d+$/.test(categoryId)) blockers.push("CATEGORY_REQUIRED")
+  if (!text(input.policies.conditionId)) blockers.push("CONDITION_REQUIRED")
+  if (![input.policies.fulfillmentPolicyId, input.policies.paymentPolicyId, input.policies.returnPolicyId].every((value) => text(value))) blockers.push("VERIFIED_BUSINESS_POLICIES_REQUIRED")
+  if (!images.length) blockers.push("AUTHORIZED_LUNA_IMAGE_REQUIRED")
+  if (!(input.listingQuantity >= 1)) blockers.push("LISTING_QUANTITY_REQUIRED")
+  if (!(input.salePrice > 0) || input.economics.operatorPriceApproved !== true || input.economics.passesProfitGate !== true) blockers.push("OPERATOR_PRICE_AND_ECONOMICS_REQUIRED")
+  if (!fulfillmentBasis) blockers.push("COMPLIANT_FULFILLMENT_BASIS_REQUIRED")
+  if (!["AVAILABLE_QUANTITY_NOT_SHOWN", "AVAILABLE_EXACT_QUANTITY"].includes(text(lunaConfirmation.status)) ||
+    text(lunaConfirmation.source) !== "OPERATOR_VISIBLE_LUNA_PRODUCT_PAGE" ||
+    !Number.isFinite(Date.parse(text(lunaConfirmation.confirmedAt)))) {
+    blockers.push("OPERATOR_LUNA_CONFIRMATION_REQUIRED")
+  }
+  const shippingKeys = ["shippingWeight", "shippingLength", "shippingWidth", "shippingHeight"]
+  const confirmedShipping = shippingKeys.every((key) => fact("SHIPPING_PACKAGE", key))
+  if (!confirmedShipping && gates.SHIPPING_ESTIMATE_READY !== true) blockers.push("SHIPPING_ESTIMATE_REQUIRED")
+  for (const requirement of requirements) {
+    if (requirement.required && !["SATISFIED_VERIFIED", "SATISFIED_CORROBORATED", "NOT_APPLICABLE"].includes(requirement.status)) {
+      blockers.push(`REQUIRED_ASPECT_${text(requirement.aspectName).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`)
+    }
+    if (requirement.selectedValue && requirement.allowedValues.length && !requirement.allowedValues.includes(requirement.selectedValue)) {
+      blockers.push(`ASPECT_VALUE_NOT_ALLOWED_${text(requirement.aspectName).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`)
+    }
+  }
+  const exactName = text(fact("PRODUCT_UNIT", "exactProductName")?.value || input.productTitle)
+  const brand = text(fact("PRODUCT_UNIT", "brand")?.value)
+  const condition = text(fact("PRODUCT_UNIT", "condition")?.value)
+  const conditionContract = ebayConditionContractFromVerifiedFact(condition)
+  const selectedConditionId = text(input.policies.conditionId)
+  if (!conditionContract) blockers.push("VERIFIED_CONDITION_ID_MAPPING_REQUIRED")
+  if (conditionContract && selectedConditionId !== conditionContract.conditionId) blockers.push("CONDITION_ID_FACT_MISMATCH")
+  if (!exactName || !brand || !condition) blockers.push("CORE_PRODUCT_FACTS_REQUIRED")
+  const dedupedBlockers = unique(blockers)
+  if (dedupedBlockers.length) {
+    return { ready: false as const, blockers: dedupedBlockers, package: null, packageHash: null,
+      safety: { openAiCalls: 0, ebayWrites: 0, competitorContentUsed: false, productionChanged: false } }
+  }
+
+  const aspects: Record<string, string[]> = {}
+  for (const requirement of requirements) {
+    if (requirement.selectedValue && ["SATISFIED_VERIFIED", "SATISFIED_CORROBORATED"].includes(requirement.status)) {
+      aspects[requirement.aspectName] = [requirement.selectedValue]
+    }
+  }
+  const addAspect = (name: string, key: string) => {
+    const value = text(fact("PRODUCT_UNIT", key)?.value)
+    if (value && !aspects[name]) aspects[name] = [value]
+  }
+  addAspect("Brand", "brand")
+  addAspect("MPN", "mpn")
+  addAspect("UPC", "upc")
+  addAspect("Model", "model")
+  const title = titleFromFacts({ productTitle: input.productTitle, facts })
+  const includedCount = text(fact("OFFER_PACK", "totalUnitCount")?.value)
+  const descriptionLines = [
+    exactName,
+    `Marca: ${brand}.`,
+    includedCount ? `Contenido total verificado: ${includedCount}.` : "",
+    `Condición: ${condition}.`,
+    "El contenido, la variante y la presentación corresponden exactamente a los datos verificados antes de publicar.",
+  ].filter(Boolean)
+  const shipping = confirmedShipping
+    ? { status: "CONFIRMED", values: Object.fromEntries(shippingKeys.map((key) => {
+      const entry = fact("SHIPPING_PACKAGE", key)!
+      return [key, { value: entry.value, unit: entry.unit, verificationStatus: entry.status }]
+    })), operatorConfirmationRequired: false, estimatedValuesExcluded: true }
+    : { status: "ESTIMATE_ONLY_NOT_FOR_LISTING", values: {}, operatorConfirmationRequired: true,
+      estimatedValuesExcluded: true,
+      operatorAction: "Confirma peso y dimensiones en Seller Hub o utiliza una política de envío verificada que no los requiera." }
+  const warnings = [
+    ...(!confirmedShipping ? ["SHIPPING_CONFIRMATION_REQUIRED_IN_SELLER_HUB"] : []),
+    ...requirements.filter((requirement) => !requirement.required && requirement.status === "MISSING_OPTIONAL")
+      .map((requirement) => `OPTIONAL_ASPECT_MISSING_${text(requirement.aspectName).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`),
+  ]
+  const listingPackage = {
+    version: SAME_DAY_MANUAL_HANDOFF_VERSION,
+    candidateId: input.candidateId,
+    factRunId: input.factRunId,
+    title,
+    categoryId,
+    conditionId: conditionContract!.conditionId,
+    conditionLabel: conditionContract!.canonicalLabel,
+    itemSpecifics: aspects,
+    description: descriptionLines.join("\n\n"),
+    price: Number(input.salePrice.toFixed(2)),
+    quantity: input.listingQuantity,
+    customLabel: text(input.supplierSku, 50),
+    fulfillmentCompliance: {
+      basis: fulfillmentBasis!,
+      operatorAttested: true,
+      documentsStored: false,
+      piiStored: false,
+      sellerArbitrageAllowed: false,
+    },
+    supplierConfirmation: {
+      source: "OPERATOR_VISIBLE_LUNA_PRODUCT_PAGE",
+      status: text(lunaConfirmation.status),
+      confirmedAt: text(lunaConfirmation.confirmedAt),
+      quantityVisible: lunaConfirmation.quantityVisible === true,
+      confirmedQuantity: lunaConfirmation.quantityVisible === true ? number(lunaConfirmation.confirmedQuantity) : null,
+      recheckAfterSale: lunaConfirmation.recheckAfterSale === true,
+      ebayConfirmedSupplierStock: false,
+      actorIdentifierStored: false,
+      piiStored: false,
+    },
+    images: { urls: images, count: images.length, source: "LUNA_AUTHORIZED_CATALOG", competitorImages: 0 },
+    shipping,
+    publicationReadiness: confirmedShipping ? "READY_WITH_CONFIRMED_SHIPPING" : "READY_FOR_MANUAL_SHIPPING_CONFIRMATION",
+    qualityWarnings: warnings,
+    businessPolicies: {
+      fulfillmentPolicyId: text(input.policies.fulfillmentPolicyId),
+      paymentPolicyId: text(input.policies.paymentPolicyId),
+      returnPolicyId: text(input.policies.returnPolicyId),
+      verifiedSourceAt: text(input.policies.verifiedSourceAt),
+    },
+    operatorChecklist: [
+      "Confirmar que el producto y pack físicos coinciden con este paquete.",
+      fulfillmentBasis === "OWNED_INVENTORY"
+        ? "Confirmar que el inventario ya es propio antes de publicar."
+        : "Confirmar que permanece vigente el acuerdo de fulfillment con el proveedor mayorista autorizado.",
+      ...(!confirmedShipping ? ["Confirmar peso/dimensiones o seleccionar una política de envío verificada compatible en Seller Hub."] : []),
+      "Usar únicamente las imágenes Luna incluidas y aprobadas.",
+      "Copiar título, categoría, specifics, precio, cantidad, Custom Label, envío y políticas en Seller Hub.",
+      "Revisar el preview final de Seller Hub antes de publicar.",
+      "Regresar con el Item ID para verificación read-only.",
+    ],
+    generatedAt: input.generatedAt,
+    safety: { factsOnly: true, openAiCalls: 0, ebayWrites: 0, competitorContentUsed: false,
+      automaticPricingUsed: false, operatorPriceApproved: true, productionChanged: false },
+  }
+  const packageHash = hash(listingPackage)
+  return { ready: true as const, blockers: [], warnings, package: listingPackage, packageHash,
+    safety: listingPackage.safety }
+}

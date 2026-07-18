@@ -22,16 +22,20 @@ jobs:
         env:
           PREVIEW_URL: ${{ secrets.EBAY_COMMERCIAL_PREVIEW_URL }}
           CRON_SECRET: ${{ secrets.EBAY_COMMERCIAL_CRON_SECRET }}
+          VERCEL_BYPASS_SECRET: ${{ secrets.EBAY_COMMERCIAL_VERCEL_BYPASS_SECRET }}
         run: |
           test -n "$PREVIEW_URL"
           test -n "$CRON_SECRET"
-          curl --fail --silent --show-error --max-time 55 \
-            -H "Authorization: Bearer $CRON_SECRET" \
-            "$PREVIEW_URL/api/cron/ebay-commercial-monitor"
+          args=(--fail --silent --show-error --max-time 55
+            -H "Authorization: Bearer $CRON_SECRET")
+          if [ -n "$VERCEL_BYPASS_SECRET" ]; then
+            args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")
+          fi
+          curl "${args[@]}" "$PREVIEW_URL/api/cron/ebay-commercial-monitor"
 
   whatsapp-dispatcher:
-    # Delivery is deliberately independent from reader activation. A successful
-    # dry run may enable the monitor without enabling an external message.
+    # The delivery flag remains independent, but the endpoint also requires the
+    # same durable dry-run authorization as the commercial scheduler.
     if: vars.EBAY_COMMERCIAL_PREVIEW_WHATSAPP_DISPATCHER_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -40,9 +44,13 @@ jobs:
         env:
           PREVIEW_URL: ${{ secrets.EBAY_COMMERCIAL_PREVIEW_URL }}
           CRON_SECRET: ${{ secrets.EBAY_COMMERCIAL_CRON_SECRET }}
+          VERCEL_BYPASS_SECRET: ${{ secrets.EBAY_COMMERCIAL_VERCEL_BYPASS_SECRET }}
         run: |
           test -n "$PREVIEW_URL"
           test -n "$CRON_SECRET"
-          curl --fail --silent --show-error --max-time 55 \
-            -H "Authorization: Bearer $CRON_SECRET" \
-            "$PREVIEW_URL/api/cron/commercial-alert-dispatcher"
+          args=(--fail --silent --show-error --max-time 55
+            -H "Authorization: Bearer $CRON_SECRET")
+          if [ -n "$VERCEL_BYPASS_SECRET" ]; then
+            args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")
+          fi
+          curl "${args[@]}" "$PREVIEW_URL/api/cron/commercial-alert-dispatcher"

@@ -35,5 +35,5 @@ export async function POST(req: Request, context: { params: Promise<{ taskId: st
 
 function safeCode(error: unknown) {
   const value = error instanceof Error ? error.message : ""
-  return /^FULFILLMENT_[A-Z0-9_]+$/.test(value) ? value : "FULFILLMENT_TRACKING_APPROVAL_FAILED"
+  return /^(?:FULFILLMENT|EBAY_FULFILLMENT)_[A-Z0-9_]+$/.test(value) ? value : "FULFILLMENT_TRACKING_APPROVAL_FAILED"
 }

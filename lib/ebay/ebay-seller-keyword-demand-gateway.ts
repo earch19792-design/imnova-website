@@ -158,7 +158,9 @@ export async function getEbayApplicationBrowseQuota(): Promise<EbayApplicationBr
       cache: "no-store",
       signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
     })
-    if (response.status === 429) throw createEbayReadonlyRateLimitError("EBAY_READONLY_GET_429", response)
+    if (response.status === 429) throw createEbayReadonlyRateLimitError("EBAY_READONLY_GET_429", response, {
+      apiFamily: "DEVELOPER_ANALYTICS", operation: "RATE_LIMIT", endpoint: "/developer/analytics/v1_beta/rate_limit/",
+    })
     if (!response.ok) return unavailable()
     const value = parseEbayApplicationBrowseQuota(await response.json())
     rateLimitCache = { value, expiresAt: Date.now() + RATE_LIMIT_CACHE_TTL_MS }
@@ -175,7 +177,9 @@ async function enforceBrowseQuota(expectedCalls: number) {
   const quota = await getEbayApplicationBrowseQuota()
   if (quota.status === "AVAILABLE" && quota.remaining !== null &&
     quota.remaining <= BROWSE_QUOTA_RESERVE + expectedCalls && quota.resetAt) {
-    throw createEbayReadonlyQuotaLimitError(quota.resetAt)
+    throw createEbayReadonlyQuotaLimitError(quota.resetAt, Date.now(), {
+      apiFamily: "BROWSE", operation: "QUOTA_PRECHECK", endpoint: "/buy/browse/v1",
+    })
   }
 }
 
@@ -275,7 +279,9 @@ async function getApplicationToken(scope: string) {
         return accessToken
       }
       if (response.status === 429) {
-        throw createEbayReadonlyRateLimitError("EBAY_OAUTH_429", response)
+        throw createEbayReadonlyRateLimitError("EBAY_OAUTH_429", response, {
+          apiFamily: "OAUTH", operation: "APPLICATION_TOKEN", endpoint: "/identity/v1/oauth2/token",
+        })
       }
       if (![429, 500, 502, 503, 504].includes(response.status) || attempt === EBAY_MAX_RETRIES - 1) {
         throw new Error(`EBAY_OAUTH_${response.status}`)
@@ -288,6 +294,20 @@ async function getApplicationToken(scope: string) {
     }
   }
   throw new Error("EBAY_OAUTH_FAILED")
+}
+
+function readonlyRequestContext(url: URL) {
+  const endpoint = url.pathname
+  if (endpoint.startsWith("/buy/browse/")) return { apiFamily: "BROWSE", operation: endpoint.includes("item_summary/search") ? "SEARCH" : "ITEM_DETAIL", endpoint }
+  if (endpoint.startsWith("/commerce/catalog/")) return { apiFamily: "CATALOG", operation: "PRODUCT_SUMMARY_SEARCH", endpoint }
+  if (endpoint.startsWith("/commerce/taxonomy/")) {
+    const operation = endpoint.includes("get_default_category_tree_id") ? "DEFAULT_CATEGORY_TREE" :
+      endpoint.includes("get_category_suggestions") ? "CATEGORY_SUGGESTIONS" : "CATEGORY_ASPECTS"
+    return { apiFamily: "TAXONOMY", operation, endpoint }
+  }
+  if (endpoint.startsWith("/buy/marketplace_insights/")) return { apiFamily: "MARKETPLACE_INSIGHTS", operation: "SOLD_HISTORY_SEARCH", endpoint }
+  if (endpoint.startsWith("/buy/marketing/")) return { apiFamily: "MARKETING", operation: "BEST_SELLING_PRODUCTS", endpoint }
+  return { apiFamily: "EBAY_READONLY", operation: "GET", endpoint }
 }
 
 async function getEbayJson(url: URL, accessToken: string) {
@@ -312,7 +332,7 @@ async function getEbayJson(url: URL, accessToken: string) {
         }
       }
       if (response.status === 429) {
-        throw createEbayReadonlyRateLimitError("EBAY_READONLY_GET_429", response)
+        throw createEbayReadonlyRateLimitError("EBAY_READONLY_GET_429", response, readonlyRequestContext(url))
       }
       if (![429, 500, 502, 503, 504].includes(response.status) || attempt === EBAY_MAX_RETRIES - 1) {
         throw new Error(`EBAY_READONLY_GET_${response.status}`)
@@ -715,6 +735,8 @@ export type EbayTaxonomyAspectValueIntelligence = {
 
 export type EbayTaxonomyAspectIntelligence = {
   name: string
+  required: boolean
+  usage: string | null
   mode: string | null
   cardinality: string | null
   maxLength: number | null
@@ -770,7 +792,7 @@ export async function searchEbayCatalogIdentity(input: {
     if (gtin) url.searchParams.set("gtin", gtin)
     else if (text(input.mpn)) url.searchParams.set("mpn", text(input.mpn))
     else url.searchParams.set("q", text(input.query).slice(0, 350))
-    if (/^\d+$/.test(text(input.categoryId))) url.searchParams.set("category_ids", text(input.categoryId))
+    if (/^\d+$/.test(text(input.categoryId))) url.searchParams.set("category_id", text(input.categoryId))
     url.searchParams.set("limit", "10")
     const payload = await getEbayJson(url, token)
     const products = array(payload.productSummaries).map(mapCatalogProduct)
@@ -919,9 +941,9 @@ export async function getEbayTaxonomyListingIntelligence(
       categoryId,
       categoryName: categoryName || null,
       observedAt: new Date().toISOString(),
-      aspects: aspects.map(({ required: _required, usage: _usage, ...aspect }) => aspect),
-      requiredAspects: aspects.filter((aspect) => aspect.required).map(({ required: _required, usage: _usage, ...aspect }) => aspect),
-      recommendedAspects: aspects.filter((aspect) => !aspect.required && aspect.usage === "RECOMMENDED").map(({ required: _required, usage: _usage, ...aspect }) => aspect),
+      aspects,
+      requiredAspects: aspects.filter((aspect) => aspect.required),
+      recommendedAspects: aspects.filter((aspect) => !aspect.required && aspect.usage === "RECOMMENDED"),
       source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
     }
     taxonomyCache.set(cacheKey, {

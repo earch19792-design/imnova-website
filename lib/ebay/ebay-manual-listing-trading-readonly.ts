@@ -5,6 +5,10 @@ import {
   ebayProductionAccountFingerprint,
   getEbayProductionIdentityBindingConfiguration,
 } from "./ebay-seller-account-scope"
+import {
+  createEbayReadonlyRateLimitError,
+  getEbayReadonlyRateLimitMetadata,
+} from "./ebay-readonly-rate-limit"
 
 export const EBAY_MANUAL_LISTING_TRADING_CONNECTOR =
   "EBAY_TRADING_GET_ITEM_READONLY" as const
@@ -246,6 +250,13 @@ async function getTradingAccessToken(
     cache: "no-store",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
+  if (response.status === 429) {
+    throw createEbayReadonlyRateLimitError("EBAY_OAUTH_429", response, {
+      apiFamily: "OAUTH",
+      operation: "TRADING_REFRESH_TOKEN",
+      endpoint: "/identity/v1/oauth2/token",
+    })
+  }
   if (!response.ok) {
     throw new Error(`EBAY_TRADING_OAUTH_${response.status}`)
   }
@@ -335,14 +346,22 @@ async function tradingRead(
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
       const xml = await response.text()
+      if (response.status === 429) {
+        throw createEbayReadonlyRateLimitError("EBAY_READONLY_GET_429", response, {
+          apiFamily: "TRADING",
+          operation: callName === "GetUser" ? "GET_USER" : "GET_ITEM_IDENTITY",
+          endpoint: "/ws/api.dll",
+        })
+      }
       if (response.ok && responseAccepted(xml)) return xml
       if (
-        ![429, 500, 502, 503, 504].includes(response.status) ||
+        ![500, 502, 503, 504].includes(response.status) ||
         attempt === MAX_RETRIES - 1
       ) {
         throw new Error(`EBAY_TRADING_${callName.toUpperCase()}_${response.status}`)
       }
     } catch (error) {
+      if (getEbayReadonlyRateLimitMetadata(error)) throw error
       if (attempt === MAX_RETRIES - 1) throw error
     }
     await wait(400 * (attempt + 1))

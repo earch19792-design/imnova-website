@@ -42,6 +42,14 @@ function money(value: number) {
   return Math.round(value * 100) / 100
 }
 
+function minimumMoney(value: number) {
+  // A price floor that lands exactly on a cent can otherwise miss its own
+  // gate by a floating-point fraction (for example 4.999999999999999 profit).
+  // The tiny guard makes that boundary one cent conservative without changing
+  // ordinary non-boundary values.
+  return Math.ceil((value + 1e-9) * 100) / 100
+}
+
 export function normalizeEbayUnitEconomicsConfig(
   input: Partial<EbayUnitEconomicsConfig> = {},
 ): EbayUnitEconomicsConfig {
@@ -160,5 +168,45 @@ export function calculateEbayUnitEconomics(
     passesProfitGate,
     config,
     calculationSource: "SERVER_CANONICAL_EBAY_UNIT_ECONOMICS_V1" as const,
+  }
+}
+
+export function calculateEbayMinimumOperatorPrice(
+  input: { supplierCost: unknown },
+  overrides: Partial<EbayUnitEconomicsConfig> = {},
+) {
+  const config = normalizeEbayUnitEconomicsConfig(overrides)
+  const supplierCost = finite(input.supplierCost)
+  if (supplierCost === null || supplierCost < 0) {
+    return {
+      ready: false as const,
+      supplierCost,
+      minimumOperatorPrice: null,
+      config,
+      calculationSource: "SERVER_OWN_COST_PRICE_FLOOR_V1" as const,
+    }
+  }
+
+  const variableRate = config.estimatedEbayFeeRate + config.returnsReserveRate +
+    config.promotedListingsReserveRate
+  const fixedBase = supplierCost + config.estimatedOutboundShipping + config.fixedOrderFee
+  const profitFloor = (fixedBase + config.minimumNetProfit) / Math.max(0.01, 1 - variableRate)
+  const marginRate = config.minimumNetMarginPercent / 100
+  const marginFloor = fixedBase / Math.max(0.01, 1 - variableRate - marginRate)
+  const roiRate = config.minimumRoiPercent / 100
+  const roiFloor = (supplierCost * (1 + roiRate) + config.estimatedOutboundShipping + config.fixedOrderFee) /
+    Math.max(0.01, 1 - variableRate)
+
+  return {
+    ready: true as const,
+    supplierCost: money(supplierCost),
+    minimumOperatorPrice: minimumMoney(Math.max(profitFloor, marginFloor, roiFloor)),
+    components: {
+      minimumNetProfitPrice: minimumMoney(profitFloor),
+      minimumNetMarginPrice: minimumMoney(marginFloor),
+      minimumRoiPrice: minimumMoney(roiFloor),
+    },
+    config,
+    calculationSource: "SERVER_OWN_COST_PRICE_FLOOR_V1" as const,
   }
 }
