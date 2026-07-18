@@ -24,6 +24,7 @@ import {
   recordPersistentEbayRateLimit,
 } from "./ebay-persistent-quota-coordinator"
 import { reconcileProductResearchObservations } from "./ebay-product-research-identity-reconciliation"
+import { productResearchPlannedQueryHash } from "./ebay-product-research-query-plan"
 import { enqueueListingAiTop20Continuation } from "./ebay-listing-ai-top20-queue"
 import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
 
@@ -963,10 +964,11 @@ export async function decideSameDayImages(input: {
 export async function resumeSameDayPilotAfterProductResearchCapture(input: { supabase: SupabaseClient; accountKey: string; searchQuery: string; batchId: string; capturedAt?: string | null; exactLunaMatches?: number }) {
   const state = await getSameDayPilot(input)
   if (!state) return { resumed: 0 }
-  const normalizedQuery = input.searchQuery.trim().toLowerCase()
+  const capturedQueryHash = productResearchPlannedQueryHash(input.searchQuery)
   const familyCandidates = state.candidates.filter((candidate) =>
     !["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(text(candidate.machine_state)) &&
-    text(record(candidate.product_research_query_plan).query).toLowerCase() === normalizedQuery)
+    productResearchPlannedQueryHash(record(candidate.product_research_query_plan).query) ===
+      capturedQueryHash)
   let resumed = 0
   let familyEnriched = 0
   for (const candidate of familyCandidates) {
