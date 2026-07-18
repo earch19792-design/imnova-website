@@ -8,4 +8,3 @@ alter table public.ebay_command_center_reviews
   add constraint ebay_command_center_reviews_step_check check (
     current_step in ('luna', 'ebay', 'product_research', 'economics', 'listing', 'review')
   );
-
