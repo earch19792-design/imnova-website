@@ -110,13 +110,20 @@ test("stock and commercial guards produce blocking routes", () => {
 })
 
 test("mobile UI exposes source, Radar fields and browser-only persistence", () => {
+  const opportunitySource = readFileSync(
+    new URL("../app/admin/ebay/mobile-review/opportunity-command-center.tsx", import.meta.url),
+    "utf8",
+  )
+  const hybridSource = `${pageSource}\n${opportunitySource}`
   for (const expected of [
     /REAL RADAR/, /FIXTURE\/DEMO/, /MARKET_RADAR_READONLY/, /marketRadarProductId/,
     /marketRadarSnapshotId/, /supplierSku/, /supplierVariantId/, /lastSeenAt/,
-    /lastSnapshotAt/, /candidate\.stockSource/, /candidate\.stockConfirmationAgeHours/, /BROWSER_STATE_ONLY/,
+    /lastSnapshotAt/, /radar\.stockQuantity/, /radar\.stockConfirmationAgeHours/, /BROWSER_STATE_ONLY/,
     /officialApprovalRecord: false/, /canPublish: false/, /eBay read-only/,
     /productos observados/, /candidatos seleccionables/, /B2-RUN continúa desactivado/,
-  ]) assert.match(pageSource, expected)
+  ]) assert.match(hybridSource, expected)
+  assert.match(hybridSource, /Oportunidades recomendadas/)
+  assert.doesNotMatch(hybridSource, /Radar alternativo/)
 })
 
 test("connector has no external write or publication capability", () => {

@@ -52,9 +52,13 @@ test("seller journey provides one directional route and inline required-field he
   assert.match(mobile, /Ingresa el costo y abre Luna/)
 })
 
-test("mobile navigation exposes Top 5, protects work and reports dependency failures", () => {
-  assert.match(mobile, /aria-pressed=\{view === "top5"\}/)
-  assert.match(mobile, /onClick=\{\(\) => setView\("top5"\)\}/)
+test("mobile navigation exposes one hybrid opportunity view, protects work and reports dependency failures", () => {
+  assert.doesNotMatch(mobile, /Radar alternativo/)
+  assert.doesNotMatch(mobile, /view === "top5"/)
+  assert.match(mobile, /radarCandidates=\{report\.allCandidates\}/)
+  assert.match(queue, /Cola canónica \+ Radar actualizado/)
+  assert.match(queue, /Oportunidades recomendadas/)
+  assert.match(queue, /Nueva señal · análisis pendiente/)
   assert.match(mobile, /confirmReviewReset/)
   assert.match(mobile, /beforeunload/)
   assert.match(mobile, /serverReviewsLoadState === "ERROR"/)
@@ -83,7 +87,7 @@ test("opportunity UI uses the canonical queue and real listing workspace", () =>
   assert.match(mobile, /<OpportunityCommandCenter guided/)
   assert.match(queue, /guided \? "Actualizar oportunidades"/)
   assert.match(queue, /Elegir este producto/)
-  assert.match(queue, /Ranking canónico · una sola fuente/)
+  assert.match(queue, /Cola canónica \+ Radar actualizado/)
   assert.match(queue, /seller_priority_score/)
   assert.match(queue, /Potencial/)
   assert.match(queue, /Confianza/)

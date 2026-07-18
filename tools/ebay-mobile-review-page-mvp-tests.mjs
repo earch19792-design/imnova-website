@@ -22,14 +22,15 @@ const moduleSource = fs.readFileSync(
   "utf8"
 )
 
-test("mobile review page loads exactly the Top 5 and recommends rank 1", () => {
+test("mobile review keeps the Top 5 model behind one canonical opportunity view", () => {
   const input = buildEbayMobileReviewPageInput(fixture)
   const report = buildEbayMobileReviewPageReport(fixture)
   assert.equal(input.top5Candidates.length, 5)
   assert.equal(input.top5Visible, true)
   assert.equal(report.top5Visible, true)
   assert.equal(report.recommendedCandidateRank, 1)
-  assert.match(pageSource, /Top 5 actual/)
+  assert.match(pageSource, /radarCandidates=\{report\.allCandidates\}/)
+  assert.doesNotMatch(pageSource, /Radar alternativo/)
   assert.match(pageSource, /Fuente actual: fixture modelado · no es data viva/)
   assert.match(pageSource, /score modelado/)
   assert.match(pageSource, /Fixture · no precio runtime/)

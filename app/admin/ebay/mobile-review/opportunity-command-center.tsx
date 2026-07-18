@@ -143,6 +143,7 @@ function sellerLaneLabel(value: string) {
 
 export function OpportunityCommandCenter({
   guided = false,
+  radarCandidates = [],
   onReviewCandidate,
   onRadarRefresh,
   onRadarLookup,
@@ -150,6 +151,7 @@ export function OpportunityCommandCenter({
   preferredMarketRadarProductId,
 }: {
   guided?: boolean
+  radarCandidates?: RealRadarCandidate[]
   onReviewCandidate: (opportunity: Opportunity, radarCandidates?: RealRadarCandidate[]) => boolean
   onRadarRefresh: () => Promise<RealRadarCandidate[]>
   onRadarLookup: (productId: string) => Promise<RealRadarCandidate | null>
@@ -324,6 +326,19 @@ export function OpportunityCommandCenter({
     .filter((row) => row.supplier_available !== false && row.ebay_candidate_count > 0)
     .sort((left, right) => right.seller_priority_score - left.seller_priority_score)
     .slice(0, 5), [dashboard])
+  const radarByProductId = useMemo(
+    () => new Map(radarCandidates.map((candidate) => [candidate.marketRadarProductId, candidate])),
+    [radarCandidates],
+  )
+  const newRadarSignals = useMemo(() => {
+    const queuedIds = new Set((dashboard?.queue ?? [])
+      .map((row) => row.market_radar_product_id)
+      .filter((value): value is string => Boolean(value)))
+    return radarCandidates
+      .filter((candidate) => candidate.availabilityStatus === "AVAILABLE" &&
+        !queuedIds.has(candidate.marketRadarProductId))
+      .slice(0, 5)
+  }, [dashboard, radarCandidates])
   const preferredOpportunity = useMemo(
     () => preferredMarketRadarProductId
       ? dashboard?.queue.find((row) => row.market_radar_product_id === preferredMarketRadarProductId) ?? null
@@ -454,14 +469,22 @@ export function OpportunityCommandCenter({
       </div></details>
 
       <section className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.045] p-4">
-        <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Ranking canónico · una sola fuente</p><h3 className="mt-1 text-xl font-black">Top para trabajar ahora</h3></div><span className="rounded-xl bg-emerald-100 px-3 py-2 text-sm font-black text-black">Top {topPotential.length}</span></div>
-        <div className="mt-4 space-y-3">{topPotential.map((row, index) => <article key={row.id} className="rounded-2xl border border-white/10 bg-black/25 p-3">
+        <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Cola canónica + Radar actualizado</p><h3 className="mt-1 text-xl font-black">Oportunidades recomendadas</h3></div><span className="rounded-xl bg-emerald-100 px-3 py-2 text-sm font-black text-black">Top {topPotential.length}</span></div>
+        <p className="mt-2 text-xs leading-5 text-white/60">Seller OS decide el orden con evidencia, economía e identidad. Radar aporta el stock, costo y frescura más recientes dentro de esta misma lista.</p>
+        <div className="mt-4 space-y-3">{topPotential.map((row, index) => {
+          const radar = row.market_radar_product_id
+            ? radarByProductId.get(row.market_radar_product_id) ?? null
+            : null
+          return <article key={row.id} className="rounded-2xl border border-white/10 bg-black/25 p-3">
           <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black text-emerald-100">#{index + 1} · {sellerLaneLabel(row.seller_lane)}</p><h4 className="mt-1 font-black leading-5">{row.product_title}</h4></div><div className="rounded-xl bg-white px-2 py-1 text-center text-black"><span className="block text-[9px] font-black uppercase">Prioridad</span><strong>{row.seller_priority_score}</strong></div></div>
           {!guided && row.score_axes && <dl className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px]"><div className="rounded-xl bg-white/[0.06] p-2"><dt className="text-white/50">Potencial</dt><dd className="mt-1 font-black">{Math.round(row.score_axes.potential)}</dd></div><div className="rounded-xl bg-white/[0.06] p-2"><dt className="text-white/50">Confianza</dt><dd className="mt-1 font-black">{Math.round(row.score_axes.confidence)}</dd></div><div className="rounded-xl bg-white/[0.06] p-2"><dt className="text-white/50">Urgencia</dt><dd className="mt-1 font-black">{Math.round(row.score_axes.urgency)}</dd></div></dl>}
+          {radar && <dl className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px]"><div className="rounded-xl bg-cyan-200/[0.07] p-2"><dt className="text-cyan-50/55">Stock Luna</dt><dd className="mt-1 font-black">{radar.stockQuantity ?? "Por confirmar"}</dd></div><div className="rounded-xl bg-cyan-200/[0.07] p-2"><dt className="text-cyan-50/55">Costo Luna</dt><dd className="mt-1 font-black">{radar.lunaPrice === null ? "Pendiente" : money(radar.lunaPrice)}</dd></div><div className="rounded-xl bg-cyan-200/[0.07] p-2"><dt className="text-cyan-50/55">Frescura</dt><dd className="mt-1 font-black">{radar.stockConfirmationAgeHours === null ? "Pendiente" : radar.stockConfirmationAgeHours < 1 ? "Menos de 1 h" : `${Math.round(radar.stockConfirmationAgeHours)} h`}</dd></div></dl>}
+          {!radar && <p className="mt-3 rounded-xl border border-amber-200/20 bg-amber-200/[0.05] p-2 text-xs text-amber-50">Radar pendiente de sincronizar para este producto. La prioridad canónica se conserva.</p>}
           {!guided && <p className="mt-2 text-xs text-white/60">{row.ebay_candidate_count} candidatos eBay · {row.exact_comparable_count} comparables exactos</p>}
           <p className="mt-2 text-xs leading-5 text-white/75">{row.next_seller_action}</p>
           <div className={`mt-3 ${guided ? "" : "grid grid-cols-2 gap-2"}`}><button type="button" disabled={busy || !row.market_radar_product_id} onClick={() => { if (row.market_radar_product_id) void openRadarReview(row) }} className="min-h-12 w-full rounded-xl bg-cyan-200 px-3 text-sm font-black text-black disabled:opacity-40">Elegir este producto</button>{!guided && (row.can_open_listing_workspace ? <a href={`/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(row.id)}&candidate=${encodeURIComponent(row.candidate_key)}`} className="inline-flex min-h-11 items-center justify-center rounded-xl border border-emerald-200/35 px-3 text-center text-xs font-black text-emerald-50">{row.can_prepare_listing_package ? "Preparar draft" : "Completar paquete"}</a> : <button type="button" disabled aria-disabled="true" className="min-h-11 rounded-xl border border-white/10 px-3 text-xs font-black text-white/40">Guardas de mercado</button>)}</div>
-        </article>)}{!topPotential.length && <p className="text-sm text-white/55">Acelera el scan para construir el primer Top con evidencia eBay.</p>}</div>
+        </article>})}{!topPotential.length && <p className="text-sm text-white/55">Acelera el scan para construir el primer Top con evidencia eBay.</p>}</div>
+        {newRadarSignals.length > 0 && <details className="mt-4 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.05] p-3"><summary className="cursor-pointer text-sm font-black">{newRadarSignals.length} señal{newRadarSignals.length === 1 ? "" : "es"} nueva{newRadarSignals.length === 1 ? "" : "s"} de Radar</summary><p className="mt-2 text-xs leading-5 text-white/60">Son productos recientes de Luna que todavía no terminaron el análisis canónico. No compiten en el ranking hasta procesar evidencia eBay.</p><div className="mt-3 space-y-2">{newRadarSignals.map((candidate) => <div key={candidate.marketRadarProductId} className="rounded-xl border border-white/10 bg-black/20 p-3"><p className="font-bold">{candidate.productTitle}</p><p className="mt-1 text-xs text-white/55">SKU {candidate.supplierSku ?? "Pendiente"} · stock {candidate.stockQuantity ?? "por confirmar"} · costo {candidate.lunaPrice === null ? "pendiente" : money(candidate.lunaPrice)}</p><p className="mt-1 text-xs font-bold text-cyan-50">Nueva señal · análisis pendiente</p></div>)}</div></details>}
       </section>
 
       <details open={!guided} className="rounded-3xl border border-white/10 p-4"><summary className="cursor-pointer font-black">Ver toda la cola y filtros</summary><nav aria-label="Filtrar oportunidades" className="mt-3 flex gap-2 overflow-x-auto pb-1">{["all", "ready", "review", "watchlist", "hold"].map((value) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} className={`min-h-11 shrink-0 rounded-full px-4 text-xs font-black uppercase ${filter === value ? "bg-white text-black" : "border border-white/15"}`}>{value === "all" ? "Todas" : label(value)}</button>)}</nav>

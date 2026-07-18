@@ -66,7 +66,7 @@ import { Loop2ListingAiPanel } from "./loop2-listing-ai-panel"
 import { SellerJourneyGuide, type SellerJourneyStep } from "./seller-journey-guide"
 
 const emptyReport = buildMobileReviewRealRadarConnector({ products: [] })
-type View = "loop1" | "loop2" | "opportunities" | "top5" | "pinned" | "blocked"
+type View = "loop1" | "loop2" | "opportunities" | "pinned" | "blocked"
 
 type ServerReview = {
   id: string
@@ -188,48 +188,12 @@ const humanGuardLabels: Record<string, string> = {
 
 const formatValue = (value: unknown) => value === null || value === undefined || value === "" ? "Pendiente" : String(value)
 const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat("es", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : "Pendiente"
-const formatStockAge = (hours: number | null) => hours === null ? "edad pendiente" : hours < 1 ? "menos de 1 h" : `${Math.round(hours)} h`
 const routeLabel = (route: string | null) => route ? humanRouteLabels[route] ?? route.replaceAll("_", " ") : "Sin ruta"
 const guardLabel = (guard: string) => humanGuardLabels[guard] ?? humanRouteLabels[guard] ?? guard
 
 function StatusPill({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "good" | "warning" | "danger" }) {
   const colors = { neutral: "border-white/20 bg-white/10 text-white", good: "border-emerald-200/30 bg-emerald-200/10 text-emerald-50", warning: "border-amber-200/30 bg-amber-200/10 text-amber-50", danger: "border-rose-200/30 bg-rose-200/10 text-rose-50" }
   return <span className={`rounded-full border px-3 py-1.5 text-[11px] font-bold ${colors[tone]}`}>{children}</span>
-}
-
-function CandidateCard({ candidate, selected, pinned, provisional, onSelect, onUnavailable }: { candidate: RealRadarCandidate; selected: boolean; pinned: boolean; provisional: boolean; onSelect: () => void; onUnavailable: () => void }) {
-  return (
-    <article className={`rounded-3xl border p-4 ${selected ? "border-emerald-200/60 bg-emerald-200/10" : "border-white/15 bg-white/[0.045]"}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-bold uppercase tracking-wider text-cyan-100">Orden #{candidate.candidateRank}{candidate.candidateRank === 1 && !provisional ? " · Recomendado" : provisional ? " · Provisional" : ""}</p>
-          <h2 className="mt-2 text-lg font-black leading-6">{candidate.productTitle}</h2>
-          <p className="mt-1 text-sm text-white/70">{formatValue(candidate.variantTitle)} · SKU {formatValue(candidate.supplierSku)}</p>
-        </div>
-        <span className="shrink-0 rounded-2xl bg-white/10 px-3 py-2 text-lg font-black">{candidate.opportunityScore.toFixed(2)}</span>
-      </div>
-      <div className="mt-4 grid gap-2 text-sm">
-        <div className="flex justify-between gap-3 rounded-2xl bg-black/30 p-3"><span className="text-white/70">Stock</span><strong className="text-right">{formatValue(candidate.stockQuantity)} · {candidate.stockSource}<span className="block text-xs font-medium text-white/55">Actualizado: {formatStockAge(candidate.stockConfirmationAgeHours)}</span></strong></div>
-        <div className="flex justify-between gap-3 rounded-2xl bg-black/30 p-3"><span className="text-white/70">Precio Luna</span><strong>{candidate.lunaPrice === null ? "Pendiente" : `$${candidate.lunaPrice.toFixed(2)}`}</strong></div>
-        <div className="flex justify-between gap-3 rounded-2xl bg-black/30 p-3"><span className="text-white/70">Siguiente paso</span><strong className="text-right text-amber-100">{routeLabel(candidate.routeRecommendation)}</strong></div>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2">{pinned && <StatusPill tone="warning">También está en revisión</StatusPill>}<StatusPill>Último scan: {formatDate(candidate.lastSeenAt)}</StatusPill></div>
-      <details className="mt-4 rounded-2xl border border-white/15 bg-black/20 p-3">
-        <summary className="cursor-pointer font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200">Ver detalles técnicos</summary>
-        <dl className="mt-3 grid gap-3 text-xs text-white/80">
-          <div><dt className="font-bold text-white">Radar</dt><dd className="break-all">Producto: {candidate.marketRadarProductId}<br />Snapshot: {formatValue(candidate.marketRadarSnapshotId)}</dd></div>
-          <div><dt className="font-bold text-white">Proveedor</dt><dd className="break-all">Producto: {candidate.supplierProductId}<br />Variante: {formatValue(candidate.supplierVariantId)}</dd></div>
-          <div><dt className="font-bold text-white">Readiness</dt><dd>{candidate.professionalReadinessStatus}<br />Pipeline: {candidate.pipelineStatus}<br />Category ID: {formatValue(candidate.categoryId)}</dd></div>
-          <div><dt className="font-bold text-white">Guardas</dt><dd>{candidate.missingFields.join(", ") || "Ninguna"}</dd></div>
-          <div><dt className="font-bold text-white">URL</dt><dd className="break-all">{formatValue(candidate.productUrl)}</dd></div>
-        </dl>
-      </details>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        <button type="button" aria-pressed={selected} onClick={onSelect} className="min-h-12 rounded-2xl bg-emerald-200 px-4 py-3 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white">{selected ? "✓ Producto seleccionado" : "Revisar producto"}</button>
-        <button type="button" onClick={() => { if (window.confirm(`¿Marcar “${candidate.productTitle}” como no disponible?`)) onUnavailable() }} className="min-h-12 rounded-2xl border border-rose-200/35 px-4 py-3 font-bold text-rose-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-rose-200">Marcar no disponible</button>
-      </div>
-    </article>
-  )
 }
 
 export default function EbayMobileReviewPage() {
@@ -1211,16 +1175,11 @@ export default function EbayMobileReviewPage() {
         {report.fixtureUsed && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4 text-sm"><p className="font-black">FIXTURE/DEMO · no usar para aprobación real</p><p className="mt-2 text-white/80">Fuente actual: fixture modelado · no es data viva. score modelado · Fixture · no precio runtime · Fixture · no Category ID.</p></aside>}
 
         {lastActionMessage !== "Todavía no realizaste ninguna acción." && <div role="status" aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.07] p-3 text-sm text-cyan-50">{lastActionMessage}</div>}
-        {view === "top5" && radarGuards.showScoreTieWarning && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4"><p className="font-black">Orden provisional</p><p className="mt-1 text-sm text-white/80">Los cinco scores son iguales. Ningún producto se considera recomendado hasta desempatar el ranking.</p></aside>}
-
-        {(view === "opportunities" || view === "top5") && <details className="rounded-2xl border border-white/10 bg-black/20 p-3"><summary className="cursor-pointer text-sm font-bold text-white/50">Cambiar vista de oportunidades</summary><nav aria-label="Vistas de oportunidades" className="mt-3 grid grid-cols-2 gap-1 rounded-xl border border-white/10 p-1"><button type="button" aria-pressed={view === "opportunities"} onClick={() => setView("opportunities")} className={`min-h-12 rounded-xl px-3 py-2 text-xs font-black ${view === "opportunities" ? "bg-white text-black" : "text-white/75"}`}>Cola priorizada</button><button type="button" aria-pressed={view === "top5"} onClick={() => setView("top5")} className={`min-h-12 rounded-xl px-3 py-2 text-xs font-black ${view === "top5" ? "bg-white text-black" : "text-white/75"}`}>Radar alternativo</button></nav></details>}
         <p className="sr-only">{report.stockHoldCandidates.length} productos están bloqueados por stock. B2-RUN continúa desactivado hasta completar todas las validaciones.</p>
 
         {serverReviewsLoadState === "ERROR" && <div role="alert" className="rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-3 text-sm text-rose-50"><strong>No pudimos cargar En curso y Operación.</strong><span className="mt-1 block">{serverReviewsError}</span><button type="button" onClick={() => void loadServerReviews()} className="mt-3 min-h-11 rounded-xl border border-rose-100/30 px-3 font-black">Reintentar</button></div>}
 
-        {view === "opportunities" && <div ref={opportunityRef} className="scroll-mt-32"><OpportunityCommandCenter guided onReviewCandidate={reviewOpportunityCandidate} onRadarRefresh={load} onRadarLookup={lookupRadarCandidateByProductId} confirmDestructiveRefresh={confirmReviewReset} preferredMarketRadarProductId={!selectedQueueOpportunity ? selectedRadarCandidate?.marketRadarProductId ?? null : null} /></div>}
-
-        {view === "top5" && <section aria-labelledby="top5-heading"><h2 id="top5-heading" className="mb-3 text-xl font-black">Top 5 actual</h2><div className="space-y-4">{report.top5Candidates.map((candidate) => <CandidateCard key={candidate.candidateId} candidate={candidate} selected={!selectedQueueCandidate && state.selectedCandidateRank === candidate.candidateRank} pinned={pinnedCandidates.some((item) => pinnedCandidateMatchesRadar(item, candidate))} provisional={radarGuards.needsScoreDisambiguation} onSelect={() => { setSelectedQueueCandidate(null); setSelectedQueueOpportunity(null); act({ type: "SELECT_CANDIDATE", rank: candidate.candidateRank }) }} onUnavailable={() => act({ type: "MARK_UNAVAILABLE", rank: candidate.candidateRank })} />)}{!loading && report.top5Candidates.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/75">No hay candidatos seleccionables.</p>}</div></section>}
+        {view === "opportunities" && <div ref={opportunityRef} className="scroll-mt-32"><OpportunityCommandCenter guided radarCandidates={report.allCandidates} onReviewCandidate={reviewOpportunityCandidate} onRadarRefresh={load} onRadarLookup={lookupRadarCandidateByProductId} confirmDestructiveRefresh={confirmReviewReset} preferredMarketRadarProductId={!selectedQueueOpportunity ? selectedRadarCandidate?.marketRadarProductId ?? null : null} /></div>}
 
         {view === "pinned" && (
           <section aria-labelledby="server-reviews-heading" className="space-y-3">
@@ -1694,7 +1653,6 @@ export default function EbayMobileReviewPage() {
           Sin aprobación oficial · publicación desactivada.
         </footer>
       </section>
-      {selectedRadarCandidate && view === "top5" && <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 border-t border-white/15 bg-[#0b1018]/95 p-3 backdrop-blur"><div className="mx-auto flex max-w-xl items-center gap-3"><p className="min-w-0 flex-1 truncate text-sm font-bold">Seleccionado: {selectedRadarCandidate.productTitle}</p><button type="button" onClick={() => setView("loop1")} className="min-h-12 rounded-2xl bg-emerald-200 px-4 font-black text-black">Abrir Loop 1</button></div></div>}
       <SellerOsMobileNav
         active={view === "blocked" ? "operations" : "ebay-opportunities"}
         operationCount={serverReviewsLoadState === "READY" ? alertCount : 0}
