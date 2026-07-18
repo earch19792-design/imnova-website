@@ -113,6 +113,8 @@ export default function ProductResearchCaptureReceiverPage() {
           validCount: payload.result.validCount ?? 0,
           duplicateCount: payload.result.duplicateCount ?? 0,
           rejectedCount: payload.result.rejectedCount ?? 0,
+          navigationOnly: payload.result.navigationOnly === true,
+          captureQueryCorrected: payload.result.captureQueryCorrected === true,
           exactLunaMatches: payload.result.matchCounts?.exactLuna ?? 0,
           nextQuery: payload.result.queryPlan?.nextQuery?.searchQuery ?? null,
           nextQueryOrdinal: payload.result.queryPlan?.nextQuery?.ordinal ?? null,

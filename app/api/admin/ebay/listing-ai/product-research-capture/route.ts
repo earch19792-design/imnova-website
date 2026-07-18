@@ -96,7 +96,7 @@ export async function POST(req: Request) {
       if (code !== "PRODUCT_RESEARCH_QUERY_PLAN_NEXT_QUERY_REQUIRED") throw planError
       // A visible table from another tab is a navigation problem, not a bad
       // commercial import. Return the durable next query without persisting a
-      // row, so v1.2.2 can apply it automatically in the same eBay tab.
+      // row, so v1.2.3 can apply it automatically in the same eBay tab.
       let queryPlan: Awaited<ReturnType<typeof getProductResearchQueryPlanStatus>> = null
       try {
         queryPlan = await getProductResearchQueryPlanStatus({

@@ -6,12 +6,12 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 2. Activa **Developer mode**.
 3. Selecciona **Load unpacked** y elige esta carpeta.
 4. Abre la página oficial `https://www.ebay.com/sh/research` e inicia sesión normalmente.
-5. Ejecuta una búsqueda y usa **Capturar resultados para Seller OS**.
+5. Ejecuta una búsqueda y usa **Capturar y continuar**.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.2.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.3.
 
-## Consulta guiada y patrones locales (v1.2.2)
+## Consulta guiada y patrones locales (v1.2.3)
 
 Seller OS puede abrir Product Research con una consulta preparada en el fragmento
 local de la URL. La extensión aplica la consulta automáticamente y el usuario sólo
@@ -32,6 +32,13 @@ nuevos y verifica que la consulta visible coincida antes de habilitar la siguien
 nunca inicia sesión automáticamente. Si eBay recarga la página, conserva en el fragmento
 local la consulta y una huella SHA-256 no reconstructiva de la tabla anterior; no guarda
 Item IDs ni filas en storage y sólo reactiva la captura cuando prueba que los resultados cambiaron.
+
+La aplicación automática de consultas excluye explícitamente el buscador global de
+eBay y valida el destino del formulario antes de enviarlo. Sólo permite formularios
+de lectura GET cuya URL resuelva a `https://www.ebay.com/sh/research`; nunca usa `/sch`
+ni envía formularios POST. Si eBay no
+expone un control local verificable, deja la consulta escrita y se detiene de forma
+segura dentro de Product Research para que el usuario pulse Search.
 
 La extensión sólo se inyecta en la ruta oficial Product Research. No lee cookies,
 tokens, contraseñas, datos de comprador, HTML completo ni archivos de imagen. La

@@ -8,6 +8,11 @@
   const CAPTURE_RESULT_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_CAPTURE_RESULT_V1"
   const VISUAL_PATTERN_SCHEMA_VERSION = "PRODUCT_RESEARCH_VISUAL_PATTERN_V1_2026_07_17"
   const VISUAL_PATTERN_ALGORITHM_VERSION = "PR_VISIBLE_THUMBNAIL_LOCAL_V1"
+  const OFFICIAL_RESEARCH_PATH = /^\/sh\/research\/?$/
+  const GLOBAL_EBAY_SEARCH_SCOPE = [
+    "#gh", "#gh-top", '[role="banner"]',
+    '[data-testid*="global-header" i]', '[class*="global-header" i]',
+  ].join(",")
   const MAX_ITEM_LINKS = 200
   const MAX_COORDINATE_CONTAINERS = 6
   const MAX_FALLBACK_HEADERS = 200
@@ -73,6 +78,8 @@
       "Estoy esperando los resultados de la próxima consulta. No captures todavía.",
     PRODUCT_RESEARCH_QUERY_FIELD_NOT_FOUND:
       "No encontré el campo de búsqueda de Product Research. Pega la consulta preparada y ejecuta Search.",
+    PRODUCT_RESEARCH_SAFE_SUBMIT_NOT_FOUND:
+      "La consulta quedó preparada, pero eBay no expuso un control seguro dentro de Product Research. Pulsa Search en esta misma página; Seller OS nunca usará la búsqueda pública.",
   }
 
   const text = (value) => typeof value === "string"
@@ -1026,15 +1033,94 @@
     }
   }
 
+  function isOfficialResearchTarget(value) {
+    try {
+      const target = new URL(value || window.location.href, window.location.href)
+      return target.protocol === "https:" && target.hostname === "www.ebay.com" &&
+        OFFICIAL_RESEARCH_PATH.test(target.pathname)
+    } catch {
+      return false
+    }
+  }
+
+  function closestAcrossOpenRoots(element, selector) {
+    let current = element
+    while (current) {
+      const match = current.closest?.(selector)
+      if (match) return match
+      const root = current.getRootNode?.()
+      current = root?.host ?? null
+    }
+    return null
+  }
+
+  function isGlobalEbaySearchInput(input) {
+    const id = text(input?.id).toLowerCase()
+    const name = text(input?.getAttribute?.("name")).toLowerCase()
+    const hint = text([
+      input?.getAttribute?.("aria-label"), input?.getAttribute?.("placeholder"),
+    ].filter(Boolean).join(" ")).toLowerCase()
+    const form = input?.form || input?.closest?.("form")
+    const rawAction = text(form?.getAttribute?.("action"))
+    let actionPath = ""
+    try {
+      actionPath = rawAction ? new URL(rawAction, window.location.href).pathname : ""
+    } catch {
+      return true
+    }
+    const unsafeExplicitAction = Boolean(rawAction && !isOfficialResearchTarget(rawAction))
+    return Boolean(closestAcrossOpenRoots(input, GLOBAL_EBAY_SEARCH_SCOPE)) || id === "gh-ac" ||
+      name === "_nkw" || /search for anything|buscar cualquier cosa/.test(hint) ||
+      /^\/sch(?:\/|$)/.test(actionPath) || unsafeExplicitAction
+  }
+
+  function officialResearchFormFor(input) {
+    if (!input || isGlobalEbaySearchInput(input)) return null
+    const form = input.form || input.closest?.("form")
+    if (!form) return null
+    const method = text(form.getAttribute("method")).toLowerCase()
+    if (method && method !== "get") return null
+    const rawAction = text(form.getAttribute("action"))
+    const action = rawAction || window.location.href
+    const localMainControl = Boolean(closestAcrossOpenRoots(input, 'main,[role="main"]'))
+    const explicitResearchAction = rawAction ? isOfficialResearchTarget(rawAction) : false
+    return isOfficialResearchTarget(action) && (localMainControl || explicitResearchAction)
+      ? form : null
+  }
+
+  function isProductResearchInput(input) {
+    if (!input || isGlobalEbaySearchInput(input)) return false
+    if (closestAcrossOpenRoots(input, 'main,[role="main"]')) return true
+    const form = input.form || input.closest?.("form")
+    const rawAction = text(form?.getAttribute?.("action"))
+    return Boolean(rawAction && isOfficialResearchTarget(rawAction))
+  }
+
   function researchSearchInputs() {
-    return [...document.querySelectorAll(
-      'input[type="search"],input[aria-label*="search" i],input[placeholder*="search" i]',
-    )].filter(visible)
+    const selector = [
+      'input[type="search"]', 'input[aria-label*="search" i]',
+      'input[placeholder*="search" i]', 'input[aria-label*="keyword" i]',
+      'input[placeholder*="keyword" i]', 'input[aria-label*="buscar" i]',
+      'input[placeholder*="buscar" i]',
+    ].join(",")
+    return deepQueryAll(selector).filter(visible)
+      .filter((input) => isProductResearchInput(input))
   }
 
   function researchSearchInput() {
     const inputs = researchSearchInputs()
-    return inputs.find((input) => text(input.value)) ?? inputs[0] ?? null
+    return inputs.sort((left, right) => {
+      const score = (input) => {
+        const hint = text([
+          input.value, input.getAttribute?.("aria-label"), input.getAttribute?.("placeholder"),
+        ].filter(Boolean).join(" ")).toLowerCase()
+        return (officialResearchFormFor(input) ? 200 : 0) +
+          (closestAcrossOpenRoots(input, 'main,[role="main"]') ? 100 : 0) +
+          (/product|research|keyword|item|producto|palabra/.test(hint) ? 30 : 0) +
+          (text(input.value) ? 10 : 0)
+      }
+      return score(right) - score(left)
+    })[0] ?? null
   }
 
   const normalizedQuery = (value) => text(value).toLocaleLowerCase("en-US")
@@ -1149,6 +1235,33 @@
     input.dispatchEvent(new Event("change", { bubbles: true }))
   }
 
+  function requestResearchSubmitWithGuidedFragment(form) {
+    if (!form || typeof form.requestSubmit !== "function") return false
+    const method = text(form.getAttribute("method")).toLowerCase()
+    if (method && method !== "get") return false
+    const originalAction = form.getAttribute("action")
+    const target = new URL(originalAction || window.location.href, window.location.href)
+    if (!isOfficialResearchTarget(target.href)) return false
+    // A native same-path form navigation normally drops the current fragment.
+    // Carry the local guided state in the action so a reload restores the query
+    // and previous-results fingerprint with capture still disabled.
+    target.hash = window.location.hash
+    form.setAttribute("action", target.href)
+    const restoreAction = () => {
+      if (!form.isConnected) return
+      if (originalAction === null) form.removeAttribute("action")
+      else form.setAttribute("action", originalAction)
+    }
+    try {
+      form.requestSubmit()
+    } catch {
+      restoreAction()
+      return false
+    }
+    window.setTimeout(restoreAction, 0)
+    return true
+  }
+
   async function applyAndSearchNextQuery() {
     const query = nextQueryState?.query ?? ""
     if (query.length < 3) return
@@ -1157,6 +1270,7 @@
       setStatus("PRODUCT_RESEARCH_QUERY_FIELD_NOT_FOUND", "error")
       return
     }
+    const form = officialResearchFormFor(input)
     nextQueryState.previousResultsSignature = visibleResultsSignature()
     nextQueryState.previousResultsFingerprint = nextQueryState.previousResultsSignature
       ? await resultsFingerprint(nextQueryState.previousResultsSignature) : null
@@ -1166,14 +1280,21 @@
     )
     setSearchInputValue(input, query)
     input.focus()
-    const form = input.form || input.closest("form")
-    if (form?.requestSubmit) form.requestSubmit()
-    else input.dispatchEvent(new KeyboardEvent("keydown", {
-      key: "Enter", code: "Enter", bubbles: true,
-    }))
     updateCaptureAvailability()
-    setStatus("Próxima consulta aplicada. Esperando resultados nuevos de eBay…")
     watchForNextQueryResults()
+    if (!form || typeof form.requestSubmit !== "function") {
+      setStatus("PRODUCT_RESEARCH_SAFE_SUBMIT_NOT_FOUND", "error")
+      return
+    }
+    // Fail closed: requestSubmit is permitted only after the candidate input and
+    // its resolved form action both prove that they belong to /sh/research.
+    // Never fall back to Enter because eBay's global header handles it by
+    // navigating to the public /sch search surface.
+    if (!requestResearchSubmitWithGuidedFragment(form)) {
+      setStatus("PRODUCT_RESEARCH_SAFE_SUBMIT_NOT_FOUND", "error")
+      return
+    }
+    setStatus("Próxima consulta aplicada. Esperando resultados nuevos de eBay…")
   }
 
   function advanceAfterAcceptedCapture(value, ordinal, total) {
@@ -1184,6 +1305,13 @@
     // Continue with the next prepared query without requiring another button,
     // while keeping capture disabled until both the visible query and result
     // signature prove that eBay loaded a different table.
+    window.setTimeout(() => void applyAndSearchNextQuery(), 0)
+  }
+
+  function advanceAfterCorrectedCapture(value, ordinal, total) {
+    showNextQuery(value, ordinal, total)
+    if (!nextQueryState) return
+    setStatus("La tabla anterior fue descartada. Aplicando la consulta correcta dentro de Product Research…", "success")
     window.setTimeout(() => void applyAndSearchNextQuery(), 0)
   }
 
@@ -1201,7 +1329,7 @@
   }
 
   function buildCapture() {
-    if (window.location.hostname !== "www.ebay.com" || !/^\/sh\/research\/?$/.test(window.location.pathname)) {
+    if (!isOfficialResearchTarget(window.location.href)) {
       throw new Error("PRODUCT_RESEARCH_OFFICIAL_PAGE_REQUIRED")
     }
     const context = queryContext()
@@ -1325,15 +1453,18 @@
       setStatus("Enviando datos estructurados a Seller OS…")
     }
     if (event.data.type === CAPTURE_RESULT_MESSAGE && event.data.captureId === pending?.captureId) {
-      setStatus(event.data.success
-        ? `Captura procesada: ${event.data.validCount || 0} válidas; ${event.data.importedCount || 0} nuevas; ${event.data.duplicateCount || 0} duplicadas; ${event.data.rejectedCount || 0} rechazadas.`
-        : `Captura rechazada: ${event.data.error || "ERROR"}`,
+      const navigationOnly = event.data.success && event.data.navigationOnly === true &&
+        event.data.captureQueryCorrected === true
+      setStatus(navigationOnly
+        ? "La tabla no correspondía y no fue guardada. Preparando la consulta correcta…"
+        : event.data.success
+          ? `Captura procesada: ${event.data.validCount || 0} válidas; ${event.data.importedCount || 0} nuevas; ${event.data.duplicateCount || 0} duplicadas; ${event.data.rejectedCount || 0} rechazadas.`
+          : `Captura rechazada: ${event.data.error || "ERROR"}`,
       event.data.success ? "success" : "error")
       pending = null
       if (event.data.success && event.data.nextQuery) {
-        advanceAfterAcceptedCapture(
-          event.data.nextQuery, event.data.nextQueryOrdinal, event.data.queryCount,
-        )
+        const advance = navigationOnly ? advanceAfterCorrectedCapture : advanceAfterAcceptedCapture
+        advance(event.data.nextQuery, event.data.nextQueryOrdinal, event.data.queryCount)
       } else if (event.data.success) clearNextQuery()
       finishCapture()
     }
@@ -1346,7 +1477,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.2"
+  title.textContent = "Seller OS · Product Research · v1.2.3"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"

@@ -97,7 +97,7 @@ export function TodayLaunchPanel() {
         <p className="text-[10px] font-black uppercase tracking-widest text-amber-100/60">2 · Tu decisión</p>
         <h3 id="operator-task-heading" className="mt-1 text-lg font-black">Tarea para Ernesto</h3>
         {productResearchTasks.length > 0
-          ? <div className="mt-3"><ProductResearchQueueTask guidance={pilot.productResearchGuidance} fallbackQuery={productResearchTasks[0]?.action_schema?.query} openTaskCount={productResearchTasks.length} /></div>
+          ? <div className="mt-3"><ProductResearchQueueTask guidance={pilot.productResearchGuidance} researchTasks={productResearchTasks} fallbackQuery={productResearchTasks[0]?.action_schema?.query} openTaskCount={productResearchTasks.length} /></div>
           : !primaryTask
           ? <p className="mt-2 rounded-2xl border border-white/10 p-4 text-sm text-white/55">Seller OS no necesita una acción humana en este momento.</p>
           : <div className="mt-3"><HumanTask task={primaryTask} candidate={primaryCandidate} working={working} onConfirm={(body) => request(body)} /></div>}
@@ -124,35 +124,76 @@ export function TodayLaunchPanel() {
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-2xl border border-white/10 bg-black/20 p-4"><p className="text-xs font-black uppercase text-white/45">{label}</p><p className="mt-2 text-xl font-black">{value}</p></div> }
 
-function ProductResearchQueueTask({ guidance, fallbackQuery, openTaskCount }: { guidance?: Row | null; fallbackQuery?: unknown; openTaskCount: number }) {
+function ProductResearchQueueTask({ guidance, researchTasks, fallbackQuery, openTaskCount }: { guidance?: Row | null; researchTasks: Row[]; fallbackQuery?: unknown; openTaskCount: number }) {
+  const [copyStatus, setCopyStatus] = useState<"IDLE" | "COPIED" | "FAILED">("IDLE")
   const guidedQuery = typeof guidance?.nextQuery?.searchQuery === "string"
     ? guidance.nextQuery.searchQuery.trim().slice(0, 100) : ""
   const durableTaskQuery = typeof fallbackQuery === "string"
     ? fallbackQuery.trim().slice(0, 100) : ""
   const nextQuery = guidedQuery || durableTaskQuery
+  const queryKey = (value: unknown) => typeof value === "string"
+    ? value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/\bdefault\s+title\b/gi, " ").toLocaleLowerCase("en-US")
+      .replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ")
+    : ""
+  const matchedTask = nextQuery ? researchTasks.find((task) =>
+    queryKey(task?.action_schema?.query) === queryKey(nextQuery)) : undefined
+  const productFamily = typeof matchedTask?.evidence?.product === "string"
+    ? matchedTask.evidence.product.trim().slice(0, 180) : ""
   const queryCount = Number(guidance?.queryCount ?? 0)
   const capturedCount = Number(guidance?.capturedCount ?? 0)
   const pendingCount = Number(guidance?.pendingCount ?? openTaskCount)
   const nextOrdinal = Number(guidance?.nextQuery?.ordinal ?? capturedCount + 1)
+  const familyCandidateCount = Number(guidance?.nextQuery?.candidateCount ?? 0)
   const chainedAfterCurrent = Math.max(0, pendingCount - 1)
+  const queryFieldId = `product-research-query-${nextOrdinal}`
+  const copyExactQuery = async () => {
+    if (!nextQuery) return
+    try {
+      await navigator.clipboard.writeText(nextQuery)
+      setCopyStatus("COPIED")
+    } catch {
+      setCopyStatus("FAILED")
+    }
+  }
   return <article className="min-w-0 overflow-hidden rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-4">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
         <h4 className="font-black">Captura la próxima consulta de Product Research</h4>
-        <p className="mt-1 text-sm leading-6 text-white/65">Una sola consulta está disponible para actuar. Las posteriores permanecen ordenadas y la extensión v1.2.2 las encadena.</p>
+        <p className="mt-1 text-sm leading-6 text-white/65">Una sola consulta está disponible para actuar. Las posteriores permanecen ordenadas y la extensión v1.2.3 las encadena.</p>
       </div>
       <span className="rounded-full border border-amber-100/20 px-3 py-1 text-xs font-black text-amber-100">{capturedCount}/{queryCount || capturedCount + pendingCount} capturadas</span>
     </div>
-    <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-xs leading-5 text-white/65">
-      <p><strong className="text-white">Próxima consulta #{nextOrdinal}:</strong> <span className="break-words">{nextQuery || "Actualizando consulta segura…"}</span></p>
-      <p className="mt-1">Pendientes: {pendingCount}. Después de ésta, {chainedAfterCurrent} consulta(s) quedarán encadenadas automáticamente.</p>
+    <div className="mt-3 grid gap-3">
+      <section aria-label="Familia o producto de referencia" className="rounded-xl border border-violet-200/25 bg-violet-200/[0.07] p-3">
+        <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/65">Familia / producto de referencia</p>
+        <p className="mt-1 break-words text-sm font-black text-violet-50">{productFamily || `Familia de ${familyCandidateCount || 1} candidato(s)`}</p>
+      </section>
+      <section className="rounded-xl border border-cyan-200/30 bg-cyan-200/[0.07] p-3">
+        <label htmlFor={queryFieldId} className="text-[10px] font-black uppercase tracking-widest text-cyan-100/70">Consulta exacta que se enviará · #{nextOrdinal}</label>
+        <textarea id={queryFieldId} readOnly rows={2} value={nextQuery || "Actualizando consulta segura…"}
+          onFocus={(event) => event.currentTarget.select()}
+          className="mt-2 box-border w-full resize-none rounded-lg border border-cyan-100/20 bg-black/30 p-2 text-sm font-bold leading-5 text-cyan-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-100" />
+      </section>
+      <p className="text-xs leading-5 text-white/60">Pendientes: {pendingCount}. Después de ésta, {chainedAfterCurrent} consulta(s) quedarán encadenadas automáticamente.</p>
     </div>
-    <a href={nextQuery ? `https://www.ebay.com/sh/research#seller-os-query=${encodeURIComponent(nextQuery)}` : undefined}
-      target="_blank" rel="noreferrer" aria-disabled={!nextQuery}
-      className={`mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-xl px-4 text-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 sm:w-auto ${nextQuery ? "bg-amber-200 text-black" : "pointer-events-none border border-red-300/30 text-red-100"}`}>
-      ABRIR CONSULTA PREPARADA
-    </a>
-    <p className="mt-2 text-xs leading-5 text-cyan-100/75">La extensión aplica sola la consulta. Captura únicamente cuando habilite “Capturar y continuar”. “Aplicar y buscar” queda como respaldo.</p>
+    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+      <a href={nextQuery ? `https://www.ebay.com/sh/research#seller-os-query=${encodeURIComponent(nextQuery)}` : undefined}
+        target="_blank" rel="noreferrer" aria-disabled={!nextQuery}
+        className={`inline-flex min-h-12 w-full items-center justify-center rounded-xl px-4 text-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 ${nextQuery ? "bg-amber-200 text-black" : "pointer-events-none border border-red-300/30 text-red-100"}`}>
+        ABRIR PRODUCT RESEARCH
+      </a>
+      <button type="button" disabled={!nextQuery} onClick={() => void copyExactQuery()}
+        className="min-h-12 w-full rounded-xl border border-cyan-200/40 px-4 text-center font-black text-cyan-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-100 disabled:opacity-45">
+        COPIAR CONSULTA EXACTA
+      </button>
+    </div>
+    <p role="status" aria-live="polite" className={`mt-2 text-xs font-bold ${copyStatus === "FAILED" ? "text-red-200" : "text-cyan-100/80"}`}>{copyStatus === "COPIED"
+      ? "Consulta exacta copiada completa."
+      : copyStatus === "FAILED"
+        ? "No se pudo copiar automáticamente. Toca el campo cian para seleccionarlo."
+        : "Abrir transfiere la consulta a la extensión. Copiar queda como respaldo visible."}</p>
+    <p className="mt-2 text-xs leading-5 text-cyan-100/75">Captura únicamente cuando habilite “Capturar y continuar”. Nunca utilices una búsqueda pública como sustituto de Product Research.</p>
   </article>
 }
 

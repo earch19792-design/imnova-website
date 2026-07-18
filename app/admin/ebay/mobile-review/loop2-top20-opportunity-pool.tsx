@@ -871,10 +871,10 @@ export function Loop2Top20OpportunityPool() {
               <p className="mt-1 text-white/60">Para cuentas sin export CSV/JSON: la extensión captura con un clic únicamente la tabla visible en la página oficial autenticada. No comparte cookies ni credenciales con Seller OS.</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.2.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.2</a>
+              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.3.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.3</a>
               <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
             </div>
-            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.2 avanza automáticamente a la próxima consulta después de una captura aceptada y espera la tabla nueva antes de permitir otra captura.</p>
+            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.3 avanza automáticamente a la próxima consulta después de una captura aceptada y espera la tabla nueva antes de permitir otra captura.</p>
             <div className="rounded-xl border border-amber-100/20 bg-amber-100/[0.04] p-3">
               <p className="font-black">Cuota oficial Browse</p>
               <p className="mt-1 text-white/55">Estado {browserCaptureStatus?.browseQuota?.status ?? "SIN VERIFICAR"} · restantes {browserCaptureStatus?.browseQuota?.remaining ?? "N/D"} de {browserCaptureStatus?.browseQuota?.limit ?? "N/D"} · reset {browserCaptureStatus?.browseQuota?.resetAt ? new Date(browserCaptureStatus.browseQuota.resetAt).toLocaleString("es") : "N/D"}.</p>
@@ -886,15 +886,24 @@ export function Loop2Top20OpportunityPool() {
                 <span className="rounded-full border border-white/20 px-2 py-1 font-black">{browserCaptureStatus.queryPlan.status}</span>
               </div>
               {browserCaptureStatus.queryPlan.nextQuery ? <>
-                <label className="block text-white/55">Próxima consulta #{browserCaptureStatus.queryPlan.nextQuery.ordinal}
+                <div className="rounded-xl border border-violet-200/25 bg-violet-200/[0.07] p-3">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/65">Familia cubierta</p>
+                  <p className="mt-1 font-black text-violet-50">Familia de {browserCaptureStatus.queryPlan.nextQuery.candidateCount} candidato(s)</p>
+                </div>
+                <label className="block rounded-xl border border-cyan-200/30 bg-cyan-200/[0.07] p-3 text-cyan-100/75">Consulta exacta que se enviará · #{browserCaptureStatus.queryPlan.nextQuery.ordinal}
                   <input readOnly value={browserCaptureStatus.queryPlan.nextQuery.searchQuery}
-                    className="mt-1 min-h-11 w-full rounded-xl border border-white/20 bg-black/30 px-3 text-white" />
+                    onFocus={(event) => event.currentTarget.select()}
+                    className="mt-1 min-h-11 w-full rounded-xl border border-cyan-100/25 bg-black/30 px-3 font-bold text-cyan-50" />
                 </label>
-                <p className="text-white/45">Cubre {browserCaptureStatus.queryPlan.nextQuery.candidateCount} candidato(s) · categoría {browserCaptureStatus.queryPlan.nextQuery.categoryId ?? "general"}.</p>
-                <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer"
-                  onClick={() => void copyResearchQuery(browserCaptureStatus.queryPlan!.nextQuery!.searchQuery)}
-                  className="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-cyan-100 px-4 text-center font-black text-cyan-950">Abrir próxima búsqueda · consulta copiada</a>
-                <p className="text-white/45">Al abrir eBay, pega la consulta copiada y ejecuta Search. Seller OS eligió el producto; no necesitas decidir qué buscar.</p>
+                <p className="text-white/45">Categoría {browserCaptureStatus.queryPlan.nextQuery.categoryId ?? "general"}.</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <a href={`https://www.ebay.com/sh/research#seller-os-query=${encodeURIComponent(browserCaptureStatus.queryPlan.nextQuery.searchQuery)}`}
+                    target="_blank" rel="noreferrer"
+                    className="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-cyan-100 px-4 text-center font-black text-cyan-950">Abrir Product Research</a>
+                  <button type="button" onClick={() => void copyResearchQuery(browserCaptureStatus.queryPlan!.nextQuery!.searchQuery)}
+                    className="min-h-11 w-full rounded-xl border border-cyan-100/35 px-4 text-center font-black text-cyan-50">Copiar consulta exacta</button>
+                </div>
+                <p className="text-white/45">1. Abre Product Research. 2. Espera los resultados nuevos. 3. Captura cuando la extensión lo habilite. Copiar es únicamente un respaldo visible.</p>
               </> : <p className="font-bold text-emerald-100">Todas las consultas agrupadas del plan fueron capturadas.</p>}
             </div>}
             <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">

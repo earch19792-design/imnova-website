@@ -1120,9 +1120,8 @@ export default function EbayMobileReviewPage() {
     const url = `https://www.ebay.com/sh/research#seller-os-query=${encodeURIComponent(query)}`
     const researchWindow = window.open(url, "_blank")
     if (researchWindow) researchWindow.opener = null
-    void navigator.clipboard.writeText(query).catch(() => undefined)
     setProductResearchCaptureOpened(true)
-    setLastActionMessage("Product Research abierto con la consulta preparada. Ejecuta la búsqueda, pulsa “Capturar y continuar” y regresa para verificar.")
+    setLastActionMessage("Product Research abierto y consulta exacta transferida a la extensión. Espera los resultados nuevos y pulsa “Capturar y continuar” cuando se habilite.")
   }
 
   const sourceLabel = report.dataSource === "MARKET_RADAR_READONLY" ? "REAL RADAR" : report.dataSource === "DEMO_FIXTURE_ONLY" ? "DEMO" : loadState === "AUTH_REQUIRED" ? "SESIÓN REQUERIDA" : loadState === "RADAR_REQUEST_FAILED" ? "ERROR DE RADAR" : "SIN DATOS"

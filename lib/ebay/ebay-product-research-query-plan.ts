@@ -71,6 +71,11 @@ function canonicalQuery(value: unknown) {
   return meaningful.join(" ")
 }
 
+export function productResearchDisplayQuery(value: unknown) {
+  return text(value, 100).replace(/\bdefault\s+title\b/gi, " ")
+    .trim().replace(/\s+/g, " ")
+}
+
 function queryHash(value: string) {
   return sha256(canonicalQuery(value))
 }
@@ -248,7 +253,7 @@ export async function getProductResearchQueryPlanStatus(input: {
     pendingCount: Math.max(0, plan.query_count - capturedCount),
     nextQuery: pending ? {
       ordinal: pending.ordinal,
-      searchQuery: pending.search_query,
+      searchQuery: productResearchDisplayQuery(pending.search_query),
       categoryId: pending.category_id,
       candidateCount: pending.candidate_count,
     } : null,

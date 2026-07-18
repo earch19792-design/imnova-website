@@ -83,6 +83,11 @@ function normalized(value: unknown) {
     : ""
 }
 
+function productIdentityText(value: unknown) {
+  return normalized(value).replace(/\bdefault title\b/gi, " ")
+    .trim().replace(/\s+/g, " ")
+}
+
 function fingerprint(value: string) {
   return createHash("sha256").update(value.toLowerCase()).digest("hex")
 }
@@ -101,7 +106,9 @@ export function buildSameDayProductResearchQuery(input: SameDayCandidateInput) {
   }
   const variant = normalized(input.variantTitle)
   const meaningfulVariant = /^(?:default(?: title)?|title)$/i.test(variant) ? "" : variant
-  const identity = normalized([input.productTitle, meaningfulVariant].filter(Boolean).join(" "))
+  const identity = productIdentityText(
+    [input.productTitle, meaningfulVariant].filter(Boolean).join(" "),
+  )
   return {
     strategy: "EXACT_NORMALIZED_IDENTITY", query: identity.slice(0, 100),
     reason: "No existe GTIN o MPN confiable; se requiere corroborar la identidad normalizada antes de avanzar.",
