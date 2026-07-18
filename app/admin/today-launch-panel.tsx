@@ -123,6 +123,7 @@ function HumanTask({ task, candidate, working, onConfirm }: { task: Row; candida
   const availabilityMissing = availability === "unknown"
   const salePriceMissing = !(Number(salePrice) > 0)
   const fieldId = String(task.id ?? "task")
+  const productResearchQuery = String(schema.query ?? "").trim().slice(0, 100)
 
   return <article className="min-w-0 overflow-hidden rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-4">
     <div className="flex flex-wrap justify-between gap-3">
@@ -141,7 +142,14 @@ function HumanTask({ task, candidate, working, onConfirm }: { task: Row; candida
     <p className="mt-3 text-sm leading-6 text-white/60">{task.why_needed}</p>
     <p className="mt-2 text-xs leading-5 text-emerald-100/75">Después: {task.impact}</p>
 
-    {task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" && <a href={`https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=${encodeURIComponent(String(schema.query ?? ""))}`} target="_blank" rel="noreferrer" className="mt-4 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-amber-200 px-4 text-center font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 sm:w-auto">ABRIR CONSULTA Y CAPTURAR</a>}
+    {task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" && <div className="mt-4">
+      <p className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs leading-5 text-white/65">
+        <strong className="text-white">Consulta que Seller OS validará:</strong>{" "}
+        <span className="break-words">{productResearchQuery || "Consulta no disponible"}</span>
+      </p>
+      <a href={`https://www.ebay.com/sh/research#seller-os-query=${encodeURIComponent(productResearchQuery)}`} target="_blank" rel="noreferrer" aria-disabled={!productResearchQuery} className={`mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-xl px-4 text-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 sm:w-auto ${productResearchQuery ? "bg-amber-200 text-black" : "pointer-events-none border border-red-300/30 text-red-100"}`}>ABRIR CONSULTA PREPARADA</a>
+      <p className="mt-2 text-xs leading-5 text-cyan-100/75">En eBay pulsa “Aplicar y buscar próxima consulta”, espera los resultados nuevos y después pulsa “Capturar y continuar”.</p>
+    </div>}
 
     {task.gate_type === "LUNA_CONFIRMATION_REQUIRED" && <div className="mt-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">
