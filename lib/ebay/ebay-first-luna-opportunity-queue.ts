@@ -258,7 +258,11 @@ export function buildProfessionalSellerQueueView(row: ProfessionalQueueRow) {
       compatibleSellerCount,
       confirmedSoldQuantity: soldExactCount,
       estimatedSignals: numberOrNull(market.estimatedMovementSignals) ?? 0,
-      productResearchStatus: soldExactCount > 0 ? "CONFIRMED_SOLD_EXACT" : "PENDING_OR_UNMATCHED",
+      productResearchStatus: text(row.product_research_ranking_status) === "UNAVAILABLE"
+        ? "UNAVAILABLE"
+        : soldExactCount > 0
+          ? "CONFIRMED_SOLD_EXACT"
+          : "PENDING_OR_UNMATCHED",
       margin: numberOrNull(economics.estimatedNetMarginPercent),
       blockers: [...new Set([...hardGates, ...evidenceGuards, ...workspaceEligibility.blockers])],
     },

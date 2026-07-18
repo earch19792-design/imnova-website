@@ -807,7 +807,7 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
     : Promise.resolve({ data: [], error: null })
   const [runs, queue, events, activeRisks, total, ready, review, watchlist, holds] = await Promise.all([
     supabase.from("ebay_luna_scan_runs").select("*").order("started_at", { ascending: false }).limit(5),
-    supabase.from("ebay_luna_opportunity_queue").select("id,candidate_key,market_radar_product_id,product_title,variant_title,supplier_sku,queue_status,decision,opportunity_score,demand_score,economics_score,identity_score,competition_score,supply_score,listing_readiness_score,active_comparables,sellers_with_movement,estimated_weekly_velocity,median_total_buyer_price,estimated_net_profit,supplier_price,supplier_available,supplier_inventory_quantity,best_selling_match_score,hard_gates,evidence_guards,assessment,last_scanned_at").order("opportunity_score", { ascending: false }).limit(QUEUE_LIMIT),
+    supabase.from("ebay_luna_opportunity_queue").select("id,candidate_key,market_radar_product_id,supplier_variant_id,product_title,variant_title,supplier_sku,queue_status,decision,opportunity_score,demand_score,economics_score,identity_score,competition_score,supply_score,listing_readiness_score,active_comparables,sellers_with_movement,estimated_weekly_velocity,median_total_buyer_price,estimated_net_profit,supplier_price,supplier_available,supplier_inventory_quantity,best_selling_match_score,hard_gates,evidence_guards,assessment,last_scanned_at").order("opportunity_score", { ascending: false }).limit(QUEUE_LIMIT),
     supabase.from("ebay_luna_opportunity_queue_events").select("*,ebay_luna_opportunity_queue(product_title,supplier_sku)").order("created_at", { ascending: false }).limit(40),
     activeRisksQuery,
     supabase.from("ebay_luna_opportunity_queue").select("id", { count: "exact", head: true }),
@@ -829,49 +829,66 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
   if (quotaError || quotaEventError) throw new Error("EBAY_QUOTA_DASHBOARD_READ_FAILED")
   const automationHealth = await getSellerAutomationHealth(supabase)
   const rows = queue.data ?? []
-  const queueIds = rows.map((row) => row.id).filter((id): id is string => typeof id === "string")
-  const productResearchByQueue = new Map<string, {
+  const supplierVariantIds = [...new Set(rows
+    .map((row) => row.supplier_variant_id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0))]
+  const productResearchBySupplierVariant = new Map<string, {
     soldExactCount: number
     soldRelatedPackCount: number
     soldRelatedSizeCount: number
     latestObservedAt: string | null
   }>()
-  if (queueIds.length) {
+  let productResearchRankingStatus: "AVAILABLE" | "UNAVAILABLE" | "NOT_APPLICABLE" = supplierVariantIds.length
+    ? "AVAILABLE"
+    : "NOT_APPLICABLE"
+  if (supplierVariantIds.length) {
     const { data: researchRows, error: researchError } = await supabase
       .from("marketplace_product_research_capture_observations")
-      .select("matched_queue_item_id,match_classification,confirmed_sold_quantity,observed_at")
-      .in("matched_queue_item_id", queueIds)
-      .eq("reviewed", true)
+      .select("matched_supplier_variant_id,match_classification,confirmed_sold_quantity,last_sold_date")
+      .eq("marketplace_account_key", accountKey)
+      .eq("marketplace", "EBAY_US")
+      .in("matched_supplier_variant_id", supplierVariantIds)
+      .eq("evidence_reviewed", true)
       .limit(5_000)
-    if (researchError) throw new Error("EBAY_PRODUCT_RESEARCH_RANKING_READ_FAILED")
-    for (const observation of researchRows ?? []) {
-      if (!observation.matched_queue_item_id) continue
-      const current = productResearchByQueue.get(observation.matched_queue_item_id) ?? {
-        soldExactCount: 0,
-        soldRelatedPackCount: 0,
-        soldRelatedSizeCount: 0,
-        latestObservedAt: null,
+    if (researchError) {
+      // Product Research enriches ranking but must never take down the operational queue.
+      productResearchRankingStatus = "UNAVAILABLE"
+    } else {
+      for (const observation of researchRows ?? []) {
+        if (!observation.matched_supplier_variant_id) continue
+        const current = productResearchBySupplierVariant.get(observation.matched_supplier_variant_id) ?? {
+          soldExactCount: 0,
+          soldRelatedPackCount: 0,
+          soldRelatedSizeCount: 0,
+          latestObservedAt: null,
+        }
+        const sold = Math.max(0, Number(observation.confirmed_sold_quantity ?? 0))
+        if (observation.match_classification === "EXACT_LUNA_MATCH") current.soldExactCount += sold
+        else if (observation.match_classification === "SAME_PRODUCT_DIFFERENT_PACK") current.soldRelatedPackCount += sold
+        else if (observation.match_classification === "SAME_PRODUCT_DIFFERENT_SIZE") current.soldRelatedSizeCount += sold
+        if (!current.latestObservedAt || observation.last_sold_date > current.latestObservedAt) {
+          current.latestObservedAt = observation.last_sold_date
+        }
+        productResearchBySupplierVariant.set(observation.matched_supplier_variant_id, current)
       }
-      const sold = Math.max(0, Number(observation.confirmed_sold_quantity ?? 0))
-      if (observation.match_classification === "EXACT_LUNA_MATCH") current.soldExactCount += sold
-      else if (observation.match_classification === "SAME_PRODUCT_DIFFERENT_PACK") current.soldRelatedPackCount += sold
-      else if (observation.match_classification === "SAME_PRODUCT_DIFFERENT_SIZE") current.soldRelatedSizeCount += sold
-      if (!current.latestObservedAt || observation.observed_at > current.latestObservedAt) {
-        current.latestObservedAt = observation.observed_at
-      }
-      productResearchByQueue.set(observation.matched_queue_item_id, current)
     }
   }
   const professionalRows = rows
     .map((row) => {
-      const research = productResearchByQueue.get(row.id)
-      if (!research) return buildProfessionalSellerQueueView(row)
+      const research = row.supplier_variant_id
+        ? productResearchBySupplierVariant.get(row.supplier_variant_id)
+        : undefined
+      if (!research) return buildProfessionalSellerQueueView({
+        ...row,
+        product_research_ranking_status: productResearchRankingStatus,
+      })
       const assessment = row.assessment && typeof row.assessment === "object"
         ? row.assessment as Record<string, unknown> : {}
       const market = assessment.market && typeof assessment.market === "object"
         ? assessment.market as Record<string, unknown> : {}
       return buildProfessionalSellerQueueView({
         ...row,
+        product_research_ranking_status: productResearchRankingStatus,
         assessment: {
           ...assessment,
           market: {
@@ -931,6 +948,12 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
         ["P2_DISCOVERY", "P3_DEEP_ANALYSIS"].includes(state.owner_lane) && state.status === "PAUSED_429"),
       monitorBudgetProtected: (quotaStates ?? []).filter((state) =>
         String(state.owner_lane).startsWith("P0_")).every((state) => Number(state.reserved_budget ?? 0) > 0),
+    },
+    rankingEvidence: {
+      productResearchStatus: productResearchRankingStatus,
+      failureCode: productResearchRankingStatus === "UNAVAILABLE"
+        ? "EBAY_PRODUCT_RESEARCH_RANKING_UNAVAILABLE"
+        : null,
     },
   }
 }
