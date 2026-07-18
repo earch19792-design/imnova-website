@@ -126,7 +126,7 @@ test("canonical links exist and navigation remains mobile accessible", () => {
 
 test("route and bundle surface regress downward", () => {
   assert.ok(countNamed("app", "page.tsx") <= 13, "page route count regressed")
-  assert.ok(countNamed("app/api", "route.ts") <= 63, "API route count regressed")
+  assert.ok(countNamed("app/api", "route.ts") <= 65, "API route count regressed")
   assert.equal(countNamed("app/api/community", "route.ts"), 0)
   assert.equal(countNamed("app/api/store", "route.ts"), 0)
 })

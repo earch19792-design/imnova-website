@@ -24,6 +24,7 @@ import {
   markProductResearchQueryCaptured,
 } from "@/lib/ebay/ebay-product-research-query-plan"
 import { getEbayApplicationBrowseQuota } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
+import { resumeSameDayPilotAfterProductResearchCapture } from "@/lib/ebay/ebay-same-day-pilot-service"
 
 async function visualStatusOrUnavailable(input: {
   supabase: Parameters<typeof getProductResearchVisualPatternStatus>[0]["supabase"]
@@ -125,8 +126,13 @@ export async function POST(req: Request) {
     const visualStatus = await visualStatusOrUnavailable({
       supabase: auth.supabase, accountKey: auth.accountKey,
     })
+    const sameDayPilot = await resumeSameDayPilotAfterProductResearchCapture({
+      supabase: auth.supabase, accountKey: auth.accountKey,
+      searchQuery: capture.searchQuery, batchId: result.batchId,
+      exactLunaMatches: result.matchCounts.exactLuna,
+    })
     return listingAiResponse({ success: true, result: { ...result, scan, queryPlan,
-      visualStatus,
+      visualStatus, sameDayPilot,
       source: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
       rawHtmlStored: false, temporaryTitlesStored: false,
       competitorImagesDownloaded: 0, piiStored: false,

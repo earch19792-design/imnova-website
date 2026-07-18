@@ -36,7 +36,10 @@ export async function POST(req: Request) {
     listingAiIdempotencyKey(req)
     const body = await listingAiJson(req)
     if (body.action !== "enrich") throw new Error("PRODUCT_FACT_ACTION_INVALID")
-    const result = await runProductFactsEnrichment({ supabase: auth.supabase, accountKey: auth.accountKey })
+    const candidateIds = Array.isArray(body.candidateIds)
+      ? body.candidateIds.filter((value): value is string => typeof value === "string" && /^[0-9a-f-]{36}$/i.test(value)).slice(0, 5)
+      : undefined
+    const result = await runProductFactsEnrichment({ supabase: auth.supabase, accountKey: auth.accountKey, candidateIds })
     return listingAiResponse({ success: true, result }, 202)
   } catch (error) {
     return listingAiFailure(error)

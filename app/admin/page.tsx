@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { SELLER_OS_NAVIGATION } from "@/lib/seller-os/navigation"
 import { validateAdminSession } from "@/lib/admin-auth"
 import { SellerOsMobileNav } from "./ebay/components/seller-os-mobile-nav"
+import { TodayLaunchPanel } from "./today-launch-panel"
 
 type HomeState = "LOADING" | "READY" | "UNAVAILABLE"
 
@@ -51,8 +52,10 @@ export default function SellerOsAdminHome() {
         <section>
           <header className="rounded-3xl border border-white/10 bg-gradient-to-br from-cyan-200/[0.10] via-white/[0.03] to-emerald-200/[0.06] p-5 sm:p-7">
             <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-100/60">Inicio operativo</p><h1 className="mt-2 text-3xl font-black">¿Qué necesita atención ahora?</h1></div><span className={`rounded-full px-3 py-2 text-xs font-black ${state === "READY" ? "bg-emerald-200 text-black" : "border border-amber-200/30 text-amber-100"}`}>{state === "LOADING" ? "VALIDANDO SESIÓN" : state === "READY" ? "SESIÓN PROTEGIDA" : "REVISAR CONEXIÓN"}</span></div>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-white/60">Seller OS está aislando su superficie profesional. La próxima acción permitida es validar esta depuración en staging; OpenAI, Loop 3, producción y escrituras eBay permanecen apagados.</p>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-white/60">Seller OS coordina el piloto de hoy con trabajo automático y confirmaciones humanas puntuales. La publicación continúa siendo manual en Seller Hub; producción y escrituras eBay permanecen intactas.</p>
           </header>
+
+          <TodayLaunchPanel />
 
           <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{cards.map(([title, status, detail]) => <article key={title} className="rounded-3xl border border-white/10 bg-white/[0.035] p-5"><p className="text-xs font-black uppercase tracking-wider text-white/45">{title}</p><h2 className="mt-3 text-lg font-black">{status}</h2><p className="mt-2 text-sm leading-6 text-white/55">{detail}</p></article>)}</div>
         </section>

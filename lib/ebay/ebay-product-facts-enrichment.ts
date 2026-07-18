@@ -191,12 +191,13 @@ async function latestQueueRun(supabase: SupabaseClient, accountKey: string) {
   return data
 }
 
-async function eligibleCandidates(supabase: SupabaseClient, accountKey: string, runId: string) {
-  const { data, error } = await supabase.from("marketplace_listing_approval_queue_items")
+async function eligibleCandidates(supabase: SupabaseClient, accountKey: string, runId: string, candidateIds?: string[]) {
+  let query = supabase.from("marketplace_listing_approval_queue_items")
     .select("id,market_radar_product_id,supplier_variant_id,recommended_pack_count,evidence_snapshot,luna_match_status,cohort,internal_status,pool_rank,rank")
     .eq("run_id", runId).eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
     .eq("luna_match_status", "EXACT_LUNA_MATCH").in("cohort", ["READY_FOR_OPERATOR_APPROVAL", "READY_FOR_OPENAI_APPROVAL"])
-    .order("pool_rank", { ascending: true, nullsFirst: false }).limit(MAX_CANDIDATES)
+  if (candidateIds?.length) query = query.in("id", candidateIds.slice(0, MAX_CANDIDATES))
+  const { data, error } = await query.order("pool_rank", { ascending: true, nullsFirst: false }).limit(MAX_CANDIDATES)
   if (error) throw new Error("PRODUCT_FACT_CANDIDATE_READ_FAILED")
   return (data ?? []).map(record)
 }
@@ -251,13 +252,13 @@ async function insertIgnoringDuplicates(supabase: SupabaseClient, table: string,
   if (error) throw new Error(`PRODUCT_FACT_${table.toUpperCase()}_PERSIST_FAILED`)
 }
 
-export async function runProductFactsEnrichment(input: { supabase: SupabaseClient; accountKey: string; now?: Date; environment?: NodeJS.ProcessEnv }) {
+export async function runProductFactsEnrichment(input: { supabase: SupabaseClient; accountKey: string; candidateIds?: string[]; now?: Date; environment?: NodeJS.ProcessEnv }) {
   const boundary = productIdentityReconciliationBoundary(input.environment ?? process.env)
   if (!boundary.preview || !boundary.staging || !boundary.branchMatch) throw new Error("PRODUCT_FACTS_PREVIEW_STAGING_REQUIRED")
   const now = input.now ?? new Date()
   const queueRun = await latestQueueRun(input.supabase, input.accountKey)
   if (!queueRun?.id) throw new Error("PRODUCT_FACT_QUEUE_RUN_MISSING")
-  const candidates = await eligibleCandidates(input.supabase, input.accountKey, queueRun.id)
+  const candidates = await eligibleCandidates(input.supabase, input.accountKey, queueRun.id, input.candidateIds)
   const candidateResults: Array<{ candidateId: string; status: string; openAiInputReady: boolean; reason?: string }> = []
   const prepared: Array<{ candidate: JsonRecord; variant: JsonRecord; observations: FactObservation[]; facts: ResolvedFact[]; requirements: ReturnType<typeof mapTaxonomyRequirements>; readiness: ReturnType<typeof calculateReadiness>; exception: ReturnType<typeof targetedFactException>; sourceSnapshots: JsonRecord[]; taxonomy: JsonRecord; sourceAttempts: JsonRecord }> = []
   for (const candidate of candidates) {
