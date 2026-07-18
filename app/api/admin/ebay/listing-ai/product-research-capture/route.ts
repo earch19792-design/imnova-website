@@ -86,9 +86,46 @@ export async function POST(req: Request) {
       throw new Error("PRODUCT_RESEARCH_CAPTURE_BODY_INVALID")
     }
     const capture = body.capture as ProductResearchBrowserCapture
-    const plannedTask = await assertProductResearchCaptureMatchesNextQuery({
-      supabase: auth.supabase, accountKey: auth.accountKey, searchQuery: capture.searchQuery,
-    })
+    let plannedTask: Awaited<ReturnType<typeof assertProductResearchCaptureMatchesNextQuery>>
+    try {
+      plannedTask = await assertProductResearchCaptureMatchesNextQuery({
+        supabase: auth.supabase, accountKey: auth.accountKey, searchQuery: capture.searchQuery,
+      })
+    } catch (planError) {
+      const code = planError instanceof Error ? planError.message : ""
+      if (code !== "PRODUCT_RESEARCH_QUERY_PLAN_NEXT_QUERY_REQUIRED") throw planError
+      // A visible table from another tab is a navigation problem, not a bad
+      // commercial import. Return the durable next query without persisting a
+      // row, so v1.2.2 can apply it automatically in the same eBay tab.
+      let queryPlan: Awaited<ReturnType<typeof getProductResearchQueryPlanStatus>> = null
+      try {
+        queryPlan = await getProductResearchQueryPlanStatus({
+          supabase: auth.supabase, accountKey: auth.accountKey,
+        })
+      } catch {
+        throw planError
+      }
+      if (queryPlan?.status !== "ACTIVE" || !queryPlan.nextQuery) throw planError
+      return listingAiResponse({ success: true, result: {
+        captureQueryCorrected: true,
+        navigationOnly: true,
+        batchId: null,
+        capturedAt: null,
+        rowCount: 0, validCount: 0, importedCount: 0, duplicateCount: 0, rejectedCount: 0,
+        candidatesEnriched: 0,
+        matchCounts: { exactLuna: 0, differentPack: 0, differentSize: 0,
+          differentVariant: 0, ambiguous: 0, noLunaMatch: 0 },
+        reanalysisRequired: false,
+        scan: { status: "PRODUCT_RESEARCH_QUERY_NAVIGATION_CORRECTED",
+          commercialEvidenceStored: false, browserMayClose: false,
+          observationsImported: 0, discoveryRepeated: false },
+        queryPlan,
+        source: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
+        rawHtmlStored: false, temporaryTitlesStored: false,
+        competitorImagesDownloaded: 0, piiStored: false,
+        openAiCalls: 0, ebayWrites: 0, canPublish: false,
+      } }, 200)
+    }
     if (plannedTask?.alreadyProcessed && plannedTask.captureBatchId) {
       const queryPlan = await getProductResearchQueryPlanStatus({
         supabase: auth.supabase, accountKey: auth.accountKey, planId: plannedTask.planId,

@@ -10,6 +10,8 @@ const RECEIVER_READY_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_RECEIVER_READY_V1"
 
 type SafeResult = {
   captureAlreadyProcessed?: boolean
+  captureQueryCorrected?: boolean
+  navigationOnly?: boolean
   rowCount?: number
   validCount?: number
   importedCount?: number
@@ -138,7 +140,7 @@ export default function ProductResearchCaptureReceiverPage() {
       <p className="mt-2 text-sm text-white/65">Esta ventana sólo acepta una tabla visible enviada desde la página oficial de Product Research. Nunca recibe cookies, contraseñas, HTML completo ni imágenes.</p>
       <div className="mt-6 rounded-2xl border border-white/10 bg-black/25 p-4">
         <p className="text-xs uppercase tracking-widest text-white/50">Estado</p>
-        <p className="mt-2 text-lg font-black">{status === "WAITING" ? "Esperando captura oficial…" : status === "IMPORTING" ? "Validando e importando…" : status === "READY" ? result?.captureAlreadyProcessed ? "TABLA YA PROCESADA" : "CAPTURA COMPLETADA" : "CAPTURA RECHAZADA"}</p>
+        <p className="mt-2 text-lg font-black">{status === "WAITING" ? "Esperando captura oficial…" : status === "IMPORTING" ? "Validando e importando…" : status === "READY" ? result?.captureQueryCorrected ? "CONSULTA CORREGIDA" : result?.captureAlreadyProcessed ? "TABLA YA PROCESADA" : "CAPTURA COMPLETADA" : "CAPTURA RECHAZADA"}</p>
         {error && <div className="mt-3 rounded-xl border border-rose-300/25 bg-rose-400/10 p-3">
           <p className="text-sm font-semibold text-rose-50">{captureErrorMessage(error)}</p>
           <details className="mt-2 text-xs text-rose-100/65">
@@ -147,8 +149,9 @@ export default function ProductResearchCaptureReceiverPage() {
           </details>
         </div>}
       </div>
+      {result?.captureQueryCorrected && <p className="mt-5 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.07] p-4 text-sm leading-6 text-cyan-50">La tabla de esta pestaña no correspondía a la consulta pendiente y no fue guardada. Seller OS está enviando la consulta correcta a la extensión; espera los resultados nuevos antes de capturar.</p>}
       {result?.captureAlreadyProcessed && <p className="mt-5 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.07] p-4 text-sm leading-6 text-emerald-50">Esta tabla ya estaba guardada. No se importó ni duplicó nuevamente. Seller OS está enviando la próxima consulta validada a la extensión.</p>}
-      {result && !result.captureAlreadyProcessed && <dl className="mt-5 grid grid-cols-2 gap-3 text-sm">
+      {result && !result.captureAlreadyProcessed && !result.captureQueryCorrected && <dl className="mt-5 grid grid-cols-2 gap-3 text-sm">
         <div><dt className="text-white/50">Filas / válidas</dt><dd className="font-black">{result.rowCount ?? 0} / {result.validCount ?? 0}</dd></div>
         <div><dt className="text-white/50">Importadas</dt><dd className="font-black">{result.importedCount ?? 0}</dd></div>
         <div><dt className="text-white/50">Duplicadas / rechazadas</dt><dd>{result.duplicateCount ?? 0} / {result.rejectedCount ?? 0}</dd></div>
