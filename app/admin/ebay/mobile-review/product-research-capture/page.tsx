@@ -8,21 +8,6 @@ const EBAY_PRODUCT_RESEARCH_ORIGIN = "https://www.ebay.com"
 const CAPTURE_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_VISIBLE_CAPTURE_V1"
 const RECEIVER_READY_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_RECEIVER_READY_V1"
 
-type VisualMarketBrief = {
-  exactCohortSize?: number
-  relatedPackCohortSize?: number
-  relatedSizeCohortSize?: number
-  confidence?: string
-  supportingSignals?: {
-    sampleSize?: number
-    whiteOrNeutralPercent?: number
-    highCoveragePercent?: number
-    lowComplexityPercent?: number
-    lowOrNoTextOverlayPercent?: number
-    clearMultipackPercent?: number
-  }
-}
-
 type SafeResult = {
   rowCount?: number
   validCount?: number
@@ -39,22 +24,6 @@ type SafeResult = {
     noLunaMatch?: number
   }
   scan?: { status?: string }
-  visual?: {
-    thumbnailDetectedCount?: number
-    analyzedCount?: number
-    partialCount?: number
-    unavailableCount?: number
-    rejectedCount?: number
-    persistedCount?: number
-    existingVisualCount?: number
-    visualBriefs?: VisualMarketBrief[]
-    error?: string | null
-  }
-  visualStatus?: {
-    legacyWithoutVisualCount?: number
-    visualNotCapturedLegacyStatus?: string
-    latestBrief?: VisualMarketBrief | null
-  }
   queryPlan?: {
     status?: string
     queryCount?: number
@@ -174,31 +143,6 @@ export default function ProductResearchCaptureReceiverPage() {
         <div><dt className="text-white/50">OpenAI</dt><dd>0 llamadas</dd></div>
         <div><dt className="text-white/50">Escrituras eBay</dt><dd>0</dd></div>
       </dl>}
-      {result && <section className="mt-5 rounded-2xl border border-cyan-100/20 bg-cyan-100/[0.04] p-4 text-sm">
-        <h2 className="font-black">Patrones visuales observados</h2>
-        <dl className="mt-3 grid grid-cols-2 gap-3">
-          <div><dt className="text-white/50">Miniaturas visibles</dt><dd>{result.visual?.thumbnailDetectedCount ?? 0}</dd></div>
-          <div><dt className="text-white/50">Analizados / parciales</dt><dd>{result.visual?.analyzedCount ?? 0} / {result.visual?.partialCount ?? 0}</dd></div>
-          <div><dt className="text-white/50">No disponibles / rechazados</dt><dd>{result.visual?.unavailableCount ?? 0} / {result.visual?.rejectedCount ?? 0}</dd></div>
-          <div><dt className="text-white/50">Legacy sin visual</dt><dd>{result.visualStatus?.legacyWithoutVisualCount ?? 0}</dd></div>
-        </dl>
-        {(() => {
-          const brief = result.visual?.visualBriefs?.[0] ?? result.visualStatus?.latestBrief ?? null
-          return brief ? <>
-            <ul className="mt-3 space-y-1 text-white/75">
-              <li>Fondo blanco/neutro: {brief.supportingSignals?.whiteOrNeutralPercent ?? 0}%</li>
-              <li>Producto con cobertura alta: {brief.supportingSignals?.highCoveragePercent ?? 0}%</li>
-              <li>Complejidad baja: {brief.supportingSignals?.lowComplexityPercent ?? 0}%</li>
-              <li>Texto superpuesto bajo o inexistente: {brief.supportingSignals?.lowOrNoTextOverlayPercent ?? 0}%</li>
-              <li>Presentación multipack clara: {brief.supportingSignals?.clearMultipackPercent ?? 0}%</li>
-              <li>Muestra válida: {brief.supportingSignals?.sampleSize ?? 0} listings · Confianza: {brief.confidence ?? "UNKNOWN"}</li>
-              <li>Exact Luna / pack relacionado / tamaño relacionado: {brief.exactCohortSize ?? 0} / {brief.relatedPackCohortSize ?? 0} / {brief.relatedSizeCohortSize ?? 0}</li>
-            </ul>
-          </> : <p className="mt-3 text-white/55">Aún no hay una muestra visual analizada suficiente; la evidencia comercial continúa normalmente.</p>
-        })()}
-        {result.visual?.error && <p className="mt-3 text-amber-100">El análisis visual no estuvo disponible; la captura comercial sí se conservó.</p>}
-        <p className="mt-3 text-xs text-white/50">Estos patrones representan correlaciones de la muestra capturada. No prueban causalidad y no autorizan copiar imágenes de otros vendedores.</p>
-      </section>}
       <p className="mt-6 text-xs text-white/45">Puedes cerrar esta ventana al finalizar. Seller OS continuará únicamente el reanálisis de Loop 1 del mismo run.</p>
     </section>
   </main>
