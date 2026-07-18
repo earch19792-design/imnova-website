@@ -13,6 +13,10 @@ const canonicalNavigation = readFileSync("lib/seller-os/navigation.ts", "utf8")
 const journeyGuide = readFileSync("app/admin/ebay/mobile-review/seller-journey-guide.tsx", "utf8")
 const registration = readFileSync("app/admin/ebay/listings/register/page.tsx", "utf8")
 const registrationApi = readFileSync("app/api/admin/ebay/listings/register/route.ts", "utf8")
+const productResearchStepMigration = readFileSync(
+  "supabase/migrations/20260717200000_allow_product_research_command_center_step.sql",
+  "utf8",
+)
 
 test("mobile command center centralizes the five Seller OS areas", () => {
   for (const label of ["Inicio", "Oportunidades eBay", "Listings", "Operación", "Salud y configuración"]) {
@@ -105,6 +109,9 @@ test("review and package state are persisted only through the protected Admin AP
   assert.match(api, /COMMAND_CENTER_PACKAGE_GATES_PENDING/)
   assert.match(api, /sourceOpportunity\.hard_gates/)
   assert.match(api, /safety: \{ ebayWriteUsed: false, canPublish: false \}/)
+  assert.match(mobile, /\? "product_research"/)
+  assert.match(productResearchStepMigration, /'product_research'/)
+  assert.doesNotMatch(productResearchStepMigration, /delete from|truncate/i)
 })
 
 test("listing workspace is resumable and gates one unpublished environment-aware draft", () => {
