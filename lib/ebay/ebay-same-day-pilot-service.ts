@@ -35,7 +35,7 @@ function operationDate(now: Date) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Managua", year: "numeric", month: "2-digit", day: "2-digit" }).format(now)
 }
 
-function candidateInput(row: JsonRecord): SameDayCandidateInput {
+function candidateInput(row: JsonRecord, latestVariant: JsonRecord = {}): SameDayCandidateInput {
   const assessment = record(row.assessment)
   const identity = record(assessment.identity)
   const market = record(assessment.market)
@@ -45,12 +45,16 @@ function candidateInput(row: JsonRecord): SameDayCandidateInput {
   const observed = text(row.last_scanned_at)
   return {
     id: text(row.id), candidateKey: text(row.candidate_key), productTitle: text(row.product_title),
-    variantTitle: text(row.variant_title) || null, supplierSku: text(row.supplier_sku) || null,
-    supplierVariantId: text(row.supplier_variant_id) || null, gtin: text(row.gtin) || null,
+    variantTitle: text(latestVariant.variant_title || row.variant_title) || null,
+    supplierSku: text(latestVariant.sku || row.supplier_sku) || null,
+    supplierVariantId: text(latestVariant.supplier_variant_id || row.supplier_variant_id) || null,
+    gtin: text(latestVariant.barcode || row.gtin) || null,
     brand: text(identity.brand || candidate.brand || candidate.vendor) || null,
     mpn: text(identity.mpn || candidate.mpn) || null, model: text(identity.model || candidate.model) || null,
-    supplierPrice: number(row.supplier_price), supplierAvailable: row.supplier_available === true ? true : row.supplier_available === false ? false : null,
-    supplierQuantity: number(row.supplier_inventory_quantity), supplierObservedAt: text(row.supplier_snapshot_at) || null,
+    supplierPrice: number(latestVariant.price) ?? number(row.supplier_price),
+    supplierAvailable: latestVariant.available === true ? true : latestVariant.available === false ? false : row.supplier_available === true ? true : row.supplier_available === false ? false : null,
+    supplierQuantity: number(latestVariant.inventory_quantity) ?? number(row.supplier_inventory_quantity),
+    supplierObservedAt: text(latestVariant.captured_at || row.supplier_snapshot_at) || null,
     exactIdentityConfirmed: identity.exactIdentityConfirmed === true,
     identityConfidence: number(scores.confidenceScore) ?? number(row.identity_score) ?? 0,
     activeExactCount: number(row.active_comparables) ?? 0, soldExactCount: number(market.soldExactCount) ?? 0,
@@ -179,7 +183,18 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
     input.supabase.from("ebay_active_listings").select("id", { count: "exact", head: true }).eq("account_key", input.accountKey).eq("ebay_item_id", "366543596425").eq("listing_status", "active"),
   ])
   if (opportunityError || quotaError || monitorError || productResearchCount.error || existingPilotListing.error) throw new Error("SAME_DAY_PILOT_SOURCE_READ_FAILED")
-  const selected = selectSameDayQueue((opportunities ?? []).map((row) => candidateInput(record(row))))
+  const productIds = [...new Set((opportunities ?? []).map((row) => text(row.market_radar_product_id)).filter(Boolean))]
+  const { data: latestVariants, error: variantError } = productIds.length
+    ? await input.supabase.from("market_radar_latest_variants").select("product_id,supplier_variant_id,variant_title,sku,barcode,price,available,inventory_quantity,captured_at").in("product_id", productIds).limit(500)
+    : { data: [], error: null }
+  if (variantError) throw new Error("SAME_DAY_PILOT_LUNA_CURRENT_SNAPSHOT_READ_FAILED")
+  const variantByKey = new Map((latestVariants ?? []).map((variant) => [
+    `${text(variant.product_id)}:${text(variant.supplier_variant_id)}`, record(variant),
+  ]))
+  const selected = selectSameDayQueue((opportunities ?? []).map((row) => {
+    const key = `${text(row.market_radar_product_id)}:${text(row.supplier_variant_id)}`
+    return candidateInput(record(row), variantByKey.get(key) ?? {})
+  }))
   const { data: latestQueueRun } = await input.supabase.from("marketplace_listing_approval_queue_runs").select("id")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE).order("created_at", { ascending: false }).limit(1).maybeSingle()
   const { data: queueItems } = latestQueueRun?.id ? await input.supabase.from("marketplace_listing_approval_queue_items")
@@ -189,7 +204,8 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
   const { data: run, error: runError } = await input.supabase.from("ebay_same_day_pilot_runs").insert({
     marketplace_account_key: input.accountKey, operation_date: date, run_key: runKey, queue_count: selected.length,
     verified_existing_listings: (existingPilotListing.count ?? 0) > 0 ? 1 : 0,
-    source_inventory: { opportunitiesRead: opportunities?.length ?? 0, productResearchObservationsReused: productResearchCount.count ?? 0, fullCatalogRescan: false },
+    source_inventory: { opportunitiesRead: opportunities?.length ?? 0, currentLunaVariantsRead: latestVariants?.length ?? 0,
+      productResearchObservationsReused: productResearchCount.count ?? 0, fullCatalogRescan: false },
     quota_snapshot: { lanes: quotas ?? [], exactValidationCallsEstimated: selected.reduce((total, row) => total + row.callsEstimated, 0), protectedMonitorBudgetUsed: false },
     monitor_snapshot: monitor ?? { status: "NOT_RUNNING" },
     next_automated_action: selected.length ? "Esperar y procesar automáticamente la próxima evidencia autorizada." : "No hay candidatos seguros; preservar trabajo y revisar próximo conjunto.",
