@@ -40,7 +40,7 @@ import {
   fetchOfficialManufacturerFacts,
 } from "./ebay-official-manufacturer-facts"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V5_2026_07_19"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V6_2026_07_19"
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
 type JsonRecord = Record<string, unknown>
@@ -555,6 +555,14 @@ function tradingItemIdFromBrowseComparable(value: unknown) {
   return raw.match(/^v1\|(\d{9,20})\|/)?.[1] ?? ""
 }
 
+const SEMANTIC_CATEGORY_GUARDS = [
+  { pattern: /\bkey\s*(?:chain|chains|ring|rings)\b/i, categoryId: "45237" },
+]
+
+function semanticCategoryIdFromTitle(productTitle: string) {
+  return SEMANTIC_CATEGORY_GUARDS.find((guard) => guard.pattern.test(productTitle))?.categoryId ?? ""
+}
+
 function browseSellSimilarTradingCandidates(input: { browse: JsonRecord | null; productTitle: string }) {
   return array(input.browse?.comparableEvidence)
     .map(record)
@@ -667,9 +675,11 @@ export async function runProductFactsEnrichment(input: {
       const intendedPackCount = base.offerPackConflict ? null : base.nativePackCount
       const authoritativeGtin = normalizeGtin(variant.barcode ?? fromMetadata(base.metadata, ["upc", "ean", "gtin", "barcode"]) ?? officialDescription.facts.gtin)
       const knownCategoryId = categoryIdFromCandidateEvidence(candidate)
+      const semanticCategoryId = semanticCategoryIdFromTitle(base.title)
       const [catalog, manufacturerOfficial] = await Promise.all([
         searchEbayCatalogIdentity({ query: base.title, gtin: authoritativeGtin,
-          mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])), categoryId: knownCategoryId || null }),
+          mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])),
+          categoryId: semanticCategoryId || knownCategoryId || null }),
         fetchOfficialManufacturerFacts({ productTitle: base.title, now }),
       ])
       const catalogSelection = selectCatalogIdentityMatches({
@@ -692,7 +702,7 @@ export async function runProductFactsEnrichment(input: {
       try {
         const browse = record(await runEbaySellerKeywordDemandValidation({ productName: base.title, productTitle: base.title,
           variantTitle: text(variant.variant_title) || null, supplierSku: text(variant.sku) || null,
-          categoryId: catalogCategoryId || null, gtin: authoritativeGtin,
+          categoryId: semanticCategoryId || catalogCategoryId || null, gtin: authoritativeGtin,
           brand: text(fromMetadata(base.metadata, ["brand", "manufacturerBrand"])) || null,
           mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])) || null,
           size: text(fromMetadata(base.metadata, ["size", "netContent"])) || null,
@@ -749,7 +759,7 @@ export async function runProductFactsEnrichment(input: {
       // Category is resolved before aspect evaluation. Exact Catalog identity
       // wins, followed by the title-verified Trading comparable. Existing
       // evidence remains a last category seed for official Taxonomy.
-      const taxonomyCategoryId = catalogCategoryId || tradingCategoryId || knownCategoryId
+      const taxonomyCategoryId = semanticCategoryId || catalogCategoryId || tradingCategoryId || knownCategoryId
       const taxonomy = await getEbayTaxonomyListingIntelligence(base.title, taxonomyCategoryId || undefined)
       const taxonomyRecord = record(taxonomy)
       const sourceSnapshots = [
@@ -770,7 +780,8 @@ export async function runProductFactsEnrichment(input: {
           sourceType: "EBAY_TAXONOMY_OFFICIAL_READONLY", authority: "EBAY_TAXONOMY", observedAt: text(taxonomyRecord.observedAt) || null,
           status: text(taxonomyRecord.status) || "REQUEST_FAILED", payload: { categoryId: text(taxonomyRecord.categoryId) || null,
             categorySeedPresent: Boolean(taxonomyCategoryId),
-            categorySeedSource: catalogCategoryId ? "EBAY_CATALOG_EXACT" : tradingCategoryId
+            categorySeedSource: semanticCategoryId ? "TITLE_SEMANTIC_CATEGORY_GUARD" : catalogCategoryId
+              ? "EBAY_CATALOG_EXACT" : tradingCategoryId
               ? tradingSelectionSource === "BROWSE_SELL_SIMILAR"
                 ? "EBAY_TRADING_SELL_SIMILAR_TITLE_VALIDATED"
                 : "EBAY_TRADING_EXACT_COMPARABLE"
