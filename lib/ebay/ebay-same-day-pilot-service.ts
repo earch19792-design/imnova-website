@@ -25,7 +25,9 @@ import { buildVerifiedManualSellerHubHandoff, SAME_DAY_MANUAL_HANDOFF_VERSION } 
 import {
   assertEbayLaneAvailable,
   recordPersistentEbayRateLimit,
+  releaseExpiredEbayQuotaPauses,
 } from "./ebay-persistent-quota-coordinator"
+import { projectEffectiveEbayQuotaLane } from "./ebay-quota-lane-domain"
 import {
   PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_VERSION,
   reconcileProductResearchObservations,
@@ -162,7 +164,12 @@ function candidateInput(row: JsonRecord, latestVariant: JsonRecord = {}, now = n
   }
 }
 
-async function currentState(supabase: SupabaseClient, accountKey: string, date: string) {
+async function currentState(
+  supabase: SupabaseClient,
+  accountKey: string,
+  date: string,
+  now = new Date(),
+) {
   const { data: datedRun, error } = await supabase.from("ebay_same_day_pilot_runs").select("*")
     .eq("marketplace_account_key", accountKey).eq("operation_date", date).maybeSingle()
   if (error) throw new Error("SAME_DAY_PILOT_RUN_READ_FAILED")
@@ -182,15 +189,20 @@ async function currentState(supabase: SupabaseClient, accountKey: string, date: 
   if (!run) return null
   const [{ data: candidates, error: candidateError }, { data: tasks, error: taskError },
     { data: transitions, error: transitionError }, { data: jobs, error: jobError },
-    { data: handoffs, error: handoffError }] = await Promise.all([
+    { data: handoffs, error: handoffError }, { data: quotaStates, error: quotaError }] = await Promise.all([
     supabase.from("ebay_same_day_pilot_candidates").select("*").eq("run_id", run.id).order("ordinal"),
     supabase.from("ebay_same_day_pilot_human_tasks").select("*").eq("run_id", run.id).order("created_at"),
     supabase.from("ebay_same_day_pilot_transitions").select("*").eq("run_id", run.id).order("created_at"),
     supabase.from("ebay_same_day_pilot_jobs").select("id,job_type,status,attempt,available_at,rate_limit_resume_at,last_error_code,created_at,updated_at").eq("run_id", run.id).order("created_at"),
     supabase.from("ebay_same_day_pilot_handoffs").select("id,candidate_id,status,package_data,package_hash,created_at")
       .eq("run_id", run.id).order("created_at"),
+    supabase.from("ebay_api_quota_states")
+      .select("api_family,operation,status,remaining,reserved_budget,available_budget,reset_at,owner_lane,last_refreshed_at")
+      .eq("marketplace", MARKETPLACE),
   ])
-  if (candidateError || taskError || transitionError || jobError || handoffError) throw new Error("SAME_DAY_PILOT_STATE_READ_FAILED")
+  if (candidateError || taskError || transitionError || jobError || handoffError || quotaError) {
+    throw new Error("SAME_DAY_PILOT_STATE_READ_FAILED")
+  }
   const candidateRows = candidates ?? []
   const opportunityIds = [...new Set(candidateRows.map((candidate) => text(candidate.opportunity_id)).filter(Boolean))]
   const { data: opportunityRows, error: opportunityError } = opportunityIds.length
@@ -235,7 +247,17 @@ async function currentState(supabase: SupabaseClient, accountKey: string, date: 
       },
     }
   })
-  return { run, candidates: anchoredCandidates, tasks: tasks ?? [], transitions: transitions ?? [], jobs: jobs ?? [], handoffs: handoffs ?? [] }
+  const effectiveQuotaLanes = (quotaStates ?? []).map((lane) =>
+    projectEffectiveEbayQuotaLane(lane, now))
+  const projectedRun = {
+    ...run,
+    quota_snapshot: {
+      ...record(run.quota_snapshot),
+      lanes: effectiveQuotaLanes,
+      observedAt: now.toISOString(),
+    },
+  }
+  return { run: projectedRun, candidates: anchoredCandidates, tasks: tasks ?? [], transitions: transitions ?? [], jobs: jobs ?? [], handoffs: handoffs ?? [] }
 }
 
 async function transition(input: {
@@ -881,13 +903,16 @@ export async function previewSameDayPilot(input: {
     : { data: [], error: null }
   if (queueItemError) throw new Error("SAME_DAY_PILOT_QUEUE_ITEM_READ_FAILED")
   const queueItemByVariant = new Map((queueItems ?? []).map((row) => [text(row.supplier_variant_id), row.id]))
-  const exactLane = (quotas ?? []).find((lane) => lane.api_family === "BROWSE" && lane.operation === "EXACT_VERIFICATION") ?? null
+  const effectiveQuotaLanes = (quotas ?? []).map((lane) =>
+    projectEffectiveEbayQuotaLane(lane, now))
+  const exactLane = effectiveQuotaLanes.find((lane) =>
+    lane.api_family === "BROWSE" && lane.operation === "EXACT_VERIFICATION") ?? null
   return {
     observedAt: now.toISOString(),
     selected,
     queueItemByVariant,
     latestQueueRunId: latestQueueRun?.id ?? null,
-    quotaLanes: quotas ?? [],
+    quotaLanes: effectiveQuotaLanes,
     exactVerificationLane: exactLane,
     monitor: monitor ?? { status: "NOT_RUNNING" },
     counts: {
@@ -1030,7 +1055,8 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
 }
 
 export async function getSameDayPilot(input: { supabase: SupabaseClient; accountKey: string; now?: Date }) {
-  return currentState(input.supabase, input.accountKey, operationDate(input.now ?? new Date()))
+  const now = input.now ?? new Date()
+  return currentState(input.supabase, input.accountKey, operationDate(now), now)
 }
 
 export async function confirmSameDayLuna(input: { supabase: SupabaseClient; accountKey: string; actorId: string; taskId: string; price: number; available: boolean; quantity: number | null }) {
@@ -1452,13 +1478,17 @@ async function releasePilotRunLease(input: {
 
 export async function processSameDayPilotJobs(input: { supabase: SupabaseClient; accountKey: string; workerId: string; now?: Date }) {
   const now = input.now ?? new Date()
+  // The scheduler heartbeat also reconciles expired persistent pauses, even
+  // when the run is currently waiting at a human gate and has no quota job to
+  // claim. This prevents an old 429 from looking active indefinitely.
+  const expiredQuotaPauses = await releaseExpiredEbayQuotaPauses(input.supabase, now)
   let state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
-  if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
+  if (!state) return { processed: 0, status: "NO_ACTIVE_RUN", expiredQuotaPausesReleased: expiredQuotaPauses.released }
   const runId = state.run.id
   const runLeaseToken = await acquirePilotRunLease({
     supabase: input.supabase, runId, workerId: input.workerId, now,
   })
-  if (!runLeaseToken) return { processed: 0, status: "RUN_BUSY" }
+  if (!runLeaseToken) return { processed: 0, status: "RUN_BUSY", expiredQuotaPausesReleased: expiredQuotaPauses.released }
   try {
   const { error: heartbeatError } = await input.supabase.from("ebay_same_day_pilot_runs").update({
     last_worker_heartbeat_at: now.toISOString(), updated_at: now.toISOString(),

@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { supabase } from "@/lib/supabase"
+import {
+  evaluateEbayQuotaLaneState,
+  evaluateEbayQuotaRetryState,
+} from "@/lib/ebay/ebay-quota-lane-domain"
 
 type Row = Record<string, any>
 
@@ -56,15 +60,32 @@ export function TodayLaunchPanel() {
     : undefined
   const readyCandidates = candidates.filter((candidate: Row) => candidate.machine_state === "READY_FOR_MANUAL_PUBLICATION")
   const runStatus = String(pilot?.run?.status ?? "")
-  const pausedJobs = (pilot?.jobs ?? []).filter((job: Row) => job.status === "WAITING_RETRY" && /429|QUOTA/.test(String(job.last_error_code ?? "")))
+  const quotaNow = new Date()
+  const pausedJobs = (pilot?.jobs ?? []).map((job: Row) => ({
+    job,
+    decision: evaluateEbayQuotaRetryState({
+      status: String(job.status ?? ""),
+      last_error_code: typeof job.last_error_code === "string" ? job.last_error_code : null,
+      rate_limit_resume_at: typeof job.rate_limit_resume_at === "string" ? job.rate_limit_resume_at : null,
+      available_at: typeof job.available_at === "string" ? job.available_at : null,
+    }, quotaNow),
+  })).filter((entry: Row) => entry.decision.active)
   const quotaLanes = Array.isArray(pilot?.run?.quota_snapshot?.lanes)
     ? pilot.run.quota_snapshot.lanes : []
-  const pausedQuotaLanes = quotaLanes.filter((lane: Row) => lane.status === "PAUSED_429" &&
-    (!lane.reset_at || Date.parse(String(lane.reset_at)) > Date.now()))
+  const pausedQuotaLanes = quotaLanes.map((lane: Row) => ({
+    lane,
+    decision: evaluateEbayQuotaLaneState({
+      status: String(lane.status ?? ""),
+      reset_at: typeof lane.reset_at === "string" ? lane.reset_at : null,
+      available_budget: lane.available_budget ?? null,
+      reserved_budget: lane.reserved_budget ?? null,
+      owner_lane: String(lane.owner_lane ?? ""),
+    }, quotaNow),
+  })).filter((entry: Row) => entry.decision.status === "PAUSED_429")
   const quotaPaused = pausedJobs.length > 0 || pausedQuotaLanes.length > 0
   const quotaResumeAt = [
-    ...pausedJobs.map((job: Row) => String(job.rate_limit_resume_at || job.available_at || "")),
-    ...pausedQuotaLanes.map((lane: Row) => String(lane.reset_at || "")),
+    ...pausedJobs.map((entry: Row) => String(entry.decision.resumeAt || "")),
+    ...pausedQuotaLanes.map((entry: Row) => String(entry.decision.resumeAt || "")),
   ].filter(Boolean).sort()[0]
   const currentBusinessState = !pilot ? "NO INICIADO" : runStatus === "BLOCKED" ? "BLOQUEADO" :
     runStatus === "COMPLETED" ? "PUBLICADO Y VERIFICADO" :

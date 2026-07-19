@@ -14,6 +14,33 @@ export type EbayQuotaLane =
   | "P2_DISCOVERY"
   | "P3_DEEP_ANALYSIS"
 
+/**
+ * Reconcile durable PAUSED_429 rows whose authorized reset instant has
+ * already passed. The update is guarded by both status and reset_at, so a
+ * concurrent newer 429 with a later reset cannot be cleared accidentally.
+ * Quota events remain append-only and available as the audit trail.
+ */
+export async function releaseExpiredEbayQuotaPauses(
+  supabase: SupabaseClient,
+  now = new Date(),
+) {
+  const observedAt = now.toISOString()
+  const { data, error } = await supabase
+    .from("ebay_api_quota_states")
+    .update({
+      status: "UNKNOWN",
+      reset_at: null,
+      last_refreshed_at: observedAt,
+      updated_at: observedAt,
+    })
+    .eq("marketplace", "EBAY_US")
+    .eq("status", "PAUSED_429")
+    .lte("reset_at", observedAt)
+    .select("id")
+  if (error) throw new Error("EBAY_QUOTA_EXPIRED_PAUSE_RELEASE_FAILED")
+  return { released: data?.length ?? 0, observedAt }
+}
+
 export async function recordPersistentEbayRateLimit(
   supabase: SupabaseClient,
   input: {
@@ -109,7 +136,7 @@ export async function assertEbayLaneAvailable(
   if (decision.resetReached) {
     // The first request after eBay's authorized reset may probe the lane once.
     // A new 429 will persist a new pause; a successful request resumes normal work.
-    await supabase.from("ebay_api_quota_states").update({
+    const { error: releaseError } = await supabase.from("ebay_api_quota_states").update({
       status: "UNKNOWN",
       reset_at: null,
       last_refreshed_at: now.toISOString(),
@@ -117,6 +144,9 @@ export async function assertEbayLaneAvailable(
     }).eq("marketplace", "EBAY_US")
       .eq("api_family", apiFamily)
       .eq("operation", operation)
+      .eq("status", "PAUSED_429")
+      .lte("reset_at", now.toISOString())
+    if (releaseError) throw new Error("EBAY_QUOTA_EXPIRED_PAUSE_RELEASE_FAILED")
     return {
       available: true,
       status: "RESET_REACHED",

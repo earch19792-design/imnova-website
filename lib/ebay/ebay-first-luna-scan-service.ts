@@ -4,6 +4,7 @@ import {
   assertEbayLaneAvailable,
   recordPersistentEbayRateLimit,
 } from "./ebay-persistent-quota-coordinator"
+import { projectEffectiveEbayQuotaLane } from "./ebay-quota-lane-domain"
 import { runLightweightFamilyDiscovery } from "./ebay-two-speed-discovery-service"
 
 import {
@@ -1055,6 +1056,9 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
       .order("observed_at", { ascending: false }).limit(1),
   ])
   if (quotaError || quotaEventError) throw new Error("EBAY_QUOTA_DASHBOARD_READ_FAILED")
+  const quotaObservedAt = new Date()
+  const effectiveQuotaStates = (quotaStates ?? []).map((state) =>
+    projectEffectiveEbayQuotaLane(state, quotaObservedAt))
   const automationHealth = await getSellerAutomationHealth(supabase)
   const rows = queue.data ?? []
   const supplierVariantIds = [...new Set(rows
@@ -1170,11 +1174,11 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
       health: automationHealth,
     },
     quota: {
-      states: quotaStates ?? [],
+      states: effectiveQuotaStates,
       latestPause: quotaEvents?.[0] ?? null,
-      discoveryPaused: (quotaStates ?? []).some((state) =>
+      discoveryPaused: effectiveQuotaStates.some((state) =>
         ["P2_DISCOVERY", "P3_DEEP_ANALYSIS"].includes(state.owner_lane) && state.status === "PAUSED_429"),
-      monitorBudgetProtected: (quotaStates ?? []).filter((state) =>
+      monitorBudgetProtected: effectiveQuotaStates.filter((state) =>
         String(state.owner_lane).startsWith("P0_")).every((state) => Number(state.reserved_budget ?? 0) > 0),
     },
     rankingEvidence: {
