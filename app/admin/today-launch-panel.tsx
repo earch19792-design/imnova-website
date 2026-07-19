@@ -447,8 +447,13 @@ function ProductResearchQueueTask({ guidance, researchTasks, candidates, fallbac
       .replace(/\bdefault\s+title\b/gi, " ").toLocaleLowerCase("en-US")
       .replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ")
     : ""
+  const queryFamilyKey = (value: unknown) => queryKey(value).replace(
+    /\s+\d+(?:\s+\d+)*\s+(?:(?:fl|fluid)\s+)?(?:oz|ounce|ounces|ml|milliliter|milliliters|l|liter|liters|litre|litres|g|gram|grams|kg|kilogram|kilograms|lb|lbs|pound|pounds|ct|count|counts)$/,
+    "",
+  )
   const guidedTask = guidedQuery ? researchTasks.find((task) =>
-    queryKey(task?.action_schema?.query) === queryKey(guidedQuery)) : undefined
+    queryKey(task?.action_schema?.query) === queryKey(guidedQuery) ||
+    queryFamilyKey(task?.action_schema?.query) === queryFamilyKey(guidedQuery)) : undefined
   const nextQuery = guidedTask ? guidedQuery : durableTaskQuery
   const matchedTask = guidedTask ?? (nextQuery ? researchTasks.find((task) =>
     queryKey(task?.action_schema?.query) === queryKey(nextQuery)) : undefined)

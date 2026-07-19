@@ -2,6 +2,8 @@ import { createHash } from "node:crypto"
 
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { validateGtinChecksum } from "./ebay-winner-evidence-v2.ts"
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import { productResearchDisplayQuery } from "./ebay-product-research-query-plan.ts"
 
 export const SAME_DAY_PILOT_VERSION = "PILOT_3_LISTINGS_SAME_DAY_V1"
 export const SAME_DAY_QUEUE_LIMIT = 5
@@ -251,8 +253,9 @@ export function buildSameDayProductResearchQuery(input: SameDayCandidateInput) {
     [input.productTitle, meaningfulVariant].filter(Boolean).join(" "),
   )
   return {
-    strategy: "EXACT_NORMALIZED_IDENTITY", query: identity.slice(0, 100),
-    reason: "No existe GTIN o MPN confiable; se requiere corroborar la identidad normalizada antes de avanzar.",
+    strategy: "FAMILY_IDENTITY_RECONCILIATION",
+    query: productResearchDisplayQuery(identity.slice(0, 100)),
+    reason: "No existe GTIN o MPN confiable; se consulta la familia y después se separan tamaño, pack y variante fila por fila.",
   }
 }
 

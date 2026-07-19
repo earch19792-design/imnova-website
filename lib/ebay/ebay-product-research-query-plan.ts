@@ -72,8 +72,34 @@ function canonicalQuery(value: unknown) {
 }
 
 export function productResearchDisplayQuery(value: unknown) {
-  return text(value, 100).replace(/\bdefault\s+title\b/gi, " ")
+  const display = text(value, 100).replace(/\bdefault\s+title\b/gi, " ")
     .trim().replace(/\s+/g, " ")
+  const tokens = display.split(" ")
+  let end = tokens.length
+  const unit = (token: string) => /^(?:fl|fluid|oz|ounce|ounces|ml|milliliter|milliliters|l|liter|liters|litre|litres|g|gram|grams|kg|kilogram|kilograms|lb|lbs|pound|pounds|ct|count|counts)$/i
+    .test(token.replace(/[^a-z]/gi, ""))
+  let unitsRemoved = 0
+  while (end > 0 && unit(tokens[end - 1])) {
+    end -= 1
+    unitsRemoved += 1
+  }
+  let numbersRemoved = 0
+  while (end > 0 && /^\d+(?:[.,]\d+)?$/.test(tokens[end - 1])) {
+    end -= 1
+    numbersRemoved += 1
+  }
+  return unitsRemoved > 0 && numbersRemoved > 0 && end >= 3
+    ? tokens.slice(0, end).join(" ")
+    : display
+}
+
+export function productResearchQueriesMatch(left: unknown, right: unknown) {
+  const leftCanonical = canonicalQuery(left)
+  const rightCanonical = canonicalQuery(right)
+  if (!leftCanonical || !rightCanonical) return false
+  if (leftCanonical === rightCanonical) return true
+  return canonicalQuery(productResearchDisplayQuery(left)) ===
+    canonicalQuery(productResearchDisplayQuery(right))
 }
 
 function queryHash(value: string) {
@@ -281,8 +307,7 @@ export async function assertProductResearchCaptureMatchesNextQuery(input: {
       .not("capture_batch_id", "is", null).order("ordinal", { ascending: false })
     if (processedError) throw new Error("PRODUCT_RESEARCH_QUERY_TASK_STATUS_READ_FAILED")
     const replay = (processedTasks ?? []).find((processed) =>
-      productResearchPlannedQueryHash(input.searchQuery) ===
-        productResearchPlannedQueryHash(processed.search_query))
+      productResearchQueriesMatch(input.searchQuery, processed.search_query))
     if (!replay?.capture_batch_id) return null
     return {
       planId: plan.id,
@@ -349,8 +374,7 @@ export async function assertProductResearchCaptureMatchesNextQuery(input: {
     if (replay) return replay
     throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_NO_PENDING_TASK")
   }
-  if (productResearchPlannedQueryHash(input.searchQuery) !==
-    productResearchPlannedQueryHash(task.search_query)) {
+  if (!productResearchQueriesMatch(input.searchQuery, task.search_query)) {
     // A browser tab can remain on the table that was just accepted while the
     // durable plan has already advanced. Treat only an exact canonical match
     // to a PROCESSED task in this same active plan as navigation recovery. It

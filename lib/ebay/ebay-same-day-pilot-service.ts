@@ -44,7 +44,10 @@ import {
   PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_VERSION,
   reconcileProductResearchObservations,
 } from "./ebay-product-research-identity-reconciliation"
-import { productResearchPlannedQueryHash } from "./ebay-product-research-query-plan"
+import {
+  productResearchPlannedQueryHash,
+  productResearchQueriesMatch,
+} from "./ebay-product-research-query-plan"
 import { enqueueListingAiTop20Continuation } from "./ebay-listing-ai-top20-queue"
 import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
 import {
@@ -2236,8 +2239,11 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
   const capturedQueryHash = productResearchPlannedQueryHash(input.searchQuery)
   const familyCandidates = state.candidates.filter((candidate) =>
     !["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(text(candidate.machine_state)) &&
-    productResearchPlannedQueryHash(record(candidate.product_research_query_plan).query) ===
-      capturedQueryHash)
+    (productResearchPlannedQueryHash(record(candidate.product_research_query_plan).query) ===
+      capturedQueryHash || productResearchQueriesMatch(
+        record(candidate.product_research_query_plan).query,
+        input.searchQuery,
+      )))
   let resumed = 0
   let familyEnriched = 0
   for (const candidate of familyCandidates) {
