@@ -181,7 +181,7 @@ function ProductResearchQueueTask({ guidance, researchTasks, fallbackQuery, open
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
         <h4 className="font-black">Captura la próxima consulta de Product Research</h4>
-        <p className="mt-1 text-sm leading-6 text-white/65">Una sola consulta está disponible para actuar. Las posteriores permanecen ordenadas y la extensión v1.2.3 las encadena.</p>
+        <p className="mt-1 text-sm leading-6 text-white/65">Una sola consulta está disponible para actuar. Las posteriores permanecen ordenadas y la extensión v1.2.5 las encadena.</p>
       </div>
       <span className="rounded-full border border-amber-100/20 px-3 py-1 text-xs font-black text-amber-100">{capturedCount}/{queryCount || capturedCount + pendingCount} capturadas</span>
     </div>
