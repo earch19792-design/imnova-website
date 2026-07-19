@@ -296,7 +296,12 @@ export function evaluateSameDayCandidate(input: SameDayCandidateInput, now = new
     normalized(input.productTitle), normalized(input.variantTitle),
   ].join("|"))
   const exactOrStrongIdentity = input.exactIdentityConfirmed === true || Number(input.identityConfidence ?? 0) >= 85
-  const stockKnown = input.supplierAvailable === true && Number(input.supplierQuantity ?? 0) > 0
+  const supplierQuantity = input.supplierQuantity ?? null
+  const lunaAvailabilityQuantityConflict =
+    (input.supplierAvailable === true && supplierQuantity === 0) ||
+    (input.supplierAvailable === false && Number(supplierQuantity ?? 0) > 0)
+  const stockKnown = !lunaAvailabilityQuantityConflict &&
+    input.supplierAvailable === true && Number(supplierQuantity ?? 0) > 0
   const stockUnknown = input.supplierAvailable === true && input.supplierQuantity == null
   const economicsPlausible = input.economicsReady === true || Number(input.estimatedProfit ?? 0) > 0
   const supplierObservedAt = Date.parse(input.supplierObservedAt ?? "")
@@ -314,7 +319,8 @@ export function evaluateSameDayCandidate(input: SameDayCandidateInput, now = new
     !lunaIdentityConfirmationRequired ||
     (blocker !== "IDENTITY_QUERY_TOO_GENERIC" && blocker !== "OFFER_PACK_IDENTITY_MISSING"))
   const localBlockers = [
-    input.supplierAvailable === false ? "LUNA_OUT_OF_STOCK" : "",
+    input.supplierAvailable === false && !lunaAvailabilityQuantityConflict
+      ? "LUNA_OUT_OF_STOCK" : "",
     !(Number(input.supplierPrice) > 0) ? "LUNA_COST_MISSING" : "",
     !normalized(input.supplierSku) ? "SUPPLIER_SKU_MISSING" : "",
     !normalized(input.supplierVariantId) ? "SUPPLIER_VARIANT_ID_MISSING" : "",
@@ -340,7 +346,11 @@ export function evaluateSameDayCandidate(input: SameDayCandidateInput, now = new
   } else if (lunaIdentityConfirmationRequired || !stockKnown) {
     state = "NEEDS_LUNA_CONFIRMATION"
     if (lunaIdentityConfirmationRequired) blockers.push("LUNA_VISIBLE_IDENTITY_AND_PACK_CONFIRMATION_REQUIRED")
-    if (!stockKnown) blockers.push(stockUnknown ? "LUNA_EXACT_QUANTITY_UNKNOWN" : "LUNA_AVAILABILITY_CONFIRMATION_REQUIRED")
+    if (lunaAvailabilityQuantityConflict) {
+      blockers.push("LUNA_AVAILABILITY_QUANTITY_CONFLICT")
+    } else if (!stockKnown) {
+      blockers.push(stockUnknown ? "LUNA_EXACT_QUANTITY_UNKNOWN" : "LUNA_AVAILABILITY_CONFIRMATION_REQUIRED")
+    }
     nextAutomatedAction = "Conservar el candidato y continuar automáticamente después de una sola confirmación Luna."
     nextHumanAction = "Confirmar producto, presentación, costo y disponibilidad en la página exacta de Luna."
   } else if (!exactOrStrongIdentity || !marketReady || !economicsPlausible) {
@@ -448,7 +458,13 @@ export function listingQuantityFromLuna(quantity: number | null, available: bool
 }
 
 export function buildSameDayLocalPreparationPackage(candidate: SameDayCandidateDecision, observedAt: string) {
-  const quantity = listingQuantityFromLuna(candidate.supplierQuantity ?? null, candidate.supplierAvailable === true)
+  const supplierQuantity = candidate.supplierQuantity ?? null
+  const snapshotConflict =
+    (candidate.supplierAvailable === true && supplierQuantity === 0) ||
+    (candidate.supplierAvailable === false && Number(supplierQuantity ?? 0) > 0)
+  const quantity = candidate.supplierAvailable == null || snapshotConflict
+    ? { quantity: 1, recheckAfterSale: true }
+    : listingQuantityFromLuna(supplierQuantity, candidate.supplierAvailable === true)
   return {
     schemaVersion: "SELLER_HUB_LOCAL_PREPARATION_V1",
     status: "BLOCKED_PENDING_VERIFIED_GATES" as const,

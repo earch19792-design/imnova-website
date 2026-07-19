@@ -80,6 +80,7 @@ const BLOCKER_LABELS: Record<string, string> = {
   EXACT_PRODUCT_PRESENTATION_REQUIRED: "Debe definirse la presentación exacta antes de calcular el listing.",
   LOOP1_EXACT_IDENTITY_NOT_CONFIRMED: "No se confirmó que la evidencia corresponda al producto y presentación exactos.",
   LUNA_OUT_OF_STOCK: "Luna fue confirmada sin inventario disponible.",
+  LUNA_AVAILABILITY_QUANTITY_CONFLICT: "El snapshot automático de Luna muestra disponibilidad y cantidad contradictorias; confirma esos dos datos en la página exacta del producto.",
   LUNA_COST_REQUIRED_FOR_ECONOMICS: "Falta confirmar el costo actual de Luna para calcular la rentabilidad.",
   EXACT_TOP20_QUEUE_IDENTITY_MISSING: "Falta una identidad exacta y trazable en la cola comercial.",
   CURRENT_PRODUCT_FACT_RUN_INCOMPLETE: "La ficha técnica automatizada dejó datos críticos sin verificar.",
