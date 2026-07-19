@@ -17,7 +17,10 @@ import {
 } from "./ebay-same-day-pilot-domain"
 import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics } from "./ebay-unit-economics"
 import { ebayDraftOnlyEconomicsConfig } from "./ebay-draft-only-readiness"
-import { runProductFactsEnrichment } from "./ebay-product-facts-enrichment"
+import {
+  PRODUCT_FACTS_ENGINE_VERSION,
+  runProductFactsEnrichment,
+} from "./ebay-product-facts-enrichment"
 import { selectApplicableSafeListingDefaults } from "./ebay-manual-listing-service"
 import { ebayConditionContractFromVerifiedFact } from "./ebay-manual-listing-domain"
 import { isAllowedLunaProductUrl } from "../marketplace/fulfillment-v1a-domain"
@@ -52,6 +55,11 @@ import {
 } from "./ebay-same-day-image-package-runtime"
 
 const MARKETPLACE = "EBAY_US"
+const LEGACY_PRODUCT_FACTS_RECOVERY_VERSION = "LEGACY_PRODUCT_FACTS_RECOVERY_V1_2026_07_19"
+const LEGACY_PRODUCT_FACTS_REJECTION_REASONS = new Set([
+  "PRODUCT_FACT_MARKETPLACE_PRODUCT_FACT_SOURCE_SNAPSHOTS_PERSIST_FAILED",
+  "SHIPPING_CONFIRMED_REQUIRED",
+])
 const PRODUCT_FACT_READ_DEPENDENCIES = [
   ["OAUTH", "APPLICATION_TOKEN"],
   ["BROWSE", "QUOTA_PRECHECK"],
@@ -830,6 +838,99 @@ async function repairLegacyPrematureProductResearchRejections(
   }
   if (repaired) await refreshRunProjection(supabase, state.run.id)
   return repaired
+}
+
+/**
+ * Replays only a candidate rejected by a superseded Product Facts rule or a
+ * transient append-only persistence failure. It never reopens a commercial
+ * rejection, repeats Discovery, or widens the five-candidate queue. One
+ * candidate is repaired per pass so the operator inbox remains serialized.
+ */
+async function repairLegacyProductFactsRejections(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  if (state.tasks.some((task) => task.status === "OPEN")) return 0
+  const candidate = [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .find((entry) => {
+      const blockers = strings(entry.blockers)
+      const evidence = record(entry.evidence_summary)
+      return entry.machine_state === "REJECTED" && entry.state === "REJECTED_TODAY" &&
+        blockers.length === 1 && LEGACY_PRODUCT_FACTS_REJECTION_REASONS.has(blockers[0]) &&
+        text(entry.queue_item_id) && text(entry.supplier_variant_id) &&
+        text(evidence.legacyProductFactsRecoveryVersion) !== LEGACY_PRODUCT_FACTS_RECOVERY_VERSION
+    })
+  if (!candidate) return 0
+
+  const economics = record(candidate.economics_summary)
+  const lunaConfirmation = record(economics.lunaConfirmation)
+  const confirmedAt = Date.parse(text(lunaConfirmation.confirmedAt))
+  const confirmationFresh = economics.available === true && Number(economics.confirmedLunaPrice) > 0 &&
+    Number.isFinite(confirmedAt) && now.getTime() - confirmedAt >= -5 * 60_000 &&
+    now.getTime() - confirmedAt <= 4 * 60 * 60_000
+  const recoveryEvidence = {
+    ...record(candidate.evidence_summary),
+    legacyProductFactsRecoveryVersion: LEGACY_PRODUCT_FACTS_RECOVERY_VERSION,
+    legacyProductFactsRecoveredAt: now.toISOString(),
+    legacyProductFactsPreviousBlocker: strings(candidate.blockers)[0],
+    fullCatalogRescan: false,
+  }
+
+  if (!confirmationFresh) {
+    await createLunaGate(supabase, state.run.id, record(candidate), "REJECTED")
+    const { error } = await supabase.from("ebay_same_day_pilot_candidates").update({
+      state: "NEEDS_LUNA_CONFIRMATION",
+      blockers: [],
+      evidence_summary: recoveryEvidence,
+      product_facts_summary: {},
+      next_automated_action: "Recalcular economía y Product Facts con la confirmación vigente.",
+      next_human_action: "Confirmar nuevamente precio y disponibilidad visibles en Luna.",
+      updated_at: now.toISOString(),
+    }).eq("id", candidate.id).eq("run_id", state.run.id)
+      .eq("machine_state", "WAITING_LUNA_CONFIRMATION")
+    if (error) throw new Error("SAME_DAY_PILOT_LEGACY_FACTS_LUNA_RECOVERY_FAILED")
+  } else {
+    await transition({
+      supabase,
+      runId: state.run.id,
+      candidateId: text(candidate.id),
+      previousState: "REJECTED",
+      nextState: "ENRICHING_PRODUCT_FACTS",
+      reasonCode: "LEGACY_PRODUCT_FACTS_RULE_REPAIRED",
+      triggeredBy: "RETRY",
+      checkpoint: {
+        previousReason: strings(candidate.blockers)[0],
+        recoveryVersion: LEGACY_PRODUCT_FACTS_RECOVERY_VERSION,
+        fullCatalogRescan: false,
+      },
+      nextAutomaticAction: "Reprocesar únicamente Product Facts y Taxonomy del candidato afectado.",
+      nextHumanAction: "Ninguna.",
+      job: {
+        jobType: "ENRICH_PRODUCT_FACTS",
+        idempotencyKey: `${state.run.id}:${candidate.id}:ENRICH_PRODUCT_FACTS:${PRODUCT_FACTS_ENGINE_VERSION}`,
+        checkpoint: { queueItemId: candidate.queue_item_id, targetedLegacyRecovery: true },
+        maxAttempts: 10,
+        apiFamily: "BROWSE",
+        apiOperation: "EXACT_VERIFICATION",
+        ownerLane: "P1_EXACT_VERIFICATION",
+      },
+    })
+    const { error } = await supabase.from("ebay_same_day_pilot_candidates").update({
+      state: "READY_FOR_CONTENT",
+      blockers: [],
+      evidence_summary: recoveryEvidence,
+      product_facts_summary: {},
+      next_automated_action: "Resolver Product Facts, categoría y requisitos obligatorios.",
+      next_human_action: "Ninguna.",
+      updated_at: now.toISOString(),
+    }).eq("id", candidate.id).eq("run_id", state.run.id)
+      .eq("machine_state", "ENRICHING_PRODUCT_FACTS")
+    if (error) throw new Error("SAME_DAY_PILOT_LEGACY_FACTS_RECOVERY_FAILED")
+  }
+  await refreshRunProjection(supabase, state.run.id)
+  return 1
 }
 
 async function repairSameDayPilotBootstrap(
@@ -2105,8 +2206,10 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       state,
       input.accountKey,
     )
+  const legacyProductFactsRejectionsRepaired =
+    await repairLegacyProductFactsRejections(input.supabase, state, now)
   const deadLettersRecovered = await recoverDeadLetterCandidates(input.supabase, state)
-  if (legacyPrematureRejectionsRepaired || deadLettersRecovered) {
+  if (legacyPrematureRejectionsRepaired || legacyProductFactsRejectionsRepaired || deadLettersRecovered) {
     state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
     if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
   }
@@ -2118,7 +2221,8 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
   if (!leased) {
     await refreshRunProjection(input.supabase, state.run.id, true)
     return { processed: 0, status: "IDLE", repaired,
-      legacyPrematureRejectionsRepaired, deadLettersRecovered }
+      legacyPrematureRejectionsRepaired, legacyProductFactsRejectionsRepaired,
+      deadLettersRecovered }
   }
   const candidate = state.candidates.find((entry) => entry.id === leased.candidate_id)
   if (!candidate) throw new Error("SAME_DAY_PILOT_JOB_CANDIDATE_MISSING")
