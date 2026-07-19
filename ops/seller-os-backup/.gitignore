@@ -1,0 +1,12 @@
+*.sql
+*.custom
+*.dump
+*.tar
+*.gpg
+*.sha256
+*.manifest.json
+*.audit.log
+*.env
+!.env.example
+!backup.env.example
+!restore.env.example
