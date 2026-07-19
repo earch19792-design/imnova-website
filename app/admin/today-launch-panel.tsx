@@ -568,6 +568,13 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
   const nativePackCountMissing = identityAndPackConfirmationApplies && (
     !Number.isInteger(parsedNativePackCount) || Number(parsedNativePackCount) <= 0
   )
+  const factKey = String(task.action_schema?.factKey ?? "")
+  const factFieldLabel = String(task.action_schema?.fieldLabel ?? task.action_schema?.fieldRequired ?? "Dato requerido")
+  const factAllowedValues: string[] = Array.isArray(task.action_schema?.allowedValues)
+    ? task.action_schema.allowedValues.map((value: unknown) => String(value)).filter(Boolean).slice(0, 100)
+    : []
+  const factValueListId = `fact-values-${fieldId}`
+  const measurementFact = ["itemLength", "itemWidth"].includes(factKey)
 
   useEffect(() => {
     setIdentityAndPackConfirmed(false)
@@ -642,16 +649,21 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
     {task.gate_type === "CRITICAL_EXCEPTION_REQUIRED" && <div className="mt-4 rounded-xl border border-amber-200/25 bg-amber-200/[0.05] p-3">
       <p className="text-sm font-black text-amber-50">Sólo falta un dato verificable</p>
       <p className="mt-1 text-xs leading-5 text-white/60">No completes una ficha. Mira el empaque oficial o la página exacta del producto en Luna y confirma únicamente este campo.</p>
-      <label className="mt-3 block text-xs font-bold">{String(task.action_schema?.fieldLabel ?? task.action_schema?.fieldRequired ?? "Dato requerido")} <span className="text-red-200">*</span>
+      <label className="mt-3 block text-xs font-bold">{factFieldLabel} <span className="text-red-200">*</span>
         <input value={brandAbsentConfirmed ? "Unbranded" : factExceptionValue}
           onChange={(event) => setFactExceptionValue(event.target.value)}
           disabled={brandAbsentConfirmed}
+          list={factAllowedValues.length ? factValueListId : undefined}
+          placeholder={measurementFact ? "Ejemplo: 7.5 in" : factAllowedValues.length ? "Elige o escribe el valor visible" : "Escribe el valor exacto visible"}
           maxLength={100} aria-required="true" aria-invalid={!brandAbsentConfirmed && !factExceptionValue.trim()}
           className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${brandAbsentConfirmed || factExceptionValue.trim() ? "border-white/15" : "border-red-400"}`} />
+        {factAllowedValues.length > 0 && <datalist id={factValueListId}>{factAllowedValues.map((value) =>
+          <option key={value} value={value} />)}</datalist>}
         <span className={`mt-1 block font-normal ${brandAbsentConfirmed || factExceptionValue.trim() ? "text-white/55" : "text-red-200"}`}>{brandAbsentConfirmed
           ? "Se enviará el valor estándar Unbranded porque confirmaste que no existe marca visible."
           : factExceptionValue.trim()
           ? "Valor recibido; Seller OS lo guardará con procedencia y volverá a validar Taxonomy."
+          : measurementFact ? "Escribe el número y la unidad que aparecen en el producto o empaque; no uses dimensiones estimadas de envío."
           : "Obligatorio sólo si puedes verificarlo visualmente."}</span>
       </label>
       <p className="mt-3 text-xs font-bold text-white/70">Elige una sola confirmación:</p>
@@ -663,9 +675,9 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
             if (event.target.checked) setBrandAbsentConfirmed(false)
           }}
           className="mt-1 h-5 w-5 shrink-0 accent-emerald-200" />
-        <span><strong>La marca sí aparece.</strong> El valor escrito arriba está visible en el empaque/etiqueta oficial o en la página exacta autorizada de Luna para este mismo producto.</span>
+        <span><strong>El dato sí aparece.</strong> El valor escrito arriba está visible en el producto, empaque/etiqueta oficial o en la página exacta autorizada de Luna para esta misma presentación.</span>
       </label>
-      {task.action_schema?.factKey === "brand" && <label className={`mt-3 flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${brandAbsentConfirmed ? "border-emerald-200/25 text-emerald-50" : "border-white/15 text-white/65"}`}>
+      {factKey === "brand" && <label className={`mt-3 flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${brandAbsentConfirmed ? "border-emerald-200/25 text-emerald-50" : "border-white/15 text-white/65"}`}>
         <input type="checkbox" checked={brandAbsentConfirmed}
           onChange={(event) => {
             setBrandAbsentConfirmed(event.target.checked)

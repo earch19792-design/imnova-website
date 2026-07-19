@@ -63,9 +63,14 @@ import {
 } from "./ebay-same-day-image-package-runtime"
 
 const MARKETPLACE = "EBAY_US"
-const SINGLE_FACT_EXCEPTION_VERSION = "SAME_DAY_SINGLE_FACT_EXCEPTION_V1_2026_07_19"
+const SINGLE_FACT_EXCEPTION_VERSION = "SAME_DAY_SINGLE_FACT_EXCEPTION_V2_2026_07_19"
 const OPERATOR_CONFIRMABLE_OFFICIAL_LABEL_FACTS: Record<string, { factKey: string; label: string }> = {
   brand: { factKey: "brand", label: "Marca (Brand)" },
+  color: { factKey: "color", label: "Color" },
+  type: { factKey: "type", label: "Tipo de producto (Type)" },
+  style: { factKey: "style", label: "Estilo (Style)" },
+  "item length": { factKey: "itemLength", label: "Largo del producto (Item Length)" },
+  "item width": { factKey: "itemWidth", label: "Ancho del producto (Item Width)" },
 }
 const LEGACY_PRODUCT_FACTS_RECOVERY_VERSION = "LEGACY_PRODUCT_FACTS_RECOVERY_V2_2026_07_19"
 const STALE_DECISION_FACTS_RECOVERY_VERSION = "STALE_DECISION_FACTS_RECOVERY_V1_2026_07_19"
@@ -260,20 +265,27 @@ function recoverableSingleFactException(summaryValue: unknown) {
   const missing = (Array.isArray(summary.resolvedRequirements)
     ? summary.resolvedRequirements.map(record) : [])
     .filter((requirement) => text(requirement.status) === "MISSING_BLOCKING")
-  if (missing.length !== 1 || gates.IDENTITY_READY !== true ||
+  if (!missing.length || missing.length > 6 || gates.IDENTITY_READY !== true ||
     gates.PRODUCT_FACTS_READY !== true || gates.OFFER_PACK_READY !== true ||
     gates.REGULATORY_READY !== true || gates.SHIPPING_ESTIMATE_READY !== true) return null
-  const aspectName = text(missing[0].aspectName, 100)
-  const configuration = OPERATOR_CONFIRMABLE_OFFICIAL_LABEL_FACTS[
-    aspectName.toLocaleLowerCase()
-  ]
-  if (!configuration) return null
+  const configured = missing.map((requirement) => {
+    const aspectName = text(requirement.aspectName, 100)
+    const configuration = OPERATOR_CONFIRMABLE_OFFICIAL_LABEL_FACTS[aspectName.toLocaleLowerCase()]
+    return configuration ? { requirement, aspectName, configuration } : null
+  })
+  // Manual fallback is allowed only when every remaining blocking aspect is a
+  // narrow, label-verifiable field. Regulatory, identity and pack conflicts
+  // never enter this path.
+  if (configured.some((entry) => !entry)) return null
+  const selected = configured[0]
+  if (!selected) return null
   return {
-    aspectName,
-    factKey: configuration.factKey,
-    label: configuration.label,
-    allowedValues: Array.isArray(missing[0].allowedValues)
-      ? missing[0].allowedValues.map((entry) => text(entry, 100)).filter(Boolean).slice(0, 100)
+    aspectName: selected.aspectName,
+    factKey: selected.configuration.factKey,
+    label: selected.configuration.label,
+    remainingBlockingFields: configured.map((entry) => entry?.aspectName).filter(Boolean),
+    allowedValues: Array.isArray(selected.requirement.allowedValues)
+      ? selected.requirement.allowedValues.map((entry) => text(entry, 100)).filter(Boolean).slice(0, 100)
       : [],
   }
 }
@@ -1189,7 +1201,9 @@ async function repairRejectedSingleFactException(
     seconds: 45,
     impact: "Seller OS guardará sólo el fact confirmado con procedencia, repetirá Product Facts para este candidato y continuará automáticamente.",
     evidence: { fieldRequired: exception.aspectName,
-      sourcesAlreadyChecked: ["Luna exact variant", "eBay Catalog oficial", "eBay Taxonomy oficial"] },
+      remainingBlockingFields: exception.remainingBlockingFields,
+      sourcesAlreadyChecked: ["Luna exact variant", "eBay Catalog oficial", "eBay Taxonomy oficial",
+        "fuente pública oficial del fabricante cuando existe"] },
     actionSchema: { type: "CONFIRM_OFFICIAL_LABEL_FACT", factScope: "PRODUCT_UNIT",
       factKey: exception.factKey, fieldRequired: exception.aspectName,
       fieldLabel: exception.label, allowedValues: exception.allowedValues,
@@ -3358,7 +3372,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       if (productFactsState === "VALIDATING_TAXONOMY") {
         if (!taxonomyReady) {
           const singleFactException = recoverableSingleFactException(summary)
-          if (missingBlockingAspects === 1 && singleFactException) {
+          if (missingBlockingAspects >= 1 && singleFactException) {
             const exceptionEvidence = {
               ...record(candidate.evidence_summary),
               singleFactExceptionRecoveryVersion: SINGLE_FACT_EXCEPTION_VERSION,
@@ -3384,7 +3398,9 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
               seconds: 45,
               impact: "Seller OS guardará sólo el fact confirmado con procedencia, repetirá Product Facts para este candidato y continuará automáticamente.",
               evidence: { fieldRequired: singleFactException.aspectName,
-                sourcesAlreadyChecked: ["Luna exact variant", "eBay Catalog oficial", "eBay Taxonomy oficial"] },
+                remainingBlockingFields: singleFactException.remainingBlockingFields,
+                sourcesAlreadyChecked: ["Luna exact variant", "eBay Catalog oficial", "eBay Taxonomy oficial",
+                  "fuente pública oficial del fabricante cuando existe"] },
               actionSchema: { type: "CONFIRM_OFFICIAL_LABEL_FACT", factScope: "PRODUCT_UNIT",
                 factKey: singleFactException.factKey,
                 fieldRequired: singleFactException.aspectName,
