@@ -62,6 +62,10 @@ import {
 } from "./ebay-same-day-image-package-runtime"
 
 const MARKETPLACE = "EBAY_US"
+const SINGLE_FACT_EXCEPTION_VERSION = "SAME_DAY_SINGLE_FACT_EXCEPTION_V1_2026_07_19"
+const OPERATOR_CONFIRMABLE_OFFICIAL_LABEL_FACTS: Record<string, { factKey: string; label: string }> = {
+  brand: { factKey: "brand", label: "Marca (Brand)" },
+}
 const LEGACY_PRODUCT_FACTS_RECOVERY_VERSION = "LEGACY_PRODUCT_FACTS_RECOVERY_V2_2026_07_19"
 const LEGACY_PRODUCT_FACTS_REJECTION_REASONS = new Set([
   "PRODUCT_FACT_MARKETPLACE_PRODUCT_FACT_SOURCE_SNAPSHOTS_PERSIST_FAILED",
@@ -99,7 +103,13 @@ function record(value: unknown): JsonRecord {
 function text(value: unknown, limit = 500) {
   return typeof value === "string" ? value.trim().slice(0, limit) : ""
 }
+function officialLabelFactText(value: unknown) {
+  const normalized = text(value, 100).normalize("NFKC").replace(/\s+/g, " ")
+  return /^[\p{L}\p{N}][\p{L}\p{N}\s&'’().,+\-/#]{0,99}$/u.test(normalized)
+    ? normalized : ""
+}
 function number(value: unknown) {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
 }
@@ -239,6 +249,30 @@ function hash(value: unknown) {
 }
 function versionedHash(value: unknown) {
   return `sha256:${createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex")}`
+}
+
+function recoverableSingleFactException(summaryValue: unknown) {
+  const summary = record(summaryValue)
+  const gates = record(summary.gates)
+  const missing = (Array.isArray(summary.resolvedRequirements)
+    ? summary.resolvedRequirements.map(record) : [])
+    .filter((requirement) => text(requirement.status) === "MISSING_BLOCKING")
+  if (missing.length !== 1 || gates.IDENTITY_READY !== true ||
+    gates.PRODUCT_FACTS_READY !== true || gates.OFFER_PACK_READY !== true ||
+    gates.REGULATORY_READY !== true || gates.SHIPPING_ESTIMATE_READY !== true) return null
+  const aspectName = text(missing[0].aspectName, 100)
+  const configuration = OPERATOR_CONFIRMABLE_OFFICIAL_LABEL_FACTS[
+    aspectName.toLocaleLowerCase()
+  ]
+  if (!configuration) return null
+  return {
+    aspectName,
+    factKey: configuration.factKey,
+    label: configuration.label,
+    allowedValues: Array.isArray(missing[0].allowedValues)
+      ? missing[0].allowedValues.map((entry) => text(entry, 100)).filter(Boolean).slice(0, 100)
+      : [],
+  }
 }
 function operationDate(now: Date) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Managua", year: "numeric", month: "2-digit", day: "2-digit" }).format(now)
@@ -1081,6 +1115,88 @@ async function repairLegacyProductFactsRejections(
   return 1
 }
 
+/**
+ * A single, operator-verifiable label fact is an exception task, not a reason
+ * to discard an otherwise safe candidate. Recovery is serialized and happens
+ * once per candidate; multi-field or regulatory gaps remain rejected.
+ */
+async function repairRejectedSingleFactException(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  if (state.tasks.some((task) => task.status === "OPEN")) return 0
+  const selected = [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .map((candidate) => ({
+      candidate,
+      exception: recoverableSingleFactException(candidate.product_facts_summary),
+    }))
+    .find(({ candidate, exception }) => {
+      const evidence = record(candidate.evidence_summary)
+      return Boolean(exception) && candidate.machine_state === "REJECTED" &&
+        candidate.state === "REJECTED_TODAY" && strings(candidate.blockers).includes("MISSING_BLOCKING") &&
+        text(candidate.queue_item_id) && text(candidate.supplier_variant_id) &&
+        text(evidence.singleFactExceptionRecoveryVersion) !== SINGLE_FACT_EXCEPTION_VERSION
+    })
+  if (!selected?.exception) return 0
+  const candidate = record(selected.candidate)
+  const exception = selected.exception
+  const evidenceSummary = {
+    ...record(candidate.evidence_summary),
+    singleFactExceptionRecoveryVersion: SINGLE_FACT_EXCEPTION_VERSION,
+    singleFactExceptionOpenedAt: now.toISOString(),
+    singleFactExceptionField: exception.aspectName,
+    fullCatalogRescan: false,
+  }
+  await transition({
+    supabase,
+    runId: state.run.id,
+    candidateId: text(candidate.id),
+    previousState: "REJECTED",
+    nextState: "VALIDATING_TAXONOMY",
+    reasonCode: "SINGLE_OFFICIAL_LABEL_FACT_EXCEPTION_OPENED",
+    triggeredBy: "RETRY",
+    checkpoint: { field: exception.aspectName, factKey: exception.factKey,
+      version: SINGLE_FACT_EXCEPTION_VERSION, fullCatalogRescan: false },
+    nextAutomaticAction: "Esperar una confirmación puntual y reanudar Product Facts.",
+    nextHumanAction: `Confirmar ${exception.label} desde el empaque o la página exacta de Luna.`,
+  })
+  const { error: updateError } = await supabase.from("ebay_same_day_pilot_candidates")
+    .update({
+      state: "NEEDS_ONE_CRITICAL_FACT",
+      blockers: [],
+      evidence_summary: evidenceSummary,
+      next_automated_action: "Reanudar Product Facts después de la confirmación puntual.",
+      next_human_action: `Confirmar ${exception.label} desde una fuente visible autorizada.`,
+      updated_at: now.toISOString(),
+    })
+    .eq("id", candidate.id)
+    .eq("run_id", state.run.id)
+    .eq("machine_state", "VALIDATING_TAXONOMY")
+  if (updateError) throw new Error("SAME_DAY_PILOT_SINGLE_FACT_RECOVERY_UPDATE_FAILED")
+  await createHumanTask({
+    supabase,
+    runId: state.run.id,
+    candidateId: text(candidate.id),
+    expectedState: "VALIDATING_TAXONOMY",
+    gateType: "CRITICAL_EXCEPTION_REQUIRED",
+    title: `Confirma únicamente: ${exception.label}`,
+    why: `eBay exige ${exception.aspectName}. Seller OS revisó Luna, Catalog y Taxonomy, pero no encontró un valor estructurado verificable.`,
+    seconds: 45,
+    impact: "Seller OS guardará sólo el fact confirmado con procedencia, repetirá Product Facts para este candidato y continuará automáticamente.",
+    evidence: { fieldRequired: exception.aspectName,
+      sourcesAlreadyChecked: ["Luna exact variant", "eBay Catalog oficial", "eBay Taxonomy oficial"] },
+    actionSchema: { type: "CONFIRM_OFFICIAL_LABEL_FACT", factScope: "PRODUCT_UNIT",
+      factKey: exception.factKey, fieldRequired: exception.aspectName,
+      fieldLabel: exception.label, allowedValues: exception.allowedValues,
+      requiresVisibleOfficialLabel: true },
+    continuationJobType: "ENRICH_PRODUCT_FACTS",
+  })
+  await refreshRunProjection(supabase, state.run.id)
+  return 1
+}
+
 async function repairSameDayPilotBootstrap(
   supabase: SupabaseClient,
   state: Awaited<ReturnType<typeof currentState>>,
@@ -1558,6 +1674,11 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
       await refreshRunProjection(input.supabase, existing.run.id)
       existing = await currentState(input.supabase, input.accountKey, date)
     }
+    if (existing && await repairRejectedSingleFactException(input.supabase, existing, now)) {
+      repaired = true
+      existing = await currentState(input.supabase, input.accountKey,
+        text(existing.run.operation_date) || date)
+    }
   }
   const recoverEmptyRun = Boolean(existing && existing.candidates.length === 0
     && Number(existing.run.queue_count ?? 0) === 0)
@@ -1918,6 +2039,111 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
           checkpoint: { confirmedLunaPrice: input.price, quantityKnown: input.quantity != null } } })
     }
   }
+  await refreshRunProjection(input.supabase, state.run.id)
+  return getSameDayPilot(input)
+}
+
+export async function decideSameDayFactException(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorId: string
+  taskId: string
+  decision: "CONFIRM" | "REJECT"
+  value?: string | null
+  visibleOfficialLabelConfirmed?: boolean
+}) {
+  const state = await getSameDayPilot(input)
+  if (!state) throw new Error("SAME_DAY_PILOT_RUN_MISSING")
+  const task = state.tasks.find((entry) => entry.id === input.taskId && entry.status === "OPEN")
+  if (!task || task.gate_type !== "CRITICAL_EXCEPTION_REQUIRED") {
+    throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_TASK_INVALID")
+  }
+  const candidate = state.candidates.find((entry) => entry.id === task.candidate_id)
+  if (!candidate || candidate.machine_state !== "VALIDATING_TAXONOMY") {
+    throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_CANDIDATE_INVALID")
+  }
+  const schema = record(task.action_schema)
+  const factKey = text(schema.factKey, 100)
+  const fieldRequired = text(schema.fieldRequired, 100)
+  if (schema.type !== "CONFIRM_OFFICIAL_LABEL_FACT" || schema.factScope !== "PRODUCT_UNIT" ||
+    OPERATOR_CONFIRMABLE_OFFICIAL_LABEL_FACTS[fieldRequired.toLocaleLowerCase()]?.factKey !== factKey) {
+    throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_SCHEMA_INVALID")
+  }
+  const now = new Date().toISOString()
+  const evidenceSummary = {
+    ...record(candidate.evidence_summary),
+    singleFactExceptionRecoveryVersion: SINGLE_FACT_EXCEPTION_VERSION,
+    singleFactExceptionField: fieldRequired,
+    singleFactExceptionDecisionAt: now,
+    singleFactExceptionActorRecorded: Boolean(input.actorId),
+  }
+  if (input.decision === "REJECT") {
+    await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
+      gateType: "CRITICAL_EXCEPTION_REQUIRED", runId: state.run.id,
+      candidateId: task.candidate_id, previousState: "VALIDATING_TAXONOMY",
+      nextState: "REJECTED", reasonCode: "SINGLE_FACT_EXCEPTION_NOT_VERIFIABLE",
+      triggeredBy: "USER", checkpoint: { fieldRequired, rejected: true },
+      candidatePatch: { state: "REJECTED_TODAY", blockers: ["MISSING_BLOCKING"],
+        evidenceSummary: { ...evidenceSummary, singleFactExceptionRejected: true } },
+      nextAutomaticAction: "Promover el siguiente candidato recuperable.",
+      nextHumanAction: "Ninguna." })
+    await refreshRunProjection(input.supabase, state.run.id)
+    return getSameDayPilot(input)
+  }
+  const value = officialLabelFactText(input.value)
+  if (!value || input.visibleOfficialLabelConfirmed !== true) {
+    throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_EVIDENCE_REQUIRED")
+  }
+  const factRunId = text(record(candidate.product_facts_summary).factRunId, 40)
+  if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(factRunId) || !text(candidate.queue_item_id)) {
+    throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_RUN_BINDING_REQUIRED")
+  }
+  const sourceReference = `OFFICIAL_LABEL:sha256:${hash({ taskId: task.id, factKey }).slice(0, 24)}`
+  const evidenceHash = versionedHash({ version: SINGLE_FACT_EXCEPTION_VERSION,
+    taskId: task.id, candidateId: candidate.id, factKey, value })
+  const { error: observationError } = await input.supabase
+    .from("marketplace_product_fact_observations")
+    .upsert({
+      fact_run_id: factRunId,
+      queue_item_id: candidate.queue_item_id,
+      luna_variant_id: candidate.supplier_variant_id,
+      marketplace_account_key: input.accountKey,
+      marketplace: MARKETPLACE,
+      fact_scope: "PRODUCT_UNIT",
+      fact_key: factKey,
+      raw_value: value,
+      normalized_value: value,
+      normalized_unit: null,
+      source_type: "OFFICIAL_LABEL",
+      source_reference: sourceReference,
+      source_authority: "MANUFACTURER_OR_LABEL",
+      source_observed_at: now,
+      fetched_at: now,
+      expires_at: null,
+      confidence: 1,
+      verification_status: "VERIFIED",
+      evidence_hash: evidenceHash,
+      adapter_version: SINGLE_FACT_EXCEPTION_VERSION,
+      derivation: null,
+    }, { onConflict: "queue_item_id,evidence_hash", ignoreDuplicates: true })
+  if (observationError) throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_PERSIST_FAILED")
+  await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
+    gateType: "CRITICAL_EXCEPTION_REQUIRED", runId: state.run.id,
+    candidateId: task.candidate_id, previousState: "VALIDATING_TAXONOMY",
+    nextState: "ENRICHING_PRODUCT_FACTS", reasonCode: "OFFICIAL_LABEL_FACT_CONFIRMED",
+    triggeredBy: "USER", checkpoint: { fieldRequired, factKey, evidenceHash,
+      rawLabelStored: false, imageStored: false },
+    candidatePatch: { state: "READY_FOR_CONTENT", blockers: [],
+      evidenceSummary: { ...evidenceSummary, singleFactExceptionConfirmed: true,
+        singleFactExceptionEvidenceHash: evidenceHash } },
+    nextAutomaticAction: "Recalcular Product Facts y Taxonomy para este candidato.",
+    nextHumanAction: "Ninguna.",
+    job: { jobType: "ENRICH_PRODUCT_FACTS",
+      idempotencyKey: `${state.run.id}:${candidate.id}:ENRICH_PRODUCT_FACTS:${evidenceHash}`,
+      checkpoint: { queueItemId: candidate.queue_item_id,
+        officialLabelEvidenceHash: evidenceHash }, maxAttempts: 10,
+      apiFamily: "BROWSE", apiOperation: "EXACT_VERIFICATION",
+      ownerLane: "P1_EXACT_VERIFICATION" } })
   await refreshRunProjection(input.supabase, state.run.id)
   return getSameDayPilot(input)
 }
@@ -2530,10 +2756,13 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       state,
       input.accountKey,
     )
+  const singleFactExceptionsRecovered =
+    await repairRejectedSingleFactException(input.supabase, state, now)
   const legacyProductFactsRejectionsRepaired =
     await repairLegacyProductFactsRejections(input.supabase, state, now)
   const deadLettersRecovered = await recoverDeadLetterCandidates(input.supabase, state)
-  if (legacyPrematureRejectionsRepaired || legacyProductFactsRejectionsRepaired || deadLettersRecovered) {
+  if (legacyPrematureRejectionsRepaired || singleFactExceptionsRecovered ||
+    legacyProductFactsRejectionsRepaired || deadLettersRecovered) {
     state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
     if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
   }
@@ -2545,7 +2774,8 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
   if (!leased) {
     await refreshRunProjection(input.supabase, state.run.id, true)
     return { processed: 0, status: "IDLE", repaired,
-      legacyPrematureRejectionsRepaired, legacyProductFactsRejectionsRepaired,
+      legacyPrematureRejectionsRepaired, singleFactExceptionsRecovered,
+      legacyProductFactsRejectionsRepaired,
       deadLettersRecovered }
   }
   const candidate = state.candidates.find((entry) => entry.id === leased.candidate_id)
@@ -3005,10 +3235,47 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       const missingBlockingAspects = Number(record(summary.requirements).MISSING_BLOCKING ?? 0)
       if (productFactsState === "VALIDATING_TAXONOMY") {
         if (!taxonomyReady) {
-          await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
-            previousState: "VALIDATING_TAXONOMY", reasonCode: "EBAY_REQUIRED_ASPECTS_NOT_READY_TODAY",
-            blockers: [missingBlockingAspects > 0 ? "MISSING_BLOCKING" : "EBAY_TAXONOMY_NOT_READY"] })
-          productFactsState = "REJECTED"
+          const singleFactException = recoverableSingleFactException(summary)
+          if (missingBlockingAspects === 1 && singleFactException) {
+            const exceptionEvidence = {
+              ...record(candidate.evidence_summary),
+              singleFactExceptionRecoveryVersion: SINGLE_FACT_EXCEPTION_VERSION,
+              singleFactExceptionOpenedAt: new Date().toISOString(),
+              singleFactExceptionField: singleFactException.aspectName,
+              fullCatalogRescan: false,
+            }
+            const { error: exceptionUpdateError } = await input.supabase
+              .from("ebay_same_day_pilot_candidates")
+              .update({ state: "NEEDS_ONE_CRITICAL_FACT", blockers: [],
+                evidence_summary: exceptionEvidence,
+                next_automated_action: "Reanudar Product Facts después de la confirmación puntual.",
+                next_human_action: `Confirmar ${singleFactException.label} desde una fuente visible autorizada.`,
+                updated_at: new Date().toISOString() })
+              .eq("id", candidate.id).eq("run_id", state.run.id)
+              .eq("machine_state", "VALIDATING_TAXONOMY")
+            if (exceptionUpdateError) throw new Error("SAME_DAY_PILOT_SINGLE_FACT_TASK_UPDATE_FAILED")
+            await createHumanTask({ supabase: input.supabase, runId: state.run.id,
+              candidateId: text(candidate.id), expectedState: "VALIDATING_TAXONOMY",
+              gateType: "CRITICAL_EXCEPTION_REQUIRED",
+              title: `Confirma únicamente: ${singleFactException.label}`,
+              why: `eBay exige ${singleFactException.aspectName}. Seller OS revisó Luna, Catalog y Taxonomy, pero no encontró un valor estructurado verificable.`,
+              seconds: 45,
+              impact: "Seller OS guardará sólo el fact confirmado con procedencia, repetirá Product Facts para este candidato y continuará automáticamente.",
+              evidence: { fieldRequired: singleFactException.aspectName,
+                sourcesAlreadyChecked: ["Luna exact variant", "eBay Catalog oficial", "eBay Taxonomy oficial"] },
+              actionSchema: { type: "CONFIRM_OFFICIAL_LABEL_FACT", factScope: "PRODUCT_UNIT",
+                factKey: singleFactException.factKey,
+                fieldRequired: singleFactException.aspectName,
+                fieldLabel: singleFactException.label,
+                allowedValues: singleFactException.allowedValues,
+                requiresVisibleOfficialLabel: true },
+              continuationJobType: "ENRICH_PRODUCT_FACTS" })
+          } else {
+            await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
+              previousState: "VALIDATING_TAXONOMY", reasonCode: "EBAY_REQUIRED_ASPECTS_NOT_READY_TODAY",
+              blockers: [missingBlockingAspects > 0 ? "MISSING_BLOCKING" : "EBAY_TAXONOMY_NOT_READY"] })
+            productFactsState = "REJECTED"
+          }
         } else {
           await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, previousState: "VALIDATING_TAXONOMY",
             nextState: "VALIDATING_REGULATION", reasonCode: "TAXONOMY_REQUIREMENTS_RESOLVED", triggeredBy: "SYSTEM",

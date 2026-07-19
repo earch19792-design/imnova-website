@@ -36,7 +36,7 @@ import {
 import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
 import { extractLunaOfficialDescriptionIdentity } from "./luna-official-description-identity"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V3_2026_07_19"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V4_2026_07_19"
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
 type JsonRecord = Record<string, unknown>
@@ -400,6 +400,44 @@ async function officialCapturedItemId(supabase: SupabaseClient, accountKey: stri
   return /^\d{9,20}$/.test(itemId) ? itemId : null
 }
 
+async function operatorConfirmedOfficialLabelFacts(
+  supabase: SupabaseClient,
+  candidateId: string,
+) {
+  const { data, error } = await supabase
+    .from("marketplace_product_fact_observations")
+    .select("luna_variant_id,fact_scope,fact_key,raw_value,normalized_value,normalized_unit,source_type,source_reference,source_authority,source_observed_at,fetched_at,expires_at,confidence,verification_status,evidence_hash,adapter_version")
+    .eq("queue_item_id", candidateId)
+    .eq("source_type", "OFFICIAL_LABEL")
+    .eq("verification_status", "VERIFIED")
+    .order("created_at", { ascending: true })
+    .limit(20)
+  if (error) throw new Error("PRODUCT_FACT_OPERATOR_LABEL_FACT_READ_FAILED")
+  return (data ?? []).flatMap((row): FactObservation[] => {
+    if (row.fact_scope !== "PRODUCT_UNIT" || !text(row.fact_key) ||
+      !text(row.source_reference) || !text(row.evidence_hash)) return []
+    return [{
+      candidateId,
+      lunaVariantId: text(row.luna_variant_id) || null,
+      factScope: "PRODUCT_UNIT",
+      factKey: text(row.fact_key),
+      rawValue: row.raw_value,
+      normalizedValue: row.normalized_value,
+      normalizedUnit: text(row.normalized_unit) || null,
+      sourceType: "OFFICIAL_LABEL",
+      sourceReference: text(row.source_reference),
+      sourceAuthority: "MANUFACTURER_OR_LABEL",
+      sourceObservedAt: text(row.source_observed_at),
+      fetchedAt: text(row.fetched_at),
+      expiresAt: text(row.expires_at) || null,
+      confidence: Math.max(0, Math.min(1, Number(row.confidence ?? 1))),
+      verificationStatus: "VERIFIED",
+      evidenceHash: text(row.evidence_hash),
+      adapterVersion: text(row.adapter_version) || PRODUCT_FACTS_ENGINE_VERSION,
+    }]
+  })
+}
+
 function snapshot(input: { runId: string; candidateId: string; lunaVariantId: string | null; sourceType: FactSourceType; authority: string; observedAt: string | null; status: string; payload: JsonRecord }) {
   return { fact_run_id: input.runId, queue_item_id: input.candidateId, luna_variant_id: input.lunaVariantId,
     marketplace_account_key: "", marketplace: MARKETPLACE, source_type: input.sourceType,
@@ -470,9 +508,10 @@ export async function runProductFactsEnrichment(input: {
   const prepared: Array<{ candidate: JsonRecord; variant: JsonRecord; observations: FactObservation[]; facts: ResolvedFact[]; requirements: ReturnType<typeof mapTaxonomyRequirements>; readiness: ReturnType<typeof calculateReadiness>; authoritativeFactsPackage: AuthoritativeFactsInputPackage | ReturnType<typeof buildOpenAiFactsInputPackage>; authoritativeFactsExpiresAt: string | null; exception: ReturnType<typeof targetedFactException>; sourceSnapshots: JsonRecord[]; taxonomy: JsonRecord; sourceAttempts: JsonRecord }> = []
   for (const candidate of candidates) {
     try {
-      const [variant, officialDescription] = await Promise.all([
+      const [variant, officialDescription, operatorLabelFacts] = await Promise.all([
         variantForCandidate(input.supabase, candidate),
         officialDescriptionForCandidate(input.supabase, candidate),
+        operatorConfirmedOfficialLabelFacts(input.supabase, text(candidate.id)),
       ])
       if (!variant) { candidateResults.push({ candidateId: text(candidate.id), status: "EXCLUDED_LUNA_VARIANT_MISSING", openAiInputReady: false }); continue }
       const lunaObservedAt = Date.parse(text(variant.captured_at))
@@ -572,7 +611,8 @@ export async function runProductFactsEnrichment(input: {
           sourceType: "REGULATOR_OFFICIAL", authority: "REGULATOR", observedAt: null, status: "NOT_CONFIGURED",
           payload: { regulatedOnly: true, externalPageFetched: false } }),
       ]
-      const initial = [...base.entries, ...catalogObservations({ candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
+      const initial = [...base.entries, ...operatorLabelFacts,
+      ...catalogObservations({ candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
         products: catalogSelection.products,
         observedAt: text(catalogRecord.observedAt) || now.toISOString() }),
       ...taxonomyObservations({ candidateId: text(candidate.id),

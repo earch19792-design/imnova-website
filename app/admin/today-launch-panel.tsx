@@ -539,6 +539,8 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
   const [quantity, setQuantity] = useState("")
   const [identityAndPackConfirmed, setIdentityAndPackConfirmed] = useState(false)
   const [nativePackCount, setNativePackCount] = useState("")
+  const [factExceptionValue, setFactExceptionValue] = useState("")
+  const [visibleOfficialLabelConfirmed, setVisibleOfficialLabelConfirmed] = useState(false)
   const [imageRightsConfirmed, setImageRightsConfirmed] = useState(false)
   const [openAiImageSpendApproved, setOpenAiImageSpendApproved] = useState(false)
   const anchorImage = candidateHeroImage(candidate)
@@ -569,6 +571,8 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
   useEffect(() => {
     setIdentityAndPackConfirmed(false)
     setNativePackCount("")
+    setFactExceptionValue("")
+    setVisibleOfficialLabelConfirmed(false)
   }, [task.id])
 
   return <article className="min-w-0 overflow-hidden rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-4">
@@ -631,6 +635,39 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
           : "Identidad visual confirmada. Seller OS conservará esta confirmación con la presentación indicada."}</p>
       </fieldset>}
       <button type="button" disabled={working || priceMissing || availabilityMissing || lunaQuantityConflict || identityConfirmationMissing || nativePackCountMissing} onClick={() => void onConfirm({ action: "confirm_luna", taskId: task.id, price: Number(price), availability: { available: availability === "available", quantity: parsedQuantity }, ...(identityAndPackConfirmationApplies ? { identityAndPackConfirmed, nativePackCount: parsedNativePackCount } : {}) })} className="mt-4 min-h-12 w-full rounded-xl bg-amber-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 disabled:opacity-40 sm:w-auto">CONFIRMAR Y CONTINUAR</button>
+    </div>}
+
+    {task.gate_type === "CRITICAL_EXCEPTION_REQUIRED" && <div className="mt-4 rounded-xl border border-amber-200/25 bg-amber-200/[0.05] p-3">
+      <p className="text-sm font-black text-amber-50">Sólo falta un dato verificable</p>
+      <p className="mt-1 text-xs leading-5 text-white/60">No completes una ficha. Mira el empaque oficial o la página exacta del producto en Luna y confirma únicamente este campo.</p>
+      <label className="mt-3 block text-xs font-bold">{String(task.action_schema?.fieldLabel ?? task.action_schema?.fieldRequired ?? "Dato requerido")} <span className="text-red-200">*</span>
+        <input value={factExceptionValue}
+          onChange={(event) => setFactExceptionValue(event.target.value)}
+          maxLength={100} aria-required="true" aria-invalid={!factExceptionValue.trim()}
+          className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${factExceptionValue.trim() ? "border-white/15" : "border-red-400"}`} />
+        <span className={`mt-1 block font-normal ${factExceptionValue.trim() ? "text-white/55" : "text-red-200"}`}>{factExceptionValue.trim()
+          ? "Valor recibido; Seller OS lo guardará con procedencia y volverá a validar Taxonomy."
+          : "Obligatorio sólo si puedes verificarlo visualmente."}</span>
+      </label>
+      <label className={`mt-3 flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${visibleOfficialLabelConfirmed ? "border-emerald-200/25 text-emerald-50" : "border-red-300/30 text-red-100"}`}>
+        <input type="checkbox" checked={visibleOfficialLabelConfirmed}
+          onChange={(event) => setVisibleOfficialLabelConfirmed(event.target.checked)}
+          className="mt-1 h-5 w-5 shrink-0 accent-emerald-200" />
+        <span><strong>Confirmo la evidencia visible.</strong> El valor aparece en el empaque/etiqueta oficial o en la página exacta autorizada de Luna para este mismo producto y presentación.</span>
+      </label>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button"
+          disabled={working || !factExceptionValue.trim() || !visibleOfficialLabelConfirmed}
+          onClick={() => void onConfirm({ action: "fact_exception_decision",
+            taskId: task.id, decision: "CONFIRM", value: factExceptionValue.trim(),
+            visibleOfficialLabelConfirmed })}
+          className="min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40 sm:w-auto">CONFIRMAR DATO Y CONTINUAR AUTOMÁTICAMENTE</button>
+        <button type="button" disabled={working}
+          onClick={() => void onConfirm({ action: "fact_exception_decision",
+            taskId: task.id, decision: "REJECT" })}
+          className="min-h-12 w-full rounded-xl border border-red-300/35 px-4 font-black text-red-100 disabled:opacity-40 sm:w-auto">NO PUEDO VERIFICARLO · PROBAR SIGUIENTE</button>
+      </div>
+      <p className="mt-2 text-xs text-white/50">OpenAI no completa este campo. No se guarda imagen, URL, HTML ni dato del competidor.</p>
     </div>}
 
     {task.gate_type === "PRODUCT_APPROVAL_REQUIRED" && <div className="mt-4 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm text-cyan-50">

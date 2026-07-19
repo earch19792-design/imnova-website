@@ -12,6 +12,7 @@ import { getProductResearchQueryPlanStatus } from "@/lib/ebay/ebay-product-resea
 import {
   authorizeSameDayControlledRiskOverride,
   confirmSameDayLuna,
+  decideSameDayFactException,
   decideSameDayImages,
   decideSameDayProduct,
   getSameDayPilot,
@@ -237,6 +238,28 @@ export async function POST(req: Request) {
         workerId: `user-confirmation:${access.auth.userId}` })
       const pilot = await getSameDayPilot({ supabase: access.supabase, accountKey: access.accountKey })
       return NextResponse.json({ success: true, pilot, continuation, autoResumed: true, safety: { ebayWrites: 0, productionChanged: false } })
+    }
+    if (body.action === "fact_exception_decision") {
+      const decision = body.decision === "CONFIRM" || body.decision === "REJECT"
+        ? body.decision : null
+      if (typeof body.taskId !== "string" || !decision ||
+        (decision === "CONFIRM" && (!text(body.value, 100) ||
+          body.visibleOfficialLabelConfirmed !== true))) {
+        return NextResponse.json({ success: false,
+          error: "SAME_DAY_PILOT_FACT_EXCEPTION_DECISION_INVALID" }, { status: 400 })
+      }
+      await decideSameDayFactException({ supabase: access.supabase,
+        accountKey: access.accountKey, actorId: access.auth.userId,
+        taskId: body.taskId, decision, value: text(body.value, 100) || null,
+        visibleOfficialLabelConfirmed: body.visibleOfficialLabelConfirmed === true })
+      const continuation = scheduleImmediateContinuation({ supabase: access.supabase,
+        accountKey: access.accountKey,
+        workerId: `fact-exception:${access.auth.userId}` })
+      const pilot = await getSameDayPilot({ supabase: access.supabase,
+        accountKey: access.accountKey })
+      return NextResponse.json({ success: true, pilot, continuation,
+        autoResumed: true, safety: { openAiCalls: 0, ebayWrites: 0,
+          fullCatalogRescan: false, productionChanged: false } })
     }
     if (body.action === "product_decision") {
       const decision = body.decision === "APPROVE" || body.decision === "REJECT" ? body.decision : null

@@ -82,6 +82,8 @@ const BLOCKER_LABELS: Record<string, string> = {
   LUNA_OUT_OF_STOCK: "Luna fue confirmada sin inventario disponible.",
   LUNA_AVAILABILITY_QUANTITY_CONFLICT: "El snapshot automático de Luna muestra disponibilidad y cantidad contradictorias; confirma esos dos datos en la página exacta del producto.",
   LUNA_COST_REQUIRED_FOR_ECONOMICS: "Falta confirmar el costo actual de Luna para calcular la rentabilidad.",
+  MISSING_BLOCKING: "Faltan aspectos obligatorios de eBay que deben resolverse antes de publicar.",
+  MARKET_PRICE_BELOW_MINIMUM_SAFE_PRICE: "El precio mínimo seguro supera una referencia exacta verificable del mercado.",
   EXACT_TOP20_QUEUE_IDENTITY_MISSING: "Falta una identidad exacta y trazable en la cola comercial.",
   CURRENT_PRODUCT_FACT_RUN_INCOMPLETE: "La ficha técnica automatizada dejó datos críticos sin verificar.",
   PRODUCT_FACTS_PARTIAL_OR_EXCLUDED: "La ficha técnica no alcanzó la cobertura segura requerida para hoy.",
@@ -135,6 +137,7 @@ function dateMs(value: unknown) {
 }
 
 function numeric(value: unknown) {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
 }
@@ -170,6 +173,7 @@ export function explainSameDayRejectedCandidate(candidate: Row): SameDayCandidat
   const currentFloor = numeric(currentEconomics.minimumOperatorPrice)
   const soldExact = numeric(decisionEvidence.confirmedSoldExact) ??
     numeric((candidate.evidence_summary as Row | undefined)?.soldExactCount) ?? 0
+  const activeExact = numeric(decisionEvidence.activeExactCount) ?? 0
   const candidateEvidence = candidate.evidence_summary &&
     typeof candidate.evidence_summary === "object" ? candidate.evidence_summary as Row : {}
   const evidenceTiers = candidateEvidence.evidenceTiers &&
@@ -181,16 +185,24 @@ export function explainSameDayRejectedCandidate(candidate: Row): SameDayCandidat
     .filter((requirement) => text(requirement.status) === "MISSING_BLOCKING")
     .map((requirement) => text(requirement.aspectName)).filter(Boolean)
   const details: string[] = []
-  let headline = translateSameDayPilotBlocker(Array.isArray(candidate.blockers)
-    ? candidate.blockers[0] : null) ?? "El candidato no superó las puertas de publicación."
+  const candidateBlockers = Array.isArray(candidate.blockers)
+    ? candidate.blockers.map((blocker) => text(blocker)).filter(Boolean) : []
+  let headline = translateSameDayPilotBlocker(candidateBlockers[0]) ??
+    "El candidato no superó las puertas de publicación."
+  const marketPriceIsCurrentBlocker = candidateBlockers.includes("MARKET_PRICE_BELOW_MINIMUM_SAFE_PRICE")
 
-  if (text(decision.verdict) === "NO_GO" && marketMedian !== null && safePrice !== null &&
+  if (marketPriceIsCurrentBlocker && text(decision.verdict) === "NO_GO" &&
+    marketMedian !== null && marketMedian > 0 &&
+    safePrice !== null && activeExact > 0 &&
     decisionEconomics.marketSupportsMinimumSafePrice !== true) {
     headline = `No se publica: el precio seguro completo ${usd(safePrice)} supera la mediana eBay ${usd(marketMedian)}.`
     if (currentFloor !== null) {
       const currentGap = currentFloor - marketMedian
       details.push(`Incluso el piso preliminar actual ${usd(currentFloor)} queda ${usd(Math.abs(currentGap))} ${currentGap >= 0 ? "por encima" : "por debajo"} del mercado mediano.`)
     }
+  } else if (marketPriceIsCurrentBlocker && text(decision.verdict) === "NO_GO" &&
+    activeExact === 0) {
+    headline = "No se publica todavía: no existe una mediana eBay exacta para esta presentación."
   }
   const supplierCost = numeric(currentEconomics.confirmedLunaPrice ?? currentEconomics.supplierCost)
   const outboundShipping = numeric(economicsConfig.estimatedOutboundShipping)
