@@ -671,10 +671,24 @@ async function repairSameDayPilotBootstrap(
 ) {
   if (!state) return false
   const serialized = await serializeOpenHumanTasksForRun(supabase, state.run.id)
-  const activeState = serialized.superseded > 0
+  let repaired = serialized.superseded > 0
+  let activeState = serialized.superseded > 0
     ? await currentState(supabase, accountKey, text(state.run.operation_date))
     : state
-  if (!activeState) return serialized.superseded > 0
+  if (!activeState) return repaired
+  if (Number(activeState.run.queue_count ?? 0) === 0 && activeState.candidates.length > 0) {
+    const { error: projectionError } = await supabase.from("ebay_same_day_pilot_runs")
+      .update({ queue_count: Math.min(5, activeState.candidates.length),
+        stage: "QUEUE_PREPARED", status: "ACTIVE",
+        next_automated_action: "Continuar desde el primer candidato durable.",
+        next_human_action: "Completar la tarea visible en Tareas para Ernesto.",
+        updated_at: new Date().toISOString() })
+      .eq("id", activeState.run.id).eq("queue_count", 0)
+    if (projectionError) throw new Error("SAME_DAY_PILOT_QUEUE_PROJECTION_REPAIR_FAILED")
+    repaired = true
+    activeState = await currentState(supabase, accountKey, text(state.run.operation_date))
+    if (!activeState) return repaired
+  }
   // A capture is durable before the Same-Day transition is attempted. If an
   // older deployment or a transient continuation failure left the query task
   // PROCESSED while its human gate stayed OPEN, consume that exact stored
@@ -687,7 +701,7 @@ async function repairSameDayPilotBootstrap(
   // explicit exception below: promoteImmediateSuccessorDuringQuotaPause may
   // activate only the immediate successor, and its RUN_CREATED check makes a
   // replay unable to leapfrog to another candidate.
-  if (activeState.tasks.some((task) => task.status === "OPEN")) return serialized.superseded > 0
+  if (activeState.tasks.some((task) => task.status === "OPEN")) return repaired
   const gateByState: Record<string, string> = {
     WAITING_PRODUCT_RESEARCH_CAPTURE: "PRODUCT_RESEARCH_CAPTURE_REQUIRED",
     WAITING_LUNA_CONFIRMATION: "LUNA_CONFIRMATION_REQUIRED",
@@ -704,7 +718,7 @@ async function repairSameDayPilotBootstrap(
     return Boolean(expectedGate && !activeState.tasks.some((task) =>
       task.candidate_id === candidate.id && task.gate_type === expectedGate && task.status === "OPEN"))
   })
-  if (!active) return serialized.superseded > 0
+  if (!active) return repaired
   await bootstrapCandidate(supabase, activeState.run.id, record(active))
   return true
 }
@@ -1188,6 +1202,9 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
   const sourceInventory = { ...preview.counts, cycle,
     previousRunId: startNextCycle ? existing!.run.id : null,
     attemptedCandidatesExcluded: attemptedRows.length,
+    candidateInsertFailureCount: number(
+      record(existing?.run.source_inventory).candidateInsertFailureCount,
+    ) ?? 0,
     fullCatalogRescan: false,
     productResearchPlanPrepared: Boolean(productResearchPlanId), productResearchPlanId }
   const quotaSnapshot = { lanes: preview.quotaLanes,
@@ -1214,7 +1231,30 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
   }))
   if (rows.length) {
     const { data: candidates, error } = await input.supabase.from("ebay_same_day_pilot_candidates").insert(rows).select("*")
-    if (error) throw new Error("SAME_DAY_PILOT_CANDIDATES_CREATE_FAILED")
+    if (error) {
+      const candidateInsertFailureCount = Number(sourceInventory.candidateInsertFailureCount) + 1
+      const failureSourceInventory = { ...sourceInventory,
+        candidateInsertFailureCount,
+        lastCandidateInsertFailureCode: "SAME_DAY_PILOT_CANDIDATES_CREATE_FAILED",
+        lastCandidateInsertFailureAt: new Date().toISOString(),
+        preparedPlanPreserved: Boolean(productResearchPlanId) }
+      const { error: recoveryError } = await input.supabase.from("ebay_same_day_pilot_runs")
+        .update({ status: "BLOCKED", stage: "CANDIDATE_INSERT_RETRYABLE",
+          source_inventory: failureSourceInventory,
+          next_automated_action: "Reutilizar el mismo plan y reintentar la inserción idempotente.",
+          next_human_action: "Reanudar los cinco candidatos preparados; no repetir capturas.",
+          updated_at: new Date().toISOString() })
+        .eq("id", runId).eq("queue_count", 0)
+      if (recoveryError) throw new Error("SAME_DAY_PILOT_CANDIDATE_FAILURE_RECOVERY_PERSIST_FAILED")
+      await input.supabase.from("ebay_same_day_pilot_events").upsert({
+        run_id: runId, event_type: "CANDIDATE_INSERT_RETRYABLE_FAILURE",
+        event_payload: { reasonCode: "SAME_DAY_PILOT_CANDIDATES_CREATE_FAILED",
+          preparedPlanPreserved: Boolean(productResearchPlanId), candidateInsertFailureCount },
+        idempotency_key: `${runId}:CANDIDATE_INSERT_RETRYABLE_FAILURE:${candidateInsertFailureCount}`,
+        ebay_read_calls: 0, openai_calls: 0, ebay_writes: 0, production_changed: false,
+      }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+      throw new Error("SAME_DAY_PILOT_CANDIDATES_CREATE_FAILED")
+    }
     const { error: finalizeError } = await input.supabase.from("ebay_same_day_pilot_runs")
       .update({ queue_count: selected.length, stage: "QUEUE_PREPARED", status: "ACTIVE",
         next_automated_action: "Esperar y procesar automáticamente la próxima evidencia autorizada.",

@@ -66,6 +66,8 @@ export function TodayLaunchPanel() {
     Number(pilot?.nextCandidateCycle?.nextCycle ?? currentCycle + 1) || currentCycle + 1)
   const canRecoverEmptyRun = runStatus === "BLOCKED" && candidates.length === 0
     && pilot?.nextCandidateCycle?.reason !== "NEXT_CANDIDATE_SET_EXHAUSTED"
+  const resumePreparedCycle = canRecoverEmptyRun
+    && pilot?.run?.source_inventory?.productResearchPlanPrepared === true
   const showLaunchAction = !loading && (!pilot || canRecoverEmptyRun || nextCycleAllowed)
   const pilotProgress = Math.max(0, Math.min(3,
     Number(pilot?.cycleHistory?.verifiedPilotProgress
@@ -116,8 +118,8 @@ export function TodayLaunchPanel() {
       </div>
     </div>
     {showLaunchAction && <div className="mt-5">
-      <button type="button" disabled={working} aria-describedby={pilot ? "next-cycle-helper" : undefined} onClick={() => void request({ action: "start" })} className="min-h-14 w-full rounded-2xl bg-cyan-200 px-5 text-base font-black text-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-100 disabled:opacity-50 sm:w-auto">{working ? (pilot ? "PREPARANDO SIGUIENTES 5…" : "INICIANDO…") : pilot ? "ANALIZAR SIGUIENTES 5 CANDIDATOS" : "INICIAR LANZAMIENTO DE HOY"}</button>
-      {pilot && <p id="next-cycle-helper" className="mt-2 max-w-2xl text-xs leading-5 text-white/60">Conserva todo lo revisado, excluye los candidatos ya intentados y crea el ciclo {nextCycle} con un máximo de 5. No reinicia Discovery ni consulta eBay para las 1,513 variantes.</p>}
+      <button type="button" disabled={working} aria-describedby={pilot ? "next-cycle-helper" : undefined} onClick={() => void request({ action: "start" })} className="min-h-14 w-full rounded-2xl bg-cyan-200 px-5 text-base font-black text-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-100 disabled:opacity-50 sm:w-auto">{working ? (resumePreparedCycle ? "REANUDANDO CICLO…" : pilot ? "PREPARANDO SIGUIENTES 5…" : "INICIANDO…") : resumePreparedCycle ? "REANUDAR 5 CANDIDATOS PREPARADOS" : pilot ? "ANALIZAR SIGUIENTES 5 CANDIDATOS" : "INICIAR LANZAMIENTO DE HOY"}</button>
+      {pilot && <p id="next-cycle-helper" className="mt-2 max-w-2xl text-xs leading-5 text-white/60">{resumePreparedCycle ? `Reutiliza el plan ya preparado del ciclo ${currentCycle}; no duplica consultas ni requiere repetir capturas.` : `Conserva todo lo revisado, excluye los candidatos ya intentados y crea el ciclo ${nextCycle} con un máximo de 5. No reinicia Discovery ni consulta eBay para las 1,513 variantes.`}</p>}
     </div>}
     {pilot?.nextCandidateCycle?.reason === "NEXT_CANDIDATE_SET_EXHAUSTED" && <p className="mt-5 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 text-sm text-amber-50">No quedan candidatos distintos elegibles en la cola local actual. Seller OS preservó toda la evidencia y no forzará una publicación.</p>}
     {error && <p role="alert" className="mt-4 rounded-2xl border border-red-300/30 bg-red-400/10 p-3 text-sm font-bold text-red-100">{error}</p>}

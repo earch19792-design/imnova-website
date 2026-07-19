@@ -346,7 +346,6 @@ export function buildSameDayLocalPreparationPackage(candidate: SameDayCandidateD
       supplierSku: candidate.supplierSku ?? null,
       supplierVariantId: candidate.supplierVariantId ?? null,
       supplierProductUrl: candidate.supplierProductUrl ?? null,
-      supplierImageUrl: candidate.supplierImageUrl ?? null,
       gtin: candidate.gtin ?? null,
     },
     offer: {
