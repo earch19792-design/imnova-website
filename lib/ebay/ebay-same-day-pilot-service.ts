@@ -1601,8 +1601,11 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
   const commercialEvidenceMode = text(evidence.commercialEvidenceMode)
   const controlledExploratoryTest = commercialEvidenceMode === "CONTROLLED_EXPLORATORY_TEST"
   const basePatch = {
-    listingQuantity: controlledExploratoryTest ? 1 : quantity.quantity || null,
-    recheckAfterSale: controlledExploratoryTest || quantity.recheckAfterSale,
+    // Luna's visible quantity is supplier evidence, not inventory reserved for
+    // this eBay offer. The same-day pilot therefore exposes one offer pack at
+    // a time and preserves the full supplier quantity only in lunaConfirmation.
+    listingQuantity: input.available ? 1 : null,
+    recheckAfterSale: input.available,
     economicsSummary: controlledExploratoryTest
       ? { ...economicsSummary, controlledTestPlan: {
           listingQuantity: 1, commercialMonitorRequired: true,

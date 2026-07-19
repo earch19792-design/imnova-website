@@ -259,7 +259,7 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt, nextCycleAll
         <p className={`mt-1 break-words text-sm font-bold leading-5 ${monitor.nextHumanAction === "Ninguna." ? "text-white/45" : "text-amber-50"}`}>{monitor.nextHumanAction}</p>
       </div>
     </div>
-    {monitor.blockerSummary && <p role="status" className="mt-3 rounded-2xl border border-red-300/25 bg-red-400/[0.08] p-3 text-sm leading-6 text-red-100"><strong>Por qué se descartó:</strong> {monitor.blockerSummary}</p>}
+    {monitor.blockerSummary && <p role="status" className="mt-3 rounded-2xl border border-red-300/25 bg-red-400/[0.08] p-3 text-sm leading-6 text-red-100"><strong>{monitor.status === "BLOCKED" ? "Por qué se bloqueó este lote:" : "Descarte anterior del lote:"}</strong> {monitor.blockerSummary}</p>}
   </section>
 }
 
