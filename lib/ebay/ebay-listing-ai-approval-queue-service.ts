@@ -2857,6 +2857,123 @@ async function readQueueItem(supabase: SupabaseClient, accountKey: string, itemI
   return data
 }
 
+const FACT_RECOVERY_GATES = [
+  "IDENTITY_READY",
+  "PRODUCT_FACTS_READY",
+  "OFFER_PACK_READY",
+  "EBAY_ASPECTS_READY",
+  "REGULATORY_READY",
+] as const
+
+function canonicalScalarText(value: unknown) {
+  const normalized = text(value)
+  if (normalized) return normalized
+  const numeric = number(value)
+  return numeric === null ? null : String(numeric)
+}
+
+async function readCanonicalProductFactRecovery(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  itemId: string
+  now: Date
+}) {
+  const { data: latest, error: latestError } = await input.supabase
+    .from("marketplace_product_fact_readiness_events")
+    .select("fact_run_id,observed_at")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", MARKETPLACE)
+    .eq("queue_item_id", input.itemId)
+    .eq("gate_name", "PRODUCT_FACTS_READY")
+    .eq("ready", true)
+    .order("observed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (latestError) throw new Error("TOP10_CANONICAL_FACT_RECOVERY_READ_FAILED")
+  const factRunId = text(latest?.fact_run_id)
+  const observedAt = Date.parse(text(latest?.observed_at) ?? "")
+  if (!factRunId || !Number.isFinite(observedAt) || observedAt > input.now.getTime() + 5 * 60_000 ||
+    input.now.getTime() - observedAt > FRESHNESS_MS) {
+    throw new Error("TOP10_CANONICAL_FACT_RECOVERY_STALE")
+  }
+
+  const [{ data: gates, error: gatesError }, { data: links, error: linksError }] = await Promise.all([
+    input.supabase.from("marketplace_product_fact_readiness_events")
+      .select("gate_name,ready")
+      .eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .eq("queue_item_id", input.itemId)
+      .eq("fact_run_id", factRunId)
+      .in("gate_name", [...FACT_RECOVERY_GATES]),
+    input.supabase.from("marketplace_product_fact_run_evidence_links")
+      .select("resolution_id,requirement_id")
+      .eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .eq("queue_item_id", input.itemId)
+      .eq("fact_run_id", factRunId),
+  ])
+  if (gatesError || linksError) throw new Error("TOP10_CANONICAL_FACT_RECOVERY_READ_FAILED")
+  const readyGates = new Set((gates ?? []).filter((row) => row.ready === true)
+    .map((row) => text(row.gate_name)).filter((value): value is string => Boolean(value)))
+  if (FACT_RECOVERY_GATES.some((gate) => !readyGates.has(gate))) {
+    throw new Error("TOP10_CANONICAL_FACT_RECOVERY_NOT_READY")
+  }
+
+  const resolutionIds = [...new Set((links ?? []).map((row) => text(row.resolution_id))
+    .filter((value): value is string => Boolean(value)))]
+  const requirementIds = [...new Set((links ?? []).map((row) => text(row.requirement_id))
+    .filter((value): value is string => Boolean(value)))]
+  if (!resolutionIds.length) throw new Error("TOP10_CANONICAL_FACT_RECOVERY_EMPTY")
+
+  const { data: resolutions, error: resolutionsError } = await input.supabase
+    .from("marketplace_product_fact_resolutions")
+    .select("fact_scope,fact_key,selected_value,selected_unit,verification_status")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", MARKETPLACE)
+    .eq("queue_item_id", input.itemId)
+    .in("id", resolutionIds)
+  if (resolutionsError) throw new Error("TOP10_CANONICAL_FACT_RECOVERY_READ_FAILED")
+  let requirements: JsonRecord[] = []
+  if (requirementIds.length) {
+    const { data, error } = await input.supabase
+      .from("marketplace_product_fact_requirements")
+      .select("category_id,aspect_name,required,selected_value,requirement_status")
+      .eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .eq("queue_item_id", input.itemId)
+      .in("id", requirementIds)
+    if (error) throw new Error("TOP10_CANONICAL_FACT_RECOVERY_READ_FAILED")
+    requirements = (data ?? []).map((row) => record(row))
+  }
+
+  const values = (resolutions ?? []).reduce<JsonRecord>((result, row) => {
+    const key = text(row.fact_key)
+    if (key) result[key] = row.selected_value
+    return result
+  }, {})
+  const aspects = new Map<string, { name: string; value: string; required: boolean }>()
+  for (const row of requirements) {
+    const name = text(row.aspect_name)
+    const value = canonicalScalarText(row.selected_value)
+    const satisfied = text(row.requirement_status)?.startsWith("SATISFIED_") === true
+    if (!name || !value || !satisfied) continue
+    const key = name.toLocaleLowerCase("en-US")
+    const next = { name, value, required: row.required === true }
+    const current = aspects.get(key)
+    if (!current || next.required && !current.required) aspects.set(key, next)
+  }
+  return {
+    factRunId,
+    values,
+    categoryId: canonicalScalarText(values.categoryId) ??
+      requirements.map((row) => text(row.category_id)).find(Boolean) ?? null,
+    requiredAspects: [...aspects.values()].filter((entry) => entry.required)
+      .map(({ name, value }) => ({ name, value })),
+    optionalAspects: [...aspects.values()].filter((entry) => !entry.required)
+      .map(({ name, value }) => ({ name, value })),
+  }
+}
+
 export async function confirmListingAiQueueLunaObservation(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -2873,9 +2990,15 @@ export async function confirmListingAiQueueLunaObservation(input: {
   const item = await readQueueItem(input.supabase, input.accountKey, input.itemId)
   const snapshot = record(item.evidence_snapshot)
   const pack = record(record(snapshot.packStrategy).recommendedPack)
-  const recommendedPackCount = positiveInteger(pack.packCount)
+  const needsFactRecovery = !positiveInteger(pack.packCount) || !text(item.decision_package_id)
+  const canonicalFacts = needsFactRecovery ? await readCanonicalProductFactRecovery({
+    supabase: input.supabase, accountKey: input.accountKey, itemId: item.id, now,
+  }) : null
+  const recommendedPackCount = positiveInteger(pack.packCount) ??
+    positiveInteger(canonicalFacts?.values.offerPackCount)
   if (!recommendedPackCount) throw new Error("TOP10_RECOMMENDED_PACK_REQUIRED")
-  const supplierUnitsPerOffer = positiveInteger(pack.stockRequired) ?? 1
+  const supplierUnitsPerOffer = positiveInteger(pack.stockRequired) ??
+    positiveInteger(canonicalFacts?.values.offerPackCount) ?? 1
   const reserve = number(item.supplier_shipping_reserve_usd) ??
     supplierReserve(input.environment ?? process.env)
   const confirmation = buildLunaOperatorConfirmation({
@@ -2921,8 +3044,96 @@ export async function confirmListingAiQueueLunaObservation(input: {
     await recomputeRanks(input.supabase, input.accountKey, item.run_id)
     return { duplicate: false, confirmation, cohort: "REJECTED_AFTER_CONFIRMATION", openAiCalls: 0, ebayWrites: 0 }
   }
-  if (!item.decision_package_id) throw new Error("TOP10_DECISION_PACKAGE_REQUIRED")
-  const previous = await readDecisionRow(input.supabase, input.accountKey, item.decision_package_id)
+  let decisionPackageId = text(item.decision_package_id)
+  if (!decisionPackageId) {
+    if (!canonicalFacts) throw new Error("TOP10_DECISION_PACKAGE_REQUIRED")
+    const facts = canonicalFacts.values
+    const factText = (key: string) => canonicalScalarText(facts[key])
+    const factNumber = (key: string) => number(facts[key])
+    const product = record(snapshot.product)
+    const logistics = record(snapshot.logistics)
+    const dims = dimensions(logistics.dimensions)
+    const outbound = number(logistics.outboundShippingCost)
+    const packagingCost = number(logistics.packagingCost)
+    const fixedFulfillmentCost = number(logistics.fixedFulfillmentCost)
+    if (outbound === null || packagingCost === null || fixedFulfillmentCost === null) {
+      throw new Error("TOP20_CANONICAL_COST_COMPONENTS_REQUIRED")
+    }
+    const productName = factText("exactProductName") ?? text(product.name)
+    if (!productName) throw new Error("TOP10_CANONICAL_PRODUCT_NAME_REQUIRED")
+    const productType = factText("type")
+    const unitsPerPack = positiveInteger(facts.unitsPerPack) ?? positiveInteger(facts.unitCount)
+    const rawVariant = factText("variant")
+    const variant = rawVariant?.toLocaleLowerCase("en-US") === "default title"
+      ? productType : rawVariant ?? productType
+    const includedContents = unitsPerPack && productType
+      ? [`${unitsPerPack} ${productType}${unitsPerPack === 1 ? "" : "s"}`]
+      : productType ? [productType] : [productName]
+    const approvedKeywords = [...new Set([productName, productType]
+      .filter((value): value is string => Boolean(value)))]
+    const allowedImageFacts = [
+      ...includedContents,
+      factText("color") ? `Color: ${factText("color")}` : null,
+      unitsPerPack ? `Unit count: ${unitsPerPack}` : null,
+    ].filter((value): value is string => Boolean(value))
+    const generated = await createWinnerEvidenceDecisionPackage(input.supabase, {
+      marketplaceAccountKey: input.accountKey,
+      candidateId: item.market_radar_product_id,
+      supplierSku: item.supplier_sku,
+      supplierVariantId: item.supplier_variant_id,
+      identity: {
+        manufacturerBrand: factText("brand"),
+        gtin: factText("gtin"), mpn: factText("mpn"), model: factText("model"),
+        productName,
+        packCount: positiveInteger(facts.offerPackCount) ?? recommendedPackCount,
+        unitCount: unitsPerPack,
+        size: factText("size"), color: factText("color"), scent: factText("scent"),
+        variant, condition: factText("condition"),
+      },
+      supplierPackageCost: confirmation.supplierPriceObserved * confirmation.supplierUnitsPerOffer,
+      packagingCost,
+      outboundShippingCost: outbound + confirmation.supplierShippingReserveUsd,
+      fixedFulfillmentCost,
+      authorizedKeywords: approvedKeywords,
+      requiredKeywordCount: 1,
+      complianceBlocked: false,
+      complianceFindings: [],
+      stockAvailable: confirmation.availableOfferPackCapacity,
+      stockObservedAt: now.toISOString(), costObservedAt: now.toISOString(),
+      listingAiIntake: {
+        approvedKeywords,
+        category: { id: canonicalFacts.categoryId, name: null },
+        requiredAspects: canonicalFacts.requiredAspects,
+        optionalAspects: canonicalFacts.optionalAspects,
+        pricingScenarioName: "CANONICAL_FACT_RECOVERY",
+        includedContents,
+        complianceRestrictions: [], blockedClaims: [],
+        allowedImageFacts, allowedClaims: allowedImageFacts,
+        missingFacts: [], unsupportedTerms: [],
+        titleStructurePatterns: [], locale: "en-US",
+      },
+      marketEvidence: {
+        discoveryOrigin: item.discovery_strategy === "EBAY_FIRST" ? "EBAY_FIRST" : "LUNA_FIRST",
+        crossSourceCorroborated: true,
+        activeAndSoldSeparated: true,
+      },
+      packStrategyEvidence: { offers: [{
+        packCount: confirmation.recommendedPackCount,
+        unitCountPerItem: unitsPerPack,
+        exactContents: includedContents,
+        cost: confirmation.supplierPriceObserved * confirmation.supplierUnitsPerOffer,
+        shippingCost: outbound + confirmation.supplierShippingReserveUsd,
+        stockRequired: confirmation.supplierUnitsPerOffer,
+        stockAvailable: confirmation.supplierUnitQuantity ?? confirmation.availableOfferPackCapacity,
+        packageWeight: factNumber("unitGrossWeight") ?? number(logistics.weight),
+        packageDimensions: dims,
+      }] },
+      now,
+    }, { useOfficialRead: true, persist: true, candidateRecordId: null })
+    decisionPackageId = generated.packageId
+    if (!decisionPackageId) throw new Error("TOP10_RECOVERED_PACKAGE_REQUIRED")
+  }
+  const previous = await readDecisionRow(input.supabase, input.accountKey, decisionPackageId)
   const payload = record(previous.package_payload)
   const identity = record(record(payload.productIdentity).identity)
   const intake = record(payload.listingAiIntake)
