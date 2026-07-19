@@ -549,6 +549,31 @@ async function insertIgnoringDuplicates(supabase: SupabaseClient, table: string,
   if (error) throw new Error(`PRODUCT_FACT_${table.toUpperCase()}_PERSIST_FAILED`)
 }
 
+function tradingItemIdFromBrowseComparable(value: unknown) {
+  const raw = text(value)
+  if (/^\d{9,20}$/.test(raw)) return raw
+  return raw.match(/^v1\|(\d{9,20})\|/)?.[1] ?? ""
+}
+
+function browseSellSimilarTradingItemId(input: { browse: JsonRecord | null; productTitle: string }) {
+  return array(input.browse?.comparableEvidence)
+    .map(record)
+    .map((comparable) => ({
+      itemId: tradingItemIdFromBrowseComparable(comparable.comparableId),
+      identifierExact: comparable.identifierExact === true,
+      matchQuality: text(comparable.identityMatchQuality).toUpperCase(),
+      matchScore: Number(comparable.identityMatchScore) || 0,
+      title: text(comparable.title),
+      eligible: comparable.eligibleComparable === true,
+    }))
+    .filter((comparable) => comparable.itemId && comparable.eligible &&
+      ["EXACT", "STRONG"].includes(comparable.matchQuality) &&
+      comparableTitleMatches(input.productTitle, comparable.title))
+    .sort((left, right) => Number(right.identifierExact) - Number(left.identifierExact) ||
+      Number(right.matchQuality === "EXACT") - Number(left.matchQuality === "EXACT") ||
+      right.matchScore - left.matchScore)[0]?.itemId ?? ""
+}
+
 export async function runProductFactsEnrichment(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -623,18 +648,53 @@ export async function runProductFactsEnrichment(input: {
       const catalogRecord = record(catalog)
       const catalogCategoryId = catalogSelection.products.length === 1
         ? numericCategoryId(catalogSelection.products[0]?.categoryId) : ""
+      // Browse is intentionally evaluated before Taxonomy so a safe comparable
+      // can provide the official Trading item/category used by "Sell one like this".
+      // A previously inferred category never narrows this discovery search.
+      const browsePackQuantity = intendedPackCount
+      let browseStatus = "SKIPPED"
+      let browseComparableCount = 0
+      let browseReport: JsonRecord | null = null
+      try {
+        const browse = record(await runEbaySellerKeywordDemandValidation({ productName: base.title, productTitle: base.title,
+          variantTitle: text(variant.variant_title) || null, supplierSku: text(variant.sku) || null,
+          categoryId: catalogCategoryId || null, gtin: authoritativeGtin,
+          brand: text(fromMetadata(base.metadata, ["brand", "manufacturerBrand"])) || null,
+          mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])) || null,
+          size: text(fromMetadata(base.metadata, ["size", "netContent"])) || null,
+          packQuantity: browsePackQuantity,
+          productType: text(variant.product_type) || null }))
+        browseStatus = "AVAILABLE"
+        browseComparableCount = array(browse.comparableEvidence).length
+        browseReport = browse
+      } catch (error) {
+        if (getEbayReadonlyRateLimitMetadata(error)) throw error
+        browseStatus = safeCode(error)
+      }
       // This is the API equivalent of eBay's "Sell one like this": read the
-      // captured exact listing, verify title identity, then reuse only its
-      // official category and corroborating facts. Seller copy is never used.
+      // captured exact listing or a Browse-selected comparable, verify title
+      // identity, then reuse only official category and corroborating facts.
+      // Seller copy is never used.
       let trading: JsonRecord | null = null
       let tradingStatus = "NOT_APPLICABLE_ITEM_ID_MISSING"
-      const tradingItemId = await officialCapturedItemId(input.supabase, input.accountKey, text(candidate.supplier_variant_id))
-      if (tradingItemId) {
+      let tradingSelectionSource = "NONE"
+      const capturedTradingItemId = await officialCapturedItemId(input.supabase, input.accountKey,
+        text(candidate.supplier_variant_id))
+      const browseTradingItemId = browseSellSimilarTradingItemId({ browse: browseReport, productTitle: base.title })
+      const tradingAttempts = [
+        capturedTradingItemId ? { itemId: capturedTradingItemId, source: "CAPTURED_EXACT" } : null,
+        browseTradingItemId && browseTradingItemId !== capturedTradingItemId
+          ? { itemId: browseTradingItemId, source: "BROWSE_SELL_SIMILAR" }
+          : null,
+      ].filter((attempt): attempt is { itemId: string; source: string } => Boolean(attempt))
+      for (const attempt of tradingAttempts) {
         try {
-          const comparable = record(await readEbayTradingItemIdentityReadonly(tradingItemId))
+          const comparable = record(await readEbayTradingItemIdentityReadonly(attempt.itemId))
           if (comparableTitleMatches(base.title, comparable.title)) {
             trading = comparable
             tradingStatus = "AVAILABLE"
+            tradingSelectionSource = attempt.source
+            break
           } else {
             tradingStatus = "TITLE_IDENTITY_MISMATCH"
           }
@@ -650,26 +710,6 @@ export async function runProductFactsEnrichment(input: {
       const taxonomyCategoryId = catalogCategoryId || tradingCategoryId || knownCategoryId
       const taxonomy = await getEbayTaxonomyListingIntelligence(base.title, taxonomyCategoryId || undefined)
       const taxonomyRecord = record(taxonomy)
-      const browsePackQuantity = intendedPackCount
-      let browseStatus = "SKIPPED"
-      let browseComparableCount = 0
-      let browseReport: JsonRecord | null = null
-      try {
-        const browse = record(await runEbaySellerKeywordDemandValidation({ productName: base.title, productTitle: base.title,
-          variantTitle: text(variant.variant_title) || null, supplierSku: text(variant.sku) || null,
-          categoryId: text(taxonomyRecord.categoryId) || null, gtin: normalizeGtin(variant.barcode),
-          brand: text(fromMetadata(base.metadata, ["brand", "manufacturerBrand"])) || null,
-          mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])) || null,
-          size: text(fromMetadata(base.metadata, ["size", "netContent"])) || null,
-          packQuantity: browsePackQuantity,
-          productType: text(variant.product_type) || null }))
-        browseStatus = "AVAILABLE"
-        browseComparableCount = array(browse.comparableEvidence).length
-        browseReport = browse
-      } catch (error) {
-        if (getEbayReadonlyRateLimitMetadata(error)) throw error
-        browseStatus = safeCode(error)
-      }
       const sourceSnapshots = [
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "LUNA_EXACT_VARIANT", authority: "SUPPLIER", observedAt: base.observedAt, status: "AVAILABLE",
@@ -688,7 +728,11 @@ export async function runProductFactsEnrichment(input: {
           sourceType: "EBAY_TAXONOMY_OFFICIAL_READONLY", authority: "EBAY_TAXONOMY", observedAt: text(taxonomyRecord.observedAt) || null,
           status: text(taxonomyRecord.status) || "REQUEST_FAILED", payload: { categoryId: text(taxonomyRecord.categoryId) || null,
             categorySeedPresent: Boolean(taxonomyCategoryId),
-            categorySeedSource: catalogCategoryId ? "EBAY_CATALOG_EXACT" : tradingCategoryId ? "EBAY_TRADING_EXACT_COMPARABLE" : knownCategoryId ? "EXISTING_EXACT_COMPARABLE" : "TITLE_SUGGESTION",
+            categorySeedSource: catalogCategoryId ? "EBAY_CATALOG_EXACT" : tradingCategoryId
+              ? tradingSelectionSource === "BROWSE_SELL_SIMILAR"
+                ? "EBAY_TRADING_SELL_SIMILAR_TITLE_VALIDATED"
+                : "EBAY_TRADING_EXACT_COMPARABLE"
+              : knownCategoryId ? "EXISTING_EXACT_COMPARABLE" : "TITLE_SUGGESTION",
             categoryResolution: text(taxonomyRecord.categoryResolution) || "UNRESOLVED",
             failureCode: text(taxonomyRecord.failureCode) || null,
             requiredAspectCount: array(taxonomyRecord.requiredAspects).length } }),
@@ -697,7 +741,9 @@ export async function runProductFactsEnrichment(input: {
           payload: { comparableCount: browseComparableCount, contentUsedAsCriticalAuthority: false } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "EBAY_TRADING_GET_ITEM_READONLY", authority: "CORROBORATION", observedAt: trading ? text(trading.observedAt) || now.toISOString() : null,
-          status: tradingStatus, payload: { validOfficialItemId: Boolean(trading), contentUsedAsCriticalAuthority: false } }),
+          status: tradingStatus, payload: { validOfficialItemId: Boolean(trading),
+            selectionSource: tradingSelectionSource, titleIdentityValidated: Boolean(trading),
+            contentUsedAsCriticalAuthority: false } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "MANUFACTURER_OFFICIAL_PUBLIC", authority: "MANUFACTURER_OR_LABEL",
           observedAt: manufacturerOfficial.status === "AVAILABLE" ? manufacturerOfficial.observedAt : null,
