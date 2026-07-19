@@ -40,7 +40,7 @@ import {
   fetchOfficialManufacturerFacts,
 } from "./ebay-official-manufacturer-facts"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V7_2026_07_19"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V8_2026_07_19"
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
 type JsonRecord = Record<string, unknown>
@@ -613,7 +613,7 @@ function browseSellSimilarTradingCandidates(input: { browse: JsonRecord | null; 
 
 const SELL_SIMILAR_SAFE_ITEM_SPECIFICS = new Set([
   "type", "style", "theme", "material", "department", "features", "feature", "character",
-  "character family", "occasion", "pattern", "shape", "finish",
+  "character family", "occasion", "pattern", "shape", "finish", "item length", "item width",
 ])
 
 function tradingItemSpecificObservations(input: {
@@ -784,6 +784,14 @@ export async function runProductFactsEnrichment(input: {
       const taxonomyCategoryId = semanticCategoryId || catalogCategoryId || tradingCategoryId || knownCategoryId
       const taxonomy = await getEbayTaxonomyListingIntelligence(base.title, taxonomyCategoryId || undefined)
       const taxonomyRecord = record(taxonomy)
+      const requiredAspectNames = new Set(array(taxonomyRecord.requiredAspects).map(record)
+        .map((aspect) => text(aspect.name).toLocaleLowerCase()).filter(Boolean))
+      const sellSimilarCriticalItemSpecificsAvailable = tradingComparables.some((comparable) =>
+        array(comparable.itemSpecifics).map(record).some((specific) => {
+          const name = text(specific.name).toLocaleLowerCase("en-US").replace(/\s+/g, " ")
+          const values = array(specific.values).map(text).filter(Boolean)
+          return requiredAspectNames.has(name) && SELL_SIMILAR_SAFE_ITEM_SPECIFICS.has(name) && values.length === 1
+        }))
       const sourceSnapshots = [
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "LUNA_EXACT_VARIANT", authority: "SUPPLIER", observedAt: base.observedAt, status: "AVAILABLE",
@@ -820,7 +828,7 @@ export async function runProductFactsEnrichment(input: {
             selectionSource: tradingSelectionSource, titleIdentityValidated: Boolean(trading),
             comparableReadCount: tradingComparables.length,
             safeDescriptiveItemSpecificsEligible: tradingComparables.length > 0,
-            contentUsedAsCriticalAuthority: false } }),
+            contentUsedAsCriticalAuthority: sellSimilarCriticalItemSpecificsAvailable } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "MANUFACTURER_OFFICIAL_PUBLIC", authority: "MANUFACTURER_OR_LABEL",
           observedAt: manufacturerOfficial.status === "AVAILABLE" ? manufacturerOfficial.observedAt : null,
@@ -862,8 +870,6 @@ export async function runProductFactsEnrichment(input: {
         offerPackCount: number(factKeyValue(firstResolution.facts, "OFFER_PACK", "offerPackCount")), now })
       const observations = [...initial, ...derived, ...(estimate ? [estimate.observation] : [])]
       const resolved = resolveProductFacts(observations, now)
-      const requiredAspectNames = new Set(array(taxonomyRecord.requiredAspects).map(record)
-        .map((aspect) => text(aspect.name).toLocaleLowerCase()).filter(Boolean))
       const taxonomySourceReady = text(taxonomyRecord.status) === "AVAILABLE" && /^\d+$/.test(text(taxonomyRecord.categoryId)) &&
         array(taxonomyRecord.aspects).length > 0
       const taxonomyAspects = taxonomySourceReady ? array(taxonomyRecord.aspects) : []

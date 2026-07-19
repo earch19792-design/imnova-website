@@ -430,7 +430,7 @@ const ASPECT_MAPPING: Record<string, string[]> = {
 
 const SELL_SIMILAR_DESCRIPTIVE_ASPECTS = new Set([
   "color", "type", "style", "theme", "material", "department", "features", "feature",
-  "character", "characterfamily", "occasion", "pattern", "shape", "finish",
+  "character", "characterfamily", "occasion", "pattern", "shape", "finish", "itemlength", "itemwidth",
 ])
 
 function hasSafeSellSimilarAspect(aspect: TaxonomyAspect, resolved: ResolvedFact | null,
