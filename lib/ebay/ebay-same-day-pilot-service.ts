@@ -56,6 +56,7 @@ import {
 } from "./luna-fulfillment-pricing"
 import { extractLunaOfficialDescriptionIdentity } from "./luna-official-description-identity"
 import { loadBoundAuthoritativeFactPackage } from "./ebay-authoritative-fact-package"
+import { confirmListingAiQueueLunaObservation } from "./ebay-listing-ai-approval-queue-service"
 import {
   generateAndPersistSameDayImagePackage,
   reviewSameDayImagePackage,
@@ -67,6 +68,8 @@ const OPERATOR_CONFIRMABLE_OFFICIAL_LABEL_FACTS: Record<string, { factKey: strin
   brand: { factKey: "brand", label: "Marca (Brand)" },
 }
 const LEGACY_PRODUCT_FACTS_RECOVERY_VERSION = "LEGACY_PRODUCT_FACTS_RECOVERY_V2_2026_07_19"
+const STALE_DECISION_FACTS_RECOVERY_VERSION = "STALE_DECISION_FACTS_RECOVERY_V1_2026_07_19"
+const SAME_DAY_LUNA_DECISION_REFRESH_VERSION = "SAME_DAY_LUNA_DECISION_REFRESH_V1_2026_07_19"
 const LEGACY_PRODUCT_FACTS_REJECTION_REASONS = new Set([
   "PRODUCT_FACT_MARKETPLACE_PRODUCT_FACT_SOURCE_SNAPSHOTS_PERSIST_FAILED",
   "SHIPPING_CONFIRMED_REQUIRED",
@@ -1197,6 +1200,98 @@ async function repairRejectedSingleFactException(
   return 1
 }
 
+/**
+ * Product facts can remain valid while their commercial decision binding has
+ * expired. Refresh the decision from the operator's existing Luna
+ * confirmation and stored evidence, then rerun only Product Facts. This does
+ * not repeat Discovery, Product Research or any eBay write.
+ */
+async function repairStaleDecisionProductFactsRejection(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  if (state.tasks.some((task) => task.status === "OPEN")) return 0
+  const selected = [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .find((candidate) => {
+      const gates = record(record(candidate.product_facts_summary).gates)
+      const evidence = record(candidate.evidence_summary)
+      const confirmation = record(record(candidate.economics_summary).lunaConfirmation)
+      const confirmedAt = Date.parse(text(confirmation.confirmedAt))
+      return candidate.machine_state === "REJECTED" && candidate.state === "REJECTED_TODAY" &&
+        strings(candidate.blockers).includes("OPENAI_INPUT_NOT_READY") &&
+        gates.IDENTITY_READY === true && gates.PRODUCT_FACTS_READY === true &&
+        gates.OFFER_PACK_READY === true && gates.EBAY_ASPECTS_READY === true &&
+        gates.REGULATORY_READY === true && gates.SHIPPING_ESTIMATE_READY === true &&
+        text(candidate.queue_item_id) && Number(candidate.economics_summary?.confirmedLunaPrice) > 0 &&
+        confirmation.status !== "OUT_OF_STOCK" && Number.isFinite(confirmedAt) &&
+        now.getTime() - confirmedAt <= 4 * 60 * 60_000 &&
+        text(evidence.staleDecisionFactsRecoveryVersion) !== STALE_DECISION_FACTS_RECOVERY_VERSION
+    })
+  if (!selected) return 0
+  const actorId = text(state.run.created_by)
+  if (!/^[0-9a-f-]{36}$/i.test(actorId)) return 0
+  const economics = record(selected.economics_summary)
+  const confirmation = record(economics.lunaConfirmation)
+  const exactQuantity = confirmation.quantityVisible === true
+    ? number(confirmation.confirmedQuantity) : null
+  await confirmListingAiQueueLunaObservation({
+    supabase,
+    accountKey: text(state.run.marketplace_account_key),
+    actorId,
+    itemId: text(selected.queue_item_id),
+    idempotencyKey: `${state.run.id}:${selected.id}:${STALE_DECISION_FACTS_RECOVERY_VERSION}`,
+    priceObserved: Number(economics.confirmedLunaPrice),
+    availability: exactQuantity !== null ? "EXACT_QUANTITY_VISIBLE" : "AVAILABLE_QUANTITY_NOT_SHOWN",
+    exactQuantity,
+    now,
+  })
+  const evidenceSummary = {
+    ...record(selected.evidence_summary),
+    staleDecisionFactsRecoveryVersion: STALE_DECISION_FACTS_RECOVERY_VERSION,
+    staleDecisionRefreshedAt: now.toISOString(),
+    fullCatalogRescan: false,
+    productResearchRepeated: false,
+  }
+  await transition({
+    supabase,
+    runId: state.run.id,
+    candidateId: text(selected.id),
+    previousState: "REJECTED",
+    nextState: "ENRICHING_PRODUCT_FACTS",
+    reasonCode: "STALE_COMMERCIAL_DECISION_REFRESHED",
+    triggeredBy: "RETRY",
+    checkpoint: { version: STALE_DECISION_FACTS_RECOVERY_VERSION,
+      fullCatalogRescan: false, productResearchRepeated: false, ebayWrites: 0 },
+    nextAutomaticAction: "Recalcular Product Facts con la decisión comercial vigente.",
+    nextHumanAction: "Ninguna.",
+    job: {
+      jobType: "ENRICH_PRODUCT_FACTS",
+      idempotencyKey: `${state.run.id}:${selected.id}:ENRICH_PRODUCT_FACTS:${STALE_DECISION_FACTS_RECOVERY_VERSION}`,
+      checkpoint: { queueItemId: selected.queue_item_id, staleDecisionRecovery: true },
+      availableAt: now.toISOString(),
+      maxAttempts: 10,
+      apiFamily: "BROWSE",
+      apiOperation: "EXACT_VERIFICATION",
+      ownerLane: "P1_EXACT_VERIFICATION",
+    },
+  })
+  const { error } = await supabase.from("ebay_same_day_pilot_candidates").update({
+    state: "READY_FOR_CONTENT",
+    blockers: [],
+    evidence_summary: evidenceSummary,
+    product_facts_summary: {},
+    next_automated_action: "Recalcular Product Facts y Taxonomy del candidato afectado.",
+    next_human_action: "Ninguna.",
+    updated_at: now.toISOString(),
+  }).eq("id", selected.id).eq("run_id", state.run.id)
+    .eq("machine_state", "ENRICHING_PRODUCT_FACTS")
+  if (error) throw new Error("SAME_DAY_PILOT_STALE_DECISION_RECOVERY_FAILED")
+  await refreshRunProjection(supabase, state.run.id)
+  return 1
+}
+
 async function repairSameDayPilotBootstrap(
   supabase: SupabaseClient,
   state: Awaited<ReturnType<typeof currentState>>,
@@ -1679,6 +1774,11 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
       existing = await currentState(input.supabase, input.accountKey,
         text(existing.run.operation_date) || date)
     }
+    if (existing && await repairStaleDecisionProductFactsRejection(input.supabase, existing, now)) {
+      repaired = true
+      existing = await currentState(input.supabase, input.accountKey,
+        text(existing.run.operation_date) || date)
+    }
   }
   const recoverEmptyRun = Boolean(existing && existing.candidates.length === 0
     && Number(existing.run.queue_count ?? 0) === 0)
@@ -2023,6 +2123,17 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
         actionSchema: { type: "OPEN_PRODUCT_RESEARCH", query: record(candidate.product_research_query_plan).query },
         continuationJobType: "RECONCILE_PRODUCT_RESEARCH_CAPTURE" })
     } else {
+      if (!text(candidate.queue_item_id)) throw new Error("SAME_DAY_PILOT_FACT_QUEUE_ITEM_MISSING")
+      await confirmListingAiQueueLunaObservation({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        actorId: input.actorId,
+        itemId: text(candidate.queue_item_id),
+        idempotencyKey: `${state.run.id}:${task.id}:${SAME_DAY_LUNA_DECISION_REFRESH_VERSION}`,
+        priceObserved: input.price,
+        availability: input.quantity === null ? "AVAILABLE_QUANTITY_NOT_SHOWN" : "EXACT_QUANTITY_VISIBLE",
+        exactQuantity: input.quantity,
+      })
       await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
         gateType: "LUNA_CONFIRMATION_REQUIRED", runId: state.run.id, candidateId: task.candidate_id,
         previousState: "WAITING_LUNA_CONFIRMATION", nextState: "CALCULATING_ECONOMICS",
@@ -2762,10 +2873,16 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     )
   const singleFactExceptionsRecovered =
     await repairRejectedSingleFactException(input.supabase, state, now)
-  const legacyProductFactsRejectionsRepaired =
+  // Repair at most one durable lane per worker cycle. Each repair can create a
+  // job or human task, so later repair decisions must observe the refreshed
+  // state on the following cycle instead of opening parallel operator work.
+  const staleDecisionFactsRecovered = singleFactExceptionsRecovered ? 0 :
+    await repairStaleDecisionProductFactsRejection(input.supabase, state, now)
+  const legacyProductFactsRejectionsRepaired = singleFactExceptionsRecovered || staleDecisionFactsRecovered ? 0 :
     await repairLegacyProductFactsRejections(input.supabase, state, now)
-  const deadLettersRecovered = await recoverDeadLetterCandidates(input.supabase, state)
-  if (legacyPrematureRejectionsRepaired || singleFactExceptionsRecovered ||
+  const deadLettersRecovered = singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
+    legacyProductFactsRejectionsRepaired ? 0 : await recoverDeadLetterCandidates(input.supabase, state)
+  if (legacyPrematureRejectionsRepaired || singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
     legacyProductFactsRejectionsRepaired || deadLettersRecovered) {
     state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
     if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
@@ -2779,6 +2896,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     await refreshRunProjection(input.supabase, state.run.id, true)
     return { processed: 0, status: "IDLE", repaired,
       legacyPrematureRejectionsRepaired, singleFactExceptionsRecovered,
+      staleDecisionFactsRecovered,
       legacyProductFactsRejectionsRepaired,
       deadLettersRecovered }
   }

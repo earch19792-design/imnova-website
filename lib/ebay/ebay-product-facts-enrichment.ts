@@ -35,6 +35,10 @@ import {
 } from "./ebay-product-facts-readiness"
 import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
 import { extractLunaOfficialDescriptionIdentity } from "./luna-official-description-identity"
+import {
+  OFFICIAL_MANUFACTURER_FACTS_ADAPTER_VERSION,
+  fetchOfficialManufacturerFacts,
+} from "./ebay-official-manufacturer-facts"
 
 export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V4_2026_07_19"
 const MARKETPLACE = "EBAY_US"
@@ -438,6 +442,36 @@ async function operatorConfirmedOfficialLabelFacts(
   })
 }
 
+function manufacturerOfficialObservations(input: {
+  candidateId: string
+  lunaVariantId: string | null
+  source: Awaited<ReturnType<typeof fetchOfficialManufacturerFacts>>
+}) {
+  if (input.source.status !== "AVAILABLE" || !input.source.sourceReference) {
+    return [] as FactObservation[]
+  }
+  const sourceReference = input.source.sourceReference
+  return input.source.facts.flatMap((fact): FactObservation[] => {
+    const value = safeFactValue(fact.value)
+    if (value === null) return []
+    return [observation({
+      candidateId: input.candidateId,
+      lunaVariantId: input.lunaVariantId,
+      scope: "PRODUCT_UNIT",
+      key: fact.key,
+      value,
+      unit: fact.unit,
+      sourceType: "MANUFACTURER_OFFICIAL_PUBLIC",
+      authority: "MANUFACTURER_OR_LABEL",
+      status: "VERIFIED",
+      confidence: .96,
+      observedAt: input.source.observedAt,
+      sourceReference,
+      adapterVersion: OFFICIAL_MANUFACTURER_FACTS_ADAPTER_VERSION,
+    })]
+  })
+}
+
 function snapshot(input: { runId: string; candidateId: string; lunaVariantId: string | null; sourceType: FactSourceType; authority: string; observedAt: string | null; status: string; payload: JsonRecord }) {
   return { fact_run_id: input.runId, queue_item_id: input.candidateId, luna_variant_id: input.lunaVariantId,
     marketplace_account_key: "", marketplace: MARKETPLACE, source_type: input.sourceType,
@@ -528,8 +562,11 @@ export async function runProductFactsEnrichment(input: {
       const intendedPackCount = base.offerPackConflict ? null : base.nativePackCount
       const authoritativeGtin = normalizeGtin(variant.barcode ?? fromMetadata(base.metadata, ["upc", "ean", "gtin", "barcode"]) ?? officialDescription.facts.gtin)
       const knownCategoryId = categoryIdFromCandidateEvidence(candidate)
-      const catalog = await searchEbayCatalogIdentity({ query: base.title, gtin: authoritativeGtin,
-        mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])), categoryId: knownCategoryId || null })
+      const [catalog, manufacturerOfficial] = await Promise.all([
+        searchEbayCatalogIdentity({ query: base.title, gtin: authoritativeGtin,
+          mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])), categoryId: knownCategoryId || null }),
+        fetchOfficialManufacturerFacts({ productTitle: base.title, now }),
+      ])
       const catalogSelection = selectCatalogIdentityMatches({
         title: base.title,
         gtin: authoritativeGtin,
@@ -605,13 +642,19 @@ export async function runProductFactsEnrichment(input: {
           sourceType: "EBAY_TRADING_GET_ITEM_READONLY", authority: "CORROBORATION", observedAt: trading ? text(trading.observedAt) || now.toISOString() : null,
           status: tradingStatus, payload: { validOfficialItemId: Boolean(tradingItemId), contentUsedAsCriticalAuthority: false } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
-          sourceType: "MANUFACTURER_OFFICIAL_PUBLIC", authority: "MANUFACTURER_OR_LABEL", observedAt: null, status: "NOT_CONFIGURED",
-          payload: { allowlistedOfficialDomainConfigured: false, externalPageFetched: false } }),
+          sourceType: "MANUFACTURER_OFFICIAL_PUBLIC", authority: "MANUFACTURER_OR_LABEL",
+          observedAt: manufacturerOfficial.status === "AVAILABLE" ? manufacturerOfficial.observedAt : null,
+          status: manufacturerOfficial.status,
+          payload: { ...manufacturerOfficial.audit,
+            adapterVersion: OFFICIAL_MANUFACTURER_FACTS_ADAPTER_VERSION,
+            structuredFactKeys: manufacturerOfficial.facts.map((fact) => fact.key) } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "REGULATOR_OFFICIAL", authority: "REGULATOR", observedAt: null, status: "NOT_CONFIGURED",
           payload: { regulatedOnly: true, externalPageFetched: false } }),
       ]
       const initial = [...base.entries, ...operatorLabelFacts,
+      ...manufacturerOfficialObservations({ candidateId: text(candidate.id),
+        lunaVariantId: text(candidate.supplier_variant_id) || null, source: manufacturerOfficial }),
       ...catalogObservations({ candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
         products: catalogSelection.products,
         observedAt: text(catalogRecord.observedAt) || now.toISOString() }),
@@ -663,7 +706,8 @@ export async function runProductFactsEnrichment(input: {
         authoritativeFactsPackage, authoritativeFactsExpiresAt,
         exception, sourceSnapshots, taxonomy: taxonomyRecord,
         sourceAttempts: { catalog: text(catalogRecord.status) || "REQUEST_FAILED", taxonomy: text(taxonomyRecord.status) || "REQUEST_FAILED",
-          browse: browseStatus, trading: tradingStatus } })
+          browse: browseStatus, trading: tradingStatus,
+          manufacturer: manufacturerOfficial.status } })
       const factCounts = resolved.facts.reduce<JsonRecord>((counts, fact) => {
         counts.total = Number(counts.total ?? 0) + 1
         counts[fact.verificationStatus] = Number(counts[fact.verificationStatus] ?? 0) + 1
@@ -697,7 +741,8 @@ export async function runProductFactsEnrichment(input: {
     ebayTaxonomy: prepared.filter((entry) => text(entry.sourceAttempts.taxonomy) === "AVAILABLE").length,
     ebayBrowse: prepared.filter((entry) => entry.sourceAttempts.browse === "AVAILABLE").length,
     ebayTradingGetItem: prepared.filter((entry) => entry.sourceAttempts.trading === "AVAILABLE").length,
-    manufacturerOfficial: 0, regulatorOfficial: 0 }
+    manufacturerOfficial: prepared.filter((entry) => text(entry.sourceAttempts.manufacturer) === "AVAILABLE").length,
+    regulatorOfficial: 0 }
   const { data: run, error: runError } = await input.supabase.from("marketplace_product_fact_runs").insert({
     queue_run_id: queueRun.id, marketplace_account_key: input.accountKey, marketplace: MARKETPLACE, engine_version: PRODUCT_FACTS_ENGINE_VERSION,
     candidate_limit: MAX_CANDIDATES, candidates_requested: candidates.length, candidates_processed: 0,
