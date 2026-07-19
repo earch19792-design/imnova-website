@@ -409,6 +409,57 @@ async function currentState(
       },
     }
   })
+  const rejectedQueueItemIds = [...new Set(anchoredCandidates.filter((candidate) =>
+    ["REJECTED", "BLOCKED"].includes(text(candidate.machine_state)))
+    .map((candidate) => text(candidate.queue_item_id)).filter(Boolean))]
+  const { data: decisionLinks, error: decisionLinkError } = rejectedQueueItemIds.length
+    ? await supabase.from("marketplace_listing_approval_queue_items")
+      .select("id,decision_package_id,package_hash,stale_after")
+      .in("id", rejectedQueueItemIds)
+    : { data: [], error: null }
+  if (decisionLinkError) throw new Error("SAME_DAY_PILOT_DECISION_EXPLANATION_LINK_READ_FAILED")
+  const decisionPackageIds = [...new Set((decisionLinks ?? [])
+    .map((entry) => text(entry.decision_package_id)).filter(Boolean))]
+  const { data: decisionRows, error: decisionError } = decisionPackageIds.length
+    ? await supabase.from("marketplace_listing_decision_packages")
+      .select("id,package_hash,verdict,status,generated_at,economics:package_payload->economics,comparable_counts:package_payload->comparables->counts,decision_summary:package_payload->decision")
+      .in("id", decisionPackageIds)
+    : { data: [], error: null }
+  if (decisionError) throw new Error("SAME_DAY_PILOT_DECISION_EXPLANATION_READ_FAILED")
+  const decisionById = new Map((decisionRows ?? []).map((entry) => [text(entry.id), record(entry)]))
+  const decisionLinkByQueueItem = new Map((decisionLinks ?? []).map((entry) => [text(entry.id), record(entry)]))
+  const explainedCandidates = anchoredCandidates.map((candidate) => {
+    const decisionLink = decisionLinkByQueueItem.get(text(candidate.queue_item_id)) ?? {}
+    const decision = decisionById.get(text(decisionLink.decision_package_id)) ?? {}
+    if (!text(decision.id)) return candidate
+    const economics = record(decision.economics)
+    const comparableCounts = record(decision.comparable_counts)
+    const decisionBlock = record(decision.decision_summary)
+    const staleAfter = text(decisionLink.stale_after)
+    const staleAfterMs = Date.parse(staleAfter)
+    return {
+      ...candidate,
+      commercial_decision_summary: {
+        verdict: text(decision.verdict),
+        status: text(decision.status),
+        generatedAt: text(decision.generated_at),
+        staleAfter: staleAfter || null,
+        fresh: Number.isFinite(staleAfterMs) && staleAfterMs > now.getTime(),
+        packageHashMatches: Boolean(text(decisionLink.package_hash) &&
+          text(decisionLink.package_hash) === text(decision.package_hash)),
+        economics: {
+          activeMarketMedian: number(economics.activeMarketMedian),
+          minimumSafePrice: number(economics.minimumSafePrice),
+          marketSupportsMinimumSafePrice: economics.marketSupportsMinimumSafePrice === true,
+        },
+        evidence: {
+          activeExactCount: number(comparableCounts.activeExact) ?? 0,
+          confirmedSoldExact: number(comparableCounts.confirmedSoldExact) ?? 0,
+        },
+        blockers: strings(decisionBlock.blockers),
+      },
+    }
+  })
   const cycleRunRows = cycleRuns ?? []
   const cycleRunIds = cycleRunRows.map((cycleRun) => text(cycleRun.id)).filter(Boolean)
   const { data: historicalCandidates, error: historicalCandidateError } = cycleRunIds.length
@@ -430,7 +481,7 @@ async function currentState(
   const nextCandidateCycle = canStartNextSameDayCandidateCycle({
     runStatus: text(run.status),
     cycle: number(run.cycle) ?? 1,
-    candidateMachineStates: anchoredCandidates.map((candidate) =>
+    candidateMachineStates: explainedCandidates.map((candidate) =>
       text(candidate.machine_state)),
     openHumanTasks: (tasks ?? []).filter((task) => task.status === "OPEN").length,
     dueOrLeasedJobs: (jobs ?? []).filter((job) =>
@@ -456,7 +507,7 @@ async function currentState(
   }
   return {
     run: projectedRun,
-    candidates: anchoredCandidates,
+    candidates: explainedCandidates,
     tasks: tasks ?? [],
     transitions: transitions ?? [],
     jobs: jobs ?? [],

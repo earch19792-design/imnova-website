@@ -142,6 +142,8 @@ export function TodayLaunchPanel() {
     {pilot && <>
       <LivePilotMonitor monitor={liveMonitor} pilotProgress={pilotProgress}
         lastObservedAt={lastObservedAt} nextCycleAllowed={nextCycleAllowed} />
+      {liveMonitor.rejectionSummaries.length > 0 && <RejectedCandidateExplanations
+        summaries={liveMonitor.rejectionSummaries} />}
       {quotaPaused && <p className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 text-sm text-amber-50">eBay pausó únicamente la verificación exacta. La selección, Luna y los paquetes locales permanecen disponibles; Seller OS retomará el mismo producto automáticamente{quotaResumeAt ? ` después de ${new Date(quotaResumeAt).toLocaleString("es-NI")}` : " cuando eBay libere la cuota"}.</p>}
       <section aria-labelledby="operator-task-heading" className="mt-6">
         <p className="text-[10px] font-black uppercase tracking-widest text-amber-100/60">2 · Tu decisión</p>
@@ -171,6 +173,29 @@ export function TodayLaunchPanel() {
       {readyCandidates.length > 0 && <div className="mt-6"><h3 className="text-lg font-black">Listos para Seller Hub</h3><div className="mt-3 grid gap-4">{readyCandidates.map((candidate: Row) => <ManualHandoffCard key={candidate.id} candidate={candidate} />)}</div></div>}
       <details className="mt-5 rounded-2xl border border-white/10 p-4"><summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver métricas y progreso automático</summary><div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-7"><Metric label="Piloto" value={`${pilotProgress} / 3`} /><Metric label="Ciclo" value={String(currentCycle)} /><Metric label="Cola de este ciclo" value={`${candidates.length} / 5`} /><Metric label="Intentados acumulados" value={String(pilot.cycleHistory?.attemptedCandidates ?? candidates.length)} /><Metric label="Preparación local" value={String(candidates.filter((candidate: Row) => candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES").length)} /><Metric label="Listos" value={String(pilot.run.ready_for_manual_publication_count)} /><Metric label="Escrituras eBay" value="0" /></div><div className="mt-3 grid gap-2">{candidates.map((candidate: Row) => <div key={candidate.id} className="min-w-0 rounded-xl bg-black/20 p-3"><p className="break-words font-bold">{candidate.ordinal}. {candidate.product_title}</p><p className="mt-1 break-words text-xs text-white/55">{businessState(candidate.machine_state)} · SKU {candidate.supplier_sku}</p>{candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES" && <p className="mt-1 text-xs text-cyan-100/75">Paquete local seguro preparado; todavía no es publicable.</p>}<p className="mt-1 break-words text-xs text-amber-100/80">{candidate.next_human_action}</p></div>)}</div></details>
     </>}
+  </section>
+}
+
+function RejectedCandidateExplanations({ summaries }: {
+  summaries: SameDayLiveMonitor["rejectionSummaries"]
+}) {
+  return <section aria-labelledby="rejected-candidates-heading"
+    className="mt-4 rounded-3xl border border-red-200/25 bg-red-300/[0.055] p-4 sm:p-5">
+    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-red-100/65">Decisión comercial explicada</p>
+    <h3 id="rejected-candidates-heading" className="mt-1 text-lg font-black text-red-50">Por qué no se publicarán estos productos</h3>
+    <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">Cada descarte muestra el motivo real, el cálculo económico y los campos obligatorios pendientes. Seller OS nunca publicará sólo para llenar el piloto.</p>
+    <div className="mt-4 grid gap-3">{summaries.map((summary) => <article key={summary.candidateId || `${summary.ordinal}:${summary.productTitle}`}
+      className="min-w-0 rounded-2xl border border-red-100/15 bg-black/25 p-4">
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[10px] font-black uppercase tracking-widest text-red-100/50">Candidato {summary.ordinal ?? "—"}</p>
+          <h4 className="mt-1 break-words font-black text-white">{summary.productTitle}</h4>
+        </div>
+        <span className="rounded-full border border-red-200/25 bg-red-200/[0.08] px-2.5 py-1 text-[10px] font-black text-red-100">NO PUBLICAR AHORA</span>
+      </div>
+      <p className="mt-3 break-words text-sm font-black leading-6 text-red-100">{summary.headline}</p>
+      {summary.details.length > 0 && <ul className="mt-2 grid gap-1.5 text-xs leading-5 text-white/60">{summary.details.map((detail) => <li key={detail} className="flex gap-2"><span aria-hidden="true" className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-red-200/70" /><span>{detail}</span></li>)}</ul>}
+    </article>)}</div>
   </section>
 }
 

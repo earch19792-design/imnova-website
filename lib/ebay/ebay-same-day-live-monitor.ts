@@ -16,6 +16,14 @@ export type SameDayLiveTimelineStep = {
   status: "DONE" | "CURRENT" | "NEXT"
 }
 
+export type SameDayCandidateRejectionSummary = {
+  candidateId: string
+  ordinal: number | null
+  productTitle: string
+  headline: string
+  details: string[]
+}
+
 export type SameDayLiveMonitor = {
   status: SameDayLiveMonitorStatus
   businessLabel: string
@@ -35,6 +43,7 @@ export type SameDayLiveMonitor = {
   nextAutomaticAction: string
   nextHumanAction: string
   blockerSummary: string | null
+  rejectionSummaries: SameDayCandidateRejectionSummary[]
 }
 
 const TERMINAL_STATES = new Set(["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"])
@@ -96,6 +105,94 @@ function rows(value: unknown): Row[] {
 function dateMs(value: unknown) {
   const parsed = Date.parse(text(value))
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function numeric(value: unknown) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function usd(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2,
+  }).format(value)
+}
+
+export function explainSameDayRejectedCandidate(candidate: Row): SameDayCandidateRejectionSummary {
+  const decision = candidate.commercial_decision_summary &&
+    typeof candidate.commercial_decision_summary === "object"
+    ? candidate.commercial_decision_summary as Row : {}
+  const decisionEconomics = decision.economics && typeof decision.economics === "object"
+    ? decision.economics as Row : {}
+  const decisionEvidence = decision.evidence && typeof decision.evidence === "object"
+    ? decision.evidence as Row : {}
+  const currentEconomics = candidate.economics_summary && typeof candidate.economics_summary === "object"
+    ? candidate.economics_summary as Row : {}
+  const facts = candidate.product_facts_summary && typeof candidate.product_facts_summary === "object"
+    ? candidate.product_facts_summary as Row : {}
+  const gates = facts.gates && typeof facts.gates === "object" ? facts.gates as Row : {}
+  const economicsConfig = currentEconomics.config && typeof currentEconomics.config === "object"
+    ? currentEconomics.config as Row : {}
+  const feePolicy = currentEconomics.feePolicy && typeof currentEconomics.feePolicy === "object"
+    ? currentEconomics.feePolicy as Row : {}
+  const marketMedian = numeric(decisionEconomics.activeMarketMedian)
+  const safePrice = numeric(decisionEconomics.minimumSafePrice)
+  const currentFloor = numeric(currentEconomics.minimumOperatorPrice)
+  const soldExact = numeric(decisionEvidence.confirmedSoldExact) ??
+    numeric((candidate.evidence_summary as Row | undefined)?.soldExactCount) ?? 0
+  const missingRequiredAspects = rows(facts.resolvedRequirements)
+    .filter((requirement) => text(requirement.status) === "MISSING_BLOCKING")
+    .map((requirement) => text(requirement.aspectName)).filter(Boolean)
+  const details: string[] = []
+  let headline = translateSameDayPilotBlocker(Array.isArray(candidate.blockers)
+    ? candidate.blockers[0] : null) ?? "El candidato no superó las puertas de publicación."
+
+  if (text(decision.verdict) === "NO_GO" && marketMedian !== null && safePrice !== null &&
+    decisionEconomics.marketSupportsMinimumSafePrice !== true) {
+    headline = `No se publica: el precio seguro completo ${usd(safePrice)} supera la mediana eBay ${usd(marketMedian)}.`
+    if (currentFloor !== null) {
+      const currentGap = currentFloor - marketMedian
+      details.push(`Incluso el piso preliminar actual ${usd(currentFloor)} queda ${usd(Math.abs(currentGap))} ${currentGap >= 0 ? "por encima" : "por debajo"} del mercado mediano.`)
+    }
+  }
+  const supplierCost = numeric(currentEconomics.confirmedLunaPrice ?? currentEconomics.supplierCost)
+  const outboundShipping = numeric(economicsConfig.estimatedOutboundShipping)
+  const ebayFeeRate = numeric(economicsConfig.estimatedEbayFeeRate)
+  const fixedOrderFee = numeric(feePolicy.appliedFixedOrderFee ?? economicsConfig.fixedOrderFee)
+  const returnsRate = numeric(economicsConfig.returnsReserveRate)
+  const promotedRate = numeric(economicsConfig.promotedListingsReserveRate)
+  if ([currentFloor, supplierCost, outboundShipping, ebayFeeRate, fixedOrderFee, returnsRate, promotedRate]
+    .every((value) => value !== null)) {
+    const salePrice = currentFloor as number
+    const ebayFee = salePrice * (ebayFeeRate as number) + (fixedOrderFee as number)
+    const returnsReserve = salePrice * (returnsRate as number)
+    const promotedReserve = salePrice * (promotedRate as number)
+    const profit = salePrice - (supplierCost as number) - (outboundShipping as number) - ebayFee -
+      returnsReserve - promotedReserve
+    const margin = salePrice > 0 ? profit / salePrice * 100 : 0
+    const roi = (supplierCost as number) > 0 ? profit / (supplierCost as number) * 100 : 0
+    details.push(`A ${usd(salePrice)}: Luna ${usd(supplierCost as number)}, envío ${usd(outboundShipping as number)}, eBay estimado ${usd(ebayFee)}, devoluciones ${usd(returnsReserve)}, publicidad ${usd(promotedReserve)}; utilidad ${usd(profit)}, margen ${margin.toFixed(2)}% y ROI ${roi.toFixed(2)}%.`)
+  }
+  details.push(soldExact > 0
+    ? `${soldExact} venta(s) exacta(s) confirmada(s) en la evidencia disponible.`
+    : "No hay ventas exactas confirmadas para esta presentación.")
+  if (missingRequiredAspects.length) {
+    details.push(`Aspectos obligatorios pendientes: ${missingRequiredAspects.join(", ")}.`)
+  }
+  if (gates.SHIPPING_CONFIRMED === false) {
+    details.push("El peso o las dimensiones del paquete aún deben confirmarse antes de publicar si la política de envío los requiere.")
+  }
+  if (decision.fresh === false) {
+    details.push("La decisión comercial anterior está vencida y debe recalcularse antes de reconsiderar este producto.")
+  }
+
+  return {
+    candidateId: text(candidate.id),
+    ordinal: Number.isInteger(Number(candidate.ordinal)) ? Number(candidate.ordinal) : null,
+    productTitle: text(candidate.product_title) || "Producto sin nombre",
+    headline,
+    details: [...new Set(details)],
+  }
 }
 
 function isRecent(value: unknown, nowMs: number, maximumAgeMs: number) {
@@ -188,9 +285,10 @@ export function deriveSameDayLiveMonitor(input: {
     COMPLETED: { business: "PUBLICADO Y VERIFICADO", headline: "El listing fue verificado y registrado", detail: "Seller OS cerró el recorrido durable de este candidato." },
   }
   const label = labels[status]
+  const rejectionSummaries = blockedCandidates.map(explainSameDayRejectedCandidate)
   const firstBlocker = blockedCandidates.flatMap((candidate) =>
     Array.isArray(candidate.blockers) ? candidate.blockers : [])[0]
-  const blockerSummary = translateSameDayPilotBlocker(firstBlocker)
+  const blockerSummary = rejectionSummaries[0]?.headline ?? translateSameDayPilotBlocker(firstBlocker)
   const heartbeatAt = dateMs(run?.last_worker_heartbeat_at)
   const activityEvidence = status === "WORKING"
     ? heartbeatAt != null
@@ -223,5 +321,6 @@ export function deriveSameDayLiveMonitor(input: {
       ? text(openTasks[0]?.title) || "Completar la tarea visible."
       : text(run?.next_human_action) || text(currentCandidate?.next_human_action) || "Ninguna.",
     blockerSummary,
+    rejectionSummaries,
   }
 }
