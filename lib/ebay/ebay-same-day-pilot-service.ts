@@ -911,6 +911,10 @@ async function repairLegacyProductFactsRejections(
         jobType: "ENRICH_PRODUCT_FACTS",
         idempotencyKey: `${state.run.id}:${candidate.id}:ENRICH_PRODUCT_FACTS:${PRODUCT_FACTS_ENGINE_VERSION}`,
         checkpoint: { queueItemId: candidate.queue_item_id, targetedLegacyRecovery: true },
+        // The worker claim uses the cycle's captured `now`. Pin this recovery
+        // job to that same instant so a few milliseconds of transition work do
+        // not defer otherwise immediate continuation to the next cron slot.
+        availableAt: now.toISOString(),
         maxAttempts: 10,
         apiFamily: "BROWSE",
         apiOperation: "EXACT_VERIFICATION",
