@@ -28,9 +28,32 @@ import {
 } from "@/lib/ebay/ebay-product-research-query-plan"
 import { getEbayApplicationBrowseQuota } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import {
+  getSameDayPilot,
   processSameDayPilotJobChain,
   resumeSameDayPilotAfterProductResearchCapture,
 } from "@/lib/ebay/ebay-same-day-pilot-service"
+
+function object(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {}
+}
+
+async function currentPilotProductResearchPlanId(input: {
+  supabase: Parameters<typeof getSameDayPilot>[0]["supabase"]
+  accountKey: string
+}) {
+  const pilot = await getSameDayPilot(input)
+  if (!pilot) return null
+  const productResearchTaskOpen = pilot.tasks.some((task) =>
+    task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" && task.status === "OPEN")
+  if (!productResearchTaskOpen) return null
+  const planId = object(pilot.run.source_inventory).productResearchPlanId
+  if (typeof planId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(planId)) {
+    throw new Error("PRODUCT_RESEARCH_ACTIVE_PILOT_PLAN_REQUIRED")
+  }
+  return planId
+}
 
 function scheduleSameDayPilotContinuation(input: {
   supabase: Parameters<typeof processSameDayPilotJobChain>[0]["supabase"]
@@ -77,12 +100,15 @@ export async function GET(req: Request) {
   if (!auth.ok) return auth.response
   try {
     enforceListingAiRouteRateLimit(auth.actorId, "READ")
+    const pilotPlanId = await currentPilotProductResearchPlanId({
+      supabase: auth.supabase, accountKey: auth.accountKey,
+    })
     const [status, queryPlan, browseQuota, visual] = await Promise.all([
       getProductResearchBrowserCaptureStatus({
         supabase: auth.supabase, accountKey: auth.accountKey,
       }),
       getProductResearchQueryPlanStatus({
-        supabase: auth.supabase, accountKey: auth.accountKey,
+        supabase: auth.supabase, accountKey: auth.accountKey, planId: pilotPlanId,
       }),
       getEbayApplicationBrowseQuota(),
       visualStatusOrUnavailable({
@@ -107,10 +133,14 @@ export async function POST(req: Request) {
       throw new Error("PRODUCT_RESEARCH_CAPTURE_BODY_INVALID")
     }
     const capture = body.capture as ProductResearchBrowserCapture
+    const pilotPlanId = await currentPilotProductResearchPlanId({
+      supabase: auth.supabase, accountKey: auth.accountKey,
+    })
     let plannedTask: Awaited<ReturnType<typeof assertProductResearchCaptureMatchesNextQuery>>
     try {
       plannedTask = await assertProductResearchCaptureMatchesNextQuery({
-        supabase: auth.supabase, accountKey: auth.accountKey, searchQuery: capture.searchQuery,
+        supabase: auth.supabase, accountKey: auth.accountKey,
+        searchQuery: capture.searchQuery, planId: pilotPlanId,
       })
     } catch (planError) {
       const code = planError instanceof Error ? planError.message : ""
@@ -121,7 +151,7 @@ export async function POST(req: Request) {
       let queryPlan: Awaited<ReturnType<typeof getProductResearchQueryPlanStatus>> = null
       try {
         queryPlan = await getProductResearchQueryPlanStatus({
-          supabase: auth.supabase, accountKey: auth.accountKey,
+          supabase: auth.supabase, accountKey: auth.accountKey, planId: pilotPlanId,
         })
       } catch {
         throw planError

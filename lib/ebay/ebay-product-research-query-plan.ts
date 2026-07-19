@@ -270,6 +270,7 @@ export async function assertProductResearchCaptureMatchesNextQuery(input: {
   supabase: SupabaseClient
   accountKey: string
   searchQuery: unknown
+  planId?: string | null
 }) {
   const processedReplayForPlan = async (plan: { id: string; run_id: string | null }) => {
     const { data: processedTasks, error: processedError } = await input.supabase
@@ -296,12 +297,32 @@ export async function assertProductResearchCaptureMatchesNextQuery(input: {
       capturedAt: replay.captured_at ?? null,
     }
   }
-  const { data: activePlan, error: planError } = await input.supabase
-    .from("marketplace_product_research_query_plans").select("id,run_id")
-    .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
-    .eq("status", "ACTIVE").order("created_at", { ascending: false }).limit(1).maybeSingle()
-  if (planError) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_STATUS_READ_FAILED")
-  let plan = activePlan
+  let plan: { id: string; run_id: string | null } | null = null
+  if (input.planId) {
+    const { data: scopedPlan, error: scopedPlanError } = await input.supabase
+      .from("marketplace_product_research_query_plans").select("id,run_id,status")
+      .eq("id", input.planId)
+      .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+      .limit(1).maybeSingle()
+    if (scopedPlanError) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_STATUS_READ_FAILED")
+    if (!scopedPlan) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_SCOPE_MISSING")
+    if (scopedPlan.status === "COMPLETED") {
+      const replay = await processedReplayForPlan(scopedPlan)
+      if (replay) return replay
+      throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_NO_PENDING_TASK")
+    }
+    if (scopedPlan.status !== "ACTIVE") {
+      throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_SCOPE_NOT_ACTIVE")
+    }
+    plan = scopedPlan
+  } else {
+    const { data: activePlan, error: planError } = await input.supabase
+      .from("marketplace_product_research_query_plans").select("id,run_id")
+      .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+      .eq("status", "ACTIVE").order("created_at", { ascending: false }).limit(1).maybeSingle()
+    if (planError) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_STATUS_READ_FAILED")
+    plan = activePlan
+  }
   if (!plan) {
     // Once the final query is processed the plan becomes COMPLETED. A stale
     // tab from that just-finished plan must still receive safe navigation

@@ -140,6 +140,8 @@ export default function ProductResearchCaptureReceiverPage() {
         }
         setResult(payload.result)
         setStatus("READY")
+        const navigationCorrection = payload.result.navigationOnly === true &&
+          payload.result.captureQueryCorrected === true
         const successMessage = { type: CAPTURE_RESULT_MESSAGE,
           success: true, captureId, importedCount: payload.result.importedCount ?? 0,
           validCount: payload.result.validCount ?? 0,
@@ -148,12 +150,21 @@ export default function ProductResearchCaptureReceiverPage() {
           navigationOnly: payload.result.navigationOnly === true,
           captureQueryCorrected: payload.result.captureQueryCorrected === true,
           exactLunaMatches: payload.result.matchCounts?.exactLuna ?? 0,
-          nextQuery: payload.result.queryPlan?.nextQuery?.searchQuery ?? null,
-          nextQueryOrdinal: payload.result.queryPlan?.nextQuery?.ordinal ?? null,
-          queryCount: payload.result.queryPlan?.queryCount ?? null }
+          // Only a stale/wrong table is corrected in place. A valid capture
+          // returns control to Seller OS, which is the authority for the next
+          // product in this exact five-candidate batch.
+          nextQuery: navigationCorrection
+            ? payload.result.queryPlan?.nextQuery?.searchQuery ?? null : null,
+          nextQueryOrdinal: navigationCorrection
+            ? payload.result.queryPlan?.nextQuery?.ordinal ?? null : null,
+          queryCount: navigationCorrection
+            ? payload.result.queryPlan?.queryCount ?? null : null,
+          returnToSellerOs: !navigationCorrection }
         cacheCaptureResult(captureId, successMessage)
         postCaptureResult(successMessage)
-        if (payload.result.queryPlan?.nextQuery) window.setTimeout(() => opener.focus(), 250)
+        if (navigationCorrection && payload.result.queryPlan?.nextQuery) {
+          window.setTimeout(() => opener.focus(), 250)
+        }
       } catch (captureError) {
         const code = safeCode(captureError instanceof Error ? captureError.message : "")
         setStatus("ERROR")
@@ -211,8 +222,8 @@ export default function ProductResearchCaptureReceiverPage() {
         <div><dt className="text-white/50">OpenAI</dt><dd>0 llamadas</dd></div>
         <div><dt className="text-white/50">Escrituras eBay</dt><dd>0</dd></div>
       </dl>}
-      {result?.queryPlan?.status === "COMPLETED" && <a href="/admin/ebay-seller-os" target="sellerOsDashboard" rel="noopener" className="mt-6 grid min-h-12 w-full place-items-center rounded-2xl bg-emerald-200 px-4 text-sm font-black text-emerald-950">VOLVER A SELLER OS</a>}
-      <p className="mt-6 text-xs text-white/45">{result?.queryPlan?.status === "COMPLETED" ? "El plan terminó. Regresa a Seller OS para revisar el resultado y la siguiente acción." : "Sesión segura del lote activa. Déjala abierta: recibirá las próximas capturas sin pedir otro inicio de sesión. Seller OS continuará únicamente el reanálisis de Loop 1 del mismo run."}</p>
+      {result && !result.captureQueryCorrected && <a href="/admin/ebay-seller-os" target="sellerOsDashboard" rel="noopener" className="mt-6 grid min-h-12 w-full place-items-center rounded-2xl bg-emerald-200 px-4 text-sm font-black text-emerald-950">CONTINUAR EN SELLER OS</a>}
+      <p className="mt-6 text-xs text-white/45">{result?.queryPlan?.status === "COMPLETED" ? "El plan terminó. Regresa a Seller OS para revisar el resultado y la siguiente acción." : result && !result.captureQueryCorrected ? "La captura quedó guardada para este lote. Regresa a Seller OS: allí verás el siguiente producto antes de abrir otra consulta." : "Sesión segura del lote activa. Déjala abierta para conservar la autenticación durante las capturas autorizadas."}</p>
     </section>
   </main>
 }

@@ -150,7 +150,7 @@ export function TodayLaunchPanel() {
         <p className="text-[10px] font-black uppercase tracking-widest text-amber-100/60">2 · Tu decisión</p>
         <h3 id="operator-task-heading" className="mt-1 text-lg font-black">Tarea para Ernesto</h3>
         {productResearchTasks.length > 0
-          ? <div className="mt-3"><ProductResearchQueueTask guidance={pilot.productResearchGuidance} researchTasks={productResearchTasks} fallbackQuery={productResearchTasks[0]?.action_schema?.query} openTaskCount={productResearchTasks.length} /></div>
+          ? <div className="mt-3"><ProductResearchQueueTask guidance={pilot.productResearchGuidance} researchTasks={productResearchTasks} candidates={candidates} fallbackQuery={productResearchTasks[0]?.action_schema?.query} openTaskCount={productResearchTasks.length} /></div>
           : !primaryTask
           ? <p className="mt-2 rounded-2xl border border-white/10 p-4 text-sm text-white/55">Seller OS no necesita una acción humana en este momento.</p>
           : <div className="mt-3"><HumanTask task={primaryTask} candidate={primaryCandidate}
@@ -167,9 +167,11 @@ export function TodayLaunchPanel() {
       <section aria-labelledby="automatic-continuation-heading" className="mt-5 rounded-2xl border border-violet-200/20 bg-violet-200/[0.05] p-4">
         <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/60">3 · Qué continuará</p>
         <h3 id="automatic-continuation-heading" className="mt-1 text-base font-black text-violet-50">{productResearchTasks.length > 0
-          ? "La extensión cargará la próxima consulta validada y Seller OS continuará con cada candidato afectado."
+          ? "Después de la captura volverás a Seller OS para verificar el siguiente producto del mismo lote."
           : primaryTask?.impact ?? (readyCandidates.length ? "El paquete queda listo para publicación manual en Seller Hub." : "Seller OS avanzará automáticamente hasta la próxima confirmación indispensable.")}</h3>
-        <p className="mt-2 text-xs leading-5 text-white/55">No necesitas pulsar otro botón técnico después de confirmar la tarea principal.</p>
+        <p className="mt-2 text-xs leading-5 text-white/55">{productResearchTasks.length > 0
+          ? "Seller OS habilitará únicamente la consulta que corresponda al próximo candidato del lote."
+          : "No necesitas pulsar otro botón técnico después de confirmar la tarea principal."}</p>
       </section>
       {readyCandidates.length > 0 && <div className="mt-6"><h3 className="text-lg font-black">Listos para Seller Hub</h3><div className="mt-3 grid gap-4">{readyCandidates.map((candidate: Row) => <ManualHandoffCard key={candidate.id} candidate={candidate} />)}</div></div>}
       <details className="mt-5 rounded-2xl border border-white/10 p-4"><summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver métricas y progreso automático</summary><div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-7"><Metric label="Piloto" value={`${pilotProgress} / 3`} /><Metric label="Ciclo" value={String(currentCycle)} /><Metric label="Cola de este ciclo" value={`${candidates.length} / 5`} /><Metric label="Intentados acumulados" value={String(pilot.cycleHistory?.attemptedCandidates ?? candidates.length)} /><Metric label="Preparación local" value={String(candidates.filter((candidate: Row) => candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES").length)} /><Metric label="Listos" value={String(pilot.run.ready_for_manual_publication_count)} /><Metric label="Escrituras eBay" value="0" /></div><div className="mt-3 grid gap-2">{candidates.map((candidate: Row) => <div key={candidate.id} className="min-w-0 rounded-xl bg-black/20 p-3"><p className="break-words font-bold">{candidate.ordinal}. {candidate.product_title}</p><p className="mt-1 break-words text-xs text-white/55">{businessState(candidate.machine_state)} · SKU {candidate.supplier_sku}</p>{candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES" && <p className="mt-1 text-xs text-cyan-100/75">Paquete local seguro preparado; todavía no es publicable.</p>}<p className="mt-1 break-words text-xs text-amber-100/80">{candidate.next_human_action}</p></div>)}</div></details>
@@ -434,20 +436,22 @@ function liveMonitorPalette(status: SameDayLiveMonitor["status"]) {
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-2xl border border-white/10 bg-black/20 p-4"><p className="text-xs font-black uppercase text-white/45">{label}</p><p className="mt-2 text-xl font-black">{value}</p></div> }
 
-function ProductResearchQueueTask({ guidance, researchTasks, fallbackQuery, openTaskCount }: { guidance?: Row | null; researchTasks: Row[]; fallbackQuery?: unknown; openTaskCount: number }) {
+function ProductResearchQueueTask({ guidance, researchTasks, candidates, fallbackQuery, openTaskCount }: { guidance?: Row | null; researchTasks: Row[]; candidates: Row[]; fallbackQuery?: unknown; openTaskCount: number }) {
   const [copyStatus, setCopyStatus] = useState<"IDLE" | "COPIED" | "FAILED">("IDLE")
   const guidedQuery = typeof guidance?.nextQuery?.searchQuery === "string"
     ? guidance.nextQuery.searchQuery.trim().slice(0, 100) : ""
   const durableTaskQuery = typeof fallbackQuery === "string"
     ? fallbackQuery.trim().slice(0, 100) : ""
-  const nextQuery = guidedQuery || durableTaskQuery
   const queryKey = (value: unknown) => typeof value === "string"
     ? value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
       .replace(/\bdefault\s+title\b/gi, " ").toLocaleLowerCase("en-US")
       .replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ")
     : ""
-  const matchedTask = nextQuery ? researchTasks.find((task) =>
-    queryKey(task?.action_schema?.query) === queryKey(nextQuery)) : undefined
+  const guidedTask = guidedQuery ? researchTasks.find((task) =>
+    queryKey(task?.action_schema?.query) === queryKey(guidedQuery)) : undefined
+  const nextQuery = guidedTask ? guidedQuery : durableTaskQuery
+  const matchedTask = guidedTask ?? (nextQuery ? researchTasks.find((task) =>
+    queryKey(task?.action_schema?.query) === queryKey(nextQuery)) : undefined)
   const productFamily = typeof matchedTask?.evidence?.product === "string"
     ? matchedTask.evidence.product.trim().slice(0, 180) : ""
   const queryCount = Number(guidance?.queryCount ?? 0)
@@ -470,11 +474,20 @@ function ProductResearchQueueTask({ guidance, researchTasks, fallbackQuery, open
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
         <h4 className="font-black">Captura la próxima consulta de Product Research</h4>
-        <p className="mt-1 text-sm leading-6 text-white/65">Una sola consulta está disponible para actuar. Las posteriores permanecen ordenadas y la extensión v1.2.6 las encadena en la misma sesión.</p>
+        <p className="mt-1 text-sm leading-6 text-white/65">Una sola consulta está disponible. Después de capturar, vuelve a Seller OS para verificar el siguiente producto del mismo lote.</p>
       </div>
       <span className="rounded-full border border-amber-100/20 px-3 py-1 text-xs font-black text-amber-100">{capturedCount}/{queryCount || capturedCount + pendingCount} capturadas</span>
     </div>
     <div className="mt-3 grid gap-3">
+      <section aria-label="Productos del lote actual" className="rounded-xl border border-white/10 bg-black/20 p-3">
+        <p className="text-[10px] font-black uppercase tracking-widest text-white/50">Productos del lote actual · {candidates.length}/5</p>
+        <ol className="mt-2 grid gap-1.5 text-xs leading-5 text-white/65">{candidates.map((candidate) => {
+          const current = matchedTask?.candidate_id === candidate.id
+          return <li key={candidate.id} className={`rounded-lg border px-2.5 py-2 ${current ? "border-amber-200/35 bg-amber-200/[0.08] text-amber-50" : "border-white/[0.06]"}`}>
+            <span className="font-black">{candidate.ordinal}. {candidate.product_title}</span>{current ? " · AHORA" : ""}
+          </li>
+        })}</ol>
+      </section>
       <section aria-label="Familia o producto de referencia" className="rounded-xl border border-violet-200/25 bg-violet-200/[0.07] p-3">
         <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/65">Familia / producto de referencia</p>
         <p className="mt-1 break-words text-sm font-black text-violet-50">{productFamily || `Familia de ${familyCandidateCount || 1} candidato(s)`}</p>
@@ -485,7 +498,7 @@ function ProductResearchQueueTask({ guidance, researchTasks, fallbackQuery, open
           onFocus={(event) => event.currentTarget.select()}
           className="mt-2 box-border w-full resize-none rounded-lg border border-cyan-100/20 bg-black/30 p-2 text-sm font-bold leading-5 text-cyan-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-100" />
       </section>
-      <p className="text-xs leading-5 text-white/60">Pendientes: {pendingCount}. Después de ésta, {chainedAfterCurrent} consulta(s) quedarán encadenadas automáticamente.</p>
+      <p className="text-xs leading-5 text-white/60">Pendientes: {pendingCount}. Después de ésta, {chainedAfterCurrent} consulta(s) permanecerán protegidas hasta que Seller OS muestre el producto correspondiente.</p>
     </div>
     <div className="mt-3 grid gap-2 sm:grid-cols-2">
       <a href={nextQuery ? `https://www.ebay.com/sh/research#seller-os-query=${encodeURIComponent(nextQuery)}` : undefined}
