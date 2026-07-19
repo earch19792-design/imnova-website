@@ -2153,16 +2153,30 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
         continuationJobType: "RECONCILE_PRODUCT_RESEARCH_CAPTURE" })
     } else {
       if (!text(candidate.queue_item_id)) throw new Error("SAME_DAY_PILOT_FACT_QUEUE_ITEM_MISSING")
-      await confirmListingAiQueueLunaObservation({
-        supabase: input.supabase,
-        accountKey: input.accountKey,
-        actorId: input.actorId,
-        itemId: text(candidate.queue_item_id),
-        idempotencyKey: `${state.run.id}:${task.id}:${SAME_DAY_LUNA_DECISION_REFRESH_VERSION}`,
-        priceObserved: input.price,
-        availability: input.quantity === null ? "AVAILABLE_QUANTITY_NOT_SHOWN" : "EXACT_QUANTITY_VISIBLE",
-        exactQuantity: input.quantity,
-      })
+      const priorLunaConfirmation = record(record(candidate.economics_summary).lunaConfirmation)
+      const priorConfirmedAt = Date.parse(text(priorLunaConfirmation.confirmedAt))
+      const nowTimestamp = Date.parse(now)
+      const priorQuantityMatches = input.quantity === null
+        ? priorLunaConfirmation.confirmedQuantity === null
+        : number(priorLunaConfirmation.confirmedQuantity) === input.quantity
+      const reusablePriorLunaConfirmation = Number(task.gate_generation) > 1 &&
+        priorLunaConfirmation.confirmedByActorRecorded === true &&
+        text(priorLunaConfirmation.status).startsWith("AVAILABLE_") &&
+        number(priorLunaConfirmation.confirmedUnitCost) === input.price &&
+        priorQuantityMatches && Number.isFinite(priorConfirmedAt) &&
+        priorConfirmedAt <= nowTimestamp && nowTimestamp - priorConfirmedAt <= 24 * 60 * 60 * 1_000
+      if (!reusablePriorLunaConfirmation) {
+        await confirmListingAiQueueLunaObservation({
+          supabase: input.supabase,
+          accountKey: input.accountKey,
+          actorId: input.actorId,
+          itemId: text(candidate.queue_item_id),
+          idempotencyKey: `${state.run.id}:${task.id}:${SAME_DAY_LUNA_DECISION_REFRESH_VERSION}`,
+          priceObserved: input.price,
+          availability: input.quantity === null ? "AVAILABLE_QUANTITY_NOT_SHOWN" : "EXACT_QUANTITY_VISIBLE",
+          exactQuantity: input.quantity,
+        })
+      }
       await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
         gateType: "LUNA_CONFIRMATION_REQUIRED", runId: state.run.id, candidateId: task.candidate_id,
         previousState: "WAITING_LUNA_CONFIRMATION", nextState: "CALCULATING_ECONOMICS",
@@ -2171,11 +2185,12 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
           : "LUNA_CONFIRMED_AUTO_RESUME", triggeredBy: "USER",
         checkpoint: { price: input.price, available: true, quantityKnown: input.quantity != null,
           identityAndPackConfirmed: identityConfirmationRequired,
-          nativePackCount: confirmedNativePackCount },
+          nativePackCount: confirmedNativePackCount,
+          reusedPriorLunaConfirmation: reusablePriorLunaConfirmation },
         candidatePatch: basePatch,
         nextAutomaticAction: "Recalcular economía localmente.", nextHumanAction: "Ninguna.",
         job: { jobType: "CALCULATE_ECONOMICS",
-          idempotencyKey: `${state.run.id}:${task.candidate_id}:CALCULATE_ECONOMICS`,
+          idempotencyKey: `${state.run.id}:${task.candidate_id}:CALCULATE_ECONOMICS:${task.id}:${SAME_DAY_LUNA_DECISION_REFRESH_VERSION}`,
           checkpoint: { confirmedLunaPrice: input.price, quantityKnown: input.quantity != null } } })
     }
   }
