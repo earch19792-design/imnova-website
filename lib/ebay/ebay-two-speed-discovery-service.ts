@@ -37,7 +37,8 @@ function queryFingerprint(candidate: LunaOpportunityCandidateInput) {
 
 function familyFingerprint(candidate: LunaOpportunityCandidateInput) {
   return buildEbayFamilyFingerprint({
-    brand: candidate.brand || candidate.vendor,
+    // Supplier/vendor is not a manufacturer brand.
+    brand: candidate.brand,
     productLine: candidate.productType,
     mpn: candidate.mpn,
     normalizedName: candidate.productName || candidate.title,
@@ -110,7 +111,7 @@ export async function runLightweightFamilyDiscovery(
       supplierSku: candidate.sku,
       categoryId: candidate.categoryId,
       gtin: candidate.gtin || candidate.upc || candidate.barcode,
-      brand: candidate.brand || candidate.vendor,
+      brand: candidate.brand,
       mpn: candidate.mpn,
       color: candidate.color,
       size: candidate.size,

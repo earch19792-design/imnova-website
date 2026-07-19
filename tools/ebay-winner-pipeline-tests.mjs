@@ -1179,12 +1179,16 @@ test("product selection decision service: calcula economia V1 con defaults segur
   )
   assert.equal(
     economics.estimatedEbayFees,
-    4.27
+    4.99
   )
   assert.equal(
     economics.netProfit,
-    13.72
+    13
   )
+  assert.equal(economics.feeEstimate.scheduleVersion,
+    "EBAY_US_SELLING_FEES_2026_07_01_V1")
+  assert.equal(economics.feeEstimate.appliedFixedOrderFee, 0.4)
+  assert.equal(economics.feeEstimate.exactFee, false)
   assert.equal(
     economics.thresholds.minimumProfitUsd,
     5
@@ -23181,7 +23185,7 @@ test("producto con margen bajo queda bloqueado", () => {
   )
 })
 
-test("fee engine: categoria default usa 13.25% + fee fijo", () => {
+test("fee engine: categoría default usa 13.6% + fee fijo vigente", () => {
   const result = calculateProfitScenario(
     {
       cost:
@@ -23198,6 +23202,8 @@ test("fee engine: categoria default usa 13.25% + fee fijo", () => {
         0,
       suggested_category_name:
         "Health & Beauty",
+      suggested_category_id:
+        "26395",
     },
     {
       defaultShippingCost:
@@ -23211,14 +23217,14 @@ test("fee engine: categoria default usa 13.25% + fee fijo", () => {
     }
   )
 
-  assert.equal(result.assumptions.ebayFeePercent, 13.25)
-  assert.equal(result.assumptions.ebay_fixed_fee, 0.3)
+  assert.equal(result.assumptions.ebayFeePercent, 13.6)
+  assert.equal(result.assumptions.ebay_fixed_fee, 0.4)
   assert.equal(result.assumptions.ebay_fee_source, "default_most_categories")
   assert.equal(result.assumptions.ebay_fee_confidence, "medium")
-  assert.equal(result.estimated_ebay_fee, 14.88)
+  assert.equal(result.estimated_ebay_fee, 15.36)
 })
 
-test("fee engine: books/media usa 14.95% + fee fijo", () => {
+test("fee engine: Books & Magazines usa 15.3% + fee fijo", () => {
   const result = calculateProfitScenario(
     {
       cost:
@@ -23232,7 +23238,9 @@ test("fee engine: books/media usa 14.95% + fee fijo", () => {
       packaging_cost:
         0,
       suggested_category_name:
-        "Books, Movies & Music",
+        "Books & Magazines",
+      suggested_category_id:
+        "267",
     },
     {
       defaultShippingCost:
@@ -23246,13 +23254,13 @@ test("fee engine: books/media usa 14.95% + fee fijo", () => {
     }
   )
 
-  assert.equal(result.assumptions.ebayFeePercent, 14.95)
+  assert.equal(result.assumptions.ebayFeePercent, 15.3)
   assert.equal(result.assumptions.ebay_fee_source, "category_rule")
-  assert.equal(result.assumptions.ebay_fee_confidence, "high")
-  assert.equal(result.estimated_ebay_fee, 15.25)
+  assert.equal(result.assumptions.ebay_fee_confidence, "medium")
+  assert.equal(result.estimated_ebay_fee, 15.7)
 })
 
-test("fee engine: guitars/basses usa 6.35% + fee fijo", () => {
+test("fee engine: guitars/basses usa 6.7% + fee fijo", () => {
   const result = calculateProfitScenario(
     {
       cost:
@@ -23267,6 +23275,8 @@ test("fee engine: guitars/basses usa 6.35% + fee fijo", () => {
         0,
       suggested_category_name:
         "Guitars & Basses",
+      suggested_category_id:
+        "3858",
     },
     {
       defaultShippingCost:
@@ -23280,11 +23290,11 @@ test("fee engine: guitars/basses usa 6.35% + fee fijo", () => {
     }
   )
 
-  assert.equal(result.assumptions.ebayFeePercent, 6.35)
-  assert.equal(result.estimated_ebay_fee, 6.65)
+  assert.equal(result.assumptions.ebayFeePercent, 6.7)
+  assert.equal(result.estimated_ebay_fee, 7.1)
 })
 
-test("fee engine: sneakers desde 150 usa 8% + fee fijo", () => {
+test("fee engine: sneakers desde 150 usa 8% sin fee fijo", () => {
   const result = calculateProfitScenario(
     {
       cost:
@@ -23299,6 +23309,8 @@ test("fee engine: sneakers desde 150 usa 8% + fee fijo", () => {
         0,
       suggested_category_name:
         "Sneakers",
+      suggested_category_id:
+        "15709",
     },
     {
       defaultShippingCost:
@@ -23314,7 +23326,8 @@ test("fee engine: sneakers desde 150 usa 8% + fee fijo", () => {
 
   assert.equal(result.assumptions.ebayFeePercent, 8)
   assert.equal(result.assumptions.ebay_category_group, "sneakers_150_plus")
-  assert.equal(result.estimated_ebay_fee, 12.3)
+  assert.equal(result.assumptions.ebay_fixed_fee, 0)
+  assert.equal(result.estimated_ebay_fee, 12)
 })
 
 test("fee engine: categoria desconocida usa default con confianza media", () => {
@@ -23332,6 +23345,8 @@ test("fee engine: categoria desconocida usa default con confianza media", () => 
         0,
       suggested_category_name:
         "Unmapped Category",
+      suggested_category_id:
+        "999999",
     },
     {
       defaultShippingCost:
@@ -23345,7 +23360,7 @@ test("fee engine: categoria desconocida usa default con confianza media", () => 
     }
   )
 
-  assert.equal(result.assumptions.ebayFeePercent, 13.25)
+  assert.equal(result.assumptions.ebayFeePercent, 13.6)
   assert.equal(result.assumptions.ebay_fee_source, "default_most_categories")
   assert.equal(result.assumptions.ebay_fee_confidence, "medium")
 })
@@ -23365,6 +23380,8 @@ test("fee engine: insertion fee no se suma por defecto", () => {
         0,
       suggested_category_name:
         "Health & Beauty",
+      suggested_category_id:
+        "26395",
     },
     {
       defaultShippingCost:
@@ -23382,7 +23399,41 @@ test("fee engine: insertion fee no se suma por defecto", () => {
     result.assumptions.insertion_fee_assumption,
     /Insertion fee no aplicado/
   )
-  assert.equal(result.total_estimated_cost, 14.55)
+  assert.equal(result.total_estimated_cost, 15)
+})
+
+test("fee engine: no confunde bookcase con Books ni bassinet con Guitars", () => {
+  for (const suggested_category_name of ["Bookcases & Shelving", "Bassinets & Cradles"]) {
+    const result = calculateProfitScenario({ cost: 1, estimated_sale_price: 100,
+      shipping_cost: 0, fulfillment_cost: 0, packaging_cost: 0,
+      suggested_category_id: "999998", suggested_category_name }, {
+      defaultShippingCost: 0, paymentFeePercent: 0, advertisingPercent: 0,
+      returnReservePercent: 0,
+    })
+    assert.equal(result.assumptions.ebay_fee_source, "default_most_categories")
+    assert.equal(result.assumptions.ebayFeePercent, 13.6)
+    assert.equal(result.estimated_ebay_fee, 14)
+  }
+})
+
+test("fee engine: cargo fijo es $0.30 hasta $10 y $0.40 por encima", () => {
+  const low = calculateProfitScenario({ cost: 1, estimated_sale_price: 10,
+    shipping_cost: 0, fulfillment_cost: 0, packaging_cost: 0,
+    suggested_category_id: "26395", suggested_category_name: "Health & Beauty" }, {
+    defaultShippingCost: 0, paymentFeePercent: 0, advertisingPercent: 0,
+    returnReservePercent: 0,
+  })
+  assert.equal(low.assumptions.ebay_fixed_fee, .3)
+  assert.equal(low.estimated_ebay_fee, 1.66)
+
+  const high = calculateProfitScenario({ cost: 1, estimated_sale_price: 10.01,
+    shipping_cost: 0, fulfillment_cost: 0, packaging_cost: 0,
+    suggested_category_id: "26395", suggested_category_name: "Health & Beauty" }, {
+    defaultShippingCost: 0, paymentFeePercent: 0, advertisingPercent: 0,
+    returnReservePercent: 0,
+  })
+  assert.equal(high.assumptions.ebay_fixed_fee, .4)
+  assert.equal(high.estimated_ebay_fee, 1.76)
 })
 
 test("advisor advierte que categoria faltante puede cambiar fee eBay", () => {
@@ -23744,7 +23795,7 @@ test("cost model: margen deseado no se suma como costo real", () => {
     }
   )
 
-  assert.equal(result.total_estimated_cost, 14.28)
+  assert.equal(result.total_estimated_cost, 14.48)
 })
 
 test("cost model: eBay fee queda como assumption configurable", () => {
@@ -24656,7 +24707,7 @@ test("IMNOVA free shipping mantiene estimated_shipping_cost como costo interno",
           1.5 +
           0.75 +
           6.99 +
-          4.14 +
+          4.24 +
           0 +
           0 +
           0.87
@@ -25021,7 +25072,7 @@ test("supplier model simulator: profit_gap no crea recomendacion falsa si faltan
   )
 })
 
-test("supplier model simulator: Fee Engine V0 conserva porcentaje y fee fijo", () => {
+test("supplier model simulator: conserva porcentaje configurado y fee fijo vigente", () => {
   const advisor =
     makeSupplierSimulatorAdvisor({})
 
@@ -25031,7 +25082,7 @@ test("supplier model simulator: Fee Engine V0 conserva porcentaje y fee fijo", (
   )
   assert.equal(
     advisor.cost_breakdown.ebay_fixed_fee,
-    0.3
+    0.4
   )
 })
 
@@ -25294,7 +25345,7 @@ test("multipack advisor: no altera Fee Engine ni Campaign Advisor", () => {
   )
   assert.equal(
     advisor.cost_breakdown.ebay_fixed_fee,
-    0.3
+    0.4
   )
   assert.equal(
     advisor.pricing_strategy.campaign_eligible,

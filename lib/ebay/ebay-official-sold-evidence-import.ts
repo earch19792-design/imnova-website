@@ -84,7 +84,10 @@ const STOP_WORDS = new Set([
 ])
 
 const ALIASES: Record<string, string[]> = {
-  sourceListingId: ["sourcelistingid", "itemid", "ebayitemid", "legacyitemid", "epid"],
+  // ePID identifies a catalog product, not an individual listing. It must
+  // never stand in for Item ID because that would corrupt source dedupe and
+  // read-only listing-detail reconciliation.
+  sourceListingId: ["sourcelistingid", "itemid", "ebayitemid", "legacyitemid"],
   observedAt: ["observedat", "completedat", "solddate", "date", "reportenddate", "enddate"],
   confirmedSoldQuantity: ["confirmedsoldquantity", "quantitysold", "soldquantity", "qtysold", "totalsold"],
   itemPrice: ["itemprice", "price", "soldprice", "averagesoldprice", "averageprice"],

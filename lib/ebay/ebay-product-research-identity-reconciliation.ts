@@ -6,13 +6,17 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { buildProductIdentityFingerprint, normalizeProductIdentity } from "./ebay-winner-evidence-v2.ts"
 import type { ProductIdentityInput } from "./ebay-winner-evidence-v2"
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
-import { targetFromCatalogRow, targetFromVerifiedActiveListingLink, type ProductResearchCaptureTarget } from "./ebay-product-research-browser-capture.ts"
+import { detectProductResearchOfferFacts, targetFromCatalogRow, targetFromVerifiedActiveListingLink, type ProductResearchCaptureTarget } from "./ebay-product-research-browser-capture.ts"
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import { extractLunaOfficialDescriptionIdentity } from "./luna-official-description-identity.ts"
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { readEbayTradingItemIdentityReadonly } from "./ebay-trading-item-identity-readonly.ts"
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { createTop20ContinuationToken, hashTop20ContinuationToken } from "./ebay-listing-ai-top20-automation.ts"
 // @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
 import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit.ts"
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import { selectCatalogIdentityMatches, type CatalogIdentityProduct } from "./ebay-luna-product-identity-enrichment.ts"
 
 export const PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_VERSION =
   "PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_V2_2026_07_18"
@@ -33,6 +37,10 @@ type BrowseReader = (input: {
   productName?: string | null
   packQuantity?: number | null
   size?: string | null
+  gtin?: string | null
+  brand?: string | null
+  mpn?: string | null
+  model?: string | null
 }) => Promise<unknown>
 type CatalogReader = (input: {
   query: string
@@ -58,7 +66,7 @@ type Observation = {
   last_sold_date: string
 }
 
-type OfficialIdentityFacts = {
+export type OfficialIdentityFacts = {
   productName: string | null
   brand: string | null
   manufacturer: string | null
@@ -169,66 +177,182 @@ function aspectValue(aspects: unknown, names: string[]) {
   return null
 }
 
-function mostFrequent(values: Array<string | null>) {
-  const counts = new Map<string, { value: string; count: number }>()
-  for (const value of values) {
-    const key = normalized(value)
-    if (!key || !value) continue
-    const current = counts.get(key)
-    counts.set(key, { value, count: (current?.count ?? 0) + 1 })
-  }
-  return [...counts.values()].sort((left, right) => right.count - left.count)[0] ?? null
+function comparableAspectValue(row: JsonRecord, names: string[]) {
+  return aspectValue(row.localizedAspects, names)
 }
 
-function officialFactsFromSources(input: {
+function jsonStringArray(value: unknown) {
+  return [...new Set((Array.isArray(value) ? value : [])
+    .map((entry) => text(entry)).filter((entry): entry is string => Boolean(entry)))]
+}
+
+function catalogProduct(value: unknown): CatalogIdentityProduct {
+  const product = record(value)
+  return {
+    epid: text(product.epid) ?? null,
+    title: text(product.title) ?? null,
+    brand: text(product.brand) ?? null,
+    gtins: jsonStringArray(product.gtins),
+    mpns: jsonStringArray(product.mpns),
+    aspects: (Array.isArray(product.aspects) ? product.aspects : []).map(record)
+      .map((aspect) => ({ name: text(aspect.name) ?? "", values: jsonStringArray(aspect.values) }))
+      .filter((aspect) => Boolean(aspect.name) && aspect.values.length > 0),
+    categoryId: text(product.categoryId) ?? null,
+  }
+}
+
+function identityAnchor(input: ProductIdentityInput) {
+  return normalizeProductIdentity(input)
+}
+
+function browseIdentityFields(row: JsonRecord) {
+  return {
+    gtin: text(row.gtin),
+    brand: text(row.brand) ?? comparableAspectValue(row, ["brand"]),
+    mpn: text(row.mpn) ?? comparableAspectValue(row, ["mpn", "manufacturer part number"]),
+    model: text(row.model) ?? comparableAspectValue(row, ["model", "model number"]),
+    packCount: integer(row.lotSize) ?? integer(comparableAspectValue(row,
+      ["number in pack", "pack quantity", "pack size"])),
+    size: text(row.size) ?? comparableAspectValue(row, ["size", "unit size", "capacity", "volume"]),
+    color: text(row.color) ?? comparableAspectValue(row, ["color", "colour"]),
+    scent: comparableAspectValue(row, ["scent", "fragrance"]),
+    variant: comparableAspectValue(row, ["variant", "variation"]),
+  }
+}
+
+function hasConflictList(value: unknown) {
+  return Array.isArray(value) && value.some((entry) => Boolean(text(entry)))
+}
+
+function browseCompatibleWithAnchor(row: JsonRecord, anchor: ReturnType<typeof identityAnchor>) {
+  if (row.eligibleComparable !== true || row.identifierExact !== true ||
+    !["EXACT_IDENTIFIER", "EXACT"].includes(text(row.identityMatchQuality) ?? "") ||
+    hasConflictList(row.identityConflicts)) return false
+  const identity = browseIdentityFields(row)
+  const normalizedIdentity = normalizeProductIdentity({
+    manufacturerBrand: identity.brand, gtin: identity.gtin, mpn: identity.mpn,
+    model: identity.model, packCount: identity.packCount, size: identity.size,
+    color: identity.color, scent: identity.scent, variant: identity.variant,
+  })
+  if (anchor.gtinValid && (!normalizedIdentity.gtinValid || anchor.gtin !== normalizedIdentity.gtin)) return false
+  const anchorPart = anchor.mpn ?? anchor.model
+  const observedPart = normalizedIdentity.mpn ?? normalizedIdentity.model
+  if (!anchor.gtinValid && anchor.manufacturerBrand && anchorPart &&
+    (anchor.manufacturerBrand !== normalizedIdentity.manufacturerBrand || anchorPart !== observedPart)) return false
+  if (anchor.packCount && (normalizedIdentity.packCount !== anchor.packCount || row.offerPackResolved !== true)) return false
+  for (const [expected, observed] of [
+    [anchor.size, normalizedIdentity.size], [anchor.color, normalizedIdentity.color],
+    [anchor.scent, normalizedIdentity.scent], [anchor.variant, normalizedIdentity.variant],
+  ]) if (expected && observed && expected !== observed) return false
+  return true
+}
+
+function catalogCompatibleWithAnchor(product: CatalogIdentityProduct,
+  anchor: ReturnType<typeof identityAnchor>) {
+  const gtins = product.gtins.map((gtin) => normalizeProductIdentity({ gtin }).gtin).filter(Boolean)
+  const mpns = product.mpns.map((mpn) => normalizeProductIdentity({ mpn }).mpn).filter(Boolean)
+  if (anchor.gtinValid && !gtins.includes(anchor.gtin)) return false
+  if (anchor.manufacturerBrand && product.brand &&
+    normalized(product.brand) !== anchor.manufacturerBrand) return false
+  const anchorPart = anchor.mpn ?? anchor.model
+  if (!anchor.gtinValid && anchor.manufacturerBrand && anchorPart &&
+    (!product.brand || normalized(product.brand) !== anchor.manufacturerBrand ||
+      !mpns.includes(anchorPart))) return false
+  const productPack = integer(aspectValue(product.aspects.flatMap((aspect) =>
+    aspect.values.map((value) => ({ name: aspect.name, value }))),
+  ["number in pack", "pack size", "pack quantity"]))
+  if (anchor.packCount && productPack && anchor.packCount !== productPack) return false
+  return true
+}
+
+/**
+ * Selects product identity evidence without ever merging arbitrary search rows.
+ * Browse contributes one exact, eligible offer. Catalog contributes exactly one
+ * validated product; ambiguous result sets contribute no identity fields.
+ */
+export function selectOfficialProductIdentityEvidence(input: {
+  anchor: ProductIdentityInput
+  browse: JsonRecord | null
+  catalog: JsonRecord | null
+}) {
+  const anchor = identityAnchor(input.anchor)
+  const exactBrowse = (Array.isArray(input.browse?.comparableEvidence)
+    ? input.browse.comparableEvidence : []).map(record)
+    .filter((row) => browseCompatibleWithAnchor(row, anchor))
+    .sort((left, right) =>
+      Number(right.identityMatchScore ?? 0) - Number(left.identityMatchScore ?? 0) ||
+      (text(left.comparableId) ?? "").localeCompare(text(right.comparableId) ?? ""))
+  const catalogCandidates = (Array.isArray(input.catalog?.products) ? input.catalog.products : [])
+    .map(catalogProduct)
+  const catalogSelection = selectCatalogIdentityMatches({
+    title: anchor.normalizedProductName,
+    gtin: anchor.gtinValid ? anchor.gtin : null,
+    brand: anchor.manufacturerBrand,
+    mpn: anchor.mpn ?? anchor.model,
+    packCount: anchor.packCount,
+  }, catalogCandidates)
+  const selectedCatalog = catalogSelection.products.length === 1 &&
+    ["EXACT_GTIN", "EXACT_BRAND_MPN"].includes(catalogSelection.matchRule) &&
+    catalogCompatibleWithAnchor(catalogSelection.products[0], anchor) &&
+    Boolean(catalogSelection.products[0].epid ||
+      catalogSelection.products[0].gtins.some((value) => normalizeProductIdentity({ gtin: value }).gtinValid) ||
+      catalogSelection.products[0].brand && catalogSelection.products[0].mpns.length)
+    ? catalogSelection.products[0] : null
+  return {
+    browseComparable: exactBrowse[0] ?? null,
+    browseExactEligibleCount: exactBrowse.length,
+    catalogProduct: selectedCatalog,
+    catalogSelectionRule: selectedCatalog ? catalogSelection.matchRule : "AMBIGUOUS_OR_UNVALIDATED",
+    catalogCandidateCount: catalogCandidates.length,
+  }
+}
+
+export function officialFactsFromSources(input: {
   capture: OfficialIdentityFacts
   trading: JsonRecord | null
   browse: JsonRecord | null
   catalog: JsonRecord | null
   taxonomy: JsonRecord | null
+  anchor?: ProductIdentityInput | null
 }) {
-  const comparables = (Array.isArray(input.browse?.comparableEvidence)
-    ? input.browse.comparableEvidence : []).map(record)
-  const catalogProducts = (Array.isArray(input.catalog?.products) ? input.catalog.products : []).map(record)
-  const catalogAspects = catalogProducts.flatMap((product) =>
-    (Array.isArray(product.aspects) ? product.aspects : []).map(record).flatMap((aspect) => {
-      const name = text(aspect.name)
-      return (Array.isArray(aspect.values) ? aspect.values : []).map((value) => ({ name, value }))
-    }))
-  const frequent = (values: Array<string | null>) => {
-    const result = mostFrequent(values)
-    return result && (result.count >= 2 || values.filter(Boolean).length === 1) ? result.value : null
-  }
+  const selection = selectOfficialProductIdentityEvidence({
+    anchor: input.anchor ?? {
+      manufacturerBrand: input.capture.brand, gtin: input.capture.gtin,
+      mpn: input.capture.mpn, model: input.capture.model,
+      productName: input.capture.productName, packCount: input.capture.packCount,
+      unitCount: input.capture.unitCount, size: input.capture.size,
+      color: input.capture.color, scent: input.capture.scent,
+      variant: input.capture.variant, condition: input.capture.condition,
+    },
+    browse: input.browse, catalog: input.catalog,
+  })
+  const comparable = selection.browseComparable ?? {}
+  const comparableIdentity = browseIdentityFields(comparable)
+  const catalogProduct = selection.catalogProduct
+  const catalogAspects = catalogProduct?.aspects.flatMap((aspect) =>
+    aspect.values.map((value) => ({ name: aspect.name, value }))) ?? []
   const trading = input.trading ?? {}
   const capture = input.capture
   const facts: OfficialIdentityFacts = {
     productName: text(trading.title) ?? capture.productName,
-    brand: text(trading.brand) ?? frequent([
-      ...comparables.map((row) => text(row.brand)),
-      ...catalogProducts.map((row) => text(row.brand)),
-    ]),
+    brand: text(trading.brand) ?? comparableIdentity.brand ?? catalogProduct?.brand ?? null,
     manufacturer: text(trading.manufacturer),
-    gtin: text(trading.gtin) ?? frequent([
-      ...comparables.map((row) => text(row.gtin)),
-      ...catalogProducts.flatMap((row) => (Array.isArray(row.gtins) ? row.gtins : []).map(text)),
-    ]),
-    mpn: text(trading.mpn) ?? frequent([
-      ...comparables.map((row) => text(row.mpn)),
-      ...catalogProducts.flatMap((row) => (Array.isArray(row.mpns) ? row.mpns : []).map(text)),
-    ]),
-    model: text(trading.model) ?? aspectValue(catalogAspects, ["model", "model number"]),
-    size: text(trading.size) ?? capture.size ?? frequent(comparables.map((row) => text(row.size))) ??
+    gtin: text(trading.gtin) ?? comparableIdentity.gtin ?? catalogProduct?.gtins[0] ?? null,
+    mpn: text(trading.mpn) ?? comparableIdentity.mpn ?? catalogProduct?.mpns[0] ?? null,
+    model: text(trading.model) ?? comparableIdentity.model ??
+      aspectValue(catalogAspects, ["model", "model number"]),
+    size: text(trading.size) ?? capture.size ?? comparableIdentity.size ??
       aspectValue(catalogAspects, ["size", "unit size"]),
-    color: text(trading.color) ?? frequent(comparables.map((row) => text(row.color))) ??
+    color: text(trading.color) ?? comparableIdentity.color ??
       aspectValue(catalogAspects, ["color"]),
-    scent: text(trading.scent) ?? aspectValue(catalogAspects, ["scent", "fragrance"]),
+    scent: text(trading.scent) ?? comparableIdentity.scent ??
+      aspectValue(catalogAspects, ["scent", "fragrance"]),
     variant: text(trading.variant) ?? capture.variant,
     packCount: integer(trading.packCount) ?? capture.packCount,
     unitCount: integer(trading.unitCount) ?? capture.unitCount,
     condition: text(trading.condition) ?? capture.condition ?? "new",
     categoryId: text(trading.categoryId) ?? text(input.taxonomy?.categoryId) ??
-      frequent(comparables.map((row) => text(row.categoryId))) ??
-      frequent(catalogProducts.map((row) => text(row.categoryId))),
+      text(comparable.categoryId) ?? catalogProduct?.categoryId ?? null,
   }
   // Product Research does not prove that a UPC shown around a multipack is a
   // separately assigned offer GTIN; never inherit the unit GTIN automatically.
@@ -337,8 +461,12 @@ export function reconcileProductResearchIdentity(input: {
   let classification: ProductIdentityReconciliationClassification
   if (hardConflict) classification = "CONFLICTED"
   else if (variantMismatch) classification = "DIFFERENT_VARIANT"
-  else if (packMismatch) classification = "SAME_PRODUCT_DIFFERENT_PACK"
-  else if (sizeMismatch) classification = "SAME_PRODUCT_DIFFERENT_SIZE"
+  // A different presentation is useful only after the base product has an
+  // exact identifier link. Similar titles alone must never manufacture pack
+  // intelligence for another product.
+  else if (packMismatch && best.identifierExact) classification = "SAME_PRODUCT_DIFFERENT_PACK"
+  else if (sizeMismatch && best.identifierExact) classification = "SAME_PRODUCT_DIFFERENT_SIZE"
+  else if (packMismatch || sizeMismatch) classification = "AMBIGUOUS"
   else if (best.identifierExact && exactOfferFactsPresent) classification = "EXACT_LUNA_MATCH"
   else classification = "AMBIGUOUS"
   if (!["AMBIGUOUS", "NO_LUNA_MATCH"].includes(classification) && !best.target.supplierSku) {
@@ -424,6 +552,22 @@ async function loadTargets(
   }
   const [catalogResult, linksResult] = await Promise.all([catalogQuery, linksQuery])
   if (catalogResult.error || linksResult.error) throw new Error("PRODUCT_IDENTITY_RECONCILIATION_TARGET_READ_FAILED")
+  const catalogRows = (catalogResult.data ?? []).map(record)
+  const productIds = [...new Set(catalogRows.map((row) => text(row.product_id, 160))
+    .filter((value): value is string => Boolean(value)))]
+  const descriptionResult = productIds.length
+    ? await supabase.from("market_radar_products").select("id,body_html")
+      .in("id", productIds).limit(5_000)
+    : { data: [], error: null }
+  if (descriptionResult.error) throw new Error("PRODUCT_IDENTITY_RECONCILIATION_TARGET_READ_FAILED")
+  // Luna's official public product description is decoded only in memory. We
+  // keep explicit labelled facts and a provenance hash; raw HTML/text never
+  // enters the target, event, response, or database payload.
+  const descriptionByProductId = new Map((descriptionResult.data ?? []).map((row) => {
+    const productId = text(row.id, 160)
+    if (!productId) return ["", null] as const
+    return [productId, row.body_html] as const
+  }).filter(([productId]) => Boolean(productId)))
   const opportunityIds = [...new Set((linksResult.data ?? []).map((row) => text(row.opportunity_id))
     .filter((value): value is string => Boolean(value)))]
   const opportunitiesResult = opportunityIds.length
@@ -436,7 +580,39 @@ async function loadTargets(
   const verified = (linksResult.data ?? []).map((link) => targetFromVerifiedActiveListingLink({
     link: record(link), opportunity: opportunities.get(link.opportunity_id) ?? {},
   })).filter((target): target is ProductResearchCaptureTarget => Boolean(target))
-  const catalog = (catalogResult.data ?? []).map((row) => targetFromCatalogRow(record(row)))
+  const catalog = catalogRows.map((row) => {
+    const metadata = record(row.metadata)
+    const offer = detectProductResearchOfferFacts(`${text(row.title) ?? ""} ${text(row.variant_title) ?? ""}`)
+    const extracted = extractLunaOfficialDescriptionIdentity({
+      bodyHtml: descriptionByProductId.get(text(row.product_id, 160) ?? "") ?? null,
+      nativePackCount: integer(metadata.packCount) ?? offer.packCount,
+    })
+    const facts = extracted.facts
+    const existingBrand = text(metadata.manufacturerBrand ?? metadata.brand, 100)
+    const existingMpn = text(metadata.mpn ?? metadata.manufacturerPartNumber, 100)
+    const existingModel = text(metadata.model ?? metadata.modelNumber, 100)
+    const existingBarcode = text(row.barcode, 32)
+    const descriptionUsed = Boolean(
+      !existingBarcode && facts.gtin ||
+      !existingBrand && facts.brand ||
+      !existingMpn && facts.mpn ||
+      !existingModel && facts.model,
+    )
+    return targetFromCatalogRow({ ...row,
+      barcode: existingBarcode ?? facts.gtin,
+      metadata: {
+        ...metadata,
+        manufacturerBrand: existingBrand ?? facts.brand,
+        mpn: existingMpn ?? facts.mpn,
+        model: existingModel ?? facts.model,
+        packCount: integer(metadata.packCount) ?? facts.packCount,
+        size: text(metadata.size, 100) ?? facts.size,
+        identityEvidenceSource: descriptionUsed && extracted.evidenceHash
+          ? "LUNA_OFFICIAL_PRODUCT_DESCRIPTION" : "LUNA_STRUCTURED_CATALOG",
+        identityEvidenceHash: descriptionUsed ? extracted.evidenceHash : null,
+      },
+    })
+  })
     .filter((target): target is ProductResearchCaptureTarget => Boolean(target))
   const byVariant = new Map<string, ProductResearchCaptureTarget>()
   for (const target of verified) byVariant.set(target.supplierVariantId, target)
@@ -600,6 +776,9 @@ export async function reconcileProductResearchObservations(input: {
     outcomes: JsonRecord
   }
   const sharedEvidenceByBatch = new Map<string, Promise<SharedOfficialEvidence>>()
+  const plannedTarget = targets.length === 1 ? targets[0] : null
+  const plannedIdentity = plannedTarget
+    ? normalizeProductIdentity(plannedTarget.identity) : null
   const sharedOfficialEvidence = (
     observation: Observation,
     captured: OfficialIdentityFacts,
@@ -618,8 +797,16 @@ export async function reconcileProductResearchObservations(input: {
         try {
           officialCallBudget.browse += 1
           const result = record(await browseReader({ productName: sharedQueryText,
-            packQuantity: null, size: null }))
+            packQuantity: plannedIdentity?.packCount ?? null,
+            size: plannedIdentity?.size ?? null,
+            gtin: plannedIdentity?.gtinValid ? plannedIdentity.gtin : null,
+            brand: plannedIdentity?.manufacturerBrand ?? null,
+            mpn: plannedIdentity?.mpn ?? null,
+            model: plannedIdentity?.model ?? null }))
           outcomes.browse = "READY"
+          outcomes.browseQueryStrategy = plannedIdentity?.gtinValid ? "GTIN"
+            : plannedIdentity?.manufacturerBrand && (plannedIdentity.mpn || plannedIdentity.model)
+              ? "BRAND_MPN" : "PLANNED_NORMALIZED_IDENTITY"
           outcomes.browseComparableCount = Array.isArray(result.comparableEvidence)
             ? result.comparableEvidence.length : 0
           return result
@@ -632,7 +819,8 @@ export async function reconcileProductResearchObservations(input: {
         try {
           officialCallBudget.catalog += 1
           const result = record(await catalogReader({ query: sharedQueryText,
-            gtin: null, mpn: null }))
+            gtin: plannedIdentity?.gtinValid ? plannedIdentity.gtin : null,
+            mpn: plannedIdentity?.mpn ?? plannedIdentity?.model ?? null }))
           outcomes.catalog = text(result.status) ?? "UNAVAILABLE"
           outcomes.catalogProductCount = Array.isArray(result.products) ? result.products.length : 0
           return result
@@ -648,6 +836,7 @@ export async function reconcileProductResearchObservations(input: {
         browse,
         catalog,
         taxonomy: null,
+        anchor: plannedTarget?.identity ?? null,
       })
       let taxonomy: JsonRecord | null = null
       try {
@@ -703,8 +892,15 @@ export async function reconcileProductResearchObservations(input: {
     sourcesConsulted.push("EBAY_CATALOG_OFFICIAL_READONLY")
     sourcesConsulted.push("EBAY_TAXONOMY_OFFICIAL_READONLY")
     Object.assign(outcomes, shared.outcomes)
-    const facts = officialFactsFromSources({ capture: captured, trading, browse, catalog, taxonomy })
+    const facts = officialFactsFromSources({
+      capture: captured, trading, browse, catalog, taxonomy,
+      anchor: plannedTarget?.identity ?? null,
+    })
     const decision = reconcileProductResearchIdentity({ observation: facts, queryTokens, targets })
+    if (decision.target?.identityEvidenceSource === "LUNA_OFFICIAL_PRODUCT_DESCRIPTION") {
+      sourcesConsulted.push("LUNA_OFFICIAL_PRODUCT_DESCRIPTION")
+      outcomes.lunaIdentity = "EXPLICIT_LABELLED_FACTS_READY"
+    } else outcomes.lunaIdentity = "STRUCTURED_CATALOG_ONLY"
     const previous = previousByObservation.get(observation.id) ?? null
     const deduplicationKey = sha256({ observationId: observation.id,
       version: PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_VERSION,
@@ -755,6 +951,9 @@ export async function reconcileProductResearchObservations(input: {
       sourcesUsed: sourcesConsulted, sourceOutcomes: outcomes,
       supplierVariantId: decision.target?.supplierVariantId ?? null,
       supplierSku: decision.target?.supplierSku ?? null,
+      observedPackCount: facts.packCount,
+      candidatePackCount: decision.target?.identity.packCount ?? null,
+      confirmedSoldQuantity: observation.confirmed_sold_quantity,
       soldExactCountImpact: decision.affectsSoldExactCount
         ? observation.confirmed_sold_quantity : 0,
       packIntelligenceImpact: decision.affectsPackIntelligence

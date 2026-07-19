@@ -4,6 +4,8 @@
   const SELLER_OS_ORIGIN = "https://imnova-website-z1qh-git-featur-438554-earch19792-6888s-projects.vercel.app"
   const RECEIVER_URL = `${SELLER_OS_ORIGIN}/admin/ebay/mobile-review/product-research-capture`
   const SELLER_OS_HOME_URL = `${SELLER_OS_ORIGIN}/admin/ebay-seller-os`
+  const RECEIVER_WINDOW_NAME = "sellerOsProductResearchBatchReceiver"
+  const RECEIVER_WINDOW_FEATURES = "popup=yes,width=720,height=780,resizable=yes,scrollbars=yes"
   const CAPTURE_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_VISIBLE_CAPTURE_V1"
   const RECEIVER_READY_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_RECEIVER_READY_V1"
   const CAPTURE_RESULT_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_CAPTURE_RESULT_V1"
@@ -62,12 +64,13 @@
   let nextQueryProgress = null
   let nextQueryInstruction = null
   let applyNextQueryButton = null
-  let copyNextQueryButton = null
+  let searchStepButton = null
   let nextQueryState = null
   let nextQueryWatchTimer = null
   let nextQueryCheckPending = false
   let nextQueryApplyPending = false
   let guidedPlanCompleted = false
+  let dispatchedCaptureId = null
 
   const ERROR_MESSAGES = {
     PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND:
@@ -1247,6 +1250,28 @@
     nextQueryWatchTimer = null
   }
 
+  function paintWorkflowStep(button, { label, state, enabled = false }) {
+    if (!button) return
+    const palette = {
+      future: { background: "#172033", color: "#64748b", border: "rgba(148,163,184,.18)" },
+      working: { background: "#164e63", color: "#cffafe", border: "rgba(165,243,252,.7)" },
+      current: { background: "#a5f3fc", color: "#082f49", border: "rgba(165,243,252,1)" },
+      done: { background: "#14532d", color: "#bbf7d0", border: "rgba(187,247,208,.4)" },
+    }[state] ?? { background: "#172033", color: "#64748b", border: "rgba(148,163,184,.18)" }
+    button.hidden = false
+    button.disabled = !enabled
+    button.textContent = label
+    button.style.background = palette.background
+    button.style.color = palette.color
+    button.style.border = `1px solid ${palette.border}`
+    button.style.opacity = state === "future" ? ".72" : "1"
+    button.style.cursor = enabled ? "pointer" : state === "working" ? "wait" : "not-allowed"
+    button.style.boxShadow = state === "current" || state === "working"
+      ? "0 0 0 2px rgba(165,243,252,.18),0 0 22px rgba(34,211,238,.22)" : "none"
+    button.setAttribute("aria-current", state === "current" || state === "working" ? "step" : "false")
+    button.setAttribute("aria-busy", state === "working" ? "true" : "false")
+  }
+
   function updateCaptureAvailability() {
     if (!captureButton) return
     if (guidedPlanCompleted) {
@@ -1256,18 +1281,19 @@
       captureButton.style.cursor = "pointer"
       captureButton.style.background = "#bbf7d0"
       captureButton.style.color = "#052e16"
+      captureButton.style.border = "1px solid rgba(187,247,208,.7)"
+      captureButton.style.boxShadow = "0 0 24px rgba(74,222,128,.24)"
+      captureButton.setAttribute("aria-current", "step")
       return
     }
     const waitingForResults = Boolean(nextQueryState && !nextQueryState.resultsReady)
-    captureButton.disabled = waitingForResults
-    captureButton.textContent = nextQueryState
-      ? waitingForResults ? "3. Capturar cuando carguen resultados" : "3. Capturar y continuar"
-      : "Capturar y continuar"
-    captureButton.style.opacity = waitingForResults ? ".72" : "1"
-    captureButton.style.cursor = waitingForResults ? "not-allowed" : "pointer"
-    captureButton.style.background = waitingForResults ? "#1e293b" : "#a5f3fc"
-    captureButton.style.color = waitingForResults ? "#94a3b8" : "#082f49"
-    captureButton.setAttribute("aria-current", waitingForResults ? "false" : "step")
+    paintWorkflowStep(captureButton, {
+      label: nextQueryState
+        ? waitingForResults ? "3. Capturar cuando carguen resultados" : "3. Capturar y continuar"
+        : "Capturar y continuar",
+      state: waitingForResults ? "future" : "current",
+      enabled: !waitingForResults,
+    })
   }
 
   function setNextQueryWorkflowStage(stage) {
@@ -1279,23 +1305,19 @@
     const manualSearch = stage === "MANUAL_SEARCH_REQUIRED"
     const waiting = stage === "WAITING_RESULTS"
     const ready = stage === "READY_TO_CAPTURE"
-    if (applyNextQueryButton) {
-      applyNextQueryButton.hidden = !applying
-      applyNextQueryButton.disabled = true
-      applyNextQueryButton.textContent = `1. Aplicando consulta ${ordinal}…`
-      applyNextQueryButton.style.opacity = ".72"
-      applyNextQueryButton.style.cursor = "wait"
-      applyNextQueryButton.setAttribute("aria-current", applying ? "step" : "false")
-    }
-    if (copyNextQueryButton) {
-      copyNextQueryButton.hidden = !manualCopy
-      copyNextQueryButton.disabled = false
-      copyNextQueryButton.textContent = `1. Copiar consulta ${ordinal}`
-      copyNextQueryButton.style.background = "#a5f3fc"
-      copyNextQueryButton.style.color = "#082f49"
-      copyNextQueryButton.style.opacity = "1"
-      copyNextQueryButton.setAttribute("aria-current", manualCopy ? "step" : "false")
-    }
+    paintWorkflowStep(applyNextQueryButton, {
+      label: applying ? `1. Preparando consulta ${ordinal}…`
+        : manualCopy ? `1. Copiar consulta ${ordinal}` : "1. Consulta preparada ✓",
+      state: applying ? "working" : manualCopy ? "current" : "done",
+      enabled: manualCopy,
+    })
+    paintWorkflowStep(searchStepButton, {
+      label: manualSearch ? "2. Mostrar dónde ejecutar Search"
+        : waiting ? "2. Esperando resultados nuevos…"
+          : ready ? "2. Resultados nuevos listos ✓" : "2. Buscar en Product Research",
+      state: manualSearch ? "current" : waiting ? "working" : ready ? "done" : "future",
+      enabled: manualSearch,
+    })
     if (nextQueryInstruction) {
       nextQueryInstruction.textContent = applying
           ? "TRABAJANDO: Seller OS está buscando el control seguro dentro de Product Research."
@@ -1359,6 +1381,40 @@
     else input.value = value
     input.dispatchEvent(new Event("input", { bubbles: true }))
     input.dispatchEvent(new Event("change", { bubbles: true }))
+  }
+
+  async function copyPreparedQuery() {
+    if (!nextQueryState) return
+    try {
+      await navigator.clipboard.writeText(nextQueryState.query)
+      setNextQueryWorkflowStage("MANUAL_SEARCH_REQUIRED")
+      setStatus("Consulta copiada. Pégala en Product Research y ejecuta Search.", "success")
+    } catch {
+      nextQueryField?.focus()
+      nextQueryField?.select()
+      setNextQueryWorkflowStage("MANUAL_SEARCH_REQUIRED")
+      setStatus("Seleccioné la consulta. Usa Ctrl+C; después pégala y ejecuta Search.", "warning")
+    }
+  }
+
+  function revealResearchSearchControl() {
+    const input = researchSearchInput()
+    if (!input) {
+      setStatus("No encontré el buscador interno. Pega la consulta en el campo de Product Research y pulsa Search.", "warning")
+      return
+    }
+    input.scrollIntoView?.({ behavior: "smooth", block: "center" })
+    input.focus()
+    const previousOutline = input.style.outline
+    const previousOutlineOffset = input.style.outlineOffset
+    input.style.outline = "4px solid #22d3ee"
+    input.style.outlineOffset = "4px"
+    window.setTimeout(() => {
+      if (!input.isConnected) return
+      input.style.outline = previousOutline
+      input.style.outlineOffset = previousOutlineOffset
+    }, 4_000)
+    setStatus("Campo localizado y resaltado. Pega la consulta y pulsa Search dentro de Product Research.", "success")
   }
 
   function requestResearchSubmitWithGuidedFragment(form) {
@@ -1564,12 +1620,27 @@
     updateCaptureAvailability()
   }
 
+  function reusableReceiverWindow() {
+    if (receiver && !receiver.closed) return receiver
+    // An empty URL retrieves the named window without navigating an existing
+    // authenticated receiver. Only a newly created about:blank window is sent
+    // to Preview, so one login can serve the complete five-query batch.
+    const candidate = window.open("", RECEIVER_WINDOW_NAME, RECEIVER_WINDOW_FEATURES)
+    if (!candidate) throw new Error("PRODUCT_RESEARCH_CAPTURE_POPUP_BLOCKED")
+    receiver = candidate
+    try {
+      if (candidate.location.href === "about:blank") candidate.location.replace(RECEIVER_URL)
+    } catch {
+      // A cross-origin access error proves that the named Preview receiver is
+      // already open. Do not navigate or reload it.
+    }
+    return candidate
+  }
+
   function startCapture() {
     try {
       assertExpectedQuery(queryContext())
-      receiver = window.open(RECEIVER_URL, "imnovaProductResearchCapture",
-        "popup=yes,width=720,height=780,resizable=yes,scrollbars=yes")
-      if (!receiver) throw new Error("PRODUCT_RESEARCH_CAPTURE_POPUP_BLOCKED")
+      reusableReceiverWindow()
     } catch (error) {
       const code = error instanceof Error ? error.message : "PRODUCT_RESEARCH_CAPTURE_FAILED"
       setStatus(code, "error")
@@ -1601,9 +1672,8 @@
         }, 20_000)
       } catch (error) {
         pending = null
+        dispatchedCaptureId = null
         const code = error instanceof Error ? error.message : "PRODUCT_RESEARCH_CAPTURE_FAILED"
-        if (receiver && !receiver.closed) receiver.close()
-        receiver = null
         if (code === "PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND") {
           const diagnostic = safeStructureDiagnostics()
           setStatus(`${ERROR_MESSAGES[code]} Diagnóstico seguro: roots=${diagnostic.roots}; frames=${diagnostic.sameOriginFrames}; fields=${diagnostic.recognizedFields.join(",") || "none"}; itemLinks=${diagnostic.itemLinks}; coordinateRows=${diagnostic.coordinateRows}.`, "error")
@@ -1617,8 +1687,10 @@
 
   window.addEventListener("message", (event) => {
     if (event.origin !== SELLER_OS_ORIGIN || event.source !== receiver || !event.data) return
-    if (event.data.type === RECEIVER_READY_MESSAGE && pending) {
+    if (event.data.type === RECEIVER_READY_MESSAGE && pending &&
+      dispatchedCaptureId !== pending.captureId) {
       resetReceiverTimeout()
+      dispatchedCaptureId = pending.captureId
       receiver.postMessage({ type: CAPTURE_MESSAGE, capture: pending }, SELLER_OS_ORIGIN)
       setStatus("Enviando datos estructurados a Seller OS…")
     }
@@ -1632,6 +1704,7 @@
           : `Captura rechazada: ${event.data.error || "ERROR"}`,
       event.data.success ? "success" : "error")
       pending = null
+      dispatchedCaptureId = null
       if (event.data.success && event.data.nextQuery) {
         const advance = navigationOnly ? advanceAfterCorrectedCapture : advanceAfterAcceptedCapture
         advance(event.data.nextQuery, event.data.nextQueryOrdinal, event.data.queryCount)
@@ -1649,7 +1722,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.5"
+  title.textContent = "Seller OS · Product Research · v1.2.6"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"
@@ -1679,32 +1752,25 @@
   nextQueryField.style.cssText = "box-sizing:border-box;width:100%;resize:none;border:1px solid rgba(255,255,255,.2);border-radius:8px;background:#020617;color:white;padding:7px;font:11px/1.35 system-ui,sans-serif"
   nextQueryInstruction = document.createElement("p")
   nextQueryInstruction.style.cssText = "margin:7px 0 0;color:#fde68a;font-size:11px"
-  copyNextQueryButton = document.createElement("button")
-  copyNextQueryButton.type = "button"
-  copyNextQueryButton.textContent = "1. Copiar consulta"
-  copyNextQueryButton.style.cssText = "display:block;width:100%;margin-top:7px;padding:8px;border:1px solid rgba(165,243,252,.45);border-radius:8px;background:transparent;color:#cffafe;font-weight:800;cursor:pointer"
-  copyNextQueryButton.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(nextQueryField?.value ?? "")
-      copyNextQueryButton.disabled = true
-      copyNextQueryButton.textContent = "1. Consulta copiada ✓"
-      copyNextQueryButton.style.opacity = ".7"
-      copyNextQueryButton.style.cursor = "not-allowed"
-      setStatus("Consulta copiada. Completa el paso 2 dentro de Product Research.", "success")
-    } catch {
-      nextQueryField?.focus()
-      nextQueryField?.select()
-      setStatus("Seleccioné la consulta. Usa Ctrl+C para copiarla.")
-    }
-  })
   applyNextQueryButton = document.createElement("button")
   applyNextQueryButton.type = "button"
-  applyNextQueryButton.textContent = "Aplicar y buscar próxima consulta"
-  applyNextQueryButton.style.cssText = "display:block;width:100%;margin-top:7px;padding:9px;border:0;border-radius:8px;background:#a5f3fc;color:#082f49;font-weight:800;cursor:pointer"
-  applyNextQueryButton.addEventListener("click", () => void applyAndSearchNextQuery())
+  applyNextQueryButton.textContent = "1. Preparar consulta"
+  applyNextQueryButton.style.cssText = "display:block;width:100%;margin-top:7px;padding:9px;border-radius:8px;font-weight:800"
+  applyNextQueryButton.addEventListener("click", () => {
+    if (nextQueryState?.workflowStage === "MANUAL_COPY_REQUIRED") {
+      void copyPreparedQuery()
+      return
+    }
+    void applyAndSearchNextQuery()
+  })
+  searchStepButton = document.createElement("button")
+  searchStepButton.type = "button"
+  searchStepButton.textContent = "2. Buscar en Product Research"
+  searchStepButton.style.cssText = "display:block;width:100%;margin-top:7px;padding:9px;border-radius:8px;font-weight:800"
+  searchStepButton.addEventListener("click", revealResearchSearchControl)
   nextQueryPanel.append(
     nextQueryProgress, nextQueryField, applyNextQueryButton,
-    copyNextQueryButton, nextQueryInstruction,
+    searchStepButton, nextQueryInstruction,
   )
   // Keep the visual order identical to the operating order. The capture
   // action is step 3 and must never appear above steps 1 and 2.

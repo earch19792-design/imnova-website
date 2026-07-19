@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto"
 
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import { validateGtinChecksum } from "./ebay-winner-evidence-v2.ts"
+
 export const SAME_DAY_PILOT_VERSION = "PILOT_3_LISTINGS_SAME_DAY_V1"
 export const SAME_DAY_QUEUE_LIMIT = 5
 export const SAME_DAY_MAX_CANDIDATE_CYCLES = 20
@@ -32,6 +35,14 @@ export type SameDayCandidateInput = {
   brand?: string | null
   mpn?: string | null
   model?: string | null
+  nativePackCount?: number | null
+  unitCount?: number | null
+  size?: string | null
+  color?: string | null
+  scent?: string | null
+  formulation?: string | null
+  identityEvidenceSource?: string | null
+  identityEvidenceHash?: string | null
   supplierPrice?: number | null
   supplierAvailable?: boolean | null
   supplierQuantity?: number | null
@@ -183,7 +194,7 @@ function fingerprint(value: string) {
 
 export function buildSameDayProductResearchQuery(input: SameDayCandidateInput) {
   const gtin = normalized(input.gtin).replace(/\s/g, "")
-  if (/^\d{8,14}$/.test(gtin)) return {
+  if (validateGtinChecksum(gtin)) return {
     strategy: "GTIN", query: gtin,
     reason: "El identificador global reduce coincidencias de otro tamaño, pack o variante.",
   }
@@ -204,8 +215,41 @@ export function buildSameDayProductResearchQuery(input: SameDayCandidateInput) {
   }
 }
 
+export function assessSameDayResearchIdentityReadiness(input: SameDayCandidateInput) {
+  const rawGtin = normalized(input.gtin).replace(/\s/g, "")
+  const gtinPresent = Boolean(rawGtin)
+  const gtinValid = validateGtinChecksum(rawGtin)
+  const brand = normalized(input.brand)
+  const modelIdentifier = normalized(input.mpn || input.model)
+  const structuredBrandModel = Boolean(brand && modelIdentifier)
+  const nativePackCount = Number.isInteger(input.nativePackCount) && Number(input.nativePackCount) > 0
+    ? Number(input.nativePackCount) : null
+  const blockers = [
+    gtinPresent && !gtinValid ? "GTIN_INVALID_OR_UNVERIFIED" : "",
+    !gtinValid && !structuredBrandModel ? "IDENTITY_QUERY_TOO_GENERIC" : "",
+    nativePackCount === null ? "OFFER_PACK_IDENTITY_MISSING" : "",
+  ].filter(Boolean)
+  return {
+    ready: blockers.length === 0,
+    blockers,
+    strategy: gtinValid ? "GTIN" as const
+      : structuredBrandModel ? "BRAND_MPN" as const : "IDENTITY_ENRICHMENT_REQUIRED" as const,
+    gtinValid,
+    structuredBrandModel,
+    nativePackCount,
+    factsAvailable: {
+      brand: Boolean(brand),
+      mpnOrModel: Boolean(modelIdentifier),
+      size: Boolean(normalized(input.size)),
+      variant: Boolean(normalized(input.color || input.scent || input.formulation || input.variantTitle)),
+      unitCount: Number.isInteger(input.unitCount) && Number(input.unitCount) > 0,
+    },
+  }
+}
+
 export function evaluateSameDayCandidate(input: SameDayCandidateInput, now = new Date()): SameDayCandidateDecision {
   const queryPlan = buildSameDayProductResearchQuery(input)
+  const identityReadiness = assessSameDayResearchIdentityReadiness(input)
   const familyFingerprint = fingerprint([
     normalized(input.brand), normalized(input.mpn || input.model),
     normalized(input.productTitle), normalized(input.variantTitle),
@@ -216,10 +260,6 @@ export function evaluateSameDayCandidate(input: SameDayCandidateInput, now = new
   const economicsPlausible = input.economicsReady === true || Number(input.estimatedProfit ?? 0) > 0
   const supplierObservedAt = Date.parse(input.supplierObservedAt ?? "")
   const lunaFresh = Number.isFinite(supplierObservedAt) && now.getTime() - supplierObservedAt <= 72 * 60 * 60_000
-  const normalizedIdentity = normalized([input.productTitle, input.variantTitle].filter(Boolean).join(" "))
-  const researchIdentitySufficient = /^\d{8,14}$/.test(normalized(input.gtin).replace(/\s/g, "")) ||
-    Boolean(normalized(input.brand) && normalized(input.mpn || input.model)) ||
-    normalizedIdentity.split(" ").filter((token) => token.length > 1).length >= 3
   const criticalHardGates = (input.hardGates ?? []).filter((gate) => !TODAY_RESOLVABLE_HARD_GATES.has(gate))
   const localBlockers = [
     input.supplierAvailable === false ? "LUNA_OUT_OF_STOCK" : "",
@@ -227,7 +267,7 @@ export function evaluateSameDayCandidate(input: SameDayCandidateInput, now = new
     !normalized(input.supplierSku) ? "SUPPLIER_SKU_MISSING" : "",
     !normalized(input.supplierVariantId) ? "SUPPLIER_VARIANT_ID_MISSING" : "",
     !lunaFresh ? "LUNA_RECORD_STALE" : "",
-    !researchIdentitySufficient ? "IDENTITY_INSUFFICIENT" : "",
+    ...identityReadiness.blockers,
     input.regulatedWithoutPath ? "REGULATORY_PATH_MISSING" : "",
     ["listed", "rejected", "archived"].includes(input.queueStatus ?? "") ? "OPPORTUNITY_NOT_ELIGIBLE" : "",
     ...criticalHardGates.map((gate) => `HARD_GATE:${gate}`),
@@ -347,11 +387,21 @@ export function buildSameDayLocalPreparationPackage(candidate: SameDayCandidateD
       supplierVariantId: candidate.supplierVariantId ?? null,
       supplierProductUrl: candidate.supplierProductUrl ?? null,
       gtin: candidate.gtin ?? null,
+      brand: candidate.brand ?? null,
+      mpn: candidate.mpn ?? null,
+      model: candidate.model ?? null,
+      unitCount: candidate.unitCount ?? null,
+      size: candidate.size ?? null,
+      identityProvenance: {
+        source: candidate.identityEvidenceSource ?? null,
+        evidenceHash: candidate.identityEvidenceHash ?? null,
+      },
     },
     offer: {
       listingQuantity: quantity.quantity || 1,
       recheckAfterSale: quantity.recheckAfterSale,
       supplierUnitCost: candidate.supplierPrice ?? null,
+      nativePackCount: candidate.nativePackCount ?? null,
       targetPrice: null,
       finalPackIdentity: null,
     },

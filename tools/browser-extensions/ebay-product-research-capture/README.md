@@ -9,9 +9,9 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Ejecuta una búsqueda y usa **Capturar y continuar**.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.5.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.6.
 
-## Consulta guiada y patrones locales (v1.2.5)
+## Consulta guiada, sesión de lote y patrones locales (v1.2.6)
 
 Seller OS puede abrir Product Research con una consulta preparada en el fragmento
 local de la URL. La extensión aplica la consulta automáticamente y el usuario sólo
@@ -32,6 +32,17 @@ nuevos y verifica que la consulta visible coincida antes de habilitar la siguien
 nunca inicia sesión automáticamente. Si eBay recarga la página, conserva en el fragmento
 local la consulta y una huella SHA-256 no reconstructiva de la tabla anterior; no guarda
 Item IDs ni filas en storage y sólo reactiva la captura cuando prueba que los resultados cambiaron.
+
+La ventana segura de Seller OS se abre una sola vez y se reutiliza durante el lote de
+hasta cinco consultas. Su heartbeat se reactiva después de cada captura y reconoce cada
+`captureId` de forma idempotente, por lo que una entrega repetida no vuelve a importar.
+La extensión no renavega esa ventana entre productos: la sesión que el operador abrió
+legítimamente sirve para todo el lote mientras no venza ni se cierre. Nunca automatiza el
+login, guarda cookies, lee credenciales ni intenta eludir una expiración de eBay o Seller OS.
+
+El panel muestra los pasos en orden. Sólo la acción humana que corresponde queda
+resaltada y habilitada; los pasos futuros permanecen grises. Al completar la última
+consulta, oculta los controles intermedios y deja únicamente “VOLVER A SELLER OS”.
 
 La aplicación automática de consultas excluye explícitamente el buscador global de
 eBay y valida el destino del formulario antes de enviarlo. Sólo permite formularios

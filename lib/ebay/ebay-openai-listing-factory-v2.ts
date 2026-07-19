@@ -6,6 +6,8 @@ import { z } from "zod"
 import { buildListingAiEvidenceDistillation, listingAiEvidenceDistillationSchema } from "./ebay-openai-listing-evidence-distillation.ts"
 // @ts-expect-error Node test runtime imports the TypeScript source directly.
 import { buildListingAiPackStrategy } from "./ebay-openai-listing-pack-strategy.ts"
+// @ts-expect-error Node test runtime imports the TypeScript source directly.
+import { parseAuthoritativeFactsInputPackage } from "./ebay-product-facts-readiness.ts"
 
 export const LISTING_AI_SCHEMA_VERSION = "EBAY_LISTING_AI_OUTPUT_V2_1"
 export const LISTING_AI_ENGINE_VERSION = "EBAY_LISTING_AI_ENGINE_V2_1"
@@ -85,6 +87,7 @@ export const listingAiProductFactsSchema = z.object({
 export const listingAiInputSchema = z.object({
   packageVersion: z.string().trim().min(1).max(160),
   packageHash: hashSchema,
+  authoritativeFactPackageHash: hashSchema,
   candidateId: z.string().uuid().nullable(),
   productFacts: listingAiProductFactsSchema,
   identityFingerprint: hashSchema,
@@ -443,10 +446,16 @@ function buildVisualSummary(value: unknown) {
 export function buildListingAiInputFromDecisionPackage(
   row: ListingAiDecisionRow,
   now = new Date(),
-  options: { integrityVerified?: boolean } = {},
+  options: { integrityVerified?: boolean; authoritativeFactsPackage?: unknown } = {},
 ): ListingAiInput {
   const assessment = assessListingAiDecisionPackage(row, now, options)
   if (!assessment.eligible) throw new Error(assessment.reasons[0] ?? "LISTING_AI_PACKAGE_NOT_ELIGIBLE")
+  const authoritativePackage = parseAuthoritativeFactsInputPackage(options.authoritativeFactsPackage)
+  if (!authoritativePackage) throw new Error("AUTHORITATIVE_FACT_PACKAGE_REQUIRED")
+  const fact = (scope: string, ...keys: string[]) => authoritativePackage.facts.find((entry) =>
+    entry.scope === scope && keys.some((key) => key.toLocaleLowerCase() === entry.key.toLocaleLowerCase()))?.value
+  const factText = (scope: string, ...keys: string[]) => optionalText(fact(scope, ...keys))
+  const factNumber = (scope: string, ...keys: string[]) => numberOrNull(fact(scope, ...keys))
   const payload = record(row.package_payload)
   const productIdentity = record(payload.productIdentity)
   const identity = record(productIdentity.identity)
@@ -456,55 +465,71 @@ export function buildListingAiInputFromDecisionPackage(
   const intake = record(payload.listingAiIntake)
   const category = record(intake.category)
   const compliance = record(payload.compliance)
-  const currentPackCount = numberOrNull(identity.packCount)
-  const currentUnitCount = numberOrNull(identity.unitCount)
-  const verifiedOffer = array(record(payload.packStrategyEvidence).offers).map(record)
-    .find((entry) => numberOrNull(entry.packCount) === currentPackCount &&
-      numberOrNull(entry.unitCountPerItem) === currentUnitCount &&
-      entry.offerGtinVerified === true)
+  const currentPackCount = factNumber("OFFER_PACK", "offerPackCount")
+  const currentUnitCount = factNumber("PRODUCT_UNIT", "unitCount")
   const safeOfferGtin = currentPackCount !== null && currentPackCount > 1
-    ? optionalText(verifiedOffer?.offerGtin)
-    : optionalText(identity.gtin)
+    ? factText("OFFER_PACK", "multipackGtin")
+    : factText("PRODUCT_UNIT", "gtin", "upc", "ean")
   const demandScore = numberOrNull(scores.demandConfidence)
-  const exactIdentifier = identity.gtinValid === true || Boolean(
-    optionalText(identity.manufacturerBrand) &&
-    (optionalText(identity.mpn) || optionalText(identity.model)),
+  const exactIdentifier = Boolean(safeOfferGtin) || Boolean(
+    factText("PRODUCT_UNIT", "brand") &&
+    (factText("PRODUCT_UNIT", "mpn") || factText("PRODUCT_UNIT", "model")),
   )
   const evidenceCodes = [
-    identity.gtinValid === true ? "GTIN_CHECKSUM_VALID" : null,
-    optionalText(identity.manufacturerBrand) ? "MANUFACTURER_BRAND_VERIFIED" : null,
-    optionalText(identity.mpn) ? "MPN_VERIFIED" : null,
-    optionalText(identity.model) ? "MODEL_VERIFIED" : null,
-    numberOrNull(identity.packCount) ? "PACK_COUNT_VERIFIED" : null,
-    optionalText(identity.variant) ? "VARIANT_VERIFIED" : null,
+    safeOfferGtin ? "GTIN_CHECKSUM_VALID" : null,
+    factText("PRODUCT_UNIT", "brand") ? "MANUFACTURER_BRAND_VERIFIED" : null,
+    factText("PRODUCT_UNIT", "mpn") ? "MPN_VERIFIED" : null,
+    factText("PRODUCT_UNIT", "model") ? "MODEL_VERIFIED" : null,
+    currentPackCount ? "PACK_COUNT_VERIFIED" : null,
+    factText("PRODUCT_UNIT", "variant") ? "VARIANT_VERIFIED" : null,
   ].filter((value): value is string => Boolean(value))
+  const aspectAliases: Record<string, string[]> = {
+    brand: ["brand"], manufacturer: ["manufacturer"], upc: ["upc", "gtin"],
+    ean: ["ean", "gtin"], gtin: ["gtin", "upc", "ean"], mpn: ["mpn"],
+    model: ["model"], color: ["color"], scent: ["scent"], flavor: ["flavor"],
+    formulation: ["formulation"], material: ["material"], condition: ["condition"],
+    numberinpack: ["offerPackCount"], unitcount: ["totalUnitCount", "unitCount"],
+    size: ["netContent", "size"],
+  }
+  const authorizedAspects = (value: unknown) => aspects(value).flatMap((aspect) => {
+    const normalizedName = aspect.name.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "")
+    const keys = aspectAliases[normalizedName] ?? [aspect.name]
+    const resolved = factText("PRODUCT_UNIT", ...keys) ?? factText("OFFER_PACK", ...keys)
+    return resolved ? [{ name: aspect.name, value: resolved }] : []
+  })
+  const allowedImageFacts = authoritativePackage.facts.filter((entry) =>
+    ["exactProductName", "brand", "model", "variant", "scent", "color", "netContent",
+      "offerPackCount", "totalUnitCount"].includes(entry.key) &&
+      ["string", "number", "boolean"].includes(typeof entry.value))
+    .map((entry) => `${entry.key}: ${String(entry.value)}`).slice(0, 50)
   return listingAiInputSchema.parse({
     packageVersion: row.package_version,
     packageHash: row.package_hash,
+    authoritativeFactPackageHash: authoritativePackage.factPackageHash,
     candidateId: row.candidate_id ?? null,
     productFacts: {
-      manufacturerBrand: optionalText(identity.manufacturerBrand),
-      manufacturer: null,
+      manufacturerBrand: factText("PRODUCT_UNIT", "brand"),
+      manufacturer: factText("PRODUCT_UNIT", "manufacturer"),
       gtin: safeOfferGtin,
-      mpn: optionalText(identity.mpn),
-      model: optionalText(identity.model),
-      normalizedProductName: optionalText(identity.normalizedProductName),
-      packCount: numberOrNull(identity.packCount),
-      unitCount: numberOrNull(identity.unitCount),
-      size: optionalText(identity.size),
-      color: optionalText(identity.color),
-      scent: optionalText(identity.scent),
-      variant: optionalText(identity.variant),
-      condition: String(identity.condition).toLowerCase(),
-      includedContents: stringArray(intake.includedContents, 30),
+      mpn: factText("PRODUCT_UNIT", "mpn"),
+      model: factText("PRODUCT_UNIT", "model"),
+      normalizedProductName: factText("PRODUCT_UNIT", "exactProductName"),
+      packCount: currentPackCount,
+      unitCount: currentUnitCount,
+      size: factText("PRODUCT_UNIT", "netContent", "size"),
+      color: factText("PRODUCT_UNIT", "color"),
+      scent: factText("PRODUCT_UNIT", "scent"),
+      variant: factText("PRODUCT_UNIT", "variant", "formulation", "flavor"),
+      condition: String(factText("PRODUCT_UNIT", "condition")).toLowerCase(),
+      includedContents: stringArray(fact("OFFER_PACK", "packConfiguration"), 30),
     },
     identityFingerprint: row.product_identity_fingerprint,
     identityEvidence: { strong: true, exactIdentifier, evidenceCodes },
     verdict: row.verdict,
     approvedKeywords: stringArray(intake.approvedKeywords, 40),
     category: { id: optionalText(category.id), name: optionalText(category.name) },
-    requiredAspects: aspects(intake.requiredAspects),
-    optionalAspects: aspects(intake.optionalAspects),
+    requiredAspects: authorizedAspects(intake.requiredAspects),
+    optionalAspects: authorizedAspects(intake.optionalAspects),
     pricingScenario: {
       currency: "USD",
       name: optionalText(intake.pricingScenarioName) ?? "TARGET_PRICE",
@@ -515,7 +540,7 @@ export function buildListingAiInputFromDecisionPackage(
       ...stringArray(compliance.findings), ...stringArray(intake.complianceRestrictions),
     ],
     blockedClaims: stringArray(intake.blockedClaims),
-    allowedImageFacts: stringArray(intake.allowedImageFacts),
+    allowedImageFacts,
     marketPatternSummary: {
       activeExactCount: numberOrNull(counts.activeExact) ?? 0,
       soldOrCompletedExactCount: numberOrNull(counts.soldOrCompletedExact) ?? 0,
@@ -626,6 +651,10 @@ export function buildListingAiInputHash(
   return listingAiHash({
     loop1PackageHash: input.packageHash,
     identityFingerprint: input.identityFingerprint,
+    // The decision package can remain unchanged while a newer authoritative
+    // Product Facts run replaces or expires individual facts. Binding the fact
+    // package hash prevents an older generation from being reused for new facts.
+    authoritativeFactPackageHash: input.authoritativeFactPackageHash,
     normalizedProductFacts: input.productFacts,
     evidenceDistillationHash: input.evidenceDistillation.distillationHash,
     pricingScenario: input.pricingScenario,
@@ -635,6 +664,23 @@ export function buildListingAiInputHash(
     model,
     schemaVersion: LISTING_AI_SCHEMA_VERSION,
   })
+}
+
+export function assertListingAiRevisionFactPackageCurrent(input: {
+  factoryInput: ListingAiInput
+  storedInputHash: string
+  promptVersion: string
+  model: string
+}) {
+  const currentInputHash = buildListingAiInputHash(
+    input.factoryInput,
+    input.promptVersion,
+    input.model,
+  )
+  if (currentInputHash !== input.storedInputHash) {
+    throw new Error("LISTING_AI_REVISION_FACT_PACKAGE_STALE")
+  }
+  return currentInputHash
 }
 
 export function buildListingAiPrompt(

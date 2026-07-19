@@ -143,7 +143,7 @@ test("candidate, similar, identifier-exact active and identifier-exact sold evid
       brand: null,
       mpn: null,
     },
-    exact({ itemId: "conflict", gtin: "999999999999" }),
+    exact({ itemId: "conflict", gtin: "036000291452" }),
   ])
   assert.deepEqual(demand.evidenceBuckets, {
     candidateFoundCount: 4,

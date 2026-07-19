@@ -179,7 +179,8 @@ export function mapMarketRadarProductToMobileCandidate(
     productName: text(product.title, "Producto sin título"),
     productTitle: text(product.title, "Producto sin título"),
     variantTitle: product.variant_title ?? null,
-    brand: product.vendor ?? null,
+    // Luna vendor identifies the supplier, not the manufacturer brand.
+    brand: null,
     productType: product.product_type ?? null,
     handle: text(product.handle),
     productUrl: product.product_url ?? null,

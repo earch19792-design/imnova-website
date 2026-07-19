@@ -40,6 +40,8 @@ export type ProductResearchCaptureTarget = {
   supplierSku?: string | null
   sourceType?: "LOOP1_EVIDENCE" | "LUNA_CATALOG" | "VERIFIED_ACTIVE_LISTING_LINK"
   officialLinkVerified?: boolean
+  identityEvidenceSource?: "LUNA_STRUCTURED_CATALOG" | "LUNA_OFFICIAL_PRODUCT_DESCRIPTION" | null
+  identityEvidenceHash?: string | null
   identity: ProductIdentityInput
   productName: string
 }
@@ -618,6 +620,10 @@ export function targetFromCatalogRow(row: JsonRecord): ProductResearchCaptureTar
     supplierVariantId,
     supplierSku: normalizedText(row.sku, 100),
     sourceType: "LUNA_CATALOG",
+    identityEvidenceSource: normalizedText(metadata.identityEvidenceSource, 80) ===
+      "LUNA_OFFICIAL_PRODUCT_DESCRIPTION"
+      ? "LUNA_OFFICIAL_PRODUCT_DESCRIPTION" : "LUNA_STRUCTURED_CATALOG",
+    identityEvidenceHash: normalizedText(metadata.identityEvidenceHash, 100),
     identity,
     productName,
   }

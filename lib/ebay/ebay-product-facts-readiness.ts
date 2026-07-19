@@ -10,6 +10,7 @@ export const PRODUCT_FACTS_SCHEMA_VERSION = "PRODUCT_FACTS_V1_2026_07_17"
 export const PRODUCT_FACTS_RESOLVER_VERSION = "PRODUCT_FACTS_RESOLVER_V1_2026_07_17"
 export const SHIPPING_ESTIMATION_MODEL_VERSION = "SHIPPING_ESTIMATE_V1_2026_07_17"
 export const OPENAI_FACTS_INPUT_VERSION = "OPENAI_FACTS_INPUT_V1_2026_07_17"
+export const AUTHORITATIVE_FACT_SOURCE_POLICY = "TECHNICAL_AUTHORITY_ONLY_V1_2026_07_18"
 
 export type FactScope = "PRODUCT_UNIT" | "OFFER_PACK" | "SHIPPING_PACKAGE" | "EBAY_LISTING_REQUIREMENTS"
 export type FactVerificationStatus = "VERIFIED" | "CORROBORATED" | "DERIVED_VERIFIED" |
@@ -69,6 +70,8 @@ export type ResolvedFact = {
   selectedValue: unknown
   selectedUnit: string | null
   supportingObservationIds: string[]
+  supportingSourceTypes: FactSourceType[]
+  supportingSourceAuthorities: FactAuthority[]
   conflictingObservationIds: string[]
   resolutionRule: string
   confidence: number
@@ -97,6 +100,26 @@ export type FactRequirement = {
 export type ProductFactsResolution = {
   facts: ResolvedFact[]
   conflicts: Array<{ factScope: FactScope; factKey: string; observationIds: string[]; values: string[] }>
+}
+
+export type AuthoritativeOutboundFact = {
+  scope: FactScope
+  key: string
+  value: unknown
+  unit: string | null
+  verificationStatus: "VERIFIED" | "CORROBORATED" | "DERIVED_VERIFIED"
+  sourceTypes: FactSourceType[]
+  resolutionRule: string
+}
+
+export type AuthoritativeFactsInputPackage = {
+  ready: true
+  facts: AuthoritativeOutboundFact[]
+  version: typeof OPENAI_FACTS_INPUT_VERSION
+  sourcePolicy: typeof AUTHORITATIVE_FACT_SOURCE_POLICY
+  factPackageHash: string
+  openAiCalls: 0
+  blockedReason: null
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -185,9 +208,21 @@ function valueKey(value: unknown, unit: string | null) {
 
 const CRITICAL_CONFLICT_KEYS = new Set([
   "gtin", "upc", "ean", "mpn", "model", "variant", "scent", "flavor", "color",
-  "formulation", "unitcount", "netcontent", "hazardousmaterialstatus", "eparegistration",
+  "formulation", "unitcount", "netcontent", "offerpackcount", "unitsperpack", "totalunitcount",
+  "hazardousmaterialstatus", "eparegistration",
 ])
 const TRUSTED = new Set<FactVerificationStatus>(["VERIFIED", "CORROBORATED", "DERIVED_VERIFIED"])
+const TECHNICAL_AUTHORITY_SOURCES = new Set<FactSourceType>([
+  "LUNA_EXACT_VARIANT", "LUNA_FULFILLMENT", "EBAY_CATALOG_OFFICIAL_READONLY",
+  "MANUFACTURER_OFFICIAL_PUBLIC", "OFFICIAL_LABEL", "REGULATOR_OFFICIAL",
+  "PHYSICAL_MEASUREMENT_CONFIRMED", "EBAY_TAXONOMY_OFFICIAL_READONLY",
+])
+const REGULATORY_AUTHORITY_SOURCES = new Set<FactSourceType>([
+  "MANUFACTURER_OFFICIAL_PUBLIC", "OFFICIAL_LABEL", "REGULATOR_OFFICIAL",
+])
+const CONFIRMED_SHIPPING_SOURCES = new Set<FactSourceType>([
+  "LUNA_FULFILLMENT", "PHYSICAL_MEASUREMENT_CONFIRMED",
+])
 const RESOLUTION_WEIGHT: Record<FactAuthority, number> = {
   REGULATOR: 9, MANUFACTURER_OR_LABEL: 8, PHYSICAL_MEASUREMENT: 8, FULFILLMENT: 8,
   EBAY_TAXONOMY: 8, SUPPLIER: 7, CORROBORATION: 4, INTERNAL: 1,
@@ -195,6 +230,24 @@ const RESOLUTION_WEIGHT: Record<FactAuthority, number> = {
 
 /** Resolves a single logical fact only. It never joins different variants or packs. */
 export function resolveProductFacts(observations: FactObservation[], now = new Date()): ProductFactsResolution {
+  const observationById = new Map(observations.map((entry) => [
+    entry.id ?? factObservationKey(entry), entry,
+  ] as const))
+  const authorizedDerivation = (entry: FactObservation, trail = new Set<string>()): boolean => {
+    if (entry.verificationStatus !== "DERIVED_VERIFIED" || !entry.derivation?.sourceObservationIds.length) return false
+    const entryId = entry.id ?? factObservationKey(entry)
+    if (trail.has(entryId)) return false
+    const nextTrail = new Set(trail).add(entryId)
+    return [...new Set(entry.derivation.sourceObservationIds)].every((sourceId) => {
+      const source = observationById.get(sourceId)
+      if (!source || source.candidateId !== entry.candidateId ||
+        source.lunaVariantId !== entry.lunaVariantId || source === entry ||
+        !TRUSTED.has(source.verificationStatus)) return false
+      return source.verificationStatus === "DERIVED_VERIFIED"
+        ? authorizedDerivation(source, nextTrail)
+        : TECHNICAL_AUTHORITY_SOURCES.has(source.sourceType)
+    })
+  }
   const grouped = new Map<string, FactObservation[]>()
   for (const observation of observations) {
     const groupKey = `${observation.factScope}:${observation.factKey}`
@@ -215,7 +268,8 @@ export function resolveProductFacts(observations: FactObservation[], now = new D
     if (critical && valueGroups.size > 1) {
       const conflicting = [...valueGroups.values()].flat()
       facts.push({ factScope: first.factScope, factKey: first.factKey, selectedValue: null,
-        selectedUnit: null, supportingObservationIds: [], conflictingObservationIds: conflicting.map((entry) => entry.id ?? factObservationKey(entry)),
+        selectedUnit: null, supportingObservationIds: [], supportingSourceTypes: [], supportingSourceAuthorities: [],
+        conflictingObservationIds: conflicting.map((entry) => entry.id ?? factObservationKey(entry)),
         resolutionRule: "CRITICAL_CONFLICT_BLOCKED", confidence: 0, verificationStatus: "CONFLICTED",
         resolvedAt: now.toISOString(), resolverVersion: PRODUCT_FACTS_RESOLVER_VERSION })
       conflicts.push({ factScope: first.factScope, factKey: first.factKey,
@@ -234,8 +288,11 @@ export function resolveProductFacts(observations: FactObservation[], now = new D
       facts.push({ factScope: first.factScope, factKey: first.factKey,
         selectedValue: winner.normalizedValue, selectedUnit: winner.normalizedUnit,
         supportingObservationIds: same.map((entry) => entry.id ?? factObservationKey(entry)),
+        supportingSourceTypes: [...new Set(same.map((entry) => entry.sourceType))],
+        supportingSourceAuthorities: [...new Set(same.map((entry) => entry.sourceAuthority))],
         conflictingObservationIds: trusted.filter((entry) => !same.includes(entry)).map((entry) => entry.id ?? factObservationKey(entry)),
-        resolutionRule: same.length > 1 ? "AUTHORITY_WITH_CORROBORATION" : "FIELD_AUTHORITY_MATRIX",
+        resolutionRule: winner.verificationStatus === "DERIVED_VERIFIED" && authorizedDerivation(winner)
+          ? "AUTHORIZED_DERIVATION" : same.length > 1 ? "AUTHORITY_WITH_CORROBORATION" : "FIELD_AUTHORITY_MATRIX",
         confidence: Math.max(0, Math.min(1, winner.confidence)), verificationStatus: winner.verificationStatus,
         resolvedAt: now.toISOString(), resolverVersion: PRODUCT_FACTS_RESOLVER_VERSION })
     } else {
@@ -243,13 +300,15 @@ export function resolveProductFacts(observations: FactObservation[], now = new D
       if (estimate) {
         facts.push({ factScope: first.factScope, factKey: first.factKey, selectedValue: estimate.normalizedValue,
           selectedUnit: estimate.normalizedUnit, supportingObservationIds: [estimate.id ?? factObservationKey(estimate)],
+          supportingSourceTypes: [estimate.sourceType], supportingSourceAuthorities: [estimate.sourceAuthority],
           conflictingObservationIds: [], resolutionRule: "INTERNAL_ESTIMATE_NON_PUBLISHABLE", confidence: estimate.confidence,
           verificationStatus: "ESTIMATED_INTERNAL", resolvedAt: now.toISOString(), resolverVersion: PRODUCT_FACTS_RESOLVER_VERSION })
         continue
       }
       const status = entries.some((entry) => entry.verificationStatus === "NOT_APPLICABLE") ? "NOT_APPLICABLE" : "MISSING"
       facts.push({ factScope: first.factScope, factKey: first.factKey, selectedValue: null,
-        selectedUnit: null, supportingObservationIds: [], conflictingObservationIds: [],
+        selectedUnit: null, supportingObservationIds: [], supportingSourceTypes: [], supportingSourceAuthorities: [],
+        conflictingObservationIds: [],
         resolutionRule: status === "NOT_APPLICABLE" ? "NOT_APPLICABLE" : "NO_TRUSTED_OBSERVATION",
         confidence: 0, verificationStatus: status, resolvedAt: now.toISOString(),
         resolverVersion: PRODUCT_FACTS_RESOLVER_VERSION })
@@ -260,6 +319,12 @@ export function resolveProductFacts(observations: FactObservation[], now = new D
 
 function factByKey(facts: ResolvedFact[], scope: FactScope, factKey: string) {
   return facts.find((fact) => fact.factScope === scope && key(fact.factKey) === key(factKey)) ?? null
+}
+
+function hasPermittedSource(fact: ResolvedFact | null, sources = TECHNICAL_AUTHORITY_SOURCES) {
+  if (!fact || !TRUSTED.has(fact.verificationStatus)) return false
+  if (fact.verificationStatus === "DERIVED_VERIFIED") return fact.resolutionRule === "AUTHORIZED_DERIVATION"
+  return fact.supportingSourceTypes.some((sourceType) => sources.has(sourceType))
 }
 
 export function deriveOfferPackFacts(input: {
@@ -273,8 +338,20 @@ export function deriveOfferPackFacts(input: {
   const packs = factByKey(input.facts, "OFFER_PACK", "offerPackCount")
   const unitCount = positiveInteger(unit?.selectedValue)
   const packCount = positiveInteger(packs?.selectedValue)
-  if (!unitCount || !packCount || !unit || !packs || !TRUSTED.has(unit.verificationStatus) || !TRUSTED.has(packs.verificationStatus)) return []
-  const observation: FactObservation = {
+  if (!unitCount || !packCount || !unit || !packs || !hasPermittedSource(unit) || !hasPermittedSource(packs)) return []
+  const unitsPerPack: FactObservation = {
+    candidateId: input.candidateId, lunaVariantId: input.lunaVariantId, factScope: "OFFER_PACK",
+    factKey: "unitsPerPack", rawValue: null, normalizedValue: unitCount,
+    normalizedUnit: "count", sourceType: "INTERNAL_DERIVATION",
+    sourceReference: safeSourceReference("INTERNAL_DERIVATION", `${input.candidateId}:unitsPerPack`),
+    sourceAuthority: "INTERNAL", sourceObservedAt: now.toISOString(), fetchedAt: now.toISOString(), expiresAt: null,
+    confidence: unit.confidence, verificationStatus: "DERIVED_VERIFIED",
+    adapterVersion: PRODUCT_FACTS_RESOLVER_VERSION,
+    derivation: { formula: "OFFER_PACK.unitsPerPack = PRODUCT_UNIT.unitCount", sourceObservationIds: [
+      ...unit.supportingObservationIds], version: PRODUCT_FACTS_RESOLVER_VERSION, derivedAt: now.toISOString() },
+  }
+  unitsPerPack.evidenceHash = factObservationKey(unitsPerPack)
+  const totalUnitCount: FactObservation = {
     candidateId: input.candidateId, lunaVariantId: input.lunaVariantId, factScope: "OFFER_PACK",
     factKey: "totalUnitCount", rawValue: null, normalizedValue: unitCount * packCount,
     normalizedUnit: "count", sourceType: "INTERNAL_DERIVATION", sourceReference: safeSourceReference("INTERNAL_DERIVATION", input.candidateId),
@@ -284,8 +361,8 @@ export function deriveOfferPackFacts(input: {
     derivation: { formula: "PRODUCT_UNIT.unitCount × OFFER_PACK.offerPackCount", sourceObservationIds: [
       ...unit.supportingObservationIds, ...packs.supportingObservationIds], version: PRODUCT_FACTS_RESOLVER_VERSION, derivedAt: now.toISOString() },
   }
-  observation.evidenceHash = factObservationKey(observation)
-  return [observation]
+  totalUnitCount.evidenceHash = factObservationKey(totalUnitCount)
+  return [unitsPerPack, totalUnitCount]
 }
 
 /** Estimates support economics only. Exact dimensions and multipack GTIN are intentionally absent. */
@@ -330,7 +407,7 @@ export function mapTaxonomyRequirements(aspects: TaxonomyAspect[], facts: Resolv
     const selectedValue = resolved && typeof resolved.selectedValue !== "object" && resolved.selectedValue !== null
       ? String(resolved.selectedValue) : null
     const status: RequirementStatus = resolved?.verificationStatus === "CONFLICTED" ? "CONFLICTED_BLOCKING" :
-      TRUSTED.has(resolved?.verificationStatus ?? "MISSING") ? (resolved?.verificationStatus === "VERIFIED" ||
+      hasPermittedSource(resolved) ? (resolved?.verificationStatus === "VERIFIED" ||
         resolved?.verificationStatus === "DERIVED_VERIFIED" ? "SATISFIED_VERIFIED" : "SATISFIED_CORROBORATED") :
         aspect.required ? "MISSING_BLOCKING" : "MISSING_OPTIONAL"
     return { aspectName: aspect.name, required: aspect.required, mappedFactKey: resolved?.factKey ?? null,
@@ -343,7 +420,7 @@ export function regulatoryReadiness(facts: ResolvedFact[], regulated: boolean) {
   const required = ["warnings", "hazardousMaterialStatus", "regulatoryIdentifiers"]
   const missing = required.filter((factKey) => {
     const fact = facts.find((entry) => key(entry.factKey) === key(factKey))
-    return !fact || !TRUSTED.has(fact.verificationStatus)
+    return !hasPermittedSource(fact ?? null, REGULATORY_AUTHORITY_SOURCES)
   })
   return { status: missing.length ? "REGULATORY_NOT_READY" as const : "REGULATORY_READY" as const,
     blocking: missing.length > 0, missing }
@@ -358,7 +435,7 @@ export function calculateReadiness(input: {
 }) {
   const has = (scope: FactScope, keys: string[]) => keys.every((factKey) => {
     const fact = factByKey(input.facts, scope, factKey)
-    return Boolean(fact && TRUSTED.has(fact.verificationStatus))
+    return hasPermittedSource(fact)
   })
   const conflict = input.facts.some((fact) => fact.verificationStatus === "CONFLICTED") ||
     input.requirements.some((requirement) => requirement.status === "CONFLICTED_BLOCKING")
@@ -367,17 +444,22 @@ export function calculateReadiness(input: {
   const regulatory = regulatoryReadiness(input.facts, input.regulated)
   const actualShipping = ["shippingWeight", "shippingLength", "shippingWidth", "shippingHeight"].every((factKey) => {
     const fact = factByKey(input.facts, "SHIPPING_PACKAGE", factKey)
-    return Boolean(fact && TRUSTED.has(fact.verificationStatus))
+    return Boolean(fact && hasPermittedSource(fact) && fact.supportingSourceTypes
+      .some((sourceType) => CONFIRMED_SHIPPING_SOURCES.has(sourceType)))
   })
   const estimate = input.facts.some((fact) => fact.factScope === "SHIPPING_PACKAGE" && fact.factKey === "shippingWeight" &&
     ["ESTIMATED_INTERNAL", "VERIFIED", "CORROBORATED", "DERIVED_VERIFIED"].includes(fact.verificationStatus))
   const productFacts = has("PRODUCT_UNIT", ["exactProductName", "brand", "condition"])
-  const offerPack = has("OFFER_PACK", ["offerPackCount", "unitsPerPack", "totalUnitCount"])
+  const offerPackCount = positiveInteger(factByKey(input.facts, "OFFER_PACK", "offerPackCount")?.selectedValue)
+  const unitsPerPack = positiveInteger(factByKey(input.facts, "OFFER_PACK", "unitsPerPack")?.selectedValue)
+  const totalUnitCount = positiveInteger(factByKey(input.facts, "OFFER_PACK", "totalUnitCount")?.selectedValue)
+  const offerPack = has("OFFER_PACK", ["offerPackCount", "unitsPerPack", "totalUnitCount"]) &&
+    Boolean(offerPackCount && unitsPerPack && totalUnitCount && offerPackCount * unitsPerPack === totalUnitCount)
   const gates: Record<ReadinessGate, boolean> = {
     IDENTITY_READY: input.identityExact && !conflict,
     PRODUCT_FACTS_READY: productFacts && !conflict,
     OFFER_PACK_READY: offerPack && !conflict,
-    EBAY_ASPECTS_READY: input.taxonomySourceReady !== false && requirementsReady && !conflict,
+    EBAY_ASPECTS_READY: input.taxonomySourceReady === true && requirementsReady && !conflict,
     REGULATORY_READY: !regulatory.blocking,
     SHIPPING_ESTIMATE_READY: estimate,
     SHIPPING_CONFIRMED: actualShipping,
@@ -392,12 +474,78 @@ export function calculateReadiness(input: {
 
 export function buildOpenAiFactsInputPackage(input: { facts: ResolvedFact[]; readiness: ReturnType<typeof calculateReadiness> }) {
   if (!input.readiness.gates.OPENAI_INPUT_READY) return { ready: false, facts: [], version: OPENAI_FACTS_INPUT_VERSION,
+    sourcePolicy: AUTHORITATIVE_FACT_SOURCE_POLICY, factPackageHash: null,
     openAiCalls: 0, blockedReason: "OPENAI_INPUT_NOT_READY" }
-  const facts = input.facts.filter((fact) => TRUSTED.has(fact.verificationStatus)).map((fact) => ({
+  const facts = input.facts.filter((fact) => hasPermittedSource(fact)).map<AuthoritativeOutboundFact>((fact) => ({
     scope: fact.factScope, key: fact.factKey, value: fact.selectedValue, unit: fact.selectedUnit,
-    verificationStatus: fact.verificationStatus,
-  }))
-  return { ready: true, facts, version: OPENAI_FACTS_INPUT_VERSION, openAiCalls: 0, blockedReason: null }
+    verificationStatus: fact.verificationStatus as AuthoritativeOutboundFact["verificationStatus"],
+    // Preserve only the technical authorities that made the fact eligible.
+    // Browse and Trading may corroborate internally but never cross this
+    // outbound firewall, even when they agree with an authoritative source.
+    sourceTypes: fact.verificationStatus === "DERIVED_VERIFIED"
+      ? ["INTERNAL_DERIVATION"]
+      : fact.supportingSourceTypes.filter((sourceType) => TECHNICAL_AUTHORITY_SOURCES.has(sourceType)),
+    resolutionRule: fact.resolutionRule,
+  })).sort((left, right) => `${left.scope}:${left.key}`.localeCompare(`${right.scope}:${right.key}`))
+  const required = new Set([
+    "PRODUCT_UNIT:exactproductname", "PRODUCT_UNIT:brand", "PRODUCT_UNIT:condition",
+    "OFFER_PACK:offerpackcount", "OFFER_PACK:unitsperpack", "OFFER_PACK:totalunitcount",
+  ])
+  for (const fact of facts) required.delete(`${fact.scope}:${key(fact.key)}`)
+  if (required.size) return { ready: false, facts: [], version: OPENAI_FACTS_INPUT_VERSION,
+    sourcePolicy: AUTHORITATIVE_FACT_SOURCE_POLICY, factPackageHash: null,
+    openAiCalls: 0, blockedReason: "AUTHORITATIVE_FACT_PACKAGE_INCOMPLETE" }
+  const hashInput = { version: OPENAI_FACTS_INPUT_VERSION, sourcePolicy: AUTHORITATIVE_FACT_SOURCE_POLICY, facts }
+  return { ready: true as const, facts, version: OPENAI_FACTS_INPUT_VERSION,
+    sourcePolicy: AUTHORITATIVE_FACT_SOURCE_POLICY, factPackageHash: productFactsHash(hashInput),
+    openAiCalls: 0 as const, blockedReason: null }
+}
+
+/**
+ * Treat persisted JSON as hostile at the final outbound boundary. A status such
+ * as CORROBORATED is not sufficient: every fact must carry an allowed source
+ * class (or a traceable authorized derivation) and the immutable package hash
+ * must match before OpenAI or Seller Hub can consume it.
+ */
+export function parseAuthoritativeFactsInputPackage(value: unknown): AuthoritativeFactsInputPackage | null {
+  const packageRecord = record(value)
+  if (packageRecord.ready !== true || packageRecord.version !== OPENAI_FACTS_INPUT_VERSION ||
+    packageRecord.sourcePolicy !== AUTHORITATIVE_FACT_SOURCE_POLICY || packageRecord.openAiCalls !== 0 ||
+    packageRecord.blockedReason !== null || !Array.isArray(packageRecord.facts) ||
+    !/^sha256:[0-9a-f]{64}$/.test(string(packageRecord.factPackageHash))) return null
+  const allowedScopes = new Set<FactScope>(["PRODUCT_UNIT", "OFFER_PACK", "SHIPPING_PACKAGE", "EBAY_LISTING_REQUIREMENTS"])
+  const allowedStatuses = new Set(["VERIFIED", "CORROBORATED", "DERIVED_VERIFIED"])
+  const facts: AuthoritativeOutboundFact[] = []
+  for (const rawFact of packageRecord.facts.slice(0, 250)) {
+    const fact = record(rawFact)
+    const scope = string(fact.scope) as FactScope
+    const factKey = string(fact.key, 160)
+    const status = string(fact.verificationStatus) as AuthoritativeOutboundFact["verificationStatus"]
+    const resolutionRule = string(fact.resolutionRule, 160)
+    const sourceTypes = Array.isArray(fact.sourceTypes)
+      ? [...new Set(fact.sourceTypes.map((entry) => string(entry) as FactSourceType).filter(Boolean))]
+      : []
+    const authorizedDerivation = status === "DERIVED_VERIFIED" && resolutionRule === "AUTHORIZED_DERIVATION" &&
+      sourceTypes.length === 1 && sourceTypes[0] === "INTERNAL_DERIVATION"
+    const authoritativeSources = status !== "DERIVED_VERIFIED" && sourceTypes.length > 0 &&
+      sourceTypes.every((sourceType) => TECHNICAL_AUTHORITY_SOURCES.has(sourceType))
+    if (!allowedScopes.has(scope) || !factKey || !allowedStatuses.has(status) ||
+      (!authorizedDerivation && !authoritativeSources)) return null
+    facts.push({ scope, key: factKey, value: fact.value, unit: string(fact.unit) || null,
+      verificationStatus: status, sourceTypes, resolutionRule })
+  }
+  if (facts.length !== packageRecord.facts.length) return null
+  const required = new Set([
+    "PRODUCT_UNIT:exactproductname", "PRODUCT_UNIT:brand", "PRODUCT_UNIT:condition",
+    "OFFER_PACK:offerpackcount", "OFFER_PACK:unitsperpack", "OFFER_PACK:totalunitcount",
+  ])
+  for (const fact of facts) required.delete(`${fact.scope}:${key(fact.key)}`)
+  if (required.size) return null
+  const hashInput = { version: OPENAI_FACTS_INPUT_VERSION, sourcePolicy: AUTHORITATIVE_FACT_SOURCE_POLICY, facts }
+  if (productFactsHash(hashInput) !== packageRecord.factPackageHash) return null
+  return { ready: true, facts, version: OPENAI_FACTS_INPUT_VERSION,
+    sourcePolicy: AUTHORITATIVE_FACT_SOURCE_POLICY,
+    factPackageHash: string(packageRecord.factPackageHash), openAiCalls: 0, blockedReason: null }
 }
 
 export function targetedFactException(input: { readiness: ReturnType<typeof calculateReadiness>; requirements: FactRequirement[] }) {

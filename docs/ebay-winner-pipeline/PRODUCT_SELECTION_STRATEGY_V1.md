@@ -98,7 +98,7 @@ Initial business thresholds:
 - Incomplete data: `review`
 - Profitable price more than 10% above market: `review` or `blocked`, depending on severity.
 
-Current technical defaults already include values such as `idealProfitUsd: 7`, default eBay fee `13.25% + $0.30`, and default shipping cost `6.99`.
+Current technical defaults already include values such as `idealProfitUsd: 7`, the conservative EBAY_US fallback `13.6% + $0.30/$0.40 per order`, and default shipping cost `6.99`. Category and Store profile snapshots override this fallback when verified.
 
 This V1 strategy intentionally raises the recommended business standard for net margin to 20%, even if current technical configuration uses a lower minimum in some paths. Implementation should make that difference explicit rather than silently changing behavior.
 
@@ -152,7 +152,7 @@ Example:
 ```text
 Decision: REVIEW
 Main reason: Net margin qualifies, but dimensions are missing.
-Key numbers: Net profit $6.80, ROI 32%, estimated eBay fee 13.25% + $0.30.
+Key numbers must display the versioned eBay fee estimate used for that candidate; category, Store plan, order total and effective date can change the result.
 Risk: Shipping cost may be inaccurate without dimensions.
 Next human action: Confirm weight and dimensions before creating a draft.
 ```

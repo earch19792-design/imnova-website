@@ -419,10 +419,10 @@ test("readiness recalculates profit on the server and ignores client profit clai
   const baseline = validInput()
   const result = module.evaluateEbayDraftOnlyReadiness(baseline)
   assert.equal(result.ready, true)
-  assert.equal(result.economics.estimatedNetProfit, 8.51)
-  assert.equal(result.economics.marginPercent, 28.37)
+  assert.equal(result.economics.estimatedNetProfit, 8.32)
+  assert.equal(result.economics.marginPercent, 27.73)
   assert.equal(result.economics.calculationSource, "SERVER_CANONICAL_EBAY_UNIT_ECONOMICS_V1")
-  assert.equal(result.payload.listingPackage.packageData.pricing.estimatedNetProfit, 8.51)
+  assert.equal(result.payload.listingPackage.packageData.pricing.estimatedNetProfit, 8.32)
   assert.notEqual(result.payload.listingPackage.packageData.pricing.estimatedNetProfit, 999_999)
 
   const tamperedProfit = validInput()
@@ -434,7 +434,7 @@ test("readiness recalculates profit on the server and ignores client profit clai
   repriced.listingPackage.package_data.pricing.targetPrice = 20
   repriced.listingPackage.package_data.pricing.estimatedNetProfit = 1_000_000
   const repricedResult = module.evaluateEbayDraftOnlyReadiness(repriced)
-  assert.equal(repricedResult.economics.estimatedNetProfit, 0.91)
+  assert.equal(repricedResult.economics.estimatedNetProfit, 0.75)
   assert.equal(repricedResult.ready, false)
   assert.ok(repricedResult.blockers.includes("MINIMUM_NET_MARGIN_NOT_MET"))
 

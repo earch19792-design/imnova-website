@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import {
   buildSameDayLocalPreparationPackage,
   canStartNextSameDayCandidateCycle,
+  evaluateSameDayCandidate,
   SAME_DAY_MAX_CANDIDATE_CYCLES,
   SAME_DAY_PILOT_VERSION,
   SAME_DAY_RECONCILIATION_COVERAGE_ROW_LIMIT,
@@ -23,7 +24,8 @@ import {
   normalizeEbayCompliantFulfillmentBasis,
   type EbayCompliantFulfillmentBasis,
 } from "./ebay-fulfillment-policy-compliance"
-import { buildVerifiedManualSellerHubHandoff, SAME_DAY_MANUAL_HANDOFF_VERSION } from "./ebay-same-day-manual-handoff"
+import { bindCurrentAuthoritativeFactsForManualHandoff, buildVerifiedManualSellerHubHandoff,
+  SAME_DAY_MANUAL_HANDOFF_VERSION } from "./ebay-same-day-manual-handoff"
 import {
   assertEbayLaneAvailable,
   recordPersistentEbayRateLimit,
@@ -37,6 +39,12 @@ import {
 import { productResearchPlannedQueryHash } from "./ebay-product-research-query-plan"
 import { enqueueListingAiTop20Continuation } from "./ebay-listing-ai-top20-queue"
 import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
+import {
+  evaluatePackDiscountScenarios,
+  rankRelatedPackStrategies,
+} from "./luna-fulfillment-pricing"
+import { extractLunaOfficialDescriptionIdentity } from "./luna-official-description-identity"
+import { loadBoundAuthoritativeFactPackage } from "./ebay-authoritative-fact-package"
 
 const MARKETPLACE = "EBAY_US"
 const PRODUCT_FACT_READ_DEPENDENCIES = [
@@ -116,6 +124,92 @@ function exactSoldMarketReference(rows: JsonRecord[]) {
       "Describe precios observados; no determina automáticamente el precio del listing."],
   }
 }
+
+function relatedPackStrategyFromReconciliation(
+  rows: JsonRecord[],
+  nativePackCount: number | null,
+  confirmedLunaPresentationCost: number | null,
+) {
+  const grouped = new Map<number, { packCount: number; observationCount: number;
+    confirmedSoldQuantity: number; confidenceTotal: number }>()
+  for (const row of rows) {
+    if (row.classification !== "SAME_PRODUCT_DIFFERENT_PACK") continue
+    const packCount = number(row.observedPackCount)
+    if (!packCount || !Number.isInteger(packCount) || packCount <= 0) continue
+    const current = grouped.get(packCount) ?? { packCount, observationCount: 0,
+      confirmedSoldQuantity: 0, confidenceTotal: 0 }
+    current.observationCount += 1
+    current.confirmedSoldQuantity += Math.max(0, number(row.confirmedSoldQuantity) ?? 0)
+    current.confidenceTotal += Math.max(0, Math.min(1, number(row.confidence) ?? 0))
+    grouped.set(packCount, current)
+  }
+  const cohorts = [...grouped.values()].map((cohort) => {
+    const averageConfidence = cohort.observationCount
+      ? cohort.confidenceTotal / cohort.observationCount : 0
+    return {
+      packCount: cohort.packCount,
+      observationCount: cohort.observationCount,
+      confirmedSoldQuantity: cohort.confirmedSoldQuantity,
+      confidence: averageConfidence >= .9 ? "HIGH" as const
+        : averageConfidence >= .75 ? "MEDIUM" as const : "LOW" as const,
+    }
+  })
+  const strategy = nativePackCount === null
+    ? {
+        version: "LUNA_RELATED_PACK_STRATEGY_V1",
+        candidates: [],
+        suggestedPackCountForEvaluation: null,
+        requiresCustomPreparation: false,
+        conclusion: "No se evaluaron presentaciones relacionadas porque el pack nativo de Luna no está verificado.",
+        prohibitedConclusions: [
+          "La presentación causó las ventas.",
+          "El precio observado debe convertirse automáticamente en precio del listing.",
+        ],
+      }
+    : rankRelatedPackStrategies({ nativePackCount, relatedPackEvidence: cohorts })
+  const targetPackCount = nativePackCount === null
+    ? null : number(strategy.suggestedPackCountForEvaluation)
+  const targetCohort = targetPackCount === null
+    ? null : cohorts.find((cohort) => cohort.packCount === targetPackCount) ?? null
+  const lunaPurchaseUnitsPerOffer = nativePackCount && targetPackCount &&
+    targetPackCount % nativePackCount === 0
+    ? targetPackCount / nativePackCount : null
+  const discountScenarioPreflight = nativePackCount && targetPackCount &&
+    lunaPurchaseUnitsPerOffer
+    ? evaluatePackDiscountScenarios({
+        source: targetPackCount === nativePackCount
+          ? "LUNA_NATIVE_PRESENTATION" : "LUNA_CUSTOM_PRESENTATION",
+        nativePackCount,
+        targetPackCount,
+        lunaPurchaseUnitsPerOffer,
+        lunaPurchaseUnitCostUsd: confirmedLunaPresentationCost,
+        approvedBaselinePricePerNativePresentationUsd: null,
+        shippingCostUsd: null,
+        packagingType: targetPackCount === nativePackCount ? undefined : "UNKNOWN",
+        packagingMaterial: targetPackCount === nativePackCount ? undefined : "UNKNOWN",
+        marketEvidence: targetCohort ? {
+          packCount: targetCohort.packCount,
+          evidenceTier: "CONFIRMED_SOLD_RELATED_PACK",
+          confirmedSoldObservationCount: targetCohort.observationCount,
+          confirmedSoldQuantity: targetCohort.confirmedSoldQuantity,
+          confidence: targetCohort.confidence,
+        } : null,
+      })
+    : null
+  return {
+    ...strategy,
+    analysisStatus: nativePackCount === null ? "UNAVAILABLE" as const : "ANALYZED" as const,
+    blockers: nativePackCount === null ? ["OFFER_PACK_IDENTITY_MISSING"] : [],
+    evidenceTier: "CONFIRMED_SOLD_RELATED_PACK" as const,
+    soldExactCountImpact: 0,
+    sampleSize: cohorts.reduce((sum, cohort) => sum + cohort.observationCount, 0),
+    confirmedSoldQuantity: cohorts.reduce((sum, cohort) => sum + cohort.confirmedSoldQuantity, 0),
+    discountScenarioPreflight,
+    discountScenarioStatus: discountScenarioPreflight
+      ? "WAITING_OWNER_BASELINE_AND_EXACT_PACK_COSTS" as const
+      : "NOT_APPLICABLE" as const,
+  }
+}
 function strings(value: unknown) {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []
 }
@@ -129,7 +223,12 @@ function operationDate(now: Date) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Managua", year: "numeric", month: "2-digit", day: "2-digit" }).format(now)
 }
 
-function candidateInput(row: JsonRecord, latestVariant: JsonRecord = {}, now = new Date()): SameDayCandidateInput {
+function candidateInput(
+  row: JsonRecord,
+  latestVariant: JsonRecord = {},
+  now = new Date(),
+  officialDescriptionIdentity: JsonRecord = {},
+): SameDayCandidateInput {
   const assessment = record(row.assessment)
   const identity = record(assessment.identity)
   const market = record(assessment.market)
@@ -145,9 +244,19 @@ function candidateInput(row: JsonRecord, latestVariant: JsonRecord = {}, now = n
     supplierVariantId: text(latestVariant.supplier_variant_id || row.supplier_variant_id) || null,
     supplierProductUrl: isAllowedLunaProductUrl(supplierProductUrl) ? supplierProductUrl : null,
     supplierImageUrl: safeHttpsUrl(latestVariant.featured_image_url || row.featured_image_url),
-    gtin: text(latestVariant.barcode || row.gtin) || null,
-    brand: text(identity.brand || candidate.brand || candidate.vendor) || null,
-    mpn: text(identity.mpn || candidate.mpn) || null, model: text(identity.model || candidate.model) || null,
+    gtin: text(latestVariant.barcode || row.gtin || officialDescriptionIdentity.gtin) || null,
+    brand: text(identity.brand || candidate.brand || officialDescriptionIdentity.brand) || null,
+    mpn: text(identity.mpn || candidate.mpn || officialDescriptionIdentity.mpn) || null,
+    model: text(identity.model || candidate.model || officialDescriptionIdentity.model) || null,
+    nativePackCount: number(candidate.packQuantity ?? candidate.packCount ?? identity.packCount ??
+      officialDescriptionIdentity.packCount),
+    unitCount: number(candidate.unitCount ?? identity.unitCount),
+    size: text(candidate.size || identity.size || officialDescriptionIdentity.size) || null,
+    color: text(candidate.color || identity.color) || null,
+    scent: text(candidate.scent || identity.scent) || null,
+    formulation: text(candidate.formulation || identity.formulation) || null,
+    identityEvidenceSource: text(officialDescriptionIdentity.source) || null,
+    identityEvidenceHash: text(officialDescriptionIdentity.evidenceHash) || null,
     supplierPrice: number(latestVariant.price) ?? number(row.supplier_price),
     supplierAvailable: latestVariant.available === true ? true : latestVariant.available === false ? false : row.supplier_available === true ? true : row.supplier_available === false ? false : null,
     supplierQuantity: number(latestVariant.inventory_quantity) ?? number(row.supplier_inventory_quantity),
@@ -942,6 +1051,28 @@ async function rejectAndPromote(input: {
   await promoteNextCandidate(input.supabase, input.runId, Number(input.candidate.ordinal))
 }
 
+async function blockRelatedPresentationAndPromote(input: {
+  supabase: SupabaseClient
+  runId: string
+  candidate: JsonRecord
+  previousState: string
+  reasonCode: string
+  blockers: string[]
+}) {
+  await transition({ supabase: input.supabase, runId: input.runId,
+    candidateId: text(input.candidate.id), previousState: input.previousState,
+    nextState: "BLOCKED", reasonCode: input.reasonCode, triggeredBy: "SYSTEM",
+    checkpoint: { blockers: input.blockers, evidenceRetained: true },
+    nextAutomaticAction: "Conservar la estrategia de presentación y promover el siguiente candidato.",
+    nextHumanAction: "Ninguna por ahora; Seller OS debe resolver costos del pack antes de recuperarlo." })
+  const { error } = await input.supabase.from("ebay_same_day_pilot_candidates").update({
+    state: "NEEDS_ONE_CRITICAL_FACT", blockers: input.blockers,
+    updated_at: new Date().toISOString(),
+  }).eq("id", input.candidate.id).eq("run_id", input.runId)
+  if (error) throw new Error("SAME_DAY_PILOT_RELATED_PRESENTATION_BLOCK_FAILED")
+  await promoteNextCandidate(input.supabase, input.runId, Number(input.candidate.ordinal))
+}
+
 export async function previewSameDayPilot(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -970,17 +1101,36 @@ export async function previewSameDayPilot(input: {
     !excludedOpportunityIds.has(text(row.id)))
   const productIds = [...new Set(eligibleOpportunities
     .map((row) => text(row.market_radar_product_id)).filter(Boolean))]
-  const { data: latestVariants, error: variantError } = productIds.length
-    ? await input.supabase.from("market_radar_latest_variants").select("product_id,supplier_variant_id,variant_title,sku,barcode,price,available,inventory_quantity,product_url,featured_image_url,captured_at").in("product_id", productIds).limit(500)
-    : { data: [], error: null }
-  if (variantError) throw new Error("SAME_DAY_PILOT_LUNA_CURRENT_SNAPSHOT_READ_FAILED")
+  const [variantResult, productDescriptionResult] = productIds.length
+    ? await Promise.all([
+      input.supabase.from("market_radar_latest_variants")
+        .select("product_id,supplier_variant_id,variant_title,sku,barcode,price,available,inventory_quantity,product_url,featured_image_url,captured_at")
+        .in("product_id", productIds).limit(500),
+      input.supabase.from("market_radar_products")
+        .select("id,body_html").in("id", productIds).limit(500),
+    ])
+    : [{ data: [], error: null }, { data: [], error: null }]
+  const latestVariants = variantResult.data ?? []
+  if (variantResult.error || productDescriptionResult.error) {
+    throw new Error("SAME_DAY_PILOT_LUNA_CURRENT_SNAPSHOT_READ_FAILED")
+  }
   const variantByKey = new Map((latestVariants ?? []).map((variant) => [
     `${text(variant.product_id)}:${text(variant.supplier_variant_id)}`, record(variant),
   ]))
-  const selected = selectSameDayQueue(eligibleOpportunities.map((row) => {
+  const descriptionIdentityByProductId = new Map((productDescriptionResult.data ?? [])
+    .map((product) => {
+      const extracted = extractLunaOfficialDescriptionIdentity({ bodyHtml: product.body_html })
+      return [text(product.id), { ...extracted.facts, source: extracted.source,
+        evidenceHash: extracted.evidenceHash }] as const
+    }))
+  const candidateInputs = eligibleOpportunities.map((row) => {
     const key = `${text(row.market_radar_product_id)}:${text(row.supplier_variant_id)}`
-    return candidateInput(record(row), variantByKey.get(key) ?? {}, now)
-  }), now, {
+    return candidateInput(record(row), variantByKey.get(key) ?? {}, now,
+      descriptionIdentityByProductId.get(text(row.market_radar_product_id)) ?? {})
+  })
+  const evaluatedCandidates = candidateInputs.map((candidate) =>
+    evaluateSameDayCandidate(candidate, now))
+  const selected = selectSameDayQueue(candidateInputs, now, {
     opportunityIds: excludedOpportunityIds,
     candidateKeys: input.excludeCandidateKeys,
     supplierVariantIds: input.excludeSupplierVariantIds,
@@ -1013,6 +1163,10 @@ export async function previewSameDayPilot(input: {
       opportunitiesEligibleForCycle: eligibleOpportunities.length,
       currentLunaVariantsRead: latestVariants?.length ?? 0,
       productResearchObservationsReused: productResearchCount.count ?? 0,
+      identityEnrichmentRequired: evaluatedCandidates.filter((candidate) =>
+        candidate.blockers.includes("IDENTITY_QUERY_TOO_GENERIC") ||
+        candidate.blockers.includes("GTIN_INVALID_OR_UNVERIFIED") ||
+        candidate.blockers.includes("OFFER_PACK_IDENTITY_MISSING")).length,
       verifiedExistingListings: (existingPilotListing.count ?? 0) > 0 ? 1 : 0,
       selectedCandidates: selected.length,
       localPreparationPackages: selected.length,
@@ -1564,14 +1718,40 @@ function jobEffectAlreadyApplied(jobType: string, machineState: string) {
 
 async function prepareFactsOnlyManualHandoff(input: {
   supabase: SupabaseClient
+  accountKey: string
   runId: string
   candidate: JsonRecord
 }) {
   const factsSummary = record(input.candidate.product_facts_summary)
-  const taxonomy = record(factsSummary.taxonomy)
+  const queueItemId = text(input.candidate.queue_item_id)
+  if (!queueItemId) throw new Error("SAME_DAY_PILOT_FACT_QUEUE_ITEM_MISSING")
+  const { data: queueItem, error: queueItemError } = await input.supabase
+    .from("marketplace_listing_approval_queue_items")
+    .select("id,run_id,decision_package_id,package_hash")
+    .eq("id", queueItemId)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", MARKETPLACE)
+    .maybeSingle()
+  if (queueItemError) throw new Error("SAME_DAY_PILOT_FACT_BINDING_READ_FAILED")
+  const decisionPackageId = text(queueItem?.decision_package_id)
+  const decisionPackageHash = text(queueItem?.package_hash)
+  const queueRunId = text(queueItem?.run_id)
+  if (!queueItem || !queueRunId || !decisionPackageId || !decisionPackageHash) {
+    throw new Error("SAME_DAY_PILOT_FACT_BINDING_MISSING")
+  }
+  const boundFacts = await loadBoundAuthoritativeFactPackage({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    itemId: queueItemId,
+    binding: { queueRunId, decisionPackageId, decisionPackageHash },
+  })
+  const currentFactsSummary: JsonRecord = bindCurrentAuthoritativeFactsForManualHandoff({
+    factsSummary, boundFacts,
+  })
+  const taxonomy = record(currentFactsSummary.taxonomy)
   const categoryId = text(taxonomy.categoryId)
-  const conditionFact = Array.isArray(factsSummary.resolvedFacts)
-    ? factsSummary.resolvedFacts.map(record).find((fact) => text(fact.scope) === "PRODUCT_UNIT" &&
+  const conditionFact = Array.isArray(currentFactsSummary.resolvedFacts)
+    ? currentFactsSummary.resolvedFacts.map(record).find((fact) => text(fact.scope) === "PRODUCT_UNIT" &&
       text(fact.key) === "condition" && ["VERIFIED", "CORROBORATED", "DERIVED_VERIFIED"].includes(text(fact.status)))
     : null
   const conditionContract = ebayConditionContractFromVerifiedFact(conditionFact?.value)
@@ -1603,12 +1783,12 @@ async function prepareFactsOnlyManualHandoff(input: {
   const images = [text(luna?.featured_image_url, 2_000),
     ...(Array.isArray(luna?.image_urls) ? luna.image_urls.map((value) => text(value, 2_000)) : [])].filter(Boolean)
   const result = buildVerifiedManualSellerHubHandoff({
-    candidateId: text(input.candidate.id), factRunId: text(factsSummary.factRunId),
+    candidateId: text(input.candidate.id), factRunId: text(currentFactsSummary.factRunId),
     productTitle: text(input.candidate.product_title), supplierSku: text(input.candidate.supplier_sku),
     listingQuantity: Number(input.candidate.listing_quantity ?? 0),
     salePrice: Number(record(input.candidate.economics_summary).operatorApprovedSalePrice ?? 0),
     fulfillmentBasis: record(input.candidate.economics_summary).fulfillmentBasis,
-    economics: record(input.candidate.economics_summary), factsSummary, lunaImageUrls: images,
+    economics: record(input.candidate.economics_summary), factsSummary: currentFactsSummary, lunaImageUrls: images,
     policies: { categoryId: text(defaults?.defaults.categoryId || categoryId) || null,
       conditionId: conditionContract?.conditionId ?? null,
       fulfillmentPolicyId: text(defaults?.defaults.fulfillmentPolicyId) || null,
@@ -1868,7 +2048,30 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
         const reconciledExactRows = decisionObservations
           .filter((row) => exactObservationIds.has(text(row.id)))
         const marketReference = exactSoldMarketReference(reconciledExactRows)
+        const relatedPackResults = reconciled.results.filter((result) =>
+          result.classification === "SAME_PRODUCT_DIFFERENT_PACK" &&
+          result.supplierVariantId === supplierVariantId &&
+          Number(result.packIntelligenceImpact ?? 0) > 0)
+        const relatedSizeResults = reconciled.results.filter((result) =>
+          result.classification === "SAME_PRODUCT_DIFFERENT_SIZE" &&
+          result.supplierVariantId === supplierVariantId &&
+          Number(result.packIntelligenceImpact ?? 0) > 0)
+        const nativePackCount = number(record(
+          record(candidate.local_preparation_package).offer,
+        ).nativePackCount) ?? number(relatedPackResults[0]?.candidatePackCount)
+        const relatedPackStrategy = relatedPackStrategyFromReconciliation(
+          relatedPackResults, nativePackCount,
+          number(record(candidate.economics_summary).confirmedLunaPrice),
+        )
         const reconciliationEvidenceSummary = { ...record(candidate.evidence_summary),
+          evidenceTiers: {
+            confirmedSoldExact: exactObservationIds.size,
+            confirmedSoldRelatedPack: relatedPackResults.length,
+            confirmedSoldRelatedSize: relatedSizeResults.length,
+            broadSearchOnlyPromoted: false,
+          },
+          relatedPackStrategy,
+          relatedSizeSampleSize: relatedSizeResults.length,
           reconciliationCoverage: {
             reviewedObservations: coverageObservationIds.length,
             eventsProcessed: reconciled.observationsProcessed,
@@ -1895,8 +2098,25 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
               expectedBatch: reconciled.reanalysis.expectedBatch,
             })
           }
-          await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
-            previousState: "RECONCILING_IDENTITY", reasonCode: "OFFICIAL_IDENTITY_RECONCILIATION_NOT_EXACT" })
+          if (relatedPackResults.length > 0) {
+            await blockRelatedPresentationAndPromote({ supabase: input.supabase,
+              runId: state.run.id, candidate: record(candidate),
+              previousState: "RECONCILING_IDENTITY",
+              reasonCode: "RELATED_PACK_STRATEGY_RETAINED",
+              blockers: ["CUSTOM_PRESENTATION_ECONOMICS_REQUIRED",
+                "LUNA_PACKAGING_CONFIGURATION_REQUIRED"] })
+          } else if (relatedSizeResults.length > 0) {
+            await blockRelatedPresentationAndPromote({ supabase: input.supabase,
+              runId: state.run.id, candidate: record(candidate),
+              previousState: "RECONCILING_IDENTITY",
+              reasonCode: "RELATED_SIZE_STRATEGY_RETAINED",
+              blockers: ["RELATED_SIZE_IS_NOT_EXACT_OFFER",
+                "EXACT_PRODUCT_PRESENTATION_REQUIRED"] })
+          } else {
+            await rejectAndPromote({ supabase: input.supabase, runId: state.run.id,
+              candidate: record(candidate), previousState: "RECONCILING_IDENTITY",
+              reasonCode: "OFFICIAL_IDENTITY_RECONCILIATION_NOT_EXACT" })
+          }
         } else {
           const { error: evidenceUpdateError } = await input.supabase.from("ebay_same_day_pilot_candidates").update({
             evidence_summary: { ...reconciliationEvidenceSummary,
@@ -1994,7 +2214,8 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       const confirmedLunaPrice = number(confirmation.confirmedLunaPrice)
       const economics = calculateEbayMinimumOperatorPrice({ supplierCost: confirmedLunaPrice }, ebayDraftOnlyEconomicsConfig())
       const { error: economicsUpdateError } = await input.supabase.from("ebay_same_day_pilot_candidates").update({
-        economics_summary: { ...economics, confirmedLunaPrice, available: true,
+        economics_summary: { ...record(candidate.economics_summary), ...economics,
+          confirmedLunaPrice, available: true,
           quantityUnknown: confirmation.quantityKnown !== true, status: "AWAITING_OPERATOR_PRICE",
           automaticPricingUsed: false, competitorPriceUsedForRecommendation: false },
         updated_at: new Date().toISOString(),
@@ -2040,6 +2261,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             factRunId: factRun.runId, status: currentResult.status, gates: currentResult.gates ?? {},
             exception: currentResult.exception ?? null, counts: currentResult.factCounts ?? {},
             requirements: currentResult.requirementCounts ?? {}, resolvedFacts: currentResult.resolvedFacts ?? [],
+            authoritativeFactsPackage: currentResult.authoritativeFactsPackage ?? null,
             resolvedRequirements: currentResult.resolvedRequirements ?? [], taxonomy: currentResult.taxonomy ?? {},
             evidenceBinding,
             observedAt: new Date().toISOString(),
@@ -2124,7 +2346,8 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       let handoffState = text(candidate.machine_state)
       let handoffSummary = record(candidate.manual_handoff_package)
       if (handoffState === "GENERATING_LISTING_CONTENT") {
-        const prepared = await prepareFactsOnlyManualHandoff({ supabase: input.supabase, runId: state.run.id,
+        const prepared = await prepareFactsOnlyManualHandoff({ supabase: input.supabase,
+          accountKey: input.accountKey, runId: state.run.id,
           candidate: record(candidate) })
         if (!prepared.ready) {
           await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),

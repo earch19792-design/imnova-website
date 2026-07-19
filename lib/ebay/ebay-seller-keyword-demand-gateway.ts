@@ -19,6 +19,7 @@ import {
   parseEbayApplicationBrowseQuota,
   type EbayApplicationBrowseQuota,
 } from "./ebay-application-rate-limit"
+import { validateGtinChecksum } from "./ebay-winner-evidence-v2"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const BROWSE_SEARCH_ENDPOINT =
@@ -362,6 +363,7 @@ function mapComparable(
   const returnTerms = record(item.returnTerms)
   return {
     itemId: text(item.itemId),
+    epid: text(item.epid),
     title: text(item.title),
     itemWebUrl: text(item.itemWebUrl),
     imageUrl: text(image.imageUrl),
@@ -375,9 +377,11 @@ function mapComparable(
     totalSoldQuantity: numberOrNull(item.totalSoldQuantity),
     estimatedSoldQuantity: numberOrNull(availability.estimatedSoldQuantity),
     lastSoldDate: text(item.lastSoldDate),
-    gtin: text(item.gtin),
+    gtin: normalizedGtin(item.gtin) || null,
     brand: text(item.brand),
     mpn: text(item.mpn),
+    model: text(item.model),
+    lotSize: numberOrNull(item.lotSize),
     color: text(item.color),
     size: text(item.size),
     shortDescription: text(item.shortDescription),
@@ -393,7 +397,12 @@ function mapComparable(
 
 function normalizedGtin(value: unknown) {
   const candidate = text(value).replace(/\D/g, "")
-  return /^\d{8,14}$/.test(candidate) ? candidate : ""
+  return validateGtinChecksum(candidate) ? candidate : ""
+}
+
+function normalizedEpid(value: unknown) {
+  const candidate = text(value)
+  return /^\d{1,20}$/.test(candidate) ? candidate : ""
 }
 
 async function searchActiveListings(
@@ -403,7 +412,9 @@ async function searchActiveListings(
 ) {
   const url = new URL(BROWSE_SEARCH_ENDPOINT)
   const gtin = normalizedGtin(candidate.gtin)
+  const epid = normalizedEpid(candidate.epid)
   if (gtin) url.searchParams.set("gtin", gtin)
+  else if (epid) url.searchParams.set("epid", epid)
   else url.searchParams.set("q", query)
   if (/^\d+$/.test(text(candidate.categoryId))) {
     url.searchParams.set("category_ids", text(candidate.categoryId))

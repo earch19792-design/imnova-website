@@ -4,6 +4,8 @@ import { createHash } from "node:crypto"
 import { ebayConditionContractFromVerifiedFact } from "./ebay-manual-listing-domain.ts"
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { normalizeEbayCompliantFulfillmentBasis } from "./ebay-fulfillment-policy-compliance.ts"
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import { parseAuthoritativeFactsInputPackage } from "./ebay-product-facts-readiness.ts"
 
 export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V2_2026_07_18"
 
@@ -12,6 +14,7 @@ type SafeFact = { scope: string; key: string; value: unknown; unit: string | nul
 type SafeRequirement = {
   aspectName: string
   required: boolean
+  mappedFactKey: string | null
   status: string
   selectedValue: string | null
   allowedValues: string[]
@@ -45,6 +48,24 @@ function validImageUrl(value: unknown) {
     return url.protocol === "https:" ? url.href : null
   } catch {
     return null
+  }
+}
+
+export function bindCurrentAuthoritativeFactsForManualHandoff(input: {
+  factsSummary: unknown
+  boundFacts: { factRunId: string; package: unknown } | null
+}) {
+  const summary = record(input.factsSummary)
+  const boundPackage = parseAuthoritativeFactsInputPackage(input.boundFacts?.package)
+  if (!input.boundFacts || !boundPackage ||
+    text(summary.factRunId) !== text(input.boundFacts.factRunId)) {
+    throw new Error("SAME_DAY_PILOT_AUTHORITATIVE_FACT_PACKAGE_STALE")
+  }
+  return {
+    ...summary,
+    authoritativeFactsPackage: boundPackage,
+    factRunId: input.boundFacts.factRunId,
+    currentRunBound: true,
   }
 }
 function titleFromFacts(input: { productTitle: string; facts: SafeFact[] }) {
@@ -85,14 +106,17 @@ export function buildVerifiedManualSellerHubHandoff(input: {
   generatedAt: string
 }) {
   const gates = record(input.factsSummary.gates)
-  const facts = Array.isArray(input.factsSummary.resolvedFacts)
-    ? input.factsSummary.resolvedFacts.map(record).map((fact): SafeFact => ({
-      scope: text(fact.scope), key: text(fact.key), value: fact.value, unit: text(fact.unit) || null, status: text(fact.status),
-    }))
-    : []
+  const authoritativeFactsPackage = parseAuthoritativeFactsInputPackage(
+    input.factsSummary.authoritativeFactsPackage,
+  )
+  const facts = authoritativeFactsPackage?.facts.map((fact): SafeFact => ({
+    scope: fact.scope, key: fact.key, value: fact.value, unit: fact.unit,
+    status: fact.verificationStatus,
+  })) ?? []
   const requirements = Array.isArray(input.factsSummary.resolvedRequirements)
     ? input.factsSummary.resolvedRequirements.map(record).map((requirement): SafeRequirement => ({
       aspectName: text(requirement.aspectName), required: requirement.required === true,
+      mappedFactKey: text(requirement.mappedFactKey) || null,
       status: text(requirement.status), selectedValue: text(requirement.selectedValue) || null,
       allowedValues: Array.isArray(requirement.allowedValues) ? requirement.allowedValues.map(text).filter(Boolean) : [],
     }))
@@ -108,6 +132,7 @@ export function buildVerifiedManualSellerHubHandoff(input: {
   const fact = (scope: string, key: string) => facts.find((entry) => entry.scope === scope && entry.key === key && trusted.has(entry.status))
   const blockers: string[] = []
   if (input.factsSummary.currentRunBound !== true || text(input.factsSummary.factRunId) !== text(input.factRunId)) blockers.push("CURRENT_FACT_RUN_REQUIRED")
+  if (!authoritativeFactsPackage) blockers.push("AUTHORITATIVE_FACT_PACKAGE_REQUIRED")
   if (gates.OPENAI_INPUT_READY !== true) blockers.push("VERIFIED_CONTENT_FACTS_NOT_READY")
   if (!/^\d+$/.test(categoryId)) blockers.push("CATEGORY_REQUIRED")
   if (!text(input.policies.conditionId)) blockers.push("CONDITION_REQUIRED")
@@ -125,8 +150,17 @@ export function buildVerifiedManualSellerHubHandoff(input: {
   const confirmedShipping = shippingKeys.every((key) => fact("SHIPPING_PACKAGE", key))
   if (!confirmedShipping && gates.SHIPPING_ESTIMATE_READY !== true) blockers.push("SHIPPING_ESTIMATE_REQUIRED")
   for (const requirement of requirements) {
+    const authoritativeFact = requirement.mappedFactKey
+      ? fact("PRODUCT_UNIT", requirement.mappedFactKey) ?? fact("OFFER_PACK", requirement.mappedFactKey)
+      : null
+    const authoritativeValue = text(authoritativeFact?.value)
+    const selectedValueAuthorized = Boolean(requirement.selectedValue && authoritativeValue &&
+      authoritativeValue.toLocaleLowerCase() === requirement.selectedValue.toLocaleLowerCase())
     if (requirement.required && !["SATISFIED_VERIFIED", "SATISFIED_CORROBORATED", "NOT_APPLICABLE"].includes(requirement.status)) {
       blockers.push(`REQUIRED_ASPECT_${text(requirement.aspectName).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`)
+    }
+    if (requirement.required && requirement.selectedValue && !selectedValueAuthorized) {
+      blockers.push(`REQUIRED_ASPECT_AUTHORITY_${text(requirement.aspectName).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`)
     }
     if (requirement.selectedValue && requirement.allowedValues.length && !requirement.allowedValues.includes(requirement.selectedValue)) {
       blockers.push(`ASPECT_VALUE_NOT_ALLOWED_${text(requirement.aspectName).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`)
@@ -148,7 +182,13 @@ export function buildVerifiedManualSellerHubHandoff(input: {
 
   const aspects: Record<string, string[]> = {}
   for (const requirement of requirements) {
-    if (requirement.selectedValue && ["SATISFIED_VERIFIED", "SATISFIED_CORROBORATED"].includes(requirement.status)) {
+    const authoritativeFact = requirement.mappedFactKey
+      ? fact("PRODUCT_UNIT", requirement.mappedFactKey) ?? fact("OFFER_PACK", requirement.mappedFactKey)
+      : null
+    const authoritativeValue = text(authoritativeFact?.value)
+    if (requirement.selectedValue && authoritativeValue &&
+      authoritativeValue.toLocaleLowerCase() === requirement.selectedValue.toLocaleLowerCase() &&
+      ["SATISFIED_VERIFIED", "SATISFIED_CORROBORATED"].includes(requirement.status)) {
       aspects[requirement.aspectName] = [requirement.selectedValue]
     }
   }
@@ -177,8 +217,11 @@ export function buildVerifiedManualSellerHubHandoff(input: {
     : { status: "ESTIMATE_ONLY_NOT_FOR_LISTING", values: {}, operatorConfirmationRequired: true,
       estimatedValuesExcluded: true,
       operatorAction: "Confirma peso y dimensiones en Seller Hub o utiliza una política de envío verificada que no los requiera." }
+  const feePolicy = record(input.economics.feePolicy)
+  const exactEbayFeeProfile = feePolicy.exactFeeClaimed === true
   const warnings = [
     ...(!confirmedShipping ? ["SHIPPING_CONFIRMATION_REQUIRED_IN_SELLER_HUB"] : []),
+    ...(!exactEbayFeeProfile ? ["EBAY_FEE_PROFILE_ESTIMATE_NOT_EXACT"] : []),
     ...requirements.filter((requirement) => !requirement.required && requirement.status === "MISSING_OPTIONAL")
       .map((requirement) => `OPTIONAL_ASPECT_MISSING_${text(requirement.aspectName).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`),
   ]
@@ -229,6 +272,7 @@ export function buildVerifiedManualSellerHubHandoff(input: {
         ? "Confirmar que el inventario ya es propio antes de publicar."
         : "Confirmar que permanece vigente el acuerdo de fulfillment con el proveedor mayorista autorizado.",
       ...(!confirmedShipping ? ["Confirmar peso/dimensiones o seleccionar una política de envío verificada compatible en Seller Hub."] : []),
+      ...(!exactEbayFeeProfile ? ["Revisar en Seller Hub la tarifa estimada según categoría y plan de tienda antes de publicar; la reserva económica es conservadora."] : []),
       "Usar únicamente las imágenes Luna incluidas y aprobadas.",
       "Copiar título, categoría, specifics, precio, cantidad, Custom Label, envío y políticas en Seller Hub.",
       "Revisar el preview final de Seller Hub antes de publicar.",
@@ -236,7 +280,8 @@ export function buildVerifiedManualSellerHubHandoff(input: {
     ],
     generatedAt: input.generatedAt,
     safety: { factsOnly: true, openAiCalls: 0, ebayWrites: 0, competitorContentUsed: false,
-      automaticPricingUsed: false, operatorPriceApproved: true, productionChanged: false },
+      automaticPricingUsed: false, operatorPriceApproved: true, productionChanged: false,
+      authoritativeFactPackageHash: authoritativeFactsPackage!.factPackageHash },
   }
   const packageHash = hash(listingPackage)
   return { ready: true as const, blockers: [], warnings, package: listingPackage, packageHash,

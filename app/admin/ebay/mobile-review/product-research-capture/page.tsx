@@ -7,6 +7,8 @@ import { supabase } from "@/lib/supabase"
 const EBAY_PRODUCT_RESEARCH_ORIGIN = "https://www.ebay.com"
 const CAPTURE_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_VISIBLE_CAPTURE_V1"
 const RECEIVER_READY_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_RECEIVER_READY_V1"
+const CAPTURE_RESULT_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_CAPTURE_RESULT_V1"
+const RECEIVER_HEARTBEAT_MS = 1_000
 
 type SafeResult = {
   captureAlreadyProcessed?: boolean
@@ -61,7 +63,8 @@ export default function ProductResearchCaptureReceiverPage() {
   const [status, setStatus] = useState<"WAITING" | "IMPORTING" | "READY" | "ERROR">("WAITING")
   const [error, setError] = useState("")
   const [result, setResult] = useState<SafeResult | null>(null)
-  const processedCaptureIds = useRef(new Set<string>())
+  const inFlightCaptureIds = useRef(new Set<string>())
+  const completedCaptureResults = useRef(new Map<string, Record<string, unknown>>())
 
   useEffect(() => {
     const opener = window.opener
@@ -71,10 +74,33 @@ export default function ProductResearchCaptureReceiverPage() {
       return
     }
     let active = true
-    const announceReady = () => opener.postMessage({ type: RECEIVER_READY_MESSAGE },
-      EBAY_PRODUCT_RESEARCH_ORIGIN)
-    const timer = window.setInterval(announceReady, 1_000)
-    announceReady()
+    let readyTimer: number | null = null
+    const announceReady = () => opener.postMessage({
+      type: RECEIVER_READY_MESSAGE,
+      reusableReceiver: true,
+    }, EBAY_PRODUCT_RESEARCH_ORIGIN)
+    const stopReadyHeartbeat = () => {
+      if (readyTimer !== null) window.clearInterval(readyTimer)
+      readyTimer = null
+    }
+    const startReadyHeartbeat = () => {
+      if (!active || readyTimer !== null) return
+      announceReady()
+      readyTimer = window.setInterval(announceReady, RECEIVER_HEARTBEAT_MS)
+    }
+    const postCaptureResult = (message: Record<string, unknown>) => {
+      opener.postMessage(message, EBAY_PRODUCT_RESEARCH_ORIGIN)
+    }
+    const cacheCaptureResult = (captureId: string, message: Record<string, unknown>) => {
+      completedCaptureResults.current.set(captureId, message)
+      // A same-day batch is bounded, but keep a small replay window so a lost
+      // postMessage can be answered without repeating an import or network call.
+      if (completedCaptureResults.current.size > 10) {
+        const oldest = completedCaptureResults.current.keys().next().value
+        if (typeof oldest === "string") completedCaptureResults.current.delete(oldest)
+      }
+    }
+    startReadyHeartbeat()
 
     const receive = async (event: MessageEvent) => {
       if (!active || event.origin !== EBAY_PRODUCT_RESEARCH_ORIGIN || event.source !== opener) return
@@ -84,9 +110,15 @@ export default function ProductResearchCaptureReceiverPage() {
         typeof message.capture !== "object") return
       const capture = message.capture as Record<string, unknown>
       const captureId = typeof capture.captureId === "string" ? capture.captureId : ""
-      if (!/^[0-9a-f-]{36}$/i.test(captureId) || processedCaptureIds.current.has(captureId)) return
-      processedCaptureIds.current.add(captureId)
-      window.clearInterval(timer)
+      if (!/^[0-9a-f-]{36}$/i.test(captureId)) return
+      const completed = completedCaptureResults.current.get(captureId)
+      if (completed) {
+        postCaptureResult(completed)
+        return
+      }
+      if (inFlightCaptureIds.current.has(captureId)) return
+      inFlightCaptureIds.current.add(captureId)
+      stopReadyHeartbeat()
       setStatus("IMPORTING")
       setError("")
       try {
@@ -108,7 +140,7 @@ export default function ProductResearchCaptureReceiverPage() {
         }
         setResult(payload.result)
         setStatus("READY")
-        opener.postMessage({ type: "IMNOVA_PRODUCT_RESEARCH_CAPTURE_RESULT_V1",
+        const successMessage = { type: CAPTURE_RESULT_MESSAGE,
           success: true, captureId, importedCount: payload.result.importedCount ?? 0,
           validCount: payload.result.validCount ?? 0,
           duplicateCount: payload.result.duplicateCount ?? 0,
@@ -118,19 +150,30 @@ export default function ProductResearchCaptureReceiverPage() {
           exactLunaMatches: payload.result.matchCounts?.exactLuna ?? 0,
           nextQuery: payload.result.queryPlan?.nextQuery?.searchQuery ?? null,
           nextQueryOrdinal: payload.result.queryPlan?.nextQuery?.ordinal ?? null,
-          queryCount: payload.result.queryPlan?.queryCount ?? null }, EBAY_PRODUCT_RESEARCH_ORIGIN)
+          queryCount: payload.result.queryPlan?.queryCount ?? null }
+        cacheCaptureResult(captureId, successMessage)
+        postCaptureResult(successMessage)
+        if (payload.result.queryPlan?.nextQuery) window.setTimeout(() => opener.focus(), 250)
       } catch (captureError) {
         const code = safeCode(captureError instanceof Error ? captureError.message : "")
         setStatus("ERROR")
         setError(code)
-        opener.postMessage({ type: "IMNOVA_PRODUCT_RESEARCH_CAPTURE_RESULT_V1",
-          success: false, captureId, error: code }, EBAY_PRODUCT_RESEARCH_ORIGIN)
+        const errorMessage = { type: CAPTURE_RESULT_MESSAGE,
+          success: false, captureId, error: code }
+        cacheCaptureResult(captureId, errorMessage)
+        postCaptureResult(errorMessage)
+      } finally {
+        inFlightCaptureIds.current.delete(captureId)
+        // The receiver stays open for the entire batch. Re-arm the handshake
+        // after every capture so the same authenticated window can accept the
+        // next captureId without navigation or another login.
+        startReadyHeartbeat()
       }
     }
     window.addEventListener("message", receive)
     return () => {
       active = false
-      window.clearInterval(timer)
+      stopReadyHeartbeat()
       window.removeEventListener("message", receive)
     }
   }, [])
@@ -168,8 +211,8 @@ export default function ProductResearchCaptureReceiverPage() {
         <div><dt className="text-white/50">OpenAI</dt><dd>0 llamadas</dd></div>
         <div><dt className="text-white/50">Escrituras eBay</dt><dd>0</dd></div>
       </dl>}
-      {result?.queryPlan?.status === "COMPLETED" && <a href="/admin/ebay-seller-os" className="mt-6 grid min-h-12 w-full place-items-center rounded-2xl bg-emerald-200 px-4 text-sm font-black text-emerald-950">VOLVER A SELLER OS</a>}
-      <p className="mt-6 text-xs text-white/45">{result?.queryPlan?.status === "COMPLETED" ? "El plan terminó. Regresa a Seller OS para revisar el resultado y la siguiente acción." : "Puedes cerrar esta ventana al finalizar. Seller OS continuará únicamente el reanálisis de Loop 1 del mismo run."}</p>
+      {result?.queryPlan?.status === "COMPLETED" && <a href="/admin/ebay-seller-os" target="sellerOsDashboard" rel="noopener" className="mt-6 grid min-h-12 w-full place-items-center rounded-2xl bg-emerald-200 px-4 text-sm font-black text-emerald-950">VOLVER A SELLER OS</a>}
+      <p className="mt-6 text-xs text-white/45">{result?.queryPlan?.status === "COMPLETED" ? "El plan terminó. Regresa a Seller OS para revisar el resultado y la siguiente acción." : "Sesión segura del lote activa. Déjala abierta: recibirá las próximas capturas sin pedir otro inicio de sesión. Seller OS continuará únicamente el reanálisis de Loop 1 del mismo run."}</p>
     </section>
   </main>
 }

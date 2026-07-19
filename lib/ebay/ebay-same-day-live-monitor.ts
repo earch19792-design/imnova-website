@@ -1,0 +1,222 @@
+type Row = Record<string, unknown>
+
+export type SameDayLiveMonitorStatus =
+  | "NOT_STARTED"
+  | "WORKING"
+  | "QUEUED"
+  | "WAITING_OPERATOR"
+  | "PAUSED_EBAY"
+  | "READY_TO_PUBLISH"
+  | "BLOCKED"
+  | "COMPLETED"
+
+export type SameDayLiveTimelineStep = {
+  id: string
+  label: string
+  status: "DONE" | "CURRENT" | "NEXT"
+}
+
+export type SameDayLiveMonitor = {
+  status: SameDayLiveMonitorStatus
+  businessLabel: string
+  headline: string
+  detail: string
+  activityEvidence: string
+  shouldAnimate: boolean
+  batch: {
+    total: number
+    completed: number
+    blocked: number
+    active: number
+    queued: number
+    currentOrdinal: number | null
+  }
+  timeline: SameDayLiveTimelineStep[]
+  nextAutomaticAction: string
+  nextHumanAction: string
+  blockerSummary: string | null
+}
+
+const TERMINAL_STATES = new Set(["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"])
+const READY_STATES = new Set(["READY_FOR_MANUAL_PUBLICATION", "WAITING_ITEM_ID"])
+
+const TIMELINE = [
+  { id: "selection", label: "Selección", states: ["RUN_CREATED", "LOCAL_FILTERING", "CANDIDATE_SELECTION"] },
+  { id: "research", label: "Product Research", states: ["PRODUCT_RESEARCH_PLAN_READY", "WAITING_PRODUCT_RESEARCH_CAPTURE", "IMPORTING_SOLD_EVIDENCE"] },
+  { id: "identity", label: "Identidad", states: ["RECONCILING_IDENTITY", "MATCHING_LUNA", "RUNNING_LOOP_1"] },
+  { id: "economics", label: "Luna y economía", states: ["CALCULATING_ECONOMICS", "WAITING_LUNA_CONFIRMATION"] },
+  { id: "facts", label: "Ficha y cumplimiento", states: ["ENRICHING_PRODUCT_FACTS", "VALIDATING_TAXONOMY", "VALIDATING_REGULATION", "BUILDING_OPENAI_INPUT", "WAITING_PRODUCT_APPROVAL"] },
+  { id: "creative", label: "Contenido e imágenes", states: ["GENERATING_LISTING_CONTENT", "VALIDATING_LISTING_CONTENT", "PREPARING_IMAGE_PACKAGE", "WAITING_IMAGE_APPROVAL", "BUILDING_SELLER_HUB_HANDOFF"] },
+  { id: "publish", label: "Publicación y monitor", states: ["READY_FOR_MANUAL_PUBLICATION", "WAITING_ITEM_ID", "VERIFYING_PUBLISHED_LISTING", "REGISTERING_COMMERCIAL_MONITOR", "VERIFIED_ACTIVE"] },
+] as const
+
+const BLOCKER_LABELS: Record<string, string> = {
+  AUTHORIZED_CAPTURE_OBSERVATIONS_MISSING: "La captura no aportó referencias vendidas válidas para este producto.",
+  CANDIDATE_CAPTURE_REFERENCES_MISSING: "No se encontraron referencias compatibles para reconciliar este producto.",
+  OFFICIAL_IDENTITY_RECONCILIATION_NOT_EXACT: "La identidad, variante o presentación no coincide con suficiente precisión.",
+  IDENTITY_QUERY_TOO_GENERIC: "Luna no tiene aún GTIN ni marca + MPN/modelo para preparar una búsqueda exacta.",
+  GTIN_INVALID_OR_UNVERIFIED: "El GTIN disponible no superó la validación y no puede usarse para unir productos.",
+  OFFER_PACK_IDENTITY_MISSING: "Falta identificar la presentación nativa que Luna vende.",
+  CUSTOM_PRESENTATION_ECONOMICS_REQUIRED: "Se encontró el mismo producto en otro pack; falta calcular el costo completo de esa presentación.",
+  LUNA_PACKAGING_CONFIGURATION_REQUIRED: "Falta confirmar si Luna preparará el pack en polybag o caja y qué material requiere.",
+  RELATED_SIZE_IS_NOT_EXACT_OFFER: "La evidencia corresponde a otro tamaño de la misma familia, no a la oferta exacta.",
+  EXACT_PRODUCT_PRESENTATION_REQUIRED: "Debe definirse la presentación exacta antes de calcular el listing.",
+  LOOP1_EXACT_IDENTITY_NOT_CONFIRMED: "No se confirmó que la evidencia corresponda al producto y presentación exactos.",
+  LUNA_OUT_OF_STOCK: "Luna fue confirmada sin inventario disponible.",
+  LUNA_COST_REQUIRED_FOR_ECONOMICS: "Falta confirmar el costo actual de Luna para calcular la rentabilidad.",
+  EXACT_TOP20_QUEUE_IDENTITY_MISSING: "Falta una identidad exacta y trazable en la cola comercial.",
+  CURRENT_PRODUCT_FACT_RUN_INCOMPLETE: "La ficha técnica automatizada dejó datos críticos sin verificar.",
+  PRODUCT_FACTS_PARTIAL_OR_EXCLUDED: "La ficha técnica no alcanzó la cobertura segura requerida para hoy.",
+  EBAY_REQUIRED_ASPECTS_NOT_READY_TODAY: "Faltan aspectos obligatorios de la categoría de eBay.",
+  EBAY_ASPECTS_READY_FALSE: "Los aspectos obligatorios de eBay todavía no están resueltos.",
+  REGULATORY_NOT_READY_TODAY: "La validación regulatoria no está lista para publicar este producto.",
+  REGULATORY_READY_FALSE: "Falta evidencia regulatoria autorizada.",
+  PRODUCT_FACTS_NOT_READY_TODAY: "La ficha técnica aún contiene un dato crítico pendiente o conflictivo.",
+  OPENAI_INPUT_NOT_READY: "El paquete de facts verificados todavía no está listo para generar contenido.",
+  NEED_AUTHORIZED_PRODUCT_IMAGES: "Faltan imágenes propias o autorizadas del producto exacto.",
+  PRODUCT_REJECTED_BY_OPERATOR: "El producto fue rechazado durante la revisión humana.",
+  IMAGES_REJECTED_BY_OPERATOR: "Las imágenes fueron rechazadas durante la revisión humana.",
+  LOOP1_REANALYSIS_TIMEOUT: "El reanálisis comercial no terminó dentro de la ventana segura.",
+}
+
+function text(value: unknown) {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function rows(value: unknown): Row[] {
+  return Array.isArray(value) ? value.filter((entry): entry is Row =>
+    Boolean(entry) && typeof entry === "object" && !Array.isArray(entry)) : []
+}
+
+function dateMs(value: unknown) {
+  const parsed = Date.parse(text(value))
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function isRecent(value: unknown, nowMs: number, maximumAgeMs: number) {
+  const observedAt = dateMs(value)
+  return observedAt != null && observedAt <= nowMs + 30_000 && nowMs - observedAt <= maximumAgeMs
+}
+
+function phaseForState(state: string) {
+  const index = TIMELINE.findIndex((step) => (step.states as readonly string[]).includes(state))
+  return index < 0 ? 0 : index
+}
+
+function timelineForState(state: string): SameDayLiveTimelineStep[] {
+  const current = phaseForState(state)
+  return TIMELINE.map((step, index) => ({
+    id: step.id,
+    label: step.label,
+    status: index < current ? "DONE" : index === current ? "CURRENT" : "NEXT",
+  }))
+}
+
+export function translateSameDayPilotBlocker(value: unknown) {
+  const code = text(value)
+  if (!code) return null
+  return BLOCKER_LABELS[code]
+    ?? (code.startsWith("NEED_PACKAGE_WEIGHT")
+      ? "Falta confirmar el peso o las dimensiones reales del paquete de envío."
+      : code.startsWith("CONFLICTED")
+        ? "Existe un dato crítico conflictivo que requiere evidencia autorizada."
+        : "El candidato necesita una revisión verificable antes de continuar.")
+}
+
+export function deriveSameDayLiveMonitor(input: {
+  run?: Row | null
+  candidates?: unknown
+  tasks?: unknown
+  jobs?: unknown
+  quotaPaused?: boolean
+  now?: Date
+}): SameDayLiveMonitor {
+  const now = input.now ?? new Date()
+  const nowMs = now.getTime()
+  const run = input.run ?? null
+  const candidates = rows(input.candidates)
+  const tasks = rows(input.tasks)
+  const jobs = rows(input.jobs)
+  const openTasks = tasks.filter((task) => text(task.status) === "OPEN")
+  const blockedCandidates = candidates.filter((candidate) => TERMINAL_STATES.has(text(candidate.machine_state))
+    && ["BLOCKED", "REJECTED"].includes(text(candidate.machine_state)))
+  const completedCandidates = candidates.filter((candidate) =>
+    ["VERIFIED_ACTIVE", "COMPLETED"].includes(text(candidate.machine_state)))
+  const readyCandidates = candidates.filter((candidate) => READY_STATES.has(text(candidate.machine_state)))
+  const activeCandidates = candidates.filter((candidate) => !TERMINAL_STATES.has(text(candidate.machine_state))
+    && !READY_STATES.has(text(candidate.machine_state)) && text(candidate.machine_state) !== "RUN_CREATED")
+  const queuedCandidates = candidates.filter((candidate) => text(candidate.machine_state) === "RUN_CREATED")
+  const currentCandidate = activeCandidates[0] ?? readyCandidates[0] ?? queuedCandidates[0] ?? candidates[0]
+  const currentState = text(currentCandidate?.machine_state) || text(run?.stage) || "RUN_CREATED"
+  const currentOrdinal = Number(currentCandidate?.ordinal)
+
+  const leasedJobs = jobs.filter((job) => text(job.status) === "LEASED")
+  const pendingJobs = jobs.filter((job) => ["PENDING", "WAITING_RETRY"].includes(text(job.status)))
+  const freshHeartbeat = isRecent(run?.last_worker_heartbeat_at, nowMs, 3 * 60_000)
+  const activeWorkerLease = (dateMs(run?.worker_lease_expires_at) ?? 0) > nowMs
+  const freshLeasedJob = leasedJobs.some((job) => isRecent(job.updated_at, nowMs, 6 * 60_000))
+  // A visual pulse is earned only by a current durable execution signal. A
+  // merely PENDING job is intentionally rendered as queued, never as working.
+  const activeExecution = (freshHeartbeat && (activeWorkerLease || leasedJobs.length > 0))
+    || (activeWorkerLease && freshLeasedJob)
+
+  const runStatus = text(run?.status)
+  let status: SameDayLiveMonitorStatus
+  if (!run) status = "NOT_STARTED"
+  else if (runStatus === "COMPLETED") status = "COMPLETED"
+  else if (openTasks.length > 0) status = "WAITING_OPERATOR"
+  else if (input.quotaPaused === true || jobs.some((job) => text(job.status) === "WAITING_RETRY")) status = "PAUSED_EBAY"
+  else if (readyCandidates.length > 0 || runStatus === "READY_FOR_OPERATOR") status = "READY_TO_PUBLISH"
+  else if (runStatus === "BLOCKED" || (candidates.length > 0 && blockedCandidates.length === candidates.length)) status = "BLOCKED"
+  else if (activeExecution) status = "WORKING"
+  else if (pendingJobs.length > 0 || activeCandidates.length > 0 || queuedCandidates.length > 0) status = "QUEUED"
+  else status = "QUEUED"
+
+  const labels: Record<SameDayLiveMonitorStatus, { business: string; headline: string; detail: string }> = {
+    NOT_STARTED: { business: "NO INICIADO", headline: "El lanzamiento está listo para comenzar", detail: "Seller OS todavía no ha creado un lote." },
+    WORKING: { business: "TRABAJANDO", headline: "Seller OS está procesando el lote", detail: "Existe un lease o latido reciente del worker durable." },
+    QUEUED: { business: "EN COLA", headline: "El trabajo está preparado y preservado", detail: "No hay ejecución activa confirmada ahora; el siguiente turno retomará el checkpoint." },
+    WAITING_OPERATOR: { business: "ESPERANDO TU CONFIRMACIÓN", headline: "Seller OS necesita una sola acción tuya", detail: "Las etapas automáticas posteriores permanecen bloqueadas hasta completar el gate visible." },
+    PAUSED_EBAY: { business: "PAUSADO POR EBAY", headline: "La lane de eBay espera su ventana segura", detail: "El checkpoint está preservado y no se harán reintentos agresivos." },
+    READY_TO_PUBLISH: { business: "LISTO PARA PUBLICAR", headline: "Hay un paquete preparado para Seller Hub", detail: "La publicación continúa siendo manual y requiere tu aprobación." },
+    BLOCKED: { business: "BLOQUEADO", headline: "Este lote no puede avanzar de forma segura", detail: "Seller OS preservó la evidencia y no forzará una publicación." },
+    COMPLETED: { business: "PUBLICADO Y VERIFICADO", headline: "El listing fue verificado y registrado", detail: "Seller OS cerró el recorrido durable de este candidato." },
+  }
+  const label = labels[status]
+  const firstBlocker = blockedCandidates.flatMap((candidate) =>
+    Array.isArray(candidate.blockers) ? candidate.blockers : [])[0]
+  const blockerSummary = translateSameDayPilotBlocker(firstBlocker)
+  const heartbeatAt = dateMs(run?.last_worker_heartbeat_at)
+  const activityEvidence = status === "WORKING"
+    ? heartbeatAt != null
+      ? `Latido confirmado ${new Intl.DateTimeFormat("es-NI", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(heartbeatAt))}.`
+      : "Job con lease vigente confirmado."
+    : status === "QUEUED"
+      ? `${pendingJobs.length} trabajo(s) en cola; no se simula actividad mientras esperan.`
+      : status === "WAITING_OPERATOR"
+        ? `${openTasks.length} tarea(s) humana(s) abiertas; sólo se muestra la primera.`
+        : label.detail
+
+  return {
+    status,
+    businessLabel: label.business,
+    headline: label.headline,
+    detail: label.detail,
+    activityEvidence,
+    shouldAnimate: status === "WORKING",
+    batch: {
+      total: candidates.length,
+      completed: completedCandidates.length,
+      blocked: blockedCandidates.length,
+      active: activeCandidates.length,
+      queued: queuedCandidates.length,
+      currentOrdinal: Number.isInteger(currentOrdinal) && currentOrdinal > 0 ? currentOrdinal : null,
+    },
+    timeline: timelineForState(currentState),
+    nextAutomaticAction: text(run?.next_automated_action) || text(currentCandidate?.next_automated_action) || "Preservar el checkpoint y esperar la siguiente señal.",
+    nextHumanAction: openTasks.length
+      ? text(openTasks[0]?.title) || "Completar la tarea visible."
+      : text(run?.next_human_action) || text(currentCandidate?.next_human_action) || "Ninguna.",
+    blockerSummary,
+  }
+}

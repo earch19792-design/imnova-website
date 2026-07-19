@@ -96,7 +96,7 @@ export async function POST(req: Request) {
       if (code !== "PRODUCT_RESEARCH_QUERY_PLAN_NEXT_QUERY_REQUIRED") throw planError
       // A visible table from another tab is a navigation problem, not a bad
       // commercial import. Return the durable next query without persisting a
-      // row, so v1.2.5 can apply it automatically in the same eBay tab.
+      // row, so v1.2.6 can apply it automatically in the same eBay tab.
       let queryPlan: Awaited<ReturnType<typeof getProductResearchQueryPlanStatus>> = null
       try {
         queryPlan = await getProductResearchQueryPlanStatus({
@@ -220,7 +220,8 @@ export async function POST(req: Request) {
     } else if (result.reanalysisRequired) {
       if (sameDayPilot.resumed > 0) {
         scan = { status: "DURABLE_RECONCILIATION_QUEUED", observationsReconciled: 0,
-          maximumReferencesPerCandidate: 10, sameRunResumed: true,
+          decisionReferencesPerCandidate: 10, fullCaptureBatchReconciliation: true,
+          sameRunResumed: true,
           browserMayClose: true, discoveryRepeated: false }
       } else {
         // Preserve the legacy non-pilot continuation, but constrain it to the

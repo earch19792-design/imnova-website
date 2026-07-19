@@ -6,6 +6,10 @@ import {
   evaluateEbayQuotaLaneState,
   evaluateEbayQuotaRetryState,
 } from "@/lib/ebay/ebay-quota-lane-domain"
+import {
+  deriveSameDayLiveMonitor,
+  type SameDayLiveMonitor,
+} from "@/lib/ebay/ebay-same-day-live-monitor"
 
 type Row = Record<string, any>
 
@@ -19,6 +23,7 @@ export function TodayLaunchPanel() {
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState(false)
   const [error, setError] = useState("")
+  const [lastObservedAt, setLastObservedAt] = useState<string | null>(null)
   const load = useCallback(async () => {
     const accessToken = await token()
     if (!accessToken) return
@@ -26,13 +31,14 @@ export function TodayLaunchPanel() {
     const body = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(body.error || "No se pudo consultar el lanzamiento.")
     setPilot(body.pilot)
+    setLastObservedAt(new Date().toISOString())
   }, [])
   useEffect(() => { load().catch((caught) => setError(caught instanceof Error ? caught.message : "No disponible")).finally(() => setLoading(false)) }, [load])
   useEffect(() => {
     if (!pilot || ["COMPLETED", "BLOCKED"].includes(String(pilot.run?.status))) return
     const timer = window.setInterval(() => {
       load().catch(() => undefined)
-    }, 15_000)
+    }, 10_000)
     return () => window.clearInterval(timer)
   }, [load, pilot])
   const request = async (body: Row) => {
@@ -99,12 +105,16 @@ export function TodayLaunchPanel() {
     ...pausedJobs.map((entry: Row) => String(entry.decision.resumeAt || "")),
     ...pausedQuotaLanes.map((entry: Row) => String(entry.decision.resumeAt || "")),
   ].filter(Boolean).sort()[0]
-  const currentBusinessState = !pilot ? "NO INICIADO" : nextCycleAllowed ? "ESPERANDO TU CONFIRMACIÓN" : runStatus === "BLOCKED" ? "BLOQUEADO" :
-    runStatus === "COMPLETED" ? "PUBLICADO Y VERIFICADO" :
-      candidates.some((candidate: Row) => candidate.machine_state === "READY_FOR_MANUAL_PUBLICATION") ? "LISTO PARA PUBLICAR" :
-        openTasks.length ? "ESPERANDO TU CONFIRMACIÓN" :
-          quotaPaused ? "PAUSADO POR EBAY" :
-        candidates.some((candidate: Row) => candidate.machine_state === "BLOCKED") ? "BLOQUEADO" : "TRABAJANDO"
+  const liveMonitor = deriveSameDayLiveMonitor({
+    run: pilot?.run,
+    candidates,
+    tasks: pilot?.tasks,
+    jobs: pilot?.jobs,
+    quotaPaused,
+  })
+  const currentBusinessState = nextCycleAllowed
+    ? "ESPERANDO TU CONFIRMACIÓN"
+    : liveMonitor.businessLabel
   return <section className="mt-5 min-w-0 overflow-hidden rounded-3xl border border-cyan-200/20 bg-gradient-to-br from-cyan-200/[0.10] to-emerald-200/[0.04] p-5 sm:p-7">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="min-w-0">
@@ -124,14 +134,8 @@ export function TodayLaunchPanel() {
     {pilot?.nextCandidateCycle?.reason === "NEXT_CANDIDATE_SET_EXHAUSTED" && <p className="mt-5 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 text-sm text-amber-50">No quedan candidatos distintos elegibles en la cola local actual. Seller OS preservó toda la evidencia y no forzará una publicación.</p>}
     {error && <p role="alert" className="mt-4 rounded-2xl border border-red-300/30 bg-red-400/10 p-3 text-sm font-bold text-red-100">{error}</p>}
     {pilot && <>
-      <section aria-labelledby="system-working-heading" className="mt-5 rounded-2xl border border-emerald-200/20 bg-black/20 p-4">
-        <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100/60">1 · Sistema trabajando</p>
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-          <h3 id="system-working-heading" className="text-lg font-black text-emerald-50">{currentBusinessState}</h3>
-          <span className="text-sm font-bold text-white/65">Piloto {pilotProgress} / 3</span>
-        </div>
-        <p className="mt-2 text-sm leading-6 text-white/60">Seller OS conserva el progreso, continúa los trabajos permitidos en segundo plano y te presenta una sola decisión a la vez.</p>
-      </section>
+      <LivePilotMonitor monitor={liveMonitor} pilotProgress={pilotProgress}
+        lastObservedAt={lastObservedAt} nextCycleAllowed={nextCycleAllowed} />
       {quotaPaused && <p className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 text-sm text-amber-50">eBay pausó únicamente la verificación exacta. La selección, Luna y los paquetes locales permanecen disponibles; Seller OS retomará el mismo producto automáticamente{quotaResumeAt ? ` después de ${new Date(quotaResumeAt).toLocaleString("es-NI")}` : " cuando eBay libere la cuota"}.</p>}
       <section aria-labelledby="operator-task-heading" className="mt-6">
         <p className="text-[10px] font-black uppercase tracking-widest text-amber-100/60">2 · Tu decisión</p>
@@ -160,6 +164,130 @@ export function TodayLaunchPanel() {
       <details className="mt-5 rounded-2xl border border-white/10 p-4"><summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver métricas y progreso automático</summary><div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-7"><Metric label="Piloto" value={`${pilotProgress} / 3`} /><Metric label="Ciclo" value={String(currentCycle)} /><Metric label="Cola de este ciclo" value={`${candidates.length} / 5`} /><Metric label="Intentados acumulados" value={String(pilot.cycleHistory?.attemptedCandidates ?? candidates.length)} /><Metric label="Preparación local" value={String(candidates.filter((candidate: Row) => candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES").length)} /><Metric label="Listos" value={String(pilot.run.ready_for_manual_publication_count)} /><Metric label="Escrituras eBay" value="0" /></div><div className="mt-3 grid gap-2">{candidates.map((candidate: Row) => <div key={candidate.id} className="min-w-0 rounded-xl bg-black/20 p-3"><p className="break-words font-bold">{candidate.ordinal}. {candidate.product_title}</p><p className="mt-1 break-words text-xs text-white/55">{businessState(candidate.machine_state)} · SKU {candidate.supplier_sku}</p>{candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES" && <p className="mt-1 text-xs text-cyan-100/75">Paquete local seguro preparado; todavía no es publicable.</p>}<p className="mt-1 break-words text-xs text-amber-100/80">{candidate.next_human_action}</p></div>)}</div></details>
     </>}
   </section>
+}
+
+function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt, nextCycleAllowed }: {
+  monitor: SameDayLiveMonitor
+  pilotProgress: number
+  lastObservedAt: string | null
+  nextCycleAllowed: boolean
+}) {
+  const palette = liveMonitorPalette(monitor.status)
+  const settled = monitor.batch.completed + monitor.batch.blocked
+  const progressValue = monitor.batch.total
+    ? Math.max(settled, monitor.batch.currentOrdinal ?? 0)
+    : 0
+  const observedLabel = lastObservedAt
+    ? new Date(lastObservedAt).toLocaleTimeString("es-NI", {
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    })
+    : "pendiente"
+  return <section aria-labelledby="system-working-heading"
+    className="relative isolate mt-5 overflow-hidden rounded-3xl border border-cyan-200/20 bg-[#07141a] p-4 shadow-[0_24px_90px_rgba(34,211,238,0.08)] sm:p-5">
+    <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 opacity-60 [background-image:linear-gradient(rgba(34,211,238,0.055)_1px,transparent_1px),linear-gradient(90deg,rgba(34,211,238,0.055)_1px,transparent_1px)] [background-size:28px_28px]" />
+    <div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 -z-10 h-64 w-64 rounded-full bg-cyan-300/10 blur-3xl" />
+    <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="flex min-w-0 items-start gap-3">
+        <div aria-hidden="true" className={`relative mt-1 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border ${palette.beacon}`}>
+          {monitor.shouldAnimate && <span className="absolute inset-1 rounded-xl bg-cyan-200/25 motion-safe:animate-ping" />}
+          <span className={`relative h-3 w-3 rounded-full ${palette.dot} ${monitor.shouldAnimate ? "motion-safe:animate-pulse" : ""}`} />
+        </div>
+        <div className="min-w-0">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-100/60">1 · Sistema trabajando</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <h3 id="system-working-heading" className="break-words text-lg font-black text-white">{nextCycleAllowed ? "El ciclo terminó; puedes autorizar el siguiente lote" : monitor.headline}</h3>
+            <span aria-live="polite" className={`rounded-full border px-2.5 py-1 text-[10px] font-black tracking-wide ${nextCycleAllowed ? "border-amber-200/35 bg-amber-200/10 text-amber-100" : palette.badge}`}>{nextCycleAllowed ? "ESPERANDO TU CONFIRMACIÓN" : monitor.businessLabel}</span>
+          </div>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">{nextCycleAllowed
+            ? "No se iniciará otro grupo sin tu autorización. El lote terminado y toda su evidencia permanecen guardados."
+            : monitor.detail}</p>
+          <p className="mt-1 text-xs font-bold text-cyan-100/65">{nextCycleAllowed
+            ? "Próxima acción: autorizar un lote acotado de hasta cinco candidatos distintos."
+            : monitor.activityEvidence}</p>
+        </div>
+      </div>
+      <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2">
+        <LiveMetric label="Piloto" value={`${pilotProgress} / 3`} />
+        <LiveMetric label="Lote" value={`${monitor.batch.total} / 5`} />
+        <LiveMetric label="En curso" value={String(monitor.batch.active)} />
+        <LiveMetric label="Descartados" value={String(monitor.batch.blocked)} tone={monitor.batch.blocked ? "WARN" : "DEFAULT"} />
+      </div>
+    </div>
+
+    <div className="mt-5">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <span className="font-black text-white/70">Recorrido del candidato</span>
+        <span className="text-white/45">Actualización {observedLabel}</span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10" role="progressbar"
+        aria-label="Progreso del lote actual" aria-valuemin={0} aria-valuemax={monitor.batch.total || 1}
+        aria-valuenow={Math.min(progressValue, monitor.batch.total || 1)}>
+        <div className="h-full rounded-full bg-gradient-to-r from-cyan-300 via-violet-300 to-emerald-300 transition-[width] motion-reduce:transition-none"
+          style={{ width: monitor.batch.total ? `${Math.min(100, (progressValue / monitor.batch.total) * 100)}%` : "0%" }} />
+      </div>
+      <ol className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+        {monitor.timeline.map((step, index) => <li key={step.id} aria-current={step.status === "CURRENT" ? "step" : undefined}
+          className={`min-w-0 rounded-xl border p-2.5 ${step.status === "DONE"
+            ? "border-emerald-200/25 bg-emerald-200/[0.07] text-emerald-50"
+            : step.status === "CURRENT"
+              ? "border-cyan-200/40 bg-cyan-200/[0.12] text-cyan-50 shadow-[0_0_24px_rgba(34,211,238,0.10)]"
+              : "border-white/[0.08] bg-white/[0.025] text-white/30"}`}>
+          <p className="text-[9px] font-black uppercase tracking-wider">{step.status === "DONE" ? "Completado" : step.status === "CURRENT" ? "Ahora" : "Después"}</p>
+          <p className="mt-1 break-words text-xs font-black">{index + 1}. {step.label}</p>
+        </li>)}
+      </ol>
+      <p className="mt-2 text-[11px] leading-5 text-white/45">La etapa actual está resaltada. Las etapas futuras permanecen en gris y no habilitan acciones antes de tiempo.</p>
+    </div>
+
+    <div className="mt-4 grid gap-3 md:grid-cols-2">
+      <div className="rounded-2xl border border-violet-200/20 bg-violet-200/[0.05] p-3">
+        <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/60">Próxima acción del sistema</p>
+        <p className="mt-1 break-words text-sm font-bold leading-5 text-violet-50">{monitor.nextAutomaticAction}</p>
+      </div>
+      <div className={`rounded-2xl border p-3 ${monitor.nextHumanAction === "Ninguna."
+        ? "border-white/10 bg-white/[0.025]"
+        : "border-amber-200/25 bg-amber-200/[0.06]"}`}>
+        <p className={`text-[10px] font-black uppercase tracking-widest ${monitor.nextHumanAction === "Ninguna." ? "text-white/40" : "text-amber-100/60"}`}>Próxima acción tuya</p>
+        <p className={`mt-1 break-words text-sm font-bold leading-5 ${monitor.nextHumanAction === "Ninguna." ? "text-white/45" : "text-amber-50"}`}>{monitor.nextHumanAction}</p>
+      </div>
+    </div>
+    {monitor.blockerSummary && <p role="status" className="mt-3 rounded-2xl border border-red-300/25 bg-red-400/[0.08] p-3 text-sm leading-6 text-red-100"><strong>Por qué se descartó:</strong> {monitor.blockerSummary}</p>}
+  </section>
+}
+
+function LiveMetric({ label, value, tone = "DEFAULT" }: { label: string; value: string; tone?: "DEFAULT" | "WARN" }) {
+  return <div className={`min-w-[6.5rem] rounded-xl border px-3 py-2 ${tone === "WARN" ? "border-amber-200/25 bg-amber-200/[0.06]" : "border-white/10 bg-black/20"}`}>
+    <p className={`text-[9px] font-black uppercase tracking-widest ${tone === "WARN" ? "text-amber-100/60" : "text-white/40"}`}>{label}</p>
+    <p className="mt-1 text-base font-black text-white">{value}</p>
+  </div>
+}
+
+function liveMonitorPalette(status: SameDayLiveMonitor["status"]) {
+  if (status === "WORKING") return {
+    beacon: "border-cyan-200/40 bg-cyan-200/10",
+    dot: "bg-cyan-200 shadow-[0_0_18px_rgba(165,243,252,0.9)]",
+    badge: "border-cyan-200/35 bg-cyan-200/10 text-cyan-100",
+  }
+  if (status === "WAITING_OPERATOR" || status === "PAUSED_EBAY") return {
+    beacon: "border-amber-200/35 bg-amber-200/10",
+    dot: "bg-amber-200 shadow-[0_0_14px_rgba(253,230,138,0.65)]",
+    badge: "border-amber-200/35 bg-amber-200/10 text-amber-100",
+  }
+  if (status === "READY_TO_PUBLISH" || status === "COMPLETED") return {
+    beacon: "border-emerald-200/35 bg-emerald-200/10",
+    dot: "bg-emerald-200 shadow-[0_0_14px_rgba(167,243,208,0.65)]",
+    badge: "border-emerald-200/35 bg-emerald-200/10 text-emerald-100",
+  }
+  if (status === "BLOCKED") return {
+    beacon: "border-red-200/35 bg-red-200/10",
+    dot: "bg-red-200 shadow-[0_0_14px_rgba(254,202,202,0.65)]",
+    badge: "border-red-200/35 bg-red-200/10 text-red-100",
+  }
+  return {
+    beacon: "border-white/15 bg-white/[0.04]",
+    dot: "bg-white/45",
+    badge: "border-white/15 bg-white/[0.04] text-white/60",
+  }
 }
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-2xl border border-white/10 bg-black/20 p-4"><p className="text-xs font-black uppercase text-white/45">{label}</p><p className="mt-2 text-xl font-black">{value}</p></div> }
@@ -200,7 +328,7 @@ function ProductResearchQueueTask({ guidance, researchTasks, fallbackQuery, open
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
         <h4 className="font-black">Captura la próxima consulta de Product Research</h4>
-        <p className="mt-1 text-sm leading-6 text-white/65">Una sola consulta está disponible para actuar. Las posteriores permanecen ordenadas y la extensión v1.2.5 las encadena.</p>
+        <p className="mt-1 text-sm leading-6 text-white/65">Una sola consulta está disponible para actuar. Las posteriores permanecen ordenadas y la extensión v1.2.6 las encadena en la misma sesión.</p>
       </div>
       <span className="rounded-full border border-amber-100/20 px-3 py-1 text-xs font-black text-amber-100">{capturedCount}/{queryCount || capturedCount + pendingCount} capturadas</span>
     </div>

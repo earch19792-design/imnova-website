@@ -94,6 +94,136 @@ test("accepts eBay estimated sold quantity but labels it separately", () => {
   assert.match(report.evidenceDisclaimer, /estimada/i)
 })
 
+test("uses ePID as an exact catalog identity and lotSize as a hard offer-pack guard", () => {
+  const candidate = {
+    ...fixture.candidate,
+    gtin: null,
+    brand: null,
+    mpn: null,
+    epid: "123456789",
+    packQuantity: 3,
+  }
+  const exact = {
+    ...fixture.comparables[0],
+    gtin: null,
+    brand: null,
+    mpn: null,
+    epid: "123456789",
+    lotSize: 3,
+  }
+  const wrongPack = { ...exact, itemId: "wrong-pack", lotSize: 6 }
+  const report = buildEbaySellerKeywordDemandValidation({
+    candidate,
+    comparables: [exact, wrongPack],
+    insightsAvailability: "AVAILABLE",
+  })
+  assert.equal(report.comparableEvidence[0].identityEvidenceClass, "IDENTIFIER_EXACT_EPID")
+  assert.equal(report.comparableEvidence[0].identifierExact, true)
+  assert.equal(report.comparableEvidence.find((row) => row.comparableId === "wrong-pack")
+    ?.identityEvidenceClass, "OFFER_PACK_CONFLICT")
+  assert.equal(report.eligibleComparableListings, 1)
+
+  const unresolved = buildEbaySellerKeywordDemandValidation({
+    candidate,
+    comparables: [{ ...exact, itemId: "unknown-pack", lotSize: null }],
+    insightsAvailability: "AVAILABLE",
+  })
+  assert.equal(unresolved.comparableEvidence[0].baseIdentifierExact, true)
+  assert.equal(unresolved.comparableEvidence[0].identifierExact, false)
+  assert.equal(unresolved.comparableEvidence[0].identityEvidenceClass,
+    "BASE_PRODUCT_EXACT_OFFER_UNRESOLVED")
+  assert.equal(unresolved.eligibleComparableListings, 0)
+
+  const conflict = buildEbaySellerKeywordDemandValidation({
+    candidate: { ...candidate, brand: "Acme" },
+    comparables: [{ ...exact, itemId: "wrong-brand", brand: "Other" }],
+    insightsAvailability: "AVAILABLE",
+  })
+  assert.equal(conflict.comparableEvidence[0].identifierExact, false)
+  assert.equal(conflict.comparableEvidence[0].identityEvidenceClass, "IDENTITY_CONFLICT")
+})
+
+test("exact GTIN identifies only the base product until the offer pack is resolved", () => {
+  const candidate = {
+    ...fixture.candidate,
+    gtin: "036000291452",
+    packQuantity: 3,
+  }
+  const comparable = {
+    ...fixture.comparables[0],
+    gtin: "036000291452",
+    lotSize: null,
+  }
+  const unresolved = buildEbaySellerKeywordDemandValidation({
+    candidate,
+    comparables: [comparable],
+    insightsAvailability: "AVAILABLE",
+  })
+  assert.equal(unresolved.comparableEvidence[0].baseIdentifierExact, true)
+  assert.equal(unresolved.comparableEvidence[0].identifierExact, false)
+  assert.equal(unresolved.comparableEvidence[0].offerPackResolved, false)
+  assert.equal(unresolved.comparableEvidence[0].identityEvidenceClass,
+    "BASE_PRODUCT_EXACT_OFFER_UNRESOLVED")
+  assert.equal(unresolved.eligibleComparableListings, 0)
+
+  const wrongPack = buildEbaySellerKeywordDemandValidation({
+    candidate,
+    comparables: [{ ...comparable, lotSize: 6 }],
+    insightsAvailability: "AVAILABLE",
+  })
+  assert.equal(wrongPack.comparableEvidence[0].identityEvidenceClass,
+    "OFFER_PACK_CONFLICT")
+  assert.equal(wrongPack.eligibleComparableListings, 0)
+})
+
+test("exact brand and MPN still requires the listing offer pack", () => {
+  const candidate = {
+    ...fixture.candidate,
+    gtin: null,
+    brand: "Acme",
+    mpn: "AX-100",
+    packQuantity: 12,
+  }
+  const comparable = {
+    ...fixture.comparables[0],
+    gtin: null,
+    brand: "Acme",
+    mpn: "AX-100",
+    lotSize: null,
+  }
+  const unresolved = buildEbaySellerKeywordDemandValidation({
+    candidate,
+    comparables: [comparable],
+    insightsAvailability: "AVAILABLE",
+  })
+  assert.equal(unresolved.comparableEvidence[0].identifierMatchType, "BRAND_MPN")
+  assert.equal(unresolved.comparableEvidence[0].baseIdentifierExact, true)
+  assert.equal(unresolved.comparableEvidence[0].identifierExact, false)
+  assert.equal(unresolved.comparableEvidence[0].identityEvidenceClass,
+    "BASE_PRODUCT_EXACT_OFFER_UNRESOLVED")
+  assert.equal(unresolved.eligibleComparableListings, 0)
+
+  const resolved = buildEbaySellerKeywordDemandValidation({
+    candidate,
+    comparables: [{ ...comparable, lotSize: 12 }],
+    insightsAvailability: "AVAILABLE",
+  })
+  assert.equal(resolved.comparableEvidence[0].identifierExact, true)
+  assert.equal(resolved.comparableEvidence[0].offerPackResolved, true)
+  assert.equal(resolved.comparableEvidence[0].identityEvidenceClass,
+    "IDENTIFIER_EXACT_BRAND_MPN")
+})
+
+test("identical invalid GTIN values never become an exact identifier", () => {
+  const report = buildEbaySellerKeywordDemandValidation({
+    candidate: { ...fixture.candidate, gtin: "036000291453" },
+    comparables: [{ ...fixture.comparables[0], gtin: "036000291453" }],
+    insightsAvailability: "AVAILABLE",
+  })
+  assert.equal(report.comparableEvidence[0].identifierExact, false)
+  assert.notEqual(report.comparableEvidence[0].identifierMatchType, "GTIN")
+})
+
 test("allows only official eBay read-only market endpoints", () => {
   assert.doesNotThrow(() => assertEbaySellerKeywordReadonlyRequest(
     "https://api.ebay.com/buy/browse/v1/item_summary/search?q=hair%20spray",
@@ -191,6 +321,7 @@ test("wires the read-only analysis into the phone menu without manual title or U
     "utf8"
   )
   assert.match(gateway, /EBAY_READONLY_ENV_MISSING/)
+  assert.match(gateway, /else if \(epid\) url\.searchParams\.set\("epid", epid\)/)
   assert.match(gateway, /url\.searchParams\.set\("category_id", text\(input\.categoryId\)\)/)
   assert.doesNotMatch(gateway, /url\.searchParams\.set\("category_ids", text\(input\.categoryId\)\)/)
   assert.match(gateway, /aspects,\s*requiredAspects: aspects\.filter\(\(aspect\) => aspect\.required\)/)

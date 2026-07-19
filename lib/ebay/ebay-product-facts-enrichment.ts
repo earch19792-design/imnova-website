@@ -9,6 +9,8 @@ import {
 import { productIdentityReconciliationBoundary } from "./ebay-product-research-identity-reconciliation.ts"
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { readEbayTradingItemIdentityReadonly } from "./ebay-trading-item-identity-readonly.ts"
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import { selectCatalogIdentityMatches, type CatalogIdentityProduct } from "./ebay-luna-product-identity-enrichment.ts"
 import {
   PRODUCT_FACTS_RESOLVER_VERSION,
   PRODUCT_FACTS_SCHEMA_VERSION,
@@ -27,9 +29,11 @@ import {
   type FactScope,
   type FactSourceType,
   type FactVerificationStatus,
+  type AuthoritativeFactsInputPackage,
   type ResolvedFact,
 } from "./ebay-product-facts-readiness"
 import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
+import { extractLunaOfficialDescriptionIdentity } from "./luna-official-description-identity"
 
 export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V1_2026_07_17"
 const MARKETPLACE = "EBAY_US"
@@ -98,14 +102,28 @@ function observation(input: {
   return entry
 }
 
-function lunaObservations(input: { candidateId: string; lunaVariantId: string | null; variant: JsonRecord; item: JsonRecord; now: Date }) {
-  const metadata = record(input.variant.metadata)
+function lunaObservations(input: {
+  candidateId: string
+  lunaVariantId: string | null
+  variant: JsonRecord
+  item: JsonRecord
+  officialDescription: ReturnType<typeof extractLunaOfficialDescriptionIdentity>
+  now: Date
+}) {
+  const descriptionFacts = input.officialDescription.facts
+  const metadata = {
+    ...record(input.variant.metadata),
+    manufacturerBrand: fromMetadata(record(input.variant.metadata), ["brand", "manufacturerBrand"]) ?? descriptionFacts.brand,
+    mpn: fromMetadata(record(input.variant.metadata), ["mpn", "manufacturerPartNumber", "manufacturer_part_number"]) ?? descriptionFacts.mpn,
+    model: fromMetadata(record(input.variant.metadata), ["model"]) ?? descriptionFacts.model,
+    size: fromMetadata(record(input.variant.metadata), ["size", "netContent", "net_content"]) ?? descriptionFacts.size,
+  }
   const snapshot = record(input.item.evidence_snapshot)
   const pack = record(record(snapshot.packStrategy).recommendedPack)
   const title = text(input.variant.title) || text(record(snapshot.product).name)
   const variantTitle = text(input.variant.variant_title)
   const observedAt = text(input.variant.captured_at) || input.now.toISOString()
-  const sourceReference = safeSourceReference("LUNA_EXACT_VARIANT", `${input.variant.product_id}:${input.lunaVariantId ?? ""}:${input.variant.snapshot_id ?? ""}`)
+  const sourceReference = safeSourceReference("LUNA_EXACT_VARIANT", `${input.variant.product_id}:${input.lunaVariantId ?? ""}:${input.variant.snapshot_id ?? ""}:${input.officialDescription.evidenceHash ?? ""}`)
   const entries: FactObservation[] = []
   const add = (scope: FactScope, key: string, value: unknown, unit?: string | null, status: FactVerificationStatus = "VERIFIED") => {
     if (value === null || value === undefined || value === "") return
@@ -113,9 +131,12 @@ function lunaObservations(input: { candidateId: string; lunaVariantId: string | 
       unit, status, observedAt, sourceReference }))
   }
   add("PRODUCT_UNIT", "exactProductName", title)
-  add("PRODUCT_UNIT", "brand", fromMetadata(metadata, ["brand", "manufacturerBrand"]) ?? input.variant.vendor)
-  add("PRODUCT_UNIT", "manufacturer", fromMetadata(metadata, ["manufacturer", "brand"]) ?? input.variant.vendor)
-  const barcode = normalizeGtin(input.variant.barcode ?? fromMetadata(metadata, ["upc", "ean", "gtin", "barcode"]))
+  // Luna's vendor is the supplier/fulfillment party, not necessarily the
+  // manufacturer. Never manufacture a product brand from "Luna Portex" or a
+  // warehouse label when the official product identity is missing.
+  add("PRODUCT_UNIT", "brand", fromMetadata(metadata, ["brand", "manufacturerBrand"]))
+  add("PRODUCT_UNIT", "manufacturer", fromMetadata(metadata, ["manufacturer"]))
+  const barcode = normalizeGtin(input.variant.barcode ?? fromMetadata(metadata, ["upc", "ean", "gtin", "barcode"]) ?? descriptionFacts.gtin)
   if (barcode) add("PRODUCT_UNIT", "gtin", barcode)
   add("PRODUCT_UNIT", "upc", normalizeGtin(fromMetadata(metadata, ["upc"])) ?? null)
   add("PRODUCT_UNIT", "ean", normalizeGtin(fromMetadata(metadata, ["ean"])) ?? null)
@@ -136,20 +157,25 @@ function lunaObservations(input: { candidateId: string; lunaVariantId: string | 
   add("PRODUCT_UNIT", "hazardousMaterialStatus", fromMetadata(metadata, ["hazardousMaterialStatus", "hazmat", "hazardous_material_status"]), null, "CORROBORATED")
   add("PRODUCT_UNIT", "regulatoryIdentifiers", fromMetadata(metadata, ["epaRegistration", "epa_registration", "regulatoryIdentifiers"]), null, "CORROBORATED")
   add("PRODUCT_UNIT", "unitGrossWeight", number(input.variant.weight), text(input.variant.weight_unit) || null)
-  const offerCount = integer(pack.packCount) ?? integer(input.item.recommended_pack_count) ?? packCountFromText(title)
-  if (offerCount) {
-    entries.push(observation({ candidateId: input.candidateId, lunaVariantId: input.lunaVariantId, scope: "OFFER_PACK", key: "offerPackCount",
-      value: offerCount, unit: "count", sourceType: "INTERNAL_DERIVATION", authority: "INTERNAL", status: "DERIVED_VERIFIED",
-      confidence: .8, observedAt, sourceReference: safeSourceReference("INTERNAL_DERIVATION", `${input.candidateId}:offerPack`) }))
-    entries.push(observation({ candidateId: input.candidateId, lunaVariantId: input.lunaVariantId, scope: "OFFER_PACK", key: "unitsPerPack",
-      value: 1, unit: "count", sourceType: "INTERNAL_DERIVATION", authority: "INTERNAL", status: "DERIVED_VERIFIED",
-      confidence: .8, observedAt, sourceReference: safeSourceReference("INTERNAL_DERIVATION", `${input.candidateId}:unitsPerPack`) }))
-  }
-  return { entries, title, metadata, observedAt, sourceReference }
+  const nativePackCount = integer(fromMetadata(metadata, ["packCount", "pack_count"])) ??
+    descriptionFacts.packCount ?? packCountFromText(title)
+  const plannedPackCount = integer(pack.packCount) ?? integer(input.item.recommended_pack_count)
+  // The current same-day path only permits Luna's native presentation. A
+  // seller-created multipack is a separate offer and must pass its own cost and
+  // operator approval path before becoming an authoritative OFFER_PACK fact.
+  const offerCount = nativePackCount && (!plannedPackCount || plannedPackCount === nativePackCount)
+    ? nativePackCount : null
+  if (offerCount) add("OFFER_PACK", "offerPackCount", offerCount, "count")
+  return { entries, title, metadata, observedAt, sourceReference, nativePackCount,
+    plannedPackCount, offerPackConflict: Boolean(nativePackCount && plannedPackCount && nativePackCount !== plannedPackCount) }
 }
 
-function catalogObservations(input: { candidateId: string; lunaVariantId: string | null; catalog: JsonRecord; observedAt: string }) {
-  const product = record(array(input.catalog.products)[0])
+function catalogObservations(input: { candidateId: string; lunaVariantId: string | null;
+  products: CatalogIdentityProduct[]; observedAt: string }) {
+  // The Catalog endpoint can return several products. The caller already
+  // applied exact GTIN / brand+MPN / unique-title selection; never corroborate
+  // facts from the first arbitrary search result.
+  const product = record(input.products[0])
   if (!Object.keys(product).length) return [] as FactObservation[]
   const sourceReference = safeSourceReference("EBAY_CATALOG_OFFICIAL_READONLY", text(product.epid) || text(product.title))
   const add = (key: string, value: unknown) => value === null || value === undefined || value === "" ? null : observation({
@@ -177,6 +203,44 @@ function tradingObservations(input: { candidateId: string; lunaVariantId: string
     add("color", input.trading.color), add("scent", input.trading.scent), add("variant", input.trading.variant),
     add("unitCount", input.trading.unitCount), add("condition", input.trading.condition)]
     .filter((entry): entry is FactObservation => Boolean(entry))
+}
+
+function browseObservations(input: { candidateId: string; lunaVariantId: string | null;
+  browse: JsonRecord | null; observedAt: string }) {
+  const rows = array(input.browse?.comparableEvidence).map(record)
+    .filter((row) => row.identifierExact === true && row.eligibleComparable === true)
+    .slice(0, 2)
+  const observations: FactObservation[] = []
+  for (const row of rows) {
+    const aspects = array(row.localizedAspects).map(record)
+    const aspect = (names: string[]) => {
+      const expected = new Set(names.map((name) => name.toLowerCase().replace(/[^a-z0-9]/g, "")))
+      return text(aspects.find((entry) => expected.has(text(entry.name).toLowerCase()
+        .replace(/[^a-z0-9]/g, "")))?.value) || null
+    }
+    const sourceReference = safeSourceReference("EBAY_BROWSE_OFFICIAL_READONLY",
+      text(row.comparableId) || `${input.candidateId}:exact-comparable`)
+    const add = (scope: FactScope, key: string, value: unknown, unit?: string | null) => {
+      if (value === null || value === undefined || value === "") return
+      observations.push(observation({ candidateId: input.candidateId,
+        lunaVariantId: input.lunaVariantId, scope, key, value, unit,
+        sourceType: "EBAY_BROWSE_OFFICIAL_READONLY", authority: "CORROBORATION",
+        status: "CORROBORATED", confidence: .62, observedAt: input.observedAt,
+        sourceReference }))
+    }
+    add("PRODUCT_UNIT", "brand", row.brand ?? aspect(["brand"]))
+    add("PRODUCT_UNIT", "gtin", normalizeGtin(row.gtin ?? aspect(["upc", "ean", "gtin"])))
+    add("PRODUCT_UNIT", "mpn", row.mpn ?? aspect(["mpn", "manufacturer part number"]))
+    add("PRODUCT_UNIT", "model", row.model ?? aspect(["model", "model number"]))
+    add("PRODUCT_UNIT", "netContent", aspect(["net content", "capacity", "volume"]))
+    add("PRODUCT_UNIT", "color", row.color ?? aspect(["color", "colour"]))
+    add("PRODUCT_UNIT", "scent", aspect(["scent", "fragrance"]))
+    add("PRODUCT_UNIT", "formulation", aspect(["formulation", "form"]))
+    add("PRODUCT_UNIT", "unitCount", integer(aspect(["unit quantity", "unit count", "count per pack"])), "count")
+    add("OFFER_PACK", "offerPackCount", integer(row.lotSize) ??
+      integer(aspect(["number in pack", "pack quantity", "pack size"])), "count")
+  }
+  return observations
 }
 
 function regulatedCandidate(variant: JsonRecord, metadata: JsonRecord) {
@@ -218,7 +282,7 @@ async function queueRunForCandidateIds(supabase: SupabaseClient, accountKey: str
 
 async function eligibleCandidates(supabase: SupabaseClient, accountKey: string, runId: string, candidateIds?: string[]) {
   let query = supabase.from("marketplace_listing_approval_queue_items")
-    .select("id,market_radar_product_id,supplier_variant_id,recommended_pack_count,evidence_snapshot,luna_match_status,cohort,internal_status,pool_rank,rank")
+    .select("id,run_id,market_radar_product_id,supplier_variant_id,recommended_pack_count,evidence_snapshot,luna_match_status,cohort,internal_status,pool_rank,rank,decision_package_id,package_hash,stale_after")
     .eq("run_id", runId).eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
     .eq("luna_match_status", "EXACT_LUNA_MATCH").in("cohort", ["READY_FOR_OPERATOR_APPROVAL", "READY_FOR_OPENAI_APPROVAL"])
   if (candidateIds?.length) query = query.in("id", candidateIds.slice(0, MAX_CANDIDATES))
@@ -234,6 +298,14 @@ async function variantForCandidate(supabase: SupabaseClient, candidate: JsonReco
     .eq("supplier_variant_id", candidate.supplier_variant_id).maybeSingle()
   if (error) throw new Error("PRODUCT_FACT_LUNA_VARIANT_READ_FAILED")
   return data ? record(data) : null
+}
+
+async function officialDescriptionForCandidate(supabase: SupabaseClient, candidate: JsonRecord) {
+  const { data, error } = await supabase.from("market_radar_products")
+    .select("id,body_html").eq("id", candidate.market_radar_product_id).maybeSingle()
+  if (error) throw new Error("PRODUCT_FACT_LUNA_DESCRIPTION_READ_FAILED")
+  // Raw HTML is consumed in memory only and never returned or persisted.
+  return extractLunaOfficialDescriptionIdentity({ bodyHtml: data?.body_html ?? null })
 }
 
 async function officialCapturedItemId(supabase: SupabaseClient, accountKey: string, supplierVariantId: string) {
@@ -297,37 +369,54 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
     exception?: JsonRecord | null
     factCounts?: JsonRecord
     requirementCounts?: JsonRecord
+    authoritativeFactsPackage?: AuthoritativeFactsInputPackage | ReturnType<typeof buildOpenAiFactsInputPackage>
     resolvedFacts?: Array<{ scope: string; key: string; value: unknown; unit: string | null; status: string }>
-    resolvedRequirements?: Array<{ aspectName: string; required: boolean; status: string; selectedValue: string | null; allowedValues: string[] }>
+    resolvedRequirements?: Array<{ aspectName: string; required: boolean; mappedFactKey: string | null;
+      status: string; selectedValue: string | null; allowedValues: string[] }>
     taxonomy?: { status: string; categoryId: string | null; categoryTreeId: string | null; observedAt: string | null }
     evidenceBinding?: { factRunId: string; currentRunBound: boolean; sourceSnapshotLinks: number;
       observationLinks: number; resolutionLinks: number; requirementLinks: number; readinessEventLinks: number }
   }> = []
-  const prepared: Array<{ candidate: JsonRecord; variant: JsonRecord; observations: FactObservation[]; facts: ResolvedFact[]; requirements: ReturnType<typeof mapTaxonomyRequirements>; readiness: ReturnType<typeof calculateReadiness>; exception: ReturnType<typeof targetedFactException>; sourceSnapshots: JsonRecord[]; taxonomy: JsonRecord; sourceAttempts: JsonRecord }> = []
+  const prepared: Array<{ candidate: JsonRecord; variant: JsonRecord; observations: FactObservation[]; facts: ResolvedFact[]; requirements: ReturnType<typeof mapTaxonomyRequirements>; readiness: ReturnType<typeof calculateReadiness>; authoritativeFactsPackage: AuthoritativeFactsInputPackage | ReturnType<typeof buildOpenAiFactsInputPackage>; authoritativeFactsExpiresAt: string | null; exception: ReturnType<typeof targetedFactException>; sourceSnapshots: JsonRecord[]; taxonomy: JsonRecord; sourceAttempts: JsonRecord }> = []
   for (const candidate of candidates) {
     try {
-      const variant = await variantForCandidate(input.supabase, candidate)
+      const [variant, officialDescription] = await Promise.all([
+        variantForCandidate(input.supabase, candidate),
+        officialDescriptionForCandidate(input.supabase, candidate),
+      ])
       if (!variant) { candidateResults.push({ candidateId: text(candidate.id), status: "EXCLUDED_LUNA_VARIANT_MISSING", openAiInputReady: false }); continue }
-      const base = lunaObservations({ candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null, variant, item: candidate, now })
-      const catalog = await searchEbayCatalogIdentity({ query: base.title, gtin: normalizeGtin(variant.barcode),
+      const base = lunaObservations({ candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
+        variant, item: candidate, officialDescription, now })
+      const intendedPackCount = base.offerPackConflict ? null : base.nativePackCount
+      const authoritativeGtin = normalizeGtin(variant.barcode ?? fromMetadata(base.metadata, ["upc", "ean", "gtin", "barcode"]) ?? officialDescription.facts.gtin)
+      const catalog = await searchEbayCatalogIdentity({ query: base.title, gtin: authoritativeGtin,
         mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])), categoryId: text(record(record(candidate.evidence_snapshot).product).categoryId) || null })
+      const catalogSelection = selectCatalogIdentityMatches({
+        title: base.title,
+        gtin: authoritativeGtin,
+        brand: text(fromMetadata(base.metadata, ["brand", "manufacturerBrand"])) || null,
+        mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])) || null,
+        packCount: intendedPackCount,
+      }, catalog.products)
       const taxonomy = await getEbayTaxonomyListingIntelligence(base.title, text(record(record(candidate.evidence_snapshot).product).categoryId) || undefined)
       const catalogRecord = record(catalog)
       const taxonomyRecord = record(taxonomy)
-      const recommendedPack = record(record(candidate.evidence_snapshot).packStrategy).recommendedPack
-      const browsePackQuantity = integer(record(recommendedPack).packCount)
+      const browsePackQuantity = intendedPackCount
       let browseStatus = "SKIPPED"
       let browseComparableCount = 0
+      let browseReport: JsonRecord | null = null
       try {
         const browse = record(await runEbaySellerKeywordDemandValidation({ productName: base.title, productTitle: base.title,
           variantTitle: text(variant.variant_title) || null, supplierSku: text(variant.sku) || null,
           categoryId: text(taxonomyRecord.categoryId) || null, gtin: normalizeGtin(variant.barcode),
-          brand: text(variant.vendor) || null, mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])) || null,
+          brand: text(fromMetadata(base.metadata, ["brand", "manufacturerBrand"])) || null,
+          mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])) || null,
           size: text(fromMetadata(base.metadata, ["size", "netContent"])) || null,
           packQuantity: browsePackQuantity,
           productType: text(variant.product_type) || null }))
         browseStatus = "AVAILABLE"
         browseComparableCount = array(browse.comparableEvidence).length
+        browseReport = browse
       } catch (error) {
         if (getEbayReadonlyRateLimitMetadata(error)) throw error
         browseStatus = safeCode(error)
@@ -345,10 +434,17 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
       const sourceSnapshots = [
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "LUNA_EXACT_VARIANT", authority: "SUPPLIER", observedAt: base.observedAt, status: "AVAILABLE",
-          payload: { structuredVariant: true, fieldsObserved: base.entries.map((entry) => entry.factKey) } }),
+          payload: { structuredVariant: true, officialDescriptionFactsExtracted: Boolean(officialDescription.evidenceHash),
+            officialDescriptionEvidenceHash: officialDescription.evidenceHash,
+            offerPackConflict: base.offerPackConflict,
+            fieldsObserved: base.entries.map((entry) => entry.factKey) } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "EBAY_CATALOG_OFFICIAL_READONLY", authority: "CORROBORATION", observedAt: text(catalogRecord.observedAt) || null,
-          status: text(catalogRecord.status) || "REQUEST_FAILED", payload: { productCount: array(catalogRecord.products).length } }),
+          status: text(catalogRecord.status) || "REQUEST_FAILED", payload: {
+            productCount: array(catalogRecord.products).length,
+            selectedProductCount: catalogSelection.products.length,
+            selectionRule: catalogSelection.matchRule,
+          } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "EBAY_TAXONOMY_OFFICIAL_READONLY", authority: "EBAY_TAXONOMY", observedAt: text(taxonomyRecord.observedAt) || null,
           status: text(taxonomyRecord.status) || "REQUEST_FAILED", payload: { categoryId: text(taxonomyRecord.categoryId) || null,
@@ -367,7 +463,11 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
           payload: { regulatedOnly: true, externalPageFetched: false } }),
       ]
       const initial = [...base.entries, ...catalogObservations({ candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
-        catalog: catalogRecord, observedAt: text(catalogRecord.observedAt) || now.toISOString() }),
+        products: catalogSelection.products,
+        observedAt: text(catalogRecord.observedAt) || now.toISOString() }),
+      ...browseObservations({ candidateId: text(candidate.id),
+        lunaVariantId: text(candidate.supplier_variant_id) || null,
+        browse: browseReport, observedAt: now.toISOString() }),
       ...(trading ? tradingObservations({ candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
         trading, observedAt: text(trading.observedAt) || now.toISOString() }) : [])]
       const firstResolution = resolveProductFacts(initial, now)
@@ -386,10 +486,28 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
         name: text(aspect.name), required: aspect.required === true || requiredAspectNames.has(text(aspect.name).toLocaleLowerCase()),
         values: array(aspect.suggestedValues).map((value) => text(value)).filter(Boolean), aspectMode: text(aspect.mode) || null,
       })).filter((aspect) => aspect.name), resolved.facts)
-      const readiness = calculateReadiness({ identityExact: candidate.luna_match_status === "EXACT_LUNA_MATCH", facts: resolved.facts,
+      const calculatedReadiness = calculateReadiness({ identityExact: candidate.luna_match_status === "EXACT_LUNA_MATCH", facts: resolved.facts,
         requirements, regulated: regulatedCandidate(variant, base.metadata), taxonomySourceReady })
+      const candidateStaleAt = Date.parse(text(candidate.stale_after))
+      const maximumFactsExpiry = now.getTime() + 72 * 60 * 60 * 1_000
+      const authoritativeFactsExpiresAt = Number.isFinite(candidateStaleAt) && candidateStaleAt > now.getTime()
+        ? new Date(Math.min(candidateStaleAt, maximumFactsExpiry)).toISOString() : null
+      const candidateDecisionId = text(candidate.decision_package_id)
+      const candidateDecisionHash = text(candidate.package_hash)
+      const packageBindingReady = /^[0-9a-f-]{36}$/i.test(candidateDecisionId) &&
+        /^sha256:[0-9a-f]{64}$/.test(candidateDecisionHash) && Boolean(authoritativeFactsExpiresAt)
+      const initialAuthoritativePackage = buildOpenAiFactsInputPackage({ facts: resolved.facts,
+        readiness: calculatedReadiness })
+      const readiness = packageBindingReady && initialAuthoritativePackage.ready
+        ? calculatedReadiness
+        : { ...calculatedReadiness, gates: { ...calculatedReadiness.gates,
+            OPENAI_INPUT_READY: false, PUBLICATION_FACTS_READY: false } }
+      const authoritativeFactsPackage = packageBindingReady && initialAuthoritativePackage.ready
+        ? initialAuthoritativePackage
+        : buildOpenAiFactsInputPackage({ facts: resolved.facts, readiness })
       const exception = targetedFactException({ readiness, requirements })
       prepared.push({ candidate, variant, observations, facts: resolved.facts, requirements, readiness,
+        authoritativeFactsPackage, authoritativeFactsExpiresAt,
         exception, sourceSnapshots, taxonomy: taxonomyRecord,
         sourceAttempts: { catalog: text(catalogRecord.status) || "REQUEST_FAILED", taxonomy: text(taxonomyRecord.status) || "REQUEST_FAILED",
           browse: browseStatus, trading: tradingStatus } })
@@ -406,11 +524,13 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
       candidateResults.push({ candidateId: text(candidate.id), status: "PREPARED",
         openAiInputReady: readiness.gates.OPENAI_INPUT_READY, gates: readiness.gates,
         exception: exception ? record(exception) : null, factCounts, requirementCounts,
+        authoritativeFactsPackage,
         resolvedFacts: resolved.facts.filter((fact) => ["VERIFIED", "CORROBORATED", "DERIVED_VERIFIED"].includes(fact.verificationStatus))
           .map((fact) => ({ scope: fact.factScope, key: fact.factKey, value: fact.selectedValue,
             unit: fact.selectedUnit, status: fact.verificationStatus })),
         resolvedRequirements: requirements.map((requirement) => ({ aspectName: requirement.aspectName,
-          required: requirement.required, status: requirement.status, selectedValue: requirement.selectedValue,
+          required: requirement.required, mappedFactKey: requirement.mappedFactKey,
+          status: requirement.status, selectedValue: requirement.selectedValue,
           allowedValues: requirement.allowedValues })),
         taxonomy: { status: text(taxonomyRecord.status), categoryId: text(taxonomyRecord.categoryId) || null,
           categoryTreeId: text(taxonomyRecord.categoryTreeId) || null, observedAt: text(taxonomyRecord.observedAt) || null } })
@@ -498,10 +618,30 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
       profile_hash: productFactsHash({ candidateId, scope: "SHIPPING_PACKAGE", fact: shipping ?? null }) }
     await insertIgnoringDuplicates(input.supabase, "marketplace_shipping_package_profiles", [shippingProfile])
     const blockers = Object.entries(entry.readiness.gates).filter(([, ready]) => !ready).map(([gate]) => `${gate}_NOT_READY`)
+    const rawDecisionPackageId = text(entry.candidate.decision_package_id)
+    const rawDecisionPackageHash = text(entry.candidate.package_hash)
+    const decisionPackageId = /^[0-9a-f-]{36}$/i.test(rawDecisionPackageId)
+      ? rawDecisionPackageId : null
+    const decisionPackageHash = /^sha256:[0-9a-f]{64}$/.test(rawDecisionPackageHash)
+      ? rawDecisionPackageHash : null
+    const authoritativePackageReady = entry.authoritativeFactsPackage.ready === true
+    const authoritativePackageHash = authoritativePackageReady
+      ? entry.authoritativeFactsPackage.factPackageHash : null
     const gateRows = Object.entries(entry.readiness.gates).map(([gate, ready]) => ({ fact_run_id: run.id, queue_item_id: candidateId,
       marketplace_account_key: input.accountKey, marketplace: MARKETPLACE, gate_name: gate, ready, blocking_reason_codes: ready ? [] : blockers,
       exception: ready ? null : entry.exception, resolver_version: PRODUCT_FACTS_RESOLVER_VERSION,
-      event_hash: productFactsHash({ candidateId, gate, ready, blockers, exception: ready ? null : entry.exception }), observed_at: now.toISOString(),
+      decision_package_id: gate === "OPENAI_INPUT_READY" ? decisionPackageId : null,
+      decision_package_hash: gate === "OPENAI_INPUT_READY" ? decisionPackageHash : null,
+      authoritative_facts_package: gate === "OPENAI_INPUT_READY" && authoritativePackageReady
+        ? entry.authoritativeFactsPackage : null,
+      authoritative_facts_package_hash: gate === "OPENAI_INPUT_READY" ? authoritativePackageHash : null,
+      authoritative_facts_expires_at: gate === "OPENAI_INPUT_READY" && authoritativePackageReady
+        ? entry.authoritativeFactsExpiresAt : null,
+      event_hash: productFactsHash({ factRunId: run.id, candidateId, gate, ready, blockers,
+        decisionPackageId: gate === "OPENAI_INPUT_READY" ? decisionPackageId : null,
+        decisionPackageHash: gate === "OPENAI_INPUT_READY" ? decisionPackageHash : null,
+        authoritativePackageHash: gate === "OPENAI_INPUT_READY" ? authoritativePackageHash : null,
+        exception: ready ? null : entry.exception }), observed_at: now.toISOString(),
       openai_calls: 0, ebay_writes: 0, production_changed: false }))
     await insertIgnoringDuplicates(input.supabase, "marketplace_product_fact_readiness_events", gateRows)
     const readinessEventHashes = [...new Set(gateRows.map((row) => text(row.event_hash)).filter(Boolean))]
@@ -637,20 +777,6 @@ export async function getProductFactsStatus(input: { supabase: SupabaseClient; a
       publicationFactsReady: values.filter((value) => record(value.gates).PUBLICATION_FACTS_READY === true).length },
     safety: { openAiCalls: 0, ebayWrites: 0, productionChanged: false, cookiesStored: false, sourceUrlsStored: false,
       rawPagesStored: false, competitorImagesStored: false, piiStored: false } }
-}
-
-export async function productFactsOpenAiReady(supabase: SupabaseClient, accountKey: string, itemId: string) {
-  const { data, error } = await supabase.from("marketplace_product_fact_readiness_events")
-    .select("ready,observed_at").eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
-    .eq("queue_item_id", itemId).eq("gate_name", "OPENAI_INPUT_READY").order("observed_at", { ascending: false }).limit(1).maybeSingle()
-  if (error) throw new Error("PRODUCT_FACT_OPENAI_GATE_READ_FAILED")
-  return data?.ready === true
-}
-
-export async function assertProductFactsOpenAiReady(supabase: SupabaseClient, accountKey: string, itemId: string) {
-  if (!await productFactsOpenAiReady(supabase, accountKey, itemId)) {
-    throw new Error("PRODUCT_FACTS_OPENAI_INPUT_NOT_READY")
-  }
 }
 
 export function safeOpenAiFactsForCandidate(facts: ResolvedFact[], readiness: ReturnType<typeof calculateReadiness>) {

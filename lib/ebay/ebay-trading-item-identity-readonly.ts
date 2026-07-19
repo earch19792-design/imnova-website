@@ -1,6 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto"
 // @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
 import { createEbayReadonlyRateLimitError } from "./ebay-readonly-rate-limit.ts"
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+import { validateGtinChecksum } from "./ebay-winner-evidence-v2.ts"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const TRADING_ENDPOINT = "https://api.ebay.com/ws/api.dll"
@@ -27,6 +29,7 @@ export type TradingItemIdentityReadOnlyResult = {
   unitCount: number | null
   condition: string | null
   categoryId: string | null
+  variantResolutionStatus: "RESOLVED" | "UNRESOLVED_MULTIPLE_VALUES"
   observedAt: string
   source: "EBAY_TRADING_GET_ITEM_READONLY"
   ebayWriteUsed: false
@@ -78,21 +81,34 @@ export function parseTradingItemIdentityResponse(
   if (!item || tagValue(item, "ItemID") !== expectedItemId) {
     throw new Error("EBAY_TRADING_GETITEM_IDENTITY_INCOMPLETE")
   }
-  const specifics = new Map<string, string>()
+  const specifics = new Map<string, Set<string>>()
   for (const valueList of containers(item, "NameValueList")) {
     const name = tagValue(valueList, "Name")?.toLocaleLowerCase("en-US")
-    const value = tagValue(valueList, "Value")
-    if (name && value && !specifics.has(name)) specifics.set(name, value)
+    const values = containers(valueList, "Value").map((value) =>
+      decodeXml(value.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+    if (!name || !values.length) continue
+    const stored = specifics.get(name) ?? new Set<string>()
+    for (const value of values) stored.add(value)
+    specifics.set(name, stored)
   }
   const detail = container(item, "ProductListingDetails")
-  const aspect = (...names: string[]) => names.map((name) => specifics.get(name)).find(Boolean) ?? null
+  const aspect = (...names: string[]) => {
+    for (const name of names) {
+      const values = specifics.get(name)
+      if (values?.size === 1) return [...values][0]
+    }
+    return null
+  }
+  const variantResolutionStatus = [...specifics.values()].some((values) => values.size > 1)
+    ? "UNRESOLVED_MULTIPLE_VALUES" as const : "RESOLVED" as const
   const gtin = tagValue(detail, "UPC") ?? tagValue(detail, "EAN") ?? tagValue(detail, "ISBN") ??
     aspect("upc", "ean", "gtin")
   return {
     itemId: expectedItemId,
     title: tagValue(item, "Title"), brand: aspect("brand"),
     manufacturer: aspect("manufacturer"),
-    gtin: gtin && /^(?:\d{8}|\d{12}|\d{13}|\d{14})$/.test(gtin.replace(/[\s-]/g, ""))
+    gtin: gtin && validateGtinChecksum(gtin.replace(/[\s-]/g, ""))
       ? gtin.replace(/[\s-]/g, "") : null,
     mpn: aspect("mpn", "manufacturer part number"),
     model: aspect("model", "model number"), size: aspect("size", "unit size", "volume"),
@@ -102,6 +118,7 @@ export function parseTradingItemIdentityResponse(
     unitCount: positiveInteger(aspect("unit quantity", "count per pack", "number of items in set")),
     condition: tagValue(item, "ConditionDisplayName"),
     categoryId: numericIdentifier(tagValue(container(item, "PrimaryCategory"), "CategoryID")),
+    variantResolutionStatus,
     observedAt: now.toISOString(), source: "EBAY_TRADING_GET_ITEM_READONLY",
     ebayWriteUsed: false,
   }

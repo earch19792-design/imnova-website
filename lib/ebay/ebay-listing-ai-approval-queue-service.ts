@@ -65,7 +65,10 @@ import {
   type WinnerComparableInput,
   type WinnerEvidenceInput,
 } from "./ebay-winner-evidence-v2"
-import { assertProductFactsOpenAiReady, productFactsOpenAiReady } from "./ebay-product-facts-enrichment"
+import {
+  assertBoundAuthoritativeFactPackage,
+  boundAuthoritativeFactPackageReady,
+} from "./ebay-authoritative-fact-package"
 import {
   buildTop20TargetManifest,
   calculateTop20RateLimitPause,
@@ -315,8 +318,9 @@ function comparableObservations(report: unknown) {
       manufacturer: aspectValue(aspects, ["manufacturer"]),
       gtin: text(entry.gtin) ?? aspectValue(aspects, ["upc", "ean", "gtin"]),
       mpn: text(entry.mpn) ?? aspectValue(aspects, ["mpn", "manufacturer part number"]),
-      model: aspectValue(aspects, ["model"]),
-      packCount: positiveInteger(aspectValue(aspects, ["number in pack", "pack quantity", "pack size"])),
+      model: text(entry.model) ?? aspectValue(aspects, ["model"]),
+      packCount: positiveInteger(entry.lotSize) ??
+        positiveInteger(aspectValue(aspects, ["number in pack", "pack quantity", "pack size"])),
       unitCount: positiveInteger(aspectValue(aspects, ["unit count", "count per pack"])),
       size: text(entry.size) ?? aspectValue(aspects, ["size", "capacity", "volume"]),
       color: text(entry.color) ?? aspectValue(aspects, ["color", "colour"]),
@@ -3036,7 +3040,11 @@ export async function confirmListingAiQueueLunaObservation(input: {
     actor_id: input.actorId, idempotency_key_hash: idempotencyHash,
   })
   if (eventError) throw new Error("TOP10_LUNA_CONFIRMATION_PERSIST_FAILED")
-  const factsReadyForOpenAi = await productFactsOpenAiReady(input.supabase, input.accountKey, item.id)
+  const factsReadyForOpenAi = await boundAuthoritativeFactPackageReady({
+    supabase: input.supabase, accountKey: input.accountKey, itemId: item.id,
+    binding: { queueRunId: item.run_id, decisionPackageId: refreshed.id,
+      decisionPackageHash: refreshed.package_hash }, now,
+  })
   await input.supabase.from("marketplace_listing_approval_queue_items").update({
     decision_package_id: refreshed.id, package_hash: refreshed.package_hash,
     product_identity_fingerprint: refreshed.product_identity_fingerprint,
@@ -3088,8 +3096,12 @@ export async function approveListingAiQueueItem(input: {
   if ((item.ebay_listing_quantity ?? 0) !== 1 || (item.available_offer_pack_capacity ?? 0) < 1) {
     throw new Error("TOP10_OFFER_CAPACITY_REQUIRED")
   }
-  await assertProductFactsOpenAiReady(input.supabase, input.accountKey, item.id)
   const decision = await readDecisionRow(input.supabase, input.accountKey, item.decision_package_id)
+  await assertBoundAuthoritativeFactPackage({
+    supabase: input.supabase, accountKey: input.accountKey, itemId: item.id,
+    binding: { queueRunId: item.run_id, decisionPackageId: decision.id,
+      decisionPackageHash: decision.package_hash }, now,
+  })
   const assessment = assessListingAiDecisionPackage(
     { ...decision, status: "APPROVED", approved_at: now.toISOString() }, now,
     { integrityVerified: true },
