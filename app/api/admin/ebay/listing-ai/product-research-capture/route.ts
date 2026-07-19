@@ -63,7 +63,7 @@ function scheduleSameDayPilotContinuation(input: {
     try {
       await processSameDayPilotJobChain({ ...input,
         workerId: `product-research:${randomUUID()}`,
-        maximumJobs: 6, maximumDurationMs: 240_000 })
+        maximumJobs: 30, maximumDurationMs: 240_000 })
     } catch {
       console.error("SAME_DAY_PILOT_CAPTURE_CONTINUATION_DEFERRED_TO_SCHEDULER")
     }

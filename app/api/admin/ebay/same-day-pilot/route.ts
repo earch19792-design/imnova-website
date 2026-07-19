@@ -147,9 +147,9 @@ function scheduleImmediateContinuation(input: {
 }) {
   after(async () => {
     try {
-      await processSameDayPilotJobChain({ ...input, maximumJobs: 6, maximumDurationMs: 240_000 })
+      await processSameDayPilotJobChain({ ...input, maximumJobs: 30, maximumDurationMs: 240_000 })
     } catch {
-      // The five-minute durable scheduler is the recovery path. Never make a
+      // The one-minute durable scheduler is the recovery path. Never make a
       // completed human gate look rejected because post-response work failed.
       console.error("SAME_DAY_PILOT_IMMEDIATE_CONTINUATION_DEFERRED_TO_SCHEDULER")
     }

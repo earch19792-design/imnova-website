@@ -59,7 +59,7 @@ export async function GET(req: Request) {
       safety: { previewOnly: true, ebayWrites: 0, openAiCalls: 0, productionChanged: false } })
   }
   const result = await processSameDayPilotJobChain({ supabase: getSupabaseAdminClient(), accountKey,
-    workerId: `same-day:${randomUUID()}`, maximumJobs: 6, maximumDurationMs: 240_000 })
+    workerId: `same-day:${randomUUID()}`, maximumJobs: 30, maximumDurationMs: 240_000 })
   const imageFactory = getListingImageFactoryConfiguration()
   return NextResponse.json({ success: true, result, imageFactory,
     safety: { recursiveHttp: false, ebayWrites: 0, productionChanged: false } })
