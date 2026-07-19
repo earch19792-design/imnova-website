@@ -665,10 +665,19 @@ async function bootstrapCandidate(supabase: SupabaseClient, runId: string, candi
     return
   }
   if (machineState === "WAITING_LUNA_CONFIRMATION") {
+    const selectionIdentity = record(record(candidate.evidence_summary).selectionIdentity)
+    const identityConfirmationRequired = selectionIdentity.confirmationRequired === true &&
+      selectionIdentity.independentlyVerified !== true
     await createHumanTask({ supabase, runId, candidateId: id, expectedState: "WAITING_LUNA_CONFIRMATION", gateType: "LUNA_CONFIRMATION_REQUIRED",
-      title: "Confirma precio y disponibilidad Luna", why: "El costo y stock actuales son necesarios antes de comprometer margen o cantidad.", seconds: 30,
+      title: identityConfirmationRequired
+        ? "Confirma producto, presentación, precio y stock Luna"
+        : "Confirma precio y disponibilidad Luna",
+      why: identityConfirmationRequired
+        ? "Luna aún no entregó identidad estructurada suficiente; confirma visualmente el producto exacto y cuántas unidades contiene la presentación comprada."
+        : "El costo y stock actuales son necesarios antes de comprometer margen o cantidad.", seconds: 45,
       impact: "Seller OS recalculará economía y ejecutará Product Facts automáticamente.", evidence: { product: candidate.product_title, sku: candidate.supplier_sku },
-      actionSchema: { type: "LUNA_CONFIRMATION", fields: ["price", "availability", "quantityIfVisible"] }, continuationJobType: "CALCULATE_ECONOMICS" })
+      actionSchema: { type: "LUNA_CONFIRMATION", fields: ["price", "availability", "quantityIfVisible",
+        ...(identityConfirmationRequired ? ["identityAndPackConfirmed", "nativePackCount"] : [])] }, continuationJobType: "CALCULATE_ECONOMICS" })
     return
   }
   if (machineState === "WAITING_PRODUCT_APPROVAL") {
@@ -883,13 +892,22 @@ async function repairSameDayPilotBootstrap(
 }
 
 async function createLunaGate(supabase: SupabaseClient, runId: string, candidate: JsonRecord, previousState: string) {
+  const selectionIdentity = record(record(candidate.evidence_summary).selectionIdentity)
+  const identityConfirmationRequired = selectionIdentity.confirmationRequired === true &&
+    selectionIdentity.independentlyVerified !== true
   await transition({ supabase, runId, candidateId: text(candidate.id), previousState, nextState: "WAITING_LUNA_CONFIRMATION",
     reasonCode: "LUNA_CONFIRMATION_REQUIRED", triggeredBy: "SYSTEM", nextAutomaticAction: "Recalcular economía y enriquecer facts.",
     nextHumanAction: "Confirmar precio y disponibilidad visibles en Luna." })
   await createHumanTask({ supabase, runId, candidateId: text(candidate.id), expectedState: "WAITING_LUNA_CONFIRMATION", gateType: "LUNA_CONFIRMATION_REQUIRED",
-    title: "Confirma precio y disponibilidad Luna", why: "El costo y stock actuales son necesarios antes de comprometer margen o cantidad.", seconds: 30,
+    title: identityConfirmationRequired
+      ? "Confirma producto, presentación, precio y stock Luna"
+      : "Confirma precio y disponibilidad Luna",
+    why: identityConfirmationRequired
+      ? "Luna aún no entregó identidad estructurada suficiente; una confirmación visible del producto exacto y su presentación permite investigar sin inventar datos."
+      : "El costo y stock actuales son necesarios antes de comprometer margen o cantidad.", seconds: 45,
     impact: "Seller OS recalculará economía y ejecutará Product Facts automáticamente.", evidence: { product: candidate.product_title, sku: candidate.supplier_sku },
-    actionSchema: { type: "LUNA_CONFIRMATION", fields: ["price", "availability", "quantityIfVisible"] }, continuationJobType: "CALCULATE_ECONOMICS" })
+    actionSchema: { type: "LUNA_CONFIRMATION", fields: ["price", "availability", "quantityIfVisible",
+      ...(identityConfirmationRequired ? ["identityAndPackConfirmed", "nativePackCount"] : [])] }, continuationJobType: "CALCULATE_ECONOMICS" })
 }
 
 async function promoteNextCandidate(supabase: SupabaseClient, runId: string, ordinal: number) {
@@ -1173,10 +1191,25 @@ export async function previewSameDayPilot(input: {
       return [text(product.id), { ...extracted.facts, source: extracted.source,
         evidenceHash: extracted.evidenceHash }] as const
     }))
+  const { data: latestQueueRun, error: queueRunError } = await input.supabase
+    .from("marketplace_listing_approval_queue_runs").select("id")
+    .eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle()
+  if (queueRunError) throw new Error("SAME_DAY_PILOT_QUEUE_RUN_READ_FAILED")
+  const { data: queueItems, error: queueItemError } = latestQueueRun?.id
+    ? await input.supabase.from("marketplace_listing_approval_queue_items")
+      .select("id,supplier_variant_id").eq("run_id", latestQueueRun.id)
+      .eq("marketplace_account_key", input.accountKey).limit(200)
+    : { data: [], error: null }
+  if (queueItemError) throw new Error("SAME_DAY_PILOT_QUEUE_ITEM_READ_FAILED")
+  const queueItemByVariant = new Map((queueItems ?? [])
+    .map((row) => [text(row.supplier_variant_id), row.id]))
   const candidateInputs = eligibleOpportunities.map((row) => {
     const key = `${text(row.market_radar_product_id)}:${text(row.supplier_variant_id)}`
-    return candidateInput(record(row), variantByKey.get(key) ?? {}, now,
+    const candidate = candidateInput(record(row), variantByKey.get(key) ?? {}, now,
       descriptionIdentityByProductId.get(text(row.market_radar_product_id)) ?? {})
+    return { ...candidate,
+      queueItemAvailable: queueItemByVariant.has(text(candidate.supplierVariantId)) }
   })
   const evaluatedCandidates = candidateInputs.map((candidate) =>
     evaluateSameDayCandidate(candidate, now))
@@ -1186,15 +1219,6 @@ export async function previewSameDayPilot(input: {
     supplierVariantIds: input.excludeSupplierVariantIds,
     familyFingerprints: input.excludeFamilyFingerprints,
   })
-  const { data: latestQueueRun, error: queueRunError } = await input.supabase.from("marketplace_listing_approval_queue_runs").select("id")
-    .eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE).order("created_at", { ascending: false }).limit(1).maybeSingle()
-  if (queueRunError) throw new Error("SAME_DAY_PILOT_QUEUE_RUN_READ_FAILED")
-  const { data: queueItems, error: queueItemError } = latestQueueRun?.id
-    ? await input.supabase.from("marketplace_listing_approval_queue_items")
-      .select("id,supplier_variant_id").eq("run_id", latestQueueRun.id).eq("marketplace_account_key", input.accountKey).limit(200)
-    : { data: [], error: null }
-  if (queueItemError) throw new Error("SAME_DAY_PILOT_QUEUE_ITEM_READ_FAILED")
-  const queueItemByVariant = new Map((queueItems ?? []).map((row) => [text(row.supplier_variant_id), row.id]))
   const effectiveQuotaLanes = (quotas ?? []).map((lane) =>
     projectEffectiveEbayQuotaLane(lane, now))
   const exactLane = effectiveQuotaLanes.find((lane) =>
@@ -1443,6 +1467,7 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
         evidenceHash: entry.identityEvidenceHash ?? null,
         exactOfferPackVerified: entry.offerPackVerified === true,
         nativePackCount: entry.nativePackCount ?? null,
+        confirmationRequired: entry.lunaIdentityConfirmationRequired === true,
       },
     },
     economics_summary: { ready: entry.economicsReady, estimatedProfit: entry.estimatedProfit, roiPercent: entry.roiPercent, netMarginPercent: entry.netMarginPercent },
@@ -1508,7 +1533,7 @@ export async function getSameDayPilot(input: { supabase: SupabaseClient; account
   return currentState(input.supabase, input.accountKey, operationDate(now), now)
 }
 
-export async function confirmSameDayLuna(input: { supabase: SupabaseClient; accountKey: string; actorId: string; taskId: string; price: number; available: boolean; quantity: number | null }) {
+export async function confirmSameDayLuna(input: { supabase: SupabaseClient; accountKey: string; actorId: string; taskId: string; price: number; available: boolean; quantity: number | null; identityAndPackConfirmed?: boolean; nativePackCount?: number | null }) {
   const state = await getSameDayPilot(input)
   if (!state) throw new Error("SAME_DAY_PILOT_RUN_MISSING")
   const task = state.tasks.find((entry) => entry.id === input.taskId && entry.status === "OPEN")
@@ -1516,8 +1541,45 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
   if (!(input.price > 0)) throw new Error("SAME_DAY_PILOT_LUNA_PRICE_INVALID")
   const candidate = state.candidates.find((entry) => entry.id === task.candidate_id)
   if (!candidate) throw new Error("SAME_DAY_PILOT_LUNA_CANDIDATE_MISSING")
+  const evidence = record(candidate.evidence_summary)
+  const selectionIdentity = record(evidence.selectionIdentity)
+  const identityConfirmationRequired = selectionIdentity.confirmationRequired === true &&
+    selectionIdentity.independentlyVerified !== true
+  const confirmedNativePackCount = number(input.nativePackCount) ??
+    number(selectionIdentity.nativePackCount)
+  if (input.available && identityConfirmationRequired &&
+    (input.identityAndPackConfirmed !== true || !Number.isInteger(confirmedNativePackCount) ||
+      Number(confirmedNativePackCount) <= 0 || Number(confirmedNativePackCount) > 100)) {
+    throw new Error("SAME_DAY_PILOT_LUNA_IDENTITY_PACK_CONFIRMATION_REQUIRED")
+  }
   const quantity = listingQuantityFromLuna(input.quantity, input.available)
   const now = new Date().toISOString()
+  const confirmedSelectionIdentity = input.available && identityConfirmationRequired
+    ? {
+        ...selectionIdentity,
+        exactIdentityConfirmed: true,
+        independentlyVerified: true,
+        confidence: 100,
+        evidenceSource: "OPERATOR_VISIBLE_LUNA_EXACT_PRODUCT_PAGE",
+        evidenceHash: versionedHash({
+          version: "LUNA_VISIBLE_IDENTITY_CONFIRMATION_V1",
+          candidateId: candidate.id,
+          supplierVariantId: candidate.supplier_variant_id,
+          productTitleHash: versionedHash(text(candidate.product_title)),
+          nativePackCount: confirmedNativePackCount,
+          confirmedAt: now,
+        }),
+        exactOfferPackVerified: true,
+        nativePackCount: confirmedNativePackCount,
+        confirmationRequired: false,
+        confirmedAt: now,
+        actorRecorded: Boolean(input.actorId),
+      }
+    : selectionIdentity
+  const confirmedEvidence = {
+    ...evidence,
+    selectionIdentity: confirmedSelectionIdentity,
+  }
   const lunaConfirmation = {
     status: input.available
       ? input.quantity == null ? "AVAILABLE_QUANTITY_NOT_SHOWN" : "AVAILABLE_EXACT_QUANTITY"
@@ -1536,7 +1598,6 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
   const economicsSummary = { ...record(candidate.economics_summary),
     confirmedLunaPrice: input.price, available: input.available, quantity: input.quantity,
     quantityUnknown: input.quantity == null, lunaConfirmation }
-  const evidence = record(candidate.evidence_summary)
   const commercialEvidenceMode = text(evidence.commercialEvidenceMode)
   const controlledExploratoryTest = commercialEvidenceMode === "CONTROLLED_EXPLORATORY_TEST"
   const basePatch = {
@@ -1548,6 +1609,13 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
           oneVariableAtATime: true, automaticPricingUsed: false,
         } }
       : economicsSummary,
+    evidenceSummary: confirmedEvidence,
+    blockers: strings(candidate.blockers).filter((blocker) => ![
+      "IDENTITY_QUERY_TOO_GENERIC",
+      "OFFER_PACK_IDENTITY_MISSING",
+      "EXACT_OR_STRONG_IDENTITY_REQUIRED",
+      "LUNA_VISIBLE_IDENTITY_AND_PACK_CONFIRMATION_REQUIRED",
+    ].includes(blocker)),
   }
   if (!input.available) {
     await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
@@ -1567,7 +1635,9 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
         gateType: "LUNA_CONFIRMATION_REQUIRED", runId: state.run.id, candidateId: task.candidate_id,
         previousState: "WAITING_LUNA_CONFIRMATION", nextState: "WAITING_PRODUCT_RESEARCH_CAPTURE",
         reasonCode: "LUNA_CONFIRMED_MARKET_EVIDENCE_PENDING", triggeredBy: "USER",
-        checkpoint: { price: input.price, available: true, quantityKnown: input.quantity != null },
+        checkpoint: { price: input.price, available: true, quantityKnown: input.quantity != null,
+          identityAndPackConfirmed: identityConfirmationRequired,
+          nativePackCount: confirmedNativePackCount },
         candidatePatch: { ...basePatch, state: "NEEDS_PRODUCT_RESEARCH_CAPTURE" },
         nextAutomaticAction: "Importar y reconciliar la captura autorizada.",
         nextHumanAction: "Autorizar una captura Product Research para la consulta preparada." })
@@ -1586,7 +1656,9 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
         reasonCode: controlledExploratoryTest
           ? "LUNA_CONFIRMED_CONTROLLED_TEST_AUTO_RESUME"
           : "LUNA_CONFIRMED_AUTO_RESUME", triggeredBy: "USER",
-        checkpoint: { price: input.price, available: true, quantityKnown: input.quantity != null },
+        checkpoint: { price: input.price, available: true, quantityKnown: input.quantity != null,
+          identityAndPackConfirmed: identityConfirmationRequired,
+          nativePackCount: confirmedNativePackCount },
         candidatePatch: basePatch,
         nextAutomaticAction: "Recalcular economía localmente.", nextHumanAction: "Ninguna.",
         job: { jobType: "CALCULATE_ECONOMICS",
@@ -2174,14 +2246,15 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           result.classification === "SAME_PRODUCT_DIFFERENT_SIZE" &&
           result.supplierVariantId === supplierVariantId &&
           Number(result.packIntelligenceImpact ?? 0) > 0)
+        const selectionIdentity = record(record(candidate.evidence_summary).selectionIdentity)
         const nativePackCount = number(record(
           record(candidate.local_preparation_package).offer,
-        ).nativePackCount) ?? number(relatedPackResults[0]?.candidatePackCount)
+        ).nativePackCount) ?? number(selectionIdentity.nativePackCount) ??
+          number(relatedPackResults[0]?.candidatePackCount)
         const relatedPackStrategy = relatedPackStrategyFromReconciliation(
           relatedPackResults, nativePackCount,
           number(record(candidate.economics_summary).confirmedLunaPrice),
         )
-        const selectionIdentity = record(record(candidate.evidence_summary).selectionIdentity)
         const commercialRoute = resolveSameDayCommercialEvidenceMode({
           historicalMarketCheckCompleted: true,
           confirmedSoldExact: exactSoldObservationIds.size,
@@ -2275,8 +2348,35 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
                 "EXACT_PRODUCT_PRESENTATION_REQUIRED"] })
           } else if (commercialRoute.mode === "CONTROLLED_EXPLORATORY_TEST" &&
             text(candidate.queue_item_id)) {
-            await createLunaGate(input.supabase, state.run.id, record(candidate),
-              "RECONCILING_IDENTITY")
+            const existingLunaConfirmation = record(
+              record(candidate.economics_summary).lunaConfirmation,
+            )
+            const lunaAlreadyConfirmed = text(existingLunaConfirmation.status)
+              .startsWith("AVAILABLE_") &&
+              Number(record(candidate.economics_summary).confirmedLunaPrice) > 0
+            if (lunaAlreadyConfirmed) {
+              await transition({ supabase: input.supabase, runId: state.run.id,
+                candidateId: candidate.id, previousState: "RECONCILING_IDENTITY",
+                nextState: "CALCULATING_ECONOMICS",
+                reasonCode: "CONTROLLED_TEST_LUNA_ALREADY_CONFIRMED_AUTO_RESUME",
+                triggeredBy: "SYSTEM",
+                checkpoint: {
+                  confirmedLunaPrice: record(candidate.economics_summary).confirmedLunaPrice,
+                  quantityKnown: record(candidate.economics_summary).quantityUnknown !== true,
+                },
+                nextAutomaticAction: "Calcular economía localmente.",
+                nextHumanAction: "Ninguna.",
+                job: { jobType: "CALCULATE_ECONOMICS",
+                  idempotencyKey: `${state.run.id}:${candidate.id}:CALCULATE_ECONOMICS`,
+                  checkpoint: {
+                    confirmedLunaPrice: record(candidate.economics_summary).confirmedLunaPrice,
+                    quantityKnown: record(candidate.economics_summary).quantityUnknown !== true,
+                  } },
+              })
+            } else {
+              await createLunaGate(input.supabase, state.run.id, record(candidate),
+                "RECONCILING_IDENTITY")
+            }
           } else {
             await rejectAndPromote({ supabase: input.supabase, runId: state.run.id,
               candidate: record(candidate), previousState: "RECONCILING_IDENTITY",
@@ -2411,8 +2511,10 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       let summary = record(candidate.product_facts_summary)
       if (productFactsState === "ENRICHING_PRODUCT_FACTS") {
         const marketEvidence = record(candidate.evidence_summary)
-        const controlledExploratoryTarget = marketEvidence.commercialEvidenceMode ===
-          "CONTROLLED_EXPLORATORY_TEST"
+        const selectionIdentity = record(marketEvidence.selectionIdentity)
+        const lunaConfirmation = record(record(candidate.economics_summary).lunaConfirmation)
+        const controlledExploratoryTarget = ["CONTROLLED_EXPLORATORY_TEST", "MARKET_VALIDATED"]
+          .includes(text(marketEvidence.commercialEvidenceMode))
           ? {
               candidateId: text(candidate.queue_item_id),
               supplierVariantId: text(candidate.supplier_variant_id),
@@ -2420,6 +2522,8 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
               commercialEvidenceHash: text(marketEvidence.commercialEvidenceHash),
               historicalMarketCheckCompleted: true as const,
               exactOfferPackVerified: true as const,
+              confirmedNativePackCount: number(selectionIdentity.nativePackCount) ?? 0,
+              lunaConfirmedAt: text(lunaConfirmation.confirmedAt),
             }
           : undefined
         const factRun = await runProductFactsEnrichment({ supabase: input.supabase, accountKey: input.accountKey,

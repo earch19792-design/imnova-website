@@ -197,15 +197,19 @@ export async function POST(req: Request) {
       const availability = object(body.availability)
       const quantity = availability.quantity === null || availability.quantity === undefined || availability.quantity === ""
         ? null : Number(availability.quantity)
+      const nativePackCount = body.nativePackCount === null || body.nativePackCount === undefined || body.nativePackCount === ""
+        ? null : Number(body.nativePackCount)
       const price = Number(body.price)
       if (typeof body.taskId !== "string" || !Number.isFinite(price) || price <= 0 || typeof availability.available !== "boolean" ||
         (quantity !== null && (!Number.isInteger(quantity) || quantity < 0)) ||
+        (nativePackCount !== null && (!Number.isInteger(nativePackCount) || nativePackCount <= 0 || nativePackCount > 100)) ||
         (availability.available === true && quantity === 0) ||
         (availability.available === false && Number(quantity ?? 0) > 0)) {
         return NextResponse.json({ success: false, error: "SAME_DAY_PILOT_LUNA_CONFIRMATION_INVALID" }, { status: 400 })
       }
       await confirmSameDayLuna({ supabase: access.supabase, accountKey: access.accountKey, actorId: access.auth.userId,
-        taskId: body.taskId, price, available: availability.available, quantity })
+        taskId: body.taskId, price, available: availability.available, quantity,
+        identityAndPackConfirmed: body.identityAndPackConfirmed === true, nativePackCount })
       const continuation = await processSameDayPilotJobs({ supabase: access.supabase, accountKey: access.accountKey,
         workerId: `user-confirmation:${access.auth.userId}` })
       const pilot = await getSameDayPilot({ supabase: access.supabase, accountKey: access.accountKey })

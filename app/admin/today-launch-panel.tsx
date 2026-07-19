@@ -385,10 +385,13 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
   const [fulfillmentBasis, setFulfillmentBasis] = useState("")
   const [availability, setAvailability] = useState("unknown")
   const [quantity, setQuantity] = useState("")
+  const [identityAndPackConfirmed, setIdentityAndPackConfirmed] = useState(false)
+  const [nativePackCount, setNativePackCount] = useState("")
   const [imageRightsConfirmed, setImageRightsConfirmed] = useState(false)
   const [openAiImageSpendApproved, setOpenAiImageSpendApproved] = useState(false)
   const anchorImage = candidateHeroImage(candidate)
   const parsedQuantity = quantity === "" ? null : Number(quantity)
+  const parsedNativePackCount = nativePackCount === "" ? null : Number(nativePackCount)
   const lunaQuantityConflict = parsedQuantity !== null && (
     !Number.isInteger(parsedQuantity) || parsedQuantity < 0 ||
     (availability === "available" && parsedQuantity === 0) ||
@@ -403,6 +406,18 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
   const openAiContextUsed = imageSet.some((asset) => asset.generativeAiUsed === true)
   const controlledExploratoryTest = candidate?.evidence_summary?.commercialEvidenceMode ===
     "CONTROLLED_EXPLORATORY_TEST"
+  const selectionIdentity = candidate?.evidence_summary?.selectionIdentity ?? {}
+  const identityAndPackConfirmationRequired = selectionIdentity.confirmationRequired === true
+  const identityAndPackConfirmationApplies = identityAndPackConfirmationRequired && availability !== "out"
+  const identityConfirmationMissing = identityAndPackConfirmationApplies && !identityAndPackConfirmed
+  const nativePackCountMissing = identityAndPackConfirmationApplies && (
+    !Number.isInteger(parsedNativePackCount) || Number(parsedNativePackCount) <= 0
+  )
+
+  useEffect(() => {
+    setIdentityAndPackConfirmed(false)
+    setNativePackCount("")
+  }, [task.id])
 
   return <article className="min-w-0 overflow-hidden rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-4">
     <div className="flex flex-wrap justify-between gap-3">
@@ -439,8 +454,31 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
           <input value={quantity} onChange={(event) => setQuantity(event.target.value)} inputMode="numeric" aria-invalid={lunaQuantityConflict} aria-describedby={`${fieldId}-quantity-help`} className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${lunaQuantityConflict ? "border-red-400" : "border-white/15"}`} />
           <span id={`${fieldId}-quantity-help`} className={`mt-1 block font-normal ${lunaQuantityConflict ? "text-red-200" : "text-white/55"}`}>{lunaQuantityConflict ? "La disponibilidad y la cantidad se contradicen; corrige uno de los dos campos." : "Si Luna no comparte cantidad, déjalo vacío: eBay se preparará con cantidad 1 y revalidación después de la venta."}</span>
         </label>
-        <button type="button" disabled={working || priceMissing || availabilityMissing || lunaQuantityConflict} onClick={() => void onConfirm({ action: "confirm_luna", taskId: task.id, price: Number(price), availability: { available: availability === "available", quantity: parsedQuantity } })} className="min-h-12 self-end rounded-xl bg-amber-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 disabled:opacity-40">CONFIRMAR Y CONTINUAR</button>
       </div>
+      {identityAndPackConfirmationApplies && <fieldset className="mt-4 grid gap-3 rounded-xl border border-red-300/30 bg-red-400/[0.06] p-3 sm:grid-cols-2">
+        <legend className="px-1 text-xs font-black text-red-100">Identidad y presentación exactas <span aria-hidden="true">*</span></legend>
+        <label className={`flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${identityConfirmationMissing ? "border-red-400 text-red-100" : "border-emerald-200/25 text-emerald-50"}`}>
+          <input type="checkbox" checked={identityAndPackConfirmed}
+            onChange={(event) => setIdentityAndPackConfirmed(event.target.checked)}
+            aria-required="true" aria-invalid={identityConfirmationMissing}
+            aria-describedby={`${fieldId}-identity-pack-help`}
+            className="mt-1 h-5 w-5 shrink-0 accent-emerald-200" />
+          <span><strong>Confirmo el producto exacto.</strong> La imagen, el nombre, la variante y la presentación mostrados en Luna corresponden al producto que estamos preparando.</span>
+        </label>
+        <label className="text-xs font-bold">Unidades por presentación de Luna <span className="text-red-200">*</span>
+          <input value={nativePackCount} onChange={(event) => setNativePackCount(event.target.value)}
+            inputMode="numeric" type="number" min="1" step="1" aria-required="true"
+            aria-invalid={nativePackCountMissing} aria-describedby={`${fieldId}-native-pack-help`}
+            className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${nativePackCountMissing ? "border-red-400" : "border-white/15"}`} />
+          <span id={`${fieldId}-native-pack-help`} className={`mt-1 block font-normal ${nativePackCountMissing ? "text-red-200" : "text-white/55"}`}>{nativePackCountMissing
+            ? "Obligatorio: indica un número entero mayor que cero."
+            : "Pack nativo confirmado. No es la cantidad disponible en inventario."}</span>
+        </label>
+        <p id={`${fieldId}-identity-pack-help`} className={`text-xs leading-5 sm:col-span-2 ${identityConfirmationMissing ? "font-bold text-red-200" : "text-white/55"}`}>{identityConfirmationMissing
+          ? "Obligatorio: confirma visualmente que el producto y su presentación son exactos antes de continuar."
+          : "Identidad visual confirmada. Seller OS conservará esta confirmación con la presentación indicada."}</p>
+      </fieldset>}
+      <button type="button" disabled={working || priceMissing || availabilityMissing || lunaQuantityConflict || identityConfirmationMissing || nativePackCountMissing} onClick={() => void onConfirm({ action: "confirm_luna", taskId: task.id, price: Number(price), availability: { available: availability === "available", quantity: parsedQuantity }, ...(identityAndPackConfirmationApplies ? { identityAndPackConfirmed, nativePackCount: parsedNativePackCount } : {}) })} className="mt-4 min-h-12 w-full rounded-xl bg-amber-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 disabled:opacity-40 sm:w-auto">CONFIRMAR Y CONTINUAR</button>
     </div>}
 
     {task.gate_type === "PRODUCT_APPROVAL_REQUIRED" && <div className="mt-4 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm text-cyan-50">

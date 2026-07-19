@@ -69,6 +69,7 @@ export type SameDayCandidateInput = {
   queueStatus?: string
   score?: number
   listingPackageReadiness?: number
+  queueItemAvailable?: boolean
 }
 
 export function resolveSameDayCommercialEvidenceMode(input: {
@@ -106,6 +107,7 @@ export function resolveSameDayCommercialEvidenceMode(input: {
 
 export type SameDayCandidateDecision = SameDayCandidateInput & {
   eligibleForQueue: boolean
+  lunaIdentityConfirmationRequired: boolean
   state: SameDayCandidateState
   blockers: string[]
   familyFingerprint: string
@@ -300,13 +302,25 @@ export function evaluateSameDayCandidate(input: SameDayCandidateInput, now = new
   const supplierObservedAt = Date.parse(input.supplierObservedAt ?? "")
   const lunaFresh = Number.isFinite(supplierObservedAt) && now.getTime() - supplierObservedAt <= 72 * 60 * 60_000
   const criticalHardGates = (input.hardGates ?? []).filter((gate) => !TODAY_RESOLVABLE_HARD_GATES.has(gate))
+  const identityCanBeConfirmedFromExactLunaPage = Boolean(
+    input.supplierProductUrl && input.supplierImageUrl &&
+    productIdentityText(input.productTitle).split(" ").filter(Boolean).length >= 4 &&
+    !identityReadiness.blockers.includes("GTIN_INVALID_OR_UNVERIFIED"),
+  )
+  const lunaIdentityConfirmationRequired = identityCanBeConfirmedFromExactLunaPage &&
+    identityReadiness.blockers.some((blocker) =>
+      blocker === "IDENTITY_QUERY_TOO_GENERIC" || blocker === "OFFER_PACK_IDENTITY_MISSING")
+  const unresolvedIdentityBlockers = identityReadiness.blockers.filter((blocker) =>
+    !lunaIdentityConfirmationRequired ||
+    (blocker !== "IDENTITY_QUERY_TOO_GENERIC" && blocker !== "OFFER_PACK_IDENTITY_MISSING"))
   const localBlockers = [
     input.supplierAvailable === false ? "LUNA_OUT_OF_STOCK" : "",
     !(Number(input.supplierPrice) > 0) ? "LUNA_COST_MISSING" : "",
     !normalized(input.supplierSku) ? "SUPPLIER_SKU_MISSING" : "",
     !normalized(input.supplierVariantId) ? "SUPPLIER_VARIANT_ID_MISSING" : "",
     !lunaFresh ? "LUNA_RECORD_STALE" : "",
-    ...identityReadiness.blockers,
+    ...unresolvedIdentityBlockers,
+    input.queueItemAvailable === false ? "EXACT_TOP20_QUEUE_IDENTITY_MISSING" : "",
     input.regulatedWithoutPath ? "REGULATORY_PATH_MISSING" : "",
     ["listed", "rejected", "archived"].includes(input.queueStatus ?? "") ? "OPPORTUNITY_NOT_ELIGIBLE" : "",
     ...criticalHardGates.map((gate) => `HARD_GATE:${gate}`),
@@ -323,11 +337,12 @@ export function evaluateSameDayCandidate(input: SameDayCandidateInput, now = new
     state = "REJECTED_TODAY"
     nextAutomatedAction = "Continuar con el siguiente candidato sin consumir cuota."
     nextHumanAction = "Ninguna; revisar el motivo sólo si desea recuperarlo otro día."
-  } else if (!stockKnown) {
+  } else if (lunaIdentityConfirmationRequired || !stockKnown) {
     state = "NEEDS_LUNA_CONFIRMATION"
-    blockers.push(stockUnknown ? "LUNA_EXACT_QUANTITY_UNKNOWN" : "LUNA_AVAILABILITY_CONFIRMATION_REQUIRED")
-    nextAutomatedAction = "Conservar el candidato sin bloquear las demás tareas."
-    nextHumanAction = "Confirmar precio y disponibilidad en Luna; si la cantidad es desconocida se preparará cantidad eBay 1."
+    if (lunaIdentityConfirmationRequired) blockers.push("LUNA_VISIBLE_IDENTITY_AND_PACK_CONFIRMATION_REQUIRED")
+    if (!stockKnown) blockers.push(stockUnknown ? "LUNA_EXACT_QUANTITY_UNKNOWN" : "LUNA_AVAILABILITY_CONFIRMATION_REQUIRED")
+    nextAutomatedAction = "Conservar el candidato y continuar automáticamente después de una sola confirmación Luna."
+    nextHumanAction = "Confirmar producto, presentación, costo y disponibilidad en la página exacta de Luna."
   } else if (!exactOrStrongIdentity || !marketReady || !economicsPlausible) {
     state = "NEEDS_PRODUCT_RESEARCH_CAPTURE"
     if (!exactOrStrongIdentity) blockers.push("EXACT_OR_STRONG_IDENTITY_REQUIRED")
@@ -341,7 +356,8 @@ export function evaluateSameDayCandidate(input: SameDayCandidateInput, now = new
     Math.min(100, Number(input.activeExactCount ?? 0) * 20) * .2 +
     (stockKnown ? 10 : 0) + (economicsPlausible ? 10 : 0),
   ))
-  return { ...input, eligibleForQueue: localBlockers.length === 0, state, blockers: [...new Set(blockers)],
+  return { ...input, eligibleForQueue: localBlockers.length === 0,
+    lunaIdentityConfirmationRequired, state, blockers: [...new Set(blockers)],
     familyFingerprint, queryPlan, callsEstimated: state === "NEEDS_PRODUCT_RESEARCH_CAPTURE" ? 1 : 0,
     priority: Math.round(priority * 100) / 100, nextAutomatedAction, nextHumanAction }
 }

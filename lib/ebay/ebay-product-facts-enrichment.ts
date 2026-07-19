@@ -46,6 +46,8 @@ type ControlledExploratoryFactsTarget = {
   commercialEvidenceHash: string
   historicalMarketCheckCompleted: true
   exactOfferPackVerified: true
+  confirmedNativePackCount: number
+  lunaConfirmedAt: string
 }
 
 function record(value: unknown): JsonRecord {
@@ -117,6 +119,7 @@ function lunaObservations(input: {
   item: JsonRecord
   officialDescription: ReturnType<typeof extractLunaOfficialDescriptionIdentity>
   now: Date
+  confirmedNativePackCount?: number | null
 }) {
   const descriptionFacts = input.officialDescription.facts
   const metadata = {
@@ -165,9 +168,11 @@ function lunaObservations(input: {
   add("PRODUCT_UNIT", "hazardousMaterialStatus", fromMetadata(metadata, ["hazardousMaterialStatus", "hazmat", "hazardous_material_status"]), null, "CORROBORATED")
   add("PRODUCT_UNIT", "regulatoryIdentifiers", fromMetadata(metadata, ["epaRegistration", "epa_registration", "regulatoryIdentifiers"]), null, "CORROBORATED")
   add("PRODUCT_UNIT", "unitGrossWeight", number(input.variant.weight), text(input.variant.weight_unit) || null)
-  const nativePackCount = integer(fromMetadata(metadata, ["packCount", "pack_count"])) ??
+  const nativePackCount = integer(input.confirmedNativePackCount) ??
+    integer(fromMetadata(metadata, ["packCount", "pack_count"])) ??
     descriptionFacts.packCount ?? packCountFromText(title)
-  const plannedPackCount = integer(pack.packCount) ?? integer(input.item.recommended_pack_count)
+  const plannedPackCount = integer(input.confirmedNativePackCount) ??
+    integer(pack.packCount) ?? integer(input.item.recommended_pack_count)
   // The current same-day path only permits Luna's native presentation. A
   // seller-created multipack is a separate offer and must pass its own cost and
   // operator approval path before becoming an authoritative OFFER_PACK fact.
@@ -301,9 +306,14 @@ async function eligibleCandidates(
     .eq("run_id", runId).eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
   if (controlledExploratoryTarget) {
     const target = controlledExploratoryTarget
+    const lunaConfirmationAgeMs = now.getTime() - Date.parse(target.lunaConfirmedAt)
     const validTarget = candidateIds?.length === 1 && candidateIds[0] === target.candidateId &&
       Boolean(target.supplierVariantId) && target.historicalMarketCheckCompleted === true &&
       target.exactOfferPackVerified === true &&
+      Number.isInteger(target.confirmedNativePackCount) && target.confirmedNativePackCount > 0 &&
+      target.confirmedNativePackCount <= 100 &&
+      Number.isFinite(Date.parse(target.lunaConfirmedAt)) &&
+      lunaConfirmationAgeMs >= -5 * 60_000 && lunaConfirmationAgeMs <= 4 * 60 * 60_000 &&
       /^sha256:[0-9a-f]{64}$/.test(target.identityEvidenceHash) &&
       /^sha256:[0-9a-f]{64}$/.test(target.commercialEvidenceHash)
     if (!validTarget) throw new Error("PRODUCT_FACT_CONTROLLED_EXPLORATORY_TARGET_INVALID")
@@ -319,10 +329,8 @@ async function eligibleCandidates(
   const rows = (data ?? []).map(record)
   if (!controlledExploratoryTarget) return rows
   const target = rows[0]
-  const staleAt = Date.parse(text(target?.stale_after))
   if (!target || !text(target.market_radar_product_id) ||
-    text(target.supplier_variant_id) !== controlledExploratoryTarget.supplierVariantId ||
-    !Number.isFinite(staleAt) || staleAt <= now.getTime()) return []
+    text(target.supplier_variant_id) !== controlledExploratoryTarget.supplierVariantId) return []
   return [target]
 }
 
@@ -428,8 +436,17 @@ export async function runProductFactsEnrichment(input: {
         officialDescriptionForCandidate(input.supabase, candidate),
       ])
       if (!variant) { candidateResults.push({ candidateId: text(candidate.id), status: "EXCLUDED_LUNA_VARIANT_MISSING", openAiInputReady: false }); continue }
+      const lunaObservedAt = Date.parse(text(variant.captured_at))
+      const lunaObservationAgeMs = now.getTime() - lunaObservedAt
+      if (!Number.isFinite(lunaObservedAt) || lunaObservationAgeMs < -5 * 60_000 ||
+        lunaObservationAgeMs > 72 * 60 * 60_000) {
+        candidateResults.push({ candidateId: text(candidate.id),
+          status: "EXCLUDED_LUNA_VARIANT_STALE", openAiInputReady: false })
+        continue
+      }
       const base = lunaObservations({ candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
-        variant, item: candidate, officialDescription, now })
+        variant, item: candidate, officialDescription, now,
+        confirmedNativePackCount: input.controlledExploratoryTarget?.confirmedNativePackCount ?? null })
       const intendedPackCount = base.offerPackConflict ? null : base.nativePackCount
       const authoritativeGtin = normalizeGtin(variant.barcode ?? fromMetadata(base.metadata, ["upc", "ean", "gtin", "barcode"]) ?? officialDescription.facts.gtin)
       const catalog = await searchEbayCatalogIdentity({ query: base.title, gtin: authoritativeGtin,
