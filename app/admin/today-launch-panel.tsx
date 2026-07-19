@@ -38,7 +38,7 @@ export function TodayLaunchPanel() {
     if (!pilot || ["COMPLETED", "BLOCKED"].includes(String(pilot.run?.status))) return
     const timer = window.setInterval(() => {
       load().catch(() => undefined)
-    }, 10_000)
+    }, 3_000)
     return () => window.clearInterval(timer)
   }, [load, pilot])
   const request = async (body: Row) => {
@@ -49,6 +49,11 @@ export function TodayLaunchPanel() {
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(payload.error || "No se pudo continuar.")
       setPilot(payload.pilot)
+      // The API schedules the worker continuation after returning. Refresh in a
+      // short burst so the operator sees the next gate without waiting for the
+      // cron fallback or manually reloading the page.
+      window.setTimeout(() => { load().catch(() => undefined) }, 1_000)
+      window.setTimeout(() => { load().catch(() => undefined) }, 4_000)
     } catch (caught) { setError(caught instanceof Error ? caught.message : "No se pudo continuar.") }
     finally { setWorking(false) }
   }

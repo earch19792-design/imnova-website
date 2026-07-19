@@ -356,7 +356,7 @@ async function eligibleCandidates(
       Number.isInteger(target.confirmedNativePackCount) && target.confirmedNativePackCount > 0 &&
       target.confirmedNativePackCount <= 100 &&
       Number.isFinite(Date.parse(target.lunaConfirmedAt)) &&
-      lunaConfirmationAgeMs >= -5 * 60_000 && lunaConfirmationAgeMs <= 4 * 60 * 60_000 &&
+      lunaConfirmationAgeMs >= -5 * 60_000 && lunaConfirmationAgeMs <= 24 * 60 * 60_000 &&
       /^sha256:[0-9a-f]{64}$/.test(target.identityEvidenceHash) &&
       /^sha256:[0-9a-f]{64}$/.test(target.commercialEvidenceHash)
     if (!validTarget) throw new Error("PRODUCT_FACT_CONTROLLED_EXPLORATORY_TARGET_INVALID")
@@ -402,6 +402,22 @@ async function officialCapturedItemId(supabase: SupabaseClient, accountKey: stri
   if (error) throw new Error("PRODUCT_FACT_TRADING_ITEM_LOOKUP_FAILED")
   const itemId = text(data?.source_listing_id)
   return /^\d{9,20}$/.test(itemId) ? itemId : null
+}
+
+const COMPARABLE_TITLE_STOP_WORDS = new Set(["and", "for", "of", "pc", "pcs", "set", "the", "with"])
+
+function comparableTitleTokens(value: unknown) {
+  return text(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ").split(" ").map((token) => token.trim())
+    .filter((token) => token.length > 1 && !COMPARABLE_TITLE_STOP_WORDS.has(token))
+}
+
+function comparableTitleMatches(productTitle: unknown, listingTitle: unknown) {
+  const productTokens = new Set(comparableTitleTokens(productTitle))
+  const listingTokens = new Set(comparableTitleTokens(listingTitle))
+  if (productTokens.size === 0 || listingTokens.size === 0) return false
+  const matchingTokens = [...productTokens].filter((token) => listingTokens.has(token)).length
+  return matchingTokens >= Math.min(3, productTokens.size) && matchingTokens / productTokens.size >= 0.6
 }
 
 async function operatorConfirmedOfficialLabelFacts(
@@ -472,13 +488,29 @@ function manufacturerOfficialObservations(input: {
   })
 }
 
+const FORBIDDEN_SNAPSHOT_CONTENT = /(https?:\/\/|cookie|authorization|password|token|base64|blob|imageurl|rawhtml|<html|data:image)/i
+
+function sanitizeSnapshotPayload(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeSnapshotPayload)
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as JsonRecord)
+      .filter(([key]) => !FORBIDDEN_SNAPSHOT_CONTENT.test(key))
+      .map(([key, entry]) => [key, sanitizeSnapshotPayload(entry)]))
+  }
+  if (typeof value === "string" && FORBIDDEN_SNAPSHOT_CONTENT.test(value)) {
+    return "REDACTED_SENSITIVE_REFERENCE"
+  }
+  return value
+}
+
 function snapshot(input: { runId: string; candidateId: string; lunaVariantId: string | null; sourceType: FactSourceType; authority: string; observedAt: string | null; status: string; payload: JsonRecord }) {
+  const sanitizedPayload = record(sanitizeSnapshotPayload(input.payload))
   return { fact_run_id: input.runId, queue_item_id: input.candidateId, luna_variant_id: input.lunaVariantId,
     marketplace_account_key: "", marketplace: MARKETPLACE, source_type: input.sourceType,
     source_reference_hash: safeSourceReference(input.sourceType, `${input.candidateId}:${input.sourceType}:${input.observedAt ?? ""}`),
     source_authority: input.authority, source_observed_at: input.observedAt, fetched_at: new Date().toISOString(),
-    expires_at: null, snapshot_status: input.status, sanitized_snapshot: input.payload,
-    evidence_hash: productFactsHash({ candidateId: input.candidateId, source: input.sourceType, observedAt: input.observedAt, status: input.status, payload: input.payload }),
+    expires_at: null, snapshot_status: input.status, sanitized_snapshot: sanitizedPayload,
+    evidence_hash: productFactsHash({ candidateId: input.candidateId, source: input.sourceType, observedAt: input.observedAt, status: input.status, payload: sanitizedPayload }),
     adapter_version: PRODUCT_FACTS_ENGINE_VERSION }
 }
 
@@ -494,7 +526,21 @@ function persistenceObservation(runId: string, accountKey: string, entry: FactOb
 
 async function insertIgnoringDuplicates(supabase: SupabaseClient, table: string, rows: JsonRecord[]) {
   if (!rows.length) return
-  const { error } = await supabase.from(table).upsert(rows, { onConflict: table === "marketplace_product_fact_observations"
+  let pendingRows = rows
+  if (table === "marketplace_product_fact_source_snapshots") {
+    const queueItemIds = [...new Set(rows.map((row) => text(row.queue_item_id)).filter(Boolean))]
+    const evidenceHashes = [...new Set(rows.map((row) => text(row.evidence_hash)).filter(Boolean))]
+    if (queueItemIds.length !== 1 || evidenceHashes.length !== rows.length) {
+      throw new Error("PRODUCT_FACT_SOURCE_SNAPSHOT_BATCH_INVALID")
+    }
+    const { data: existing, error: existingError } = await supabase.from(table)
+      .select("evidence_hash").eq("queue_item_id", queueItemIds[0]).in("evidence_hash", evidenceHashes)
+    if (existingError) throw new Error("PRODUCT_FACT_SOURCE_SNAPSHOT_LOOKUP_FAILED")
+    const existingHashes = new Set((existing ?? []).map((row) => text(row.evidence_hash)))
+    pendingRows = rows.filter((row) => !existingHashes.has(text(row.evidence_hash)))
+    if (!pendingRows.length) return
+  }
+  const { error } = await supabase.from(table).upsert(pendingRows, { onConflict: table === "marketplace_product_fact_observations"
     ? "queue_item_id,evidence_hash" : table === "marketplace_product_fact_resolutions" ? "queue_item_id,resolution_hash" :
       table === "marketplace_product_fact_conflicts" ? "queue_item_id,conflict_hash" :
         table === "marketplace_product_fact_requirements" ? "queue_item_id,requirement_hash" :
@@ -577,10 +623,31 @@ export async function runProductFactsEnrichment(input: {
       const catalogRecord = record(catalog)
       const catalogCategoryId = catalogSelection.products.length === 1
         ? numericCategoryId(catalogSelection.products[0]?.categoryId) : ""
+      // This is the API equivalent of eBay's "Sell one like this": read the
+      // captured exact listing, verify title identity, then reuse only its
+      // official category and corroborating facts. Seller copy is never used.
+      let trading: JsonRecord | null = null
+      let tradingStatus = "NOT_APPLICABLE_ITEM_ID_MISSING"
+      const tradingItemId = await officialCapturedItemId(input.supabase, input.accountKey, text(candidate.supplier_variant_id))
+      if (tradingItemId) {
+        try {
+          const comparable = record(await readEbayTradingItemIdentityReadonly(tradingItemId))
+          if (comparableTitleMatches(base.title, comparable.title)) {
+            trading = comparable
+            tradingStatus = "AVAILABLE"
+          } else {
+            tradingStatus = "TITLE_IDENTITY_MISMATCH"
+          }
+        } catch (error) {
+          if (getEbayReadonlyRateLimitMetadata(error)) throw error
+          tradingStatus = safeCode(error)
+        }
+      }
+      const tradingCategoryId = numericCategoryId(trading?.categoryId)
       // Category is resolved before aspect evaluation. Exact Catalog identity
-      // wins; otherwise the existing exact-comparable category seed is used
-      // only to ask official Taxonomy for the authoritative requirements.
-      const taxonomyCategoryId = catalogCategoryId || knownCategoryId
+      // wins, followed by the title-verified Trading comparable. Existing
+      // evidence remains a last category seed for official Taxonomy.
+      const taxonomyCategoryId = catalogCategoryId || tradingCategoryId || knownCategoryId
       const taxonomy = await getEbayTaxonomyListingIntelligence(base.title, taxonomyCategoryId || undefined)
       const taxonomyRecord = record(taxonomy)
       const browsePackQuantity = intendedPackCount
@@ -603,16 +670,6 @@ export async function runProductFactsEnrichment(input: {
         if (getEbayReadonlyRateLimitMetadata(error)) throw error
         browseStatus = safeCode(error)
       }
-      let trading: JsonRecord | null = null
-      let tradingStatus = "NOT_APPLICABLE_ITEM_ID_MISSING"
-      const tradingItemId = await officialCapturedItemId(input.supabase, input.accountKey, text(candidate.supplier_variant_id))
-      if (tradingItemId) {
-        try { trading = record(await readEbayTradingItemIdentityReadonly(tradingItemId)); tradingStatus = "AVAILABLE" }
-        catch (error) {
-          if (getEbayReadonlyRateLimitMetadata(error)) throw error
-          tradingStatus = safeCode(error)
-        }
-      }
       const sourceSnapshots = [
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "LUNA_EXACT_VARIANT", authority: "SUPPLIER", observedAt: base.observedAt, status: "AVAILABLE",
@@ -631,7 +688,7 @@ export async function runProductFactsEnrichment(input: {
           sourceType: "EBAY_TAXONOMY_OFFICIAL_READONLY", authority: "EBAY_TAXONOMY", observedAt: text(taxonomyRecord.observedAt) || null,
           status: text(taxonomyRecord.status) || "REQUEST_FAILED", payload: { categoryId: text(taxonomyRecord.categoryId) || null,
             categorySeedPresent: Boolean(taxonomyCategoryId),
-            categorySeedSource: catalogCategoryId ? "EBAY_CATALOG_EXACT" : knownCategoryId ? "EXISTING_EXACT_COMPARABLE" : "TITLE_SUGGESTION",
+            categorySeedSource: catalogCategoryId ? "EBAY_CATALOG_EXACT" : tradingCategoryId ? "EBAY_TRADING_EXACT_COMPARABLE" : knownCategoryId ? "EXISTING_EXACT_COMPARABLE" : "TITLE_SUGGESTION",
             categoryResolution: text(taxonomyRecord.categoryResolution) || "UNRESOLVED",
             failureCode: text(taxonomyRecord.failureCode) || null,
             requiredAspectCount: array(taxonomyRecord.requiredAspects).length } }),
@@ -640,7 +697,7 @@ export async function runProductFactsEnrichment(input: {
           payload: { comparableCount: browseComparableCount, contentUsedAsCriticalAuthority: false } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "EBAY_TRADING_GET_ITEM_READONLY", authority: "CORROBORATION", observedAt: trading ? text(trading.observedAt) || now.toISOString() : null,
-          status: tradingStatus, payload: { validOfficialItemId: Boolean(tradingItemId), contentUsedAsCriticalAuthority: false } }),
+          status: tradingStatus, payload: { validOfficialItemId: Boolean(trading), contentUsedAsCriticalAuthority: false } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "MANUFACTURER_OFFICIAL_PUBLIC", authority: "MANUFACTURER_OR_LABEL",
           observedAt: manufacturerOfficial.status === "AVAILABLE" ? manufacturerOfficial.observedAt : null,

@@ -1062,7 +1062,7 @@ async function repairLegacyProductFactsRejections(
   const confirmedAt = Date.parse(text(lunaConfirmation.confirmedAt))
   const confirmationFresh = economics.available === true && Number(economics.confirmedLunaPrice) > 0 &&
     Number.isFinite(confirmedAt) && now.getTime() - confirmedAt >= -5 * 60_000 &&
-    now.getTime() - confirmedAt <= 4 * 60 * 60_000
+    now.getTime() - confirmedAt <= 24 * 60 * 60_000
   const recoveryEvidence = {
     ...record(candidate.evidence_summary),
     legacyProductFactsRecoveryVersion: LEGACY_PRODUCT_FACTS_RECOVERY_VERSION,
@@ -1131,9 +1131,9 @@ async function repairLegacyProductFactsRejections(
 }
 
 /**
- * A single, operator-verifiable label fact is an exception task, not a reason
- * to discard an otherwise safe candidate. Recovery is serialized and happens
- * once per candidate; multi-field or regulatory gaps remain rejected.
+ * Operator-verifiable label facts are requested one at a time instead of
+ * discarding an otherwise safe candidate. Recovery remains serialized and is
+ * bounded to six distinct fields; regulatory gaps remain rejected.
  */
 async function repairRejectedSingleFactException(
   supabase: SupabaseClient,
@@ -1149,19 +1149,34 @@ async function repairRejectedSingleFactException(
     }))
     .find(({ candidate, exception }) => {
       const evidence = record(candidate.evidence_summary)
+      const attemptedFields = new Set([
+        ...strings(evidence.singleFactExceptionFields),
+        ...(evidence.singleFactExceptionConfirmed === true
+          ? [text(evidence.singleFactExceptionField)] : []),
+      ].map((field) => field.toLocaleLowerCase()).filter(Boolean))
       return Boolean(exception) && candidate.machine_state === "REJECTED" &&
         candidate.state === "REJECTED_TODAY" && strings(candidate.blockers).includes("MISSING_BLOCKING") &&
         text(candidate.queue_item_id) && text(candidate.supplier_variant_id) &&
-        text(evidence.singleFactExceptionRecoveryVersion) !== SINGLE_FACT_EXCEPTION_VERSION
+        attemptedFields.size < 6 &&
+        !attemptedFields.has(text(exception?.aspectName).toLocaleLowerCase())
     })
   if (!selected?.exception) return 0
   const candidate = record(selected.candidate)
   const exception = selected.exception
+  const previousEvidence = record(candidate.evidence_summary)
+  const attemptedFields = new Set([
+    ...strings(previousEvidence.singleFactExceptionFields),
+    ...(previousEvidence.singleFactExceptionConfirmed === true
+      ? [text(previousEvidence.singleFactExceptionField)] : []),
+  ].map((field) => field.toLocaleLowerCase()).filter(Boolean))
+  attemptedFields.add(exception.aspectName.toLocaleLowerCase())
   const evidenceSummary = {
-    ...record(candidate.evidence_summary),
+    ...previousEvidence,
     singleFactExceptionRecoveryVersion: SINGLE_FACT_EXCEPTION_VERSION,
     singleFactExceptionOpenedAt: now.toISOString(),
     singleFactExceptionField: exception.aspectName,
+    singleFactExceptionFields: [...attemptedFields].slice(0, 6),
+    singleFactExceptionGeneration: Number(previousEvidence.singleFactExceptionGeneration ?? 0) + 1,
     fullCatalogRescan: false,
   }
   await transition({
@@ -3743,7 +3758,7 @@ export async function processSameDayPilotJobChain(input: {
   maximumJobs?: number
   maximumDurationMs?: number
 }) {
-  const maximumJobs = Math.max(1, Math.min(6, Math.trunc(input.maximumJobs ?? 6)))
+  const maximumJobs = Math.max(1, Math.min(30, Math.trunc(input.maximumJobs ?? 30)))
   const maximumDurationMs = Math.max(1_000, Math.min(240_000,
     Math.trunc(input.maximumDurationMs ?? 240_000)))
   const startedAt = Date.now()
