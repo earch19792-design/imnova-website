@@ -40,7 +40,7 @@ import {
   fetchOfficialManufacturerFacts,
 } from "./ebay-official-manufacturer-facts"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V6_2026_07_19"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V7_2026_07_19"
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
 type JsonRecord = Record<string, unknown>
@@ -559,6 +559,28 @@ const SEMANTIC_CATEGORY_GUARDS = [
   { pattern: /\bkey\s*(?:chain|chains|ring|rings)\b/i, categoryId: "45237" },
 ]
 
+function explicitAudienceObservations(input: {
+  candidateId: string
+  lunaVariantId: string | null
+  productTitle: string
+  observedAt: string
+}) {
+  const department = /\bunisex\b/i.test(input.productTitle)
+    ? "Unisex"
+    : /\b(?:woman|women|womens|mom|mother|daughter|sister)\b/i.test(input.productTitle)
+      ? "Women"
+      : ""
+  if (!department) return [] as FactObservation[]
+  return [observation({
+    candidateId: input.candidateId, lunaVariantId: input.lunaVariantId,
+    scope: "PRODUCT_UNIT", key: "department", value: department,
+    sourceType: "LUNA_EXACT_VARIANT", authority: "SUPPLIER", status: "CORROBORATED",
+    confidence: .9, observedAt: input.observedAt,
+    sourceReference: safeSourceReference("LUNA_EXACT_VARIANT",
+      input.lunaVariantId || input.candidateId),
+  })]
+}
+
 function semanticCategoryIdFromTitle(productTitle: string) {
   return SEMANTIC_CATEGORY_GUARDS.find((guard) => guard.pattern.test(productTitle))?.categoryId ?? ""
 }
@@ -810,7 +832,11 @@ export async function runProductFactsEnrichment(input: {
           sourceType: "REGULATOR_OFFICIAL", authority: "REGULATOR", observedAt: null, status: "NOT_CONFIGURED",
           payload: { regulatedOnly: true, externalPageFetched: false } }),
       ]
-      const initial = [...base.entries, ...operatorLabelFacts,
+      const initial = [...base.entries,
+      ...explicitAudienceObservations({ candidateId: text(candidate.id),
+        lunaVariantId: text(candidate.supplier_variant_id) || null,
+        productTitle: base.title, observedAt: base.observedAt }),
+      ...operatorLabelFacts,
       ...manufacturerOfficialObservations({ candidateId: text(candidate.id),
         lunaVariantId: text(candidate.supplier_variant_id) || null, source: manufacturerOfficial }),
       ...catalogObservations({ candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
