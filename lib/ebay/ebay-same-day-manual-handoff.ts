@@ -7,7 +7,7 @@ import { normalizeEbayCompliantFulfillmentBasis } from "./ebay-fulfillment-polic
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { parseAuthoritativeFactsInputPackage } from "./ebay-product-facts-readiness.ts"
 
-export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V3_2026_07_19"
+export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V4_2026_07_19"
 
 type JsonRecord = Record<string, unknown>
 type SafeFact = { scope: string; key: string; value: unknown; unit: string | null; status: string }
@@ -218,10 +218,18 @@ export function buildVerifiedManualSellerHubHandoff(input: {
       estimatedValuesExcluded: true,
       operatorAction: "Confirma peso y dimensiones en Seller Hub o utiliza una política de envío verificada que no los requiera." }
   const feePolicy = record(input.economics.feePolicy)
+  const controlledRiskOverride = record(input.economics.controlledRiskOverride)
+  const controlledRisk = controlledRiskOverride.authorized === true
   const exactEbayFeeProfile = feePolicy.exactFeeClaimed === true
   const warnings = [
     ...(!confirmedShipping ? ["SHIPPING_CONFIRMATION_REQUIRED_IN_SELLER_HUB"] : []),
     ...(!exactEbayFeeProfile ? ["EBAY_FEE_PROFILE_ESTIMATE_NOT_EXACT"] : []),
+    ...(controlledRisk ? [
+      "CONTROLLED_RISK_MANUAL_EXCEPTION",
+      "PROMOTION_MUST_REMAIN_DISABLED",
+      "VOLUNTARY_RETURNS_NOT_ACCEPTED_WHERE_EBAY_ALLOWS",
+      "EBAY_MONEY_BACK_GUARANTEE_STILL_APPLIES",
+    ] : []),
     ...requirements.filter((requirement) => !requirement.required && requirement.status === "MISSING_OPTIONAL")
       .map((requirement) => `OPTIONAL_ASPECT_MISSING_${text(requirement.aspectName).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`),
   ]
@@ -266,6 +274,15 @@ export function buildVerifiedManualSellerHubHandoff(input: {
       returnPolicyId: text(input.policies.returnPolicyId),
       verifiedSourceAt: text(input.policies.verifiedSourceAt),
     },
+    controlledRiskPolicy: controlledRisk ? {
+      version: text(controlledRiskOverride.version),
+      minimumNetMarginPercent: number(controlledRiskOverride.minimumNetMarginPercent),
+      promotion: "DO_NOT_PROMOTE",
+      voluntaryReturns: "SELECT_NO_RETURNS_WHERE_EBAY_ALLOWS",
+      ebayMoneyBackGuaranteeStillApplies: true,
+      automaticPricingUsed: false,
+      manualPublicationOnly: true,
+    } : null,
     operatorChecklist: [
       "Confirmar que el producto y pack físicos coinciden con este paquete.",
       fulfillmentBasis === "OWNED_INVENTORY"
@@ -273,6 +290,11 @@ export function buildVerifiedManualSellerHubHandoff(input: {
         : "Confirmar que permanece vigente el acuerdo de fulfillment con el proveedor mayorista autorizado.",
       ...(!confirmedShipping ? ["Confirmar peso/dimensiones o seleccionar una política de envío verificada compatible en Seller Hub."] : []),
       ...(!exactEbayFeeProfile ? ["Revisar en Seller Hub la tarifa estimada según categoría y plan de tienda antes de publicar; la reserva económica es conservadora."] : []),
+      ...(controlledRisk ? [
+        "No activar Promoted Listings ni publicidad para esta prueba de margen reducido.",
+        "Seleccionar una política sin devoluciones voluntarias sólo donde eBay y la categoría lo permitan; la Garantía al cliente de eBay continúa aplicando.",
+        "Confirmar que el precio sigue dentro de la ventana autorizada antes de publicar.",
+      ] : []),
       "Usar únicamente las imágenes Luna incluidas y aprobadas.",
       "Copiar título, categoría, specifics, precio, cantidad, Custom Label, envío y políticas en Seller Hub.",
       "Revisar el preview final de Seller Hub antes de publicar.",
@@ -281,6 +303,8 @@ export function buildVerifiedManualSellerHubHandoff(input: {
     generatedAt: input.generatedAt,
     safety: { factsOnly: true, openAiCalls: 0, ebayWrites: 0, competitorContentUsed: false,
       automaticPricingUsed: false, operatorPriceApproved: true, productionChanged: false,
+      controlledRiskManualException: controlledRisk,
+      promotedListingsAllowed: controlledRisk ? false : null,
       authoritativeFactPackageHash: authoritativeFactsPackage!.factPackageHash },
   }
   const packageHash = hash(listingPackage)

@@ -10,6 +10,7 @@ import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-a
 import { evaluateEbayProductApprovalFulfillmentBasis } from "@/lib/ebay/ebay-fulfillment-policy-compliance"
 import { getProductResearchQueryPlanStatus } from "@/lib/ebay/ebay-product-research-query-plan"
 import {
+  authorizeSameDayControlledRiskOverride,
   confirmSameDayLuna,
   decideSameDayImages,
   decideSameDayProduct,
@@ -262,6 +263,62 @@ export async function POST(req: Request) {
       const pilot = await getSameDayPilot({ supabase: access.supabase, accountKey: access.accountKey })
       return NextResponse.json({ success: true, pilot, continuation, autoResumed: true,
         safety: { openAiCalls: 0, ebayWrites: 0, automaticPricingUsed: false, productionChanged: false } })
+    }
+    if (body.action === "controlled_risk_override") {
+      const candidateId = uuid(body.candidateId)
+      const salePrice = Number(body.salePrice)
+      const fulfillmentDecision = evaluateEbayProductApprovalFulfillmentBasis(
+        "APPROVE",
+        body.fulfillmentBasis,
+      )
+      if (!candidateId || !Number.isFinite(salePrice) || salePrice <= 0 ||
+        !fulfillmentDecision.allowed || !fulfillmentDecision.basis ||
+        body.imageRightsConfirmed !== true || body.openAiImageSpendApproved !== true ||
+        body.commercialRiskAccepted !== true || body.noPromotionConfirmed !== true ||
+        body.voluntaryReturnsPolicyAcknowledged !== true ||
+        body.ebayMoneyBackGuaranteeAcknowledged !== true) {
+        return NextResponse.json({
+          success: false,
+          error: "SAME_DAY_PILOT_CONTROLLED_RISK_OVERRIDE_INVALID",
+        }, { status: 400 })
+      }
+      await authorizeSameDayControlledRiskOverride({
+        supabase: access.supabase,
+        accountKey: access.accountKey,
+        actorId: access.auth.userId,
+        candidateId,
+        salePrice,
+        fulfillmentBasis: fulfillmentDecision.basis,
+        imageRightsConfirmed: true,
+        openAiImageSpendApproved: true,
+        commercialRiskAccepted: true,
+        noPromotionConfirmed: true,
+        voluntaryReturnsPolicyAcknowledged: true,
+        ebayMoneyBackGuaranteeAcknowledged: true,
+      })
+      const continuation = scheduleImmediateContinuation({
+        supabase: access.supabase,
+        accountKey: access.accountKey,
+        workerId: `controlled-risk:${access.auth.userId}`,
+      })
+      const pilot = await getSameDayPilot({
+        supabase: access.supabase,
+        accountKey: access.accountKey,
+      })
+      return NextResponse.json({
+        success: true,
+        pilot,
+        continuation,
+        autoResumed: true,
+        safety: {
+          minimumNetMarginPercent: 10,
+          promotionAllowed: false,
+          manualPublicationOnly: true,
+          automaticPricingUsed: false,
+          ebayWrites: 0,
+          productionChanged: false,
+        },
+      })
     }
     if (body.action === "image_decision") {
       const decision = body.decision === "APPROVE" || body.decision === "REJECT" ? body.decision : null

@@ -16,6 +16,10 @@ import {
   type SameDayCandidateInput,
 } from "./ebay-same-day-pilot-domain"
 import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics } from "./ebay-unit-economics"
+import {
+  EBAY_CONTROLLED_RISK_OVERRIDE_VERSION,
+  evaluateControlledRiskManualOverride,
+} from "./ebay-controlled-risk-manual-override"
 import { ebayDraftOnlyEconomicsConfig } from "./ebay-draft-only-readiness"
 import {
   PRODUCT_FACTS_ENGINE_VERSION,
@@ -237,6 +241,75 @@ function operationDate(now: Date) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Managua", year: "numeric", month: "2-digit", day: "2-digit" }).format(now)
 }
 
+function controlledRiskEvaluationForCandidate(
+  candidate: JsonRecord,
+  operatorSalePrice?: number | null,
+) {
+  const evidence = record(candidate.evidence_summary)
+  const selectionIdentity = record(evidence.selectionIdentity)
+  const evidenceTiers = record(evidence.evidenceTiers)
+  const exactSoldReference = record(evidence.exactSoldMarketReference)
+  const highestSoldExactListing = record(exactSoldReference.highestSoldExactListing)
+  const exactSoldReferenceReconciledAt = Date.parse(
+    text(evidence.exactSoldMarketReferenceReconciledAt),
+  )
+  const exactSoldEvidenceFresh = Number.isFinite(exactSoldReferenceReconciledAt) &&
+    exactSoldReferenceReconciledAt <= Date.now() + 300_000 &&
+    Date.now() - exactSoldReferenceReconciledAt <= 72 * 60 * 60_000
+  const soldPrice = number(highestSoldExactListing.soldPrice)
+  const shipping = number(highestSoldExactListing.shipping)
+  const competitiveBuyerPrice = soldPrice === null
+    ? null
+    : money(soldPrice + Math.max(0, shipping ?? 0))
+  const economics = record(candidate.economics_summary)
+  const config = record(economics.config)
+  const facts = record(candidate.product_facts_summary)
+  const gates = record(facts.gates)
+  const decision = record(candidate.commercial_decision_summary)
+  const evaluation = evaluateControlledRiskManualOverride({
+    supplierCost: economics.confirmedLunaPrice ?? economics.supplierCost,
+    operatorSalePrice,
+    exactSoldReferenceTotalBuyerPrice: competitiveBuyerPrice,
+    confirmedSoldExactQuantity: exactSoldReference.confirmedSoldQuantity ??
+      evidence.soldExactCount,
+    exactIdentityConfirmed: evidence.exactIdentityConfirmed === true ||
+      selectionIdentity.exactIdentityConfirmed === true ||
+      Number(evidenceTiers.exactIdentityMatches ?? 0) > 0,
+    exactOfferPackVerified: selectionIdentity.exactOfferPackVerified === true ||
+      Number(evidenceTiers.exactIdentityMatches ?? 0) > 0,
+    lunaAvailable: economics.available === true,
+    evidenceFresh: evidence.evidenceFresh === true || exactSoldEvidenceFresh,
+    decisionFresh: decision.fresh === true,
+    decisionPackageHashMatches: decision.packageHashMatches === true,
+    factsReady: facts.currentRunBound === true && gates.OPENAI_INPUT_READY === true,
+    shippingEstimateReady: gates.SHIPPING_ESTIMATE_READY === true,
+    decisionVerdict: decision.verdict,
+    decisionBlockers: decision.blockers,
+    baseConfig: {
+      estimatedEbayFeeRate: number(config.estimatedEbayFeeRate) ?? undefined,
+      fixedOrderFee: number(config.fixedOrderFee) ?? undefined,
+      estimatedOutboundShipping: number(config.estimatedOutboundShipping) ?? undefined,
+      returnsReserveRate: number(config.returnsReserveRate) ?? undefined,
+      promotedListingsReserveRate: number(config.promotedListingsReserveRate) ?? undefined,
+      minimumNetProfit: number(config.minimumNetProfit) ?? undefined,
+      minimumNetMarginPercent: number(config.minimumNetMarginPercent) ?? undefined,
+      minimumRoiPercent: number(config.minimumRoiPercent) ?? undefined,
+    },
+  })
+  return {
+    evaluation,
+    exactSoldReference: {
+      totalBuyerPrice: competitiveBuyerPrice,
+      soldPrice,
+      shipping,
+      confirmedSoldQuantity: evaluation.confirmedSoldExactQuantity,
+      capturePeriod: record(exactSoldReference.capturePeriod),
+      confidence: text(exactSoldReference.confidence),
+      source: text(exactSoldReference.source),
+    },
+  }
+}
+
 function candidateInput(
   row: JsonRecord,
   latestVariant: JsonRecord = {},
@@ -428,7 +501,7 @@ async function currentState(
   if (decisionError) throw new Error("SAME_DAY_PILOT_DECISION_EXPLANATION_READ_FAILED")
   const decisionById = new Map((decisionRows ?? []).map((entry) => [text(entry.id), record(entry)]))
   const decisionLinkByQueueItem = new Map((decisionLinks ?? []).map((entry) => [text(entry.id), record(entry)]))
-  const explainedCandidates = anchoredCandidates.map((candidate) => {
+  const candidatesWithDecision = anchoredCandidates.map((candidate) => {
     const decisionLink = decisionLinkByQueueItem.get(text(candidate.queue_item_id)) ?? {}
     const decision = decisionById.get(text(decisionLink.decision_package_id)) ?? {}
     if (!text(decision.id)) return candidate
@@ -457,6 +530,22 @@ async function currentState(
           confirmedSoldExact: number(comparableCounts.confirmedSoldExact) ?? 0,
         },
         blockers: strings(decisionBlock.blockers),
+      },
+    }
+  })
+  const explainedCandidates = candidatesWithDecision.map((candidate) => {
+    if (!['REJECTED', 'BLOCKED'].includes(text(candidate.machine_state))) return candidate
+    const controlledRisk = controlledRiskEvaluationForCandidate(record(candidate))
+    return {
+      ...candidate,
+      controlled_risk_override_preview: {
+        available: controlledRisk.evaluation.available,
+        blockers: controlledRisk.evaluation.blockers,
+        minimumRiskPrice: controlledRisk.evaluation.minimumRiskPrice,
+        maximumCompetitivePrice: controlledRisk.evaluation.maximumCompetitivePrice,
+        confirmedSoldExactQuantity: controlledRisk.evaluation.confirmedSoldExactQuantity,
+        exactSoldReference: controlledRisk.exactSoldReference,
+        policy: controlledRisk.evaluation.policy,
       },
     }
   })
@@ -1826,6 +1915,179 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
           checkpoint: { confirmedLunaPrice: input.price, quantityKnown: input.quantity != null } } })
     }
   }
+  await refreshRunProjection(input.supabase, state.run.id)
+  return getSameDayPilot(input)
+}
+
+export async function authorizeSameDayControlledRiskOverride(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorId: string
+  candidateId: string
+  salePrice: number
+  fulfillmentBasis: EbayCompliantFulfillmentBasis
+  imageRightsConfirmed: boolean
+  openAiImageSpendApproved: boolean
+  commercialRiskAccepted: boolean
+  noPromotionConfirmed: boolean
+  voluntaryReturnsPolicyAcknowledged: boolean
+  ebayMoneyBackGuaranteeAcknowledged: boolean
+}) {
+  if (input.commercialRiskAccepted !== true || input.noPromotionConfirmed !== true ||
+    input.voluntaryReturnsPolicyAcknowledged !== true ||
+    input.ebayMoneyBackGuaranteeAcknowledged !== true) {
+    throw new Error("SAME_DAY_PILOT_CONTROLLED_RISK_ACKNOWLEDGEMENTS_REQUIRED")
+  }
+  const fulfillmentBasis = normalizeEbayCompliantFulfillmentBasis(input.fulfillmentBasis)
+  if (!fulfillmentBasis) {
+    throw new Error("SAME_DAY_PILOT_COMPLIANT_FULFILLMENT_BASIS_REQUIRED")
+  }
+  if (input.imageRightsConfirmed !== true) {
+    throw new Error("SAME_DAY_PILOT_IMAGE_RIGHTS_CONFIRMATION_REQUIRED")
+  }
+  if (input.openAiImageSpendApproved !== true) {
+    throw new Error("SAME_DAY_PILOT_OPENAI_IMAGE_SPEND_APPROVAL_REQUIRED")
+  }
+  const state = await getSameDayPilot(input)
+  if (!state) throw new Error("SAME_DAY_PILOT_RUN_MISSING")
+  const candidate = state.candidates.find((entry) => entry.id === input.candidateId)
+  if (!candidate || candidate.machine_state !== "REJECTED" ||
+    candidate.state !== "REJECTED_TODAY") {
+    throw new Error("SAME_DAY_PILOT_CONTROLLED_RISK_CANDIDATE_INVALID")
+  }
+  const controlledRisk = controlledRiskEvaluationForCandidate(
+    record(candidate),
+    input.salePrice,
+  )
+  if (!controlledRisk.evaluation.available || !controlledRisk.evaluation.economics?.ready ||
+    !controlledRisk.evaluation.economics.passesProfitGate) {
+    throw new Error("SAME_DAY_PILOT_CONTROLLED_RISK_NOT_ELIGIBLE")
+  }
+  const factsSummary = record(candidate.product_facts_summary)
+  if (factsSummary.currentRunBound !== true ||
+    record(factsSummary.gates).OPENAI_INPUT_READY !== true) {
+    throw new Error("SAME_DAY_PILOT_PRODUCT_FACTS_APPROVAL_BLOCKED")
+  }
+  const approvedAt = new Date().toISOString()
+  const existingEconomics = record(candidate.economics_summary)
+  const standardMinimumOperatorPrice = number(existingEconomics.minimumOperatorPrice)
+  const economicsSummary = {
+    ...existingEconomics,
+    ...controlledRisk.evaluation.economics,
+    standardMinimumOperatorPrice,
+    minimumOperatorPrice: controlledRisk.evaluation.minimumRiskPrice,
+    operatorApprovedSalePrice: controlledRisk.evaluation.operatorSalePrice,
+    operatorPriceApproved: true,
+    operatorApprovedAt: approvedAt,
+    operatorActorRecorded: Boolean(input.actorId),
+    automaticPricingUsed: false,
+    fulfillmentBasis,
+    fulfillmentBasisConfirmedAt: approvedAt,
+    fulfillmentBasisActorRecorded: Boolean(input.actorId),
+    fulfillmentBasisAttestationVersion: "EBAY_FULFILLMENT_BASIS_V1_2026_07_18",
+    imageRightsConfirmed: true,
+    imageRightsConfirmedAt: approvedAt,
+    imageRightsActorRecorded: Boolean(input.actorId),
+    imageRightsAttestationVersion: "LUNA_AUTHORIZED_IMAGE_OPERATOR_ATTESTATION_V1_2026_07_18",
+    openAiImageSpendApproved: true,
+    openAiImageSpendApprovedAt: approvedAt,
+    openAiImageSpendActorRecorded: Boolean(input.actorId),
+    openAiImageMaximumCallsApproved: 1,
+    openAiImageQualityApproved: "low",
+    controlledRiskOverride: {
+      authorized: true,
+      version: EBAY_CONTROLLED_RISK_OVERRIDE_VERSION,
+      authorizedAt: approvedAt,
+      minimumNetMarginPercent: 10,
+      minimumRiskPrice: controlledRisk.evaluation.minimumRiskPrice,
+      maximumCompetitivePrice: controlledRisk.evaluation.maximumCompetitivePrice,
+      confirmedSoldExactQuantity: controlledRisk.evaluation.confirmedSoldExactQuantity,
+      exactSoldReference: controlledRisk.exactSoldReference,
+      promotionAllowed: false,
+      promotedListingsReserveRate: 0,
+      voluntaryReturns: "NOT_ACCEPTED_WHERE_EBAY_ALLOWS",
+      ebayMoneyBackGuaranteeStillApplies: true,
+      commercialRiskAccepted: true,
+      automaticPricingUsed: false,
+      manualPublicationOnly: true,
+      ebayWrites: 0,
+    },
+    fulfillmentDocumentsStored: false,
+    fulfillmentPiiStored: false,
+  }
+  const { data: updatedCandidate, error: candidateError } = await input.supabase
+    .from("ebay_same_day_pilot_candidates")
+    .update({
+      economics_summary: economicsSummary,
+      state: "READY_FOR_CONTENT",
+      blockers: [],
+      next_automated_action: "Construir el paquete manual sin promoción.",
+      next_human_action: "Revisar las imágenes antes de publicar manualmente.",
+      updated_at: approvedAt,
+    })
+    .eq("id", candidate.id)
+    .eq("run_id", state.run.id)
+    .eq("machine_state", "REJECTED")
+    .select("id")
+    .maybeSingle()
+  if (candidateError || !updatedCandidate) {
+    throw new Error("SAME_DAY_PILOT_CONTROLLED_RISK_UPDATE_FAILED")
+  }
+  await transition({
+    supabase: input.supabase,
+    runId: state.run.id,
+    candidateId: candidate.id,
+    previousState: "REJECTED",
+    nextState: "GENERATING_LISTING_CONTENT",
+    reasonCode: "CONTROLLED_RISK_OVERRIDE_AUTHORIZED",
+    triggeredBy: "USER",
+    checkpoint: {
+      version: EBAY_CONTROLLED_RISK_OVERRIDE_VERSION,
+      operatorPriceApproved: true,
+      minimumNetMarginPercent: 10,
+      promotionAllowed: false,
+      voluntaryReturnsPolicyAcknowledged: true,
+      ebayMoneyBackGuaranteeAcknowledged: true,
+      confirmedSoldExactQuantity: controlledRisk.evaluation.confirmedSoldExactQuantity,
+      manualPublicationOnly: true,
+      openAiCalls: 0,
+      ebayWrites: 0,
+    },
+    nextAutomaticAction: "Construir un paquete original desde facts verificados.",
+    nextHumanAction: "Ninguna hasta revisar las imágenes.",
+    job: {
+      jobType: "BUILD_MANUAL_SELLER_HUB_HANDOFF",
+      idempotencyKey: `${state.run.id}:${candidate.id}:CONTROLLED_RISK_BUILD_MANUAL_HANDOFF`,
+      checkpoint: {
+        factRunId: factsSummary.factRunId,
+        controlledRiskOverrideVersion: EBAY_CONTROLLED_RISK_OVERRIDE_VERSION,
+        openAiCalls: 0,
+        ebayWrites: 0,
+      },
+    },
+  })
+  const { error: eventError } = await input.supabase
+    .from("ebay_same_day_pilot_events")
+    .upsert({
+      run_id: state.run.id,
+      event_type: "CONTROLLED_RISK_OVERRIDE_AUTHORIZED",
+      event_payload: {
+        candidateId: candidate.id,
+        version: EBAY_CONTROLLED_RISK_OVERRIDE_VERSION,
+        minimumNetMarginPercent: 10,
+        promotionAllowed: false,
+        voluntaryReturns: "NOT_ACCEPTED_WHERE_EBAY_ALLOWS",
+        ebayMoneyBackGuaranteeStillApplies: true,
+        manualPublicationOnly: true,
+        operatorActorRecorded: Boolean(input.actorId),
+      },
+      idempotency_key: `${state.run.id}:${candidate.id}:CONTROLLED_RISK_OVERRIDE_AUTHORIZED`,
+      ebay_read_calls: 0,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (eventError) throw new Error("SAME_DAY_PILOT_CONTROLLED_RISK_EVENT_FAILED")
   await refreshRunProjection(input.supabase, state.run.id)
   return getSameDayPilot(input)
 }

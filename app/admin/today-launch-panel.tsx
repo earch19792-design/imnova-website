@@ -143,7 +143,8 @@ export function TodayLaunchPanel() {
       <LivePilotMonitor monitor={liveMonitor} pilotProgress={pilotProgress}
         lastObservedAt={lastObservedAt} nextCycleAllowed={nextCycleAllowed} />
       {liveMonitor.rejectionSummaries.length > 0 && <RejectedCandidateExplanations
-        summaries={liveMonitor.rejectionSummaries} />}
+        summaries={liveMonitor.rejectionSummaries} working={working}
+        onAuthorize={(body) => request(body)} />}
       {quotaPaused && <p className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 text-sm text-amber-50">eBay pausó únicamente la verificación exacta. La selección, Luna y los paquetes locales permanecen disponibles; Seller OS retomará el mismo producto automáticamente{quotaResumeAt ? ` después de ${new Date(quotaResumeAt).toLocaleString("es-NI")}` : " cuando eBay libere la cuota"}.</p>}
       <section aria-labelledby="operator-task-heading" className="mt-6">
         <p className="text-[10px] font-black uppercase tracking-widest text-amber-100/60">2 · Tu decisión</p>
@@ -176,8 +177,10 @@ export function TodayLaunchPanel() {
   </section>
 }
 
-function RejectedCandidateExplanations({ summaries }: {
+function RejectedCandidateExplanations({ summaries, working, onAuthorize }: {
   summaries: SameDayLiveMonitor["rejectionSummaries"]
+  working: boolean
+  onAuthorize: (body: Row) => Promise<void>
 }) {
   return <section aria-labelledby="rejected-candidates-heading"
     className="mt-4 rounded-3xl border border-red-200/25 bg-red-300/[0.055] p-4 sm:p-5">
@@ -195,8 +198,114 @@ function RejectedCandidateExplanations({ summaries }: {
       </div>
       <p className="mt-3 break-words text-sm font-black leading-6 text-red-100">{summary.headline}</p>
       {summary.details.length > 0 && <ul className="mt-2 grid gap-1.5 text-xs leading-5 text-white/60">{summary.details.map((detail) => <li key={detail} className="flex gap-2"><span aria-hidden="true" className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-red-200/70" /><span>{detail}</span></li>)}</ul>}
+      <ControlledRiskOverrideAuthorization summary={summary} working={working}
+        onAuthorize={onAuthorize} />
     </article>)}</div>
   </section>
+}
+
+function ControlledRiskOverrideAuthorization({ summary, working, onAuthorize }: {
+  summary: SameDayLiveMonitor["rejectionSummaries"][number]
+  working: boolean
+  onAuthorize: (body: Row) => Promise<void>
+}) {
+  const [salePrice, setSalePrice] = useState("")
+  const [fulfillmentBasis, setFulfillmentBasis] = useState("")
+  const [commercialRiskAccepted, setCommercialRiskAccepted] = useState(false)
+  const [noPromotionConfirmed, setNoPromotionConfirmed] = useState(false)
+  const [voluntaryReturnsPolicyAcknowledged, setVoluntaryReturnsPolicyAcknowledged] = useState(false)
+  const [ebayMoneyBackGuaranteeAcknowledged, setEbayMoneyBackGuaranteeAcknowledged] = useState(false)
+  const [imageRightsConfirmed, setImageRightsConfirmed] = useState(false)
+  const [openAiImageSpendApproved, setOpenAiImageSpendApproved] = useState(false)
+  const preview = summary.controlledRiskOverride
+  const numericPrice = Number(salePrice)
+  const priceInsideWindow = Number.isFinite(numericPrice) && numericPrice > 0 &&
+    preview.minimumRiskPrice !== null && preview.maximumCompetitivePrice !== null &&
+    numericPrice >= preview.minimumRiskPrice && numericPrice <= preview.maximumCompetitivePrice
+  const ready = preview.available && priceInsideWindow && Boolean(fulfillmentBasis) &&
+    commercialRiskAccepted && noPromotionConfirmed && voluntaryReturnsPolicyAcknowledged &&
+    ebayMoneyBackGuaranteeAcknowledged && imageRightsConfirmed && openAiImageSpendApproved
+
+  if (!preview.available) {
+    return <details className="mt-4 rounded-xl border border-amber-200/20 bg-amber-200/[0.045] p-3">
+      <summary className="flex min-h-11 cursor-pointer items-center text-xs font-black text-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-200">Excepción final de 10% no disponible</summary>
+      <p className="mt-2 text-xs leading-5 text-white/55">No puede usarse para saltar identidad, pack, cumplimiento, ficha técnica o ausencia de ventas exactas.</p>
+      <ul className="mt-2 grid gap-1.5 text-xs leading-5 text-amber-50/80">{preview.blockers.map((blocker) => <li key={blocker}>• {blocker}</li>)}</ul>
+    </details>
+  }
+
+  return <section aria-label="Autorización excepcional de riesgo controlado"
+    className="mt-4 rounded-2xl border border-amber-200/35 bg-amber-200/[0.075] p-4">
+    <p className="text-[10px] font-black uppercase tracking-widest text-amber-100/65">Última instancia · autorización manual</p>
+    <h5 className="mt-1 font-black text-amber-50">Prueba competitiva con margen neto mínimo de 10%</h5>
+    <p className="mt-2 text-xs leading-5 text-white/65">La decisión normal continúa siendo NO_GO. Esta excepción sólo permite preparar un paquete manual porque existen ventas exactas confirmadas y una ventana de precio que todavía conserva el 10%.</p>
+    <div className="mt-3 grid gap-2 sm:grid-cols-3">
+      <Metric label="Piso propio 10%" value={`$${Number(preview.minimumRiskPrice).toFixed(2)}`} />
+      <Metric label="Máximo competitivo" value={`$${Number(preview.maximumCompetitivePrice).toFixed(2)}`} />
+      <Metric label="Ventas exactas 90 días" value={String(preview.confirmedSoldExactQuantity)} />
+    </div>
+    <p className="mt-2 text-xs text-white/55">Referencia descriptiva de Product Research · confianza {String(preview.referenceConfidence ?? "N/D").toLowerCase()}. Seller OS no elige el precio por ti.</p>
+    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+      <label className="text-xs font-bold">Precio manual dentro de la ventana <span className="text-red-200">*</span>
+        <input value={salePrice} onChange={(event) => setSalePrice(event.target.value)}
+          inputMode="decimal" aria-required="true" aria-invalid={Boolean(salePrice) && !priceInsideWindow}
+          className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-200 ${salePrice && !priceInsideWindow ? "border-red-400" : "border-white/15"}`} />
+        <span className={`mt-1 block font-normal ${salePrice && !priceInsideWindow ? "text-red-200" : "text-white/55"}`}>Debe estar entre ${Number(preview.minimumRiskPrice).toFixed(2)} y ${Number(preview.maximumCompetitivePrice).toFixed(2)}.</span>
+      </label>
+      <label className="text-xs font-bold">Base de fulfillment <span className="text-red-200">*</span>
+        <select value={fulfillmentBasis} onChange={(event) => setFulfillmentBasis(event.target.value)}
+          className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-200 ${fulfillmentBasis ? "border-white/15" : "border-red-400"}`}>
+          <option value="">Seleccionar</option>
+          <option value="OWNED_INVENTORY">Inventario propio disponible</option>
+          <option value="AUTHORIZED_WHOLESALE_FULFILLMENT_AGREEMENT">Contrato vigente con Luna / mayorista autorizado</option>
+        </select>
+      </label>
+    </div>
+    <fieldset className="mt-3 grid gap-2 text-xs leading-5 sm:grid-cols-2">
+      <legend className="mb-2 font-black text-amber-50">Confirmaciones obligatorias</legend>
+      <RiskCheckbox checked={commercialRiskAccepted} onChange={setCommercialRiskAccepted}
+        label="Acepto conscientemente el margen reducido y la decisión normal NO_GO." />
+      <RiskCheckbox checked={noPromotionConfirmed} onChange={setNoPromotionConfirmed}
+        label="No activar Promoted Listings ni otra publicidad en esta prueba." />
+      <RiskCheckbox checked={voluntaryReturnsPolicyAcknowledged} onChange={setVoluntaryReturnsPolicyAcknowledged}
+        label="Usar sin devoluciones voluntarias sólo donde eBay y la categoría lo permitan." />
+      <RiskCheckbox checked={ebayMoneyBackGuaranteeAcknowledged} onChange={setEbayMoneyBackGuaranteeAcknowledged}
+        label="Entiendo que la Garantía al cliente de eBay sigue aplicando aunque no acepte devoluciones voluntarias." />
+      <RiskCheckbox checked={imageRightsConfirmed} onChange={setImageRightsConfirmed}
+        label="Confirmo que las imágenes de Luna/proveedor están autorizadas y corresponden al producto exacto." />
+      <RiskCheckbox checked={openAiImageSpendApproved} onChange={setOpenAiImageSpendApproved}
+        label="Autorizo hasta 1 llamada OpenAI low para el fondo seguro del set de imágenes." />
+    </fieldset>
+    <button type="button" disabled={working || !ready}
+      onClick={() => void onAuthorize({
+        action: "controlled_risk_override",
+        candidateId: summary.candidateId,
+        salePrice: numericPrice,
+        fulfillmentBasis,
+        commercialRiskAccepted,
+        noPromotionConfirmed,
+        voluntaryReturnsPolicyAcknowledged,
+        ebayMoneyBackGuaranteeAcknowledged,
+        imageRightsConfirmed,
+        openAiImageSpendApproved,
+      })}
+      className="mt-4 min-h-12 w-full rounded-xl bg-amber-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 disabled:opacity-40 sm:w-auto">
+      AUTORIZAR EXCEPCIÓN Y PREPARAR LISTING MANUAL
+    </button>
+    <p className="mt-2 text-xs leading-5 text-amber-50/75">No publica en eBay: prepara contenido, seis imágenes y el paquete de Seller Hub para tu revisión final.</p>
+  </section>
+}
+
+function RiskCheckbox({ checked, onChange, label }: {
+  checked: boolean
+  onChange: (value: boolean) => void
+  label: string
+}) {
+  return <label className={`flex min-h-12 items-start gap-3 rounded-xl border p-3 ${checked ? "border-emerald-200/25 text-emerald-50" : "border-red-300/25 text-red-100"}`}>
+    <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)}
+      className="mt-1 h-5 w-5 shrink-0 accent-emerald-200" />
+    <span>{label}</span>
+  </label>
 }
 
 function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt, nextCycleAllowed }: {
@@ -680,9 +789,11 @@ function ManualHandoffCard({ candidate }: { candidate: Row }) {
     : String(shipping.operatorAction ?? "Confirmar envío en Seller Hub.")
   const controlledExploratoryTest = candidate.evidence_summary?.commercialEvidenceMode ===
     "CONTROLLED_EXPLORATORY_TEST"
+  const controlledRiskOverride = candidate.economics_summary?.controlledRiskOverride?.authorized === true
   return <article className="min-w-0 overflow-hidden rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.06] p-4">
     <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-black uppercase text-emerald-100/65">{controlledExploratoryTest ? "Prueba controlada · paquete verificado" : "Mercado validado · paquete verificado"}</p><h4 className="mt-1 break-words font-black">{candidate.product_title}</h4><p className="mt-1 break-words text-xs text-white/55">SKU {candidate.supplier_sku} · {imageUrls.length} imagen(es) autorizada(s)</p></div><a href="https://www.ebay.com/sh/ovw" target="_blank" rel="noreferrer" className="inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-emerald-200 px-4 text-center font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-100 sm:w-auto">ABRIR SELLER HUB Y PUBLICAR</a></div>
     <div aria-label="Ruta de publicación" className="mt-4 grid grid-cols-2 gap-2 text-xs font-black sm:grid-cols-4"><span className="rounded-xl border border-white/10 p-2">1 · Datos esenciales</span><span className="rounded-xl border border-white/10 p-2">2 · Ficha técnica</span><span className="rounded-xl border border-white/10 p-2">3 · Envío e imágenes</span><span className="rounded-xl border border-white/10 p-2">4 · Revisar y publicar</span></div>
+    {controlledRiskOverride && <div className="mt-3 rounded-xl border border-amber-200/35 bg-amber-200/[0.08] p-3 text-sm leading-6 text-amber-50"><strong>Excepción manual de margen 10%:</strong> no actives Promoted Listings. Selecciona una política sin devoluciones voluntarias sólo donde eBay lo permita; la Garantía al cliente de eBay continúa aplicando. Verifica otra vez el precio antes de publicar.</div>}
     {handoff.publicationReadiness === "READY_FOR_MANUAL_SHIPPING_CONFIRMATION" && <p className="mt-3 rounded-xl border border-amber-200/25 bg-amber-200/[0.06] p-3 text-sm text-amber-50"><strong>Confirmación puntual pendiente:</strong> el paquete no copia medidas estimadas. Confirma peso/dimensiones en Seller Hub o usa una política de envío verificada compatible.</p>}
     <div className="mt-4 grid gap-3 sm:grid-cols-2"><CopyField label="Título" value={String(handoff.title ?? "")} /><CopyField label="Descripción" value={String(handoff.description ?? "")} multiline /></div>
     <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><CopyField label="Precio" value={handoff.price ? Number(handoff.price).toFixed(2) : ""} /><CopyField label="Cantidad" value={handoff.quantity == null ? "" : String(handoff.quantity)} /><CopyField label="Custom Label / SKU" value={String(handoff.customLabel ?? "")} /><CopyField label="Categoría eBay" value={String(handoff.categoryId ?? "")} /><CopyField label="Condición eBay" value={String(handoff.conditionId ?? "")} /><CopyField label="Base de fulfillment" value={fulfillmentBasisLabel(String(fulfillmentCompliance.basis ?? ""))} /><CopyField label="Item specifics" value={specificsText} multiline /></div>

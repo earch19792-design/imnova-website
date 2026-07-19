@@ -15,6 +15,7 @@ import {
 import {
   getProductResearchBrowserCaptureStatus,
   importProductResearchBrowserCapture,
+  isProductResearchNinetyDayWindow,
   type ProductResearchBrowserCapture,
 } from "@/lib/ebay/ebay-product-research-browser-capture"
 import { reconcileProductResearchObservations } from "@/lib/ebay/ebay-product-research-identity-reconciliation"
@@ -145,6 +146,9 @@ export async function POST(req: Request) {
         competitorImagesDownloaded: 0, piiStored: false,
         openAiCalls: 0, ebayWrites: 0, canPublish: false,
       } }, 200)
+    }
+    if (plannedTask && !isProductResearchNinetyDayWindow(capture.dateRange)) {
+      throw new Error("PRODUCT_RESEARCH_LAST_90_DAYS_REQUIRED")
     }
     if (plannedTask?.alreadyProcessed && plannedTask.captureBatchId) {
       const queryPlan = await getProductResearchQueryPlanStatus({

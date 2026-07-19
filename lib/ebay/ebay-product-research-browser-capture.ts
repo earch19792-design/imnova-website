@@ -22,6 +22,27 @@ export const PRODUCT_RESEARCH_BROWSER_CAPTURE_SOURCE =
 export const PRODUCT_RESEARCH_CAPTURE_MAX_ROWS = 200
 export const PRODUCT_RESEARCH_CAPTURE_MAX_BYTES = 100_000
 
+export function isProductResearchNinetyDayWindow(
+  value: ProductResearchBrowserCapture["dateRange"],
+) {
+  const label = typeof value?.label === "string"
+    ? value.label.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    : ""
+  if (/\b90\b/.test(label) && /(?:day|days|dia|dias)/.test(label)) return true
+  const timestamp = (entry: unknown) => {
+    if (typeof entry !== "string" || !entry.trim()) return null
+    const numeric = Number(entry)
+    if (Number.isFinite(numeric) && numeric > 0) return numeric
+    const parsed = Date.parse(entry)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  const start = timestamp(value?.start)
+  const end = timestamp(value?.end)
+  if (start === null || end === null || end <= start) return false
+  const days = (end - start) / 86_400_000
+  return days >= 89 && days <= 91
+}
+
 type JsonRecord = Record<string, unknown>
 
 export type ProductResearchLunaMatch =

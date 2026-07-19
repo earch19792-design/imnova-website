@@ -22,6 +22,14 @@ export type SameDayCandidateRejectionSummary = {
   productTitle: string
   headline: string
   details: string[]
+  controlledRiskOverride: {
+    available: boolean
+    blockers: string[]
+    minimumRiskPrice: number | null
+    maximumCompetitivePrice: number | null
+    confirmedSoldExactQuantity: number
+    referenceConfidence: string | null
+  }
 }
 
 export type SameDayLiveMonitor = {
@@ -93,6 +101,24 @@ const BLOCKER_LABELS: Record<string, string> = {
   LOOP1_REANALYSIS_TIMEOUT: "El reanálisis comercial no terminó dentro de la ventana segura.",
 }
 
+const CONTROLLED_RISK_BLOCKER_LABELS: Record<string, string> = {
+  CONFIRMED_SOLD_EXACT_REQUIRED: "No existen ventas exactas confirmadas para esta presentación.",
+  EXACT_SOLD_COMPETITIVE_REFERENCE_REQUIRED: "Falta un precio vendido exacto que permita comprobar competitividad.",
+  TEN_PERCENT_MARGIN_NOT_COMPETITIVE: "El precio mínimo para conservar 10% de margen supera la referencia exacta vendida.",
+  EXACT_IDENTITY_REQUIRED: "La identidad exacta todavía no está confirmada.",
+  EXACT_OFFER_PACK_REQUIRED: "La presentación exacta todavía no está confirmada.",
+  LUNA_AVAILABILITY_REQUIRED: "Luna no está confirmada como disponible.",
+  FRESH_EVIDENCE_REQUIRED: "La evidencia comercial está vencida.",
+  FRESH_DECISION_PACKAGE_REQUIRED: "La decisión comercial está vencida.",
+  DECISION_PACKAGE_HASH_MISMATCH: "La decisión ya no coincide con la evidencia actual.",
+  VERIFIED_PRODUCT_FACTS_REQUIRED: "La ficha técnica o los aspectos obligatorios no están listos.",
+  SHIPPING_ESTIMATE_REQUIRED: "Falta una estimación conservadora del envío.",
+  NON_ECONOMIC_DECISION_BLOCKER: "Existe un bloqueo de identidad, cumplimiento o logística que no puede exceptuarse.",
+  ECONOMICS_ONLY_NO_GO_REQUIRED: "Esta excepción sólo aplica cuando el único bloqueo es económico.",
+  CONTROLLED_RISK_REQUIRES_NO_GO_DECISION: "La decisión comercial original no corresponde a un NO_GO económico.",
+  CONTROLLED_RISK_PRICE_FLOOR_UNAVAILABLE: "No fue posible calcular el piso interno de 10%.",
+}
+
 function text(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
 }
@@ -131,6 +157,9 @@ export function explainSameDayRejectedCandidate(candidate: Row): SameDayCandidat
   const facts = candidate.product_facts_summary && typeof candidate.product_facts_summary === "object"
     ? candidate.product_facts_summary as Row : {}
   const gates = facts.gates && typeof facts.gates === "object" ? facts.gates as Row : {}
+  const controlledRisk = candidate.controlled_risk_override_preview &&
+    typeof candidate.controlled_risk_override_preview === "object"
+    ? candidate.controlled_risk_override_preview as Row : {}
   const economicsConfig = currentEconomics.config && typeof currentEconomics.config === "object"
     ? currentEconomics.config as Row : {}
   const feePolicy = currentEconomics.feePolicy && typeof currentEconomics.feePolicy === "object"
@@ -140,6 +169,13 @@ export function explainSameDayRejectedCandidate(candidate: Row): SameDayCandidat
   const currentFloor = numeric(currentEconomics.minimumOperatorPrice)
   const soldExact = numeric(decisionEvidence.confirmedSoldExact) ??
     numeric((candidate.evidence_summary as Row | undefined)?.soldExactCount) ?? 0
+  const candidateEvidence = candidate.evidence_summary &&
+    typeof candidate.evidence_summary === "object" ? candidate.evidence_summary as Row : {}
+  const evidenceTiers = candidateEvidence.evidenceTiers &&
+    typeof candidateEvidence.evidenceTiers === "object" ? candidateEvidence.evidenceTiers as Row : {}
+  const reconciliationCoverage = candidateEvidence.reconciliationCoverage &&
+    typeof candidateEvidence.reconciliationCoverage === "object"
+    ? candidateEvidence.reconciliationCoverage as Row : {}
   const missingRequiredAspects = rows(facts.resolvedRequirements)
     .filter((requirement) => text(requirement.status) === "MISSING_BLOCKING")
     .map((requirement) => text(requirement.aspectName)).filter(Boolean)
@@ -176,6 +212,12 @@ export function explainSameDayRejectedCandidate(candidate: Row): SameDayCandidat
   details.push(soldExact > 0
     ? `${soldExact} venta(s) exacta(s) confirmada(s) en la evidencia disponible.`
     : "No hay ventas exactas confirmadas para esta presentación.")
+  const reviewedObservations = numeric(reconciliationCoverage.reviewedObservations)
+  const relatedPackReferences = numeric(evidenceTiers.confirmedSoldRelatedPack) ?? 0
+  const relatedSizeReferences = numeric(evidenceTiers.confirmedSoldRelatedSize) ?? 0
+  if (reviewedObservations !== null) {
+    details.push(`Product Research revisó ${reviewedObservations} fila(s) de la ventana oficial capturada: ${numeric(evidenceTiers.confirmedSoldExact) ?? 0} referencia(s) exacta(s), ${relatedPackReferences} de otro pack y ${relatedSizeReferences} de otro tamaño.`)
+  }
   if (missingRequiredAspects.length) {
     details.push(`Aspectos obligatorios pendientes: ${missingRequiredAspects.join(", ")}.`)
   }
@@ -192,6 +234,18 @@ export function explainSameDayRejectedCandidate(candidate: Row): SameDayCandidat
     productTitle: text(candidate.product_title) || "Producto sin nombre",
     headline,
     details: [...new Set(details)],
+    controlledRiskOverride: {
+      available: controlledRisk.available === true,
+      blockers: Array.isArray(controlledRisk.blockers)
+        ? controlledRisk.blockers.map((blocker) => CONTROLLED_RISK_BLOCKER_LABELS[text(blocker)] ??
+          "La excepción controlada no supera todos los controles obligatorios.")
+        : [],
+      minimumRiskPrice: numeric(controlledRisk.minimumRiskPrice),
+      maximumCompetitivePrice: numeric(controlledRisk.maximumCompetitivePrice),
+      confirmedSoldExactQuantity: Math.max(0,
+        numeric(controlledRisk.confirmedSoldExactQuantity) ?? 0),
+      referenceConfidence: text((controlledRisk.exactSoldReference as Row | undefined)?.confidence) || null,
+    },
   }
 }
 
