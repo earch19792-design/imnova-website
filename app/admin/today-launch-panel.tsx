@@ -120,7 +120,7 @@ export function TodayLaunchPanel() {
     ? "ESPERANDO TU CONFIRMACIÓN"
     : liveMonitor.businessLabel
   const imageAiReady = pilot?.imageFactoryConfiguration?.aiGeneration === "READY"
-  return <section className="mt-5 min-w-0 overflow-hidden rounded-3xl border border-cyan-200/20 bg-gradient-to-br from-cyan-200/[0.10] to-emerald-200/[0.04] p-5 sm:p-7">
+  return <section id="today-launch" className="mt-5 min-w-0 scroll-mt-4 overflow-hidden rounded-3xl border border-cyan-200/20 bg-gradient-to-br from-cyan-200/[0.10] to-emerald-200/[0.04] p-5 sm:p-7">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="min-w-0">
         <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-100/60">Lanzamiento de hoy</p>

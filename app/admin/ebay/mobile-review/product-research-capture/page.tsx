@@ -222,7 +222,7 @@ export default function ProductResearchCaptureReceiverPage() {
         <div><dt className="text-white/50">OpenAI</dt><dd>0 llamadas</dd></div>
         <div><dt className="text-white/50">Escrituras eBay</dt><dd>0</dd></div>
       </dl>}
-      {result && !result.captureQueryCorrected && <a href="/admin/ebay-seller-os" target="sellerOsDashboard" rel="noopener" className="mt-6 grid min-h-12 w-full place-items-center rounded-2xl bg-emerald-200 px-4 text-sm font-black text-emerald-950">CONTINUAR EN SELLER OS</a>}
+      {result && !result.captureQueryCorrected && <a href="/admin#today-launch" target="sellerOsDashboard" rel="noopener" className="mt-6 grid min-h-12 w-full place-items-center rounded-2xl bg-emerald-200 px-4 text-sm font-black text-emerald-950">CONTINUAR CON EL SIGUIENTE PRODUCTO</a>}
       <p className="mt-6 text-xs text-white/45">{result?.queryPlan?.status === "COMPLETED" ? "El plan terminó. Regresa a Seller OS para revisar el resultado y la siguiente acción." : result && !result.captureQueryCorrected ? "La captura quedó guardada para este lote. Regresa a Seller OS: allí verás el siguiente producto antes de abrir otra consulta." : "Sesión segura del lote activa. Déjala abierta para conservar la autenticación durante las capturas autorizadas."}</p>
     </section>
   </main>
