@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 
 export const SAME_DAY_PILOT_VERSION = "PILOT_3_LISTINGS_SAME_DAY_V1"
 export const SAME_DAY_QUEUE_LIMIT = 5
+export const SAME_DAY_MAX_CANDIDATE_CYCLES = 20
 export const SAME_DAY_RECONCILIATION_DECISION_REFERENCE_LIMIT = 10
 export const SAME_DAY_RECONCILIATION_COVERAGE_ROW_LIMIT = 200
 export const SAME_DAY_TRADING_DETAIL_READ_LIMIT_PER_BATCH = 2
@@ -63,6 +64,64 @@ export type SameDayCandidateDecision = SameDayCandidateInput & {
   priority: number
   nextAutomatedAction: string
   nextHumanAction: string
+}
+
+const TERMINAL_SAME_DAY_MACHINE_STATES = new Set([
+  "REJECTED",
+  "BLOCKED",
+  "VERIFIED_ACTIVE",
+  "COMPLETED",
+])
+
+export function canStartNextSameDayCandidateCycle(input: {
+  runStatus: string
+  cycle: number
+  candidateMachineStates: string[]
+  openHumanTasks: number
+  dueOrLeasedJobs: number
+  verifiedNewListings: number
+  targetNewListings: number
+  activeWorkerLease?: boolean
+  productResearchPlanSettled?: boolean
+  nextCandidateSetExhausted?: boolean
+}) {
+  const cycle = Number.isInteger(input.cycle) ? input.cycle : 1
+  const candidatesTerminal = input.candidateMachineStates.length > 0
+    && input.candidateMachineStates.every((state) =>
+      TERMINAL_SAME_DAY_MACHINE_STATES.has(state))
+  const allowed = input.runStatus === "BLOCKED"
+    && cycle < SAME_DAY_MAX_CANDIDATE_CYCLES
+    && candidatesTerminal
+    && input.openHumanTasks === 0
+    && input.dueOrLeasedJobs === 0
+    && input.activeWorkerLease !== true
+    && input.productResearchPlanSettled !== false
+    && input.nextCandidateSetExhausted !== true
+    && input.verifiedNewListings < input.targetNewListings
+  return {
+    allowed,
+    nextCycle: allowed ? cycle + 1 : cycle,
+    candidatesTerminal,
+    reason: allowed
+      ? "NEXT_BOUNDED_CANDIDATE_SET_ALLOWED"
+      : input.verifiedNewListings >= input.targetNewListings
+        ? "CURRENT_CYCLE_TARGET_REACHED"
+        : input.nextCandidateSetExhausted === true
+          ? "NEXT_CANDIDATE_SET_EXHAUSTED"
+        : cycle >= SAME_DAY_MAX_CANDIDATE_CYCLES
+          ? "MAX_CANDIDATE_CYCLES_REACHED"
+          : input.runStatus !== "BLOCKED"
+            ? "CURRENT_CYCLE_ACTIVE"
+            : input.openHumanTasks > 0
+              ? "HUMAN_TASK_PENDING"
+              : input.dueOrLeasedJobs > 0
+                ? "BACKGROUND_JOB_PENDING"
+                : input.activeWorkerLease === true
+                  ? "BACKGROUND_WORKER_ACTIVE"
+                  : input.productResearchPlanSettled === false
+                    ? "PRODUCT_RESEARCH_PLAN_PENDING"
+                : "CURRENT_CYCLE_NOT_SETTLED",
+  }
 }
 
 export function projectSameDayProductResearchReconciliationBudget(batchRowCounts: number[]) {
@@ -205,10 +264,29 @@ export function evaluateSameDayCandidate(input: SameDayCandidateInput, now = new
     priority: Math.round(priority * 100) / 100, nextAutomatedAction, nextHumanAction }
 }
 
-export function selectSameDayQueue(inputs: SameDayCandidateInput[], now = new Date()) {
+export function selectSameDayQueue(
+  inputs: SameDayCandidateInput[],
+  now = new Date(),
+  exclusions: {
+    opportunityIds?: Iterable<string>
+    candidateKeys?: Iterable<string>
+    supplierVariantIds?: Iterable<string>
+    familyFingerprints?: Iterable<string>
+  } = {},
+) {
+  const excludedOpportunityIds = new Set(exclusions.opportunityIds ?? [])
+  const excludedCandidateKeys = new Set(exclusions.candidateKeys ?? [])
+  const excludedSupplierVariantIds = new Set(exclusions.supplierVariantIds ?? [])
+  const excludedFamilyFingerprints = new Set(exclusions.familyFingerprints ?? [])
   const evaluated = inputs.map((input) => evaluateSameDayCandidate(input, now))
     .filter((entry) => entry.eligibleForQueue)
-    .sort((left, right) => right.priority - left.priority || left.candidateKey.localeCompare(right.candidateKey))
+    .filter((entry) => !excludedOpportunityIds.has(entry.id)
+      && !excludedCandidateKeys.has(entry.candidateKey)
+      && !excludedSupplierVariantIds.has(entry.supplierVariantId ?? "")
+      && !excludedFamilyFingerprints.has(entry.familyFingerprint))
+    .sort((left, right) => right.priority - left.priority
+      || left.candidateKey.localeCompare(right.candidateKey)
+      || left.id.localeCompare(right.id))
   const families = new Set<string>()
   const selected: SameDayCandidateDecision[] = []
   for (const entry of evaluated) {

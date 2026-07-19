@@ -3,6 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 
 import {
   buildSameDayLocalPreparationPackage,
+  canStartNextSameDayCandidateCycle,
+  SAME_DAY_MAX_CANDIDATE_CYCLES,
   SAME_DAY_PILOT_VERSION,
   SAME_DAY_RECONCILIATION_COVERAGE_ROW_LIMIT,
   SAME_DAY_RECONCILIATION_DECISION_REFERENCE_LIMIT,
@@ -171,7 +173,8 @@ async function currentState(
   now = new Date(),
 ) {
   const { data: datedRun, error } = await supabase.from("ebay_same_day_pilot_runs").select("*")
-    .eq("marketplace_account_key", accountKey).eq("operation_date", date).maybeSingle()
+    .eq("marketplace_account_key", accountKey).eq("operation_date", date)
+    .order("cycle", { ascending: false }).limit(1).maybeSingle()
   if (error) throw new Error("SAME_DAY_PILOT_RUN_READ_FAILED")
   let run = datedRun
   if (!run) {
@@ -182,14 +185,18 @@ async function currentState(
       .from("ebay_same_day_pilot_runs").select("*")
       .eq("marketplace_account_key", accountKey)
       .in("status", ["ACTIVE", "PARTIALLY_READY", "READY_FOR_OPERATOR"])
-      .order("operation_date", { ascending: false }).limit(1).maybeSingle()
+      .order("operation_date", { ascending: false })
+      .order("cycle", { ascending: false }).limit(1).maybeSingle()
     if (carryoverError) throw new Error("SAME_DAY_PILOT_CARRYOVER_RUN_READ_FAILED")
     run = carryoverRun
   }
   if (!run) return null
+  const productResearchPlanId = text(record(run.source_inventory).productResearchPlanId)
   const [{ data: candidates, error: candidateError }, { data: tasks, error: taskError },
     { data: transitions, error: transitionError }, { data: jobs, error: jobError },
-    { data: handoffs, error: handoffError }, { data: quotaStates, error: quotaError }] = await Promise.all([
+    { data: handoffs, error: handoffError }, { data: quotaStates, error: quotaError },
+    { data: productResearchPlan, error: productResearchPlanError },
+    { data: cycleRuns, error: cycleRunsError }] = await Promise.all([
     supabase.from("ebay_same_day_pilot_candidates").select("*").eq("run_id", run.id).order("ordinal"),
     supabase.from("ebay_same_day_pilot_human_tasks").select("*").eq("run_id", run.id).order("created_at"),
     supabase.from("ebay_same_day_pilot_transitions").select("*").eq("run_id", run.id).order("created_at"),
@@ -199,8 +206,18 @@ async function currentState(
     supabase.from("ebay_api_quota_states")
       .select("api_family,operation,status,remaining,reserved_budget,available_budget,reset_at,owner_lane,last_refreshed_at")
       .eq("marketplace", MARKETPLACE),
+    productResearchPlanId
+      ? supabase.from("marketplace_product_research_query_plans").select("id,status")
+        .eq("id", productResearchPlanId).eq("marketplace_account_key", accountKey)
+        .eq("marketplace", MARKETPLACE).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    supabase.from("ebay_same_day_pilot_runs")
+      .select("id,cycle,verified_existing_listings,verified_new_listings,status")
+      .eq("marketplace_account_key", accountKey)
+      .eq("operation_date", run.operation_date)
+      .order("cycle", { ascending: true }),
   ])
-  if (candidateError || taskError || transitionError || jobError || handoffError || quotaError) {
+  if (candidateError || taskError || transitionError || jobError || handoffError || quotaError || cycleRunsError) {
     throw new Error("SAME_DAY_PILOT_STATE_READ_FAILED")
   }
   const candidateRows = candidates ?? []
@@ -247,6 +264,14 @@ async function currentState(
       },
     }
   })
+  const cycleRunRows = cycleRuns ?? []
+  const cycleRunIds = cycleRunRows.map((cycleRun) => text(cycleRun.id)).filter(Boolean)
+  const { data: historicalCandidates, error: historicalCandidateError } = cycleRunIds.length
+    ? await supabase.from("ebay_same_day_pilot_candidates")
+      .select("run_id,machine_state,opportunity_id,candidate_key,supplier_variant_id,family_fingerprint")
+      .in("run_id", cycleRunIds)
+    : { data: [], error: null }
+  if (historicalCandidateError) throw new Error("SAME_DAY_PILOT_HISTORY_READ_FAILED")
   const effectiveQuotaLanes = (quotaStates ?? []).map((lane) =>
     projectEffectiveEbayQuotaLane(lane, now))
   const projectedRun = {
@@ -257,7 +282,43 @@ async function currentState(
       observedAt: now.toISOString(),
     },
   }
-  return { run: projectedRun, candidates: anchoredCandidates, tasks: tasks ?? [], transitions: transitions ?? [], jobs: jobs ?? [], handoffs: handoffs ?? [] }
+  const nextCandidateCycle = canStartNextSameDayCandidateCycle({
+    runStatus: text(run.status),
+    cycle: number(run.cycle) ?? 1,
+    candidateMachineStates: anchoredCandidates.map((candidate) =>
+      text(candidate.machine_state)),
+    openHumanTasks: (tasks ?? []).filter((task) => task.status === "OPEN").length,
+    dueOrLeasedJobs: (jobs ?? []).filter((job) =>
+      ["PENDING", "WAITING_RETRY", "LEASED"].includes(text(job.status))).length,
+    verifiedNewListings: number(run.verified_new_listings) ?? 0,
+    targetNewListings: number(run.target_new_listings) ?? 2,
+    activeWorkerLease: Date.parse(text(run.worker_lease_expires_at)) > now.getTime(),
+    productResearchPlanSettled: !productResearchPlanId || (!productResearchPlanError
+      && ["COMPLETED", "SUPERSEDED"].includes(text(productResearchPlan?.status))),
+    nextCandidateSetExhausted: record(run.source_inventory).nextCandidateSetExhausted === true,
+  })
+  const verifiedPilotProgress = Math.min(3, Math.max(0, ...cycleRunRows.map((cycleRun) =>
+    (number(cycleRun.verified_existing_listings) ?? 0)
+      + (number(cycleRun.verified_new_listings) ?? 0))))
+  const historicalRows = historicalCandidates ?? []
+  const cycleHistory = {
+    cycles: cycleRunRows.length,
+    attemptedCandidates: historicalRows.length,
+    rejectedCandidates: historicalRows.filter((candidate) =>
+      ["REJECTED", "BLOCKED"].includes(text(candidate.machine_state))).length,
+    verifiedPilotProgress,
+    remainingPilotListings: Math.max(0, 3 - verifiedPilotProgress),
+  }
+  return {
+    run: projectedRun,
+    candidates: anchoredCandidates,
+    tasks: tasks ?? [],
+    transitions: transitions ?? [],
+    jobs: jobs ?? [],
+    handoffs: handoffs ?? [],
+    nextCandidateCycle,
+    cycleHistory,
+  }
 }
 
 async function transition(input: {
@@ -731,14 +792,15 @@ async function promoteNextCandidateAfterPreparedPackage(
 }
 
 async function refreshRunProjection(supabase: SupabaseClient, runId: string, workerHeartbeat = false) {
-  const [{ data: candidates, error: candidateError }, { data: tasks, error: taskError },
+  const [{ data: run, error: runError }, { data: candidates, error: candidateError }, { data: tasks, error: taskError },
     { data: jobs, error: jobError }, { data: transitions, error: transitionError }] = await Promise.all([
+    supabase.from("ebay_same_day_pilot_runs").select("target_new_listings").eq("id", runId).single(),
     supabase.from("ebay_same_day_pilot_candidates").select("machine_state,state,next_automated_action,next_human_action").eq("run_id", runId).order("ordinal"),
     supabase.from("ebay_same_day_pilot_human_tasks").select("title,status,gate_type,created_at,completed_at").eq("run_id", runId).order("created_at"),
     supabase.from("ebay_same_day_pilot_jobs").select("status,attempt,job_type,last_error_code").eq("run_id", runId),
     supabase.from("ebay_same_day_pilot_transitions").select("triggered_by,started_at,completed_at,next_state,reason_code").eq("run_id", runId),
   ])
-  if (candidateError || taskError || jobError || transitionError) throw new Error("SAME_DAY_PILOT_PROJECTION_READ_FAILED")
+  if (runError || candidateError || taskError || jobError || transitionError) throw new Error("SAME_DAY_PILOT_PROJECTION_READ_FAILED")
   const rows = candidates ?? []
   const readyCount = rows.filter((row) => row.machine_state === "READY_FOR_MANUAL_PUBLICATION").length
   const verifiedCount = rows.filter((row) => row.machine_state === "VERIFIED_ACTIVE").length
@@ -748,7 +810,8 @@ async function refreshRunProjection(supabase: SupabaseClient, runId: string, wor
   const taskRows = tasks ?? []
   const openTask = taskRows.find((task) => task.status === "OPEN")
   const waitingRetry = (jobs ?? []).some((job) => job.status === "WAITING_RETRY")
-  const completed = verifiedCount >= 2
+  const targetNewListings = Math.max(0, Math.min(2, Number(run?.target_new_listings ?? 2)))
+  const completed = verifiedCount >= targetNewListings
   const exhausted = rows.length === 0 || rows.every((row) => ["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(row.machine_state))
   const systemTransitions = (transitions ?? []).filter((row) => row.triggered_by !== "USER").length
   const userTransitions = (transitions ?? []).filter((row) => row.triggered_by === "USER").length
@@ -869,6 +932,10 @@ export async function previewSameDayPilot(input: {
   supabase: SupabaseClient
   accountKey: string
   now?: Date
+  excludeOpportunityIds?: string[]
+  excludeCandidateKeys?: string[]
+  excludeSupplierVariantIds?: string[]
+  excludeFamilyFingerprints?: string[]
 }) {
   const now = input.now ?? new Date()
   const [{ data: opportunities, error: opportunityError }, { data: quotas, error: quotaError },
@@ -882,7 +949,13 @@ export async function previewSameDayPilot(input: {
   if (opportunityError || quotaError || monitorError || productResearchCount.error || existingPilotListing.error) {
     throw new Error("SAME_DAY_PILOT_SOURCE_READ_FAILED")
   }
-  const productIds = [...new Set((opportunities ?? []).map((row) => text(row.market_radar_product_id)).filter(Boolean))]
+  const excludedOpportunityIds = new Set(
+    (input.excludeOpportunityIds ?? []).map((id) => text(id)).filter(Boolean),
+  )
+  const eligibleOpportunities = (opportunities ?? []).filter((row) =>
+    !excludedOpportunityIds.has(text(row.id)))
+  const productIds = [...new Set(eligibleOpportunities
+    .map((row) => text(row.market_radar_product_id)).filter(Boolean))]
   const { data: latestVariants, error: variantError } = productIds.length
     ? await input.supabase.from("market_radar_latest_variants").select("product_id,supplier_variant_id,variant_title,sku,barcode,price,available,inventory_quantity,product_url,featured_image_url,captured_at").in("product_id", productIds).limit(500)
     : { data: [], error: null }
@@ -890,10 +963,15 @@ export async function previewSameDayPilot(input: {
   const variantByKey = new Map((latestVariants ?? []).map((variant) => [
     `${text(variant.product_id)}:${text(variant.supplier_variant_id)}`, record(variant),
   ]))
-  const selected = selectSameDayQueue((opportunities ?? []).map((row) => {
+  const selected = selectSameDayQueue(eligibleOpportunities.map((row) => {
     const key = `${text(row.market_radar_product_id)}:${text(row.supplier_variant_id)}`
     return candidateInput(record(row), variantByKey.get(key) ?? {}, now)
-  }), now)
+  }), now, {
+    opportunityIds: excludedOpportunityIds,
+    candidateKeys: input.excludeCandidateKeys,
+    supplierVariantIds: input.excludeSupplierVariantIds,
+    familyFingerprints: input.excludeFamilyFingerprints,
+  })
   const { data: latestQueueRun, error: queueRunError } = await input.supabase.from("marketplace_listing_approval_queue_runs").select("id")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE).order("created_at", { ascending: false }).limit(1).maybeSingle()
   if (queueRunError) throw new Error("SAME_DAY_PILOT_QUEUE_RUN_READ_FAILED")
@@ -917,6 +995,8 @@ export async function previewSameDayPilot(input: {
     monitor: monitor ?? { status: "NOT_RUNNING" },
     counts: {
       opportunitiesRead: opportunities?.length ?? 0,
+      previouslyAttemptedExcluded: excludedOpportunityIds.size,
+      opportunitiesEligibleForCycle: eligibleOpportunities.length,
       currentLunaVariantsRead: latestVariants?.length ?? 0,
       productResearchObservationsReused: productResearchCount.count ?? 0,
       verifiedExistingListings: (existingPilotListing.count ?? 0) > 0 ? 1 : 0,
@@ -943,6 +1023,7 @@ async function createSameDayProductResearchPlan(input: {
   queueRunId: string | null
   selected: ReturnType<typeof selectSameDayQueue>
   operationDate: string
+  cycle: number
 }) {
   if (!input.queueRunId || !input.selected.length) return null
   const groups = new Map<string, typeof input.selected>()
@@ -962,6 +1043,7 @@ async function createSameDayProductResearchPlan(input: {
     candidate_variant_hashes: group.map((candidate) => versionedHash(text(candidate.supplierVariantId))).sort(),
   }))
   const inputHash = versionedHash({ version: SAME_DAY_PILOT_VERSION, operationDate: input.operationDate,
+    cycle: input.cycle,
     candidates: input.selected.map((candidate) => ({ variant: candidate.supplierVariantId, query: candidate.queryPlan.query })) })
   const { data, error } = await input.supabase.rpc("create_product_research_query_plan_v1", {
     p_plan_id: randomUUID(), p_marketplace_account_key: input.accountKey,
@@ -975,55 +1057,150 @@ async function createSameDayProductResearchPlan(input: {
 export async function startSameDayPilot(input: { supabase: SupabaseClient; accountKey: string; actorId: string; now?: Date }) {
   const now = input.now ?? new Date()
   const date = operationDate(now)
-  const existing = await currentState(input.supabase, input.accountKey, date)
-  const recoverEmptyRun = Boolean(existing && existing.candidates.length === 0 &&
-    Number(existing.run.queue_count ?? 0) === 0)
-  if (existing && !recoverEmptyRun) {
-    const repaired = await repairSameDayPilotBootstrap(
-      input.supabase,
-      existing,
-      input.accountKey,
+  let existing = await currentState(input.supabase, input.accountKey, date)
+  let repaired = false
+  if (existing) {
+    repaired = await repairSameDayPilotBootstrap(
+      input.supabase, existing, input.accountKey,
     )
-    if (repaired) await refreshRunProjection(input.supabase, existing.run.id)
-    const current = await currentState(input.supabase, input.accountKey, date)
+    if (repaired) {
+      await refreshRunProjection(input.supabase, existing.run.id)
+      existing = await currentState(input.supabase, input.accountKey, date)
+    }
+  }
+  const recoverEmptyRun = Boolean(existing && existing.candidates.length === 0
+    && Number(existing.run.queue_count ?? 0) === 0)
+  const startNextCycle = Boolean(existing && !recoverEmptyRun
+    && existing.nextCandidateCycle.allowed === true)
+  const cycleDate = existing ? text(existing.run.operation_date) || date : date
+  if (existing && !recoverEmptyRun && !startNextCycle) {
+    const current = await currentState(input.supabase, input.accountKey, cycleDate)
     return { ...(current ?? existing), created: false, idempotent: true, repaired }
   }
-  const preview = await previewSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
+
+  const { data: cycleRuns, error: cycleRunsError } = await input.supabase
+    .from("ebay_same_day_pilot_runs")
+    .select("id,cycle,verified_existing_listings,verified_new_listings")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("operation_date", cycleDate)
+    .order("cycle", { ascending: true })
+  if (cycleRunsError) throw new Error("SAME_DAY_PILOT_CYCLE_HISTORY_READ_FAILED")
+  const cycleRunIds = (cycleRuns ?? []).map((run) => text(run.id)).filter(Boolean)
+  const { data: attemptedCandidates, error: attemptedCandidateError } = cycleRunIds.length
+    ? await input.supabase.from("ebay_same_day_pilot_candidates")
+      .select("opportunity_id,candidate_key,supplier_variant_id,family_fingerprint")
+      .in("run_id", cycleRunIds)
+    : { data: [], error: null }
+  if (attemptedCandidateError) throw new Error("SAME_DAY_PILOT_ATTEMPT_HISTORY_READ_FAILED")
+  const attemptedRows = attemptedCandidates ?? []
+  const cycle = startNextCycle
+    ? Math.max(1, ...(cycleRuns ?? []).map((run) => number(run.cycle) ?? 1)) + 1
+    : recoverEmptyRun ? number(existing?.run.cycle) ?? 1 : 1
+  if (cycle > SAME_DAY_MAX_CANDIDATE_CYCLES) {
+    throw new Error("SAME_DAY_PILOT_MAX_CANDIDATE_CYCLES_REACHED")
+  }
+  const cumulativeVerifiedProgress = Math.min(3, Math.max(0, ...(cycleRuns ?? []).map((run) =>
+    (number(run.verified_existing_listings) ?? 0) + (number(run.verified_new_listings) ?? 0))))
+  const verifiedExistingListings = startNextCycle
+    ? cumulativeVerifiedProgress
+    : number(existing?.run.verified_existing_listings) ?? 0
+  const targetNewListings = startNextCycle
+    ? Math.min(2, Math.max(0, 3 - verifiedExistingListings))
+    : number(existing?.run.target_new_listings) ?? 2
+  const preview = await previewSameDayPilot({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    now,
+    excludeOpportunityIds: attemptedRows.map((row) => text(row.opportunity_id)),
+    excludeCandidateKeys: attemptedRows.map((row) => text(row.candidate_key)),
+    excludeSupplierVariantIds: attemptedRows.map((row) => text(row.supplier_variant_id)),
+    excludeFamilyFingerprints: attemptedRows.map((row) => text(row.family_fingerprint)),
+  })
   const selected = preview.selected
   const queueItemByVariant = preview.queueItemByVariant
-  const productResearchPlanId = await createSameDayProductResearchPlan({
-    supabase: input.supabase, accountKey: input.accountKey,
-    queueRunId: preview.latestQueueRunId, selected, operationDate: date,
-  })
-  const runKey = `${SAME_DAY_PILOT_VERSION}:${input.accountKey}:${date}`
-  const runPatch = {
-    queue_count: selected.length,
-    verified_existing_listings: preview.counts.verifiedExistingListings,
-    source_inventory: { ...preview.counts, fullCatalogRescan: false,
-      productResearchPlanPrepared: Boolean(productResearchPlanId), productResearchPlanId },
-    quota_snapshot: { lanes: preview.quotaLanes, exactValidationCallsEstimated: selected.reduce((total, row) => total + row.callsEstimated, 0), protectedMonitorBudgetUsed: false },
-    monitor_snapshot: preview.monitor,
-    next_automated_action: selected.length ? "Esperar y procesar automáticamente la próxima evidencia autorizada." : "No hay candidatos seguros; preservar trabajo y revisar próximo conjunto.",
-    next_human_action: selected.length ? "Completar la primera tarea en Tareas para Ernesto." : "Ninguna publicación debe forzarse.",
-    orchestrator_version: SAME_DAY_PILOT_VERSION,
-    status: "ACTIVE",
-    updated_at: now.toISOString(),
+
+  if (startNextCycle && selected.length === 0) {
+    const sourceInventory = {
+      ...record(existing!.run.source_inventory),
+      nextCandidateSetExhausted: true,
+      nextCandidateSetExhaustedAt: now.toISOString(),
+      attemptedCandidatesExcluded: attemptedRows.length,
+      fullCatalogRescan: false,
+    }
+    const { error: exhaustedError } = await input.supabase.from("ebay_same_day_pilot_runs")
+      .update({ source_inventory: sourceInventory,
+        next_automated_action: "Preservar el trabajo; no quedan candidatos distintos elegibles en la cola local actual.",
+        next_human_action: "No forzar una publicación. Esperar nueva evidencia o el próximo ciclo operativo.",
+        updated_at: now.toISOString() })
+      .eq("id", existing!.run.id)
+    if (exhaustedError) throw new Error("SAME_DAY_PILOT_EXHAUSTION_PERSIST_FAILED")
+    const exhausted = await currentState(input.supabase, input.accountKey, cycleDate)
+    if (!exhausted) throw new Error("SAME_DAY_PILOT_STATE_MISSING")
+    return { ...exhausted, created: false, idempotent: false,
+      nextSetExhausted: true, reasonCode: "NEXT_CANDIDATE_SET_EXHAUSTED" }
   }
-  const runResult = recoverEmptyRun
-    ? await input.supabase.from("ebay_same_day_pilot_runs").update(runPatch)
-      .eq("id", existing!.run.id).eq("queue_count", 0).select("*").single()
-    : await input.supabase.from("ebay_same_day_pilot_runs").insert({
-      marketplace_account_key: input.accountKey, operation_date: date, run_key: runKey,
-      ...runPatch, created_by: input.actorId,
-    }).select("*").single()
-  const { data: run, error: runError } = runResult
-  if (runError || !run) {
-    const raced = await currentState(input.supabase, input.accountKey, date)
+
+  const runKey = cycle === 1
+    ? `${SAME_DAY_PILOT_VERSION}:${input.accountKey}:${cycleDate}`
+    : `${SAME_DAY_PILOT_VERSION}:${input.accountKey}:${cycleDate}:CYCLE:${cycle}`
+  const { data: claimData, error: claimError } = await input.supabase
+    .rpc("claim_same_day_pilot_cycle_v1", {
+      p_marketplace_account_key: input.accountKey,
+      p_operation_date: cycleDate,
+      p_cycle: cycle,
+      p_run_key: runKey,
+      p_target_new_listings: targetNewListings,
+      p_verified_existing_listings: verifiedExistingListings || preview.counts.verifiedExistingListings,
+      p_created_by: input.actorId,
+      p_expected_previous_run_id: startNextCycle ? existing!.run.id : null,
+      p_now: now.toISOString(),
+    })
+  if (claimError) throw new Error("SAME_DAY_PILOT_CYCLE_CLAIM_FAILED")
+  const claim = record(claimData)
+  const runId = text(claim.runId)
+  if (!runId) throw new Error("SAME_DAY_PILOT_CYCLE_CLAIM_INVALID")
+  if (claim.claimed !== true) {
+    const raced = await currentState(input.supabase, input.accountKey, cycleDate)
     if (raced) return { ...raced, created: false, idempotent: true }
     throw new Error("SAME_DAY_PILOT_RUN_CREATE_FAILED")
   }
+
+  if (!selected.length) {
+    const { error: emptyError } = await input.supabase.from("ebay_same_day_pilot_runs")
+      .update({ status: "BLOCKED", stage: "BLOCKED",
+        source_inventory: { ...preview.counts, cycle, fullCatalogRescan: false,
+          nextCandidateSetExhausted: true, nextCandidateSetExhaustedAt: now.toISOString() },
+        next_automated_action: "No hay candidatos seguros en la cola local actual.",
+        next_human_action: "No forzar una publicación; esperar nueva evidencia.",
+        updated_at: now.toISOString() })
+      .eq("id", runId)
+    if (emptyError) throw new Error("SAME_DAY_PILOT_EMPTY_CYCLE_PERSIST_FAILED")
+    const emptyState = await currentState(input.supabase, input.accountKey, cycleDate)
+    if (!emptyState) throw new Error("SAME_DAY_PILOT_STATE_MISSING")
+    return { ...emptyState, created: claim.created === true, idempotent: false,
+      nextSetExhausted: true, reasonCode: "NEXT_CANDIDATE_SET_EXHAUSTED" }
+  }
+
+  const productResearchPlanId = await createSameDayProductResearchPlan({
+    supabase: input.supabase, accountKey: input.accountKey,
+    queueRunId: preview.latestQueueRunId, selected, operationDate: cycleDate, cycle,
+  })
+  const sourceInventory = { ...preview.counts, cycle,
+    previousRunId: startNextCycle ? existing!.run.id : null,
+    attemptedCandidatesExcluded: attemptedRows.length,
+    fullCatalogRescan: false,
+    productResearchPlanPrepared: Boolean(productResearchPlanId), productResearchPlanId }
+  const quotaSnapshot = { lanes: preview.quotaLanes,
+    exactValidationCallsEstimated: selected.reduce((total, row) => total + row.callsEstimated, 0),
+    protectedMonitorBudgetUsed: false }
+  const { error: metadataError } = await input.supabase.from("ebay_same_day_pilot_runs")
+    .update({ source_inventory: sourceInventory, quota_snapshot: quotaSnapshot,
+      monitor_snapshot: preview.monitor, updated_at: now.toISOString() })
+    .eq("id", runId).eq("queue_count", 0)
+  if (metadataError) throw new Error("SAME_DAY_PILOT_CYCLE_METADATA_PERSIST_FAILED")
+
   const rows = selected.map((entry, index) => ({
-    run_id: run.id, opportunity_id: entry.id, queue_item_id: queueItemByVariant.get(text(entry.supplierVariantId)) ?? null,
+    run_id: runId, opportunity_id: entry.id, queue_item_id: queueItemByVariant.get(text(entry.supplierVariantId)) ?? null,
     ordinal: index + 1, state: entry.state, machine_state: "RUN_CREATED",
     candidate_key: entry.candidateKey, product_title: entry.productTitle, supplier_sku: entry.supplierSku,
     supplier_variant_id: entry.supplierVariantId, family_fingerprint: entry.familyFingerprint, priority: entry.priority,
@@ -1038,20 +1215,30 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
   if (rows.length) {
     const { data: candidates, error } = await input.supabase.from("ebay_same_day_pilot_candidates").insert(rows).select("*")
     if (error) throw new Error("SAME_DAY_PILOT_CANDIDATES_CREATE_FAILED")
+    const { error: finalizeError } = await input.supabase.from("ebay_same_day_pilot_runs")
+      .update({ queue_count: selected.length, stage: "QUEUE_PREPARED", status: "ACTIVE",
+        next_automated_action: "Esperar y procesar automáticamente la próxima evidencia autorizada.",
+        next_human_action: "Completar la primera tarea en Tareas para Ernesto.",
+        updated_at: now.toISOString() })
+      .eq("id", runId).eq("queue_count", 0)
+    if (finalizeError) throw new Error("SAME_DAY_PILOT_CYCLE_FINALIZE_FAILED")
     const first = candidates?.[0]
-    if (first) await bootstrapCandidate(input.supabase, run.id, record(first))
+    if (first) await bootstrapCandidate(input.supabase, runId, record(first))
   }
-  const eventType = recoverEmptyRun ? "EMPTY_RUN_RECOVERED" : "RUN_STARTED"
-  const { error: eventError } = await input.supabase.from("ebay_same_day_pilot_events").upsert({ run_id: run.id, event_type: eventType,
+  const eventType = startNextCycle ? "NEXT_CANDIDATE_CYCLE_STARTED"
+    : claim.recovered === true ? "EMPTY_RUN_RECOVERED" : "RUN_STARTED"
+  const { error: eventError } = await input.supabase.from("ebay_same_day_pilot_events").upsert({ run_id: runId, event_type: eventType,
     event_payload: { oneClick: true, candidates: selected.length, fullCatalogRescan: false,
-      deepDiscoveryFrozen: true, recoveredEmptyRun: recoverEmptyRun },
-    idempotency_key: `${run.id}:${eventType}`, ebay_read_calls: 0, openai_calls: 0, ebay_writes: 0, production_changed: false },
+      deepDiscoveryFrozen: true, recoveredEmptyRun: claim.recovered === true, cycle,
+      priorCandidatesExcluded: attemptedRows.length },
+    idempotency_key: `${runId}:${eventType}`, ebay_read_calls: 0, openai_calls: 0, ebay_writes: 0, production_changed: false },
   { onConflict: "idempotency_key", ignoreDuplicates: true })
   if (eventError) throw new Error("SAME_DAY_PILOT_START_EVENT_PERSIST_FAILED")
-  await refreshRunProjection(input.supabase, run.id)
-  const state = await currentState(input.supabase, input.accountKey, date)
+  await refreshRunProjection(input.supabase, runId)
+  const state = await currentState(input.supabase, input.accountKey, cycleDate)
   if (!state) throw new Error("SAME_DAY_PILOT_STATE_MISSING")
-  return { ...state, created: !recoverEmptyRun, recovered: recoverEmptyRun, idempotent: false }
+  return { ...state, created: claim.created === true, recovered: claim.recovered === true,
+    candidateCycleStarted: startNextCycle, idempotent: false }
 }
 
 export async function getSameDayPilot(input: { supabase: SupabaseClient; accountKey: string; now?: Date }) {

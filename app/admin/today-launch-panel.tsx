@@ -60,6 +60,16 @@ export function TodayLaunchPanel() {
     : undefined
   const readyCandidates = candidates.filter((candidate: Row) => candidate.machine_state === "READY_FOR_MANUAL_PUBLICATION")
   const runStatus = String(pilot?.run?.status ?? "")
+  const nextCycleAllowed = pilot?.nextCandidateCycle?.allowed === true
+  const currentCycle = Math.max(1, Number(pilot?.run?.cycle ?? 1) || 1)
+  const nextCycle = Math.max(currentCycle + 1,
+    Number(pilot?.nextCandidateCycle?.nextCycle ?? currentCycle + 1) || currentCycle + 1)
+  const canRecoverEmptyRun = runStatus === "BLOCKED" && candidates.length === 0
+    && pilot?.nextCandidateCycle?.reason !== "NEXT_CANDIDATE_SET_EXHAUSTED"
+  const showLaunchAction = !loading && (!pilot || canRecoverEmptyRun || nextCycleAllowed)
+  const pilotProgress = Math.max(0, Math.min(3,
+    Number(pilot?.cycleHistory?.verifiedPilotProgress
+      ?? (Number(pilot?.run?.verified_existing_listings) + Number(pilot?.run?.verified_new_listings))) || 0))
   const quotaNow = new Date()
   const pausedJobs = (pilot?.jobs ?? []).map((job: Row) => ({
     job,
@@ -87,7 +97,7 @@ export function TodayLaunchPanel() {
     ...pausedJobs.map((entry: Row) => String(entry.decision.resumeAt || "")),
     ...pausedQuotaLanes.map((entry: Row) => String(entry.decision.resumeAt || "")),
   ].filter(Boolean).sort()[0]
-  const currentBusinessState = !pilot ? "NO INICIADO" : runStatus === "BLOCKED" ? "BLOQUEADO" :
+  const currentBusinessState = !pilot ? "NO INICIADO" : nextCycleAllowed ? "ESPERANDO TU CONFIRMACIÓN" : runStatus === "BLOCKED" ? "BLOQUEADO" :
     runStatus === "COMPLETED" ? "PUBLICADO Y VERIFICADO" :
       candidates.some((candidate: Row) => candidate.machine_state === "READY_FOR_MANUAL_PUBLICATION") ? "LISTO PARA PUBLICAR" :
         openTasks.length ? "ESPERANDO TU CONFIRMACIÓN" :
@@ -100,16 +110,23 @@ export function TodayLaunchPanel() {
         <h2 className="mt-2 break-words text-2xl font-black">Objetivo: completar el piloto 3/3</h2>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-white/60">Un clic inicia el trabajo automático. Tú supervisas y Seller OS se detiene sólo cuando necesita una confirmación indispensable.</p>
       </div>
-      <span className="rounded-full border border-white/15 px-3 py-2 text-xs font-black">{loading ? "CARGANDO" : currentBusinessState}</span>
+      <div className="flex flex-wrap items-center gap-2">
+        {pilot && <span className="rounded-full border border-cyan-200/20 px-3 py-2 text-xs font-black text-cyan-100">Ciclo de revisión {currentCycle}</span>}
+        <span aria-live="polite" className="rounded-full border border-white/15 px-3 py-2 text-xs font-black">{loading ? "CARGANDO" : currentBusinessState}</span>
+      </div>
     </div>
-    {(!pilot || (runStatus === "BLOCKED" && candidates.length === 0)) && !loading && <button type="button" disabled={working} onClick={() => void request({ action: "start" })} className="mt-5 min-h-14 w-full rounded-2xl bg-cyan-200 px-5 text-base font-black text-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-100 disabled:opacity-50 sm:w-auto">{working ? "INICIANDO…" : pilot ? "BUSCAR CANDIDATOS SEGUROS DE NUEVO" : "INICIAR LANZAMIENTO DE HOY"}</button>}
+    {showLaunchAction && <div className="mt-5">
+      <button type="button" disabled={working} aria-describedby={pilot ? "next-cycle-helper" : undefined} onClick={() => void request({ action: "start" })} className="min-h-14 w-full rounded-2xl bg-cyan-200 px-5 text-base font-black text-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-100 disabled:opacity-50 sm:w-auto">{working ? (pilot ? "PREPARANDO SIGUIENTES 5…" : "INICIANDO…") : pilot ? "ANALIZAR SIGUIENTES 5 CANDIDATOS" : "INICIAR LANZAMIENTO DE HOY"}</button>
+      {pilot && <p id="next-cycle-helper" className="mt-2 max-w-2xl text-xs leading-5 text-white/60">Conserva todo lo revisado, excluye los candidatos ya intentados y crea el ciclo {nextCycle} con un máximo de 5. No reinicia Discovery ni consulta eBay para las 1,513 variantes.</p>}
+    </div>}
+    {pilot?.nextCandidateCycle?.reason === "NEXT_CANDIDATE_SET_EXHAUSTED" && <p className="mt-5 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 text-sm text-amber-50">No quedan candidatos distintos elegibles en la cola local actual. Seller OS preservó toda la evidencia y no forzará una publicación.</p>}
     {error && <p role="alert" className="mt-4 rounded-2xl border border-red-300/30 bg-red-400/10 p-3 text-sm font-bold text-red-100">{error}</p>}
     {pilot && <>
       <section aria-labelledby="system-working-heading" className="mt-5 rounded-2xl border border-emerald-200/20 bg-black/20 p-4">
         <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100/60">1 · Sistema trabajando</p>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
           <h3 id="system-working-heading" className="text-lg font-black text-emerald-50">{currentBusinessState}</h3>
-          <span className="text-sm font-bold text-white/65">Piloto {Number(pilot.run.verified_existing_listings) + Number(pilot.run.verified_new_listings)} / 3</span>
+          <span className="text-sm font-bold text-white/65">Piloto {pilotProgress} / 3</span>
         </div>
         <p className="mt-2 text-sm leading-6 text-white/60">Seller OS conserva el progreso, continúa los trabajos permitidos en segundo plano y te presenta una sola decisión a la vez.</p>
       </section>
@@ -138,7 +155,7 @@ export function TodayLaunchPanel() {
         <p className="mt-2 text-xs leading-5 text-white/55">No necesitas pulsar otro botón técnico después de confirmar la tarea principal.</p>
       </section>
       {readyCandidates.length > 0 && <div className="mt-6"><h3 className="text-lg font-black">Listos para Seller Hub</h3><div className="mt-3 grid gap-4">{readyCandidates.map((candidate: Row) => <ManualHandoffCard key={candidate.id} candidate={candidate} />)}</div></div>}
-      <details className="mt-5 rounded-2xl border border-white/10 p-4"><summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver métricas y progreso automático</summary><div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-6"><Metric label="Piloto" value={`${Number(pilot.run.verified_existing_listings) + Number(pilot.run.verified_new_listings)} / 3`} /><Metric label="Cola de hoy" value={`${candidates.length} / 5`} /><Metric label="Preparación local" value={String(candidates.filter((candidate: Row) => candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES").length)} /><Metric label="Listos" value={String(pilot.run.ready_for_manual_publication_count)} /><Metric label="Automatización" value={`${Number(pilot.run.automation_metrics?.automationCoveragePercent ?? 0)}%`} /><Metric label="Escrituras eBay" value="0" /></div><div className="mt-3 grid gap-2">{candidates.map((candidate: Row) => <div key={candidate.id} className="min-w-0 rounded-xl bg-black/20 p-3"><p className="break-words font-bold">{candidate.ordinal}. {candidate.product_title}</p><p className="mt-1 break-words text-xs text-white/55">{businessState(candidate.machine_state)} · SKU {candidate.supplier_sku}</p>{candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES" && <p className="mt-1 text-xs text-cyan-100/75">Paquete local seguro preparado; todavía no es publicable.</p>}<p className="mt-1 break-words text-xs text-amber-100/80">{candidate.next_human_action}</p></div>)}</div></details>
+      <details className="mt-5 rounded-2xl border border-white/10 p-4"><summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver métricas y progreso automático</summary><div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-7"><Metric label="Piloto" value={`${pilotProgress} / 3`} /><Metric label="Ciclo" value={String(currentCycle)} /><Metric label="Cola de este ciclo" value={`${candidates.length} / 5`} /><Metric label="Intentados acumulados" value={String(pilot.cycleHistory?.attemptedCandidates ?? candidates.length)} /><Metric label="Preparación local" value={String(candidates.filter((candidate: Row) => candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES").length)} /><Metric label="Listos" value={String(pilot.run.ready_for_manual_publication_count)} /><Metric label="Escrituras eBay" value="0" /></div><div className="mt-3 grid gap-2">{candidates.map((candidate: Row) => <div key={candidate.id} className="min-w-0 rounded-xl bg-black/20 p-3"><p className="break-words font-bold">{candidate.ordinal}. {candidate.product_title}</p><p className="mt-1 break-words text-xs text-white/55">{businessState(candidate.machine_state)} · SKU {candidate.supplier_sku}</p>{candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES" && <p className="mt-1 text-xs text-cyan-100/75">Paquete local seguro preparado; todavía no es publicable.</p>}<p className="mt-1 break-words text-xs text-amber-100/80">{candidate.next_human_action}</p></div>)}</div></details>
     </>}
   </section>
 }
