@@ -40,7 +40,7 @@ import {
   fetchOfficialManufacturerFacts,
 } from "./ebay-official-manufacturer-facts"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V4_2026_07_19"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V5_2026_07_19"
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
 type JsonRecord = Record<string, unknown>
@@ -555,7 +555,7 @@ function tradingItemIdFromBrowseComparable(value: unknown) {
   return raw.match(/^v1\|(\d{9,20})\|/)?.[1] ?? ""
 }
 
-function browseSellSimilarTradingItemId(input: { browse: JsonRecord | null; productTitle: string }) {
+function browseSellSimilarTradingCandidates(input: { browse: JsonRecord | null; productTitle: string }) {
   return array(input.browse?.comparableEvidence)
     .map(record)
     .map((comparable) => ({
@@ -563,15 +563,49 @@ function browseSellSimilarTradingItemId(input: { browse: JsonRecord | null; prod
       identifierExact: comparable.identifierExact === true,
       matchQuality: text(comparable.identityMatchQuality).toUpperCase(),
       matchScore: Number(comparable.identityMatchScore) || 0,
+      salesQuantity: Number(comparable.salesQuantity) || 0,
+      structuredFieldCount: [comparable.color, comparable.size, comparable.brand, comparable.mpn,
+        comparable.model, comparable.gtin].filter((value) => text(value)).length,
       title: text(comparable.title),
       eligible: comparable.eligibleComparable === true,
     }))
     .filter((comparable) => comparable.itemId && comparable.eligible &&
       ["EXACT", "STRONG"].includes(comparable.matchQuality) &&
       comparableTitleMatches(input.productTitle, comparable.title))
-    .sort((left, right) => Number(right.identifierExact) - Number(left.identifierExact) ||
+    .sort((left, right) => Number(right.salesQuantity > 0) - Number(left.salesQuantity > 0) ||
+      right.salesQuantity - left.salesQuantity ||
+      Number(right.identifierExact) - Number(left.identifierExact) ||
       Number(right.matchQuality === "EXACT") - Number(left.matchQuality === "EXACT") ||
-      right.matchScore - left.matchScore)[0]?.itemId ?? ""
+      right.structuredFieldCount - left.structuredFieldCount ||
+      right.matchScore - left.matchScore)
+    .slice(0, 3)
+}
+
+const SELL_SIMILAR_SAFE_ITEM_SPECIFICS = new Set([
+  "type", "style", "theme", "material", "department", "features", "feature", "character",
+  "character family", "occasion", "pattern", "shape", "finish",
+])
+
+function tradingItemSpecificObservations(input: {
+  candidateId: string
+  lunaVariantId: string | null
+  trading: JsonRecord
+  observedAt: string
+}) {
+  const sourceReference = safeSourceReference("EBAY_TRADING_GET_ITEM_READONLY", text(input.trading.itemId))
+  const observations: FactObservation[] = []
+  for (const specific of array(input.trading.itemSpecifics).map(record)) {
+    const name = text(specific.name).toLocaleLowerCase("en-US").replace(/\s+/g, " ")
+    const values = array(specific.values).map(text).filter(Boolean)
+    if (!SELL_SIMILAR_SAFE_ITEM_SPECIFICS.has(name) || values.length !== 1) continue
+    observations.push(observation({
+      candidateId: input.candidateId, lunaVariantId: input.lunaVariantId, scope: "PRODUCT_UNIT",
+      key: name, value: values[0], sourceType: "EBAY_TRADING_GET_ITEM_READONLY",
+      authority: "CORROBORATION", status: "CORROBORATED", confidence: .68,
+      observedAt: input.observedAt, sourceReference,
+    }))
+  }
+  return observations
 }
 
 export async function runProductFactsEnrichment(input: {
@@ -676,31 +710,39 @@ export async function runProductFactsEnrichment(input: {
       // identity, then reuse only official category and corroborating facts.
       // Seller copy is never used.
       let trading: JsonRecord | null = null
+      const tradingComparables: JsonRecord[] = []
       let tradingStatus = "NOT_APPLICABLE_ITEM_ID_MISSING"
       let tradingSelectionSource = "NONE"
       const capturedTradingItemId = await officialCapturedItemId(input.supabase, input.accountKey,
         text(candidate.supplier_variant_id))
-      const browseTradingItemId = browseSellSimilarTradingItemId({ browse: browseReport, productTitle: base.title })
+      const browseTradingCandidates = browseSellSimilarTradingCandidates({ browse: browseReport, productTitle: base.title })
+      const seenTradingItemIds = new Set<string>()
       const tradingAttempts = [
         capturedTradingItemId ? { itemId: capturedTradingItemId, source: "CAPTURED_EXACT" } : null,
-        browseTradingItemId && browseTradingItemId !== capturedTradingItemId
-          ? { itemId: browseTradingItemId, source: "BROWSE_SELL_SIMILAR" }
-          : null,
-      ].filter((attempt): attempt is { itemId: string; source: string } => Boolean(attempt))
+        ...browseTradingCandidates.map((candidate) => ({
+          itemId: candidate.itemId, source: "BROWSE_SELL_SIMILAR",
+        })),
+      ].filter((attempt): attempt is { itemId: string; source: string } => {
+        if (!attempt || seenTradingItemIds.has(attempt.itemId)) return false
+        seenTradingItemIds.add(attempt.itemId)
+        return true
+      }).slice(0, 3)
       for (const attempt of tradingAttempts) {
         try {
           const comparable = record(await readEbayTradingItemIdentityReadonly(attempt.itemId))
           if (comparableTitleMatches(base.title, comparable.title)) {
-            trading = comparable
+            tradingComparables.push(comparable)
             tradingStatus = "AVAILABLE"
-            tradingSelectionSource = attempt.source
-            break
-          } else {
+            if (!trading) {
+              trading = comparable
+              tradingSelectionSource = attempt.source
+            }
+          } else if (!trading) {
             tradingStatus = "TITLE_IDENTITY_MISMATCH"
           }
         } catch (error) {
           if (getEbayReadonlyRateLimitMetadata(error)) throw error
-          tradingStatus = safeCode(error)
+          if (!trading) tradingStatus = safeCode(error)
         }
       }
       const tradingCategoryId = numericCategoryId(trading?.categoryId)
@@ -743,6 +785,8 @@ export async function runProductFactsEnrichment(input: {
           sourceType: "EBAY_TRADING_GET_ITEM_READONLY", authority: "CORROBORATION", observedAt: trading ? text(trading.observedAt) || now.toISOString() : null,
           status: tradingStatus, payload: { validOfficialItemId: Boolean(trading),
             selectionSource: tradingSelectionSource, titleIdentityValidated: Boolean(trading),
+            comparableReadCount: tradingComparables.length,
+            safeDescriptiveItemSpecificsEligible: tradingComparables.length > 0,
             contentUsedAsCriticalAuthority: false } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "MANUFACTURER_OFFICIAL_PUBLIC", authority: "MANUFACTURER_OR_LABEL",
@@ -766,8 +810,14 @@ export async function runProductFactsEnrichment(input: {
       ...browseObservations({ candidateId: text(candidate.id),
         lunaVariantId: text(candidate.supplier_variant_id) || null,
         browse: browseReport, observedAt: now.toISOString() }),
-      ...(trading ? tradingObservations({ candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
-        trading, observedAt: text(trading.observedAt) || now.toISOString() }) : [])]
+      ...tradingComparables.flatMap((comparable) => [
+        ...tradingObservations({ candidateId: text(candidate.id),
+          lunaVariantId: text(candidate.supplier_variant_id) || null,
+          trading: comparable, observedAt: text(comparable.observedAt) || now.toISOString() }),
+        ...tradingItemSpecificObservations({ candidateId: text(candidate.id),
+          lunaVariantId: text(candidate.supplier_variant_id) || null,
+          trading: comparable, observedAt: text(comparable.observedAt) || now.toISOString() }),
+      ])]
       const firstResolution = resolveProductFacts(initial, now)
       const derived = deriveOfferPackFacts({ candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null, facts: firstResolution.facts, now })
       const estimate = createShippingEstimate({ candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,

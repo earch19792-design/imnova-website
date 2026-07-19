@@ -428,14 +428,29 @@ const ASPECT_MAPPING: Record<string, string[]> = {
   size: ["netContent", "size"], material: ["material"], condition: ["condition"],
 }
 
+const SELL_SIMILAR_DESCRIPTIVE_ASPECTS = new Set([
+  "color", "type", "style", "theme", "material", "department", "features", "feature",
+  "character", "characterfamily", "occasion", "pattern", "shape", "finish",
+])
+
+function hasSafeSellSimilarAspect(aspect: TaxonomyAspect, resolved: ResolvedFact | null,
+  selectedValue: string | null) {
+  if (!resolved || resolved.verificationStatus !== "CORROBORATED" || !selectedValue ||
+    resolved.conflictingObservationIds.length > 0 ||
+    !SELL_SIMILAR_DESCRIPTIVE_ASPECTS.has(key(aspect.name)) ||
+    !resolved.supportingSourceTypes.includes("EBAY_TRADING_GET_ITEM_READONLY")) return false
+  return !(aspect.values ?? []).length || (aspect.values ?? []).some((value) => key(value) === key(selectedValue))
+}
+
 export function mapTaxonomyRequirements(aspects: TaxonomyAspect[], facts: ResolvedFact[]) {
   return aspects.map<FactRequirement>((aspect) => {
     const candidates = ASPECT_MAPPING[key(aspect.name)] ?? [aspect.name]
     const resolved = candidates.map((candidate) => facts.find((fact) => key(fact.factKey) === key(candidate))).find(Boolean) ?? null
     const selectedValue = resolved && typeof resolved.selectedValue !== "object" && resolved.selectedValue !== null
       ? String(resolved.selectedValue) : null
+    const permittedSource = hasPermittedSource(resolved) || hasSafeSellSimilarAspect(aspect, resolved, selectedValue)
     const status: RequirementStatus = resolved?.verificationStatus === "CONFLICTED" ? "CONFLICTED_BLOCKING" :
-      hasPermittedSource(resolved) ? (resolved?.verificationStatus === "VERIFIED" ||
+      permittedSource ? (resolved?.verificationStatus === "VERIFIED" ||
         resolved?.verificationStatus === "DERIVED_VERIFIED" ? "SATISFIED_VERIFIED" : "SATISFIED_CORROBORATED") :
         aspect.required ? "MISSING_BLOCKING" : "MISSING_OPTIONAL"
     return { aspectName: aspect.name, required: aspect.required, mappedFactKey: resolved?.factKey ?? null,

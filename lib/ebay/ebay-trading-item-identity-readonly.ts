@@ -29,6 +29,7 @@ export type TradingItemIdentityReadOnlyResult = {
   unitCount: number | null
   condition: string | null
   categoryId: string | null
+  itemSpecifics: Array<{ name: string; values: string[] }>
   variantResolutionStatus: "RESOLVED" | "UNRESOLVED_MULTIPLE_VALUES"
   observedAt: string
   source: "EBAY_TRADING_GET_ITEM_READONLY"
@@ -102,6 +103,9 @@ export function parseTradingItemIdentityResponse(
   }
   const variantResolutionStatus = [...specifics.values()].some((values) => values.size > 1)
     ? "UNRESOLVED_MULTIPLE_VALUES" as const : "RESOLVED" as const
+  const itemSpecifics = [...specifics.entries()]
+    .filter(([name]) => !/^(sku|seller sku|custom label|customlabel)$/i.test(name))
+    .map(([name, values]) => ({ name, values: [...values] }))
   const gtin = tagValue(detail, "UPC") ?? tagValue(detail, "EAN") ?? tagValue(detail, "ISBN") ??
     aspect("upc", "ean", "gtin")
   return {
@@ -118,6 +122,7 @@ export function parseTradingItemIdentityResponse(
     unitCount: positiveInteger(aspect("unit quantity", "count per pack", "number of items in set")),
     condition: tagValue(item, "ConditionDisplayName"),
     categoryId: numericIdentifier(tagValue(container(item, "PrimaryCategory"), "CategoryID")),
+    itemSpecifics,
     variantResolutionStatus,
     observedAt: now.toISOString(), source: "EBAY_TRADING_GET_ITEM_READONLY",
     ebayWriteUsed: false,
