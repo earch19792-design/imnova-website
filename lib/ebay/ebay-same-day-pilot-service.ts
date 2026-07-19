@@ -3194,7 +3194,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
                 nextAutomaticAction: "Calcular economía localmente.",
                 nextHumanAction: "Ninguna.",
                 job: { jobType: "CALCULATE_ECONOMICS",
-                  idempotencyKey: `${state.run.id}:${candidate.id}:CALCULATE_ECONOMICS`,
+                  idempotencyKey: `${state.run.id}:${candidate.id}:CALCULATE_ECONOMICS:${leased.id}`,
                   checkpoint: {
                     confirmedLunaPrice: record(candidate.economics_summary).confirmedLunaPrice,
                     quantityKnown: record(candidate.economics_summary).quantityUnknown !== true,
@@ -3295,7 +3295,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
               previousState: "RUNNING_LOOP_1", nextState: "CALCULATING_ECONOMICS", reasonCode: "LOOP1_REANALYSIS_COMPLETED_AUTO_RESUME",
               triggeredBy: "SYSTEM", nextAutomaticAction: "Calcular economía localmente.", nextHumanAction: "Ninguna.",
               job: { jobType: "CALCULATE_ECONOMICS",
-                idempotencyKey: `${state.run.id}:${candidate.id}:CALCULATE_ECONOMICS`,
+                idempotencyKey: `${state.run.id}:${candidate.id}:CALCULATE_ECONOMICS:${leased.id}`,
                 checkpoint: { confirmedLunaPrice: confirmation.confirmedLunaPrice,
                   quantityKnown: confirmation.quantityUnknown !== true } } })
           } else {
@@ -3328,7 +3328,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           checkpoint: { minimumOperatorPrice: economics.minimumOperatorPrice, automaticPricingUsed: false },
           nextAutomaticAction: "Resolver Product Facts, Taxonomy y regulación.", nextHumanAction: "Ninguna.",
           job: { jobType: "ENRICH_PRODUCT_FACTS",
-            idempotencyKey: `${state.run.id}:${candidate.id}:ENRICH_PRODUCT_FACTS`,
+            idempotencyKey: `${state.run.id}:${candidate.id}:ENRICH_PRODUCT_FACTS:${leased.id}:${PRODUCT_FACTS_ENGINE_VERSION}`,
             checkpoint: { queueItemId: candidate.queue_item_id }, maxAttempts: 10,
             apiFamily: "BROWSE", apiOperation: "EXACT_VERIFICATION", ownerLane: "P1_EXACT_VERIFICATION" } })
       }
