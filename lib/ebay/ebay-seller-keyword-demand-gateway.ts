@@ -830,6 +830,9 @@ export type EbayTaxonomyListingIntelligence = {
   aspects: EbayTaxonomyAspectIntelligence[]
   requiredAspects: EbayTaxonomyAspectIntelligence[]
   recommendedAspects: EbayTaxonomyAspectIntelligence[]
+  categoryResolution: "KNOWN_CATEGORY" | "TITLE_SUGGESTION" |
+    "TITLE_SUGGESTION_FALLBACK" | "UNRESOLVED"
+  failureCode: string | null
   source: "EBAY_TAXONOMY_OFFICIAL_READONLY"
 }
 
@@ -905,6 +908,7 @@ export async function getEbayTaxonomyListingIntelligence(
   let resolvedCategoryId = normalizedKnownCategory
   let resolvedCategoryTreeId = ""
   let resolvedCategoryTreeVersion: string | null = null
+  let failureCode: string | null = null
   const empty = (status: EbayTaxonomyListingIntelligence["status"], context?: {
     categoryTreeId?: string | null
     categoryTreeVersion?: string | null
@@ -920,6 +924,8 @@ export async function getEbayTaxonomyListingIntelligence(
     aspects: [],
     requiredAspects: [],
     recommendedAspects: [],
+    categoryResolution: "UNRESOLVED",
+    failureCode,
     source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
   })
   try {
@@ -933,9 +939,7 @@ export async function getEbayTaxonomyListingIntelligence(
     resolvedCategoryTreeVersion = categoryTreeVersion
     if (!categoryTreeId) return empty("REQUEST_FAILED")
 
-    let categoryId = normalizedKnownCategory
-    let categoryName = ""
-    if (!categoryId) {
+    const suggestCategory = async () => {
       const suggestionUrl = new URL(
         `${TAXONOMY_ENDPOINT}/category_tree/${encodeURIComponent(categoryTreeId)}/get_category_suggestions`
       )
@@ -943,18 +947,46 @@ export async function getEbayTaxonomyListingIntelligence(
       const suggestionPayload = await getEbayJson(suggestionUrl, token)
       const suggestion = record(array(suggestionPayload.categorySuggestions)[0])
       const category = record(suggestion.category)
-      categoryId = text(category.categoryId)
-      categoryName = text(category.categoryName)
+      return { id: text(category.categoryId), name: text(category.categoryName) }
+    }
+    let categoryId = normalizedKnownCategory
+    let categoryName = ""
+    let categoryResolution: EbayTaxonomyListingIntelligence["categoryResolution"] =
+      categoryId ? "KNOWN_CATEGORY" : "TITLE_SUGGESTION"
+    if (!categoryId) {
+      const suggestion = await suggestCategory()
+      categoryId = suggestion.id
+      categoryName = suggestion.name
       resolvedCategoryId = categoryId
     }
     if (!categoryId) {
       return empty("CATEGORY_NOT_RESOLVED", { categoryTreeId, categoryTreeVersion })
     }
-    const aspectsUrl = new URL(
-      `${TAXONOMY_ENDPOINT}/category_tree/${encodeURIComponent(categoryTreeId)}/get_item_aspects_for_category`
-    )
-    aspectsUrl.searchParams.set("category_id", categoryId)
-    const aspectsPayload = await getEbayJson(aspectsUrl, token)
+    const getAspects = (targetCategoryId: string) => {
+      const aspectsUrl = new URL(
+        `${TAXONOMY_ENDPOINT}/category_tree/${encodeURIComponent(categoryTreeId)}/get_item_aspects_for_category`
+      )
+      aspectsUrl.searchParams.set("category_id", targetCategoryId)
+      return getEbayJson(aspectsUrl, token)
+    }
+    let aspectsPayload: JsonRecord
+    try {
+      aspectsPayload = await getAspects(categoryId)
+    } catch (knownCategoryError) {
+      throwIfRateLimited(knownCategoryError)
+      if (!normalizedKnownCategory) throw knownCategoryError
+      // Categories copied from an active comparable can be old, non-leaf, or
+      // simply unsuitable for the exact Luna product. Fall back only to the
+      // current official leaf suggestion and still require its aspects call to
+      // succeed before readiness can pass.
+      const suggestion = await suggestCategory()
+      if (!suggestion.id || suggestion.id === categoryId) throw knownCategoryError
+      categoryId = suggestion.id
+      categoryName = suggestion.name
+      resolvedCategoryId = categoryId
+      categoryResolution = "TITLE_SUGGESTION_FALLBACK"
+      aspectsPayload = await getAspects(categoryId)
+    }
     const aspects = array(aspectsPayload.aspects).map(mapTaxonomyAspect).filter((aspect) => aspect.name)
     const value: EbayTaxonomyListingIntelligence = {
       status: "AVAILABLE",
@@ -966,6 +998,8 @@ export async function getEbayTaxonomyListingIntelligence(
       aspects,
       requiredAspects: aspects.filter((aspect) => aspect.required),
       recommendedAspects: aspects.filter((aspect) => !aspect.required && aspect.usage === "RECOMMENDED"),
+      categoryResolution,
+      failureCode: null,
       source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
     }
     taxonomyCache.set(cacheKey, {
@@ -981,6 +1015,10 @@ export async function getEbayTaxonomyListingIntelligence(
     return value
   } catch (error) {
     throwIfRateLimited(error)
+    const code = error instanceof Error ? error.message : ""
+    failureCode = /^EBAY_READONLY_GET_(?:FAILED|\d{3})$/.test(code)
+      ? code
+      : "EBAY_TAXONOMY_REQUEST_FAILED"
     return empty("REQUEST_FAILED")
   } finally {
     token = ""

@@ -23,6 +23,15 @@ test("eBay read-only gateway caches short-lived OAuth and taxonomy data", () => 
   assert.match(gateway, /category:\$\{normalizedKnownCategory\}/)
 })
 
+test("Taxonomy replaces a rejected inherited category only with an official leaf suggestion", () => {
+  assert.match(gateway, /const suggestCategory = async/)
+  assert.match(gateway, /get_category_suggestions/)
+  assert.match(gateway, /categoryResolution = "TITLE_SUGGESTION_FALLBACK"/)
+  assert.match(gateway, /aspectsPayload = await getAspects\(categoryId\)/)
+  assert.match(gateway, /if \(!suggestion\.id \|\| suggestion\.id === categoryId\) throw knownCategoryError/)
+  assert.match(gateway, /failureCode = \/\^EBAY_READONLY_GET_/)
+})
+
 test("eBay read-only gateway retries transient failures with Retry-After", () => {
   assert.match(gateway, /\[429, 500, 502, 503, 504\]/)
   assert.match(gateway, /retry-after/)

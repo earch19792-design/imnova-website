@@ -36,7 +36,7 @@ import {
 import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
 import { extractLunaOfficialDescriptionIdentity } from "./luna-official-description-identity"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V2_2026_07_19"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V3_2026_07_19"
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
 type JsonRecord = Record<string, unknown>
@@ -556,6 +556,8 @@ export async function runProductFactsEnrichment(input: {
           status: text(taxonomyRecord.status) || "REQUEST_FAILED", payload: { categoryId: text(taxonomyRecord.categoryId) || null,
             categorySeedPresent: Boolean(taxonomyCategoryId),
             categorySeedSource: catalogCategoryId ? "EBAY_CATALOG_EXACT" : knownCategoryId ? "EXISTING_EXACT_COMPARABLE" : "TITLE_SUGGESTION",
+            categoryResolution: text(taxonomyRecord.categoryResolution) || "UNRESOLVED",
+            failureCode: text(taxonomyRecord.failureCode) || null,
             requiredAspectCount: array(taxonomyRecord.requiredAspects).length } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "EBAY_BROWSE_OFFICIAL_READONLY", authority: "CORROBORATION", observedAt: now.toISOString(), status: browseStatus,
