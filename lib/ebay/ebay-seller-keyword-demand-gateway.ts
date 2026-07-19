@@ -39,7 +39,7 @@ const MARKETPLACE_INSIGHTS_SCOPE =
 const MARKETPLACE_ID = "EBAY_US"
 // Deep analysis is deliberately bounded. Discovery uses one aggregate Browse
 // search and only promoted candidates may spend detail budget.
-const DEFAULT_DETAIL_SAMPLE_LIMIT = 2
+const DEFAULT_DETAIL_SAMPLE_LIMIT = 5
 const DETAIL_CONCURRENCY = 2
 const EBAY_REQUEST_TIMEOUT_MS = 8_000
 const EBAY_MAX_RETRIES = 3

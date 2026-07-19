@@ -439,7 +439,8 @@ function hasSafeSellSimilarAspect(aspect: TaxonomyAspect, resolved: ResolvedFact
     resolved.conflictingObservationIds.length > 0 ||
     !SELL_SIMILAR_DESCRIPTIVE_ASPECTS.has(key(aspect.name)) ||
     !resolved.supportingSourceTypes.includes("EBAY_TRADING_GET_ITEM_READONLY")) return false
-  return !(aspect.values ?? []).length || (aspect.values ?? []).some((value) => key(value) === key(selectedValue))
+  return aspect.aspectMode !== "SELECTION_ONLY" || !(aspect.values ?? []).length ||
+    (aspect.values ?? []).some((value) => key(value) === key(selectedValue))
 }
 
 export function mapTaxonomyRequirements(aspects: TaxonomyAspect[], facts: ResolvedFact[]) {
