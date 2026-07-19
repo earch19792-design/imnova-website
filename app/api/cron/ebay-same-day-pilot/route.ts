@@ -6,6 +6,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto"
 import { NextResponse } from "next/server"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { previewSameDayPilot, processSameDayPilotJobs } from "@/lib/ebay/ebay-same-day-pilot-service"
+import { getListingImageFactoryConfiguration } from "@/lib/ebay/ebay-listing-image-factory"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 
 function authorized(request: Request, validateOnly: boolean) {
@@ -30,6 +31,7 @@ export async function GET(req: Request) {
   if (!accountKey) return NextResponse.json({ success: false, error: "SAME_DAY_PILOT_ACCOUNT_SCOPE_REQUIRED" }, { status: 503 })
   if (validationMode) {
     const preview = await previewSameDayPilot({ supabase: getSupabaseAdminClient(), accountKey })
+    const imageFactory = getListingImageFactoryConfiguration()
     return NextResponse.json({
       success: true,
       mode: "STAGING_READONLY_VALIDATION",
@@ -47,12 +49,17 @@ export async function GET(req: Request) {
       })),
       packages: preview.localPreparationPackages,
       safety: preview.safety,
+      imageFactory,
     })
   }
   if (process.env.EBAY_SAME_DAY_PILOT_PREVIEW_WORKER_ENABLED !== "true") {
+    const imageFactory = getListingImageFactoryConfiguration()
     return NextResponse.json({ success: true, status: "disabled", reason: "SAME_DAY_PILOT_PREVIEW_WORKER_DISABLED",
+      imageFactory,
       safety: { previewOnly: true, ebayWrites: 0, openAiCalls: 0, productionChanged: false } })
   }
   const result = await processSameDayPilotJobs({ supabase: getSupabaseAdminClient(), accountKey, workerId: `same-day:${randomUUID()}` })
-  return NextResponse.json({ success: true, result, safety: { recursiveHttp: false, ebayWrites: 0, productionChanged: false } })
+  const imageFactory = getListingImageFactoryConfiguration()
+  return NextResponse.json({ success: true, result, imageFactory,
+    safety: { recursiveHttp: false, ebayWrites: 0, productionChanged: false } })
 }

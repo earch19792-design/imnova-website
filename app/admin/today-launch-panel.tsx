@@ -64,6 +64,10 @@ export function TodayLaunchPanel() {
   const primaryCandidate = primaryTask
     ? candidates.find((candidate: Row) => candidate.id === primaryTask.candidate_id)
     : undefined
+  const primaryReviewAssets = primaryCandidate &&
+    Array.isArray(pilot?.imageReviewAssets?.[String(primaryCandidate.id)])
+    ? pilot.imageReviewAssets[String(primaryCandidate.id)]
+    : []
   const readyCandidates = candidates.filter((candidate: Row) => candidate.machine_state === "READY_FOR_MANUAL_PUBLICATION")
   const runStatus = String(pilot?.run?.status ?? "")
   const nextCycleAllowed = pilot?.nextCandidateCycle?.allowed === true
@@ -115,6 +119,7 @@ export function TodayLaunchPanel() {
   const currentBusinessState = nextCycleAllowed
     ? "ESPERANDO TU CONFIRMACIÓN"
     : liveMonitor.businessLabel
+  const imageAiReady = pilot?.imageFactoryConfiguration?.aiGeneration === "READY"
   return <section className="mt-5 min-w-0 overflow-hidden rounded-3xl border border-cyan-200/20 bg-gradient-to-br from-cyan-200/[0.10] to-emerald-200/[0.04] p-5 sm:p-7">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="min-w-0">
@@ -124,6 +129,7 @@ export function TodayLaunchPanel() {
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {pilot && <span className="rounded-full border border-cyan-200/20 px-3 py-2 text-xs font-black text-cyan-100">Ciclo de revisión {currentCycle}</span>}
+        {pilot && <span className={`rounded-full border px-3 py-2 text-xs font-black ${imageAiReady ? "border-emerald-200/25 bg-emerald-200/[0.06] text-emerald-100" : "border-amber-200/25 bg-amber-200/[0.06] text-amber-100"}`}>{imageAiReady ? "IMÁGENES IA LISTAS" : "IMÁGENES: RESPALDO LOCAL"}</span>}
         <span aria-live="polite" className="rounded-full border border-white/15 px-3 py-2 text-xs font-black">{loading ? "CARGANDO" : currentBusinessState}</span>
       </div>
     </div>
@@ -144,7 +150,9 @@ export function TodayLaunchPanel() {
           ? <div className="mt-3"><ProductResearchQueueTask guidance={pilot.productResearchGuidance} researchTasks={productResearchTasks} fallbackQuery={productResearchTasks[0]?.action_schema?.query} openTaskCount={productResearchTasks.length} /></div>
           : !primaryTask
           ? <p className="mt-2 rounded-2xl border border-white/10 p-4 text-sm text-white/55">Seller OS no necesita una acción humana en este momento.</p>
-          : <div className="mt-3"><HumanTask task={primaryTask} candidate={primaryCandidate} working={working} onConfirm={(body) => request(body)} /></div>}
+          : <div className="mt-3"><HumanTask task={primaryTask} candidate={primaryCandidate}
+            reviewAssets={primaryReviewAssets} working={working}
+            onConfirm={(body) => request(body)} /></div>}
         {productResearchTasks.length > 0 && primaryTask && <aside aria-label="Próxima decisión en espera" className="mt-3 rounded-2xl border border-violet-200/20 bg-violet-200/[0.04] p-3">
           <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/60">Próxima decisión protegida</p>
           <p className="mt-1 break-words text-sm font-black text-violet-50">{primaryTask.title}</p>
@@ -365,12 +373,20 @@ function ProductResearchQueueTask({ guidance, researchTasks, fallbackQuery, open
   </article>
 }
 
-function HumanTask({ task, candidate, working, onConfirm }: { task: Row; candidate?: Row; working: boolean; onConfirm: (body: Row) => Promise<void> }) {
+function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
+  task: Row
+  candidate?: Row
+  reviewAssets: Row[]
+  working: boolean
+  onConfirm: (body: Row) => Promise<void>
+}) {
   const [price, setPrice] = useState("")
   const [salePrice, setSalePrice] = useState("")
   const [fulfillmentBasis, setFulfillmentBasis] = useState("")
   const [availability, setAvailability] = useState("unknown")
   const [quantity, setQuantity] = useState("")
+  const [imageRightsConfirmed, setImageRightsConfirmed] = useState(false)
+  const [openAiImageSpendApproved, setOpenAiImageSpendApproved] = useState(false)
   const anchorImage = candidateHeroImage(candidate)
   const parsedQuantity = quantity === "" ? null : Number(quantity)
   const lunaQuantityConflict = parsedQuantity !== null && (
@@ -382,6 +398,9 @@ function HumanTask({ task, candidate, working, onConfirm }: { task: Row; candida
   const availabilityMissing = availability === "unknown"
   const salePriceMissing = !(Number(salePrice) > 0)
   const fieldId = String(task.id ?? "task")
+  const imageSet = normalizedImageReviewSet(reviewAssets)
+  const imageSetReady = completeImageReviewSet(imageSet)
+  const openAiContextUsed = imageSet.some((asset) => asset.generativeAiUsed === true)
 
   return <article className="min-w-0 overflow-hidden rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-4">
     <div className="flex flex-wrap justify-between gap-3">
@@ -392,7 +411,7 @@ function HumanTask({ task, candidate, working, onConfirm }: { task: Row; candida
         <div className="min-w-0">
           <h4 className="break-words font-black">{task.title}</h4>
           <p className="mt-1 break-words text-sm text-white/65">{candidate?.product_title}</p>
-          <p className="mt-1 break-words text-xs text-white/50">SKU {String(candidate?.supplier_sku ?? "N/D")} · misma referencia visual durante todo el recorrido</p>
+          <p className="mt-1 break-words text-xs text-white/50">SKU {String(candidate?.supplier_sku ?? "N/D")} · {task.gate_type === "IMAGE_APPROVAL_REQUIRED" ? "referencia Luna de identidad; el set a aprobar aparece abajo" : "misma referencia visual durante todo el recorrido"}</p>
         </div>
       </div>
       <span className="text-xs font-black text-amber-100">≈ {Math.ceil(Number(task.estimated_seconds) / 60)} min</span>
@@ -437,27 +456,95 @@ function HumanTask({ task, candidate, working, onConfirm }: { task: Row; candida
           <span id={`${fieldId}-fulfillment-help`} className={`mt-1 block font-normal ${fulfillmentBasis ? "text-white/55" : "text-red-200"}`}>{fulfillmentBasis ? "Base de fulfillment confirmada." : "Obligatorio: confirma la fuente real de fulfillment."}</span>
         </label>
       </div>
+      <fieldset className="mt-3 grid gap-3 rounded-xl border border-violet-200/20 bg-violet-200/[0.05] p-3">
+        <legend className="px-1 text-xs font-black text-violet-50">Autorizaciones para preparar las imágenes</legend>
+        <label className={`flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${imageRightsConfirmed ? "border-emerald-200/25 text-emerald-50" : "border-red-300/30 text-red-100"}`}>
+          <input type="checkbox" checked={imageRightsConfirmed}
+            onChange={(event) => setImageRightsConfirmed(event.target.checked)}
+            className="mt-1 h-5 w-5 shrink-0 accent-emerald-200" />
+          <span><strong>Confirmo los derechos de uso.</strong> Las imágenes de Luna/proveedor mostradas para este producto están autorizadas para preparar mi listing y corresponden al producto y pack exactos.</span>
+        </label>
+        <label className={`flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${openAiImageSpendApproved ? "border-emerald-200/25 text-emerald-50" : "border-red-300/30 text-red-100"}`}>
+          <input type="checkbox" checked={openAiImageSpendApproved}
+            onChange={(event) => setOpenAiImageSpendApproved(event.target.checked)}
+            className="mt-1 h-5 w-5 shrink-0 accent-emerald-200" />
+          <span><strong>Autorizo hasta 1 llamada OpenAI de calidad low.</strong> Se utilizará únicamente para un fondo contextual seguro; el producto autorizado se compondrá localmente y las seis imágenes requerirán mi revisión.</span>
+        </label>
+      </fieldset>
       <div className="mt-3 flex flex-wrap gap-3">
-        <button type="button" disabled={working || salePriceMissing || !fulfillmentBasis} onClick={() => void onConfirm({ action: "product_decision", taskId: task.id, decision: "APPROVE", salePrice: Number(salePrice), fulfillmentBasis })} className="min-h-12 w-full rounded-xl bg-cyan-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-100 disabled:opacity-40 sm:w-auto">APROBAR PRODUCTO</button>
+        <button type="button" disabled={working || salePriceMissing || !fulfillmentBasis || !imageRightsConfirmed || !openAiImageSpendApproved} onClick={() => void onConfirm({ action: "product_decision", taskId: task.id, decision: "APPROVE", salePrice: Number(salePrice), fulfillmentBasis, imageRightsConfirmed, openAiImageSpendApproved })} className="min-h-12 w-full rounded-xl bg-cyan-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-100 disabled:opacity-40 sm:w-auto">APROBAR PRODUCTO</button>
         <button type="button" disabled={working} onClick={() => void onConfirm({ action: "product_decision", taskId: task.id, decision: "REJECT" })} className="min-h-12 w-full rounded-xl border border-red-300/35 px-4 font-black text-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-200 disabled:opacity-40 sm:w-auto">RECHAZAR</button>
       </div>
       {candidate?.economics_summary?.minimumOperatorPrice && <p className="mt-2 text-xs text-white/60">Piso interno estimado con costo y reservas propias: ${Number(candidate.economics_summary.minimumOperatorPrice).toFixed(2)}. Debe validarse con el precio que tú apruebes.</p>}
     </div>}
 
     {task.gate_type === "IMAGE_APPROVAL_REQUIRED" && <div className="mt-4">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{authorizedImages(candidate).map((url) => <img key={url} src={url} alt="Imagen autorizada de Luna para revisar" className="aspect-square w-full rounded-xl bg-white object-contain" />)}</div>
-      <p className={`mt-3 rounded-xl border p-3 text-sm ${authorizedImages(candidate).length ? "border-emerald-200/20 bg-emerald-200/[0.05] text-emerald-50" : "border-red-300/30 bg-red-400/10 text-red-100"}`}>{authorizedImages(candidate).length ? `${authorizedImages(candidate).length} imagen(es) autorizada(s) de Luna. Confirma que muestran el producto y pack exactos.` : "Faltan imágenes autorizadas; no apruebes este producto."}</p>
+      <div className="rounded-xl border border-violet-200/20 bg-violet-200/[0.05] p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-black text-violet-50">Set de publicación para revisión · {imageSet.length}/6</p>
+          <span className="rounded-full border border-violet-100/20 px-2.5 py-1 text-[10px] font-black text-violet-100">{openAiContextUsed ? "1 FONDO DE CONTEXTO OPENAI" : "COMPOSICIÓN LOCAL"}</span>
+        </div>
+        <p className="mt-2 text-xs leading-5 text-white/60">Estas son las seis imágenes derivadas guardadas por Seller OS para este candidato. La imagen Luna superior sólo sirve como referencia de identidad y no sustituye este set.</p>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">{imageSet.map((asset, index) => <figure key={asset.id} className="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-white p-2 text-black">
+        {asset.outputPreviewUrl
+          ? <img src={asset.outputPreviewUrl} alt={`${imageSlotLabel(asset.slot)} · imagen ${index + 1} de 6`} className="aspect-square w-full object-contain" />
+          : <div role="img" aria-label="Preview temporal no disponible" className="flex aspect-square w-full items-center justify-center bg-slate-100 p-3 text-center text-xs font-black text-slate-600">PREVIEW TEMPORAL NO DISPONIBLE</div>}
+        <figcaption className="mt-2 min-w-0">
+          <p className="break-words text-xs font-black">{index + 1}. {imageSlotLabel(asset.slot)}</p>
+          <p className="mt-1 text-[10px] font-bold text-slate-500">{asset.generativeAiUsed === true ? "Fondo seguro generado; producto autorizado compuesto localmente" : "Composición local con fuente autorizada"}</p>
+        </figcaption>
+      </figure>)}</div>
+      <p role="status" className={`mt-3 rounded-xl border p-3 text-sm ${imageSetReady ? "border-emerald-200/20 bg-emerald-200/[0.05] text-emerald-50" : "border-red-300/30 bg-red-400/10 text-red-100"}`}>{imageSetReady
+        ? "Set completo: revisa producto, pack, variante, textos y elementos incluidos antes de aprobar una sola vez."
+        : imageSet.length
+          ? `El set todavía no está listo para aprobar: se recibieron ${imageSet.length} de 6 previews válidos o falta un slot obligatorio.`
+          : "Seller OS todavía no entregó el set derivado de seis imágenes. Las URLs Luna no se usarán como sustituto."}</p>
       <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" disabled={working || authorizedImages(candidate).length === 0} onClick={() => void onConfirm({ action: "image_decision", taskId: task.id, decision: "APPROVE" })} className="min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-100 disabled:opacity-40 sm:w-auto">APROBAR IMÁGENES</button>
+        <button type="button" disabled={working || !imageSetReady} onClick={() => void onConfirm({ action: "image_decision", taskId: task.id, decision: "APPROVE" })} className="min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-100 disabled:opacity-40 sm:w-auto">APROBAR IMÁGENES · SET DE 6</button>
         <button type="button" disabled={working} onClick={() => void onConfirm({ action: "image_decision", taskId: task.id, decision: "REJECT" })} className="min-h-12 w-full rounded-xl border border-red-300/35 px-4 font-black text-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-200 disabled:opacity-40 sm:w-auto">RECHAZAR</button>
       </div>
     </div>}
   </article>
 }
 
-function authorizedImages(candidate?: Row) {
-  const urls = candidate?.manual_handoff_package?.package?.images?.urls
-  return Array.isArray(urls) ? urls.filter((url) => typeof url === "string" && url.startsWith("https://")) : []
+const IMAGE_REVIEW_SLOTS = [
+  "MAIN_WHITE_BACKGROUND",
+  "PACK_AND_COUNT",
+  "KEY_FEATURES",
+  "SIZE_AND_CONTENT",
+  "USE_CONTEXT",
+  "PACKAGE_CONTENTS",
+] as const
+
+function normalizedImageReviewSet(value: unknown): Row[] {
+  if (!Array.isArray(value)) return []
+  return value.map((entry) => entry && typeof entry === "object" ? entry as Row : {})
+    .filter((asset) => typeof asset.id === "string" &&
+      IMAGE_REVIEW_SLOTS.includes(asset.slot) &&
+      ["pending_review", "approved"].includes(String(asset.status)) &&
+      Boolean(safeHttpsUrl(asset.outputPreviewUrl)))
+    .map((asset): Row => ({ ...asset, outputPreviewUrl: safeHttpsUrl(asset.outputPreviewUrl) }))
+    .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0))
+    .slice(0, 6)
+}
+
+function completeImageReviewSet(assets: Row[]) {
+  return assets.length === IMAGE_REVIEW_SLOTS.length &&
+    new Set(assets.map((asset) => asset.id)).size === IMAGE_REVIEW_SLOTS.length &&
+    IMAGE_REVIEW_SLOTS.every((slot) =>
+      assets.filter((asset) => asset.slot === slot).length === 1)
+}
+
+function imageSlotLabel(value: unknown) {
+  return ({
+    MAIN_WHITE_BACKGROUND: "Principal con fondo blanco",
+    PACK_AND_COUNT: "Pack y cantidad",
+    KEY_FEATURES: "Características verificadas",
+    SIZE_AND_CONTENT: "Tamaño y contenido",
+    USE_CONTEXT: "Contexto de uso",
+    PACKAGE_CONTENTS: "Contenido del paquete",
+  } as Record<string, string>)[String(value)] ?? "Imagen del listing"
 }
 
 function candidateHeroImage(candidate?: Row) {

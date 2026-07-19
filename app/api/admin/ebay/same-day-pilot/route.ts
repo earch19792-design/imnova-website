@@ -4,6 +4,8 @@ export const maxDuration = 60
 
 import { NextResponse } from "next/server"
 
+import { EBAY_IMAGE_STAGING_BUCKET } from "@/lib/ebay/ebay-image-storage-cleanup"
+import { getListingImageFactoryConfiguration } from "@/lib/ebay/ebay-listing-image-factory"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { evaluateEbayProductApprovalFulfillmentBasis } from "@/lib/ebay/ebay-fulfillment-policy-compliance"
 import { getProductResearchQueryPlanStatus } from "@/lib/ebay/ebay-product-research-query-plan"
@@ -19,6 +21,106 @@ import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+function text(value: unknown, maximum = 500) {
+  return typeof value === "string" ? value.trim().slice(0, maximum) : ""
+}
+function uuid(value: unknown) {
+  const normalized = text(value, 40)
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(normalized) ? normalized : ""
+}
+function safeHttpsUrl(value: unknown) {
+  const normalized = text(value, 2_000)
+  try {
+    const url = new URL(normalized)
+    return url.protocol === "https:" && !url.username && !url.password
+      ? url.href
+      : null
+  } catch {
+    return null
+  }
+}
+
+async function imageReviewAssetsForPilot(
+  access: Exclude<Awaited<ReturnType<typeof authorization>>, { response: NextResponse }>,
+  pilot: Awaited<ReturnType<typeof getSameDayPilot>>,
+) {
+  if (!pilot) return {}
+  const openImageCandidateIds = new Set((pilot.tasks ?? [])
+    .filter((task) => task.status === "OPEN" &&
+      task.gate_type === "IMAGE_APPROVAL_REQUIRED")
+    .map((task) => uuid(task.candidate_id))
+    .filter(Boolean))
+  const requestedSets = (pilot.candidates ?? []).flatMap((candidate) => {
+    const candidateId = uuid(candidate.id)
+    if (!candidateId || !openImageCandidateIds.has(candidateId) ||
+      candidate.machine_state !== "WAITING_IMAGE_APPROVAL") return []
+    const summary = object(candidate.image_package_summary)
+    const embeddedAssets = Array.isArray(summary.assets)
+      ? summary.assets.map((asset) => uuid(object(asset).id))
+      : []
+    const assetIds = [...new Set([
+      ...(Array.isArray(summary.assetIds) ? summary.assetIds.map(uuid) : []),
+      ...(Array.isArray(summary.asset_ids) ? summary.asset_ids.map(uuid) : []),
+      ...embeddedAssets,
+    ].filter(Boolean))].slice(0, 6)
+    const listingPackageId = uuid(summary.listingPackageId ?? summary.listing_package_id)
+    return assetIds.length ? [{ candidateId, listingPackageId, assetIds }] : []
+  })
+  const allAssetIds = [...new Set(requestedSets.flatMap((entry) => entry.assetIds))]
+  if (!allAssetIds.length) return {}
+  const { data, error } = await access.supabase
+    .from("ebay_listing_image_assets")
+    .select("id,listing_package_id,asset_role,status,position,output_storage_path,public_url,output_width,output_height,transformation_version,transformation,qa_result")
+    .eq("account_key", access.accountKey)
+    .eq("created_by", access.auth.userId)
+    .in("id", allAssetIds)
+    .in("status", ["pending_review", "approved"])
+    .order("position", { ascending: true })
+  if (error) throw new Error("SAME_DAY_PILOT_IMAGE_REVIEW_READ_FAILED")
+  const assetsById = new Map((data ?? []).map((asset) => [asset.id, asset]))
+  const result: Record<string, Array<Record<string, unknown>>> = {}
+  for (const requested of requestedSets) {
+    const matching = requested.assetIds.map((assetId) => assetsById.get(assetId))
+      .filter((asset): asset is NonNullable<typeof asset> => Boolean(asset))
+      .filter((asset) => !requested.listingPackageId ||
+        asset.listing_package_id === requested.listingPackageId)
+      .sort((left, right) => Number(left.position) - Number(right.position))
+    result[requested.candidateId] = await Promise.all(matching.map(async (asset) => {
+      const transformation = object(asset.transformation)
+      const qa = object(asset.qa_result)
+      let outputPreviewUrl = asset.status === "approved"
+        ? safeHttpsUrl(asset.public_url)
+        : null
+      if (!outputPreviewUrl && asset.status === "pending_review" &&
+        text(asset.output_storage_path, 1_000)) {
+        const { data: signed } = await access.supabase.storage
+          .from(EBAY_IMAGE_STAGING_BUCKET)
+          .createSignedUrl(text(asset.output_storage_path, 1_000), 300)
+        outputPreviewUrl = safeHttpsUrl(signed?.signedUrl)
+      }
+      return {
+        id: asset.id,
+        listingPackageId: asset.listing_package_id,
+        assetRole: asset.asset_role,
+        status: asset.status,
+        position: asset.position,
+        slot: text(transformation.slot, 80),
+        generativeAiUsed: transformation.generativeAiUsed === true,
+        transformationVersion: asset.transformation_version,
+        automaticQaStatus: text(qa.automaticStatus, 40),
+        manualChecksRequired: Array.isArray(qa.manualChecksRequired)
+          ? qa.manualChecksRequired.map((entry) => text(entry, 100)).filter(Boolean).slice(0, 12)
+          : [],
+        width: asset.output_width,
+        height: asset.output_height,
+        outputPreviewUrl,
+        previewExpiresInSeconds: outputPreviewUrl && asset.status === "pending_review" ? 300 : null,
+      }
+    }))
+  }
+  return result
 }
 function safeError(error: unknown) {
   const message = error instanceof Error ? error.message : ""
@@ -41,6 +143,8 @@ export async function GET(req: Request) {
   if ("response" in access) return access.response
   try {
     const pilot = await getSameDayPilot({ supabase: access.supabase, accountKey: access.accountKey })
+    const imageReviewAssets = await imageReviewAssetsForPilot(access, pilot)
+    const imageFactoryConfiguration = getListingImageFactoryConfiguration()
     const productResearchPlanId = typeof pilot?.run?.source_inventory?.productResearchPlanId === "string"
       ? pilot.run.source_inventory.productResearchPlanId : null
     const productResearchTaskOpen = pilot?.tasks?.some((task) =>
@@ -70,7 +174,10 @@ export async function GET(req: Request) {
         productResearchGuidance = { status: "TEMPORARILY_UNAVAILABLE", nextQuery: null }
       }
     }
-    return NextResponse.json({ success: true, pilot: pilot ? { ...pilot, productResearchGuidance } : null,
+    return NextResponse.json({ success: true, pilot: pilot ? {
+      ...pilot, productResearchGuidance, imageReviewAssets,
+      imageFactoryConfiguration,
+    } : null,
       safety: { fullCatalogRescan: false, ebayWrites: 0, productionChanged: false } })
   } catch (error) {
     return NextResponse.json({ success: false, error: safeError(error) }, { status: 502 })
@@ -115,11 +222,15 @@ export async function POST(req: Request) {
       const fulfillmentBasis = fulfillmentDecision.basis
       if (typeof body.taskId !== "string" || !decision ||
         (decision === "APPROVE" &&
-          (!(salePrice && Number.isFinite(salePrice)) || salePrice <= 0 || !fulfillmentDecision.allowed))) {
+          (!(salePrice && Number.isFinite(salePrice)) || salePrice <= 0 ||
+            !fulfillmentDecision.allowed || body.imageRightsConfirmed !== true ||
+            body.openAiImageSpendApproved !== true))) {
         return NextResponse.json({ success: false, error: "SAME_DAY_PILOT_PRODUCT_DECISION_INVALID" }, { status: 400 })
       }
       await decideSameDayProduct({ supabase: access.supabase, accountKey: access.accountKey,
-        actorId: access.auth.userId, taskId: body.taskId, decision, salePrice, fulfillmentBasis })
+        actorId: access.auth.userId, taskId: body.taskId, decision, salePrice, fulfillmentBasis,
+        imageRightsConfirmed: body.imageRightsConfirmed === true,
+        openAiImageSpendApproved: body.openAiImageSpendApproved === true })
       const continuation = await processSameDayPilotJobs({ supabase: access.supabase,
         accountKey: access.accountKey, workerId: `product-decision:${access.auth.userId}` })
       const pilot = await getSameDayPilot({ supabase: access.supabase, accountKey: access.accountKey })

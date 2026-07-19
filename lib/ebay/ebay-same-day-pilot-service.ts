@@ -45,6 +45,10 @@ import {
 } from "./luna-fulfillment-pricing"
 import { extractLunaOfficialDescriptionIdentity } from "./luna-official-description-identity"
 import { loadBoundAuthoritativeFactPackage } from "./ebay-authoritative-fact-package"
+import {
+  generateAndPersistSameDayImagePackage,
+  reviewSameDayImagePackage,
+} from "./ebay-same-day-image-package-runtime"
 
 const MARKETPLACE = "EBAY_US"
 const PRODUCT_FACT_READ_DEPENDENCIES = [
@@ -468,6 +472,27 @@ async function transition(input: {
   if (data === "STALE") throw new Error("SAME_DAY_PILOT_STALE_TRANSITION")
 }
 
+async function enqueuePilotJob(input: {
+  supabase: SupabaseClient
+  runId: string
+  candidateId: string
+  job: PilotJobSpec
+}) {
+  const { error } = await input.supabase.from("ebay_same_day_pilot_jobs").upsert({
+    run_id: input.runId,
+    candidate_id: input.candidateId,
+    job_type: input.job.jobType,
+    idempotency_key: input.job.idempotencyKey,
+    checkpoint: input.job.checkpoint ?? {},
+    available_at: input.job.availableAt ?? new Date().toISOString(),
+    max_attempts: input.job.maxAttempts ?? 4,
+    api_family: input.job.apiFamily ?? null,
+    api_operation: input.job.apiOperation ?? null,
+    owner_lane: input.job.ownerLane ?? null,
+  }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (error) throw new Error("SAME_DAY_PILOT_JOB_ENQUEUE_FAILED")
+}
+
 type SerializedOpenHumanTask = {
   id: string
   candidate_id: string
@@ -629,17 +654,19 @@ async function bootstrapCandidate(supabase: SupabaseClient, runId: string, candi
       seconds: 180, impact: "Seller OS conservará el checkpoint y continuará automáticamente sólo después de una aprobación explícita.",
       evidence: { product: candidate.product_title, economics: candidate.economics_summary, facts: candidate.product_facts_summary },
       actionSchema: { type: "PRODUCT_APPROVAL", actions: ["APPROVE", "REQUEST_ONE_REVISION", "REJECT"],
-        fields: ["operatorSalePrice", "fulfillmentBasis"],
+        fields: ["operatorSalePrice", "fulfillmentBasis", "imageRightsConfirmed",
+          "openAiImageSpendApproved"],
         allowedFulfillmentBases: ["OWNED_INVENTORY", "AUTHORIZED_WHOLESALE_FULFILLMENT_AGREEMENT"] },
       continuationJobType: "GENERATE_LISTING_CONTENT" })
     return
   }
   if (machineState === "WAITING_IMAGE_APPROVAL") {
     await createHumanTask({ supabase, runId, candidateId: id, expectedState: "WAITING_IMAGE_APPROVAL", gateType: "IMAGE_APPROVAL_REQUIRED",
-      title: "Revisa las imágenes Luna del listing", why: "Debes confirmar que las imágenes autorizadas muestran exactamente el producto y pack.",
-      seconds: 120, impact: "Seller OS cerrará automáticamente el paquete para Seller Hub sin generar ni copiar imágenes.",
+      title: "Revisa el set completo de seis imágenes", why: "Debes confirmar que el producto autorizado, pack, variante, textos y elementos incluidos son exactos.",
+      seconds: 120, impact: "Seller OS publicará internamente el set aprobado y cerrará automáticamente el paquete para Seller Hub.",
       evidence: { product: candidate.product_title, imagePackage: candidate.image_package_summary },
-      actionSchema: { type: "IMAGE_APPROVAL", actions: ["APPROVE", "REJECT"] }, continuationJobType: "FINALIZE_MANUAL_HANDOFF" })
+      actionSchema: { type: "IMAGE_APPROVAL", actions: ["APPROVE", "REJECT"], expectedImages: 6,
+        maximumOpenAiCalls: 1 }, continuationJobType: "APPROVE_SIX_IMAGE_SET" })
   }
 }
 
@@ -1524,6 +1551,8 @@ export async function decideSameDayProduct(input: {
   decision: "APPROVE" | "REJECT"
   salePrice?: number | null
   fulfillmentBasis?: EbayCompliantFulfillmentBasis | null
+  imageRightsConfirmed?: boolean
+  openAiImageSpendApproved?: boolean
 }) {
   const state = await getSameDayPilot(input)
   if (!state) throw new Error("SAME_DAY_PILOT_RUN_MISSING")
@@ -1550,6 +1579,12 @@ export async function decideSameDayProduct(input: {
   const supplierCost = number(record(candidate.economics_summary).confirmedLunaPrice)
   if (!(salePrice && salePrice > 0) || supplierCost === null) throw new Error("SAME_DAY_PILOT_OPERATOR_PRICE_REQUIRED")
   if (!fulfillmentBasis) throw new Error("SAME_DAY_PILOT_COMPLIANT_FULFILLMENT_BASIS_REQUIRED")
+  if (input.imageRightsConfirmed !== true) {
+    throw new Error("SAME_DAY_PILOT_IMAGE_RIGHTS_CONFIRMATION_REQUIRED")
+  }
+  if (input.openAiImageSpendApproved !== true) {
+    throw new Error("SAME_DAY_PILOT_OPENAI_IMAGE_SPEND_APPROVAL_REQUIRED")
+  }
   const factsSummary = record(candidate.product_facts_summary)
   if (factsSummary.currentRunBound !== true || record(factsSummary.gates).OPENAI_INPUT_READY !== true) {
     throw new Error("SAME_DAY_PILOT_PRODUCT_FACTS_APPROVAL_BLOCKED")
@@ -1563,12 +1598,23 @@ export async function decideSameDayProduct(input: {
     fulfillmentBasis, fulfillmentBasisConfirmedAt: operatorApprovedAt,
     fulfillmentBasisActorRecorded: Boolean(input.actorId),
     fulfillmentBasisAttestationVersion: "EBAY_FULFILLMENT_BASIS_V1_2026_07_18",
+    imageRightsConfirmed: true,
+    imageRightsConfirmedAt: operatorApprovedAt,
+    imageRightsActorRecorded: Boolean(input.actorId),
+    imageRightsAttestationVersion: "LUNA_AUTHORIZED_IMAGE_OPERATOR_ATTESTATION_V1_2026_07_18",
+    openAiImageSpendApproved: true,
+    openAiImageSpendApprovedAt: operatorApprovedAt,
+    openAiImageSpendActorRecorded: Boolean(input.actorId),
+    openAiImageMaximumCallsApproved: 1,
+    openAiImageQualityApproved: "low",
     fulfillmentDocumentsStored: false, fulfillmentPiiStored: false }
   await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
     gateType: "PRODUCT_APPROVAL_REQUIRED", runId: state.run.id, candidateId: candidate.id,
     previousState: "WAITING_PRODUCT_APPROVAL", nextState: "GENERATING_LISTING_CONTENT",
     reasonCode: "OPENAI_SKIPPED_MANUAL_FACTS_ONLY", triggeredBy: "USER",
-    checkpoint: { operatorPriceApproved: true, automaticPricingUsed: false, fulfillmentBasis },
+    checkpoint: { operatorPriceApproved: true, automaticPricingUsed: false, fulfillmentBasis,
+      imageRightsConfirmed: true, openAiImageSpendApproved: true,
+      openAiImageMaximumCallsApproved: 1 },
     candidatePatch: { economicsSummary },
     nextAutomaticAction: "Construir un paquete original desde facts verificados.", nextHumanAction: "Ninguna.",
     job: { jobType: "BUILD_MANUAL_SELLER_HUB_HANDOFF",
@@ -1592,6 +1638,13 @@ export async function decideSameDayImages(input: {
   const candidate = state.candidates.find((entry) => entry.id === task.candidate_id)
   if (!candidate || candidate.machine_state !== "WAITING_IMAGE_APPROVAL") throw new Error("SAME_DAY_PILOT_IMAGE_CANDIDATE_INVALID")
   if (input.decision === "REJECT") {
+    await reviewSameDayImagePackage({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      actorId: input.actorId,
+      candidate: record(candidate),
+      decision: "REJECT",
+    })
     await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
       gateType: "IMAGE_APPROVAL_REQUIRED", runId: state.run.id, candidateId: candidate.id,
       previousState: "WAITING_IMAGE_APPROVAL", nextState: "REJECTED",
@@ -1604,12 +1657,16 @@ export async function decideSameDayImages(input: {
     await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
       gateType: "IMAGE_APPROVAL_REQUIRED", runId: state.run.id, candidateId: candidate.id,
       previousState: "WAITING_IMAGE_APPROVAL", nextState: "BUILDING_SELLER_HUB_HANDOFF",
-      reasonCode: "AUTHORIZED_IMAGES_APPROVED", triggeredBy: "USER",
-      checkpoint: { imageApproval: true, actorRecorded: Boolean(input.actorId) },
-      nextAutomaticAction: "Cerrar el paquete manual para Seller Hub.", nextHumanAction: "Ninguna.",
-      job: { jobType: "FINALIZE_MANUAL_HANDOFF",
-        idempotencyKey: `${state.run.id}:${candidate.id}:FINALIZE_MANUAL_HANDOFF`,
-        checkpoint: { openAiCalls: 0, ebayWrites: 0 } } })
+      reasonCode: "SIX_IMAGE_SET_APPROVAL_CONFIRMED", triggeredBy: "USER",
+      checkpoint: { imageApproval: true, actorRecorded: Boolean(input.actorId),
+        controlId: record(candidate.image_package_summary).controlId,
+        openAiCalls: record(candidate.image_package_summary).openAiCalls ?? 0 },
+      nextAutomaticAction: "Publicar internamente el set aprobado y cerrar el paquete para Seller Hub.", nextHumanAction: "Ninguna.",
+      job: { jobType: "APPROVE_SIX_IMAGE_SET",
+        idempotencyKey: `${state.run.id}:${candidate.id}:APPROVE_SIX_IMAGE_SET`,
+        checkpoint: { controlId: record(candidate.image_package_summary).controlId,
+          openAiCalls: record(candidate.image_package_summary).openAiCalls ?? 0,
+          ebayWrites: 0 }, maxAttempts: 4 } })
   }
   await refreshRunProjection(input.supabase, state.run.id)
   return getSameDayPilot(input)
@@ -1708,7 +1765,9 @@ function jobEffectAlreadyApplied(jobType: string, machineState: string) {
     WAIT_FOR_LOOP1_REANALYSIS: "CALCULATING_ECONOMICS",
     CALCULATE_ECONOMICS: "ENRICHING_PRODUCT_FACTS",
     ENRICH_PRODUCT_FACTS: "WAITING_PRODUCT_APPROVAL",
-    BUILD_MANUAL_SELLER_HUB_HANDOFF: "WAITING_IMAGE_APPROVAL",
+    BUILD_MANUAL_SELLER_HUB_HANDOFF: "PREPARING_IMAGE_PACKAGE",
+    GENERATE_SIX_IMAGE_PACKAGE: "WAITING_IMAGE_APPROVAL",
+    APPROVE_SIX_IMAGE_SET: "READY_FOR_MANUAL_PUBLICATION",
     FINALIZE_MANUAL_HANDOFF: "READY_FOR_MANUAL_PUBLICATION",
   }
   const minimum = minimumState[jobType]
@@ -2337,7 +2396,8 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           seconds: 180, impact: "Seller OS conservará los facts verificados; OpenAI y las escrituras eBay permanecen apagados.",
           evidence: { economics: candidate.economics_summary, facts: summary },
           actionSchema: { type: "PRODUCT_APPROVAL", actions: ["APPROVE", "REJECT"],
-            fields: ["operatorSalePrice", "fulfillmentBasis"],
+            fields: ["operatorSalePrice", "fulfillmentBasis", "imageRightsConfirmed",
+              "openAiImageSpendApproved"],
             allowedFulfillmentBases: ["OWNED_INVENTORY", "AUTHORIZED_WHOLESALE_FULFILLMENT_AGREEMENT"],
             automaticPricingUsed: false },
           continuationJobType: "PREPARE_VERIFIED_HANDOFF" })
@@ -2377,29 +2437,155 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       }
       if (handoffState === "PREPARING_IMAGE_PACKAGE") {
         const { error: stateUpdateError } = await input.supabase.from("ebay_same_day_pilot_candidates").update({
-          state: "READY_FOR_IMAGE_REVIEW", updated_at: new Date().toISOString(),
+          state: "PREPARING_IMAGE_PACKAGE", updated_at: new Date().toISOString(),
         }).eq("id", candidate.id).eq("run_id", state.run.id)
-        if (stateUpdateError) throw new Error("SAME_DAY_PILOT_IMAGE_REVIEW_STATE_FAILED")
-        await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id,
-          previousState: "PREPARING_IMAGE_PACKAGE", nextState: "WAITING_IMAGE_APPROVAL",
-          reasonCode: "AUTHORIZED_LUNA_IMAGES_READY", triggeredBy: "SYSTEM",
-          checkpoint: { packageHash: handoffSummary.packageHash, generatedImages: 0, competitorImages: 0 },
-          nextAutomaticAction: "Cerrar el handoff al aprobar.", nextHumanAction: "Aprobar o rechazar las imágenes Luna." })
-        await createHumanTask({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id,
-          expectedState: "WAITING_IMAGE_APPROVAL", gateType: "IMAGE_APPROVAL_REQUIRED",
-          title: "Revisa las imágenes Luna del listing", why: "Confirma que muestran exactamente el producto y pack que vas a vender.",
-          seconds: 120, impact: "Seller OS cerrará el paquete para Seller Hub automáticamente; no generará ni copiará imágenes.",
-          evidence: { product: candidate.product_title, imagePackage: record(handoffSummary.package).images },
-          actionSchema: { type: "IMAGE_APPROVAL", actions: ["APPROVE", "REJECT"] }, continuationJobType: "FINALIZE_MANUAL_HANDOFF" })
+        if (stateUpdateError) throw new Error("SAME_DAY_PILOT_IMAGE_PREPARATION_STATE_FAILED")
+        await enqueuePilotJob({
+          supabase: input.supabase,
+          runId: state.run.id,
+          candidateId: candidate.id,
+          job: {
+            jobType: "GENERATE_SIX_IMAGE_PACKAGE",
+            idempotencyKey: `${state.run.id}:${candidate.id}:GENERATE_SIX_IMAGE_PACKAGE`,
+            checkpoint: { packageHash: handoffSummary.packageHash,
+              factRunId: record(candidate.product_facts_summary).factRunId,
+              maximumOpenAiCalls: 1, competitorImages: 0, ebayWrites: 0 },
+            maxAttempts: 4,
+          },
+        })
       }
+    } else if (leased.job_type === "GENERATE_SIX_IMAGE_PACKAGE") {
+      if (text(candidate.machine_state) !== "PREPARING_IMAGE_PACKAGE") {
+        throw new Error("SAME_DAY_PILOT_IMAGE_GENERATION_STATE_INVALID")
+      }
+      const generated = await generateAndPersistSameDayImagePackage({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        actorId: text(state.run.created_by),
+        runId: state.run.id,
+        candidate: record(candidate),
+      })
+      await heartbeatPilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId })
+      const imageSummary = {
+        status: "PENDING_HUMAN_REVIEW",
+        source: "LUNA_AUTHORIZED_DERIVATIVE_SET",
+        setVersion: "EBAY_LISTING_IMAGE_COMPOSITION_SET_V1",
+        listingPackageId: generated.listingPackageId,
+        controlId: generated.controlId,
+        assetIds: generated.assetIds,
+        count: generated.assetIds.length,
+        generatedImages: generated.assetIds.length,
+        openAiCalls: generated.openAiCalls,
+        openAiBackgroundPlates: generated.openAiCalls,
+        aiConfiguration: generated.aiConfiguration,
+        generationMode: generated.generationMode,
+        competitorImages: 0,
+        approved: false,
+      }
+      const { error: imageUpdateError } = await input.supabase
+        .from("ebay_same_day_pilot_candidates")
+        .update({
+          state: "READY_FOR_IMAGE_REVIEW",
+          image_package_summary: imageSummary,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", candidate.id)
+        .eq("run_id", state.run.id)
+      if (imageUpdateError) throw new Error("SAME_DAY_PILOT_IMAGE_PACKAGE_SUMMARY_FAILED")
+      await transition({
+        supabase: input.supabase,
+        runId: state.run.id,
+        candidateId: candidate.id,
+        previousState: "PREPARING_IMAGE_PACKAGE",
+        nextState: "WAITING_IMAGE_APPROVAL",
+        reasonCode: generated.openAiCalls === 1
+          ? "SIX_IMAGE_SET_READY_ONE_SAFE_OPENAI_BACKGROUND"
+          : "SIX_IMAGE_SET_READY_DETERMINISTIC_FALLBACK",
+        triggeredBy: "SYSTEM",
+        checkpoint: { controlId: generated.controlId,
+          listingPackageId: generated.listingPackageId,
+          assetIds: generated.assetIds,
+          openAiCalls: generated.openAiCalls,
+          generatedImages: 6, competitorImages: 0, ebayWrites: 0 },
+        nextAutomaticAction: "Esperar una sola aprobación visual.",
+        nextHumanAction: "Revisar y aprobar o rechazar el set completo de seis imágenes.",
+      })
+      await createHumanTask({
+        supabase: input.supabase,
+        runId: state.run.id,
+        candidateId: candidate.id,
+        expectedState: "WAITING_IMAGE_APPROVAL",
+        gateType: "IMAGE_APPROVAL_REQUIRED",
+        title: "Revisa el set completo de seis imágenes",
+        why: "Confirma que producto, pack, variante, textos y elementos incluidos coinciden exactamente.",
+        seconds: 120,
+        impact: "Una sola aprobación publicará internamente el set y cerrará el paquete para Seller Hub.",
+        evidence: { product: candidate.product_title, imagePackage: imageSummary },
+        actionSchema: { type: "IMAGE_APPROVAL", actions: ["APPROVE", "REJECT"],
+          expectedImages: 6, maximumOpenAiCalls: 1 },
+        continuationJobType: "APPROVE_SIX_IMAGE_SET",
+      })
+    } else if (leased.job_type === "APPROVE_SIX_IMAGE_SET") {
+      if (text(candidate.machine_state) !== "BUILDING_SELLER_HUB_HANDOFF") {
+        throw new Error("SAME_DAY_PILOT_IMAGE_APPROVAL_STATE_INVALID")
+      }
+      const reviewed = await reviewSameDayImagePackage({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        actorId: text(state.run.created_by),
+        candidate: record(candidate),
+        decision: "APPROVE",
+      })
+      const imageSummary = {
+        ...record(candidate.image_package_summary),
+        status: "APPROVED",
+        approved: true,
+        approvedAt: new Date().toISOString(),
+        publicUrls: reviewed.publicUrls,
+        ebayWrites: 0,
+      }
+      const { error: approvalUpdateError } = await input.supabase
+        .from("ebay_same_day_pilot_candidates")
+        .update({ image_package_summary: imageSummary, updated_at: new Date().toISOString() })
+        .eq("id", candidate.id)
+        .eq("run_id", state.run.id)
+      if (approvalUpdateError) throw new Error("SAME_DAY_PILOT_IMAGE_APPROVAL_SUMMARY_FAILED")
+      await enqueuePilotJob({
+        supabase: input.supabase,
+        runId: state.run.id,
+        candidateId: candidate.id,
+        job: {
+          jobType: "FINALIZE_MANUAL_HANDOFF",
+          idempotencyKey: `${state.run.id}:${candidate.id}:FINALIZE_MANUAL_HANDOFF`,
+          checkpoint: { controlId: reviewed.controlId,
+            openAiCalls: record(candidate.image_package_summary).openAiCalls ?? 0,
+            approvedImages: 6, ebayWrites: 0 },
+          maxAttempts: 4,
+        },
+      })
     } else if (leased.job_type === "FINALIZE_MANUAL_HANDOFF") {
       if (text(candidate.machine_state) !== "BUILDING_SELLER_HUB_HANDOFF") throw new Error("SAME_DAY_PILOT_FINALIZE_STATE_INVALID")
       const currentSummary = record(candidate.manual_handoff_package)
       const basePackage = record(currentSummary.package)
       if (!Object.keys(basePackage).length || !text(currentSummary.packageHash)) throw new Error("SAME_DAY_PILOT_HANDOFF_CHECKPOINT_MISSING")
+      const imageSummary = record(candidate.image_package_summary)
+      const approvedImageUrls = Array.isArray(imageSummary.publicUrls)
+        ? imageSummary.publicUrls.map((value) => safeHttpsUrl(value)).filter(Boolean)
+        : []
+      if (imageSummary.approved !== true || approvedImageUrls.length !== 6) {
+        throw new Error("SAME_DAY_PILOT_APPROVED_SIX_IMAGE_SET_REQUIRED")
+      }
+      const openAiImageCalls = Number(imageSummary.openAiCalls) === 1 ? 1 : 0
       const readyPackage = currentSummary.status === "READY_FOR_MANUAL_PUBLICATION"
         ? basePackage
-        : { ...basePackage, imageApproval: { approved: true, approvedAt: new Date().toISOString() } }
+        : { ...basePackage,
+          images: { urls: approvedImageUrls, count: 6,
+            source: "LUNA_AUTHORIZED_DERIVATIVE_SET", competitorImages: 0,
+            openAiBackgroundPlates: openAiImageCalls },
+          safety: { ...record(basePackage.safety), openAiCalls: openAiImageCalls,
+            ebayWrites: 0, competitorContentUsed: false },
+          imageApproval: { approved: true, approvedAt: new Date().toISOString(),
+            controlId: imageSummary.controlId, approvedImageCount: 6 } }
       const packageHash = currentSummary.status === "READY_FOR_MANUAL_PUBLICATION"
         ? text(currentSummary.packageHash)
         : hash(readyPackage)
@@ -2408,13 +2594,13 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       const { error: persistError } = await input.supabase.from("ebay_same_day_pilot_handoffs").upsert({
         run_id: state.run.id, candidate_id: candidate.id, fact_run_id: factsSummary.factRunId,
         handoff_version: SAME_DAY_MANUAL_HANDOFF_VERSION, status: "READY_FOR_MANUAL_PUBLICATION",
-        package_data: readyPackage, package_hash: packageHash, source_image_type: "LUNA_AUTHORIZED_CATALOG",
+        package_data: readyPackage, package_hash: packageHash, source_image_type: "LUNA_AUTHORIZED_DERIVATIVE_SET",
         image_count: Number(images.count ?? 0), operator_price_approved: true,
-        openai_calls: 0, ebay_writes: 0, production_changed: false,
+        openai_calls: openAiImageCalls, ebay_writes: 0, production_changed: false,
       }, { onConflict: "candidate_id,package_hash", ignoreDuplicates: true })
       if (persistError) throw new Error("SAME_DAY_PILOT_READY_HANDOFF_PERSIST_FAILED")
       const readySummary = { status: "READY_FOR_MANUAL_PUBLICATION", version: SAME_DAY_MANUAL_HANDOFF_VERSION,
-        packageHash, package: readyPackage, blockers: [], openAiCalls: 0, ebayWrites: 0 }
+        packageHash, package: readyPackage, blockers: [], openAiCalls: openAiImageCalls, ebayWrites: 0 }
       const { error: updateError } = await input.supabase.from("ebay_same_day_pilot_candidates").update({
         state: "READY_FOR_MANUAL_PUBLICATION", local_preparation_status: "SUPERSEDED",
         manual_handoff_package: readySummary,
@@ -2425,7 +2611,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id,
         previousState: "BUILDING_SELLER_HUB_HANDOFF", nextState: "READY_FOR_MANUAL_PUBLICATION",
         reasonCode: "MANUAL_SELLER_HUB_HANDOFF_READY", triggeredBy: "SYSTEM",
-        checkpoint: { packageHash, openAiCalls: 0, ebayWrites: 0 },
+        checkpoint: { packageHash, openAiCalls: openAiImageCalls, approvedImages: 6, ebayWrites: 0 },
         nextAutomaticAction: "Esperar publicación manual y luego Item ID.", nextHumanAction: "Abrir Seller Hub y publicar manualmente." })
       await promoteNextCandidateAfterPreparedPackage(
         input.supabase,
