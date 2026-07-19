@@ -39,6 +39,14 @@ export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V1_2026_07_17"
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
 type JsonRecord = Record<string, unknown>
+type ControlledExploratoryFactsTarget = {
+  candidateId: string
+  supplierVariantId: string
+  identityEvidenceHash: string
+  commercialEvidenceHash: string
+  historicalMarketCheckCompleted: true
+  exactOfferPackVerified: true
+}
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {}
@@ -280,15 +288,42 @@ async function queueRunForCandidateIds(supabase: SupabaseClient, accountKey: str
   return run
 }
 
-async function eligibleCandidates(supabase: SupabaseClient, accountKey: string, runId: string, candidateIds?: string[]) {
+async function eligibleCandidates(
+  supabase: SupabaseClient,
+  accountKey: string,
+  runId: string,
+  candidateIds?: string[],
+  controlledExploratoryTarget?: ControlledExploratoryFactsTarget,
+  now = new Date(),
+) {
   let query = supabase.from("marketplace_listing_approval_queue_items")
     .select("id,run_id,market_radar_product_id,supplier_variant_id,recommended_pack_count,evidence_snapshot,luna_match_status,cohort,internal_status,pool_rank,rank,decision_package_id,package_hash,stale_after")
     .eq("run_id", runId).eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
-    .eq("luna_match_status", "EXACT_LUNA_MATCH").in("cohort", ["READY_FOR_OPERATOR_APPROVAL", "READY_FOR_OPENAI_APPROVAL"])
+  if (controlledExploratoryTarget) {
+    const target = controlledExploratoryTarget
+    const validTarget = candidateIds?.length === 1 && candidateIds[0] === target.candidateId &&
+      Boolean(target.supplierVariantId) && target.historicalMarketCheckCompleted === true &&
+      target.exactOfferPackVerified === true &&
+      /^sha256:[0-9a-f]{64}$/.test(target.identityEvidenceHash) &&
+      /^sha256:[0-9a-f]{64}$/.test(target.commercialEvidenceHash)
+    if (!validTarget) throw new Error("PRODUCT_FACT_CONTROLLED_EXPLORATORY_TARGET_INVALID")
+    query = query.eq("id", target.candidateId)
+      .eq("supplier_variant_id", target.supplierVariantId)
+  } else {
+    query = query.eq("luna_match_status", "EXACT_LUNA_MATCH")
+      .in("cohort", ["READY_FOR_OPERATOR_APPROVAL", "READY_FOR_OPENAI_APPROVAL"])
+  }
   if (candidateIds?.length) query = query.in("id", candidateIds.slice(0, MAX_CANDIDATES))
   const { data, error } = await query.order("pool_rank", { ascending: true, nullsFirst: false }).limit(MAX_CANDIDATES)
   if (error) throw new Error("PRODUCT_FACT_CANDIDATE_READ_FAILED")
-  return (data ?? []).map(record)
+  const rows = (data ?? []).map(record)
+  if (!controlledExploratoryTarget) return rows
+  const target = rows[0]
+  const staleAt = Date.parse(text(target?.stale_after))
+  if (!target || !text(target.market_radar_product_id) ||
+    text(target.supplier_variant_id) !== controlledExploratoryTarget.supplierVariantId ||
+    !Number.isFinite(staleAt) || staleAt <= now.getTime()) return []
+  return [target]
 }
 
 async function variantForCandidate(supabase: SupabaseClient, candidate: JsonRecord) {
@@ -349,7 +384,14 @@ async function insertIgnoringDuplicates(supabase: SupabaseClient, table: string,
   if (error) throw new Error(`PRODUCT_FACT_${table.toUpperCase()}_PERSIST_FAILED`)
 }
 
-export async function runProductFactsEnrichment(input: { supabase: SupabaseClient; accountKey: string; candidateIds?: string[]; now?: Date; environment?: NodeJS.ProcessEnv }) {
+export async function runProductFactsEnrichment(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  candidateIds?: string[]
+  controlledExploratoryTarget?: ControlledExploratoryFactsTarget
+  now?: Date
+  environment?: NodeJS.ProcessEnv
+}) {
   const boundary = productIdentityReconciliationBoundary(input.environment ?? process.env)
   if (!boundary.preview || !boundary.staging || !boundary.branchMatch) throw new Error("PRODUCT_FACTS_PREVIEW_STAGING_REQUIRED")
   const now = input.now ?? new Date()
@@ -359,7 +401,8 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
     ? await queueRunForCandidateIds(input.supabase, input.accountKey, input.candidateIds)
     : await latestQueueRun(input.supabase, input.accountKey)
   if (!queueRun?.id) throw new Error("PRODUCT_FACT_QUEUE_RUN_MISSING")
-  const candidates = await eligibleCandidates(input.supabase, input.accountKey, queueRun.id, input.candidateIds)
+  const candidates = await eligibleCandidates(input.supabase, input.accountKey, queueRun.id,
+    input.candidateIds, input.controlledExploratoryTarget, now)
   const candidateResults: Array<{
     candidateId: string
     status: string
@@ -486,7 +529,8 @@ export async function runProductFactsEnrichment(input: { supabase: SupabaseClien
         name: text(aspect.name), required: aspect.required === true || requiredAspectNames.has(text(aspect.name).toLocaleLowerCase()),
         values: array(aspect.suggestedValues).map((value) => text(value)).filter(Boolean), aspectMode: text(aspect.mode) || null,
       })).filter((aspect) => aspect.name), resolved.facts)
-      const calculatedReadiness = calculateReadiness({ identityExact: candidate.luna_match_status === "EXACT_LUNA_MATCH", facts: resolved.facts,
+      const controlledIdentityExact = input.controlledExploratoryTarget?.candidateId === text(candidate.id)
+      const calculatedReadiness = calculateReadiness({ identityExact: candidate.luna_match_status === "EXACT_LUNA_MATCH" || controlledIdentityExact, facts: resolved.facts,
         requirements, regulated: regulatedCandidate(variant, base.metadata), taxonomySourceReady })
       const candidateStaleAt = Date.parse(text(candidate.stale_after))
       const maximumFactsExpiry = now.getTime() + 72 * 60 * 60 * 1_000

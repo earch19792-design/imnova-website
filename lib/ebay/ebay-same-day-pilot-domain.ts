@@ -10,6 +10,10 @@ export const SAME_DAY_RECONCILIATION_DECISION_REFERENCE_LIMIT = 10
 export const SAME_DAY_RECONCILIATION_COVERAGE_ROW_LIMIT = 200
 export const SAME_DAY_TRADING_DETAIL_READ_LIMIT_PER_BATCH = 2
 
+export type SameDayCommercialEvidenceMode =
+  | "MARKET_VALIDATED"
+  | "CONTROLLED_EXPLORATORY_TEST"
+
 export type SameDayCandidateState =
   | "READY_TO_VALIDATE_TODAY"
   | "NEEDS_PRODUCT_RESEARCH_CAPTURE"
@@ -43,6 +47,8 @@ export type SameDayCandidateInput = {
   formulation?: string | null
   identityEvidenceSource?: string | null
   identityEvidenceHash?: string | null
+  identityIndependentlyVerified?: boolean
+  offerPackVerified?: boolean
   supplierPrice?: number | null
   supplierAvailable?: boolean | null
   supplierQuantity?: number | null
@@ -63,6 +69,39 @@ export type SameDayCandidateInput = {
   queueStatus?: string
   score?: number
   listingPackageReadiness?: number
+}
+
+export function resolveSameDayCommercialEvidenceMode(input: {
+  historicalMarketCheckCompleted: boolean
+  confirmedSoldExact: number
+  identityVerifiedIndependently: boolean
+  exactOfferPackVerified: boolean
+  relatedPackConflict?: boolean
+  relatedSizeConflict?: boolean
+}) {
+  const blockers = [
+    !input.historicalMarketCheckCompleted ? "HISTORICAL_MARKET_CHECK_NOT_COMPLETED" : "",
+    !input.identityVerifiedIndependently ? "EXACT_IDENTITY_NOT_INDEPENDENTLY_VERIFIED" : "",
+    !input.exactOfferPackVerified ? "EXACT_OFFER_PACK_NOT_VERIFIED" : "",
+    input.relatedPackConflict ? "RELATED_PACK_CONFLICT" : "",
+    input.relatedSizeConflict ? "RELATED_SIZE_CONFLICT" : "",
+  ].filter(Boolean)
+  const exactSold = Math.max(0, Number(input.confirmedSoldExact) || 0)
+  const mode: SameDayCommercialEvidenceMode | null = blockers.length
+    ? null
+    : exactSold > 0
+      ? "MARKET_VALIDATED"
+      : "CONTROLLED_EXPLORATORY_TEST"
+  return {
+    eligible: mode !== null,
+    mode,
+    blockers,
+    historicalMarketCheckCompleted: input.historicalMarketCheckCompleted,
+    confirmedSoldExact: exactSold,
+    forcedListingQuantity: mode === "CONTROLLED_EXPLORATORY_TEST" ? 1 : null,
+    commercialMonitorRequired: mode === "CONTROLLED_EXPLORATORY_TEST",
+    automaticPricingAllowed: false,
+  }
 }
 
 export type SameDayCandidateDecision = SameDayCandidateInput & {
@@ -272,7 +311,10 @@ export function evaluateSameDayCandidate(input: SameDayCandidateInput, now = new
     ["listed", "rejected", "archived"].includes(input.queueStatus ?? "") ? "OPPORTUNITY_NOT_ELIGIBLE" : "",
     ...criticalHardGates.map((gate) => `HARD_GATE:${gate}`),
   ].filter(Boolean)
-  const marketReady = Number(input.activeExactCount ?? 0) > 0 && input.evidenceFresh === true
+  // Active listings describe current supply; they do not prove historical
+  // sales. Reuse a previous market validation only when exact sold evidence
+  // is fresh. Otherwise Product Research remains the first market gate.
+  const marketReady = Number(input.soldExactCount ?? 0) > 0 && input.evidenceFresh === true
   let state: SameDayCandidateState = "READY_TO_VALIDATE_TODAY"
   let nextAutomatedAction = "Resolver ficha técnica únicamente para este candidato."
   let nextHumanAction = "Confirmar precio y disponibilidad visibles en Luna."
@@ -340,7 +382,9 @@ export function selectSameDayQueue(
 
 export function evaluateReadyForContent(input: {
   exactOrStrongIdentity: boolean
-  exactMarketEvidence: boolean
+  exactMarketEvidence?: boolean
+  commercialEvidenceMode?: SameDayCommercialEvidenceMode | null
+  historicalMarketCheckCompleted?: boolean
   productFactsCompatible: boolean
   requiredAspectsResolved: boolean
   regulatoryAcceptable: boolean
@@ -349,9 +393,14 @@ export function evaluateReadyForContent(input: {
   roiPercent: number | null
   netMarginPercent: number | null
 }) {
+  const commercialEvidenceMode = input.commercialEvidenceMode ??
+    (input.exactMarketEvidence === true ? "MARKET_VALIDATED" : null)
+  const historicalMarketCheckCompleted = input.historicalMarketCheckCompleted ??
+    input.exactMarketEvidence === true
   const blockers = [
     !input.exactOrStrongIdentity ? "IDENTITY_NOT_READY" : "",
-    !input.exactMarketEvidence ? "EXACT_MARKET_EVIDENCE_NOT_READY" : "",
+    !historicalMarketCheckCompleted ? "HISTORICAL_MARKET_CHECK_NOT_COMPLETED" : "",
+    !commercialEvidenceMode ? "COMMERCIAL_EVIDENCE_MODE_NOT_READY" : "",
     !input.productFactsCompatible ? "PRODUCT_FACTS_NOT_READY" : "",
     !input.requiredAspectsResolved ? "REQUIRED_ASPECTS_NOT_READY" : "",
     !input.regulatoryAcceptable ? "REGULATORY_NOT_READY" : "",
@@ -360,7 +409,15 @@ export function evaluateReadyForContent(input: {
     Number(input.roiPercent ?? 0) < 30 ? "ROI_BELOW_30_PERCENT" : "",
     Number(input.netMarginPercent ?? 0) < 20 ? "NET_MARGIN_BELOW_20_PERCENT" : "",
   ].filter(Boolean)
-  return { ready: blockers.length === 0, blockers, idealProfitReached: Number(input.estimatedProfit ?? 0) >= 7 }
+  return {
+    ready: blockers.length === 0,
+    blockers,
+    commercialEvidenceMode,
+    idealProfitReached: Number(input.estimatedProfit ?? 0) >= 7,
+    forcedListingQuantity: commercialEvidenceMode === "CONTROLLED_EXPLORATORY_TEST" ? 1 : null,
+    commercialMonitorRequired: commercialEvidenceMode === "CONTROLLED_EXPLORATORY_TEST",
+    automaticPricingAllowed: false,
+  }
 }
 
 export function listingQuantityFromLuna(quantity: number | null, available: boolean) {

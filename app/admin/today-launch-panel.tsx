@@ -401,6 +401,8 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
   const imageSet = normalizedImageReviewSet(reviewAssets)
   const imageSetReady = completeImageReviewSet(imageSet)
   const openAiContextUsed = imageSet.some((asset) => asset.generativeAiUsed === true)
+  const controlledExploratoryTest = candidate?.evidence_summary?.commercialEvidenceMode ===
+    "CONTROLLED_EXPLORATORY_TEST"
 
   return <article className="min-w-0 overflow-hidden rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-4">
     <div className="flex flex-wrap justify-between gap-3">
@@ -442,7 +444,9 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
     </div>}
 
     {task.gate_type === "PRODUCT_APPROVAL_REQUIRED" && <div className="mt-4 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm text-cyan-50">
-      <p>La identidad y la ficha técnica pasaron. Tú defines el precio final; Seller OS comprobará utilidad, ROI y margen sin convertir precios de competidores en una recomendación automática.</p>
+      <p>{controlledExploratoryTest
+        ? "La búsqueda histórica terminó sin ventas exactas confirmadas. Identidad, pack, ficha técnica y gates críticos deben pasar igualmente; esta oferta comienza como prueba comercial controlada."
+        : "La identidad y la ficha técnica pasaron. Tú defines el precio final; Seller OS comprobará utilidad, ROI y margen sin convertir precios de competidores en una recomendación automática."}</p>
       <LunaConfirmationSummary candidate={candidate} />
       <MarketPriceReference candidate={candidate} />
       <p className="mt-3 rounded-xl border border-amber-200/25 bg-amber-200/[0.06] p-3 text-xs text-amber-50"><strong>Fulfillment obligatorio:</strong> confirma la base real antes de aprobar. No selecciones un acuerdo mayorista si sólo planeas comprar el producto después de la venta en un retailer o marketplace.</p>
@@ -472,7 +476,7 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
         </label>
       </fieldset>
       <div className="mt-3 flex flex-wrap gap-3">
-        <button type="button" disabled={working || salePriceMissing || !fulfillmentBasis || !imageRightsConfirmed || !openAiImageSpendApproved} onClick={() => void onConfirm({ action: "product_decision", taskId: task.id, decision: "APPROVE", salePrice: Number(salePrice), fulfillmentBasis, imageRightsConfirmed, openAiImageSpendApproved })} className="min-h-12 w-full rounded-xl bg-cyan-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-100 disabled:opacity-40 sm:w-auto">APROBAR PRODUCTO</button>
+        <button type="button" disabled={working || salePriceMissing || !fulfillmentBasis || !imageRightsConfirmed || !openAiImageSpendApproved} onClick={() => void onConfirm({ action: "product_decision", taskId: task.id, decision: "APPROVE", salePrice: Number(salePrice), fulfillmentBasis, imageRightsConfirmed, openAiImageSpendApproved })} className="min-h-12 w-full rounded-xl bg-cyan-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-100 disabled:opacity-40 sm:w-auto">{controlledExploratoryTest ? "APROBAR PRUEBA CONTROLADA · CANTIDAD 1" : "APROBAR PRODUCTO CON MERCADO VALIDADO"}</button>
         <button type="button" disabled={working} onClick={() => void onConfirm({ action: "product_decision", taskId: task.id, decision: "REJECT" })} className="min-h-12 w-full rounded-xl border border-red-300/35 px-4 font-black text-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-200 disabled:opacity-40 sm:w-auto">RECHAZAR</button>
       </div>
       {candidate?.economics_summary?.minimumOperatorPrice && <p className="mt-2 text-xs text-white/60">Piso interno estimado con costo y reservas propias: ${Number(candidate.economics_summary.minimumOperatorPrice).toFixed(2)}. Debe validarse con el precio que tú apruebes.</p>}
@@ -571,6 +575,15 @@ function safeHttpsUrl(value: unknown) {
 
 function MarketPriceReference({ candidate }: { candidate?: Row }) {
   const reference = candidate?.evidence_summary?.exactSoldMarketReference
+  if (candidate?.evidence_summary?.commercialEvidenceMode === "CONTROLLED_EXPLORATORY_TEST") {
+    const coverage = candidate?.evidence_summary?.reconciliationCoverage ?? {}
+    return <div className="mt-3 rounded-xl border border-violet-200/25 bg-violet-200/[0.07] p-3 text-xs leading-5 text-violet-50">
+      <p className="font-black">PRUEBA COMERCIAL CONTROLADA</p>
+      <p className="mt-1">La búsqueda acotada terminó sin historial vendido exacto. Eso reduce la confianza, pero no bloquea por sí solo un producto seguro, rentable y operable.</p>
+      <p className="mt-2 text-violet-100/70">Muestra revisada: {Number(coverage.reviewedObservations ?? 0)} · cantidad inicial eBay 1 · precio aprobado por el operador · monitoreo obligatorio · un cambio por experimento.</p>
+      <p className="mt-1 text-violet-100/60">Los patrones transferibles son contexto agregado; no prueban ventas de este producto ni autorizan copiar contenido de otros vendedores.</p>
+    </div>
+  }
   if (!reference || reference.evidenceTier !== "CONFIRMED_SOLD_EXACT") {
     return <p className="mt-3 rounded-xl border border-amber-200/20 bg-amber-200/[0.05] p-3 text-xs text-amber-50">No existe todavía una referencia de precio vendido exacta y válida. No se mostrará una búsqueda amplia como sustituto.</p>
   }
@@ -602,8 +615,10 @@ function ManualHandoffCard({ candidate }: { candidate: Row }) {
       return `${shippingFieldLabel(name)}: ${String(value.value ?? "")} ${String(value.unit ?? "")}`.trim()
     }).join("\n")
     : String(shipping.operatorAction ?? "Confirmar envío en Seller Hub.")
+  const controlledExploratoryTest = candidate.evidence_summary?.commercialEvidenceMode ===
+    "CONTROLLED_EXPLORATORY_TEST"
   return <article className="min-w-0 overflow-hidden rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.06] p-4">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-black uppercase text-emerald-100/65">Paquete verificado</p><h4 className="mt-1 break-words font-black">{candidate.product_title}</h4><p className="mt-1 break-words text-xs text-white/55">SKU {candidate.supplier_sku} · {imageUrls.length} imagen(es) autorizada(s)</p></div><a href="https://www.ebay.com/sh/ovw" target="_blank" rel="noreferrer" className="inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-emerald-200 px-4 text-center font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-100 sm:w-auto">ABRIR SELLER HUB Y PUBLICAR</a></div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-black uppercase text-emerald-100/65">{controlledExploratoryTest ? "Prueba controlada · paquete verificado" : "Mercado validado · paquete verificado"}</p><h4 className="mt-1 break-words font-black">{candidate.product_title}</h4><p className="mt-1 break-words text-xs text-white/55">SKU {candidate.supplier_sku} · {imageUrls.length} imagen(es) autorizada(s)</p></div><a href="https://www.ebay.com/sh/ovw" target="_blank" rel="noreferrer" className="inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-emerald-200 px-4 text-center font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-100 sm:w-auto">ABRIR SELLER HUB Y PUBLICAR</a></div>
     <div aria-label="Ruta de publicación" className="mt-4 grid grid-cols-2 gap-2 text-xs font-black sm:grid-cols-4"><span className="rounded-xl border border-white/10 p-2">1 · Datos esenciales</span><span className="rounded-xl border border-white/10 p-2">2 · Ficha técnica</span><span className="rounded-xl border border-white/10 p-2">3 · Envío e imágenes</span><span className="rounded-xl border border-white/10 p-2">4 · Revisar y publicar</span></div>
     {handoff.publicationReadiness === "READY_FOR_MANUAL_SHIPPING_CONFIRMATION" && <p className="mt-3 rounded-xl border border-amber-200/25 bg-amber-200/[0.06] p-3 text-sm text-amber-50"><strong>Confirmación puntual pendiente:</strong> el paquete no copia medidas estimadas. Confirma peso/dimensiones en Seller Hub o usa una política de envío verificada compatible.</p>}
     <div className="mt-4 grid gap-3 sm:grid-cols-2"><CopyField label="Título" value={String(handoff.title ?? "")} /><CopyField label="Descripción" value={String(handoff.description ?? "")} multiline /></div>

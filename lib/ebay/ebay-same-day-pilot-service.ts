@@ -5,6 +5,7 @@ import {
   buildSameDayLocalPreparationPackage,
   canStartNextSameDayCandidateCycle,
   evaluateSameDayCandidate,
+  resolveSameDayCommercialEvidenceMode,
   SAME_DAY_MAX_CANDIDATE_CYCLES,
   SAME_DAY_PILOT_VERSION,
   SAME_DAY_RECONCILIATION_COVERAGE_ROW_LIMIT,
@@ -239,8 +240,28 @@ function candidateInput(
   const economics = record(assessment.economics)
   const scores = record(assessment.scores)
   const candidate = record(assessment.candidate)
+  const sourceVerification = record(assessment.sourceVerification)
   const observed = text(row.last_scanned_at)
   const supplierProductUrl = text(latestVariant.product_url || row.product_url, 2_000)
+  const lunaVariantGtin = text(latestVariant.barcode)
+  const officialDescriptionHasStrongIdentity = Boolean(
+    text(officialDescriptionIdentity.gtin) ||
+    (text(officialDescriptionIdentity.brand) &&
+      text(officialDescriptionIdentity.mpn || officialDescriptionIdentity.model)),
+  )
+  const identityEvidenceSource = lunaVariantGtin
+    ? "LUNA_EXACT_VARIANT"
+    : officialDescriptionHasStrongIdentity
+      ? text(officialDescriptionIdentity.source)
+      : ""
+  const identityEvidenceHash = lunaVariantGtin
+    ? versionedHash({ source: "LUNA_EXACT_VARIANT", productId: row.market_radar_product_id,
+        supplierVariantId: latestVariant.supplier_variant_id || row.supplier_variant_id,
+        gtin: lunaVariantGtin })
+    : text(officialDescriptionIdentity.evidenceHash)
+  const officialPackCount = number(officialDescriptionIdentity.packCount)
+  const offerPackVerified = officialPackCount !== null ||
+    sourceVerification.humanConfirmedCommercialPacks === true
   return {
     id: text(row.id), candidateKey: text(row.candidate_key), productTitle: text(row.product_title),
     variantTitle: text(latestVariant.variant_title || row.variant_title) || null,
@@ -259,8 +280,10 @@ function candidateInput(
     color: text(candidate.color || identity.color) || null,
     scent: text(candidate.scent || identity.scent) || null,
     formulation: text(candidate.formulation || identity.formulation) || null,
-    identityEvidenceSource: text(officialDescriptionIdentity.source) || null,
-    identityEvidenceHash: text(officialDescriptionIdentity.evidenceHash) || null,
+    identityEvidenceSource: identityEvidenceSource || null,
+    identityEvidenceHash: identityEvidenceHash || null,
+    identityIndependentlyVerified: Boolean(identityEvidenceSource && identityEvidenceHash),
+    offerPackVerified,
     supplierPrice: number(latestVariant.price) ?? number(row.supplier_price),
     supplierAvailable: latestVariant.available === true ? true : latestVariant.available === false ? false : row.supplier_available === true ? true : row.supplier_available === false ? false : null,
     supplierQuantity: number(latestVariant.inventory_quantity) ?? number(row.supplier_inventory_quantity),
@@ -1402,8 +1425,26 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
     ordinal: index + 1, state: entry.state, machine_state: "RUN_CREATED",
     candidate_key: entry.candidateKey, product_title: entry.productTitle, supplier_sku: entry.supplierSku,
     supplier_variant_id: entry.supplierVariantId, family_fingerprint: entry.familyFingerprint, priority: entry.priority,
-    blockers: entry.blockers, evidence_summary: { activeExactCount: entry.activeExactCount, soldExactCount: entry.soldExactCount,
-      compatibleSellerCount: entry.compatibleSellerCount, evidenceFresh: entry.evidenceFresh, broadSearchIsDemand: false },
+    blockers: entry.blockers, evidence_summary: {
+      activeExactCount: entry.activeExactCount,
+      soldExactCount: entry.soldExactCount,
+      compatibleSellerCount: entry.compatibleSellerCount,
+      evidenceFresh: entry.evidenceFresh,
+      broadSearchIsDemand: false,
+      historicalMarketCheckStatus: Number(entry.soldExactCount ?? 0) > 0 && entry.evidenceFresh
+        ? "COMPLETED_WITH_EXACT_SOLD" : "PENDING",
+      commercialEvidenceMode: Number(entry.soldExactCount ?? 0) > 0 && entry.evidenceFresh
+        ? "MARKET_VALIDATED" : null,
+      selectionIdentity: {
+        exactIdentityConfirmed: entry.exactIdentityConfirmed === true,
+        independentlyVerified: entry.identityIndependentlyVerified === true,
+        confidence: entry.identityConfidence ?? 0,
+        evidenceSource: entry.identityEvidenceSource ?? null,
+        evidenceHash: entry.identityEvidenceHash ?? null,
+        exactOfferPackVerified: entry.offerPackVerified === true,
+        nativePackCount: entry.nativePackCount ?? null,
+      },
+    },
     economics_summary: { ready: entry.economicsReady, estimatedProfit: entry.estimatedProfit, roiPercent: entry.roiPercent, netMarginPercent: entry.netMarginPercent },
     product_research_query_plan: entry.queryPlan, calls_estimated: entry.callsEstimated,
     local_preparation_status: "BLOCKED_PENDING_VERIFIED_GATES",
@@ -1495,8 +1536,19 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
   const economicsSummary = { ...record(candidate.economics_summary),
     confirmedLunaPrice: input.price, available: input.available, quantity: input.quantity,
     quantityUnknown: input.quantity == null, lunaConfirmation }
-  const basePatch = { listingQuantity: quantity.quantity || null,
-    recheckAfterSale: quantity.recheckAfterSale, economicsSummary }
+  const evidence = record(candidate.evidence_summary)
+  const commercialEvidenceMode = text(evidence.commercialEvidenceMode)
+  const controlledExploratoryTest = commercialEvidenceMode === "CONTROLLED_EXPLORATORY_TEST"
+  const basePatch = {
+    listingQuantity: controlledExploratoryTest ? 1 : quantity.quantity || null,
+    recheckAfterSale: controlledExploratoryTest || quantity.recheckAfterSale,
+    economicsSummary: controlledExploratoryTest
+      ? { ...economicsSummary, controlledTestPlan: {
+          listingQuantity: 1, commercialMonitorRequired: true,
+          oneVariableAtATime: true, automaticPricingUsed: false,
+        } }
+      : economicsSummary,
+  }
   if (!input.available) {
     await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
       gateType: "LUNA_CONFIRMATION_REQUIRED", runId: state.run.id, candidateId: task.candidate_id,
@@ -1507,9 +1559,10 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
       nextAutomaticAction: "Promover el siguiente candidato.", nextHumanAction: "Ninguna." })
     await promoteNextCandidate(input.supabase, state.run.id, Number(candidate.ordinal))
   } else {
-    const evidence = record(candidate.evidence_summary)
-    const exactMarketReady = Number(evidence.activeExactCount ?? 0) > 0 && evidence.evidenceFresh === true
-    if (!exactMarketReady) {
+    const historicalMarketCheckStatus = text(evidence.historicalMarketCheckStatus)
+    const marketDecisionReady = commercialEvidenceMode === "MARKET_VALIDATED" ||
+      (controlledExploratoryTest && historicalMarketCheckStatus === "COMPLETED_NO_EXACT_SOLD")
+    if (!marketDecisionReady) {
       await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
         gateType: "LUNA_CONFIRMATION_REQUIRED", runId: state.run.id, candidateId: task.candidate_id,
         previousState: "WAITING_LUNA_CONFIRMATION", nextState: "WAITING_PRODUCT_RESEARCH_CAPTURE",
@@ -1530,7 +1583,9 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
       await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
         gateType: "LUNA_CONFIRMATION_REQUIRED", runId: state.run.id, candidateId: task.candidate_id,
         previousState: "WAITING_LUNA_CONFIRMATION", nextState: "CALCULATING_ECONOMICS",
-        reasonCode: "LUNA_CONFIRMED_AUTO_RESUME", triggeredBy: "USER",
+        reasonCode: controlledExploratoryTest
+          ? "LUNA_CONFIRMED_CONTROLLED_TEST_AUTO_RESUME"
+          : "LUNA_CONFIRMED_AUTO_RESUME", triggeredBy: "USER",
         checkpoint: { price: input.price, available: true, quantityKnown: input.quantity != null },
         candidatePatch: basePatch,
         nextAutomaticAction: "Recalcular economía localmente.", nextHumanAction: "Ninguna.",
@@ -2098,14 +2153,18 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           maxTradingReadsPerBatch: SAME_DAY_TRADING_DETAIL_READ_LIMIT_PER_BATCH,
           now,
         })
-        const exactObservationIds = new Set(reconciled.results.filter((result) =>
-          decisionObservationIdSet.has(text(result.observationId)) &&
+        const exactIdentityResults = reconciled.results.filter((result) =>
           result.classification === "EXACT_LUNA_MATCH" &&
-          result.supplierVariantId === supplierVariantId &&
+          result.supplierVariantId === supplierVariantId)
+        const exactIdentityObservationIds = new Set(exactIdentityResults
+          .map((result) => text(result.observationId)).filter(Boolean))
+        const exactSoldObservationIds = new Set(exactIdentityResults.filter((result) =>
           Number(result.soldExactCountImpact ?? 0) > 0,
         ).map((result) => text(result.observationId)).filter(Boolean))
+        const marketReferenceObservationIds = new Set([...exactSoldObservationIds]
+          .filter((observationId) => decisionObservationIdSet.has(observationId)))
         const reconciledExactRows = decisionObservations
-          .filter((row) => exactObservationIds.has(text(row.id)))
+          .filter((row) => marketReferenceObservationIds.has(text(row.id)))
         const marketReference = exactSoldMarketReference(reconciledExactRows)
         const relatedPackResults = reconciled.results.filter((result) =>
           result.classification === "SAME_PRODUCT_DIFFERENT_PACK" &&
@@ -2122,13 +2181,56 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           relatedPackResults, nativePackCount,
           number(record(candidate.economics_summary).confirmedLunaPrice),
         )
+        const selectionIdentity = record(record(candidate.evidence_summary).selectionIdentity)
+        const commercialRoute = resolveSameDayCommercialEvidenceMode({
+          historicalMarketCheckCompleted: true,
+          confirmedSoldExact: exactSoldObservationIds.size,
+          identityVerifiedIndependently: exactIdentityResults.length > 0 ||
+            selectionIdentity.independentlyVerified === true,
+          exactOfferPackVerified: exactIdentityResults.length > 0 ||
+            selectionIdentity.exactOfferPackVerified === true,
+          relatedPackConflict: relatedPackResults.length > 0,
+          relatedSizeConflict: relatedSizeResults.length > 0,
+        })
+        const controlledIdentityEvidenceHash = text(selectionIdentity.evidenceHash) ||
+          (exactIdentityObservationIds.size > 0
+            ? versionedHash({ supplierVariantId,
+                exactIdentityObservationIds: [...exactIdentityObservationIds].sort(),
+                reconciliationVersion: PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_VERSION })
+            : null)
+        const commercialEvidenceHash = versionedHash({
+          batchId, supplierVariantId, candidateQueryHash,
+          exactIdentityObservationIds: [...exactIdentityObservationIds].sort(),
+          exactSoldObservationIds: [...exactSoldObservationIds].sort(),
+          relatedPackCount: relatedPackResults.length,
+          relatedSizeCount: relatedSizeResults.length,
+          mode: commercialRoute.mode,
+          version: "SAME_DAY_COMMERCIAL_EVIDENCE_V1",
+        })
         const reconciliationEvidenceSummary = { ...record(candidate.evidence_summary),
           evidenceTiers: {
-            confirmedSoldExact: exactObservationIds.size,
+            exactIdentityMatches: exactIdentityObservationIds.size,
+            confirmedSoldExact: exactSoldObservationIds.size,
             confirmedSoldRelatedPack: relatedPackResults.length,
             confirmedSoldRelatedSize: relatedSizeResults.length,
             broadSearchOnlyPromoted: false,
           },
+          historicalMarketCheckStatus: exactSoldObservationIds.size > 0
+            ? "COMPLETED_WITH_EXACT_SOLD"
+            : commercialRoute.mode === "CONTROLLED_EXPLORATORY_TEST"
+              ? "COMPLETED_NO_EXACT_SOLD"
+              : "COMPLETED_IDENTITY_UNRESOLVED",
+          historicalMarketCheckedAt: now.toISOString(),
+          commercialEvidenceMode: commercialRoute.mode,
+          commercialEvidenceVersion: "SAME_DAY_COMMERCIAL_EVIDENCE_V1",
+          commercialEvidenceHash,
+          controlledIdentityEvidenceHash,
+          commercialEvidenceBlockers: commercialRoute.blockers,
+          controlledTestPlan: commercialRoute.mode === "CONTROLLED_EXPLORATORY_TEST"
+            ? { listingQuantity: 1, commercialMonitorRequired: true,
+                oneVariableAtATime: true, automaticPricingAllowed: false,
+                manualPublicationRequired: true }
+            : null,
           relatedPackStrategy,
           relatedSizeSampleSize: relatedSizeResults.length,
           reconciliationCoverage: {
@@ -2147,7 +2249,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             updated_at: now.toISOString(),
           }).eq("id", candidate.id).eq("run_id", state.run.id)
         if (coverageUpdateError) throw new Error("SAME_DAY_PILOT_RECONCILIATION_COVERAGE_UPDATE_FAILED")
-        if (exactObservationIds.size <= 0 || !reconciled.reanalysis.runId || !reconciled.reanalysis.shouldSchedule) {
+        if (exactSoldObservationIds.size <= 0 || !reconciled.reanalysis.runId || !reconciled.reanalysis.shouldSchedule) {
           if (reconciled.reanalysis.runId && reconciled.reanalysis.shouldSchedule) {
             // Related pack/size evidence can refresh Loop 1 pack intelligence,
             // but it never promotes the same-day candidate as an exact match.
@@ -2171,15 +2273,21 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
               reasonCode: "RELATED_SIZE_STRATEGY_RETAINED",
               blockers: ["RELATED_SIZE_IS_NOT_EXACT_OFFER",
                 "EXACT_PRODUCT_PRESENTATION_REQUIRED"] })
+          } else if (commercialRoute.mode === "CONTROLLED_EXPLORATORY_TEST" &&
+            text(candidate.queue_item_id)) {
+            await createLunaGate(input.supabase, state.run.id, record(candidate),
+              "RECONCILING_IDENTITY")
           } else {
             await rejectAndPromote({ supabase: input.supabase, runId: state.run.id,
               candidate: record(candidate), previousState: "RECONCILING_IDENTITY",
-              reasonCode: "OFFICIAL_IDENTITY_RECONCILIATION_NOT_EXACT" })
+              reasonCode: commercialRoute.mode === "CONTROLLED_EXPLORATORY_TEST"
+                ? "CONTROLLED_TEST_QUEUE_BINDING_MISSING"
+                : "OFFICIAL_IDENTITY_RECONCILIATION_NOT_EXACT" })
           }
         } else {
           const { error: evidenceUpdateError } = await input.supabase.from("ebay_same_day_pilot_candidates").update({
             evidence_summary: { ...reconciliationEvidenceSummary,
-              reconciledExactObservationCount: exactObservationIds.size,
+              reconciledExactObservationCount: exactSoldObservationIds.size,
               exactSoldMarketReference: marketReference,
               exactSoldMarketReferenceReconciledAt: now.toISOString(),
               exactSoldMarketReferenceSource: "FINAL_IDENTITY_RECONCILIATION" },
@@ -2191,7 +2299,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             triggeredBy: "SYSTEM", checkpoint: { captureBatchId: batchId,
               references: decisionObservationIds.length,
               reconciliationCoverage: coverageObservationIds.length,
-              exactLunaMatches: exactObservationIds.size }, nextAutomaticAction: "Ejecutar Loop 1 para este candidato.", nextHumanAction: "Ninguna." })
+              exactLunaMatches: exactIdentityObservationIds.size }, nextAutomaticAction: "Ejecutar Loop 1 para este candidato.", nextHumanAction: "Ninguna." })
           const dispatched = await enqueueListingAiTop20Continuation({
             supabase: input.supabase, runId: reconciled.reanalysis.runId,
             continuationGeneration: reconciled.reanalysis.continuationGeneration,
@@ -2302,8 +2410,20 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       let productFactsState = text(candidate.machine_state)
       let summary = record(candidate.product_facts_summary)
       if (productFactsState === "ENRICHING_PRODUCT_FACTS") {
+        const marketEvidence = record(candidate.evidence_summary)
+        const controlledExploratoryTarget = marketEvidence.commercialEvidenceMode ===
+          "CONTROLLED_EXPLORATORY_TEST"
+          ? {
+              candidateId: text(candidate.queue_item_id),
+              supplierVariantId: text(candidate.supplier_variant_id),
+              identityEvidenceHash: text(marketEvidence.controlledIdentityEvidenceHash),
+              commercialEvidenceHash: text(marketEvidence.commercialEvidenceHash),
+              historicalMarketCheckCompleted: true as const,
+              exactOfferPackVerified: true as const,
+            }
+          : undefined
         const factRun = await runProductFactsEnrichment({ supabase: input.supabase, accountKey: input.accountKey,
-          candidateIds: [candidate.queue_item_id] })
+          candidateIds: [candidate.queue_item_id], controlledExploratoryTarget })
         await heartbeatPilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId })
         const currentResult = factRun.candidateResults.find((result) => result.candidateId === candidate.queue_item_id)
         const evidenceBinding = currentResult?.evidenceBinding
