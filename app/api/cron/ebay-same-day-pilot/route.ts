@@ -5,7 +5,7 @@ export const maxDuration = 300
 import { randomUUID, timingSafeEqual } from "node:crypto"
 import { NextResponse } from "next/server"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
-import { previewSameDayPilot, processSameDayPilotJobs } from "@/lib/ebay/ebay-same-day-pilot-service"
+import { previewSameDayPilot, processSameDayPilotJobChain } from "@/lib/ebay/ebay-same-day-pilot-service"
 import { getListingImageFactoryConfiguration } from "@/lib/ebay/ebay-listing-image-factory"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 
@@ -58,7 +58,8 @@ export async function GET(req: Request) {
       imageFactory,
       safety: { previewOnly: true, ebayWrites: 0, openAiCalls: 0, productionChanged: false } })
   }
-  const result = await processSameDayPilotJobs({ supabase: getSupabaseAdminClient(), accountKey, workerId: `same-day:${randomUUID()}` })
+  const result = await processSameDayPilotJobChain({ supabase: getSupabaseAdminClient(), accountKey,
+    workerId: `same-day:${randomUUID()}`, maximumJobs: 6, maximumDurationMs: 240_000 })
   const imageFactory = getListingImageFactoryConfiguration()
   return NextResponse.json({ success: true, result, imageFactory,
     safety: { recursiveHttp: false, ebayWrites: 0, productionChanged: false } })

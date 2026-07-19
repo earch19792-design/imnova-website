@@ -2572,11 +2572,14 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       const taxonomyReady = gates.EBAY_ASPECTS_READY === true
       const regulatoryReady = gates.REGULATORY_READY === true
       const openAiReady = gates.OPENAI_INPUT_READY === true
+      const shippingEstimateReady = gates.SHIPPING_ESTIMATE_READY === true
+      const exceptionStatus = text(record(summary.exception).blockingStatus)
+      const missingBlockingAspects = Number(record(summary.requirements).MISSING_BLOCKING ?? 0)
       if (productFactsState === "VALIDATING_TAXONOMY") {
         if (!taxonomyReady) {
           await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
             previousState: "VALIDATING_TAXONOMY", reasonCode: "EBAY_REQUIRED_ASPECTS_NOT_READY_TODAY",
-            blockers: [text(record(summary.exception).blockingStatus) || "EBAY_ASPECTS_READY_FALSE"] })
+            blockers: [missingBlockingAspects > 0 ? "MISSING_BLOCKING" : "EBAY_TAXONOMY_NOT_READY"] })
           productFactsState = "REJECTED"
         } else {
           await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, previousState: "VALIDATING_TAXONOMY",
@@ -2591,10 +2594,14 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             previousState: "VALIDATING_REGULATION", reasonCode: "REGULATORY_NOT_READY_TODAY",
             blockers: [text(record(summary.exception).blockingStatus) || "REGULATORY_READY_FALSE"] })
           productFactsState = "REJECTED"
-        } else if (!openAiReady) {
+        } else if (!openAiReady || !shippingEstimateReady) {
           await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
             previousState: "VALIDATING_REGULATION", reasonCode: "PRODUCT_FACTS_NOT_READY_TODAY",
-            blockers: [text(record(summary.exception).blockingStatus) || "OPENAI_INPUT_NOT_READY"] })
+            blockers: [!shippingEstimateReady
+              ? "SHIPPING_ESTIMATE_REQUIRED_FOR_CONTENT"
+              : exceptionStatus === "SHIPPING_CONFIRMATION_DEFERRED_TO_PUBLICATION"
+                ? "OPENAI_INPUT_NOT_READY"
+                : exceptionStatus || "OPENAI_INPUT_NOT_READY"] })
           productFactsState = "REJECTED"
         } else {
           await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, previousState: "VALIDATING_REGULATION",
@@ -2604,10 +2611,14 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
         }
       }
       if (productFactsState === "BUILDING_OPENAI_INPUT") {
-        if (!openAiReady) {
+        if (!openAiReady || !shippingEstimateReady) {
           await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
             previousState: "BUILDING_OPENAI_INPUT", reasonCode: "PRODUCT_FACTS_NOT_READY_TODAY",
-            blockers: [text(record(summary.exception).blockingStatus) || "OPENAI_INPUT_NOT_READY"] })
+            blockers: [!shippingEstimateReady
+              ? "SHIPPING_ESTIMATE_REQUIRED_FOR_CONTENT"
+              : exceptionStatus === "SHIPPING_CONFIRMATION_DEFERRED_TO_PUBLICATION"
+                ? "OPENAI_INPUT_NOT_READY"
+                : exceptionStatus || "OPENAI_INPUT_NOT_READY"] })
           productFactsState = "REJECTED"
         } else {
           await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, previousState: "BUILDING_OPENAI_INPUT",
@@ -2888,5 +2899,57 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     await releasePilotRunLease({
       supabase: input.supabase, runId, workerId: input.workerId, leaseToken: runLeaseToken,
     })
+  }
+}
+
+export async function processSameDayPilotJobChain(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  workerId: string
+  now?: Date
+  maximumJobs?: number
+  maximumDurationMs?: number
+}) {
+  const maximumJobs = Math.max(1, Math.min(6, Math.trunc(input.maximumJobs ?? 6)))
+  const maximumDurationMs = Math.max(1_000, Math.min(240_000,
+    Math.trunc(input.maximumDurationMs ?? 240_000)))
+  const startedAt = Date.now()
+  const results: Array<Awaited<ReturnType<typeof processSameDayPilotJobs>>> = []
+  let stoppedReason = "MAXIMUM_JOBS_REACHED"
+
+  for (let index = 0; index < maximumJobs; index += 1) {
+    const result = await processSameDayPilotJobs({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      workerId: `${input.workerId}:chain:${index + 1}`,
+      now: input.now ? new Date(input.now.getTime() + index) : undefined,
+    })
+    results.push(result)
+    if (result.processed !== 1) {
+      stoppedReason = result.status === "IDLE" ? "QUEUE_DRAINED" : result.status
+      break
+    }
+    if (!["COMPLETED", "EFFECT_ALREADY_APPLIED"].includes(result.status)) {
+      // A 429, retry, dead letter or busy lease must preserve its checkpoint
+      // and return control to the durable scheduler instead of spinning.
+      stoppedReason = result.status
+      break
+    }
+    if (Date.now() - startedAt >= maximumDurationMs) {
+      stoppedReason = "TIME_BUDGET_REACHED"
+      break
+    }
+  }
+
+  return {
+    processed: results.reduce((total, result) => total + Number(result.processed ?? 0), 0),
+    status: "IMMEDIATE_CHAIN_FINISHED",
+    stoppedReason,
+    executions: results.map((result) => ({
+      status: result.status,
+      jobType: "jobType" in result ? result.jobType ?? null : null,
+    })),
+    schedulerFallback: true,
+    recursiveHttp: false,
   }
 }

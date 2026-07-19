@@ -1,7 +1,9 @@
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
-export const maxDuration = 60
+export const maxDuration = 300
 
+import { randomUUID } from "node:crypto"
+import { after } from "next/server"
 import {
   authorizeListingAiRequest,
   enforceListingAiRouteRateLimit,
@@ -24,7 +26,25 @@ import {
   markProductResearchQueryCaptured,
 } from "@/lib/ebay/ebay-product-research-query-plan"
 import { getEbayApplicationBrowseQuota } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
-import { resumeSameDayPilotAfterProductResearchCapture } from "@/lib/ebay/ebay-same-day-pilot-service"
+import {
+  processSameDayPilotJobChain,
+  resumeSameDayPilotAfterProductResearchCapture,
+} from "@/lib/ebay/ebay-same-day-pilot-service"
+
+function scheduleSameDayPilotContinuation(input: {
+  supabase: Parameters<typeof processSameDayPilotJobChain>[0]["supabase"]
+  accountKey: string
+}) {
+  after(async () => {
+    try {
+      await processSameDayPilotJobChain({ ...input,
+        workerId: `product-research:${randomUUID()}`,
+        maximumJobs: 6, maximumDurationMs: 240_000 })
+    } catch {
+      console.error("SAME_DAY_PILOT_CAPTURE_CONTINUATION_DEFERRED_TO_SCHEDULER")
+    }
+  })
+}
 
 async function visualStatusOrUnavailable(input: {
   supabase: Parameters<typeof getProductResearchVisualPatternStatus>[0]["supabase"]
@@ -147,6 +167,9 @@ export async function POST(req: Request) {
         sameDayPilot = { resumed: 0, familyEnriched: 0, deferred: true,
           error: "SAME_DAY_PILOT_CAPTURE_RESUME_DEFERRED" }
       }
+      if (!sameDayPilot.deferred) scheduleSameDayPilotContinuation({
+        supabase: auth.supabase, accountKey: auth.accountKey,
+      })
       const visualStatus = await visualStatusOrUnavailable({
         supabase: auth.supabase, accountKey: auth.accountKey,
       })
@@ -206,6 +229,9 @@ export async function POST(req: Request) {
       sameDayPilot = { resumed: 0, familyEnriched: 0, deferred: true,
         error: "SAME_DAY_PILOT_CAPTURE_RESUME_DEFERRED" }
     }
+    if (!sameDayPilot.deferred) scheduleSameDayPilotContinuation({
+      supabase: auth.supabase, accountKey: auth.accountKey,
+    })
     let scan: Record<string, unknown> | null = null
     if (sameDayPilot.deferred) {
       // Import + query-task advancement already committed. Do not enter the

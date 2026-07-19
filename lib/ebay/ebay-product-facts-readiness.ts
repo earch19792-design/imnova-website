@@ -549,14 +549,47 @@ export function parseAuthoritativeFactsInputPackage(value: unknown): Authoritati
 }
 
 export function targetedFactException(input: { readiness: ReturnType<typeof calculateReadiness>; requirements: FactRequirement[] }) {
+  const gates = input.readiness.gates
   const missingAspect = input.requirements.find((requirement) => requirement.status === "MISSING_BLOCKING")
   if (missingAspect) return { fieldRequired: missingAspect.aspectName,
     whyItMatters: "eBay requiere este item specific para la categoría seleccionada.",
     sourcesAlreadyChecked: ["eBay Taxonomy oficial", "Luna exact variant", "eBay Catalog oficial"],
     exactEvidenceNeeded: `Etiqueta oficial o fuente autorizada que confirme ${missingAspect.aspectName}.`, blockingStatus: "MISSING_BLOCKING" }
-  if (!input.readiness.gates.SHIPPING_CONFIRMED) return { fieldRequired: "shippingWeight / package dimensions",
-    whyItMatters: "La tarifa final y la publicación segura requieren medidas de fulfillment confirmadas.",
+  if (!gates.IDENTITY_READY) return { fieldRequired: "identidad exacta del producto",
+    whyItMatters: "La ficha no puede unir variantes o presentaciones diferentes.",
+    sourcesAlreadyChecked: ["Luna exact variant", "eBay Catalog oficial"],
+    exactEvidenceNeeded: "GTIN o marca + MPN/modelo que confirme la variante exacta.",
+    blockingStatus: "IDENTITY_FACTS_REQUIRED" }
+  if (!gates.PRODUCT_FACTS_READY) return { fieldRequired: "nombre, marca o condición verificados",
+    whyItMatters: "El contenido sólo puede utilizar hechos técnicos con procedencia.",
+    sourcesAlreadyChecked: ["Luna exact variant", "eBay Catalog oficial", "fuentes autorizadas configuradas"],
+    exactEvidenceNeeded: "Etiqueta oficial o fuente autorizada que confirme el dato faltante.",
+    blockingStatus: "PRODUCT_UNIT_FACTS_REQUIRED" }
+  if (!gates.OFFER_PACK_READY) return { fieldRequired: "presentación exacta de la oferta",
+    whyItMatters: "Seller OS debe distinguir una unidad, un multipack y el total incluido.",
+    sourcesAlreadyChecked: ["Luna exact variant", "confirmación visible del operador"],
+    exactEvidenceNeeded: "Confirma unidades por presentación y total incluido en una oferta.",
+    blockingStatus: "OFFER_PACK_FACTS_REQUIRED" }
+  if (!gates.EBAY_ASPECTS_READY) return { fieldRequired: "categoría y aspectos obligatorios de eBay",
+    whyItMatters: "La categoría hoja y sus requisitos deben provenir de Taxonomy oficial.",
+    sourcesAlreadyChecked: ["eBay Taxonomy oficial", "eBay Catalog oficial"],
+    exactEvidenceNeeded: "Resolver la categoría hoja y sus item specifics obligatorios.",
+    blockingStatus: "EBAY_TAXONOMY_NOT_READY" }
+  if (!gates.REGULATORY_READY) return { fieldRequired: "validación regulatoria",
+    whyItMatters: "Un producto regulado no puede avanzar con datos críticos sin verificar.",
+    sourcesAlreadyChecked: ["Luna exact variant", "fuentes regulatorias autorizadas configuradas"],
+    exactEvidenceNeeded: "Etiqueta o fuente regulatoria oficial aplicable al producto exacto.",
+    blockingStatus: "REGULATORY_NOT_READY" }
+  if (!gates.SHIPPING_ESTIMATE_READY) return { fieldRequired: "estimación de peso de envío",
+    whyItMatters: "La economía necesita una estimación conservadora antes de preparar contenido.",
+    sourcesAlreadyChecked: ["Luna exact variant", "modelo interno de estimación"],
+    exactEvidenceNeeded: "Peso unitario o estimación conservadora trazable del paquete.",
+    blockingStatus: "SHIPPING_ESTIMATE_REQUIRED_FOR_CONTENT" }
+  if (!gates.SHIPPING_CONFIRMED) return { fieldRequired: "shippingWeight / package dimensions",
+    whyItMatters: "Las medidas confirmadas se exigen al publicar cuando la política de envío las necesita, no para redactar contenido.",
     sourcesAlreadyChecked: ["Luna exact variant", "Luna fulfillment", "estimación interna no publicable"],
-    exactEvidenceNeeded: "Confirma el peso y las dimensiones del paquete de envío desde Luna o fulfillment.", blockingStatus: "SHIPPING_CONFIRMED_REQUIRED" }
+    exactEvidenceNeeded: "Confirma el peso y las dimensiones desde Luna o fulfillment antes de usar envío calculado.",
+    blockingStatus: "SHIPPING_CONFIRMATION_DEFERRED_TO_PUBLICATION",
+    blocksContent: false, blocksPublication: true }
   return null
 }

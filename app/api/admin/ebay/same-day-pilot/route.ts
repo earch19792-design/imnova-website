@@ -1,8 +1,8 @@
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
-export const maxDuration = 60
+export const maxDuration = 300
 
-import { NextResponse } from "next/server"
+import { after, NextResponse } from "next/server"
 
 import { EBAY_IMAGE_STAGING_BUCKET } from "@/lib/ebay/ebay-image-storage-cleanup"
 import { getListingImageFactoryConfiguration } from "@/lib/ebay/ebay-listing-image-factory"
@@ -14,7 +14,7 @@ import {
   decideSameDayImages,
   decideSameDayProduct,
   getSameDayPilot,
-  processSameDayPilotJobs,
+  processSameDayPilotJobChain,
   startSameDayPilot,
 } from "@/lib/ebay/ebay-same-day-pilot-service"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
@@ -138,6 +138,24 @@ async function authorization(req: Request) {
   return { auth, accountKey, supabase: getSupabaseAdminClient() }
 }
 
+function scheduleImmediateContinuation(input: {
+  supabase: Parameters<typeof processSameDayPilotJobChain>[0]["supabase"]
+  accountKey: string
+  workerId: string
+}) {
+  after(async () => {
+    try {
+      await processSameDayPilotJobChain({ ...input, maximumJobs: 6, maximumDurationMs: 240_000 })
+    } catch {
+      // The five-minute durable scheduler is the recovery path. Never make a
+      // completed human gate look rejected because post-response work failed.
+      console.error("SAME_DAY_PILOT_IMMEDIATE_CONTINUATION_DEFERRED_TO_SCHEDULER")
+    }
+  })
+  return { processed: 0, status: "SCHEDULED_IMMEDIATE", schedulerFallback: true,
+    recursiveHttp: false }
+}
+
 export async function GET(req: Request) {
   const access = await authorization(req)
   if ("response" in access) return access.response
@@ -191,7 +209,11 @@ export async function POST(req: Request) {
     const body = object(await req.json())
     if (body.action === "start") {
       const pilot = await startSameDayPilot({ supabase: access.supabase, accountKey: access.accountKey, actorId: access.auth.userId })
-      return NextResponse.json({ success: true, pilot, safety: { oneClickStarted: true, fullCatalogRescan: false, ebayWrites: 0, productionChanged: false } }, { status: pilot.created ? 201 : 200 })
+      const continuation = scheduleImmediateContinuation({ supabase: access.supabase,
+        accountKey: access.accountKey, workerId: `pilot-start:${access.auth.userId}` })
+      return NextResponse.json({ success: true, pilot, continuation,
+        safety: { oneClickStarted: true, fullCatalogRescan: false, ebayWrites: 0, productionChanged: false } },
+      { status: pilot.created ? 201 : 200 })
     }
     if (body.action === "confirm_luna") {
       const availability = object(body.availability)
@@ -210,7 +232,7 @@ export async function POST(req: Request) {
       await confirmSameDayLuna({ supabase: access.supabase, accountKey: access.accountKey, actorId: access.auth.userId,
         taskId: body.taskId, price, available: availability.available, quantity,
         identityAndPackConfirmed: body.identityAndPackConfirmed === true, nativePackCount })
-      const continuation = await processSameDayPilotJobs({ supabase: access.supabase, accountKey: access.accountKey,
+      const continuation = scheduleImmediateContinuation({ supabase: access.supabase, accountKey: access.accountKey,
         workerId: `user-confirmation:${access.auth.userId}` })
       const pilot = await getSameDayPilot({ supabase: access.supabase, accountKey: access.accountKey })
       return NextResponse.json({ success: true, pilot, continuation, autoResumed: true, safety: { ebayWrites: 0, productionChanged: false } })
@@ -235,7 +257,7 @@ export async function POST(req: Request) {
         actorId: access.auth.userId, taskId: body.taskId, decision, salePrice, fulfillmentBasis,
         imageRightsConfirmed: body.imageRightsConfirmed === true,
         openAiImageSpendApproved: body.openAiImageSpendApproved === true })
-      const continuation = await processSameDayPilotJobs({ supabase: access.supabase,
+      const continuation = scheduleImmediateContinuation({ supabase: access.supabase,
         accountKey: access.accountKey, workerId: `product-decision:${access.auth.userId}` })
       const pilot = await getSameDayPilot({ supabase: access.supabase, accountKey: access.accountKey })
       return NextResponse.json({ success: true, pilot, continuation, autoResumed: true,
@@ -248,7 +270,7 @@ export async function POST(req: Request) {
       }
       await decideSameDayImages({ supabase: access.supabase, accountKey: access.accountKey,
         actorId: access.auth.userId, taskId: body.taskId, decision })
-      const continuation = await processSameDayPilotJobs({ supabase: access.supabase,
+      const continuation = scheduleImmediateContinuation({ supabase: access.supabase,
         accountKey: access.accountKey, workerId: `image-decision:${access.auth.userId}` })
       const pilot = await getSameDayPilot({ supabase: access.supabase, accountKey: access.accountKey })
       return NextResponse.json({ success: true, pilot, continuation, autoResumed: true,
