@@ -3197,7 +3197,7 @@ export async function confirmListingAiQueueLunaObservation(input: {
     now,
   }
   const generated = await createWinnerEvidenceDecisionPackage(input.supabase, refreshedInput,
-    { useOfficialRead: false, persist: true })
+    { useOfficialRead: false, persist: true, candidateRecordId: null })
   if (!generated.packageId) throw new Error("TOP10_REFRESHED_PACKAGE_REQUIRED")
   const refreshed = await readDecisionRow(input.supabase, input.accountKey, generated.packageId)
   const candidate: ApprovalQueueCatalogCandidate = {
