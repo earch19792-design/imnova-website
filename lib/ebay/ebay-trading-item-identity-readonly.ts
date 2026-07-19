@@ -139,12 +139,13 @@ function getItemRequest(itemId: string) {
   const selectors = [
     "Item.ItemID", "Item.Title", "Item.PrimaryCategory.CategoryID", "Item.ConditionDisplayName",
     "Item.ProductListingDetails.UPC", "Item.ProductListingDetails.EAN",
-    "Item.ProductListingDetails.ISBN", "Item.ItemSpecifics.NameValueList",
+    "Item.ProductListingDetails.ISBN", "Item.ItemSpecifics",
     "Item.Variations.VariationSpecificsSet.NameValueList",
   ]
   return "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
     "<GetItemRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
-    `<ItemID>${itemId}</ItemID>` + selectors.map((selector) =>
+    `<ItemID>${itemId}</ItemID><IncludeItemSpecifics>true</IncludeItemSpecifics>` +
+    "<DetailLevel>ItemReturnAttributes</DetailLevel>" + selectors.map((selector) =>
       `<OutputSelector>${selector}</OutputSelector>`).join("") + "</GetItemRequest>"
 }
 
