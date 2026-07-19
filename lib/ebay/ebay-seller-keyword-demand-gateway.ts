@@ -902,11 +902,19 @@ export async function getEbayTaxonomyListingIntelligence(
     taxonomyCache.set(cacheKey, { value: persistentCached, expiresAt: Date.now() + TAXONOMY_CACHE_TTL_MS })
     return persistentCached
   }
-  const empty = (status: EbayTaxonomyListingIntelligence["status"]): EbayTaxonomyListingIntelligence => ({
+  let resolvedCategoryId = normalizedKnownCategory
+  let resolvedCategoryTreeId = ""
+  let resolvedCategoryTreeVersion: string | null = null
+  const empty = (status: EbayTaxonomyListingIntelligence["status"], context?: {
+    categoryTreeId?: string | null
+    categoryTreeVersion?: string | null
+  }): EbayTaxonomyListingIntelligence => ({
     status,
-    categoryTreeId: null,
-    categoryTreeVersion: null,
-    categoryId: null,
+    categoryTreeId: context?.categoryTreeId ?? (resolvedCategoryTreeId || null),
+    categoryTreeVersion: context?.categoryTreeVersion ?? resolvedCategoryTreeVersion,
+    // Preserve a previously resolved numeric category for diagnostics and a
+    // targeted retry, but never mark its aspects ready after a failed request.
+    categoryId: resolvedCategoryId || null,
     categoryName: null,
     observedAt: null,
     aspects: [],
@@ -921,6 +929,8 @@ export async function getEbayTaxonomyListingIntelligence(
     const treePayload = await getEbayJson(treeUrl, token)
     const categoryTreeId = text(treePayload.categoryTreeId)
     const categoryTreeVersion = text(treePayload.categoryTreeVersion) || null
+    resolvedCategoryTreeId = categoryTreeId
+    resolvedCategoryTreeVersion = categoryTreeVersion
     if (!categoryTreeId) return empty("REQUEST_FAILED")
 
     let categoryId = normalizedKnownCategory
@@ -935,9 +945,10 @@ export async function getEbayTaxonomyListingIntelligence(
       const category = record(suggestion.category)
       categoryId = text(category.categoryId)
       categoryName = text(category.categoryName)
+      resolvedCategoryId = categoryId
     }
     if (!categoryId) {
-      return { ...empty("CATEGORY_NOT_RESOLVED"), categoryTreeId, categoryTreeVersion }
+      return empty("CATEGORY_NOT_RESOLVED", { categoryTreeId, categoryTreeVersion })
     }
     const aspectsUrl = new URL(
       `${TAXONOMY_ENDPOINT}/category_tree/${encodeURIComponent(categoryTreeId)}/get_item_aspects_for_category`

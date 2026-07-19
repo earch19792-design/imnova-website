@@ -7,10 +7,10 @@ import { createHash } from "node:crypto"
  * estimated fulfilment value from accidentally becoming listing copy.
  */
 export const PRODUCT_FACTS_SCHEMA_VERSION = "PRODUCT_FACTS_V1_2026_07_17"
-export const PRODUCT_FACTS_RESOLVER_VERSION = "PRODUCT_FACTS_RESOLVER_V1_2026_07_17"
+export const PRODUCT_FACTS_RESOLVER_VERSION = "PRODUCT_FACTS_RESOLVER_V2_2026_07_19"
 export const SHIPPING_ESTIMATION_MODEL_VERSION = "SHIPPING_ESTIMATE_V1_2026_07_17"
-export const OPENAI_FACTS_INPUT_VERSION = "OPENAI_FACTS_INPUT_V1_2026_07_17"
-export const AUTHORITATIVE_FACT_SOURCE_POLICY = "TECHNICAL_AUTHORITY_ONLY_V1_2026_07_18"
+export const OPENAI_FACTS_INPUT_VERSION = "OPENAI_FACTS_INPUT_V2_2026_07_19"
+export const AUTHORITATIVE_FACT_SOURCE_POLICY = "TECHNICAL_AUTHORITY_ONLY_V2_2026_07_19"
 
 export type FactScope = "PRODUCT_UNIT" | "OFFER_PACK" | "SHIPPING_PACKAGE" | "EBAY_LISTING_REQUIREMENTS"
 export type FactVerificationStatus = "VERIFIED" | "CORROBORATED" | "DERIVED_VERIFIED" |
@@ -138,6 +138,34 @@ function numeric(value: unknown) {
 function positiveInteger(value: unknown) {
   const parsed = numeric(value)
   return parsed !== null && Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
+/**
+ * Resolves the two independent count axes of Luna's native presentation. The
+ * pack count is the number of physical product units offered; unitCount is the
+ * count contained inside each physical product. Missing inner count safely
+ * defaults to one only after the native presentation itself is known.
+ */
+export function resolveNativePresentationFacts(input: {
+  confirmedNativePackCount?: number | null
+  declaredNativePackCount?: number | null
+  declaredUnitCount?: number | null
+  plannedPackCount?: number | null
+}) {
+  const confirmed = positiveInteger(input.confirmedNativePackCount)
+  const declared = positiveInteger(input.declaredNativePackCount)
+  const planned = positiveInteger(input.plannedPackCount)
+  const confirmationConflict = Boolean(confirmed && declared && confirmed !== declared)
+  const nativePackCount = confirmationConflict ? null : confirmed ?? declared
+  const strategyConflict = Boolean(nativePackCount && planned && nativePackCount !== planned)
+  return {
+    nativePackCount,
+    unitCount: positiveInteger(input.declaredUnitCount) ?? (nativePackCount ? 1 : null),
+    offerPackCount: nativePackCount && !strategyConflict ? nativePackCount : null,
+    conflict: confirmationConflict || strategyConflict,
+    confirmationConflict,
+    strategyConflict,
+  }
 }
 
 function canonical(value: unknown): string {
@@ -449,7 +477,10 @@ export function calculateReadiness(input: {
   })
   const estimate = input.facts.some((fact) => fact.factScope === "SHIPPING_PACKAGE" && fact.factKey === "shippingWeight" &&
     ["ESTIMATED_INTERNAL", "VERIFIED", "CORROBORATED", "DERIVED_VERIFIED"].includes(fact.verificationStatus))
-  const productFacts = has("PRODUCT_UNIT", ["exactProductName", "brand", "condition"])
+  // Brand is category-dependent. It blocks through Taxonomy when eBay marks it
+  // required, but an optional missing brand must not stop an otherwise safe
+  // unbranded listing from reaching manual review.
+  const productFacts = has("PRODUCT_UNIT", ["exactProductName", "condition"])
   const offerPackCount = positiveInteger(factByKey(input.facts, "OFFER_PACK", "offerPackCount")?.selectedValue)
   const unitsPerPack = positiveInteger(factByKey(input.facts, "OFFER_PACK", "unitsPerPack")?.selectedValue)
   const totalUnitCount = positiveInteger(factByKey(input.facts, "OFFER_PACK", "totalUnitCount")?.selectedValue)
@@ -488,7 +519,7 @@ export function buildOpenAiFactsInputPackage(input: { facts: ResolvedFact[]; rea
     resolutionRule: fact.resolutionRule,
   })).sort((left, right) => `${left.scope}:${left.key}`.localeCompare(`${right.scope}:${right.key}`))
   const required = new Set([
-    "PRODUCT_UNIT:exactproductname", "PRODUCT_UNIT:brand", "PRODUCT_UNIT:condition",
+    "PRODUCT_UNIT:exactproductname", "PRODUCT_UNIT:condition",
     "OFFER_PACK:offerpackcount", "OFFER_PACK:unitsperpack", "OFFER_PACK:totalunitcount",
   ])
   for (const fact of facts) required.delete(`${fact.scope}:${key(fact.key)}`)
@@ -536,7 +567,7 @@ export function parseAuthoritativeFactsInputPackage(value: unknown): Authoritati
   }
   if (facts.length !== packageRecord.facts.length) return null
   const required = new Set([
-    "PRODUCT_UNIT:exactproductname", "PRODUCT_UNIT:brand", "PRODUCT_UNIT:condition",
+    "PRODUCT_UNIT:exactproductname", "PRODUCT_UNIT:condition",
     "OFFER_PACK:offerpackcount", "OFFER_PACK:unitsperpack", "OFFER_PACK:totalunitcount",
   ])
   for (const fact of facts) required.delete(`${fact.scope}:${key(fact.key)}`)
@@ -560,7 +591,7 @@ export function targetedFactException(input: { readiness: ReturnType<typeof calc
     sourcesAlreadyChecked: ["Luna exact variant", "eBay Catalog oficial"],
     exactEvidenceNeeded: "GTIN o marca + MPN/modelo que confirme la variante exacta.",
     blockingStatus: "IDENTITY_FACTS_REQUIRED" }
-  if (!gates.PRODUCT_FACTS_READY) return { fieldRequired: "nombre, marca o condición verificados",
+  if (!gates.PRODUCT_FACTS_READY) return { fieldRequired: "nombre exacto o condición verificados",
     whyItMatters: "El contenido sólo puede utilizar hechos técnicos con procedencia.",
     sourcesAlreadyChecked: ["Luna exact variant", "eBay Catalog oficial", "fuentes autorizadas configuradas"],
     exactEvidenceNeeded: "Etiqueta oficial o fuente autorizada que confirme el dato faltante.",

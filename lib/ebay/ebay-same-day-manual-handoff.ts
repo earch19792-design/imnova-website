@@ -7,7 +7,7 @@ import { normalizeEbayCompliantFulfillmentBasis } from "./ebay-fulfillment-polic
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { parseAuthoritativeFactsInputPackage } from "./ebay-product-facts-readiness.ts"
 
-export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V2_2026_07_18"
+export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V3_2026_07_19"
 
 type JsonRecord = Record<string, unknown>
 type SafeFact = { scope: string; key: string; value: unknown; unit: string | null; status: string }
@@ -173,7 +173,7 @@ export function buildVerifiedManualSellerHubHandoff(input: {
   const selectedConditionId = text(input.policies.conditionId)
   if (!conditionContract) blockers.push("VERIFIED_CONDITION_ID_MAPPING_REQUIRED")
   if (conditionContract && selectedConditionId !== conditionContract.conditionId) blockers.push("CONDITION_ID_FACT_MISMATCH")
-  if (!exactName || !brand || !condition) blockers.push("CORE_PRODUCT_FACTS_REQUIRED")
+  if (!exactName || !condition) blockers.push("CORE_PRODUCT_FACTS_REQUIRED")
   const dedupedBlockers = unique(blockers)
   if (dedupedBlockers.length) {
     return { ready: false as const, blockers: dedupedBlockers, package: null, packageHash: null,
@@ -204,7 +204,7 @@ export function buildVerifiedManualSellerHubHandoff(input: {
   const includedCount = text(fact("OFFER_PACK", "totalUnitCount")?.value)
   const descriptionLines = [
     exactName,
-    `Marca: ${brand}.`,
+    brand ? `Marca: ${brand}.` : "",
     includedCount ? `Contenido total verificado: ${includedCount}.` : "",
     `Condición: ${condition}.`,
     "El contenido, la variante y la presentación corresponden exactamente a los datos verificados antes de publicar.",

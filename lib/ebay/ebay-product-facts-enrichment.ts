@@ -23,6 +23,7 @@ import {
   normalizeGtin,
   productFactsHash,
   resolveProductFacts,
+  resolveNativePresentationFacts,
   safeSourceReference,
   targetedFactException,
   type FactObservation,
@@ -35,7 +36,7 @@ import {
 import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
 import { extractLunaOfficialDescriptionIdentity } from "./luna-official-description-identity"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V1_2026_07_17"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V2_2026_07_19"
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
 type JsonRecord = Record<string, unknown>
@@ -86,9 +87,19 @@ function packCountFromText(value: unknown) {
     text(value).match(/\b(\d{1,3})\s*(?:pack|pk)\b/i)
   return integer(match?.[1])
 }
+
 function fromMetadata(metadata: JsonRecord, keys: string[]) {
   for (const entry of keys) if (metadata[entry] !== undefined && metadata[entry] !== null && metadata[entry] !== "") return metadata[entry]
   return null
+}
+function numericCategoryId(value: unknown) {
+  const candidate = text(value, 20)
+  return /^\d{1,20}$/.test(candidate) ? candidate : ""
+}
+function categoryIdFromCandidateEvidence(candidate: JsonRecord) {
+  const snapshot = record(candidate.evidence_snapshot)
+  return numericCategoryId(record(snapshot.product).categoryId) ||
+    numericCategoryId(record(record(snapshot.identityEnrichment).identity).categoryId)
 }
 function factKeyValue(facts: ResolvedFact[], scope: FactScope, factKey: string) {
   return facts.find((fact) => fact.factScope === scope && fact.factKey === factKey)?.selectedValue ?? null
@@ -159,7 +170,20 @@ function lunaObservations(input: {
   add("PRODUCT_UNIT", "color", fromMetadata(metadata, ["color", "colour"]))
   add("PRODUCT_UNIT", "formulation", fromMetadata(metadata, ["formulation", "form"]))
   add("PRODUCT_UNIT", "material", fromMetadata(metadata, ["material"]))
-  add("PRODUCT_UNIT", "unitCount", integer(fromMetadata(metadata, ["unitCount", "unit_count", "count"])) ?? unitCountFromText(title), "count")
+  const declaredNativePackCount = integer(fromMetadata(metadata, ["packCount", "pack_count"])) ??
+    descriptionFacts.packCount ?? packCountFromText(title)
+  // A visible operator confirmation selects Luna's native presentation for the
+  // same-day path and intentionally overrides an older exploratory pack idea.
+  const plannedPackCount = integer(input.confirmedNativePackCount) ??
+    integer(pack.packCount) ?? integer(input.item.recommended_pack_count)
+  const presentation = resolveNativePresentationFacts({
+    confirmedNativePackCount: input.confirmedNativePackCount,
+    declaredNativePackCount,
+    declaredUnitCount: integer(fromMetadata(metadata, ["unitCount", "unit_count", "count"])) ??
+      unitCountFromText(title),
+    plannedPackCount,
+  })
+  add("PRODUCT_UNIT", "unitCount", presentation.unitCount, "count")
   add("PRODUCT_UNIT", "netContent", fromMetadata(metadata, ["netContent", "net_content", "size"]))
   add("PRODUCT_UNIT", "condition", fromMetadata(metadata, ["condition"]) ?? "New")
   add("PRODUCT_UNIT", "ingredients", fromMetadata(metadata, ["ingredients"]), null, "CORROBORATED")
@@ -168,19 +192,14 @@ function lunaObservations(input: {
   add("PRODUCT_UNIT", "hazardousMaterialStatus", fromMetadata(metadata, ["hazardousMaterialStatus", "hazmat", "hazardous_material_status"]), null, "CORROBORATED")
   add("PRODUCT_UNIT", "regulatoryIdentifiers", fromMetadata(metadata, ["epaRegistration", "epa_registration", "regulatoryIdentifiers"]), null, "CORROBORATED")
   add("PRODUCT_UNIT", "unitGrossWeight", number(input.variant.weight), text(input.variant.weight_unit) || null)
-  const nativePackCount = integer(input.confirmedNativePackCount) ??
-    integer(fromMetadata(metadata, ["packCount", "pack_count"])) ??
-    descriptionFacts.packCount ?? packCountFromText(title)
-  const plannedPackCount = integer(input.confirmedNativePackCount) ??
-    integer(pack.packCount) ?? integer(input.item.recommended_pack_count)
   // The current same-day path only permits Luna's native presentation. A
   // seller-created multipack is a separate offer and must pass its own cost and
   // operator approval path before becoming an authoritative OFFER_PACK fact.
-  const offerCount = nativePackCount && (!plannedPackCount || plannedPackCount === nativePackCount)
-    ? nativePackCount : null
-  if (offerCount) add("OFFER_PACK", "offerPackCount", offerCount, "count")
-  return { entries, title, metadata, observedAt, sourceReference, nativePackCount,
-    plannedPackCount, offerPackConflict: Boolean(nativePackCount && plannedPackCount && nativePackCount !== plannedPackCount) }
+  if (presentation.offerPackCount) add("OFFER_PACK", "offerPackCount", presentation.offerPackCount, "count")
+  return { entries, title, metadata, observedAt, sourceReference,
+    nativePackCount: presentation.nativePackCount, plannedPackCount,
+    offerPackConflict: presentation.conflict,
+    packConfirmationConflict: presentation.confirmationConflict }
 }
 
 function catalogObservations(input: { candidateId: string; lunaVariantId: string | null;
@@ -201,6 +220,26 @@ function catalogObservations(input: { candidateId: string; lunaVariantId: string
   return [add("exactProductName", product.title), add("brand", product.brand),
     add("gtin", normalizeGtin(array(product.gtins)[0])), add("mpn", array(product.mpns)[0]),
     add("color", array(aspect(["color", "colour"]))[0]), add("scent", array(aspect(["scent", "fragrance"]))[0])]
+    .filter((entry): entry is FactObservation => Boolean(entry))
+}
+
+function taxonomyObservations(input: {
+  candidateId: string
+  lunaVariantId: string | null
+  taxonomy: JsonRecord
+}) {
+  if (text(input.taxonomy.status) !== "AVAILABLE") return [] as FactObservation[]
+  const observedAt = text(input.taxonomy.observedAt) || new Date().toISOString()
+  const sourceReference = safeSourceReference("EBAY_TAXONOMY_OFFICIAL_READONLY",
+    `${text(input.taxonomy.categoryTreeId)}:${text(input.taxonomy.categoryId)}`)
+  const add = (key: string, value: unknown) => value === null || value === undefined || value === "" ? null : observation({
+    candidateId: input.candidateId, lunaVariantId: input.lunaVariantId,
+    scope: "EBAY_LISTING_REQUIREMENTS", key, value,
+    sourceType: "EBAY_TAXONOMY_OFFICIAL_READONLY", authority: "EBAY_TAXONOMY",
+    status: "VERIFIED", confidence: 1, observedAt, sourceReference,
+  })
+  return [add("marketplaceId", MARKETPLACE), add("categoryId", numericCategoryId(input.taxonomy.categoryId)),
+    add("categoryTreeId", numericCategoryId(input.taxonomy.categoryTreeId))]
     .filter((entry): entry is FactObservation => Boolean(entry))
 }
 
@@ -449,8 +488,9 @@ export async function runProductFactsEnrichment(input: {
         confirmedNativePackCount: input.controlledExploratoryTarget?.confirmedNativePackCount ?? null })
       const intendedPackCount = base.offerPackConflict ? null : base.nativePackCount
       const authoritativeGtin = normalizeGtin(variant.barcode ?? fromMetadata(base.metadata, ["upc", "ean", "gtin", "barcode"]) ?? officialDescription.facts.gtin)
+      const knownCategoryId = categoryIdFromCandidateEvidence(candidate)
       const catalog = await searchEbayCatalogIdentity({ query: base.title, gtin: authoritativeGtin,
-        mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])), categoryId: text(record(record(candidate.evidence_snapshot).product).categoryId) || null })
+        mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])), categoryId: knownCategoryId || null })
       const catalogSelection = selectCatalogIdentityMatches({
         title: base.title,
         gtin: authoritativeGtin,
@@ -458,8 +498,14 @@ export async function runProductFactsEnrichment(input: {
         mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])) || null,
         packCount: intendedPackCount,
       }, catalog.products)
-      const taxonomy = await getEbayTaxonomyListingIntelligence(base.title, text(record(record(candidate.evidence_snapshot).product).categoryId) || undefined)
       const catalogRecord = record(catalog)
+      const catalogCategoryId = catalogSelection.products.length === 1
+        ? numericCategoryId(catalogSelection.products[0]?.categoryId) : ""
+      // Category is resolved before aspect evaluation. Exact Catalog identity
+      // wins; otherwise the existing exact-comparable category seed is used
+      // only to ask official Taxonomy for the authoritative requirements.
+      const taxonomyCategoryId = catalogCategoryId || knownCategoryId
+      const taxonomy = await getEbayTaxonomyListingIntelligence(base.title, taxonomyCategoryId || undefined)
       const taxonomyRecord = record(taxonomy)
       const browsePackQuantity = intendedPackCount
       let browseStatus = "SKIPPED"
@@ -508,6 +554,8 @@ export async function runProductFactsEnrichment(input: {
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "EBAY_TAXONOMY_OFFICIAL_READONLY", authority: "EBAY_TAXONOMY", observedAt: text(taxonomyRecord.observedAt) || null,
           status: text(taxonomyRecord.status) || "REQUEST_FAILED", payload: { categoryId: text(taxonomyRecord.categoryId) || null,
+            categorySeedPresent: Boolean(taxonomyCategoryId),
+            categorySeedSource: catalogCategoryId ? "EBAY_CATALOG_EXACT" : knownCategoryId ? "EXISTING_EXACT_COMPARABLE" : "TITLE_SUGGESTION",
             requiredAspectCount: array(taxonomyRecord.requiredAspects).length } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "EBAY_BROWSE_OFFICIAL_READONLY", authority: "CORROBORATION", observedAt: now.toISOString(), status: browseStatus,
@@ -525,6 +573,8 @@ export async function runProductFactsEnrichment(input: {
       const initial = [...base.entries, ...catalogObservations({ candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
         products: catalogSelection.products,
         observedAt: text(catalogRecord.observedAt) || now.toISOString() }),
+      ...taxonomyObservations({ candidateId: text(candidate.id),
+        lunaVariantId: text(candidate.supplier_variant_id) || null, taxonomy: taxonomyRecord }),
       ...browseObservations({ candidateId: text(candidate.id),
         lunaVariantId: text(candidate.supplier_variant_id) || null,
         browse: browseReport, observedAt: now.toISOString() }),
