@@ -242,16 +242,18 @@ export async function POST(req: Request) {
     if (body.action === "fact_exception_decision") {
       const decision = body.decision === "CONFIRM" || body.decision === "REJECT"
         ? body.decision : null
+      const unbrandedConfirmation = body.brandAbsentConfirmed === true
       if (typeof body.taskId !== "string" || !decision ||
-        (decision === "CONFIRM" && (!text(body.value, 100) ||
-          body.visibleOfficialLabelConfirmed !== true))) {
+        (decision === "CONFIRM" && !unbrandedConfirmation &&
+          (!text(body.value, 100) || body.visibleOfficialLabelConfirmed !== true))) {
         return NextResponse.json({ success: false,
           error: "SAME_DAY_PILOT_FACT_EXCEPTION_DECISION_INVALID" }, { status: 400 })
       }
       await decideSameDayFactException({ supabase: access.supabase,
         accountKey: access.accountKey, actorId: access.auth.userId,
         taskId: body.taskId, decision, value: text(body.value, 100) || null,
-        visibleOfficialLabelConfirmed: body.visibleOfficialLabelConfirmed === true })
+        visibleOfficialLabelConfirmed: body.visibleOfficialLabelConfirmed === true,
+        brandAbsentConfirmed: unbrandedConfirmation })
       const continuation = scheduleImmediateContinuation({ supabase: access.supabase,
         accountKey: access.accountKey,
         workerId: `fact-exception:${access.auth.userId}` })

@@ -541,6 +541,7 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
   const [nativePackCount, setNativePackCount] = useState("")
   const [factExceptionValue, setFactExceptionValue] = useState("")
   const [visibleOfficialLabelConfirmed, setVisibleOfficialLabelConfirmed] = useState(false)
+  const [brandAbsentConfirmed, setBrandAbsentConfirmed] = useState(false)
   const [imageRightsConfirmed, setImageRightsConfirmed] = useState(false)
   const [openAiImageSpendApproved, setOpenAiImageSpendApproved] = useState(false)
   const anchorImage = candidateHeroImage(candidate)
@@ -573,6 +574,7 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
     setNativePackCount("")
     setFactExceptionValue("")
     setVisibleOfficialLabelConfirmed(false)
+    setBrandAbsentConfirmed(false)
   }, [task.id])
 
   return <article className="min-w-0 overflow-hidden rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-4">
@@ -641,26 +643,45 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
       <p className="text-sm font-black text-amber-50">Sólo falta un dato verificable</p>
       <p className="mt-1 text-xs leading-5 text-white/60">No completes una ficha. Mira el empaque oficial o la página exacta del producto en Luna y confirma únicamente este campo.</p>
       <label className="mt-3 block text-xs font-bold">{String(task.action_schema?.fieldLabel ?? task.action_schema?.fieldRequired ?? "Dato requerido")} <span className="text-red-200">*</span>
-        <input value={factExceptionValue}
+        <input value={brandAbsentConfirmed ? "Unbranded" : factExceptionValue}
           onChange={(event) => setFactExceptionValue(event.target.value)}
-          maxLength={100} aria-required="true" aria-invalid={!factExceptionValue.trim()}
-          className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${factExceptionValue.trim() ? "border-white/15" : "border-red-400"}`} />
-        <span className={`mt-1 block font-normal ${factExceptionValue.trim() ? "text-white/55" : "text-red-200"}`}>{factExceptionValue.trim()
+          disabled={brandAbsentConfirmed}
+          maxLength={100} aria-required="true" aria-invalid={!brandAbsentConfirmed && !factExceptionValue.trim()}
+          className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${brandAbsentConfirmed || factExceptionValue.trim() ? "border-white/15" : "border-red-400"}`} />
+        <span className={`mt-1 block font-normal ${brandAbsentConfirmed || factExceptionValue.trim() ? "text-white/55" : "text-red-200"}`}>{brandAbsentConfirmed
+          ? "Se enviará el valor estándar Unbranded porque confirmaste que no existe marca visible."
+          : factExceptionValue.trim()
           ? "Valor recibido; Seller OS lo guardará con procedencia y volverá a validar Taxonomy."
           : "Obligatorio sólo si puedes verificarlo visualmente."}</span>
       </label>
-      <label className={`mt-3 flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${visibleOfficialLabelConfirmed ? "border-emerald-200/25 text-emerald-50" : "border-red-300/30 text-red-100"}`}>
+      <p className="mt-3 text-xs font-bold text-white/70">Elige una sola confirmación:</p>
+      <label className={`mt-2 flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${visibleOfficialLabelConfirmed ? "border-emerald-200/25 text-emerald-50" : brandAbsentConfirmed ? "border-white/10 text-white/35" : "border-red-300/30 text-red-100"}`}>
         <input type="checkbox" checked={visibleOfficialLabelConfirmed}
-          onChange={(event) => setVisibleOfficialLabelConfirmed(event.target.checked)}
+          disabled={brandAbsentConfirmed}
+          onChange={(event) => {
+            setVisibleOfficialLabelConfirmed(event.target.checked)
+            if (event.target.checked) setBrandAbsentConfirmed(false)
+          }}
           className="mt-1 h-5 w-5 shrink-0 accent-emerald-200" />
-        <span><strong>Confirmo la evidencia visible.</strong> El valor aparece en el empaque/etiqueta oficial o en la página exacta autorizada de Luna para este mismo producto y presentación.</span>
+        <span><strong>La marca sí aparece.</strong> El valor escrito arriba está visible en el empaque/etiqueta oficial o en la página exacta autorizada de Luna para este mismo producto.</span>
       </label>
+      {task.action_schema?.factKey === "brand" && <label className={`mt-3 flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${brandAbsentConfirmed ? "border-emerald-200/25 text-emerald-50" : "border-white/15 text-white/65"}`}>
+        <input type="checkbox" checked={brandAbsentConfirmed}
+          onChange={(event) => {
+            setBrandAbsentConfirmed(event.target.checked)
+            if (event.target.checked) setVisibleOfficialLabelConfirmed(false)
+          }}
+          className="mt-1 h-5 w-5 shrink-0 accent-emerald-200" />
+        <span><strong>El producto no muestra marca.</strong> Revisé el producto exacto y su empaque/página Luna; no aparece ninguna marca. Usar el valor estándar “Unbranded”.</span>
+      </label>}
       <div className="mt-3 flex flex-wrap gap-2">
         <button type="button"
-          disabled={working || !factExceptionValue.trim() || !visibleOfficialLabelConfirmed}
+          disabled={working || (!brandAbsentConfirmed &&
+            (!factExceptionValue.trim() || !visibleOfficialLabelConfirmed))}
           onClick={() => void onConfirm({ action: "fact_exception_decision",
-            taskId: task.id, decision: "CONFIRM", value: factExceptionValue.trim(),
-            visibleOfficialLabelConfirmed })}
+            taskId: task.id, decision: "CONFIRM",
+            value: brandAbsentConfirmed ? "Unbranded" : factExceptionValue.trim(),
+            visibleOfficialLabelConfirmed, brandAbsentConfirmed })}
           className="min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40 sm:w-auto">CONFIRMAR DATO Y CONTINUAR AUTOMÁTICAMENTE</button>
         <button type="button" disabled={working}
           onClick={() => void onConfirm({ action: "fact_exception_decision",

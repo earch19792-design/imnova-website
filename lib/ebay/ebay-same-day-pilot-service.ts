@@ -2051,6 +2051,7 @@ export async function decideSameDayFactException(input: {
   decision: "CONFIRM" | "REJECT"
   value?: string | null
   visibleOfficialLabelConfirmed?: boolean
+  brandAbsentConfirmed?: boolean
 }) {
   const state = await getSameDayPilot(input)
   if (!state) throw new Error("SAME_DAY_PILOT_RUN_MISSING")
@@ -2090,8 +2091,9 @@ export async function decideSameDayFactException(input: {
     await refreshRunProjection(input.supabase, state.run.id)
     return getSameDayPilot(input)
   }
-  const value = officialLabelFactText(input.value)
-  if (!value || input.visibleOfficialLabelConfirmed !== true) {
+  const brandAbsentConfirmed = factKey === "brand" && input.brandAbsentConfirmed === true
+  const value = brandAbsentConfirmed ? "Unbranded" : officialLabelFactText(input.value)
+  if (!value || (!brandAbsentConfirmed && input.visibleOfficialLabelConfirmed !== true)) {
     throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_EVIDENCE_REQUIRED")
   }
   const factRunId = text(record(candidate.product_facts_summary).factRunId, 40)
@@ -2099,8 +2101,10 @@ export async function decideSameDayFactException(input: {
     throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_RUN_BINDING_REQUIRED")
   }
   const sourceReference = `OFFICIAL_LABEL:sha256:${hash({ taskId: task.id, factKey }).slice(0, 24)}`
+  const evidenceMode = brandAbsentConfirmed
+    ? "OPERATOR_CONFIRMED_NO_BRAND_VISIBLE" : "OPERATOR_CONFIRMED_LABEL_VALUE_VISIBLE"
   const evidenceHash = versionedHash({ version: SINGLE_FACT_EXCEPTION_VERSION,
-    taskId: task.id, candidateId: candidate.id, factKey, value })
+    taskId: task.id, candidateId: candidate.id, factKey, value, evidenceMode })
   const { error: observationError } = await input.supabase
     .from("marketplace_product_fact_observations")
     .upsert({
@@ -2132,7 +2136,7 @@ export async function decideSameDayFactException(input: {
     candidateId: task.candidate_id, previousState: "VALIDATING_TAXONOMY",
     nextState: "ENRICHING_PRODUCT_FACTS", reasonCode: "OFFICIAL_LABEL_FACT_CONFIRMED",
     triggeredBy: "USER", checkpoint: { fieldRequired, factKey, evidenceHash,
-      rawLabelStored: false, imageStored: false },
+      evidenceMode, rawLabelStored: false, imageStored: false },
     candidatePatch: { state: "READY_FOR_CONTENT", blockers: [],
       evidenceSummary: { ...evidenceSummary, singleFactExceptionConfirmed: true,
         singleFactExceptionEvidenceHash: evidenceHash } },
