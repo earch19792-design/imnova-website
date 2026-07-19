@@ -153,7 +153,7 @@ export function productFactsHash(value: unknown) {
 }
 
 export function safeSourceReference(sourceType: FactSourceType, value: unknown) {
-  return `${sourceType}:${productFactsHash(string(value, 2_000)).slice(7, 31)}`
+  return `${sourceType}:${productFactsHash(string(value, 2_000)).slice(0, 31)}`
 }
 
 export function factObservationKey(observation: FactObservation) {
