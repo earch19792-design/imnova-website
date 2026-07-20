@@ -79,10 +79,11 @@ function safeBody(value: JsonRecord) {
   return { errors }
 }
 
-function gatewayConfig(): GatewayConfig {
+function gatewayConfig(refreshTokenOverride = ""): GatewayConfig {
   const clientId = credential(process.env.EBAY_CLIENT_ID)
   const clientSecret = credential(process.env.EBAY_CLIENT_SECRET)
-  const refreshToken = credential(process.env.EBAY_SELLER_REFRESH_TOKEN)
+  const refreshToken = credential(refreshTokenOverride)
+    || credential(process.env.EBAY_SELLER_REFRESH_TOKEN)
   const identity = getEbayProductionIdentityBindingConfiguration()
   const oauthConfigured = Boolean(clientId && clientSecret && refreshToken)
   return {
@@ -442,8 +443,9 @@ async function executePreflight(
 export async function preflightEbayAccountPoliciesReadonly(
   requested: EbayAccountPolicyReadonlySelection = {},
   fetchImpl: typeof fetch = fetch,
+  refreshTokenOverride = "",
 ) {
-  const config = gatewayConfig()
+  const config = gatewayConfig(refreshTokenOverride)
   if (!config.configured) {
     if (!config.oauthConfigured) {
       throw new Error("EBAY_ACCOUNT_POLICY_READONLY_OAUTH_MISSING")

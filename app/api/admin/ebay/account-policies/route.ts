@@ -6,6 +6,10 @@ import { NextResponse } from "next/server"
 
 import { saveVerifiedEbayAccountPolicyProfile } from "@/lib/ebay/ebay-account-policy-profile"
 import {
+  getEbayAccountPolicyReadonlyAuthorizationConfiguration,
+  startEbayAccountPolicyReadonlyAuthorization,
+} from "@/lib/ebay/ebay-account-policy-oauth-authorization"
+import {
   ebayAccountPolicyReadonlyRuntimeStatus,
   preflightEbayAccountPoliciesReadonly,
 } from "@/lib/ebay/ebay-account-policy-readonly-gateway"
@@ -105,14 +109,37 @@ export async function POST(req: Request) {
       )
     }
 
+    const supabase = getSupabaseAdminClient()
+    if (body.action === "start_oauth") {
+      const authorization =
+        await startEbayAccountPolicyReadonlyAuthorization(supabase, {
+          actorUserId: validation.userId,
+          accountKey: accountScope.accountKey,
+        })
+      return NextResponse.json({
+        success: true,
+        authorization,
+        configuration:
+          getEbayAccountPolicyReadonlyAuthorizationConfiguration(),
+        safety: safety("PRODUCTION"),
+      }, { headers: { "Cache-Control": "no-store" } })
+    }
+
     const requested = record(body.selection)
+    const { data: vaultRefreshToken, error: vaultReadError } =
+      await supabase.rpc(
+        "get_ebay_account_policy_readonly_refresh_token_v1",
+        { p_account_key: accountScope.accountKey },
+      )
+    if (vaultReadError) {
+      throw new Error("EBAY_ACCOUNT_POLICY_OAUTH_VAULT_READ_FAILED")
+    }
     const preflight = await preflightEbayAccountPoliciesReadonly({
       fulfillmentPolicyId: text(requested.fulfillmentPolicyId),
       paymentPolicyId: text(requested.paymentPolicyId),
       returnPolicyId: text(requested.returnPolicyId),
       merchantLocationKey: text(requested.merchantLocationKey),
-    })
-    const supabase = getSupabaseAdminClient()
+    }, fetch, text(vaultRefreshToken))
     const accountPolicyProfileSaved =
       await saveVerifiedEbayAccountPolicyProfile({
         supabase,
