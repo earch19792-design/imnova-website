@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { supabase } from "@/lib/supabase"
 import {
@@ -727,6 +727,9 @@ export default function EbayListingWorkspacePage() {
   const approvalActive = draftState.approval?.status === "approved"
     && Date.parse(draftState.approval.expires_at) > Date.now()
   const effectiveDraftQuantity = productionTarget ? 1 : draftConfiguration.quantity
+  const accountPreflightAutoStarted = useRef(false)
+  const accountPreflightAutoSaveKey = useRef("")
+  const accountPolicyProfileSaved = useRef(false)
   const accountPreflight = draftState.preflight
   const accountPoliciesSelected = [
     draftConfiguration.fulfillmentPolicyId,
@@ -998,6 +1001,7 @@ export default function EbayListingWorkspacePage() {
       })
       const preflight = payload.preflight as EbayMobilePreflight
       const profileSaved = payload.accountPolicyProfileSaved === true
+      accountPolicyProfileSaved.current = profileSaved
       const policiesComplete = [
         preflight.selection.fulfillmentPolicyId,
         preflight.selection.paymentPolicyId,
@@ -1037,6 +1041,38 @@ export default function EbayListingWorkspacePage() {
       ebayPreflightSnapshot: "",
     }))
   }
+
+  useEffect(() => {
+    if (accountPreflightAutoStarted.current) return
+    accountPreflightAutoStarted.current = true
+    void runAccountPreflight()
+    // The initial account read is intentionally executed once per page load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!accountPreflight || draftBusy || accountPolicyProfileSaved.current) return
+    const selection = [
+      draftConfiguration.fulfillmentPolicyId,
+      draftConfiguration.paymentPolicyId,
+      draftConfiguration.returnPolicyId,
+      draftConfiguration.merchantLocationKey,
+    ]
+    if (!selection.every((value) => value.trim().length > 0)) return
+    const selectionKey = selection.join(":")
+    if (accountPreflightAutoSaveKey.current === selectionKey) return
+    accountPreflightAutoSaveKey.current = selectionKey
+    void runAccountPreflight()
+    // Revalidate only when a complete selection changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    accountPreflight,
+    draftBusy,
+    draftConfiguration.fulfillmentPolicyId,
+    draftConfiguration.paymentPolicyId,
+    draftConfiguration.returnPolicyId,
+    draftConfiguration.merchantLocationKey,
+  ])
 
   async function validateDraft() {
     if (!listingPackage) return
