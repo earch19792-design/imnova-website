@@ -187,12 +187,22 @@ function titleCase(value: string | null) {
   return value.replace(/\b\p{L}/gu, (letter) => letter.toLocaleUpperCase("en-US"))
 }
 
+function isSingleCompleteSet(facts: EbayListingImageFactoryInput["facts"]) {
+  return facts.packCount === 1 && Boolean(facts.unitCount && facts.unitCount > 1) &&
+    /\b(?:set|kit)\b/iu.test(facts.normalizedProductName)
+}
+
 function verifiedLines(
   slot: Exclude<EbayListingImageSlot, "MAIN_WHITE_BACKGROUND">,
   facts: EbayListingImageFactoryInput["facts"],
 ) {
-  const pack = facts.packCount ? `${facts.packCount} Pack` : null
-  const units = facts.unitCount ? `${facts.unitCount} Count Each` : null
+  const completeSet = isSingleCompleteSet(facts)
+  const pack = facts.packCount
+    ? completeSet ? "1 Complete Set" : `${facts.packCount} Pack`
+    : null
+  const units = facts.unitCount
+    ? completeSet ? `${facts.unitCount} Pieces Total` : `${facts.unitCount} Count Each`
+    : null
   const size = titleCase(facts.size)
   const variant = titleCase(facts.scent ?? facts.color ?? facts.variant)
   const product = titleCase(facts.normalizedProductName) ?? facts.normalizedProductName
@@ -217,7 +227,13 @@ function wrap(value: string, maxCharacters = 30) {
   return lines.slice(0, 3)
 }
 
-function labelForSlot(slot: Exclude<EbayListingImageSlot, "MAIN_WHITE_BACKGROUND">) {
+function labelForSlot(
+  slot: Exclude<EbayListingImageSlot, "MAIN_WHITE_BACKGROUND">,
+  facts: EbayListingImageFactoryInput["facts"],
+) {
+  if (slot === "SIZE_AND_CONTENT" && !titleCase(facts.size)) {
+    return isSingleCompleteSet(facts) ? "SET CONTENTS" : "PRODUCT CONTENTS"
+  }
   return ({
     PACK_AND_COUNT: "PACK & COUNT",
     KEY_FEATURES: "VERIFIED PRODUCT FACTS",
@@ -309,7 +325,7 @@ async function composeInformationImage(
     .toBuffer()
   const lines = verifiedLines(slot, facts).flatMap((value) => wrap(value))
   const header = await renderVerifiedText({
-    value: labelForSlot(slot), width: layout.textWidth, height: 100, size: 30, bold: true,
+    value: labelForSlot(slot, facts), width: layout.textWidth, height: 100, size: 30, bold: true,
   })
   const body = await renderVerifiedText({
     value: lines.join("\n"), width: layout.textWidth,
