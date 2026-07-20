@@ -210,6 +210,18 @@ async function authenticatedToken(
   }
   const body = record(await response.json().catch(() => ({})))
   if (!response.ok || typeof body.access_token !== "string" || !body.access_token) {
+    const oauthError = typeof body.error === "string"
+      ? body.error.trim().toLowerCase()
+      : ""
+    if (oauthError === "invalid_scope") {
+      throw new Error("EBAY_ACCOUNT_POLICY_READONLY_SCOPE_REAUTH_REQUIRED")
+    }
+    if (oauthError === "invalid_grant") {
+      throw new Error("EBAY_ACCOUNT_POLICY_REFRESH_TOKEN_INVALID")
+    }
+    if (oauthError === "invalid_client") {
+      throw new Error("EBAY_ACCOUNT_POLICY_CLIENT_CREDENTIALS_INVALID")
+    }
     throw new Error(`EBAY_ACCOUNT_POLICY_READONLY_OAUTH_${response.status}`)
   }
 
