@@ -594,7 +594,9 @@ export default function EbayListingWorkspacePage() {
     })
     const payload = await readMobileReviewJson<Record<string, any>>(
       response,
-      "No se pudo validar el draft no publicado",
+      body?.action === "account_preflight"
+        ? "No se pudo consultar la configuración de cuenta eBay"
+        : "No se pudo validar el draft no publicado",
     )
     if (!payload.success) {
       const requestError = new Error(getMobileReviewPayloadError(payload, "No se pudo validar el draft.")) as Error & { blockers?: string[] }
