@@ -62,12 +62,19 @@ function credential(value: unknown) {
     : ""
 }
 
+function sanitizedEbayErrorId(value: unknown) {
+  const normalized = String(value ?? "").trim().toUpperCase()
+  return /^[A-Z0-9_-]{1,40}$/.test(normalized)
+    ? normalized.replaceAll("-", "_")
+    : ""
+}
+
 function safeBody(value: JsonRecord) {
   const errors = Array.isArray(value.errors)
     ? value.errors.slice(0, 3).map((raw) => {
       const item = record(raw)
       return {
-        errorId: String(item.errorId ?? "").slice(0, 40),
+        errorId: sanitizedEbayErrorId(item.errorId),
         domain: String(item.domain ?? "").slice(0, 80),
         category: String(item.category ?? "").slice(0, 80),
         message: String(item.message ?? "")
@@ -108,6 +115,10 @@ function cacheKey(config: GatewayConfig) {
 }
 
 function assertAllowedGet(url: URL, method: string) {
+  const optedInPrograms = method === "GET"
+    && url.origin === API_ORIGIN
+    && url.pathname === "/sell/account/v1/program/get_opted_in_programs"
+    && url.search === ""
   const privilege = method === "GET"
     && url.origin === API_ORIGIN
     && url.pathname === "/sell/account/v1/privilege"
@@ -123,7 +134,7 @@ function assertAllowedGet(url: URL, method: string) {
     && [...url.searchParams.keys()].every((key) => key === "limit" || key === "offset")
     && /^\d{1,3}$/.test(url.searchParams.get("limit") ?? "")
     && /^\d{1,9}$/.test(url.searchParams.get("offset") ?? "")
-  if (!privilege && !policies && !locations) {
+  if (!optedInPrograms && !privilege && !policies && !locations) {
     throw new Error("EBAY_ACCOUNT_POLICY_READONLY_ENDPOINT_BLOCKED")
   }
 }
@@ -157,6 +168,16 @@ async function read(
     }
   }
   return { ok: false, status: 0, body: {} }
+}
+
+function failedReadCode(resource: string, result: ReadResult) {
+  const firstError = Array.isArray(result.body.errors)
+    ? record(result.body.errors[0])
+    : {}
+  const errorId = sanitizedEbayErrorId(firstError.errorId)
+  return "EBAY_ACCOUNT_POLICY_READONLY_" + resource + "_"
+    + String(result.status || "UNAVAILABLE")
+    + (errorId ? "_EBAY_ERROR_" + errorId : "")
 }
 
 async function authenticatedToken(
@@ -343,6 +364,31 @@ async function executePreflight(
   forceRefresh: boolean,
 ) {
   const authenticated = await authenticatedToken(config, fetchImpl, forceRefresh)
+  const optedInPrograms = await read(
+    authenticated.token,
+    new URL(
+      "/sell/account/v1/program/get_opted_in_programs",
+      API_ORIGIN,
+    ),
+    fetchImpl,
+  )
+  if (optedInPrograms.status === 401 && !forceRefresh) {
+    return executePreflight(config, requested, fetchImpl, true)
+  }
+  if (!optedInPrograms.ok) {
+    throw new Error(failedReadCode("OPTED_IN_PROGRAMS", optedInPrograms))
+  }
+  const sellingPolicyManagementEnabled = Array.isArray(
+    optedInPrograms.body.programs,
+  ) && optedInPrograms.body.programs.some((value) => (
+    String(record(value).programType ?? "").trim().toUpperCase()
+      === "SELLING_POLICY_MANAGEMENT"
+  ))
+  if (!sellingPolicyManagementEnabled) {
+    throw new Error(
+      "EBAY_ACCOUNT_POLICY_SELLING_POLICY_MANAGEMENT_NOT_OPTED_IN",
+    )
+  }
   const locationUrl = new URL("/sell/inventory/v1/location", API_ORIGIN)
   locationUrl.searchParams.set("limit", "100")
   locationUrl.searchParams.set("offset", "0")
@@ -366,11 +412,11 @@ async function executePreflight(
       "MERCHANT_LOCATIONS",
     ]
     const failedIndex = reads.findIndex((result) => !result.ok)
-    const status = reads[failedIndex]?.status || 0
     throw new Error(
-      `EBAY_ACCOUNT_POLICY_READONLY_${names[failedIndex] ?? "RESOURCE"}_${
-        status || "UNAVAILABLE"
-      }`,
+      failedReadCode(
+        names[failedIndex] ?? "RESOURCE",
+        reads[failedIndex] ?? { ok: false, status: 0, body: {} },
+      ),
     )
   }
   const options = {
