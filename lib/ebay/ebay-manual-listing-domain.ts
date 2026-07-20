@@ -82,6 +82,7 @@ export type ManualListingVerification = {
 export function evaluateManualListingProductSkuIdentity(
   expectedEbaySku: unknown,
   observedEbaySku: unknown,
+  authoritativeCustomLabels: unknown[] = [],
 ) {
   const expected = stringValue(expectedEbaySku)
   const observed = stringValue(observedEbaySku)
@@ -97,7 +98,18 @@ export function evaluateManualListingProductSkuIdentity(
       reason: "EBAY_ITEM_CUSTOM_LABEL_REQUIRED" as const,
     }
   }
-  if (observed !== expected) {
+  if (observed === expected) {
+    return {
+      verified: true as const,
+      reason: "PRODUCT_CANONICAL_SKU_IDENTITY_CONFIRMED" as const,
+    }
+  }
+  const authoritative = new Set(
+    authoritativeCustomLabels
+      .map(normalizeAuthoritativeEbayCustomLabel)
+      .filter((value): value is string => Boolean(value)),
+  )
+  if (!authoritative.has(observed)) {
     return {
       verified: false as const,
       reason: "EBAY_ITEM_CUSTOM_LABEL_MISMATCH" as const,
@@ -105,7 +117,7 @@ export function evaluateManualListingProductSkuIdentity(
   }
   return {
     verified: true as const,
-    reason: "PRODUCT_SKU_IDENTITY_CONFIRMED" as const,
+    reason: "PRODUCT_AUTHORITATIVE_HANDOFF_CUSTOM_LABEL_CONFIRMED" as const,
   }
 }
 
@@ -117,6 +129,13 @@ function record(value: unknown): JsonRecord {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
+}
+
+export function normalizeAuthoritativeEbayCustomLabel(value: unknown) {
+  const normalized = stringValue(value)
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,49}$/.test(normalized)
+    ? normalized
+    : null
 }
 
 function boundedText(

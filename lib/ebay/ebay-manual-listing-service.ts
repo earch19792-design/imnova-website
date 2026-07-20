@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import {
   evaluateManualListingProductSkuIdentity,
   hasReusableListingDefaults,
+  normalizeAuthoritativeEbayCustomLabel,
   parseSafeListingDefaults,
   safeDefaultsTemplateKey,
   safeDefaultsTemplatePriorityKeys,
@@ -31,12 +32,20 @@ type OpportunityIdentity = {
   supplier_sku: string | null
   listing_package_id: string | null
   expected_ebay_sku: string | null
+  authoritative_handoff_custom_label: string | null
+  authoritative_ebay_skus: string[]
 }
 
 function text(value: unknown) {
   return typeof value === "string" && value.trim()
     ? value.trim()
     : null
+}
+
+function record(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonRecord
+    : {}
 }
 
 function safeDatabaseErrorCode(error: unknown, fallback: string) {
@@ -151,10 +160,76 @@ async function loadOpportunityIdentity(
   const expectedEbaySku = listingPackageId
     ? expectedEbayDraftOnlySku({ id: listingPackageId })
     : ""
+  let authoritativeHandoffCustomLabel: string | null = null
+  const { data: pilotCandidate, error: pilotCandidateError } = await supabase
+    .from("ebay_same_day_pilot_candidates")
+    .select("id,run_id,state,machine_state,manual_handoff_package,updated_at,run:ebay_same_day_pilot_runs!inner(marketplace_account_key)")
+    .eq("opportunity_id", opportunity.id)
+    .eq("candidate_key", opportunity.candidate_key)
+    .eq("run.marketplace_account_key", accountKey)
+    .in("state", [
+      "READY_FOR_MANUAL_PUBLICATION",
+      "PUBLISHED_PENDING_VERIFICATION",
+      "VERIFIED_ACTIVE",
+    ])
+    .in("machine_state", [
+      "READY_FOR_MANUAL_PUBLICATION",
+      "WAITING_ITEM_ID",
+      "VERIFYING_PUBLISHED_LISTING",
+      "REGISTERING_COMMERCIAL_MONITOR",
+      "VERIFIED_ACTIVE",
+    ])
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (pilotCandidateError) {
+    throw new Error("MANUAL_LISTING_HANDOFF_READ_FAILED")
+  }
+  if (pilotCandidate) {
+    const { data: handoff, error: handoffError } = await supabase
+      .from("ebay_same_day_pilot_handoffs")
+      .select("run_id,candidate_id,status,package_data,package_hash,created_at")
+      .eq("run_id", pilotCandidate.run_id)
+      .eq("candidate_id", pilotCandidate.id)
+      .eq("status", "READY_FOR_MANUAL_PUBLICATION")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (handoffError) {
+      throw new Error("MANUAL_LISTING_HANDOFF_READ_FAILED")
+    }
+    const candidateHandoff = record(pilotCandidate.manual_handoff_package)
+    const candidatePackage = record(candidateHandoff.package)
+    const handoffPackage = record(handoff?.package_data)
+    const candidateLabel = normalizeAuthoritativeEbayCustomLabel(
+      candidatePackage.customLabel,
+    )
+    const handoffLabel = normalizeAuthoritativeEbayCustomLabel(
+      handoffPackage.customLabel,
+    )
+    const packageHash = text(candidateHandoff.packageHash)
+    if (
+      handoff &&
+      candidateLabel &&
+      candidateLabel === handoffLabel &&
+      text(candidatePackage.candidateId) === text(pilotCandidate.id) &&
+      text(handoffPackage.candidateId) === text(pilotCandidate.id) &&
+      /^[0-9a-f]{64}$/.test(packageHash) &&
+      packageHash === text(handoff.package_hash)
+    ) {
+      authoritativeHandoffCustomLabel = candidateLabel
+    }
+  }
+  const authoritativeEbaySkus = [...new Set([
+    expectedEbaySku,
+    authoritativeHandoffCustomLabel,
+  ].filter((value): value is string => Boolean(value)))]
   return {
     ...opportunity,
     listing_package_id: listingPackageId,
     expected_ebay_sku: expectedEbaySku || null,
+    authoritative_handoff_custom_label: authoritativeHandoffCustomLabel,
+    authoritative_ebay_skus: authoritativeEbaySkus,
   }
 }
 
@@ -248,6 +323,9 @@ export async function verifyManualListingOwnershipReadonly(
   const productIdentity = evaluateManualListingProductSkuIdentity(
     opportunity?.expected_ebay_sku,
     trading.ebaySku,
+    opportunity?.authoritative_handoff_custom_label
+      ? [opportunity.authoritative_handoff_custom_label]
+      : [],
   )
   if (!productIdentity.verified) {
     return {
@@ -264,7 +342,10 @@ export async function verifyManualListingOwnershipReadonly(
   return {
     status: "verified",
     method: EBAY_MANUAL_LISTING_TRADING_CONNECTOR,
-    reason: "OWNERSHIP_AND_PRODUCT_IDENTITY_CONFIRMED_TRADING_READONLY",
+    reason: productIdentity.reason ===
+      "PRODUCT_AUTHORITATIVE_HANDOFF_CUSTOM_LABEL_CONFIRMED"
+      ? "OWNERSHIP_AND_AUTHORITATIVE_HANDOFF_CUSTOM_LABEL_CONFIRMED_TRADING_READONLY"
+      : "OWNERSHIP_AND_PRODUCT_IDENTITY_CONFIRMED_TRADING_READONLY",
     connectorListingId: null,
     connectorListingStatus: "active",
     connectorEbaySku: trading.ebaySku,
@@ -301,9 +382,9 @@ export async function registerManualEbayListing(
       p_opportunity_id: opportunity.id,
       p_candidate_key: opportunity.candidate_key,
       p_supplier_variant_id:
-        opportunity.supplier_variant_id ?? input.supplierVariantId,
+        opportunity.supplier_variant_id,
       p_supplier_sku:
-        opportunity.supplier_sku ?? input.supplierSku,
+        opportunity.supplier_sku,
       p_verification_status: verification.status,
       p_verification_method: verification.method,
       p_verification_reason: verification.reason,
@@ -350,8 +431,9 @@ export async function registerManualEbayListing(
   if (
     persistedVerification.status === "verified" &&
     (!persistedVerification.connectorListingId ||
-      persistedVerification.connectorEbaySku !==
-        opportunity.expected_ebay_sku)
+      !opportunity.authoritative_ebay_skus.includes(
+        persistedVerification.connectorEbaySku ?? "",
+      ))
   ) {
     throw new Error("MANUAL_LISTING_VERIFICATION_EVIDENCE_NOT_PERSISTED")
   }
