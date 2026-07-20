@@ -34,7 +34,6 @@ function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as JsonRecord : {}
 }
-
 function text(value: unknown, maximum = 500) {
   return typeof value === "string"
     ? value.normalize("NFKC").trim().replace(/\s+/g, " ").slice(0, maximum)
@@ -531,4 +530,3 @@ export async function applyVerifiedTitleToActiveListing(input: {
   }
   return publicResult(row, "EBAY_ACTIVE_TITLE_REVISION_OUTCOME_UNKNOWN")
 }
-
