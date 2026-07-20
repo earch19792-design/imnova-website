@@ -30,6 +30,7 @@ type OpportunityIdentity = {
   market_radar_product_id: string | null
   supplier_variant_id: string | null
   supplier_sku: string | null
+  supplier_price: number | string | null
   listing_package_id: string | null
   expected_ebay_sku: string | null
   authoritative_handoff_custom_label: string | null
@@ -107,7 +108,7 @@ async function loadOpportunityIdentity(
 ) {
   let query = supabase
     .from("ebay_luna_opportunity_queue")
-    .select("id,candidate_key,market_radar_product_id,supplier_variant_id,supplier_sku")
+    .select("id,candidate_key,market_radar_product_id,supplier_variant_id,supplier_sku,supplier_price")
 
   query = input.opportunityId
     ? query.eq("id", input.opportunityId)
@@ -237,6 +238,12 @@ async function loadOpportunityIdentity(
 type VerificationWithDefaults = ManualListingVerification & {
   learnedSafeDefaults: SafeListingDefaults
   connectorObservedAt: string | null
+  connectorListingSnapshot?: {
+    title: string | null
+    availableQuantity: number | null
+    price: number | null
+    currency: string | null
+  } | null
 }
 
 export async function verifyManualListingOwnershipReadonly(
@@ -352,6 +359,97 @@ export async function verifyManualListingOwnershipReadonly(
     connectorEbaySku: trading.ebaySku,
     learnedSafeDefaults: trading.safeDefaults,
     connectorObservedAt: trading.observedAt,
+    connectorListingSnapshot: {
+      title: trading.title,
+      availableQuantity: trading.availableQuantity,
+      price: trading.price,
+      currency: trading.currency,
+    },
+  }
+}
+
+function positiveNumberOrNull(value: unknown) {
+  if (value === null || value === undefined || value === "") return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+async function hydrateVerifiedManualActiveListing(
+  supabase: SupabaseClient,
+  input: {
+    accountKey: string
+    ebayItemId: string
+    opportunity: OpportunityIdentity
+    verification: VerificationWithDefaults
+  },
+) {
+  const snapshot = input.verification.connectorListingSnapshot
+  const observedAt = input.verification.connectorObservedAt
+  if (
+    input.verification.status !== "verified" ||
+    !snapshot?.title ||
+    snapshot.availableQuantity === null ||
+    snapshot.price === null ||
+    !snapshot.currency ||
+    !input.verification.connectorEbaySku ||
+    !observedAt
+  ) {
+    throw new Error("MANUAL_LISTING_GET_ITEM_SNAPSHOT_INCOMPLETE")
+  }
+
+  const { data: current, error: currentError } = await supabase
+    .from("ebay_active_listings")
+    .select("id,supplier_cost_at_linking,raw_payload")
+    .eq("account_key", input.accountKey)
+    .eq("source", input.verification.method)
+    .eq("ebay_item_id", input.ebayItemId)
+    .limit(1)
+    .maybeSingle()
+  if (currentError || !current?.id) {
+    throw new Error("MANUAL_LISTING_ACTIVE_SNAPSHOT_TARGET_MISSING")
+  }
+
+  const supplierCostAtLinking =
+    positiveNumberOrNull(current.supplier_cost_at_linking) ??
+    positiveNumberOrNull(input.opportunity.supplier_price)
+  if (supplierCostAtLinking === null) {
+    throw new Error("MANUAL_LISTING_SUPPLIER_COST_REQUIRED")
+  }
+
+  const { data: hydrated, error: hydrateError } = await supabase
+    .from("ebay_active_listings")
+    .update({
+      title: snapshot.title,
+      ebay_sku: input.verification.connectorEbaySku,
+      ebay_quantity: snapshot.availableQuantity,
+      ebay_price: snapshot.price,
+      currency: snapshot.currency,
+      supplier_cost_at_linking: supplierCostAtLinking,
+      last_ebay_sync_at: observedAt,
+      raw_payload: {
+        ...record(current.raw_payload),
+        getItemSnapshot: {
+          title: snapshot.title,
+          ebaySku: input.verification.connectorEbaySku,
+          availableQuantity: snapshot.availableQuantity,
+          price: snapshot.price,
+          currency: snapshot.currency,
+          observedAt,
+        },
+      },
+      updated_at: observedAt,
+    })
+    .eq("id", current.id)
+    .eq("account_key", input.accountKey)
+    .eq("ebay_item_id", input.ebayItemId)
+    .select("id,title,ebay_sku,ebay_quantity,ebay_price,currency,supplier_cost_at_linking,last_ebay_sync_at")
+    .maybeSingle()
+  if (hydrateError || !hydrated?.id) {
+    throw new Error("MANUAL_LISTING_GET_ITEM_SNAPSHOT_WRITE_FAILED")
+  }
+  return {
+    status: "HYDRATED_OFFICIAL_GET_ITEM" as const,
+    ...hydrated,
   }
 }
 
@@ -439,6 +537,15 @@ export async function registerManualEbayListing(
     throw new Error("MANUAL_LISTING_VERIFICATION_EVIDENCE_NOT_PERSISTED")
   }
 
+  const activeListingHydration = persistedVerification.status === "verified"
+    ? await hydrateVerifiedManualActiveListing(supabase, {
+        accountKey,
+        ebayItemId: input.ebayItemId,
+        opportunity,
+        verification: persistedVerification,
+      })
+    : null
+
   let template: JsonRecord | null = null
   if (
     verification.status === "verified" &&
@@ -463,6 +570,7 @@ export async function registerManualEbayListing(
     declaredSafeDefaults,
     declaredDefaultsActivated: false,
     effectiveSafeDefaults,
+    activeListingHydration,
     template,
     templateActivated: Boolean(template),
   }

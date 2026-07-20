@@ -33,6 +33,10 @@ export type TradingManualListingResult = {
   itemId: string
   listingStatus: string | null
   ebaySku: string | null
+  title: string | null
+  availableQuantity: number | null
+  price: number | null
+  currency: string | null
   safeDefaults: SafeListingDefaults
   observedAt: string
 }
@@ -119,6 +123,24 @@ function numericIdentifier(value: string | null, maximumLength = 20) {
     : null
 }
 
+function safeListingTitle(value: string | null) {
+  return value && value.length <= 80 && !/[\u0000-\u001f\u007f]/.test(value)
+    ? value
+    : null
+}
+
+function nonNegativeInteger(value: string | null) {
+  if (value === null || value === "") return null
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
+}
+
+function positiveNumber(value: string | null) {
+  if (value === null || value === "") return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
 export function parseTradingManualListingResponses(
   getUserXml: string,
   getItemXml: string,
@@ -149,6 +171,16 @@ export function parseTradingManualListingResponses(
     tradingXmlContainer(item, "SellingStatus"),
     "ListingStatus",
   )
+  const sellingStatus = tradingXmlContainer(item, "SellingStatus")
+  const listedQuantity = nonNegativeInteger(
+    tradingXmlTagValue(item, "Quantity"),
+  )
+  const quantitySold = nonNegativeInteger(
+    tradingXmlTagValue(sellingStatus, "QuantitySold"),
+  ) ?? 0
+  const availableQuantity = listedQuantity === null
+    ? null
+    : Math.max(0, listedQuantity - quantitySold)
   const sameSeller =
     authenticatedUser.toLocaleLowerCase("en-US") ===
     sellerUser.toLocaleLowerCase("en-US")
@@ -204,6 +236,11 @@ export function parseTradingManualListingResponses(
     itemId: expectedItemId,
     listingStatus: safeIdentifier(listingStatus, 40),
     ebaySku: safeIdentifier(tradingXmlTagValue(item, "SKU")),
+    title: safeListingTitle(tradingXmlTagValue(item, "Title")),
+    availableQuantity,
+    price: positiveNumber(tradingXmlTagValue(sellingStatus, "CurrentPrice")),
+    currency: safeIdentifier(tradingXmlTagValue(item, "Currency"), 3)
+      ?.toUpperCase() ?? null,
     safeDefaults,
     observedAt: now.toISOString(),
   }
@@ -304,7 +341,12 @@ function requestXml(callName: "GetUser" | "GetItem", ebayItemId?: string) {
       "Item.ItemID",
       "Item.Seller.UserID",
       "Item.SellingStatus.ListingStatus",
+      "Item.Title",
       "Item.SKU",
+      "Item.Quantity",
+      "Item.SellingStatus.QuantitySold",
+      "Item.SellingStatus.CurrentPrice",
+      "Item.Currency",
       "Item.PrimaryCategory.CategoryID",
       "Item.ConditionID",
       "Item.SellerProfiles.SellerShippingProfile.ShippingProfileID",
