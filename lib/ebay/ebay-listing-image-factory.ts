@@ -308,6 +308,18 @@ function finiteUsage(value: unknown) {
     : null
 }
 
+function validOpenAiApiKey(value: unknown) {
+  const normalized = typeof value === "string" ? value.trim() : ""
+
+  return (
+    normalized.length >= 20 &&
+    normalized.length <= 4_096 &&
+    !/[\u0000-\u0020\u007f-\u009f\u00a0\u200b-\u200f\u2028-\u202f\u2060\ufeff]/u.test(
+      normalized,
+    )
+  )
+}
+
 async function readOpenAiResponseWithLimit(response: Response) {
   const declared = Number(response.headers.get("content-length"))
   if (Number.isFinite(declared) && declared > OPENAI_BACKGROUND_PLATE_MAX_RESPONSE_BYTES) {
@@ -356,7 +368,7 @@ export async function requestSafeOpenAiBackgroundPlate(input: {
   ) {
     throw new Error("EBAY_IMAGE_OPENAI_PLAN_NOT_ALLOWED")
   }
-  if (!/^sk-[A-Za-z0-9_-]{8,}$/.test(input.apiKey.trim())) {
+  if (!validOpenAiApiKey(input.apiKey)) {
     throw new Error("EBAY_IMAGE_OPENAI_KEY_MISSING")
   }
   const controller = new AbortController()
@@ -585,7 +597,7 @@ export function getListingImageFactoryConfiguration(environment = process.env) {
   const preview = environment.VERCEL_ENV === "preview"
   const authorizedBranch =
     environment.VERCEL_GIT_COMMIT_REF === EBAY_OPENAI_IMAGE_PREVIEW_BRANCH
-  const keyPresent = Boolean(environment.OPENAI_API_KEY?.trim())
+  const keyPresent = validOpenAiApiKey(environment.OPENAI_API_KEY)
   const enabled = environment.OPENAI_IMAGE_FACTORY_ENABLED?.trim() === "true"
     && environment.OPENAI_IMAGE_CONTEXT_PLATE_ENABLED?.trim() === "true"
   const model = environment.OPENAI_IMAGE_MODEL?.trim() ?? ""
