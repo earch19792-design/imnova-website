@@ -33,7 +33,7 @@ function target() {
 function safety(responseTarget: string) {
   return {
     ebayWriteUsed: false,
-    ebayResourceMethods: ["GET"],
+    ebayResourceMethods: ["GET", "POST:GetUser(read-only)"],
     oauthTokenExchangeMethod: "POST",
     ebayWriteMethods: [],
     canPublish: false,

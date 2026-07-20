@@ -1,24 +1,18 @@
 import { createHash } from "node:crypto"
 
 import {
-  ebayProductionAccountFingerprint,
   getEbayProductionIdentityBindingConfiguration,
 } from "./ebay-seller-account-scope"
+import { verifyEbayCommercialOfficialAccount } from "./ebay-commercial-readers"
+import { EBAY_READONLY_SCOPES } from "./ebay-seller-readonly-oauth-data-audit"
 
 type JsonRecord = Record<string, unknown>
 
 const API_ORIGIN = "https://api.ebay.com"
-const IDENTITY_ORIGIN = "https://apiz.ebay.com"
 const TOKEN_ENDPOINT = `${API_ORIGIN}/identity/v1/oauth2/token`
 const MARKETPLACE_ID = "EBAY_US"
 const REQUEST_TIMEOUT_MS = 8_000
 const TRANSIENT_STATUSES = new Set([429, 500, 502, 503, 504])
-const READONLY_SCOPES = [
-  "https://api.ebay.com/oauth/api_scope",
-  "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
-  "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
-  "https://api.ebay.com/oauth/api_scope/commerce.identity.readonly",
-] as const
 
 type GatewayConfig = {
   clientId: string
@@ -113,10 +107,6 @@ function cacheKey(config: GatewayConfig) {
 }
 
 function assertAllowedGet(url: URL, method: string) {
-  const identity = method === "GET"
-    && url.origin === IDENTITY_ORIGIN
-    && url.pathname === "/commerce/identity/v1/user/"
-    && url.search === ""
   const privilege = method === "GET"
     && url.origin === API_ORIGIN
     && url.pathname === "/sell/account/v1/privilege"
@@ -132,7 +122,7 @@ function assertAllowedGet(url: URL, method: string) {
     && [...url.searchParams.keys()].every((key) => key === "limit" || key === "offset")
     && /^\d{1,3}$/.test(url.searchParams.get("limit") ?? "")
     && /^\d{1,9}$/.test(url.searchParams.get("offset") ?? "")
-  if (!identity && !privilege && !policies && !locations) {
+  if (!privilege && !policies && !locations) {
     throw new Error("EBAY_ACCOUNT_POLICY_READONLY_ENDPOINT_BLOCKED")
   }
 }
@@ -224,45 +214,15 @@ async function authenticatedToken(
   }
 
   const token = body.access_token
-  const identity = await read(
-    token,
-    new URL("/commerce/identity/v1/user/", IDENTITY_ORIGIN),
-    fetchImpl,
-  )
-  const actualUserId = typeof identity.body.userId === "string"
-    ? identity.body.userId.trim()
-    : ""
-  const confirmedStatus = typeof identity.body.status === "string"
-    ? identity.body.status.trim().toUpperCase()
-    : ""
-  if (!identity.ok || !actualUserId) {
-    throw new Error("EBAY_ACCOUNT_POLICY_IDENTITY_UNAVAILABLE")
-  }
-  if (confirmedStatus !== "CONFIRMED") {
-    throw new Error("EBAY_ACCOUNT_POLICY_IDENTITY_NOT_CONFIRMED")
-  }
-  const actualFingerprint = ebayProductionAccountFingerprint(actualUserId)
-  if (actualFingerprint !== config.expectedAccountFingerprint) {
-    throw new Error("EBAY_ACCOUNT_POLICY_IDENTITY_MISMATCH")
-  }
-  const accountType = typeof identity.body.accountType === "string"
-    ? identity.body.accountType.trim().toUpperCase()
-      .replace(/[^A-Z_]/g, "").slice(0, 32)
-    : ""
-  const rawRegistrationMarketplaceId =
-    typeof identity.body.registrationMarketplaceId === "string"
-      ? identity.body.registrationMarketplaceId.trim().toUpperCase()
-      : ""
-  const registrationMarketplaceId = /^EBAY_[A-Z0-9_]{2,24}$/.test(
-    rawRegistrationMarketplaceId,
-  ) ? rawRegistrationMarketplaceId : ""
+  await verifyEbayCommercialOfficialAccount(token, fetchImpl)
+  const actualFingerprint = config.expectedAccountFingerprint
   const expiresInSeconds = Number(body.expires_in)
   const authenticated: CachedAuthentication = {
     token,
     actualFingerprint,
     identityStatus: "BOUND",
-    accountType,
-    registrationMarketplaceId,
+    accountType: "",
+    registrationMarketplaceId: "",
     expiresAt: Number.isFinite(expiresInSeconds) && expiresInSeconds > 60
       ? Date.now() + (expiresInSeconds - 60) * 1_000
       : Date.now(),
@@ -490,7 +450,7 @@ export function ebayAccountPolicyReadonlyRuntimeStatus() {
     oauthConfigured: config.oauthConfigured,
     identityBound: config.identityBound,
     scopes: [...READONLY_SCOPES],
-    ebayResourceMethods: ["GET"],
+    ebayResourceMethods: ["GET", "POST:GetUser(read-only)"],
     oauthTokenExchangeMethod: "POST",
     ebayWriteMethods: [],
     canPublish: false,
