@@ -6,6 +6,7 @@ import {
   canStartNextSameDayCandidateCycle,
   evaluateSameDayCandidate,
   resolveSameDayCommercialEvidenceMode,
+  SAME_DAY_QUEUE_LIMIT,
   SAME_DAY_MAX_CANDIDATE_CYCLES,
   SAME_DAY_PILOT_VERSION,
   SAME_DAY_RECONCILIATION_COVERAGE_ROW_LIMIT,
@@ -78,6 +79,9 @@ const OPERATOR_CONFIRMABLE_OFFICIAL_LABEL_FACTS: Record<string, { factKey: strin
 const LEGACY_PRODUCT_FACTS_RECOVERY_VERSION = "LEGACY_PRODUCT_FACTS_RECOVERY_V2_2026_07_19"
 const STALE_DECISION_FACTS_RECOVERY_VERSION = "STALE_DECISION_FACTS_RECOVERY_V1_2026_07_19"
 const SAME_DAY_LUNA_DECISION_REFRESH_VERSION = "SAME_DAY_LUNA_DECISION_REFRESH_V1_2026_07_19"
+const SAME_DAY_REPLENISHMENT_VERSION = "SAME_RUN_REPLENISHMENT_V1_2026_07_20"
+const SAME_DAY_MAX_TOTAL_CANDIDATE_ATTEMPTS =
+  SAME_DAY_QUEUE_LIMIT * SAME_DAY_MAX_CANDIDATE_CYCLES
 const LEGACY_PRODUCT_FACTS_REJECTION_REASONS = new Set([
   "PRODUCT_FACT_MARKETPLACE_PRODUCT_FACT_SOURCE_SNAPSHOTS_PERSIST_FAILED",
   "SHIPPING_CONFIRMED_REQUIRED",
@@ -622,7 +626,7 @@ async function currentState(
       observedAt: now.toISOString(),
     },
   }
-  const nextCandidateCycle = canStartNextSameDayCandidateCycle({
+  const legacyNextCandidateCycle = canStartNextSameDayCandidateCycle({
     runStatus: text(run.status),
     cycle: number(run.cycle) ?? 1,
     candidateMachineStates: explainedCandidates.map((candidate) =>
@@ -637,6 +641,11 @@ async function currentState(
       && ["COMPLETED", "SUPERSEDED"].includes(text(productResearchPlan?.status))),
     nextCandidateSetExhausted: record(run.source_inventory).nextCandidateSetExhausted === true,
   })
+  const nextCandidateCycle = legacyNextCandidateCycle.allowed &&
+    (number(run.target_new_listings) ?? 2) > 2
+    ? { ...legacyNextCandidateCycle, allowed: false,
+        reason: "AUTOMATIC_SAME_RUN_REPLENISHMENT_PENDING" }
+    : legacyNextCandidateCycle
   const verifiedPilotProgress = Math.min(3, Math.max(0, ...cycleRunRows.map((cycleRun) =>
     (number(cycleRun.verified_existing_listings) ?? 0)
       + (number(cycleRun.verified_new_listings) ?? 0))))
@@ -1469,7 +1478,8 @@ async function promoteNextCandidateAfterPreparedPackage(
       .in("state", ["READY_FOR_MANUAL_PUBLICATION", "PUBLISHED_PENDING_VERIFICATION", "VERIFIED_ACTIVE"]),
   ])
   if (runError || countError) throw new Error("SAME_DAY_PILOT_PREPARED_PACKAGE_COUNT_FAILED")
-  const target = Math.max(0, Math.min(2, Number(run?.target_new_listings ?? 2)))
+  const target = Math.max(0, Math.min(SAME_DAY_QUEUE_LIMIT,
+    Number(run?.target_new_listings ?? 2)))
   if (Number(count ?? 0) >= target) return false
   return promoteNextCandidate(supabase, runId, ordinal)
 }
@@ -1493,7 +1503,8 @@ async function refreshRunProjection(supabase: SupabaseClient, runId: string, wor
   const taskRows = tasks ?? []
   const openTask = taskRows.find((task) => task.status === "OPEN")
   const waitingRetry = (jobs ?? []).some((job) => job.status === "WAITING_RETRY")
-  const targetNewListings = Math.max(0, Math.min(2, Number(run?.target_new_listings ?? 2)))
+  const targetNewListings = Math.max(0, Math.min(SAME_DAY_QUEUE_LIMIT,
+    Number(run?.target_new_listings ?? 2)))
   const completed = verifiedCount >= targetNewListings
   const exhausted = rows.length === 0 || rows.every((row) => ["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(row.machine_state))
   const systemTransitions = (transitions ?? []).filter((row) => row.triggered_by !== "USER").length
@@ -1513,8 +1524,8 @@ async function refreshRunProjection(supabase: SupabaseClient, runId: string, wor
   const patch: JsonRecord = {
     status,
     stage: active?.machine_state ?? (completed ? "COMPLETED" : exhausted ? "BLOCKED" : "QUEUE_PREPARED"),
-    ready_for_manual_publication_count: Math.min(2, readyCount),
-    verified_new_listings: Math.min(2, verifiedCount),
+    ready_for_manual_publication_count: Math.min(SAME_DAY_QUEUE_LIMIT, readyCount),
+    verified_new_listings: Math.min(SAME_DAY_QUEUE_LIMIT, verifiedCount),
     next_automated_action: waitingRetry ? "Reanudar automáticamente desde el checkpoint al terminar la pausa." : active?.next_automated_action ?? "Preservar el trabajo completado.",
     next_human_action: openTask?.title ?? active?.next_human_action ?? "Ninguna.",
     automation_metrics: {
@@ -1786,6 +1797,201 @@ async function createSameDayProductResearchPlan(input: {
   })
   if (error || !data) throw new Error("SAME_DAY_PILOT_PRODUCT_RESEARCH_PLAN_CREATE_FAILED")
   return String(data)
+}
+
+async function replenishSettledSameDayRun(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>
+  now: Date
+}) {
+  const { state, now } = input
+  const sourceInventory = record(state.run.source_inventory)
+  const target = Math.max(0, Math.min(SAME_DAY_QUEUE_LIMIT,
+    Number(state.run.target_new_listings ?? 2)))
+  const verifiedCount = state.candidates.filter((candidate) =>
+    candidate.machine_state === "VERIFIED_ACTIVE").length
+  const settled = state.candidates.length > 0 && state.candidates.every((candidate) =>
+    ["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"]
+      .includes(text(candidate.machine_state)))
+  const openTask = state.tasks.some((task) => task.status === "OPEN")
+  const pendingJob = state.jobs.some((job) =>
+    ["PENDING", "WAITING_RETRY", "LEASED"].includes(text(job.status)))
+  if (text(state.run.status) !== "BLOCKED" || !settled || openTask || pendingJob ||
+    verifiedCount >= target) {
+    return { status: "NOT_ELIGIBLE", replenished: 0, exhausted: false }
+  }
+  if (text(sourceInventory.replenishmentExhaustionVersion) ===
+    SAME_DAY_REPLENISHMENT_VERSION) {
+    return { status: "ALREADY_EXHAUSTED", replenished: 0, exhausted: true }
+  }
+
+  const maxOrdinal = Math.max(0, ...state.candidates.map((candidate) =>
+    Number(candidate.ordinal) || 0))
+  const remainingAttemptCapacity = SAME_DAY_MAX_TOTAL_CANDIDATE_ATTEMPTS - maxOrdinal
+  const remainingTarget = target - verifiedCount
+  const requested = Math.min(SAME_DAY_QUEUE_LIMIT, remainingTarget,
+    remainingAttemptCapacity)
+  const persistExhaustion = async (reasonCode: string) => {
+    const exhaustedSource = {
+      ...sourceInventory,
+      nextCandidateSetExhausted: true,
+      nextCandidateSetExhaustedAt: now.toISOString(),
+      replenishmentExhaustionVersion: SAME_DAY_REPLENISHMENT_VERSION,
+      replenishmentExhaustionReason: reasonCode,
+      attemptedCandidatesExcluded: state.candidates.length,
+      fullCatalogRescan: false,
+    }
+    const { error: runError } = await input.supabase
+      .from("ebay_same_day_pilot_runs")
+      .update({ status: "BLOCKED", stage: "BLOCKED",
+        source_inventory: exhaustedSource,
+        next_automated_action: "Preservar los listings verificados; no quedan candidatos locales recuperables.",
+        next_human_action: "No forzar una publicación. Esperar nueva evidencia elegible.",
+        updated_at: now.toISOString() })
+      .eq("id", state.run.id)
+    if (runError) throw new Error("SAME_DAY_PILOT_REPLENISHMENT_EXHAUSTION_PERSIST_FAILED")
+    const { error: eventError } = await input.supabase
+      .from("ebay_same_day_pilot_events")
+      .upsert({ run_id: state.run.id,
+        event_type: "SAME_RUN_CANDIDATE_REPLENISHMENT_EXHAUSTED",
+        event_payload: { version: SAME_DAY_REPLENISHMENT_VERSION, reasonCode,
+          targetNewListings: target, verifiedNewListings: verifiedCount,
+          attemptedCandidates: state.candidates.length, maximumAttempts:
+            SAME_DAY_MAX_TOTAL_CANDIDATE_ATTEMPTS },
+        idempotency_key: `${state.run.id}:${SAME_DAY_REPLENISHMENT_VERSION}:EXHAUSTED`,
+        ebay_read_calls: 0, openai_calls: 0, ebay_writes: 0,
+        production_changed: false },
+      { onConflict: "idempotency_key", ignoreDuplicates: true })
+    if (eventError) throw new Error("SAME_DAY_PILOT_REPLENISHMENT_EXHAUSTION_EVENT_FAILED")
+    return { status: reasonCode, replenished: 0, exhausted: true }
+  }
+  if (requested <= 0) return persistExhaustion("MAXIMUM_CANDIDATE_ATTEMPTS_REACHED")
+
+  const preview = await previewSameDayPilot({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    now,
+    excludeOpportunityIds: state.candidates.map((candidate) =>
+      text(candidate.opportunity_id)),
+    excludeCandidateKeys: state.candidates.map((candidate) =>
+      text(candidate.candidate_key)),
+    excludeSupplierVariantIds: state.candidates.map((candidate) =>
+      text(candidate.supplier_variant_id)),
+    excludeFamilyFingerprints: state.candidates.map((candidate) =>
+      text(candidate.family_fingerprint)),
+  })
+  const selected = preview.selected.slice(0, requested)
+  if (!selected.length) return persistExhaustion("NO_RECOVERABLE_LOCAL_CANDIDATES")
+
+  const replenishmentBatch = Math.min(SAME_DAY_MAX_CANDIDATE_CYCLES,
+    Math.floor(maxOrdinal / SAME_DAY_QUEUE_LIMIT) + 1)
+  const productResearchPlanId = await createSameDayProductResearchPlan({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    queueRunId: preview.latestQueueRunId,
+    selected,
+    operationDate: text(state.run.operation_date),
+    cycle: replenishmentBatch,
+  })
+  const nextSourceInventory = {
+    ...sourceInventory,
+    ...preview.counts,
+    productResearchPlanPrepared: Boolean(productResearchPlanId),
+    productResearchPlanId,
+    nextCandidateSetExhausted: false,
+    replenishmentExhaustionVersion: null,
+    replenishmentExhaustionReason: null,
+    sameRunReplenishmentVersion: SAME_DAY_REPLENISHMENT_VERSION,
+    replenishmentBatch,
+    attemptedCandidatesExcluded: state.candidates.length,
+    fullCatalogRescan: false,
+  }
+  const { error: metadataError } = await input.supabase
+    .from("ebay_same_day_pilot_runs")
+    .update({ source_inventory: nextSourceInventory,
+      quota_snapshot: { lanes: preview.quotaLanes,
+        exactValidationCallsEstimated: selected.reduce((total, candidate) =>
+          total + candidate.callsEstimated, 0), protectedMonitorBudgetUsed: false },
+      monitor_snapshot: preview.monitor, updated_at: now.toISOString() })
+    .eq("id", state.run.id)
+  if (metadataError) throw new Error("SAME_DAY_PILOT_REPLENISHMENT_METADATA_FAILED")
+
+  const rows = selected.map((entry, index) => ({
+    run_id: state.run.id,
+    opportunity_id: entry.id,
+    queue_item_id: preview.queueItemByVariant.get(text(entry.supplierVariantId)) ?? null,
+    ordinal: maxOrdinal + index + 1,
+    state: entry.state,
+    machine_state: "RUN_CREATED",
+    candidate_key: entry.candidateKey,
+    product_title: entry.productTitle,
+    supplier_sku: entry.supplierSku,
+    supplier_variant_id: entry.supplierVariantId,
+    family_fingerprint: entry.familyFingerprint,
+    priority: entry.priority,
+    blockers: entry.blockers,
+    evidence_summary: {
+      activeExactCount: entry.activeExactCount,
+      soldExactCount: entry.soldExactCount,
+      compatibleSellerCount: entry.compatibleSellerCount,
+      evidenceFresh: entry.evidenceFresh,
+      broadSearchIsDemand: false,
+      historicalMarketCheckStatus: Number(entry.soldExactCount ?? 0) > 0 &&
+        entry.evidenceFresh ? "COMPLETED_WITH_EXACT_SOLD" : "PENDING",
+      commercialEvidenceMode: Number(entry.soldExactCount ?? 0) > 0 &&
+        entry.evidenceFresh ? "MARKET_VALIDATED" : null,
+      selectionIdentity: {
+        exactIdentityConfirmed: entry.exactIdentityConfirmed === true,
+        independentlyVerified: entry.identityIndependentlyVerified === true,
+        confidence: entry.identityConfidence ?? 0,
+        evidenceSource: entry.identityEvidenceSource ?? null,
+        evidenceHash: entry.identityEvidenceHash ?? null,
+        exactOfferPackVerified: entry.offerPackVerified === true,
+        nativePackCount: entry.nativePackCount ?? null,
+        confirmationRequired: entry.lunaIdentityConfirmationRequired === true,
+      },
+    },
+    economics_summary: { ready: entry.economicsReady,
+      estimatedProfit: entry.estimatedProfit, roiPercent: entry.roiPercent,
+      netMarginPercent: entry.netMarginPercent },
+    product_research_query_plan: entry.queryPlan,
+    calls_estimated: entry.callsEstimated,
+    local_preparation_status: "BLOCKED_PENDING_VERIFIED_GATES",
+    local_preparation_package: buildSameDayLocalPreparationPackage(entry,
+      now.toISOString()),
+    next_automated_action: entry.nextAutomatedAction,
+    next_human_action: entry.nextHumanAction,
+  }))
+  const { data: inserted, error: insertError } = await input.supabase
+    .from("ebay_same_day_pilot_candidates").insert(rows).select("*")
+  if (insertError) throw new Error("SAME_DAY_PILOT_REPLENISHMENT_INSERT_FAILED")
+  const lastOrdinal = maxOrdinal + selected.length
+  const { error: finalizeError } = await input.supabase
+    .from("ebay_same_day_pilot_runs")
+    .update({ queue_count: lastOrdinal, status: "ACTIVE", stage: "QUEUE_PREPARED",
+      next_automated_action: "Procesar automáticamente los candidatos de reposición.",
+      next_human_action: "Ninguna hasta que el flujo solicite una validación indispensable.",
+      updated_at: now.toISOString() })
+    .eq("id", state.run.id)
+  if (finalizeError) throw new Error("SAME_DAY_PILOT_REPLENISHMENT_FINALIZE_FAILED")
+  const selectionHash = hash(selected.map((candidate) => candidate.candidateKey))
+  const { error: eventError } = await input.supabase
+    .from("ebay_same_day_pilot_events")
+    .upsert({ run_id: state.run.id,
+      event_type: "SAME_RUN_CANDIDATES_REPLENISHED",
+      event_payload: { version: SAME_DAY_REPLENISHMENT_VERSION,
+        replenishmentBatch, addedCandidates: selected.length,
+        firstOrdinal: maxOrdinal + 1, lastOrdinal, targetNewListings: target,
+        verifiedNewListings: verifiedCount, selectionHash },
+      idempotency_key: `${state.run.id}:${SAME_DAY_REPLENISHMENT_VERSION}:${maxOrdinal + 1}:${selectionHash}`,
+      ebay_read_calls: 0, openai_calls: 0, ebay_writes: 0,
+      production_changed: false },
+    { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (eventError) throw new Error("SAME_DAY_PILOT_REPLENISHMENT_EVENT_FAILED")
+  const first = inserted?.[0]
+  if (first) await bootstrapCandidate(input.supabase, state.run.id, record(first))
+  return { status: "REPLENISHED", replenished: selected.length, exhausted: false }
 }
 
 export async function startSameDayPilot(input: { supabase: SupabaseClient; accountKey: string; actorId: string; now?: Date }) {
@@ -3080,6 +3286,18 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
   if (leaseError) throw new Error("SAME_DAY_PILOT_JOB_LEASE_FAILED")
   const leased = Array.isArray(claimed) ? claimed[0] : claimed
   if (!leased) {
+    const replenishment = await replenishSettledSameDayRun({
+      supabase: input.supabase, accountKey: input.accountKey, state, now,
+    })
+    if (replenishment.replenished > 0) {
+      await refreshRunProjection(input.supabase, state.run.id, true)
+      return { processed: 1, status: "COMPLETED",
+        jobType: "REPLENISH_SAME_DAY_CANDIDATES", replenishment }
+    }
+    if (replenishment.exhausted) {
+      return { processed: 0, status: "BLOCKED_NO_RECOVERABLE_CANDIDATES",
+        replenishment }
+    }
     await refreshRunProjection(input.supabase, state.run.id, true)
     return { processed: 0, status: "IDLE", repaired,
       legacyPrematureRejectionsRepaired, singleFactExceptionsRecovered,
