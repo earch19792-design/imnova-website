@@ -524,6 +524,8 @@ export default function EbayListingWorkspacePage() {
   const [opportunity, setOpportunity] = useState<Opportunity | null>(null)
   const [listingPackage, setListingPackage] = useState<ListingPackage | null>(null)
   const [workspaceGateBlockers, setWorkspaceGateBlockers] = useState<string[]>([])
+  const [workspaceMode, setWorkspaceMode] = useState<"CREATION" | "ACTIVE_MAINTENANCE">("CREATION")
+  const [maintenance, setMaintenance] = useState<Record<string, unknown> | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm)
   const [message, setMessage] = useState("Cargando datos reales del producto…")
   const [error, setError] = useState("")
@@ -706,6 +708,8 @@ export default function EbayListingWorkspacePage() {
     const params = new URLSearchParams(window.location.search)
     const opportunityId = params.get("opportunity") ?? ""
     const candidateKey = params.get("candidate") ?? ""
+    const requestedItemId = params.get("ebayItemId") ?? ""
+    const maintenanceRequested = params.get("mode") === "maintenance" || /^\d{9,20}$/.test(requestedItemId)
     if (!opportunityId || !candidateKey) {
       setError("Abre este workspace desde una oportunidad de Seller Command Center.")
       setMessage("")
@@ -719,7 +723,9 @@ export default function EbayListingWorkspacePage() {
         setDraftConfiguration(initialDraftConfiguration(selected))
         let prepared: Record<string, any>
         try {
-          prepared = await request({ action: "prepare_package", opportunityId, candidateKey })
+          prepared = await request(maintenanceRequested
+            ? { action: "open_active_maintenance", opportunityId, candidateKey, ebayItemId: requestedItemId }
+            : { action: "prepare_package", opportunityId, candidateKey })
         } catch (prepareError) {
           const gateBlockers = (prepareError as Error & { blockers?: string[] }).blockers ?? []
           const gatePending = gateBlockers.length > 0
@@ -738,6 +744,10 @@ export default function EbayListingWorkspacePage() {
           return
         }
         const nextPackage = prepared.listingPackage as ListingPackage
+        const nextMaintenance = object(prepared.maintenance)
+        const activeMaintenance = prepared.workspaceMode === "ACTIVE_MAINTENANCE"
+        setWorkspaceMode(activeMaintenance ? "ACTIVE_MAINTENANCE" : "CREATION")
+        setMaintenance(activeMaintenance ? nextMaintenance : null)
         setWorkspaceGateBlockers([])
         setListingPackage(nextPackage)
         setForm(fromPackage(object(nextPackage.package_data)))
@@ -752,17 +762,29 @@ export default function EbayListingWorkspacePage() {
         )
         if (preferredImageRevisionId) void loadImageRevision(preferredImageRevisionId)
         let draftWarning = ""
-        try {
-          const draft = await draftRequest(undefined, nextPackage.id)
-          setDraftState(draft)
-        } catch (draftError) {
-          setDraftState({})
-          draftWarning = ` ${getMobileReviewRequestError(draftError, "El conector draft todavía no pudo validarse.")}`
+        if (activeMaintenance) {
+          const itemId = String(nextMaintenance.ebayItemId ?? "")
+          setActiveRevisionItemId(itemId)
+          setDraftState({ publication: {
+            phase: "verified_active",
+            listing_id: itemId,
+            verified_active_at: String(nextMaintenance.verifiedAt ?? ""),
+          } as DraftState["publication"] })
+        } else {
+          try {
+            const draft = await draftRequest(undefined, nextPackage.id)
+            setDraftState(draft)
+          } catch (draftError) {
+            setDraftState({})
+            draftWarning = ` ${getMobileReviewRequestError(draftError, "El conector draft todavía no pudo validarse.")}`
+          }
         }
         const defaultsMessage = prepared.safeDefaultsApplied
           ? " Se precargaron únicamente políticas, ubicación o unidades desde tu listing propio verificado; el preflight las volverá a validar."
           : ""
-        setMessage(`${prepared.created
+        setMessage(activeMaintenance
+          ? `Mantenimiento del listing ACTIVE ${String(nextMaintenance.ebayItemId ?? "")}. Las guardas de creación no se vuelven a ejecutar.`
+          : `${prepared.created
           ? "Paquete interno creado con la evidencia más reciente."
           : prepared.evidenceRefreshed
             ? "Evidencia Luna/eBay actualizada; tus campos editados se conservaron."
@@ -848,6 +870,7 @@ export default function EbayListingWorkspacePage() {
       : draftTarget === "SANDBOX" ? "CREAR DRAFT NO PUBLICADO" : "")
   const executionCompleted = draftState.execution?.phase === "completed"
   const publicationPhase = draftState.publication?.phase ?? ""
+  const maintenanceMode = workspaceMode === "ACTIVE_MAINTENANCE"
   const verifiedActiveItemId = draftState.publication?.verified_active_at
     && /^\d{9,20}$/.test(String(draftState.publication.listing_id ?? ""))
     ? String(draftState.publication.listing_id)
@@ -1585,8 +1608,9 @@ export default function EbayListingWorkspacePage() {
 
         {error && <p role="alert" className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm font-bold text-rose-50">{error}</p>}
         {message && <p aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm text-cyan-50">{message}</p>}
+        {maintenanceMode && <section className="rounded-3xl border border-emerald-200/30 bg-emerald-200/[0.07] p-4"><p className="text-xs font-black uppercase tracking-widest text-emerald-100/70">Mantenimiento ACTIVE</p><h2 className="mt-1 text-xl font-black">Item {String(maintenance?.ebayItemId ?? "")}</h2><p className="mt-2 text-sm leading-6 text-white/65">Cuenta, SKU y estado ACTIVE ya fueron verificados. Aquí sólo se revisan título e imágenes; no se repiten policies ni guardas de creación.</p></section>}
 
-        <section aria-labelledby="ebay-account-configuration-heading" className="space-y-4 rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.05] p-4">
+        <section aria-labelledby="ebay-account-configuration-heading" className={`${maintenanceMode ? "hidden" : ""} space-y-4 rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.05] p-4`}>
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Configuración independiente del producto</p>
             <h2 id="ebay-account-configuration-heading" className="mt-1 text-xl font-black">Policies de la cuenta eBay</h2>
@@ -1614,7 +1638,7 @@ export default function EbayListingWorkspacePage() {
         </section>
 
         {opportunity && listingPackage && <>
-          <section className="rounded-3xl border border-emerald-200/25 bg-emerald-200/[0.06] p-4">
+          <section className={`${maintenanceMode ? "hidden" : ""} rounded-3xl border border-emerald-200/25 bg-emerald-200/[0.06] p-4`}>
             <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase text-emerald-100/65">Datos reales de Luna + evidencia eBay</p><h2 className="mt-2 text-xl font-black">{opportunity.product_title}</h2><p className="mt-1 text-sm text-white/60">{opportunity.variant_title ?? "Variante general"} · {opportunity.supplier_sku ?? "SKU pendiente"}</p></div><strong className="rounded-2xl bg-white px-3 py-2 text-xl text-black">{Math.round(Number(opportunity.opportunity_score))}</strong></div>
             <dl className="mt-3 grid grid-cols-3 gap-2 text-xs"><div><dt className="text-white/50">Costo Luna</dt><dd className="font-black">{opportunity.supplier_price == null ? "Pendiente" : `$${Number(opportunity.supplier_price).toFixed(2)}`}</dd></div><div><dt className="text-white/50">Stock</dt><dd className="font-black">{opportunity.supplier_inventory_quantity ?? "Pendiente"}</dd></div><div><dt className="text-white/50">Fuente</dt><dd className="font-black">{listingPackage.source_observed_at ? new Date(listingPackage.source_observed_at).toLocaleDateString("es") : "Pendiente"}</dd></div></dl>
             <div className="mt-4 rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-3 text-xs leading-5 text-amber-50">
@@ -1773,7 +1797,7 @@ export default function EbayListingWorkspacePage() {
             <div className="mt-3 grid grid-cols-[1fr_auto] gap-2 sm:grid-cols-[1fr_1fr_auto]"><input aria-label="Nombre del nuevo aspecto" placeholder="Marca" value={aspectName} onChange={(event) => setAspectName(event.target.value)} className="col-span-2 min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3 sm:col-span-1" /><input aria-label="Valor del nuevo aspecto" placeholder="Valor" value={aspectValue} onChange={(event) => setAspectValue(event.target.value)} className="min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3" /><button type="button" aria-label="Agregar aspecto" disabled={!aspectName.trim() || !aspectValue.trim()} onClick={() => { setForm((current) => ({ ...current, aspects: { ...current.aspects, [aspectName.trim()]: aspectValue.trim() } })); setAspectName(""); setAspectValue("") }} className="size-11 rounded-xl bg-violet-200 font-black text-black disabled:opacity-40">+</button></div>
           </section>
 
-          <section className="space-y-4 rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.05] p-4">
+          <section className={`${maintenanceMode ? "hidden" : ""} space-y-4 rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.05] p-4`}>
             <div>
               <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Draft eBay controlado</p>
               <h2 className="mt-1 text-xl font-black">Offer API no publicado · {draftTarget}</h2>

@@ -6,8 +6,10 @@ import { ebayConditionContractFromVerifiedFact } from "./ebay-manual-listing-dom
 import { normalizeEbayCompliantFulfillmentBasis } from "./ebay-fulfillment-policy-compliance.ts"
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { parseAuthoritativeFactsInputPackage } from "./ebay-product-facts-readiness.ts"
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import { buildVerifiedEbayTitle } from "./ebay-verified-title-strategy.ts"
 
-export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V7_2026_07_20"
+export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V8_2026_07_20"
 
 type JsonRecord = Record<string, unknown>
 type SafeFact = { scope: string; key: string; value: unknown; unit: string | null; status: string }
@@ -71,22 +73,6 @@ export function bindCurrentAuthoritativeFactsForManualHandoff(input: {
     currentRunBound: true,
   }
 }
-function titleFromFacts(input: { productTitle: string; facts: SafeFact[] }) {
-  const value = (key: string) => text(input.facts.find((fact) => fact.scope === "PRODUCT_UNIT" && fact.key === key)?.value)
-  const exactName = value("exactProductName") || text(input.productTitle)
-  const brand = value("brand")
-  const model = value("model") || value("mpn")
-  const variant = value("variant") || value("scent") || value("flavor") || value("color")
-  const total = input.facts.find((fact) => fact.scope === "OFFER_PACK" && fact.key === "totalUnitCount")
-  const pack = number(total?.value)
-  const packText = pack && pack > 1 ? `${pack} Count` : ""
-  const parts = unique([
-    exactName.toLocaleLowerCase().startsWith(brand.toLocaleLowerCase()) ? "" : brand,
-    exactName, model, variant, packText,
-  ])
-  return text(parts.join(" "), 80)
-}
-
 export function buildVerifiedManualSellerHubHandoff(input: {
   candidateId: string
   factRunId: string
@@ -206,7 +192,15 @@ export function buildVerifiedManualSellerHubHandoff(input: {
   addAspect("MPN", "mpn")
   addAspect("UPC", "upc")
   addAspect("Model", "model")
-  const title = titleFromFacts({ productTitle: input.productTitle, facts })
+  const title = buildVerifiedEbayTitle({
+    productTitle: exactName || input.productTitle,
+    brand,
+    productType: text(fact("PRODUCT_UNIT", "type")?.value || fact("PRODUCT_UNIT", "productType")?.value),
+    packCount: number(fact("OFFER_PACK", "totalUnitCount")?.value),
+    color: text(fact("PRODUCT_UNIT", "color")?.value),
+    audience: text(fact("PRODUCT_UNIT", "audience")?.value || fact("PRODUCT_UNIT", "department")?.value),
+    relationship: text(fact("PRODUCT_UNIT", "relationship")?.value),
+  })
   const includedCount = text(fact("OFFER_PACK", "totalUnitCount")?.value)
   const descriptionLines = [
     exactName,
