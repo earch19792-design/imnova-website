@@ -2,7 +2,7 @@
 import { validateGtinChecksum } from "./ebay-winner-evidence-v2.ts"
 
 export const EBAY_SELLER_KEYWORD_DEMAND_VALIDATION_VERSION =
-  "EBAY-PROFESSIONAL-KEYWORD-CLASSIFICATION-V3"
+  "EBAY-PROFESSIONAL-KEYWORD-CLASSIFICATION-V4"
 
 export type EbaySalesEvidenceSource =
   | "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
@@ -102,9 +102,9 @@ export type EbaySellerKeywordDemandInput = {
 
 const STOP_WORDS = new Set([
   "a", "an", "and", "at", "authentic", "best", "brand", "by", "fast",
-  "for", "free", "from", "genuine", "in", "is", "item", "new", "of",
-  "on", "original", "sale", "seller", "shipping", "the", "to", "with",
-  "your", "usa", "us",
+  "default", "for", "free", "from", "genuine", "in", "is", "item", "new", "of",
+  "on", "original", "sale", "seller", "shipping", "the", "title", "to", "with",
+  "your", "usa", "us", "variant",
 ])
 
 const UNIT_ALIASES: Record<string, string> = {
@@ -441,10 +441,21 @@ function buildBuyerIntentType(terms: string[]) {
 export function buildEbaySellerKeywordSearchQuery(
   candidate: EbaySellerKeywordCandidate
 ) {
-  const source = [candidate.productName ?? candidate.productTitle, candidate.variantTitle]
+  const productTitle = cleanText(candidate.productName) || cleanText(candidate.productTitle)
+  const variantTitle = cleanText(candidate.variantTitle)
+  const meaningfulVariantTitle = /^(?:default(?:\s+title)?|single(?:\s+variant)?|n\/?a|none)$/i
+    .test(variantTitle) ? "" : variantTitle
+  const source = [productTitle, meaningfulVariantTitle]
     .filter(Boolean)
     .join(" ")
-  return unique(tokens(source)).slice(0, 12).join(" ").slice(0, 180)
+  const completeTokens = unique(tokens(source))
+  const identityTokens = completeTokens.filter((token) =>
+    !GENERIC_LOW_SIGNAL_TERMS.has(token) &&
+    !/^(?:\d+|\d+(?:ct|pc|pcs|pk|pack))$/.test(token) &&
+    !["ct", "pc", "pack"].includes(token)
+  )
+  const selectedTokens = identityTokens.length >= 3 ? identityTokens : completeTokens
+  return selectedTokens.slice(0, 10).join(" ").slice(0, 180)
 }
 
 export function buildEbaySellerKeywordDemandValidation(

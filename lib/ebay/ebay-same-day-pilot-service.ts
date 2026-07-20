@@ -2511,6 +2511,11 @@ export async function decideSameDayProduct(input: {
     return getSameDayPilot(input)
   }
   const salePrice = number(input.salePrice)
+  const pricingRecommendation = record(record(candidate.economics_summary).pricingRecommendation)
+  if (pricingRecommendation.marketReferenceUsed !== true ||
+    !(number(pricingRecommendation.recommendedSalePrice) ?? 0)) {
+    throw new Error("SAME_DAY_PILOT_MARKET_PRICE_REFERENCE_REQUIRED")
+  }
   const fulfillmentBasis = normalizeEbayCompliantFulfillmentBasis(
     input.fulfillmentBasis,
   )
@@ -3379,9 +3384,11 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             ...currentEconomics,
             pricingRecommendation,
             recommendedSalePrice: pricingRecommendation.recommendedSalePrice,
-            status: "PRICE_RECOMMENDED_PENDING_APPROVAL",
+            status: pricingRecommendation.marketReferenceUsed
+              ? "PRICE_RECOMMENDED_PENDING_APPROVAL"
+              : "MARKET_REFERENCE_PENDING",
             automaticPricingUsed: false,
-            automaticPricingRecommendationUsed: true,
+            automaticPricingRecommendationUsed: pricingRecommendation.marketReferenceUsed,
             competitorPriceUsedForRecommendation: pricingRecommendation.marketReferenceUsed,
             individualCompetitorPriceCopied: false,
           }
@@ -3524,6 +3531,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             allowedFulfillmentBases: ["OWNED_INVENTORY", "AUTHORIZED_WHOLESALE_FULFILLMENT_AGREEMENT"],
             automaticPricingUsed: false, automaticPricingRecommendationUsed: true,
             requiresManualPriceEntry: false, humanPriceApprovalRequired: true,
+            requiresMarketReference: true,
             presentationPortfolio: record(record(candidate.economics_summary).pricingRecommendation)
               .publicationPortfolio ?? null },
           continuationJobType: "PREPARE_VERIFIED_HANDOFF" })

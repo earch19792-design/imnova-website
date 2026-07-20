@@ -1,5 +1,5 @@
 export const EBAY_MARKET_PRICING_STRATEGY_VERSION =
-  "EBAY_MARKET_PRICING_STRATEGY_V1_2026_07_19"
+  "EBAY_MARKET_PRICING_STRATEGY_V2_2026_07_19"
 
 type JsonRecord = Record<string, unknown>
 
@@ -317,11 +317,10 @@ export function buildEbayMarketPricingRecommendation(input: {
     input.exactSoldMarketReference,
     input.now ?? new Date(),
   ) ?? soldReference ?? activeReference
-  const recommendedSalePrice = floor === null
+  const provisionalFloorPrice = floor === null ? null : moneyUp(floor)
+  const recommendedSalePrice = floor === null || !marketReference
     ? null
-    : marketReference
-      ? moneyUp(Math.max(floor, marketReference.medianPrice))
-      : moneyUp(floor)
+    : moneyUp(Math.max(floor, marketReference.medianPrice))
   const competitiveness = floor === null
     ? "ECONOMICS_NOT_READY" as const
     : !marketReference
@@ -362,11 +361,14 @@ export function buildEbayMarketPricingRecommendation(input: {
       : "DISTINCT_BUNDLE_LISTINGS_POLICY_REVIEW_REQUIRED" as const
   return {
     version: EBAY_MARKET_PRICING_STRATEGY_VERSION,
-    status: recommendedSalePrice === null
+    status: floor === null
       ? "ECONOMICS_NOT_READY" as const
-      : "RECOMMENDATION_READY_FOR_HUMAN_APPROVAL" as const,
+      : !marketReference
+        ? "MARKET_REFERENCE_REQUIRED" as const
+        : "RECOMMENDATION_READY_FOR_HUMAN_APPROVAL" as const,
     currency: "USD",
-    ownCostFloor: floor === null ? null : moneyUp(floor),
+    ownCostFloor: provisionalFloorPrice,
+    provisionalFloorPrice,
     recommendedSalePrice,
     competitiveness,
     marketReferenceUsed: Boolean(marketReference),
@@ -396,7 +398,7 @@ export function buildEbayMarketPricingRecommendation(input: {
     decisionLogic: marketReference
       ? "OWN_COST_FLOOR_THEN_EQUIVALENT_PACK_MARKET_MEDIAN"
       : "OWN_COST_FLOOR_ONLY_MARKET_SAMPLE_INSUFFICIENT",
-    automaticRecommendationUsed: true,
+    automaticRecommendationUsed: Boolean(marketReference),
     humanPriceApprovalRequired: true,
     manualPriceEntryRequired: false,
     fulfillmentConfirmationRequired: true,

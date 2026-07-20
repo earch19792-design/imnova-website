@@ -616,12 +616,19 @@ export async function runEbaySellerKeywordDemandValidation(
   let browseToken = ""
   let insightsToken = ""
   try {
-    await enforceBrowseQuota(1 + detailSampleLimit())
+    await enforceBrowseQuota(3 + detailSampleLimit())
     browseToken = await getApplicationToken(BROWSE_SCOPE)
     let activeSearch = await searchActiveListings(candidate, query, browseToken)
     if (activeSearch.items.length === 0 && normalizedGtin(candidate.gtin)) {
       activeSearch = await searchActiveListings(
         { ...candidate, gtin: null },
+        query,
+        browseToken
+      )
+    }
+    if (activeSearch.items.length === 0 && /^\d+$/.test(text(candidate.categoryId))) {
+      activeSearch = await searchActiveListings(
+        { ...candidate, gtin: null, epid: null, categoryId: null },
         query,
         browseToken
       )

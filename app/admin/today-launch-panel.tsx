@@ -539,7 +539,9 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
 }) {
   const pricingRecommendation = candidate?.economics_summary?.pricingRecommendation ?? {}
   const recommendedSalePrice = Number(pricingRecommendation.recommendedSalePrice)
-  const recommendedSalePriceText = Number.isFinite(recommendedSalePrice) && recommendedSalePrice > 0
+  const marketRecommendationReady = pricingRecommendation.marketReferenceUsed === true &&
+    Number.isFinite(recommendedSalePrice) && recommendedSalePrice > 0
+  const recommendedSalePriceText = marketRecommendationReady
     ? recommendedSalePrice.toFixed(2)
     : ""
   const [price, setPrice] = useState("")
@@ -564,7 +566,7 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
   )
   const priceMissing = !(Number(price) > 0)
   const availabilityMissing = availability === "unknown"
-  const salePriceMissing = !(Number(salePrice) > 0)
+  const salePriceMissing = !marketRecommendationReady || !(Number(salePrice) > 0)
   const fieldId = String(task.id ?? "task")
   const imageSet = normalizedImageReviewSet(reviewAssets)
   const imageSetReady = completeImageReviewSet(imageSet)
@@ -722,9 +724,9 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
       <MarketPriceReference candidate={candidate} />
       <p className="mt-3 rounded-xl border border-amber-200/25 bg-amber-200/[0.06] p-3 text-xs text-amber-50"><strong>Fulfillment obligatorio:</strong> confirma la base real antes de aprobar. No selecciones un acuerdo mayorista si sólo planeas comprar el producto después de la venta en un retailer o marketplace.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <label className="text-xs font-bold">Precio recomendado por Seller OS <span className="text-red-200">*</span>
-          <input value={salePrice} onChange={(event) => setSalePrice(event.target.value)} inputMode="decimal" aria-required="true" aria-invalid={salePriceMissing} aria-describedby={`${fieldId}-sale-price-help`} className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${salePriceMissing ? "border-red-400" : "border-white/15"}`} />
-          <span id={`${fieldId}-sale-price-help`} className={`mt-1 block font-normal ${salePriceMissing ? "text-red-200" : "text-white/55"}`}>{salePriceMissing ? "No existe todavía una recomendación calculable; Seller OS debe completar economía y mercado." : "Recomendación precargada. Puedes ajustarla antes de aprobar; el servidor volverá a comprobar utilidad, ROI y margen."}</span>
+        <label className="text-xs font-bold">{marketRecommendationReady ? "Precio recomendado por Seller OS" : "Precio pendiente de mercado"} <span className="text-red-200">*</span>
+          <input value={salePrice} onChange={(event) => setSalePrice(event.target.value)} inputMode="decimal" disabled={!marketRecommendationReady} aria-required="true" aria-invalid={salePriceMissing} aria-describedby={`${fieldId}-sale-price-help`} className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${salePriceMissing ? "border-red-400" : "border-white/15"}`} />
+          <span id={`${fieldId}-sale-price-help`} className={`mt-1 block font-normal ${salePriceMissing ? "text-red-200" : "text-white/55"}`}>{!marketRecommendationReady ? "Seller OS todavía no tiene una muestra agregada válida. El piso propio es provisional y no puede aprobarse como precio de mercado." : "Recomendación precargada. Puedes ajustarla antes de aprobar; el servidor volverá a comprobar utilidad, ROI y margen."}</span>
         </label>
         <label className="text-xs font-bold">Base de fulfillment <span className="text-red-200">*</span>
           <select value={fulfillmentBasis} onChange={(event) => setFulfillmentBasis(event.target.value)} aria-required="true" aria-invalid={!fulfillmentBasis} aria-describedby={`${fieldId}-fulfillment-help`} className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${fulfillmentBasis ? "border-white/15" : "border-red-400"}`}><option value="">Seleccionar</option><option value="OWNED_INVENTORY">Inventario propio disponible</option><option value="AUTHORIZED_WHOLESALE_FULFILLMENT_AGREEMENT">Acuerdo vigente con proveedor mayorista autorizado</option></select>
@@ -847,12 +849,14 @@ function safeHttpsUrl(value: unknown) {
 function MarketPriceReference({ candidate }: { candidate?: Row }) {
   const recommendation = candidate?.economics_summary?.pricingRecommendation ?? {}
   const recommendedSalePrice = Number(recommendation.recommendedSalePrice)
-  if (Number.isFinite(recommendedSalePrice) && recommendedSalePrice > 0) {
+  const ownCostFloor = Number(recommendation.ownCostFloor)
+  const marketReferenceUsed = recommendation.marketReferenceUsed === true
+  if ((Number.isFinite(recommendedSalePrice) && recommendedSalePrice > 0) ||
+    (Number.isFinite(ownCostFloor) && ownCostFloor > 0)) {
     const market = recommendation.marketReference ?? {}
     const marketMedian = Number(market.medianPrice)
     const marketMinimum = Number(market.minimumPrice)
     const marketMaximum = Number(market.maximumPrice)
-    const ownCostFloor = Number(recommendation.ownCostFloor)
     const source = String(market.source ?? "")
     const sourceLabel = source.includes("PRODUCT_RESEARCH")
       ? "Product Research / Terapeak"
@@ -880,13 +884,14 @@ function MarketPriceReference({ candidate }: { candidate?: Row }) {
       <p className="font-black">DECISIÓN ESTRATÉGICA AUTOMÁTICA</p>
       <div className="mt-2 grid gap-2 sm:grid-cols-5">
         <Metric label="Piso propio" value={Number.isFinite(ownCostFloor) ? `$${ownCostFloor.toFixed(2)}` : "N/D"} />
-        <Metric label="Precio recomendado" value={`$${recommendedSalePrice.toFixed(2)}`} />
+        <Metric label="Precio recomendado" value={marketReferenceUsed && Number.isFinite(recommendedSalePrice) && recommendedSalePrice > 0 ? `$${recommendedSalePrice.toFixed(2)}` : "PENDIENTE"} />
         <Metric label="Mediana equivalente" value={Number.isFinite(marketMedian) ? `$${marketMedian.toFixed(2)}` : "N/D"} />
         <Metric label="Rango de mercado" value={Number.isFinite(marketMinimum) && Number.isFinite(marketMaximum) ? `$${marketMinimum.toFixed(2)}–$${marketMaximum.toFixed(2)}` : "N/D"} />
         <Metric label="Presentación evaluada" value={recommendation.recommendedPackCount ? `${recommendation.recommendedPackCount} unidad(es)` : "N/D"} />
       </div>
       <p className="mt-2 font-black">{String(competitivenessLabels[String(recommendation.competitiveness)] ?? recommendation.competitiveness ?? "N/D")}</p>
       <p className="mt-1 text-cyan-100/70">Fuente: {sourceLabel} · muestra {Number(market.sampleSize ?? 0)} · vendedores {Number(market.sellerCount ?? 0)} · confianza {String(market.confidence ?? "limitada").toLowerCase()}. Se usa el agregado; nunca el precio de un vendedor individual.</p>
+      {!marketReferenceUsed && <p className="mt-2 rounded-lg border border-red-300/30 bg-red-300/[0.07] p-2 font-bold text-red-100">El piso de ${ownCostFloor.toFixed(2)} es sólo una referencia económica provisional. La aprobación permanecerá bloqueada hasta obtener una mediana equivalente de al menos dos vendedores.</p>}
       {Number.isFinite(relatedPackCount) && relatedPackCount > 0 && relatedPackCount !== Number(recommendation.recommendedPackCount) && <p className="mt-2 rounded-lg border border-amber-200/25 bg-amber-200/[0.06] p-2 text-amber-50"><strong>Presentación estratégica detectada:</strong> evaluar {relatedPackCount} unidades por oferta. Tiene mejor señal agregada, pero no se aplicará hasta confirmar que fulfillment puede prepararla y recalcular su costo exacto.</p>}
       {presentations.length > 1 && <div className="mt-2 rounded-lg border border-emerald-200/25 bg-emerald-200/[0.06] p-2 text-emerald-50">
         <p className="font-black">PORTAFOLIO CON VENTAS CONFIRMADAS</p>
