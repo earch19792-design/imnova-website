@@ -158,7 +158,6 @@ async function renderVerifiedText(input: {
       height: input.height,
       align: "centre",
       rgba: true,
-      dpi: 72,
       spacing: 8,
     },
   }).png().toBuffer()

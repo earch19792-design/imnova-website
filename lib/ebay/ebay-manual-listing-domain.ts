@@ -101,7 +101,7 @@ export function evaluateManualListingProductSkuIdentity(
   if (observed === expected) {
     return {
       verified: true as const,
-      reason: "PRODUCT_CANONICAL_SKU_IDENTITY_CONFIRMED" as const,
+      reason: "PRODUCT_SKU_IDENTITY_CONFIRMED" as const,
     }
   }
   const authoritative = new Set(
