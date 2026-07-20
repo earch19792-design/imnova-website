@@ -67,13 +67,28 @@ export function parseDirectedLunaProductUrl(value: unknown) {
   if (url.protocol !== "https:" || !LUNA_HOSTS.has(url.hostname)) {
     throw new Error("LUNA_DIRECTED_IMPORT_URL_INVALID")
   }
-  const match = url.pathname.match(/^\/products\/([a-z0-9][a-z0-9-]{0,180})\/?$/i)
+  const match = url.pathname.match(/^\/products\/([^/]+)\/?$/)
   if (!match) throw new Error("LUNA_DIRECTED_IMPORT_URL_INVALID")
-  const handle = match[1].toLowerCase()
+  let handle: string
+  try {
+    handle = decodeURIComponent(match[1]).toLowerCase()
+  } catch {
+    throw new Error("LUNA_DIRECTED_IMPORT_URL_INVALID")
+  }
+  const handleCodepoints = [...handle]
+  if (
+    handleCodepoints.length < 1 ||
+    handleCodepoints.length > 181 ||
+    !/^[\p{L}\p{N}\p{M}\p{Extended_Pictographic}\u200D-]+$/u.test(handle) ||
+    !/^[\p{L}\p{N}\p{Extended_Pictographic}]/u.test(handle)
+  ) {
+    throw new Error("LUNA_DIRECTED_IMPORT_URL_INVALID")
+  }
+  const encodedHandle = encodeURIComponent(handle)
   return {
     handle,
-    canonicalUrl: `https://lunaportex.com/products/${handle}`,
-    jsonUrl: `https://lunaportex.com/products/${handle}.js`,
+    canonicalUrl: `https://lunaportex.com/products/${encodedHandle}`,
+    jsonUrl: `https://lunaportex.com/products/${encodedHandle}.js`,
   }
 }
 
