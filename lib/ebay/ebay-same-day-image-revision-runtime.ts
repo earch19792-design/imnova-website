@@ -298,6 +298,29 @@ export async function generateAndPersistSameDayImageRevision(input: {
   if (!actorId || !baseControlId || (input.requestKey && !requestKey)) {
     throw new Error("SAME_DAY_IMAGE_REVISION_SCOPE_INVALID")
   }
+  const { data: pendingRevision, error: pendingRevisionError } = await input.supabase
+    .from("ebay_same_day_pilot_image_revisions")
+    .select("id")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("created_by", actorId)
+    .eq("base_control_id", baseControlId)
+    .eq("status", "PENDING_REVIEW")
+    .order("revision_number", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (pendingRevisionError) {
+    throw new Error("SAME_DAY_IMAGE_REVISION_PENDING_LOOKUP_FAILED")
+  }
+  const pendingRevisionId = uuid(pendingRevision?.id)
+  if (pendingRevisionId) {
+    const current = await getSameDayImageRevision({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      actorId,
+      revisionId: pendingRevisionId,
+    })
+    return { ...current, reused: true }
+  }
   const context = await loadBaseContext({ ...input, actorId, baseControlId })
   if (!context.candidateKey || !context.opportunityId) {
     throw new Error("SAME_DAY_IMAGE_REVISION_CANDIDATE_INVALID")
