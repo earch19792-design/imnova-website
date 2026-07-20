@@ -588,7 +588,9 @@ alter table public.ebay_active_listing_image_revision_executions
 alter table public.ebay_active_listing_image_revision_executions
   force row level security;
 revoke all on table public.ebay_active_listing_image_revision_executions
-  from public, anon, authenticated, service_role;
+  from anon, authenticated;
+revoke all on table public.ebay_active_listing_image_revision_executions
+  from public, service_role;
 grant select on table public.ebay_active_listing_image_revision_executions
   to service_role;
 
