@@ -2,7 +2,7 @@
 import { validateGtinChecksum } from "./ebay-winner-evidence-v2.ts"
 
 export const EBAY_SELLER_KEYWORD_DEMAND_VALIDATION_VERSION =
-  "EBAY-PROFESSIONAL-KEYWORD-CLASSIFICATION-V2"
+  "EBAY-PROFESSIONAL-KEYWORD-CLASSIFICATION-V3"
 
 export type EbaySalesEvidenceSource =
   | "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
@@ -168,6 +168,22 @@ function numberOrNull(value: unknown) {
   if (value === null || value === undefined || value === "") return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function packCountFromListingTitle(value: unknown) {
+  const title = cleanText(value).toLocaleLowerCase("en-US")
+  const multiplied = title.match(/\b(\d{1,3})\s*(?:sets?|packs?)\b.{0,30}?\b(\d{1,3})\s*(?:pcs?|pieces?)\b/i)
+  if (multiplied) {
+    const groups = Number(multiplied[1])
+    const units = Number(multiplied[2])
+    return Number.isInteger(groups) && groups > 0 && Number.isInteger(units) && units > 0
+      ? groups * units
+      : null
+  }
+  const explicit = title.match(/\b(?:pack|set|lot|case)\s+(?:of\s+)?(\d{1,3})\b/i) ??
+    title.match(/\b(\d{1,3})\s*(?:pcs?|pieces?|pack|pk)\b/i)
+  const parsed = Number(explicit?.[1])
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
 }
 
 export function buildOfficialEbayVisualMetadata(
@@ -459,9 +475,9 @@ export function buildEbaySellerKeywordDemandValidation(
       normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["brand"]))
     const listingMpn = normalizedIdentifier(entry.mpn ?? entry.model) ||
       normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["mpn", "model"]))
-    const listingPack = numberOrNull(entry.lotSize) ?? numberOrNull(
+    const listingPack = numberOrNull(
       comparableAspectValue(entry.localizedAspects, ["number in pack", "pack quantity", "pack size"]),
-    )
+    ) ?? packCountFromListingTitle(title) ?? numberOrNull(entry.lotSize)
     const listingSize = normalizedIdentifier(entry.size) ||
       normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["size", "capacity", "volume"]))
     const listingColor = normalizedIdentifier(entry.color) ||
