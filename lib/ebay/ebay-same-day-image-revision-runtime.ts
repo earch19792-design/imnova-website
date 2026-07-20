@@ -166,14 +166,18 @@ async function loadBaseContext(input: {
       .eq("verification_status", "verified")
       .eq("connector_listing_status", "active")
       .maybeSingle()
-    if (manualLinkError || !uuid(manualLink?.connector_listing_id)
-      || !/^\d{9,20}$/.test(text(manualLink?.ebay_item_id, 20))) {
+    if (manualLinkError || !manualLink) {
       throw new Error(
         "SAME_DAY_IMAGE_REVISION_VERIFIED_ACTIVE_EVIDENCE_REQUIRED",
       )
     }
     const connectorListingId = uuid(manualLink.connector_listing_id)
     const ebayItemId = text(manualLink.ebay_item_id, 20)
+    if (!connectorListingId || !/^\d{9,20}$/.test(ebayItemId)) {
+      throw new Error(
+        "SAME_DAY_IMAGE_REVISION_VERIFIED_ACTIVE_EVIDENCE_REQUIRED",
+      )
+    }
     const { data: activeListing, error: activeListingError } = await input.supabase
       .from("ebay_active_listings")
       .select("id")
