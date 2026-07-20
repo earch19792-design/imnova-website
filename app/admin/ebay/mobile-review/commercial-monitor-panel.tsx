@@ -378,7 +378,7 @@ function OptimizationTaskCard({ task }: {
 
 export function CommercialMonitorPanel() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
-  const [busyMode, setBusyMode] = useState<"dry_run" | "persistent" | "comparison" | "scheduler" | null>(null)
+  const [busyMode, setBusyMode] = useState<"luna" | "dry_run" | "persistent" | "comparison" | "scheduler" | null>(null)
   const [dryRunResult, setDryRunResult] = useState<MonitorRun | null>(null)
   const [comparison, setComparison] = useState<SellerHubComparison | null>(null)
   const [gateNow, setGateNow] = useState(0)
@@ -474,6 +474,45 @@ export function CommercialMonitorPanel() {
     const interval = window.setInterval(() => setGateNow(Date.now()), 15_000)
     return () => window.clearInterval(interval)
   }, [])
+
+  async function refreshLunaEvidence() {
+    if (busyMode) return
+    setBusyMode("luna")
+    setError("")
+    setMessage("Actualizando catálogo, stock y precios desde Luna…")
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError || !data.session) throw new Error("AUTH_REQUIRED")
+      const response = await fetch("/api/admin/market-radar", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "sync_lunaportex" }),
+      })
+      const payload = await readMobileReviewJson<Payload>(
+        response,
+        "No se pudo actualizar la evidencia Luna",
+      )
+      if (!payload.success) {
+        throw new Error(getMobileReviewPayloadError(
+          payload,
+          "MARKET_RADAR_SYNC_FAILED",
+        ))
+      }
+      await load()
+      setMessage("Evidencia Luna actualizada. Ejecuta ahora el dry run comercial.")
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(
+        requestError,
+        "No se pudo actualizar la evidencia Luna.",
+      ))
+    } finally {
+      setBusyMode(null)
+    }
+  }
 
   async function executeDryRun() {
     if (busyMode) return
@@ -623,7 +662,15 @@ export function CommercialMonitorPanel() {
         </span>
       </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        <button
+          type="button"
+          disabled={Boolean(busyMode) || loading}
+          onClick={() => void refreshLunaEvidence()}
+          className="min-h-14 rounded-2xl border border-amber-200/35 bg-amber-200/[0.08] px-4 font-black text-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 disabled:opacity-50"
+        >
+          {busyMode === "luna" ? "Actualizando Luna…" : "Actualizar evidencia Luna"}
+        </button>
         <button
           type="button"
           disabled={Boolean(busyMode) || loading}
