@@ -7,7 +7,7 @@ import { createHash } from "node:crypto"
  * estimated fulfilment value from accidentally becoming listing copy.
  */
 export const PRODUCT_FACTS_SCHEMA_VERSION = "PRODUCT_FACTS_V1_2026_07_17"
-export const PRODUCT_FACTS_RESOLVER_VERSION = "PRODUCT_FACTS_RESOLVER_V2_2026_07_19"
+export const PRODUCT_FACTS_RESOLVER_VERSION = "PRODUCT_FACTS_RESOLVER_V3_2026_07_20"
 export const SHIPPING_ESTIMATION_MODEL_VERSION = "SHIPPING_ESTIMATE_V1_2026_07_17"
 export const OPENAI_FACTS_INPUT_VERSION = "OPENAI_FACTS_INPUT_V2_2026_07_19"
 export const AUTHORITATIVE_FACT_SOURCE_POLICY = "TECHNICAL_AUTHORITY_ONLY_V2_2026_07_19"
@@ -447,8 +447,11 @@ export function mapTaxonomyRequirements(aspects: TaxonomyAspect[], facts: Resolv
   return aspects.map<FactRequirement>((aspect) => {
     const candidates = ASPECT_MAPPING[key(aspect.name)] ?? [aspect.name]
     const resolved = candidates.map((candidate) => facts.find((fact) => key(fact.factKey) === key(candidate))).find(Boolean) ?? null
-    const selectedValue = resolved && typeof resolved.selectedValue !== "object" && resolved.selectedValue !== null
+    const resolvedValue = resolved && typeof resolved.selectedValue !== "object" && resolved.selectedValue !== null
       ? String(resolved.selectedValue) : null
+    const selectedValue = resolvedValue
+      ? (aspect.values ?? []).find((value) => key(value) === key(resolvedValue)) ?? resolvedValue
+      : null
     const permittedSource = hasPermittedSource(resolved) || hasSafeSellSimilarAspect(aspect, resolved, selectedValue)
     const status: RequirementStatus = resolved?.verificationStatus === "CONFLICTED" ? "CONFLICTED_BLOCKING" :
       permittedSource ? (resolved?.verificationStatus === "VERIFIED" ||

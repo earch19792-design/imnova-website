@@ -41,7 +41,7 @@ import {
 } from "./ebay-official-manufacturer-facts"
 import { aggregateEbayMarketPricingByPack } from "./ebay-market-pricing-strategy"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V15_2026_07_19"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V16_2026_07_20"
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
 type JsonRecord = Record<string, unknown>

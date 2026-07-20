@@ -21,6 +21,7 @@ import {
   evaluateControlledRiskManualOverride,
 } from "./ebay-controlled-risk-manual-override"
 import { ebayDraftOnlyEconomicsConfig } from "./ebay-draft-only-readiness"
+import { preflightEbayDraftOnlyMobile } from "./ebay-draft-only-gateway"
 import {
   PRODUCT_FACTS_ENGINE_VERSION,
   runProductFactsEnrichment,
@@ -2785,6 +2786,35 @@ async function prepareFactsOnlyManualHandoff(input: {
   if (reusableConditionId && reusableConditionId !== conditionContract?.conditionId) {
     throw new Error("SAME_DAY_PILOT_SAFE_DEFAULT_CONDITION_MISMATCH")
   }
+  const handoffGeneratedAt = new Date().toISOString()
+  let verifiedPolicies = {
+    fulfillmentPolicyId: text(defaults?.defaults.fulfillmentPolicyId) || null,
+    paymentPolicyId: text(defaults?.defaults.paymentPolicyId) || null,
+    returnPolicyId: text(defaults?.defaults.returnPolicyId) || null,
+    verifiedSourceAt: text(defaults?.verifiedSourceAt) || null,
+  }
+  if (![verifiedPolicies.fulfillmentPolicyId, verifiedPolicies.paymentPolicyId,
+    verifiedPolicies.returnPolicyId].every((value) => text(value))) {
+    try {
+      const preflight = await preflightEbayDraftOnlyMobile({
+        fulfillmentPolicyId: verifiedPolicies.fulfillmentPolicyId ?? undefined,
+        paymentPolicyId: verifiedPolicies.paymentPolicyId ?? undefined,
+        returnPolicyId: verifiedPolicies.returnPolicyId ?? undefined,
+      })
+      const livePolicies = {
+        fulfillmentPolicyId: text(preflight.selection.fulfillmentPolicyId) || null,
+        paymentPolicyId: text(preflight.selection.paymentPolicyId) || null,
+        returnPolicyId: text(preflight.selection.returnPolicyId) || null,
+      }
+      if (preflight.mode === "GET_ONLY" && preflight.identity.status === "BOUND" &&
+        preflight.privilege.usable && Object.values(livePolicies).every((value) => text(value))) {
+        verifiedPolicies = { ...livePolicies, verifiedSourceAt: handoffGeneratedAt }
+      }
+    } catch {
+      // The handoff builder keeps the verified-policy blocker. Never guess a
+      // seller policy when the official read-only account lookup is unavailable.
+    }
+  }
   const images = [text(luna?.featured_image_url, 2_000),
     ...(Array.isArray(luna?.image_urls) ? luna.image_urls.map((value) => text(value, 2_000)) : [])].filter(Boolean)
   const result = buildVerifiedManualSellerHubHandoff({
@@ -2796,11 +2826,8 @@ async function prepareFactsOnlyManualHandoff(input: {
     economics: record(input.candidate.economics_summary), factsSummary: currentFactsSummary, lunaImageUrls: images,
     policies: { categoryId: text(defaults?.defaults.categoryId || categoryId) || null,
       conditionId: conditionContract?.conditionId ?? null,
-      fulfillmentPolicyId: text(defaults?.defaults.fulfillmentPolicyId) || null,
-      paymentPolicyId: text(defaults?.defaults.paymentPolicyId) || null,
-      returnPolicyId: text(defaults?.defaults.returnPolicyId) || null,
-      verifiedSourceAt: text(defaults?.verifiedSourceAt) || null },
-    generatedAt: new Date().toISOString(),
+      ...verifiedPolicies },
+    generatedAt: handoffGeneratedAt,
   })
   if (!result.ready) return { ...result, summary: null }
   const { error: persistError } = await input.supabase.from("ebay_same_day_pilot_handoffs").upsert({

@@ -7,7 +7,7 @@ import { normalizeEbayCompliantFulfillmentBasis } from "./ebay-fulfillment-polic
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { parseAuthoritativeFactsInputPackage } from "./ebay-product-facts-readiness.ts"
 
-export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V4_2026_07_19"
+export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V5_2026_07_20"
 
 type JsonRecord = Record<string, unknown>
 type SafeFact = { scope: string; key: string; value: unknown; unit: string | null; status: string }
@@ -41,6 +41,9 @@ function hash(value: unknown) {
 }
 function unique(values: string[]) {
   return [...new Set(values.map((value) => text(value)).filter(Boolean))]
+}
+function aspectValueKey(value: unknown) {
+  return text(value).toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, "")
 }
 function validImageUrl(value: unknown) {
   try {
@@ -118,7 +121,9 @@ export function buildVerifiedManualSellerHubHandoff(input: {
       aspectName: text(requirement.aspectName), required: requirement.required === true,
       mappedFactKey: text(requirement.mappedFactKey) || null,
       status: text(requirement.status), selectedValue: text(requirement.selectedValue) || null,
-      allowedValues: Array.isArray(requirement.allowedValues) ? requirement.allowedValues.map(text).filter(Boolean) : [],
+      allowedValues: Array.isArray(requirement.allowedValues)
+        ? requirement.allowedValues.map((value) => text(value)).filter(Boolean)
+        : [],
     }))
     : []
   const taxonomy = record(input.factsSummary.taxonomy)
@@ -155,14 +160,15 @@ export function buildVerifiedManualSellerHubHandoff(input: {
       : null
     const authoritativeValue = text(authoritativeFact?.value)
     const selectedValueAuthorized = Boolean(requirement.selectedValue && authoritativeValue &&
-      authoritativeValue.toLocaleLowerCase() === requirement.selectedValue.toLocaleLowerCase())
+      aspectValueKey(authoritativeValue) === aspectValueKey(requirement.selectedValue))
     if (requirement.required && !["SATISFIED_VERIFIED", "SATISFIED_CORROBORATED", "NOT_APPLICABLE"].includes(requirement.status)) {
       blockers.push(`REQUIRED_ASPECT_${text(requirement.aspectName).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`)
     }
     if (requirement.required && requirement.selectedValue && !selectedValueAuthorized) {
       blockers.push(`REQUIRED_ASPECT_AUTHORITY_${text(requirement.aspectName).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`)
     }
-    if (requirement.selectedValue && requirement.allowedValues.length && !requirement.allowedValues.includes(requirement.selectedValue)) {
+    if (requirement.selectedValue && requirement.allowedValues.length &&
+      !requirement.allowedValues.some((value) => aspectValueKey(value) === aspectValueKey(requirement.selectedValue))) {
       blockers.push(`ASPECT_VALUE_NOT_ALLOWED_${text(requirement.aspectName).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`)
     }
   }
@@ -187,7 +193,7 @@ export function buildVerifiedManualSellerHubHandoff(input: {
       : null
     const authoritativeValue = text(authoritativeFact?.value)
     if (requirement.selectedValue && authoritativeValue &&
-      authoritativeValue.toLocaleLowerCase() === requirement.selectedValue.toLocaleLowerCase() &&
+      aspectValueKey(authoritativeValue) === aspectValueKey(requirement.selectedValue) &&
       ["SATISFIED_VERIFIED", "SATISFIED_CORROBORATED"].includes(requirement.status)) {
       aspects[requirement.aspectName] = [requirement.selectedValue]
     }
