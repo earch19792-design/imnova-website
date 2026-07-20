@@ -31,6 +31,7 @@ export async function saveVerifiedEbayAccountPolicyProfile(input: {
     input.preflight.selection.fulfillmentPolicyId,
     input.preflight.selection.paymentPolicyId,
     input.preflight.selection.returnPolicyId,
+    input.preflight.selection.merchantLocationKey,
   ].every((value) => Boolean(text(value)))
 
   if (
@@ -50,7 +51,7 @@ export async function saveVerifiedEbayAccountPolicyProfile(input: {
       payment_policy_id: input.preflight.selection.paymentPolicyId,
       return_policy_id: input.preflight.selection.returnPolicyId,
       merchant_location_key:
-        text(input.preflight.selection.merchantLocationKey) || null,
+        text(input.preflight.selection.merchantLocationKey),
       verification_source: "EBAY_ACCOUNT_API_GET",
       profile_version: EBAY_ACCOUNT_POLICY_PROFILE_VERSION,
       verified_at: verifiedAt.toISOString(),

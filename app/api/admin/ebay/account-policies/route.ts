@@ -6,9 +6,9 @@ import { NextResponse } from "next/server"
 
 import { saveVerifiedEbayAccountPolicyProfile } from "@/lib/ebay/ebay-account-policy-profile"
 import {
-  ebayDraftOnlyRuntimeStatus,
-  preflightEbayDraftOnlyMobile,
-} from "@/lib/ebay/ebay-draft-only-gateway"
+  ebayAccountPolicyReadonlyRuntimeStatus,
+  preflightEbayAccountPoliciesReadonly,
+} from "@/lib/ebay/ebay-account-policy-readonly-gateway"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
@@ -27,8 +27,7 @@ function text(value: unknown) {
 }
 
 function target() {
-  const value = process.env.EBAY_DRAFT_ONLY_TARGET?.trim().toUpperCase()
-  return value === "SANDBOX" || value === "PRODUCTION" ? value : "BLOCKED"
+  return "PRODUCTION"
 }
 
 function safety(responseTarget: string) {
@@ -50,7 +49,9 @@ function safeErrorCode(error: unknown) {
   if (
     name === "AbortError" ||
     message === "EBAY_DRAFT_ONLY_READ_PREFLIGHT_UNAVAILABLE" ||
-    message === "EBAY_DRAFT_ONLY_REQUEST_FAILED"
+    message === "EBAY_DRAFT_ONLY_REQUEST_FAILED" ||
+    message === "EBAY_ACCOUNT_POLICY_READONLY_REQUEST_FAILED" ||
+    message === "EBAY_ACCOUNT_POLICY_READONLY_PREFLIGHT_UNAVAILABLE"
   ) return PREFLIGHT_UNAVAILABLE
   return /^EBAY_[A-Z0-9_]+(?:_[0-9]{3})?$/.test(message)
     ? message
@@ -105,7 +106,7 @@ export async function POST(req: Request) {
     }
 
     const requested = record(body.selection)
-    const preflight = await preflightEbayDraftOnlyMobile({
+    const preflight = await preflightEbayAccountPoliciesReadonly({
       fulfillmentPolicyId: text(requested.fulfillmentPolicyId),
       paymentPolicyId: text(requested.paymentPolicyId),
       returnPolicyId: text(requested.returnPolicyId),
@@ -124,7 +125,7 @@ export async function POST(req: Request) {
       success: true,
       preflight,
       accountPolicyProfileSaved,
-      runtime: ebayDraftOnlyRuntimeStatus(),
+      runtime: ebayAccountPolicyReadonlyRuntimeStatus(),
       safety: safety(preflight.target),
     }, { headers: { "Cache-Control": "no-store" } })
   } catch (error) {

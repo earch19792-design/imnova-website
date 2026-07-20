@@ -17,6 +17,7 @@ import {
   decideSameDayProduct,
   getSameDayPilot,
   processSameDayPilotJobChain,
+  resumeSameDayPilotAfterAccountPolicyProfile,
   startSameDayPilot,
 } from "@/lib/ebay/ebay-same-day-pilot-service"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
@@ -340,6 +341,42 @@ export async function POST(req: Request) {
           promotionAllowed: false,
           manualPublicationOnly: true,
           automaticPricingUsed: false,
+          ebayWrites: 0,
+          productionChanged: false,
+        },
+      })
+    }
+    if (body.action === "resume_account_policy_profile") {
+      const candidateId = uuid(body.candidateId)
+      if (!candidateId) {
+        return NextResponse.json({
+          success: false,
+          error: "SAME_DAY_PILOT_POLICY_RECOVERY_CANDIDATE_REQUIRED",
+        }, { status: 400 })
+      }
+      const recovery = await resumeSameDayPilotAfterAccountPolicyProfile({
+        supabase: access.supabase,
+        accountKey: access.accountKey,
+        actorId: access.auth.userId,
+        candidateId,
+      })
+      const continuation = scheduleImmediateContinuation({
+        supabase: access.supabase,
+        accountKey: access.accountKey,
+        workerId: `account-policy-recovery:${access.auth.userId}`,
+      })
+      const pilot = await getSameDayPilot({
+        supabase: access.supabase,
+        accountKey: access.accountKey,
+      })
+      return NextResponse.json({
+        success: true,
+        recovery,
+        pilot,
+        continuation,
+        autoResumed: true,
+        safety: {
+          candidateScoped: true,
           ebayWrites: 0,
           productionChanged: false,
         },

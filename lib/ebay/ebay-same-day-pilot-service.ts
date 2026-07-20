@@ -2569,6 +2569,30 @@ export async function decideSameDayProduct(input: {
   return getSameDayPilot(input)
 }
 
+export async function resumeSameDayPilotAfterAccountPolicyProfile(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorId: string
+  candidateId: string
+}) {
+  const { data, error } = await input.supabase.rpc(
+    "resume_same_day_pilot_candidate_after_account_policy_profile_v1",
+    {
+      p_account_key: input.accountKey,
+      p_actor: input.actorId,
+      p_candidate_id: input.candidateId,
+      p_now: new Date().toISOString(),
+    },
+  )
+  if (error) {
+    const message = text(record(error).message, 1_000)
+    const code = message.match(/SAME_DAY_PILOT_[A-Z0-9_]+/)?.[0]
+      ?? "SAME_DAY_PILOT_POLICY_RECOVERY_FAILED"
+    throw new Error(code)
+  }
+  return record(data)
+}
+
 export async function decideSameDayImages(input: {
   supabase: SupabaseClient
   accountKey: string
