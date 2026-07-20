@@ -236,6 +236,7 @@ type ImageRevisionPayload = {
     base_control_id: string
     revision_number: number
     image_set_hash?: string | null
+    last_error_code?: string | null
   }
   assets: Array<{
     id: string
@@ -1050,19 +1051,51 @@ export default function EbayListingWorkspacePage() {
     setError("")
     setMessage("Generando seis composiciones corregidas sin tocar eBay…")
     try {
+      const currentRevisionStatus = String(imageRevision?.revision.status ?? "")
       const payload = await imageRequest({
         action: "generate",
         baseControlId: approvedBaseImageControlId,
         reason: "IMAGE_COMPOSITOR_DEFECT",
-        ...(imageRevision?.revision.status === "REJECTED"
+        ...(!imageRevision || ["REJECTED", "FAILED_FINAL"].includes(currentRevisionStatus)
           ? { requestKey: crypto.randomUUID() }
           : {}),
       })
+      const revision = object(payload.revision)
+      const revisionStatus = String(revision.status ?? "")
+      const assets = Array.isArray(payload.assets)
+        ? payload.assets as ImageRevisionPayload["assets"]
+        : []
+      if (revisionStatus === "FAILED_FINAL") {
+        throw new Error(String(
+          revision.last_error_code ?? "SAME_DAY_IMAGE_REVISION_FAILED_FINAL",
+        ))
+      }
+      const requiredSlots = [
+        "MAIN_WHITE_BACKGROUND",
+        "PACK_AND_COUNT",
+        "KEY_FEATURES",
+        "SIZE_AND_CONTENT",
+        "USE_CONTEXT",
+        "PACKAGE_CONTENTS",
+      ]
+      const assetIds = assets.map((asset) => String(asset.id ?? ""))
+      const outputHashes = assets.map((asset) => String(asset.outputSha256 ?? ""))
+      const layoutIds = assets.map((asset) => String(asset.layoutId ?? ""))
+      const slots = assets.map((asset) => String(asset.slot ?? ""))
+      const previewUrls = assets.map((asset) => httpsImageUrl(asset.previewUrl) ?? "")
+      const exactSixReady = ["PENDING_REVIEW", "APPROVED"].includes(revisionStatus)
+        && assets.length === 6
+        && [assetIds, outputHashes, layoutIds, slots, previewUrls].every((values) =>
+          values.every(Boolean) && new Set(values).size === 6)
+        && requiredSlots.every((slot) => slots.includes(slot))
+      if (!exactSixReady) {
+        throw new Error("SAME_DAY_IMAGE_REVISION_EXACT_SIX_INVALID")
+      }
       setImageRevision({
         revision: payload.revision,
-        assets: Array.isArray(payload.assets) ? payload.assets : [],
+        assets,
       })
-      setMessage(payload.revision?.status === "APPROVED"
+      setMessage(revisionStatus === "APPROVED"
         ? "La revisión corregida ya estaba aprobada y sigue lista para el próximo preview. No se escribió en eBay."
         : "Se prepararon seis imágenes nuevas. Compara las seis antes de aprobar o rechazar el conjunto completo.")
     } catch (requestError) {

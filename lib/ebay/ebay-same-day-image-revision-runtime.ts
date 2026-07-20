@@ -9,6 +9,7 @@ import {
   EBAY_IMAGE_STAGING_BUCKET,
 } from "./ebay-image-storage-cleanup"
 import {
+  EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
   EBAY_LISTING_IMAGE_SET_VERSION,
   EBAY_LISTING_IMAGE_SLOTS,
   getListingImageFactoryConfiguration,
@@ -19,7 +20,9 @@ import {
 } from "./ebay-same-day-image-package-service"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
-const REVISION_VERSION = "EBAY_LISTING_IMAGE_REVISION_V1"
+const REVISION_VERSION = "EBAY_LISTING_IMAGE_REVISION_V2_VERIFIED_ACTIVE_HANDOFF_COMPAT"
+const VERIFIED_ACTIVE_HISTORICAL_HANDOFF_VERSION =
+  "SELLER_HUB_FACTS_ONLY_V7_2026_07_20"
 const MAX_OUTPUT_BYTES = 12 * 1024 * 1024
 
 type JsonRecord = Record<string, unknown>
@@ -129,6 +132,61 @@ async function loadBaseContext(input: {
     throw new Error("SAME_DAY_IMAGE_REVISION_FACT_BINDING_INVALID")
   }
   const handoffPackage = record(handoff.package_data)
+  const candidateKey = text(candidate.candidate_key, 300)
+  const opportunityId = uuid(candidate.opportunity_id)
+  let allowVerifiedActiveHistoricalHandoff = false
+  if (text(handoffPackage.version, 100) ===
+    VERIFIED_ACTIVE_HISTORICAL_HANDOFF_VERSION) {
+    const safety = record(handoffPackage.safety)
+    const images = record(handoffPackage.images)
+    const historicalBindingValid = candidate.state === "VERIFIED_ACTIVE"
+      && candidate.machine_state === "VERIFIED_ACTIVE"
+      && text(handoffPackage.candidateId, 40) === candidateId
+      && text(handoffPackage.factRunId, 40) === factRunId
+      && safety.factsOnly === true
+      && Number(safety.openAiCalls) === 0
+      && Number(safety.ebayWrites) === 0
+      && safety.competitorContentUsed === false
+      && text(safety.authoritativeFactPackageHash, 80) === factPackageHash
+      && images.source === "LUNA_AUTHORIZED_CATALOG"
+      && Number(images.competitorImages) === 0
+      && Number.isInteger(Number(images.count))
+      && Number(images.count) > 0
+      && Boolean(candidateKey)
+      && Boolean(opportunityId)
+    if (!historicalBindingValid) {
+      throw new Error("SAME_DAY_IMAGE_HANDOFF_STALE")
+    }
+    const { data: manualLink, error: manualLinkError } = await input.supabase
+      .from("ebay_manual_listing_links")
+      .select("connector_listing_id,ebay_item_id")
+      .eq("account_key", input.accountKey)
+      .eq("opportunity_id", opportunityId)
+      .eq("candidate_key", candidateKey)
+      .eq("verification_status", "verified")
+      .eq("connector_listing_status", "active")
+      .maybeSingle()
+    if (manualLinkError || !uuid(manualLink?.connector_listing_id)
+      || !/^\d{9,20}$/.test(text(manualLink?.ebay_item_id, 20))) {
+      throw new Error(
+        "SAME_DAY_IMAGE_REVISION_VERIFIED_ACTIVE_EVIDENCE_REQUIRED",
+      )
+    }
+    const { data: activeListing, error: activeListingError } = await input.supabase
+      .from("ebay_active_listings")
+      .select("id")
+      .eq("id", manualLink.connector_listing_id)
+      .eq("account_key", input.accountKey)
+      .eq("ebay_item_id", manualLink.ebay_item_id)
+      .eq("listing_status", "active")
+      .maybeSingle()
+    if (activeListingError || !activeListing) {
+      throw new Error(
+        "SAME_DAY_IMAGE_REVISION_VERIFIED_ACTIVE_EVIDENCE_REQUIRED",
+      )
+    }
+    allowVerifiedActiveHistoricalHandoff = true
+  }
   const sourceValues = Array.isArray(record(handoffPackage.images).urls)
     ? record(handoffPackage.images).urls as unknown[]
     : []
@@ -144,11 +202,12 @@ async function loadBaseContext(input: {
     factsPackage,
     factRunId,
     factPackageHash,
+    allowVerifiedActiveHistoricalHandoff,
     sourceUrls,
     listingPackageId,
     candidateId,
-    candidateKey: text(candidate.candidate_key, 300),
-    opportunityId: uuid(candidate.opportunity_id),
+    candidateKey,
+    opportunityId,
   }
 }
 
@@ -238,6 +297,7 @@ export async function generateAndPersistSameDayImageRevision(input: {
     actorId,
     baseControlId,
     REVISION_VERSION,
+    EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
     requestKey || "DEFAULT_DIVERSIFIED_REVISION",
   ].join(":"))
   const leaseToken = randomUUID()
@@ -301,8 +361,28 @@ export async function generateAndPersistSameDayImageRevision(input: {
         rightsEvidenceConfirmed: true,
       },
       aiContext: { enabled: false },
+      allowVerifiedActiveHistoricalHandoff:
+        context.allowVerifiedActiveHistoricalHandoff,
       source: uniqueSources.map((entry) => entry.source.buffer),
     })
+    const generatedSlots = generated.transientAssets.map((asset) => asset.slot)
+    const generatedLayouts = generated.transientAssets.map((asset) =>
+      text(record(asset.transformation).layoutId, 120))
+    const generatedHashes = generated.transientAssets.map((asset) =>
+      text(asset.outputSha256, 64))
+    const generatedContracts = generated.transientAssets.map((asset) =>
+      text(record(asset.transformation).compositorContractVersion, 120))
+    if (generated.transientAssets.length !== 6
+      || new Set(generatedSlots).size !== 6
+      || EBAY_LISTING_IMAGE_SLOTS.some((slot) => !generatedSlots.includes(slot))
+      || generatedLayouts.some((layout) => !layout)
+      || new Set(generatedLayouts).size !== 6
+      || generatedHashes.some((hash) => !/^[0-9a-f]{64}$/.test(hash))
+      || new Set(generatedHashes).size !== 6
+      || generatedContracts.some((contract) =>
+        contract !== EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION)) {
+      throw new Error("SAME_DAY_IMAGE_REVISION_EXACT_SIX_INVALID")
+    }
     const roleBySlot: Record<string, string> = {
       MAIN_WHITE_BACKGROUND: "main",
       PACK_AND_COUNT: "detail",
@@ -415,6 +495,11 @@ export async function generateAndPersistSameDayImageRevision(input: {
         authorizedSourceIndex: Number(transformation.authorizedSourceIndex),
         sourceSha256: text(requested.source_sha256, 64),
         outputSha256: text(requested.output_sha256, 64),
+        compositorContractVersion: text(
+          transformation.compositorContractVersion,
+          120,
+        ),
+        presentationMode: text(transformation.presentationMode, 120),
         reused,
       })
     }

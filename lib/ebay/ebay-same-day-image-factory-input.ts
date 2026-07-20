@@ -7,6 +7,8 @@ import { SAME_DAY_MANUAL_HANDOFF_VERSION } from "./ebay-same-day-manual-handoff.
 
 export const SAME_DAY_IMAGE_FACTORY_INPUT_VERSION =
   "SAME_DAY_FACT_ONLY_IMAGE_FACTORY_INPUT_V1_2026_07_18"
+export const VERIFIED_ACTIVE_HISTORICAL_HANDOFF_VERSION =
+  "SELLER_HUB_FACTS_ONLY_V7_2026_07_20"
 
 type JsonRecord = Record<string, unknown>
 
@@ -69,6 +71,7 @@ export function buildCurrentSameDayImageFactoryInput(input: {
   handoffPackage: unknown
   authoritativeFactsPackage: unknown
   currentBinding: CurrentSameDayImageFactBinding
+  allowVerifiedActiveHistoricalHandoff?: boolean
 }): EbayListingImageFactoryInput {
   const handoff = record(input.handoffPackage)
   const safety = record(handoff.safety)
@@ -81,7 +84,11 @@ export function buildCurrentSameDayImageFactoryInput(input: {
     !/^sha256:[0-9a-f]{64}$/.test(expectedHash)) {
     throw new Error("SAME_DAY_IMAGE_CURRENT_BINDING_INVALID")
   }
-  if (handoff.version !== SAME_DAY_MANUAL_HANDOFF_VERSION ||
+  const handoffVersionCurrent = handoff.version === SAME_DAY_MANUAL_HANDOFF_VERSION
+  const historicalMaintenanceAllowed =
+    input.allowVerifiedActiveHistoricalHandoff === true &&
+    handoff.version === VERIFIED_ACTIVE_HISTORICAL_HANDOFF_VERSION
+  if ((!handoffVersionCurrent && !historicalMaintenanceAllowed) ||
     safeText(handoff.candidateId, 200) !== candidateId ||
     safeText(handoff.factRunId, 200) !== factRunId) {
     throw new Error("SAME_DAY_IMAGE_HANDOFF_STALE")

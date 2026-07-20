@@ -85,6 +85,20 @@ function databaseErrorCode(error: unknown, fallback: string) {
   return message.match(/EBAY_[A-Z0-9_]+/)?.[0] ?? fallback
 }
 
+function assertCompleteImageRevisionResult(value: unknown) {
+  const result = record(value)
+  const revision = record(result.revision)
+  const status = text(revision.status, 40)
+  if (status === "FAILED_FINAL") {
+    throw new Error(
+      text(revision.last_error_code, 120) || "SAME_DAY_IMAGE_REVISION_FAILED_FINAL",
+    )
+  }
+  if (!Array.isArray(result.assets) || result.assets.length !== 6) {
+    throw new Error("SAME_DAY_IMAGE_REVISION_EXACT_SIX_INVALID")
+  }
+}
+
 function candidatePath(candidateKey: string) {
   return createHash("sha256").update(candidateKey).digest("hex").slice(0, 24)
 }
@@ -294,6 +308,7 @@ export async function GET(req: Request) {
           actorId: validation.userId,
           revisionId,
         })
+        assertCompleteImageRevisionResult(result)
         return NextResponse.json({
           success: true,
           ...result,
@@ -417,6 +432,7 @@ export async function POST(req: Request) {
             revisionId,
           })
           : generated
+        assertCompleteImageRevisionResult(result)
         return NextResponse.json({
           success: true,
           ...result,

@@ -9,6 +9,8 @@ import { EBAY_IMAGE_OUTPUT_SIZE, optimizeAuthorizedEbayMainImage } from "./ebay-
 
 export const EBAY_LISTING_IMAGE_SET_VERSION =
   "EBAY_LISTING_IMAGE_COMPOSITION_SET_V1"
+export const EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION =
+  "EBAY_IMAGE_COMPOSITOR_DIVERSITY_V3_2026_07_20"
 export const EBAY_OPENAI_BACKGROUND_PLATE_VERSION =
   "EBAY_OPENAI_BACKGROUND_PLATE_V1"
 export const EBAY_OPENAI_IMAGE_PREVIEW_BRANCH =
@@ -68,7 +70,9 @@ export type EbayListingImageComposition = {
     version: string
     slot: EbayListingImageSlot
     layoutId: string
+    compositorContractVersion: typeof EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION
     authorizedSourceIndex: number
+    presentationMode: "AUTHORIZED_MULTI_SOURCE" | "SINGLE_SOURCE_INFORMATIONAL"
     generativeAiUsed: boolean
     originalPackagePixelsPreserved: true
     competitorImageUsed: false
@@ -87,6 +91,8 @@ export type EbayListingImageComposition = {
     textDerivedFromVerifiedFacts: true
     mainBackground: "PURE_WHITE" | "NOT_APPLICABLE"
     humanApprovalRequired: true
+    structuralDiversityVerified: true
+    foregroundEdgeCoverage: number
     manualChecksRequired: string[]
   }
 }
@@ -588,16 +594,55 @@ async function composeContextImage(
     .toBuffer()
 }
 
-async function perceptualDistance(left: Buffer, right: Buffer) {
-  const [leftPixels, rightPixels] = await Promise.all([
-    sharp(left).resize(32, 32, { fit: "fill" }).greyscale().raw().toBuffer(),
-    sharp(right).resize(32, 32, { fit: "fill" }).greyscale().raw().toBuffer(),
-  ])
-  let difference = 0
-  for (let index = 0; index < leftPixels.length; index += 1) {
-    difference += Math.abs(leftPixels[index] - rightPixels[index])
+type StructuralSignature = {
+  pixels: Buffer
+  edges: Uint8Array
+  edgeCoverage: number
+}
+
+async function structuralSignature(value: Buffer): Promise<StructuralSignature> {
+  const size = 64
+  const pixels = await sharp(value).resize(size, size, { fit: "fill" })
+    .greyscale().raw().toBuffer()
+  const edges = new Uint8Array(pixels.length)
+  let visibleEdges = 0
+  for (let y = 1; y < size - 1; y += 1) {
+    for (let x = 1; x < size - 1; x += 1) {
+      const index = y * size + x
+      const horizontal = Math.abs(pixels[index + 1] - pixels[index - 1])
+      const vertical = Math.abs(pixels[index + size] - pixels[index - size])
+      const magnitude = Math.min(255, horizontal + vertical)
+      edges[index] = magnitude
+      if (magnitude >= 24) visibleEdges += 1
+    }
   }
-  return difference / leftPixels.length
+  const edgeCoverage = visibleEdges / ((size - 2) * (size - 2))
+  if (edgeCoverage < 0.004) {
+    pixels.fill(0)
+    edges.fill(0)
+    throw new Error("EBAY_IMAGE_SET_FOREGROUND_STRUCTURE_MISSING")
+  }
+  return { pixels, edges, edgeCoverage }
+}
+
+function structuralDistance(left: StructuralSignature, right: StructuralSignature) {
+  let pixelDifference = 0
+  let edgeDifference = 0
+  let edgeIntersection = 0
+  let edgeUnion = 0
+  for (let index = 0; index < left.pixels.length; index += 1) {
+    pixelDifference += Math.abs(left.pixels[index] - right.pixels[index])
+    edgeDifference += Math.abs(left.edges[index] - right.edges[index])
+    const leftEdge = left.edges[index] >= 24
+    const rightEdge = right.edges[index] >= 24
+    if (leftEdge && rightEdge) edgeIntersection += 1
+    if (leftEdge || rightEdge) edgeUnion += 1
+  }
+  return {
+    pixelMae: pixelDifference / left.pixels.length,
+    edgeMae: edgeDifference / left.edges.length,
+    edgeOverlap: edgeUnion ? edgeIntersection / edgeUnion : 1,
+  }
 }
 
 function sourceIndexForSlot(slot: EbayListingImageSlot, sourceCount: number) {
@@ -637,6 +682,10 @@ export async function composeAuthorizedEbayListingImageSet(
   const mains = await Promise.all(sources.map((entry) =>
     optimizeAuthorizedEbayMainImage(entry)))
   const outputs: EbayListingImageComposition[] = []
+  const signatures: StructuralSignature[] = []
+  const presentationMode = sources.length > 1
+    ? "AUTHORIZED_MULTI_SOURCE" as const
+    : "SINGLE_SOURCE_INFORMATIONAL" as const
   for (const slot of EBAY_LISTING_IMAGE_SLOTS) {
     const authorizedSourceIndex = sourceIndexForSlot(slot, mains.length)
     const main = mains[authorizedSourceIndex]
@@ -651,8 +700,17 @@ export async function composeAuthorizedEbayListingImageSet(
       metadata.width !== EBAY_IMAGE_OUTPUT_SIZE ||
       metadata.height !== EBAY_IMAGE_OUTPUT_SIZE
     ) throw new Error("EBAY_IMAGE_SET_OUTPUT_INVALID")
-    for (const previous of outputs) {
-      if (await perceptualDistance(output, previous.output) < 3) {
+    const signature = await structuralSignature(output)
+    for (const previous of signatures) {
+      const distance = structuralDistance(signature, previous)
+      if (distance.pixelMae < 5 || distance.edgeMae < 2 ||
+        distance.edgeOverlap > 0.94) {
+        signature.pixels.fill(0)
+        signature.edges.fill(0)
+        for (const stored of signatures) {
+          stored.pixels.fill(0)
+          stored.edges.fill(0)
+        }
         throw new Error("EBAY_IMAGE_SET_PERCEPTUALLY_DUPLICATED")
       }
     }
@@ -673,7 +731,9 @@ export async function composeAuthorizedEbayListingImageSet(
         version: EBAY_LISTING_IMAGE_SET_VERSION,
         slot,
         layoutId,
+        compositorContractVersion: EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
         authorizedSourceIndex,
+        presentationMode,
         generativeAiUsed: slot === "USE_CONTEXT" && Boolean(backgroundPlate),
         originalPackagePixelsPreserved: true,
         competitorImageUsed: false,
@@ -696,6 +756,8 @@ export async function composeAuthorizedEbayListingImageSet(
         textDerivedFromVerifiedFacts: true,
         mainBackground: slot === "MAIN_WHITE_BACKGROUND" ? "PURE_WHITE" : "NOT_APPLICABLE",
         humanApprovalRequired: true,
+        structuralDiversityVerified: true,
+        foregroundEdgeCoverage: signature.edgeCoverage,
         manualChecksRequired: [
           "MANUFACTURER_BRAND_MATCH",
           "PACK_AND_UNIT_COUNT_MATCH",
@@ -706,9 +768,17 @@ export async function composeAuthorizedEbayListingImageSet(
           ...(slot === "USE_CONTEXT" && backgroundPlate
             ? ["GENERATED_BACKGROUND_HAS_NO_PRODUCT_BRAND_TEXT_OR_PEOPLE"]
             : []),
+          ...(presentationMode === "SINGLE_SOURCE_INFORMATIONAL"
+            ? ["SINGLE_SOURCE_INFORMATIONAL_PANELS_NOT_MULTIPLE_PRODUCT_VIEWS"]
+            : []),
         ],
       },
     })
+    signatures.push(signature)
+  }
+  for (const signature of signatures) {
+    signature.pixels.fill(0)
+    signature.edges.fill(0)
   }
   return outputs
 }
