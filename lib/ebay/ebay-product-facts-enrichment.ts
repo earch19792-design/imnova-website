@@ -39,8 +39,9 @@ import {
   OFFICIAL_MANUFACTURER_FACTS_ADAPTER_VERSION,
   fetchOfficialManufacturerFacts,
 } from "./ebay-official-manufacturer-facts"
+import { aggregateEbayMarketPricingByPack } from "./ebay-market-pricing-strategy"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V10_2026_07_19"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V11_2026_07_19"
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
 type JsonRecord = Record<string, unknown>
@@ -670,7 +671,9 @@ export async function runProductFactsEnrichment(input: {
     resolvedFacts?: Array<{ scope: string; key: string; value: unknown; unit: string | null; status: string }>
     resolvedRequirements?: Array<{ aspectName: string; required: boolean; mappedFactKey: string | null;
       status: string; selectedValue: string | null; allowedValues: string[] }>
-    taxonomy?: { status: string; categoryId: string | null; categoryTreeId: string | null; observedAt: string | null }
+    taxonomy?: { status: string; categoryId: string | null; categoryTreeId: string | null;
+      observedAt: string | null; variationAspects: string[] }
+    marketPricing?: ReturnType<typeof aggregateEbayMarketPricingByPack>
     evidenceBinding?: { factRunId: string; currentRunBound: boolean; sourceSnapshotLinks: number;
       observationLinks: number; resolutionLinks: number; requirementLinks: number; readinessEventLinks: number }
   }> = []
@@ -926,7 +929,15 @@ export async function runProductFactsEnrichment(input: {
           status: requirement.status, selectedValue: requirement.selectedValue,
           allowedValues: requirement.allowedValues })),
         taxonomy: { status: text(taxonomyRecord.status), categoryId: text(taxonomyRecord.categoryId) || null,
-          categoryTreeId: text(taxonomyRecord.categoryTreeId) || null, observedAt: text(taxonomyRecord.observedAt) || null } })
+          categoryTreeId: text(taxonomyRecord.categoryTreeId) || null, observedAt: text(taxonomyRecord.observedAt) || null,
+          variationAspects: array(taxonomyRecord.aspects).map(record)
+            .filter((aspect) => aspect.enabledForVariations === true)
+            .map((aspect) => text(aspect.name)).filter(Boolean) },
+        marketPricing: aggregateEbayMarketPricingByPack({
+          comparableEvidence: record(browseReport).comparableEvidence,
+          nativePackCount: intendedPackCount,
+          observedAt: now.toISOString(),
+        }) })
     } catch (error) {
       if (getEbayReadonlyRateLimitMetadata(error)) throw error
       candidateResults.push({ candidateId: text(candidate.id), status: "PARTIAL", openAiInputReady: false, reason: safeCode(error) })

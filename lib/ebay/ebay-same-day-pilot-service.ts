@@ -25,6 +25,7 @@ import {
   PRODUCT_FACTS_ENGINE_VERSION,
   runProductFactsEnrichment,
 } from "./ebay-product-facts-enrichment"
+import { buildEbayMarketPricingRecommendation } from "./ebay-market-pricing-strategy"
 import { selectApplicableSafeListingDefaults } from "./ebay-manual-listing-service"
 import { ebayConditionContractFromVerifiedFact } from "./ebay-manual-listing-domain"
 import { isAllowedLunaProductUrl } from "../marketplace/fulfillment-v1a-domain"
@@ -3367,19 +3368,40 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             blockers: [text(currentResult?.reason) || "PRODUCT_FACTS_PARTIAL_OR_EXCLUDED"] })
           productFactsState = "REJECTED"
         } else {
+          const currentEconomics = record(candidate.economics_summary)
+          const pricingRecommendation = buildEbayMarketPricingRecommendation({
+            minimumOperatorPrice: number(currentEconomics.minimumOperatorPrice),
+            marketPricing: currentResult.marketPricing,
+            exactSoldMarketReference: record(candidate.evidence_summary).exactSoldMarketReference,
+            variationAspectNames: currentResult.taxonomy?.variationAspects,
+          })
+          const nextEconomics = {
+            ...currentEconomics,
+            pricingRecommendation,
+            recommendedSalePrice: pricingRecommendation.recommendedSalePrice,
+            status: "PRICE_RECOMMENDED_PENDING_APPROVAL",
+            automaticPricingUsed: false,
+            automaticPricingRecommendationUsed: true,
+            competitorPriceUsedForRecommendation: pricingRecommendation.marketReferenceUsed,
+            individualCompetitorPriceCopied: false,
+          }
           summary = {
             factRunId: factRun.runId, status: currentResult.status, gates: currentResult.gates ?? {},
             exception: currentResult.exception ?? null, counts: currentResult.factCounts ?? {},
             requirements: currentResult.requirementCounts ?? {}, resolvedFacts: currentResult.resolvedFacts ?? [],
             authoritativeFactsPackage: currentResult.authoritativeFactsPackage ?? null,
             resolvedRequirements: currentResult.resolvedRequirements ?? [], taxonomy: currentResult.taxonomy ?? {},
+            marketPricing: currentResult.marketPricing ?? null,
+            pricingRecommendation,
             evidenceBinding,
             observedAt: new Date().toISOString(),
             currentRunBound: true, openAiCalls: 0, ebayWrites: 0,
           }
           const { error: summaryError } = await input.supabase.from("ebay_same_day_pilot_candidates")
-            .update({ product_facts_summary: summary, updated_at: new Date().toISOString() }).eq("id", candidate.id)
+            .update({ product_facts_summary: summary, economics_summary: nextEconomics,
+              updated_at: new Date().toISOString() }).eq("id", candidate.id)
           if (summaryError) throw new Error("SAME_DAY_PILOT_FACT_SUMMARY_UPDATE_FAILED")
+          Object.assign(candidate, { economics_summary: nextEconomics })
         }
       }
       if (productFactsState === "ENRICHING_PRODUCT_FACTS") {
@@ -3500,7 +3522,10 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             fields: ["operatorSalePrice", "fulfillmentBasis", "imageRightsConfirmed",
               "openAiImageSpendApproved"],
             allowedFulfillmentBases: ["OWNED_INVENTORY", "AUTHORIZED_WHOLESALE_FULFILLMENT_AGREEMENT"],
-            automaticPricingUsed: false },
+            automaticPricingUsed: false, automaticPricingRecommendationUsed: true,
+            requiresManualPriceEntry: false, humanPriceApprovalRequired: true,
+            presentationPortfolio: record(record(candidate.economics_summary).pricingRecommendation)
+              .publicationPortfolio ?? null },
           continuationJobType: "PREPARE_VERIFIED_HANDOFF" })
       }
     } else if (leased.job_type === "BUILD_MANUAL_SELLER_HUB_HANDOFF") {

@@ -747,6 +747,7 @@ export type EbayTaxonomyAspectValueIntelligence = {
 export type EbayTaxonomyAspectIntelligence = {
   name: string
   required: boolean
+  enabledForVariations: boolean
   usage: string | null
   mode: string | null
   cardinality: string | null
@@ -878,6 +879,7 @@ function mapTaxonomyAspect(value: unknown) {
     advancedDataType: text(constraint.aspectAdvancedDataType) || null,
     expectedRequiredByDate: text(constraint.expectedRequiredByDate) || null,
     required: constraint.aspectRequired === true,
+    enabledForVariations: constraint.aspectEnabledForVariations === true,
     usage: text(constraint.aspectUsage),
     suggestedValues: values.map((entry) => entry.value).slice(0, 25),
     values,
