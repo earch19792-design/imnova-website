@@ -26,5 +26,5 @@ comment on table public.ebay_account_policy_profiles is
 alter table public.ebay_account_policy_profiles enable row level security;
 alter table public.ebay_account_policy_profiles force row level security;
 
-revoke all on table public.ebay_account_policy_profiles from public, anon, authenticated;
+revoke all on table public.ebay_account_policy_profiles from public, anon, authenticated, service_role;
 grant select, insert, update on table public.ebay_account_policy_profiles to service_role;
