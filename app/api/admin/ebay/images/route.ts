@@ -1,5 +1,5 @@
 export const runtime = "nodejs"
-export const maxDuration = 180
+export const maxDuration = 300
 
 import { createHash } from "node:crypto"
 import { NextResponse } from "next/server"
@@ -27,6 +27,11 @@ import {
 } from "@/lib/ebay/ebay-image-storage-cleanup"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { assertEbayImageAccountScope } from "@/lib/ebay/ebay-image-account-scope"
+import {
+  generateAndPersistSameDayImageRevision,
+  getSameDayImageRevision,
+  reviewSameDayImageRevision,
+} from "@/lib/ebay/ebay-same-day-image-revision-runtime"
 import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
@@ -60,6 +65,15 @@ function safeError(error: unknown) {
   return /^[A-Z0-9_:.-]+$/.test(message)
     ? message
     : "EBAY_IMAGE_PIPELINE_FAILED"
+}
+
+function imageRevisionErrorStatus(code: string) {
+  if (/NOT_FOUND/.test(code)) return 404
+  if (/INVALID|REQUIRED|MISSING/.test(code)) return 400
+  if (/CONFLICT|BUSY|NOT_APPROVED|NOT_REVIEWABLE|BLOCKED|LEASE/.test(code)) {
+    return 409
+  }
+  return 502
 }
 
 function databaseErrorCode(error: unknown, fallback: string) {
@@ -267,6 +281,28 @@ export async function GET(req: Request) {
       )
     }
     const url = new URL(req.url)
+    const revisionId = uuid(url.searchParams.get("revisionId"))
+    if (revisionId) {
+      try {
+        const result = await getSameDayImageRevision({
+          supabase: getSupabaseAdminClient(),
+          accountKey,
+          actorId: validation.userId,
+          revisionId,
+        })
+        return NextResponse.json({
+          success: true,
+          ...result,
+          safety: { ebayWrites: 0, productionChanged: false },
+        })
+      } catch (error) {
+        const code = safeError(error)
+        return NextResponse.json(
+          { success: false, error: code },
+          { status: imageRevisionErrorStatus(code) },
+        )
+      }
+    }
     const packageId = uuid(url.searchParams.get("packageId"))
     const candidateKey = text(url.searchParams.get("candidateKey"), 300)
     const supabase = getSupabaseAdminClient()
@@ -346,6 +382,87 @@ export async function POST(req: Request) {
     const body = await parseBody(req)
     const action = text(body.action, 40)
     const supabase = getSupabaseAdminClient()
+
+    if (action === "generate") {
+      try {
+        const baseControlId = uuid(body.baseControlId)
+        const requestKey = body.requestKey == null ? undefined : uuid(body.requestKey)
+        if (!baseControlId || (body.requestKey != null && !requestKey)) {
+          return NextResponse.json(
+            { success: false, error: "SAME_DAY_IMAGE_REVISION_GENERATE_INVALID" },
+            { status: 400 },
+          )
+        }
+        const generated = await generateAndPersistSameDayImageRevision({
+          supabase,
+          accountKey,
+          actorId: actor,
+          baseControlId,
+          requestKey,
+        })
+        const revisionId = uuid(
+          "revisionId" in generated
+            ? generated.revisionId
+            : generated.revision.id,
+        )
+        const result = revisionId
+          ? await getSameDayImageRevision({
+            supabase,
+            accountKey,
+            actorId: actor,
+            revisionId,
+          })
+          : generated
+        return NextResponse.json({
+          success: true,
+          ...result,
+          safety: {
+            exactSixHumanReviewRequired: true,
+            ebayWrites: 0,
+            productionChanged: false,
+          },
+        })
+      } catch (error) {
+        const code = safeError(error)
+        return NextResponse.json(
+          { success: false, error: code },
+          { status: imageRevisionErrorStatus(code) },
+        )
+      }
+    }
+
+    if (action === "review") {
+      try {
+        const revisionId = uuid(body.revisionId)
+        const decision = body.decision === "APPROVE" || body.decision === "REJECT"
+          ? body.decision
+          : null
+        if (!revisionId || !decision || body.confirmed !== true) {
+          return NextResponse.json(
+            { success: false, error: "SAME_DAY_IMAGE_REVISION_REVIEW_INVALID" },
+            { status: 400 },
+          )
+        }
+        const reviewed = await reviewSameDayImageRevision({
+          supabase,
+          accountKey,
+          actorId: actor,
+          revisionId,
+          decision,
+        })
+        return NextResponse.json({
+          success: true,
+          reviewed,
+          safety: { ebayWrites: 0, productionChanged: false },
+        })
+      } catch (error) {
+        const code = safeError(error)
+        return NextResponse.json(
+          { success: false, error: code },
+          { status: imageRevisionErrorStatus(code) },
+        )
+      }
+    }
 
     const composeSetAction = [
       "compose_set_url",
