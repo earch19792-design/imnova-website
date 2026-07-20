@@ -15,6 +15,12 @@ import {
   isValidEbayCommercialAuthorizationCode,
   isValidEbayCommercialOAuthState,
 } from "@/lib/ebay/ebay-commercial-orders-oauth-domain"
+import {
+  completeEbayMerchantLocationOAuth,
+  failPendingEbayMerchantLocationOAuth,
+  hasPendingEbayMerchantLocationOAuth,
+  sanitizeEbayMerchantLocationOAuthCallbackError,
+} from "@/lib/ebay/ebay-merchant-location-oauth-authorization"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 
 function safeCode(error: unknown) {
@@ -55,6 +61,24 @@ function accountPolicyRedirect(
   })
 }
 
+function merchantLocationRedirect(
+  req: Request,
+  outcome: "ready" | "error",
+  reason?: string,
+) {
+  const target = new URL("/admin/ebay/listing-workspace", req.url)
+  target.searchParams.set("ebayInventoryLocationOAuth", outcome)
+  if (reason) target.searchParams.set("reason", reason)
+  return NextResponse.redirect(target, {
+    status: 303,
+    headers: {
+      "Cache-Control": "no-store, max-age=0",
+      "Referrer-Policy": "no-referrer",
+      "X-Robots-Tag": "noindex",
+    },
+  })
+}
+
 function redirect(req: Request, outcome: "ready" | "error", reason?: string) {
   const target = new URL("/admin/ebay/mobile-review", req.url)
   target.searchParams.set("commercialOrdersOAuth", outcome)
@@ -77,6 +101,42 @@ export async function GET(req: Request) {
     state: url.searchParams.get("state")?.trim() ?? "",
   }
   const supabase = getSupabaseAdminClient()
+
+  if (
+    input.state
+    && (await hasPendingEbayMerchantLocationOAuth(supabase, input.state))
+  ) {
+    if (callbackError) {
+      const reason = sanitizeEbayMerchantLocationOAuthCallbackError(
+        callbackError,
+      )
+      await failPendingEbayMerchantLocationOAuth(
+        supabase,
+        input.state,
+        reason,
+      )
+      input.code = ""
+      input.state = ""
+      return merchantLocationRedirect(req, "error", reason)
+    }
+    if (!isValidEbayCommercialAuthorizationCode(input.code)) {
+      const reason = "EBAY_MERCHANT_LOCATION_OAUTH_CALLBACK_INVALID"
+      await failPendingEbayMerchantLocationOAuth(
+        supabase,
+        input.state,
+        reason,
+      )
+      input.code = ""
+      input.state = ""
+      return merchantLocationRedirect(req, "error", reason)
+    }
+    try {
+      await completeEbayMerchantLocationOAuth(supabase, input)
+      return merchantLocationRedirect(req, "ready")
+    } catch (error) {
+      return merchantLocationRedirect(req, "error", safeCode(error))
+    }
+  }
 
   if (
     input.state &&

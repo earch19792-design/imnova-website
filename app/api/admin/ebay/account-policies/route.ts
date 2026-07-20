@@ -10,6 +10,9 @@ import {
   startEbayAccountPolicyReadonlyAuthorization,
 } from "@/lib/ebay/ebay-account-policy-oauth-authorization"
 import {
+  startEbayMerchantLocationOAuth,
+} from "@/lib/ebay/ebay-merchant-location-oauth-authorization"
+import {
   ebayAccountPolicyReadonlyRuntimeStatus,
   preflightEbayAccountPoliciesReadonly,
 } from "@/lib/ebay/ebay-account-policy-readonly-gateway"
@@ -42,6 +45,23 @@ function safety(responseTarget: string) {
     ebayWriteMethods: [],
     canPublish: false,
     target: responseTarget,
+  }
+}
+
+function merchantLocationAuthorizationSafety() {
+  return {
+    ebayWriteUsed: false,
+    ebayResourceMethods: ["POST:GetUser(identity verification)"],
+    oauthTokenExchangeMethod: "POST",
+    ebayWriteMethods: [
+      "POST:createInventoryLocation(luna-boca-raton-fl only)",
+    ],
+    writeOccursOnlyAfterHumanEbayConsent: true,
+    tokenPersisted: false,
+    canCreateInventoryItem: false,
+    canCreateOffer: false,
+    canPublish: false,
+    target: "PRODUCTION",
   }
 }
 
@@ -110,6 +130,30 @@ export async function POST(req: Request) {
     }
 
     const supabase = getSupabaseAdminClient()
+    if (body.action === "start_inventory_location_oauth") {
+      if (
+        Object.keys(body).length !== 1
+        || Object.keys(body)[0] !== "action"
+      ) {
+        return jsonError(
+          new Error("EBAY_MERCHANT_LOCATION_OAUTH_REQUEST_INVALID"),
+          400,
+        )
+      }
+      const authorization = await startEbayMerchantLocationOAuth(supabase, {
+        actorUserId: validation.userId,
+        accountKey: accountScope.accountKey,
+      })
+      return NextResponse.json({
+        success: true,
+        action: "start_inventory_location_oauth",
+        authorization: {
+          authorizationUrl: authorization.authorizationUrl,
+          expiresAt: authorization.expiresAt,
+        },
+        safety: merchantLocationAuthorizationSafety(),
+      }, { headers: { "Cache-Control": "no-store" } })
+    }
     if (body.action === "start_oauth") {
       const authorization =
         await startEbayAccountPolicyReadonlyAuthorization(supabase, {

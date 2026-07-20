@@ -580,8 +580,9 @@ export default function EbayListingWorkspacePage() {
   ) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
     if (sessionError || !data.session) throw new Error("La sesión Admin expiró.")
-    const accountPolicyPreflight = body?.action === "account_preflight"
-    const endpoint = accountPolicyPreflight
+    const accountPolicyRequest = body?.action === "account_preflight"
+      || body?.action === "start_inventory_location_oauth"
+    const endpoint = accountPolicyRequest
       ? "/api/admin/ebay/account-policies"
       : body
         ? "/api/admin/ebay/draft-only"
@@ -594,7 +595,13 @@ export default function EbayListingWorkspacePage() {
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       body: body
-        ? JSON.stringify(accountPolicyPreflight ? { selection: body.selection } : body)
+        ? JSON.stringify(
+          body.action === "account_preflight"
+            ? { selection: body.selection }
+            : body.action === "start_inventory_location_oauth"
+              ? { action: "start_inventory_location_oauth" }
+              : body,
+        )
         : undefined,
     })
     const payload = await readMobileReviewJson<Record<string, any>>(
@@ -1027,6 +1034,8 @@ export default function EbayListingWorkspacePage() {
           ? "eBay respondió, pero la identidad de la cuenta debe quedar vinculada antes de guardar policies."
           : !preflight.privilege.usable
             ? "eBay respondió, pero la cuenta todavía no tiene privilegios utilizables para guardar esta configuración."
+            : preflight.options.merchantLocations.length === 0
+              ? "eBay no devolvió merchant locations. La autorización disponible solicita sell.inventory y, tras tu consentimiento e identidad, crea una sola vez la ubicación fija luna-boca-raton-fl. No publica listings."
             : policiesComplete
               ? "Policies revalidadas. El perfil no fue guardado; revisa la configuración de cuenta antes de continuar."
               : "Opciones cargadas desde eBay. Selecciona fulfillment, payment y returns; luego vuelve a revalidar para guardarlas.")
@@ -1034,6 +1043,42 @@ export default function EbayListingWorkspacePage() {
       setError(getMobileReviewRequestError(requestError, "No se pudo consultar la configuración de cuenta eBay."))
       setMessage("")
     } finally { setDraftBusy(false) }
+  }
+
+  async function startInventoryLocationOAuth() {
+    setDraftBusy(true)
+    setError("")
+    setMessage(
+      "Preparando autorización eBay para crear una sola vez la ubicación fija luna-boca-raton-fl…",
+    )
+    try {
+      const payload = await draftRequest({
+        action: "start_inventory_location_oauth",
+      })
+      const authorization = object(payload.authorization)
+      const authorizationUrl = String(authorization.authorizationUrl ?? "")
+      const expiresAt = String(authorization.expiresAt ?? "")
+      const redirect = new URL(authorizationUrl)
+      if (
+        !expiresAt
+        || redirect.origin !== "https://auth.ebay.com"
+        || redirect.pathname !== "/oauth2/authorize"
+      ) {
+        throw new Error("EBAY_MERCHANT_LOCATION_OAUTH_RESPONSE_INVALID")
+      }
+      setMessage(
+        "Redirigiendo a eBay. Tras tu consentimiento e identidad se creará una sola vez luna-boca-raton-fl; no se publicará ningún listing.",
+      )
+      window.location.assign(redirect.toString())
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(
+        requestError,
+        "No se pudo iniciar la autorización para crear la merchant location.",
+      ))
+      setMessage("")
+    } finally {
+      setDraftBusy(false)
+    }
   }
 
   function updatePreflightSelection(
@@ -1376,6 +1421,7 @@ export default function EbayListingWorkspacePage() {
               <button type="button" disabled={draftBusy || !draftState.runtime?.oauthConfigured} onClick={() => void runEbayPreflight()} className="mt-3 min-h-12 w-full rounded-xl border border-sky-200/35 px-3 font-black text-sky-50 disabled:opacity-40">{draftBusy ? "Consultando…" : "Cargar y validar configuración eBay"}</button>
               {draftState.runtime?.oauthConfigured === false && <p className="mt-2 text-xs text-amber-50">Faltan credenciales OAuth dedicadas. Los flags de escritura pueden permanecer apagados.</p>}
             </div>
+            {accountPreflight?.options.merchantLocations.length === 0 && <div className="rounded-2xl border border-amber-200/30 bg-amber-200/[0.07] p-3 text-sm text-amber-50"><strong>No existe una merchant location disponible</strong><p className="mt-2 leading-6">Este paso solicita a eBay el scope <code>sell.inventory</code>. Tras tu consentimiento y la verificación de identidad, crea una sola vez la ubicación fija <code>luna-boca-raton-fl</code>. Es una escritura real de Inventory API; no crea Offers ni publica listings.</p><button type="button" disabled={draftBusy} onClick={() => void startInventoryLocationOAuth()} className="mt-3 min-h-12 w-full rounded-xl bg-amber-200 px-3 font-black text-black disabled:opacity-40">{draftBusy ? "Preparando autorización…" : "Autorizar y crear luna-boca-raton-fl"}</button></div>}
             <div className="grid gap-3 sm:grid-cols-2">
               <label><span className="text-sm font-black">SKU reservado del draft</span><input value={draftConfiguration.sku} readOnly className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/20 px-4 text-white/70" /></label>
               <label><span className="text-sm font-black">Cantidad</span><input inputMode="numeric" value={effectiveDraftQuantity} readOnly={productionTarget} onChange={(event) => setDraftConfiguration((current) => ({ ...current, quantity: Math.max(0, Math.trunc(Number(event.target.value) || 0)) }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4 read-only:bg-white/[0.04] read-only:text-white/65" />{productionTarget && <span className="mt-1 block text-xs text-white/50">Piloto Production bloqueado en 1 unidad.</span>}</label>
