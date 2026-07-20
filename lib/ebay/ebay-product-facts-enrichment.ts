@@ -41,7 +41,7 @@ import {
 } from "./ebay-official-manufacturer-facts"
 import { aggregateEbayMarketPricingByPack } from "./ebay-market-pricing-strategy"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V11_2026_07_19"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V12_2026_07_19"
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
 type JsonRecord = Record<string, unknown>
@@ -698,6 +698,9 @@ export async function runProductFactsEnrichment(input: {
         variant, item: candidate, officialDescription, now,
         confirmedNativePackCount: input.controlledExploratoryTarget?.confirmedNativePackCount ?? null })
       const intendedPackCount = base.offerPackConflict ? null : base.nativePackCount
+      const nativePresentationUnitCount = integer(base.entries.find((entry) =>
+        entry.factScope === "PRODUCT_UNIT" && entry.factKey === "unitCount")?.normalizedValue) ??
+        intendedPackCount
       const authoritativeGtin = normalizeGtin(variant.barcode ?? fromMetadata(base.metadata, ["upc", "ean", "gtin", "barcode"]) ?? officialDescription.facts.gtin)
       const knownCategoryId = categoryIdFromCandidateEvidence(candidate)
       const semanticCategoryId = semanticCategoryIdFromTitle(base.title)
@@ -712,7 +715,7 @@ export async function runProductFactsEnrichment(input: {
         gtin: authoritativeGtin,
         brand: text(fromMetadata(base.metadata, ["brand", "manufacturerBrand"])) || null,
         mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])) || null,
-        packCount: intendedPackCount,
+        packCount: nativePresentationUnitCount,
       }, catalog.products)
       const catalogRecord = record(catalog)
       const catalogCategoryId = catalogSelection.products.length === 1
@@ -720,7 +723,7 @@ export async function runProductFactsEnrichment(input: {
       // Browse is intentionally evaluated before Taxonomy so a safe comparable
       // can provide the official Trading item/category used by "Sell one like this".
       // A previously inferred category never narrows this discovery search.
-      const browsePackQuantity = intendedPackCount
+      const browsePackQuantity = nativePresentationUnitCount
       let browseStatus = "SKIPPED"
       let browseComparableCount = 0
       let browseReport: JsonRecord | null = null
@@ -935,7 +938,7 @@ export async function runProductFactsEnrichment(input: {
             .map((aspect) => text(aspect.name)).filter(Boolean) },
         marketPricing: aggregateEbayMarketPricingByPack({
           comparableEvidence: record(browseReport).comparableEvidence,
-          nativePackCount: intendedPackCount,
+          nativePackCount: nativePresentationUnitCount,
           observedAt: now.toISOString(),
         }) })
     } catch (error) {
