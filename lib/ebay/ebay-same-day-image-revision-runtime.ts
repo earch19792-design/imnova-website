@@ -55,8 +55,16 @@ function safeError(error: unknown) {
 }
 
 function databaseErrorCode(error: unknown, fallback: string) {
-  return text(record(error).message, 1_000).match(/[A-Z][A-Z0-9_]{5,}/)?.[0]
-    ?? fallback
+  const row = record(error)
+  for (const field of [row.message, row.details, row.hint, row.code]) {
+    const appCode = text(field, 2_000)
+      .match(/\b(?:EBAY|SAME_DAY)_[A-Z0-9_]{3,}\b/)?.[0]
+    if (appCode) return appCode
+  }
+  const postgresCode = text(row.code, 20)
+  return /^[A-Z0-9]{5}$/.test(postgresCode)
+    ? `${fallback}:${postgresCode}`
+    : fallback
 }
 
 function candidatePath(candidateKey: string) {
@@ -524,11 +532,14 @@ export async function generateAndPersistSameDayImageRevision(input: {
         p_asset_manifest: manifest,
       },
     )
-    if (completionError || !completion) {
+    if (completionError) {
       throw new Error(databaseErrorCode(
         completionError,
         "SAME_DAY_IMAGE_REVISION_COMPLETION_FAILED",
       ))
+    }
+    if (!completion) {
+      throw new Error("SAME_DAY_IMAGE_REVISION_COMPLETION_EMPTY")
     }
     completed = true
     return {
