@@ -570,12 +570,14 @@ export async function applyApprovedImageRevisionToActiveListing(input: {
   const imageUrls = exactSixUrls(execution.image_urls)
   const expectedSku = text(execution.ebay_sku, 50)
   const imageSetHash = text(execution.image_set_hash, 64)
-  const accountFingerprint = text(execution.account_fingerprint, 64)
-  const executionId = uuid(execution.id)
-  if (
-    imageUrls.length !== 6 || !expectedSku ||
-    !/^[0-9a-f]{64}$/.test(imageSetHash) ||
-    !/^[0-9a-f]{64}$/.test(accountFingerprint) || !executionId
+    const accountFingerprint = text(execution.account_fingerprint, 64)
+    const executionId = uuid(execution.id)
+    const ledgerIdempotencyKeyHash = text(execution.idempotency_key_hash, 64)
+    if (
+      imageUrls.length !== 6 || !expectedSku ||
+      !/^[0-9a-f]{64}$/.test(imageSetHash) ||
+      !/^[0-9a-f]{64}$/.test(accountFingerprint) ||
+      !/^[0-9a-f]{64}$/.test(ledgerIdempotencyKeyHash) || !executionId
   ) throw new Error("EBAY_ACTIVE_IMAGE_REVISION_LEDGER_INVALID")
 
   let phase = text(execution.phase, 60)
@@ -651,7 +653,7 @@ export async function applyApprovedImageRevisionToActiveListing(input: {
     {
       p_execution_id: executionId,
       p_actor: actorId,
-      p_idempotency_key_hash: idempotencyKeyHash,
+        p_idempotency_key_hash: ledgerIdempotencyKeyHash,
       p_request_hash: text(execution.request_hash, 64),
       p_confirmation: input.confirmation,
       p_claim_token: claimToken,
