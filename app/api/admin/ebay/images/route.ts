@@ -85,17 +85,19 @@ function databaseErrorCode(error: unknown, fallback: string) {
   return message.match(/EBAY_[A-Z0-9_]+/)?.[0] ?? fallback
 }
 
-function assertCompleteImageRevisionResult(value: unknown) {
+function imageRevisionResultState(value: unknown) {
   const result = record(value)
   const revision = record(result.revision)
   const status = text(revision.status, 40)
-  if (status === "FAILED_FINAL") {
-    throw new Error(
-      text(revision.last_error_code, 120) || "SAME_DAY_IMAGE_REVISION_FAILED_FINAL",
-    )
-  }
-  if (!Array.isArray(result.assets) || result.assets.length !== 6) {
-    throw new Error("SAME_DAY_IMAGE_REVISION_EXACT_SIX_INVALID")
+  const assetCount = Array.isArray(result.assets) ? result.assets.length : 0
+  const failed = ["FAILED_RETRYABLE", "FAILED_FINAL"].includes(status)
+  return {
+    status,
+    assetCount,
+    ready: ["PENDING_REVIEW", "APPROVED"].includes(status) && assetCount === 6,
+    error: failed
+      ? text(revision.last_error_code, 120) || "SAME_DAY_IMAGE_REVISION_FAILED"
+      : assetCount === 6 ? null : "SAME_DAY_IMAGE_REVISION_EXACT_SIX_INVALID",
   }
 }
 
@@ -308,10 +310,10 @@ export async function GET(req: Request) {
           actorId: validation.userId,
           revisionId,
         })
-        assertCompleteImageRevisionResult(result)
         return NextResponse.json({
           success: true,
           ...result,
+          revisionState: imageRevisionResultState(result),
           safety: { ebayWrites: 0, productionChanged: false },
         })
       } catch (error) {
@@ -432,10 +434,10 @@ export async function POST(req: Request) {
             revisionId,
           })
           : generated
-        assertCompleteImageRevisionResult(result)
         return NextResponse.json({
           success: true,
           ...result,
+          revisionState: imageRevisionResultState(result),
           safety: {
             exactSixHumanReviewRequired: true,
             ebayWrites: 0,

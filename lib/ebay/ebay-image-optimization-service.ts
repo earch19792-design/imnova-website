@@ -32,19 +32,23 @@ export type EbayOptimizedImage = {
   transformation: {
     version: string
     generativeAiUsed: false
-    backgroundMethod: "LIGHT_NEUTRAL_DETERMINISTIC_NORMALIZATION"
+    backgroundMethod: "LIGHT_NEUTRAL_DETERMINISTIC_NORMALIZATION" |
+      "AUTHORIZED_SOURCE_FRAMED_CONTAIN"
+    sourcePixelsTreatment: "NEAR_NEUTRAL_WHITEN_ONLY" |
+      "PRESERVED_FULL_FRAME"
     canvas: "WHITE"
     fit: "CONTAIN"
     maxProductBoxPixels: number
   }
   qa: {
-    automaticStatus: "PASSED"
+    automaticStatus: "PASSED" | "PARTIAL"
     sourceEdgeLightNeutralRatio: number
     outputWidth: number
     outputHeight: number
     outputUnderTwelveMegabytes: boolean
     exactSourceHashRecorded: true
     generativeChangesMade: false
+    fullAuthorizedFramePreserved: boolean
     humanApprovalRequired: true
     manualChecksRequired: string[]
   }
@@ -262,32 +266,55 @@ export async function optimizeAuthorizedEbayMainImage(
     decoded.info.height,
     decoded.info.channels,
   )
-  if (edgeRatio < 0.72) {
-    throw new Error("EBAY_IMAGE_BACKGROUND_REQUIRES_MANUAL_REMOVAL")
-  }
-
-  const normalizedPixels = whitenNearNeutralPixels(
-    decoded.data,
-    decoded.info.channels,
-  )
+  const preserveAuthorizedFrame = edgeRatio < 0.72
   let output: Buffer
   try {
-    output = await sharp(normalizedPixels, {
-      raw: {
-        width: decoded.info.width,
-        height: decoded.info.height,
-        channels: decoded.info.channels,
-      },
-    })
-      .trim({ background: "#ffffff", threshold: 12 })
-      .resize(1_400, 1_400, {
-        fit: "contain",
-        background: "#ffffff",
-        kernel: sharp.kernel.lanczos3,
-      })
-      .extend({ top: 100, right: 100, bottom: 100, left: 100, background: "#ffffff" })
-      .jpeg({ quality: 92, chromaSubsampling: "4:4:4", mozjpeg: true })
-      .toBuffer()
+    if (preserveAuthorizedFrame) {
+      // A light product on a light/grey supplier canvas cannot be segmented
+      // safely by chroma without risking erased product pixels. Preserve the
+      // complete authorized frame and only scale/contain it inside a neutral
+      // white border. No crop, trim, whitening or generative fill is applied.
+      output = await sharp(source, {
+        failOn: "warning",
+        limitInputPixels: 40_000_000,
+      }).rotate().flatten({ background: "#ffffff" }).removeAlpha()
+        .toColourspace("srgb")
+        .resize(1_360, 1_360, {
+          fit: "contain",
+          background: "#f4f5f5",
+          kernel: sharp.kernel.lanczos3,
+        })
+        .extend({ top: 120, right: 120, bottom: 120, left: 120,
+          background: "#ffffff" })
+        .jpeg({ quality: 94, chromaSubsampling: "4:4:4" })
+        .toBuffer()
+    } else {
+      const normalizedPixels = whitenNearNeutralPixels(
+        decoded.data,
+        decoded.info.channels,
+      )
+      try {
+        output = await sharp(normalizedPixels, {
+          raw: {
+            width: decoded.info.width,
+            height: decoded.info.height,
+            channels: decoded.info.channels,
+          },
+        })
+          .trim({ background: "#ffffff", threshold: 12 })
+          .resize(1_400, 1_400, {
+            fit: "contain",
+            background: "#ffffff",
+            kernel: sharp.kernel.lanczos3,
+          })
+          .extend({ top: 100, right: 100, bottom: 100, left: 100,
+            background: "#ffffff" })
+          .jpeg({ quality: 92, chromaSubsampling: "4:4:4", mozjpeg: true })
+          .toBuffer()
+      } finally {
+        normalizedPixels.fill(0)
+      }
+    }
   } catch {
     throw new Error("EBAY_IMAGE_PRODUCT_NOT_DETECTED")
   }
@@ -316,19 +343,25 @@ export async function optimizeAuthorizedEbayMainImage(
     transformation: {
       version: EBAY_IMAGE_TRANSFORMATION_VERSION,
       generativeAiUsed: false,
-      backgroundMethod: "LIGHT_NEUTRAL_DETERMINISTIC_NORMALIZATION",
+      backgroundMethod: preserveAuthorizedFrame
+        ? "AUTHORIZED_SOURCE_FRAMED_CONTAIN"
+        : "LIGHT_NEUTRAL_DETERMINISTIC_NORMALIZATION",
+      sourcePixelsTreatment: preserveAuthorizedFrame
+        ? "PRESERVED_FULL_FRAME"
+        : "NEAR_NEUTRAL_WHITEN_ONLY",
       canvas: "WHITE",
       fit: "CONTAIN",
-      maxProductBoxPixels: 1_400,
+      maxProductBoxPixels: preserveAuthorizedFrame ? 1_360 : 1_400,
     },
     qa: {
-      automaticStatus: "PASSED",
+      automaticStatus: preserveAuthorizedFrame ? "PARTIAL" : "PASSED",
       sourceEdgeLightNeutralRatio: Number(edgeRatio.toFixed(4)),
       outputWidth: outputMetadata.width,
       outputHeight: outputMetadata.height,
       outputUnderTwelveMegabytes: true,
       exactSourceHashRecorded: true,
       generativeChangesMade: false,
+      fullAuthorizedFramePreserved: preserveAuthorizedFrame,
       humanApprovalRequired: true,
       manualChecksRequired: [
         "EXACT_PRODUCT_FIDELITY",
@@ -336,6 +369,10 @@ export async function optimizeAuthorizedEbayMainImage(
         "COLOR_AND_VARIANT_MATCH",
         "NO_TEXT_BADGES_OR_WATERMARKS",
         "PACKAGE_CONTENTS_MATCH",
+        ...(preserveAuthorizedFrame ? [
+          "SOURCE_BACKGROUND_PRESERVED_NOT_REMOVED",
+          "MAIN_IMAGE_BACKGROUND_MANUAL_ACCEPTANCE",
+        ] : []),
       ],
     },
   }

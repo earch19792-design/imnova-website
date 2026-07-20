@@ -27,6 +27,9 @@ const persistenceAssetSchema = z.object({
   layoutId: z.string().trim().min(1).max(80).optional(),
   compositorContractVersion: z.literal(EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION).optional(),
   presentationMode: z.enum(["AUTHORIZED_MULTI_SOURCE", "SINGLE_SOURCE_INFORMATIONAL"]).optional(),
+  authorizedSourceTreatment: z.enum([
+    "NORMALIZED_LIGHT_NEUTRAL", "PRESERVED_FRAMED_SOURCE",
+  ]).optional(),
   sourceSha256: rawSha256Schema,
   outputSha256: rawSha256Schema,
   width: z.literal(1600),
@@ -240,6 +243,8 @@ function validateTransientAssets(input: {
       asset.transformation.verifiedFactsOnly !== true ||
       !["AUTHORIZED_MULTI_SOURCE", "SINGLE_SOURCE_INFORMATIONAL"]
         .includes(asset.transformation.presentationMode) ||
+      !["NORMALIZED_LIGHT_NEUTRAL", "PRESERVED_FRAMED_SOURCE"]
+        .includes(asset.transformation.authorizedSourceTreatment) ||
       asset.qa.dimensionsValid !== true ||
       asset.qa.sourceHashRecorded !== true ||
       asset.qa.outputHashRecorded !== true ||
@@ -341,6 +346,8 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
       compositorContractVersion:
         asset.transformation.compositorContractVersion,
       presentationMode: asset.transformation.presentationMode,
+      authorizedSourceTreatment:
+        asset.transformation.authorizedSourceTreatment,
       sourceSha256: asset.sourceSha256,
       outputSha256: asset.outputSha256,
       width: asset.width,

@@ -845,6 +845,10 @@ export default function EbayListingWorkspacePage() {
       exactSlots.every((slot) => slots.has(slot)) && slots.size === 6
     )?.[0] ?? ""
   }, [approvedImageAssets])
+  const imageRevisionId = validUuid(imageRevision?.revision.id)
+  const imageRevisionFailed = ["FAILED_RETRYABLE", "FAILED_FINAL"].includes(
+    String(imageRevision?.revision.status ?? ""),
+  )
   const requiredTaxonomyAspects = useMemo(() => new Set(
     draftState.taxonomy?.requiredAspects.map((aspect) => aspect.name) ?? [],
   ), [draftState.taxonomy])
@@ -1056,7 +1060,7 @@ export default function EbayListingWorkspacePage() {
         action: "generate",
         baseControlId: approvedBaseImageControlId,
         reason: "IMAGE_COMPOSITOR_DEFECT",
-        ...(!imageRevision || ["REJECTED", "FAILED_FINAL"].includes(currentRevisionStatus)
+        ...(!imageRevision || ["REJECTED", "FAILED_RETRYABLE", "FAILED_FINAL"].includes(currentRevisionStatus)
           ? { requestKey: crypto.randomUUID() }
           : {}),
       })
@@ -1065,10 +1069,18 @@ export default function EbayListingWorkspacePage() {
       const assets = Array.isArray(payload.assets)
         ? payload.assets as ImageRevisionPayload["assets"]
         : []
-      if (revisionStatus === "FAILED_FINAL") {
-        throw new Error(String(
-          revision.last_error_code ?? "SAME_DAY_IMAGE_REVISION_FAILED_FINAL",
-        ))
+      if (!validUuid(revision.id)) {
+        throw new Error("SAME_DAY_IMAGE_REVISION_ID_INVALID")
+      }
+      if (["FAILED_RETRYABLE", "FAILED_FINAL"].includes(revisionStatus)) {
+        setImageRevision({ revision: payload.revision, assets })
+        setError(
+          `La revisión ${revision.revision_number ?? ""} terminó ${revisionStatus}. `
+          + `Error: ${String(revision.last_error_code ?? "SAME_DAY_IMAGE_REVISION_FAILED")}. `
+          + `${assets.length} imágenes nuevas; el set histórico no se presenta como esta revisión.`,
+        )
+        setMessage("")
+        return
       }
       const requiredSlots = [
         "MAIN_WHITE_BACKGROUND",
@@ -1833,11 +1845,13 @@ export default function EbayListingWorkspacePage() {
                 <div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-100/60">Corrección append-only</p><h3 className="mt-1 font-black">Revisión estratégica de seis imágenes</h3><p className="mt-1 text-xs leading-5 text-white/55">Motivo predeterminado: <strong>IMAGE_COMPOSITOR_DEFECT</strong>. El set aprobado anterior nunca se borra ni se desactiva.</p></div>
                 <span className={`rounded-full border px-2 py-1 text-[10px] font-black ${approvedBaseImageControlId ? "border-emerald-200/30 text-emerald-100" : "border-amber-200/30 text-amber-100"}`}>{approvedBaseImageControlId ? "CONTROL BASE APPROVED" : "SIN CONTROL BASE EXACT-SIX"}</span>
               </div>
-              <button type="button" disabled={!approvedBaseImageControlId || imageRevisionBusy} onClick={() => void generateImageRevision()} className="mt-3 min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">{imageRevisionBusy ? "Procesando las seis…" : imageRevision ? "Actualizar vistas de la revisión" : "Generar revisión corregida"}</button>
+              <button type="button" disabled={!approvedBaseImageControlId || imageRevisionBusy} onClick={() => void generateImageRevision()} className="mt-3 min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">{imageRevisionBusy ? "Procesando las seis…" : imageRevisionFailed ? "Reintentar generación" : "Generar revisión corregida"}</button>
+              {imageRevisionId && <button type="button" disabled={imageRevisionBusy} onClick={() => void loadImageRevision(imageRevisionId)} className="mt-2 min-h-11 w-full rounded-xl border border-cyan-200/30 px-4 text-sm font-black text-cyan-50 disabled:opacity-40">Actualizar vista</button>}
               {!approvedBaseImageControlId && <p className="mt-2 text-xs leading-5 text-amber-50">Esta acción aparece únicamente cuando el candidato conserva seis slots aprobados ligados al mismo control. El servidor vuelve a comprobar que el control esté APPROVED.</p>}
 
               {imageRevision && <div className="mt-4 space-y-3">
                 <div className="flex items-center justify-between gap-3"><strong className="text-sm">Revisión {imageRevision.revision.revision_number} · {imageRevision.revision.status}</strong><span className="text-xs text-white/50">{imageRevision.assets.length}/6</span></div>
+                {imageRevisionFailed && <div role="alert" className="rounded-xl border border-rose-200/30 bg-rose-200/[0.06] p-3 text-xs leading-5 text-rose-50"><strong>{imageRevision.revision.status}</strong><code className="mt-1 block break-all">{imageRevision.revision.last_error_code ?? "SAME_DAY_IMAGE_REVISION_FAILED"}</code><span className="mt-1 block">{imageRevision.assets.length} imágenes nuevas. Las seis imágenes históricas no pertenecen a esta revisión y no se muestran aquí.</span></div>}
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                   {imageRevision.assets.map((asset, index) => <figure key={asset.id} className="min-w-0 rounded-xl border border-white/10 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white">{asset.previewUrl ? <img src={asset.previewUrl} alt={`Revisión corregida ${index + 1}: ${asset.slot}`} className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center bg-black p-2 text-center text-xs text-white/50">Vista no disponible</div>}</div><figcaption className="mt-2 min-w-0"><strong className="block truncate text-[10px]">{index + 1}. {asset.slot}</strong><span className="mt-1 block truncate text-[9px] text-cyan-100/55">{asset.layoutId}</span>{asset.reusedFromHistory && <span className="mt-1 block text-[9px] text-emerald-100/70">Activo histórico reutilizado</span>}</figcaption></figure>)}
                 </div>

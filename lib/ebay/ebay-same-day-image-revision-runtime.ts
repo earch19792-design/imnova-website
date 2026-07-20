@@ -551,12 +551,32 @@ export async function generateAndPersistSameDayImageRevision(input: {
           .in("id", createdAssetIds)
       }
       await cleanupObjects(input.supabase, uploaded)
-      await input.supabase.rpc("fail_ebay_same_day_image_revision", {
+      const { error: failureRecordError } = await input.supabase.rpc(
+        "fail_ebay_same_day_image_revision",
+        {
         p_revision_id: revisionId,
         p_actor: actorId,
         p_lease_token: leaseToken,
         p_error_code: safeError(error),
-      })
+        },
+      )
+      if (!failureRecordError) {
+        try {
+          const failed = await getSameDayImageRevision({
+            supabase: input.supabase,
+            accountKey: input.accountKey,
+            actorId,
+            revisionId,
+          })
+          if (["FAILED_RETRYABLE", "FAILED_FINAL"].includes(
+            text(failed.revision.status, 40),
+          )) {
+            return { ...failed, reused: false, generationFailed: true }
+          }
+        } catch {
+          // Preserve the sanitized generation error when reconciliation fails.
+        }
+      }
     }
     throw error
   } finally {

@@ -73,6 +73,8 @@ export type EbayListingImageComposition = {
     compositorContractVersion: typeof EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION
     authorizedSourceIndex: number
     presentationMode: "AUTHORIZED_MULTI_SOURCE" | "SINGLE_SOURCE_INFORMATIONAL"
+    authorizedSourceTreatment: "NORMALIZED_LIGHT_NEUTRAL" |
+      "PRESERVED_FRAMED_SOURCE"
     generativeAiUsed: boolean
     originalPackagePixelsPreserved: true
     competitorImageUsed: false
@@ -89,7 +91,8 @@ export type EbayListingImageComposition = {
     sourceHashRecorded: true
     outputHashRecorded: true
     textDerivedFromVerifiedFacts: true
-    mainBackground: "PURE_WHITE" | "NOT_APPLICABLE"
+    mainBackground: "PURE_WHITE" | "FRAMED_AUTHORIZED_SOURCE" |
+      "NOT_APPLICABLE"
     humanApprovalRequired: true
     structuralDiversityVerified: true
     foregroundEdgeCoverage: number
@@ -689,6 +692,8 @@ export async function composeAuthorizedEbayListingImageSet(
   for (const slot of EBAY_LISTING_IMAGE_SLOTS) {
     const authorizedSourceIndex = sourceIndexForSlot(slot, mains.length)
     const main = mains[authorizedSourceIndex]
+    const framedAuthorizedSource =
+      main.transformation.backgroundMethod === "AUTHORIZED_SOURCE_FRAMED_CONTAIN"
     const output = slot === "MAIN_WHITE_BACKGROUND"
       ? main.output
       : slot === "USE_CONTEXT" && backgroundPlate
@@ -734,6 +739,9 @@ export async function composeAuthorizedEbayListingImageSet(
         compositorContractVersion: EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
         authorizedSourceIndex,
         presentationMode,
+        authorizedSourceTreatment: framedAuthorizedSource
+          ? "PRESERVED_FRAMED_SOURCE"
+          : "NORMALIZED_LIGHT_NEUTRAL",
         generativeAiUsed: slot === "USE_CONTEXT" && Boolean(backgroundPlate),
         originalPackagePixelsPreserved: true,
         competitorImageUsed: false,
@@ -746,7 +754,8 @@ export async function composeAuthorizedEbayListingImageSet(
         } : {}),
       },
       qa: {
-        automaticStatus: slot === "USE_CONTEXT" && backgroundPlate
+        automaticStatus: framedAuthorizedSource ||
+          (slot === "USE_CONTEXT" && backgroundPlate)
           ? "PARTIAL"
           : "PASSED",
         format: "jpeg",
@@ -754,7 +763,9 @@ export async function composeAuthorizedEbayListingImageSet(
         sourceHashRecorded: true,
         outputHashRecorded: true,
         textDerivedFromVerifiedFacts: true,
-        mainBackground: slot === "MAIN_WHITE_BACKGROUND" ? "PURE_WHITE" : "NOT_APPLICABLE",
+        mainBackground: slot === "MAIN_WHITE_BACKGROUND"
+          ? framedAuthorizedSource ? "FRAMED_AUTHORIZED_SOURCE" : "PURE_WHITE"
+          : "NOT_APPLICABLE",
         humanApprovalRequired: true,
         structuralDiversityVerified: true,
         foregroundEdgeCoverage: signature.edgeCoverage,
@@ -771,6 +782,10 @@ export async function composeAuthorizedEbayListingImageSet(
           ...(presentationMode === "SINGLE_SOURCE_INFORMATIONAL"
             ? ["SINGLE_SOURCE_INFORMATIONAL_PANELS_NOT_MULTIPLE_PRODUCT_VIEWS"]
             : []),
+          ...(framedAuthorizedSource ? [
+            "AUTHORIZED_SOURCE_FRAME_PRESERVED_WITHOUT_BACKGROUND_REMOVAL",
+            "FRAMED_MAIN_BACKGROUND_HUMAN_ACCEPTANCE",
+          ] : []),
         ],
       },
     })
