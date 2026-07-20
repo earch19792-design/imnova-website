@@ -21,6 +21,7 @@ const COMPATIBILITY_LEVEL = "1423"
 const SITE_ID_US = "0"
 const READ_TIMEOUT_MS = 15_000
 const WRITE_TIMEOUT_MS = 25_000
+const EPS_UPLOAD_TIMEOUT_MS = 25_000
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024
 const SNAPSHOT_VERSION = "EBAY_ACTIVE_LISTING_IMAGE_SNAPSHOT_V1"
 
@@ -139,20 +140,34 @@ function getItemRequestXml(itemId: string) {
     "</GetItemRequest>"
 }
 
-function revisePicturesRequestXml(itemId: string, imageUrls: string[]) {
+function uploadSiteHostedPictureRequestXml(imageUrl: string, position: number) {
+  return "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+    "<UploadSiteHostedPicturesRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
+    "<WarningLevel>High</WarningLevel>" +
+    `<ExternalPictureURL>${xmlEscape(imageUrl)}</ExternalPictureURL>` +
+    `<PictureName>IMNOVA approved image ${position}</PictureName>` +
+    "<PictureSet>Standard</PictureSet>" +
+    "</UploadSiteHostedPicturesRequest>"
+}
+
+function revisePicturesRequestXml(
+  itemId: string,
+  imageUrls: string[],
+  pictureSource: "EPS" | "Vendor",
+) {
   return "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
     "<ReviseFixedPriceItemRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
     "<Item>" +
     `<ItemID>${itemId}</ItemID>` +
-    "<PictureDetails><PictureSource>Vendor</PictureSource>" +
+    `<PictureDetails><PictureSource>${pictureSource}</PictureSource>` +
     imageUrls.map((url) => `<PictureURL>${xmlEscape(url)}</PictureURL>`).join("") +
     "</PictureDetails>" +
     "</Item>" +
     "</ReviseFixedPriceItemRequest>"
 }
 
-async function tradingCall(input: {
-  callName: "GetUser" | "GetItem" | "ReviseFixedPriceItem"
+  async function tradingCall(input: {
+    callName: "GetUser" | "GetItem" | "UploadSiteHostedPictures" | "ReviseFixedPriceItem"
   accessToken: string
   body: string
   fetchImpl: FetchLike
@@ -273,9 +288,13 @@ function sameUrls(left: string[], right: string[]) {
 function approvedStorageUrl(value: string) {
   try {
     const url = new URL(value)
-    return url.protocol === "https:" &&
-      url.hostname.endsWith(".supabase.co") &&
-      url.pathname.includes("/storage/v1/object/public/ebay-listing-images/")
+    const configured = new URL(
+      process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+    )
+    return url.protocol === "https:" && configured.protocol === "https:" &&
+      url.origin === configured.origin && !url.username && !url.password &&
+      !url.search && !url.hash &&
+      url.pathname.startsWith("/storage/v1/object/public/ebay-listing-images/")
   } catch {
     return false
   }
@@ -289,6 +308,44 @@ function ebayPictureUrl(value: string) {
   } catch {
     return false
   }
+}
+
+async function uploadApprovedImagesToEps(input: {
+  imageUrls: string[]
+  accessToken: string
+  fetchImpl: FetchLike
+}) {
+  if (
+    input.imageUrls.length !== 6 ||
+    new Set(input.imageUrls).size !== 6 ||
+    !input.imageUrls.every(approvedStorageUrl)
+  ) throw new Error("EBAY_ACTIVE_IMAGE_REVISION_EPS_SOURCE_INVALID")
+  const uploads = await Promise.all(input.imageUrls.map((imageUrl, index) =>
+    tradingCall({
+      callName: "UploadSiteHostedPictures",
+      accessToken: input.accessToken,
+      body: uploadSiteHostedPictureRequestXml(imageUrl, index + 1),
+      fetchImpl: input.fetchImpl,
+      timeoutMs: EPS_UPLOAD_TIMEOUT_MS,
+    })))
+  const epsUrls = uploads.map((upload) => {
+    if (!upload.response.ok || !responseAccepted(upload.xml)) {
+      const ebayError = text(tradingXmlTagValue(upload.xml, "ErrorCode"), 20)
+      throw new Error(/^\d{1,20}$/.test(ebayError)
+        ? `EBAY_ACTIVE_IMAGE_REVISION_EPS_UPLOAD_REJECTED_${ebayError}`
+        : "EBAY_ACTIVE_IMAGE_REVISION_EPS_UPLOAD_FAILED")
+    }
+    const details = tradingXmlContainer(upload.xml, "SiteHostedPictureDetails")
+    const fullUrl = text(tradingXmlTagValue(details, "FullURL"), 500)
+    if (!ebayPictureUrl(fullUrl)) {
+      throw new Error("EBAY_ACTIVE_IMAGE_REVISION_EPS_URL_INVALID")
+    }
+    return fullUrl
+  })
+  if (epsUrls.length !== 6 || new Set(epsUrls).size !== 6) {
+    throw new Error("EBAY_ACTIVE_IMAGE_REVISION_EPS_SET_INVALID")
+  }
+  return epsUrls
 }
 
 async function fetchImage(input: {
@@ -578,9 +635,14 @@ export async function applyApprovedImageRevisionToActiveListing(input: {
   if (phase !== "preview_ready") {
     throw new Error("EBAY_ACTIVE_IMAGE_REVISION_PHASE_CONFLICT")
   }
-  if (officialBefore.pictureSource?.toLowerCase() !== "vendor") {
-    throw new Error("EBAY_ACTIVE_IMAGE_REVISION_VENDOR_SOURCE_REQUIRED")
+  const pictureSource = officialBefore.pictureSource?.toLowerCase()
+  if (pictureSource !== "vendor" && pictureSource !== "eps") {
+    throw new Error("EBAY_ACTIVE_IMAGE_REVISION_PICTURE_SOURCE_UNSUPPORTED")
   }
+  const writeImageUrls = pictureSource === "eps"
+    ? await uploadApprovedImagesToEps({ imageUrls, accessToken, fetchImpl })
+    : imageUrls
+  const writePictureSource = pictureSource === "eps" ? "EPS" : "Vendor"
 
   const claimToken = randomUUID()
   execution = await rpcRow(
@@ -608,7 +670,11 @@ export async function applyApprovedImageRevisionToActiveListing(input: {
     const write = await tradingCall({
       callName: "ReviseFixedPriceItem",
       accessToken,
-      body: revisePicturesRequestXml(ebayItemId, imageUrls),
+        body: revisePicturesRequestXml(
+          ebayItemId,
+          writeImageUrls,
+          writePictureSource,
+        ),
       fetchImpl,
       timeoutMs: WRITE_TIMEOUT_MS,
     })
