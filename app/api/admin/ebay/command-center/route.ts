@@ -374,6 +374,81 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, review: result.data, savedAt: new Date().toISOString(), safety: { ebayWriteUsed: false, canPublish: false } })
     }
 
+    if (action === "open_active_maintenance") {
+      const [packageResult, linkResult] = await Promise.all([
+        supabase
+          .from("ebay_listing_packages")
+          .select("*")
+          .eq("account_key", accountKey)
+          .eq("opportunity_id", opportunityId)
+          .eq("candidate_key", candidateKey)
+          .maybeSingle(),
+        supabase
+          .from("ebay_manual_listing_links")
+          .select("id,ebay_item_id,ebay_url,connector_listing_id,verified_at")
+          .eq("account_key", accountKey)
+          .eq("opportunity_id", opportunityId)
+          .eq("candidate_key", candidateKey)
+          .eq("verification_status", "verified")
+          .eq("connector_listing_status", "active")
+          .maybeSingle(),
+      ])
+      if (packageResult.error || linkResult.error) {
+        throw new Error("COMMAND_CENTER_ACTIVE_MAINTENANCE_READ_FAILED")
+      }
+      const existing = packageResult.data
+      const link = linkResult.data
+      if (!existing || !link?.connector_listing_id || !link.verified_at) {
+        return NextResponse.json({
+          success: false,
+          error: "COMMAND_CENTER_ACTIVE_MAINTENANCE_EVIDENCE_REQUIRED",
+        }, { status: 409 })
+      }
+      if (existing.created_by !== reviewer) {
+        throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
+      }
+      const { data: activeListing, error: activeListingError } = await supabase
+        .from("ebay_active_listings")
+        .select("id,ebay_item_id,listing_status,title,ebay_sku,last_ebay_sync_at")
+        .eq("id", link.connector_listing_id)
+        .eq("account_key", accountKey)
+        .eq("ebay_item_id", link.ebay_item_id)
+        .eq("listing_status", "active")
+        .maybeSingle()
+      if (activeListingError) {
+        throw new Error("COMMAND_CENTER_ACTIVE_MAINTENANCE_READ_FAILED")
+      }
+      if (!activeListing) {
+        return NextResponse.json({
+          success: false,
+          error: "COMMAND_CENTER_ACTIVE_MAINTENANCE_EVIDENCE_REQUIRED",
+        }, { status: 409 })
+      }
+      return NextResponse.json({
+        success: true,
+        workspaceMode: "ACTIVE_MAINTENANCE",
+        listingPackage: existing,
+        created: false,
+        evidenceRefreshed: false,
+        maintenance: {
+          manualLinkId: link.id,
+          connectorListingId: activeListing.id,
+          ebayItemId: activeListing.ebay_item_id,
+          ebayUrl: link.ebay_url,
+          listingStatus: activeListing.listing_status,
+          title: activeListing.title,
+          sku: activeListing.ebay_sku,
+          verifiedAt: link.verified_at,
+          lastEbaySyncAt: activeListing.last_ebay_sync_at,
+        },
+        safety: {
+          ebayWriteUsed: false,
+          canPublish: false,
+          canMaintainVerifiedActiveListing: true,
+        },
+      })
+    }
+
     if (action === "prepare_package") {
       const eligibility = evaluateEbayListingWorkspaceEligibility(sourceOpportunity)
       if (!eligibility.allowed) {
