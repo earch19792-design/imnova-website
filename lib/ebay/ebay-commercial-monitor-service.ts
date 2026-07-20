@@ -75,8 +75,6 @@ import {
 const MARKETPLACE = "EBAY_US"
 const MONITOR_LEASE_SECONDS = 300
 const READER_HISTORY_LIMIT = 500
-const PILOT_LISTING_ID = "366543596425"
-const PILOT_SUPPLIER_SKU = "ITEM3995"
 const DEFAULT_LUNA_SUPPLY_MAX_AGE_MINUTES = 24 * 60
 
 export const COMMERCIAL_MONITOR_LANES = [
@@ -2084,12 +2082,11 @@ export async function runEbayCommercialMonitor(
     } else readers.messages = { status: "skipped", source: "schedule", observedAt: null }
 
     const expectedIdentityRows = new Map<string, { listingId: string; sku: string }>()
-    const pilotListing = listings.find((row) => row.ebay_item_id === PILOT_LISTING_ID)
-    if (pilotListing?.ebay_sku && pilotListing.supplier_sku === PILOT_SUPPLIER_SKU) {
-      expectedIdentityRows.set(`${PILOT_LISTING_ID}:${pilotListing.ebay_sku}`, {
-        listingId: PILOT_LISTING_ID,
-        sku: pilotListing.ebay_sku,
-      })
+    for (const listing of listings) {
+      if (listing.ebay_sku) expectedIdentityRows.set(
+        `${listing.ebay_item_id}:${listing.ebay_sku}`,
+        { listingId: listing.ebay_item_id, sku: listing.ebay_sku },
+      )
     }
     for (const order of orders) {
       for (const line of order.lineItems) {
@@ -2228,36 +2225,48 @@ export async function runEbayCommercialMonitor(
     }
 
     if (input.triggerSource === "dry_run") {
-      const pilotSupply = pilotListing ? supplyForListing(pilotListing, supplies) : null
-      const lunaCapturedAtMs = Date.parse(pilotSupply?.captured_at ?? "")
       const lunaMaxAgeMinutes = integer(
         process.env.EBAY_COMMERCIAL_LUNA_SUPPLY_MAX_AGE_MINUTES,
         DEFAULT_LUNA_SUPPLY_MAX_AGE_MINUTES,
         5,
         72 * 60,
       )
-      const lunaSupplyAgeMs = now.getTime() - lunaCapturedAtMs
-      const lunaExactSupplyLinked = Boolean(
-        pilotListing?.market_radar_product_id &&
-        pilotListing.supplier_variant_id &&
-        pilotListing.supplier_sku === PILOT_SUPPLIER_SKU &&
-        pilotSupply &&
-        pilotSupply.product_id === pilotListing.market_radar_product_id &&
-        pilotSupply.supplier_variant_id === pilotListing.supplier_variant_id &&
-        pilotSupply.sku === pilotListing.supplier_sku
-      )
+      const lunaSupplyChecks = listings.map((listing) => {
+        const supply = supplyForListing(listing, supplies)
+        const exact = Boolean(
+          listing.market_radar_product_id &&
+          listing.supplier_variant_id &&
+          listing.supplier_sku &&
+          supply &&
+          supply.product_id === listing.market_radar_product_id &&
+          supply.supplier_variant_id === listing.supplier_variant_id &&
+          supply.sku === listing.supplier_sku
+        )
+        return {
+          supply,
+          exact,
+          fresh: exact && isFreshLunaSupplyEvidence(supply, now.toISOString()),
+        }
+      })
+      const lunaExactSupplyLinked = lunaSupplyChecks.length > 0 &&
+        lunaSupplyChecks.every((check) => check.exact)
       const lunaSupplyFresh = lunaExactSupplyLinked &&
-        Number.isFinite(lunaCapturedAtMs) &&
-        lunaSupplyAgeMs >= -60_000 &&
-        lunaSupplyAgeMs <= lunaMaxAgeMinutes * 60_000
+        lunaSupplyChecks.every((check) => check.fresh)
+      const lunaSupplyObservedAt = lunaSupplyChecks
+        .map((check) => check.supply?.captured_at ?? null)
+        .filter((capturedAt): capturedAt is string => Boolean(capturedAt))
+        .sort()[0] ?? null
       readers.luna_supply = {
         status: lunaExactSupplyLinked && lunaSupplyFresh ? "available" : "unavailable",
         source: "LUNA_MARKET_RADAR_LATEST_VARIANT_LOCAL_SNAPSHOT",
-        observedAt: pilotSupply?.captured_at ?? null,
+        observedAt: lunaSupplyObservedAt,
         metrics: {
           exactProductVariantAndSku: lunaExactSupplyLinked,
           fresh: lunaSupplyFresh,
           maximumAgeMinutes: lunaMaxAgeMinutes,
+          activeListingsEvaluated: lunaSupplyChecks.length,
+          exactSupplyLinks: lunaSupplyChecks.filter((check) => check.exact).length,
+          freshSupplyLinks: lunaSupplyChecks.filter((check) => check.fresh).length,
         },
         ...(!lunaExactSupplyLinked
           ? { error: "COMMERCIAL_LUNA_EXACT_SUPPLY_LINK_MISSING" }
