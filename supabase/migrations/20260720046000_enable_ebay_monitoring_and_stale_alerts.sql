@@ -378,9 +378,13 @@ alter table public.ebay_monitoring_scheduler_dispatch_audit enable row level sec
 alter table public.ebay_monitoring_scheduler_dispatch_audit force row level security;
 
 revoke all on table public.ebay_monitoring_scheduler_config
-  from public, anon, authenticated, service_role;
+  from anon, authenticated;
+revoke all on table public.ebay_monitoring_scheduler_config
+  from public, service_role;
 revoke all on table public.ebay_monitoring_scheduler_dispatch_audit
-  from public, anon, authenticated, service_role;
+  from anon, authenticated;
+revoke all on table public.ebay_monitoring_scheduler_dispatch_audit
+  from public, service_role;
 revoke all on sequence public.ebay_monitoring_scheduler_dispatch_audit_id_seq
   from public, anon, authenticated, service_role;
 grant select on table public.ebay_monitoring_scheduler_config to service_role;
