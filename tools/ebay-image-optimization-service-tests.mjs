@@ -39,12 +39,20 @@ test("normalizes a light authorized product photo to a reviewed 1600px white can
   assert.notEqual(result.sourceSha256, result.outputSha256)
 })
 
-test("fails closed when the edge is complex instead of erasing a product", async () => {
+test("preserves the full authorized frame when removing a complex background could erase the product", async () => {
   const source = await productOnBackground("#252b35")
-  await assert.rejects(
-    optimizeAuthorizedEbayMainImage(source),
-    /EBAY_IMAGE_BACKGROUND_REQUIRES_MANUAL_REMOVAL/,
-  )
+  const result = await optimizeAuthorizedEbayMainImage(source)
+  const metadata = await sharp(result.output).metadata()
+
+  assert.equal(metadata.width, EBAY_IMAGE_OUTPUT_SIZE)
+  assert.equal(metadata.height, EBAY_IMAGE_OUTPUT_SIZE)
+  assert.equal(result.transformation.backgroundMethod, "AUTHORIZED_SOURCE_FRAMED_CONTAIN")
+  assert.equal(result.transformation.sourcePixelsTreatment, "PRESERVED_FULL_FRAME")
+  assert.equal(result.transformation.generativeAiUsed, false)
+  assert.equal(result.qa.automaticStatus, "PARTIAL")
+  assert.equal(result.qa.fullAuthorizedFramePreserved, true)
+  assert.equal(result.qa.humanApprovalRequired, true)
+  assert.ok(result.qa.manualChecksRequired.includes("SOURCE_BACKGROUND_PRESERVED_NOT_REMOVED"))
 })
 
 test("allows only documented HTTPS supplier hosts and explicit rights evidence", () => {
