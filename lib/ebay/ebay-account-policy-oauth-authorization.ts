@@ -8,7 +8,7 @@ import {
   isValidEbayCommercialAuthorizationCode,
   isValidEbayCommercialOAuthState,
 } from "./ebay-commercial-orders-oauth-domain"
-import { preflightEbayAccountPoliciesReadonly } from "./ebay-account-policy-readonly-gateway"
+import { verifyEbayCommercialOfficialAccount } from "./ebay-commercial-readers"
 import { EBAY_READONLY_SCOPES } from "./ebay-seller-readonly-oauth-data-audit"
 import {
   getEbayProductionIdentityBindingConfiguration,
@@ -351,22 +351,31 @@ export async function completeEbayAccountPolicyAuthorization(
     if (!refreshToken) {
       throw new Error("EBAY_ACCOUNT_POLICY_AUTHORIZATION_REFRESH_TOKEN_MISSING")
     }
-    const preflight = await preflightEbayAccountPoliciesReadonly(
-      {},
+    const scopeProof = await exchangeToken({
+      credentials: oauth,
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        scope: EBAY_READONLY_SCOPES.join(" "),
+      }),
       fetchImpl,
-      refreshToken,
-    )
-    if (
-      preflight.identity.status !== "BOUND"
-      || !preflight.privilege.usable
-    ) throw new Error("EBAY_ACCOUNT_POLICY_AUTHORIZATION_PREFLIGHT_REJECTED")
+    })
+    const accessToken = text(scopeProof.access_token)
+    if (!accessToken) {
+      throw new Error("EBAY_ACCOUNT_POLICY_AUTHORIZATION_SCOPE_PROOF_MISSING")
+    }
+    await verifyEbayCommercialOfficialAccount(accessToken, fetchImpl)
+    const identity = getEbayProductionIdentityBindingConfiguration(environment)
+    if (!identity.expectedAccountFingerprint) {
+      throw new Error("EBAY_ACCOUNT_POLICY_AUTHORIZATION_IDENTITY_UNBOUND")
+    }
 
     const { data: stored, error: storeError } = await supabase.rpc(
       "store_ebay_account_policy_readonly_refresh_token_v1",
       {
         p_account_key: String(handoff.account_key),
         p_actor: String(handoff.actor_user_id),
-        p_identity_fingerprint: preflight.identity.accountFingerprint,
+        p_identity_fingerprint: identity.expectedAccountFingerprint,
         p_refresh_token: refreshToken,
         p_now: new Date().toISOString(),
       },

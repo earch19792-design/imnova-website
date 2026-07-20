@@ -358,7 +358,20 @@ async function executePreflight(
     return executePreflight(config, requested, fetchImpl, true)
   }
   if (reads.some((result) => !result.ok)) {
-    throw new Error("EBAY_ACCOUNT_POLICY_READONLY_PREFLIGHT_UNAVAILABLE")
+    const names = [
+      "PRIVILEGE",
+      "FULFILLMENT_POLICIES",
+      "PAYMENT_POLICIES",
+      "RETURN_POLICIES",
+      "MERCHANT_LOCATIONS",
+    ]
+    const failedIndex = reads.findIndex((result) => !result.ok)
+    const status = reads[failedIndex]?.status || 0
+    throw new Error(
+      `EBAY_ACCOUNT_POLICY_READONLY_${names[failedIndex] ?? "RESOURCE"}_${
+        status || "UNAVAILABLE"
+      }`,
+    )
   }
   const options = {
     fulfillmentPolicies: sanitizedPolicyOptions(
