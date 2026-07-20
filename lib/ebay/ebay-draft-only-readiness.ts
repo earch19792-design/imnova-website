@@ -440,12 +440,16 @@ export function buildEbayDraftOnlyPayload(
   }
   const aspects = normalizeAspects(packageData.aspects)
   const categoryId = text(packageData.categoryId)
-  const packageMeasurementsReady = numberOrNull(dimensions.height)! > 0
-    && numberOrNull(dimensions.length)! > 0
-    && numberOrNull(dimensions.width)! > 0
-    && ['INCH', 'CENTIMETER'].includes(text(dimensions.unit).toUpperCase())
-    && numberOrNull(weight.value)! > 0
-    && ['POUND', 'KILOGRAM', 'OUNCE', 'GRAM'].includes(text(weight.unit).toUpperCase())
+  const dimensionValues = [dimensions.height, dimensions.length, dimensions.width]
+    .map(numberOrNull)
+  const dimensionUnit = text(dimensions.unit).toUpperCase()
+  const weightValue = numberOrNull(weight.value)
+  const weightUnit = text(weight.unit).toUpperCase()
+  const packageMeasurementsReady = dimensionValues.every((value) => value !== null && value > 0)
+    && ['INCH', 'CENTIMETER'].includes(dimensionUnit)
+    && weightValue !== null
+    && weightValue > 0
+    && ['POUND', 'KILOGRAM', 'OUNCE', 'GRAM'].includes(weightUnit)
 
   const inventoryItemPayload = {
     availability: { shipToLocationAvailability: { quantity } },
@@ -558,7 +562,12 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   const categoryId = text(packageData.categoryId)
   const condition = text(configuration.condition).toUpperCase()
   const weightUnit = text(weight.unit).toUpperCase()
+  const dimensionUnit = text(dimensions.unit).toUpperCase()
+  const dimensionValues = [dimensions.height, dimensions.length, dimensions.width]
+    .map(numberOrNull)
+  const weightValue = numberOrNull(weight.value)
   const validWeightUnit = ['POUND', 'KILOGRAM', 'OUNCE', 'GRAM'].includes(weightUnit)
+  const validDimensionUnit = ['INCH', 'CENTIMETER'].includes(dimensionUnit)
   const rightsBasis = text(authorization.rightsBasis).toLowerCase()
   const imageSource = text(authorization.source).toLowerCase()
   const assessment = record(opportunity.assessment)
@@ -577,13 +586,13 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     && text(taxonomy.categoryId) === categoryId
     && requiredAspects.every((name) => Boolean(aspects[name]?.length))
     && aspectConstraintBlockers.length === 0
-  const dimensionsEvidenceReady = numberOrNull(dimensions.height)! > 0
-    && numberOrNull(dimensions.length)! > 0
-    && numberOrNull(dimensions.width)! > 0
-  const weightEvidenceReady = numberOrNull(weight.value)! > 0 && validWeightUnit
-  const packageMeasurementsReady = dimensionsEvidenceReady
-    && weightEvidenceReady
-    && ['INCH', 'CENTIMETER'].includes(text(dimensions.unit).toUpperCase())
+  const packageMeasurementsProvided = dimensionValues.some((value) => value !== null)
+    || Boolean(dimensionUnit)
+    || weightValue !== null
+    || Boolean(weightUnit)
+  const dimensionsEvidenceReady = dimensionValues.every((value) => value !== null && value > 0)
+    && validDimensionUnit
+  const weightEvidenceReady = weightValue !== null && weightValue > 0 && validWeightUnit
   const resolvablePackageGates = new Set([
     ...(imageEvidenceReady ? ["NEED_AUTHORIZED_PRODUCT_IMAGES"] : []),
     ...(weightEvidenceReady ? ["NEED_PACKAGE_WEIGHT"] : []),
@@ -624,7 +633,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   if (taxonomy.validated !== true || text(taxonomy.categoryId) !== categoryId || !recent(taxonomy.validatedAt, taxonomyMaxAge, now)) blockers.push("CATEGORY_ASPECTS_NOT_VALIDATED")
   blockers.push(...aspectConstraintBlockers)
   for (const name of requiredAspects) if (!aspects[name]?.length) blockers.push(`REQUIRED_ASPECT_MISSING:${name}`)
-  if (images.length !== 6 || images.length !== strings(packageData.imageUrls, 24).length) blockers.push("EXACTLY_SIX_HTTPS_IMAGES_REQUIRED")
+  if (!images.length || images.length !== strings(packageData.imageUrls, 24).length) blockers.push("HTTPS_IMAGES_REQUIRED")
   if (authorization.approved !== true || !recent(authorization.approvedAt, sourceMaxAge, now)) blockers.push("IMAGE_AUTHORIZATION_REQUIRED")
   if (authorization.approved === true && !images.length) blockers.push("IMAGE_AUTHORIZATION_WITHOUT_SOURCE_IMAGE")
   if (!['supplier_authorized', 'owned', 'licensed'].includes(rightsBasis)) blockers.push("IMAGE_RIGHTS_BASIS_INVALID")
@@ -648,6 +657,14 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   if (!['NEW', 'NEW_OTHER', 'NEW_WITH_DEFECTS', 'USED_EXCELLENT', 'USED_GOOD', 'USED_ACCEPTABLE'].includes(condition)) blockers.push("CONDITION_INVALID")
   if (price === null || price <= 0) blockers.push("PRICE_REQUIRED")
   if (!economics.ready || !economics.passesProfitGate) blockers.push("MINIMUM_NET_MARGIN_NOT_MET")
+  if (packageMeasurementsProvided && !dimensionsEvidenceReady) {
+    if (!dimensionValues.every((value) => value !== null && value > 0)) blockers.push("PACKAGE_DIMENSIONS_REQUIRED")
+    if (!validDimensionUnit) blockers.push("PACKAGE_DIMENSION_UNIT_INVALID")
+  }
+  if (packageMeasurementsProvided && !weightEvidenceReady) {
+    if (weightValue === null || weightValue <= 0) blockers.push("PACKAGE_WEIGHT_REQUIRED")
+    if (!validWeightUnit) blockers.push("PACKAGE_WEIGHT_UNIT_REQUIRED")
+  }
   for (const [key, value] of Object.entries({
     FULFILLMENT_POLICY_REQUIRED: policies.fulfillmentPolicyId,
     PAYMENT_POLICY_REQUIRED: policies.paymentPolicyId,
@@ -689,7 +706,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
       "HUMAN_APPROVAL_EXPIRES_AND_IS_ONE_TIME",
       "EBAY_SKU_PREFLIGHT_RUNS_AT_EXECUTION",
       "EBAY_PREFLIGHT_SNAPSHOT_EXPIRES_IN_5_MINUTES",
-      ...(packageMeasurementsReady ? [] : ["OPTIONAL_PACKAGE_MEASUREMENTS_OMITTED"]),
+      ...(!packageMeasurementsProvided ? ["OPTIONAL_PACKAGE_MEASUREMENTS_OMITTED"] : []),
     ],
     economics: {
       targetPrice: price,

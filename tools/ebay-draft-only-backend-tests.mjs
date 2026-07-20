@@ -53,6 +53,10 @@ const productionMigrationSource = readFileSync(
   new URL("../supabase/migrations/20260713052000_enable_production_ebay_unpublished_drafts.sql", import.meta.url),
   "utf8",
 )
+const publicationMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260720041000_create_ebay_authorized_listing_publication.sql", import.meta.url),
+  "utf8",
+)
 
 async function importTypeScript(source) {
   const javascript = ts.transpileModule(source, {
@@ -1186,7 +1190,7 @@ test("Offer verification binds offer, SKU and marketplace; unique unknown outcom
   }
 })
 
-test("Production payload, approvals and ledger are target/account-bound and publish endpoints remain absent", async () => {
+test("Production draft and final publication use separate account-bound one-shot ledgers", async () => {
   const module = await importTypeScript(readinessSource)
   const input = validInput()
   input.target = "PRODUCTION"
@@ -1221,9 +1225,21 @@ test("Production payload, approvals and ledger are target/account-bound and publ
   assert.match(gatewaySource, /bulk_publish_offer/)
   assert.match(gatewaySource, /publish_by_inventory_item_group/)
   assert.match(gatewaySource, /offer\\\/\[\^\/\]\+\\\/publish/)
-  assert.doesNotMatch(routeSource, /publishOffer\s*\(/)
   assert.match(routeSource, /verifyEbayUnpublishedOffer/)
   assert.match(routeSource, /discoverEbayUnpublishedOfferBySku/)
+  assert.match(routeSource, /prepare_publish/)
+  assert.match(routeSource, /reconcile_publish/)
+  assert.match(routeSource, /confirmPublish !== EBAY_FINAL_PUBLISH_CONFIRMATION/)
+  assert.equal((routeSource.match(/publishEbayOfferOnce\(/g) ?? []).length, 1)
+  assert.match(gatewaySource, /EBAY_FINAL_PUBLISH_CONFIRMATION = "PUBLICAR LISTING EN EBAY"/)
+  assert.match(gatewaySource, /A timeout is never retried with POST/)
+  assert.match(routeSource, /verifyEbayPublishedOffer/)
+  assert.match(publicationMigrationSource, /ebay_authorized_listing_publications/)
+  assert.match(publicationMigrationSource, /preview_hash text not null/)
+  assert.match(publicationMigrationSource, /publish_attempt_count between 0 and 1/)
+  assert.match(publicationMigrationSource, /p_confirm_publish <> 'PUBLICAR LISTING EN EBAY'/)
+  assert.match(publicationMigrationSource, /phase = 'published_pending_verification'/)
+  assert.match(publicationMigrationSource, /phase = 'monitor_registered'/)
   assert.match(routeSource, /p_account_fingerprint: fingerprint/)
   assert.match(productionMigrationSource, /target in \('SANDBOX', 'PRODUCTION'\)/)
   assert.match(productionMigrationSource, /account_fingerprint/)

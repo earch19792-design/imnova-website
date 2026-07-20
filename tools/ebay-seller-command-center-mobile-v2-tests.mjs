@@ -123,7 +123,10 @@ test("listing workspace is resumable and gates one unpublished environment-aware
     /Item specifics/,
     /Offer API no publicado · \{draftTarget\}/,
     /CREAR DRAFT NO PUBLICADO/,
-    /Publicar permanece prohibido/,
+    /Preparar preview final no publicado/,
+    /PUBLICAR LISTING EN EBAY/,
+    /Publicar una sola vez en eBay/,
+    /Nunca vuelve a llamar publishOffer/,
     /Confirmo derechos sobre todas las imágenes/,
   ]) assert.match(workspace, signal)
   const combined = `${mobile}\n${queue}\n${workspace}\n${api}`
