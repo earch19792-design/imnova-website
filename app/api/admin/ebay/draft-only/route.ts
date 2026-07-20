@@ -18,6 +18,7 @@ import {
   verifyEbayDraftInventoryItem,
   verifyEbayUnpublishedOffer,
 } from "@/lib/ebay/ebay-draft-only-gateway"
+import { saveVerifiedEbayAccountPolicyProfile } from "@/lib/ebay/ebay-account-policy-profile"
 import {
   approvalExpiresAt,
   buildEbayDraftOnlyPayload,
@@ -522,36 +523,12 @@ async function preflightAccountConfiguration(
     returnPolicyId: text(requested.returnPolicyId),
     merchantLocationKey: text(requested.merchantLocationKey),
   })
-  const policySelectionComplete = [
-    preflight.selection.fulfillmentPolicyId,
-    preflight.selection.paymentPolicyId,
-    preflight.selection.returnPolicyId,
-  ].every((value) => text(value))
-  let accountPolicyProfileSaved = false
-  if (preflight.identity.status === "BOUND" && preflight.privilege.usable &&
-    policySelectionComplete) {
-    const verifiedAt = new Date()
-    const { error: profileError } = await supabase
-      .from("ebay_account_policy_profiles")
-      .upsert({
-        account_key: sellerAccountKey,
-        marketplace_id: "EBAY_US",
-        fulfillment_policy_id: preflight.selection.fulfillmentPolicyId,
-        payment_policy_id: preflight.selection.paymentPolicyId,
-        return_policy_id: preflight.selection.returnPolicyId,
-        merchant_location_key: text(preflight.selection.merchantLocationKey) || null,
-        verification_source: "EBAY_ACCOUNT_API_GET",
-        profile_version: "EBAY_ACCOUNT_POLICY_PROFILE_V1_2026_07_20",
-        verified_at: verifiedAt.toISOString(),
-        expires_at: new Date(verifiedAt.getTime() + 30 * 24 * 60 * 60 * 1_000).toISOString(),
-        selected_by: actor,
-        updated_at: verifiedAt.toISOString(),
-      }, { onConflict: "account_key,marketplace_id" })
-    if (profileError) {
-      return jsonError(new Error("EBAY_ACCOUNT_POLICY_PROFILE_SAVE_FAILED"), 502)
-    }
-    accountPolicyProfileSaved = true
-  }
+  const accountPolicyProfileSaved = await saveVerifiedEbayAccountPolicyProfile({
+    supabase,
+    accountKey: sellerAccountKey,
+    actorUserId: actor,
+    preflight,
+  })
   return NextResponse.json({
     success: true,
     preflight,

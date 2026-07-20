@@ -580,9 +580,12 @@ export default function EbayListingWorkspacePage() {
   ) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
     if (sessionError || !data.session) throw new Error("La sesión Admin expiró.")
-    const endpoint = body
-      ? "/api/admin/ebay/draft-only"
-      : `/api/admin/ebay/draft-only?packageId=${encodeURIComponent(packageId ?? "")}`
+    const accountPolicyPreflight = body?.action === "account_preflight"
+    const endpoint = accountPolicyPreflight
+      ? "/api/admin/ebay/account-policies"
+      : body
+        ? "/api/admin/ebay/draft-only"
+        : `/api/admin/ebay/draft-only?packageId=${encodeURIComponent(packageId ?? "")}`
     const response = await fetch(endpoint, {
       method: body ? "POST" : "GET",
       cache: "no-store",
@@ -590,7 +593,9 @@ export default function EbayListingWorkspacePage() {
         Authorization: `Bearer ${data.session.access_token}`,
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
-      body: body ? JSON.stringify(body) : undefined,
+      body: body
+        ? JSON.stringify(accountPolicyPreflight ? { selection: body.selection } : body)
+        : undefined,
     })
     const payload = await readMobileReviewJson<Record<string, any>>(
       response,
