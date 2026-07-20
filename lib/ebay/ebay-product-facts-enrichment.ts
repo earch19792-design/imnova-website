@@ -41,7 +41,7 @@ import {
 } from "./ebay-official-manufacturer-facts"
 import { aggregateEbayMarketPricingByPack } from "./ebay-market-pricing-strategy"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V14_2026_07_19"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V15_2026_07_19"
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
 type JsonRecord = Record<string, unknown>
@@ -61,6 +61,19 @@ function record(value: unknown): JsonRecord {
 }
 function text(value: unknown, maximum = 500) {
   return typeof value === "string" ? value.normalize("NFKC").trim().replace(/\s+/g, " ").slice(0, maximum) : ""
+}
+const EBAY_NON_FACT_VALUES = new Set([
+  "-", "does not apply", "n a", "na", "none", "not applicable", "not specified",
+  "unknown", "unspecified",
+])
+function meaningfulEbayFactValue(value: unknown) {
+  if (typeof value !== "string") return value
+  const normalized = text(value, 160).toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, " ").trim()
+  return EBAY_NON_FACT_VALUES.has(normalized) ? null : value
+}
+function meaningfulLunaVariant(value: unknown) {
+  const normalized = text(value, 160).toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, " ").trim()
+  return ["", "default", "default title", "single variant"].includes(normalized) ? null : value
 }
 function number(value: unknown) {
   const parsed = Number(value)
@@ -169,7 +182,9 @@ function lunaObservations(input: {
   add("PRODUCT_UNIT", "ean", normalizeGtin(fromMetadata(metadata, ["ean"])) ?? null)
   add("PRODUCT_UNIT", "mpn", fromMetadata(metadata, ["mpn", "manufacturerPartNumber", "manufacturer_part_number"]))
   add("PRODUCT_UNIT", "model", fromMetadata(metadata, ["model"]))
-  add("PRODUCT_UNIT", "variant", fromMetadata(metadata, ["variant"]) ?? variantTitle)
+  add("PRODUCT_UNIT", "variant", meaningfulLunaVariant(
+    fromMetadata(metadata, ["variant"]) ?? variantTitle,
+  ))
   add("PRODUCT_UNIT", "scent", fromMetadata(metadata, ["scent", "fragrance"]))
   add("PRODUCT_UNIT", "flavor", fromMetadata(metadata, ["flavor"]))
   add("PRODUCT_UNIT", "color", fromMetadata(metadata, ["color", "colour"]))
@@ -250,14 +265,17 @@ function taxonomyObservations(input: {
 
 function tradingObservations(input: { candidateId: string; lunaVariantId: string | null; trading: JsonRecord; observedAt: string }) {
   const sourceReference = safeSourceReference("EBAY_TRADING_GET_ITEM_READONLY", text(input.trading.itemId))
-  const add = (key: string, value: unknown) => value === null || value === undefined || value === "" ? null : observation({
-    candidateId: input.candidateId, lunaVariantId: input.lunaVariantId, scope: "PRODUCT_UNIT", key, value,
+  const add = (key: string, value: unknown) => {
+    const meaningfulValue = meaningfulEbayFactValue(value)
+    return meaningfulValue === null || meaningfulValue === undefined || meaningfulValue === "" ? null : observation({
+    candidateId: input.candidateId, lunaVariantId: input.lunaVariantId, scope: "PRODUCT_UNIT", key, value: meaningfulValue,
     sourceType: "EBAY_TRADING_GET_ITEM_READONLY", authority: "CORROBORATION", status: "CORROBORATED",
     confidence: .68, observedAt: input.observedAt, sourceReference,
   })
+  }
   return [add("exactProductName", input.trading.title), add("brand", input.trading.brand), add("manufacturer", input.trading.manufacturer),
     add("gtin", normalizeGtin(input.trading.gtin)), add("mpn", input.trading.mpn), add("model", input.trading.model),
-    add("color", input.trading.color), add("scent", input.trading.scent), add("variant", input.trading.variant),
+    add("color", input.trading.color), add("scent", input.trading.scent),
     add("unitCount", input.trading.unitCount), add("condition", input.trading.condition)]
     .filter((entry): entry is FactObservation => Boolean(entry))
 }
