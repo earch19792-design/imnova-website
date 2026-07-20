@@ -477,6 +477,22 @@ async function recordReconciliation(
   return data
 }
 
+async function blockUnresolvedPost(
+  supabase: SupabaseClient,
+  input: { outboxId: string; workerId: string; code: string },
+) {
+  const { data, error } = await supabase.rpc(
+    "block_fulfillment_real_unresolved_post_v1c",
+    {
+      p_outbox_id: input.outboxId,
+      p_worker_id: input.workerId,
+      p_code: input.code,
+    },
+  )
+  if (error) throw new Error("FULFILLMENT_REAL_UNRESOLVED_POST_BLOCK_FAILED")
+  return data
+}
+
 export async function runMarketplaceFulfillmentRealReconciler(
   supabase: SupabaseClient,
   options: {
@@ -565,14 +581,18 @@ export async function runMarketplaceFulfillmentRealReconciler(
           postStartedAt: claim.post_started_at,
           now,
         })
-        const result = await recordReconciliation(supabase, {
-          outboxId: claim.id,
-          workerId,
-          outcome: absenceProven ? "absent" : "temporary",
-          code: absenceProven
-            ? "EBAY_FULFILLMENT_ABSENCE_CONFIRMED"
-            : "EBAY_FULFILLMENT_EVENTUAL_CONSISTENCY_WAIT",
-        })
+        const result = absenceProven
+          ? await blockUnresolvedPost(supabase, {
+              outboxId: claim.id,
+              workerId,
+              code: "EBAY_FULFILLMENT_OUTCOME_UNKNOWN_MANUAL_REVIEW",
+            })
+          : await recordReconciliation(supabase, {
+              outboxId: claim.id,
+              workerId,
+              outcome: "temporary",
+              code: "EBAY_FULFILLMENT_EVENTUAL_CONSISTENCY_WAIT",
+            })
         outcomes.push({ id: claim.id, status: result?.status ?? null })
       }
     } catch (error) {

@@ -153,6 +153,34 @@ function isoDate(value: unknown) {
   return candidate && Number.isFinite(Date.parse(candidate)) ? candidate : null
 }
 
+function activeRefund(value: unknown) {
+  const refund = record(value)
+  const status = text(
+    refund.refundStatus ?? refund.refundState ?? refund.status,
+    40,
+  ).toUpperCase()
+  return !status || !["FAILED", "CANCELLED", "REJECTED"].includes(status)
+}
+
+function orderCannotBeFulfilled(order: Record<string, unknown>) {
+  const cancel = record(order.cancelStatus)
+  const cancellationStatus = text(
+    cancel.cancelState ?? cancel.cancelStatus,
+    40,
+  ).toUpperCase()
+  const cancelled = Boolean(cancellationStatus) && ![
+    "NONE_REQUESTED",
+    "CANCEL_REJECTED",
+    "CANCEL_CLOSED_NO_REFUND",
+  ].includes(cancellationStatus)
+  const paymentRefunded = array(record(order.paymentSummary).refunds)
+    .some(activeRefund)
+  const lineRefunded = array(order.lineItems).some((line) =>
+    array(record(line).refunds).some(activeRefund)
+  )
+  return cancelled || paymentRefunded || lineRefunded
+}
+
 export function normalizeCompletedEbayOrders(payload: unknown): SafeMarketplaceOrder[] {
   return array(record(payload).orders).flatMap((value) => {
     const order = record(value)
@@ -161,7 +189,14 @@ export function normalizeCompletedEbayOrders(payload: unknown): SafeMarketplaceO
     const lastModifiedDate = isoDate(order.lastModifiedDate)
     const orderPaymentStatus = text(order.orderPaymentStatus, 40).toUpperCase()
     const orderFulfillmentStatus = text(order.orderFulfillmentStatus, 40).toUpperCase()
-    if (!ebayOrderId || !creationDate || !lastModifiedDate || orderPaymentStatus !== "PAID") {
+    if (
+      !ebayOrderId ||
+      !creationDate ||
+      !lastModifiedDate ||
+      orderPaymentStatus !== "PAID" ||
+      !["NOT_STARTED", "IN_PROGRESS"].includes(orderFulfillmentStatus) ||
+      orderCannotBeFulfilled(order)
+    ) {
       return []
     }
     const pricing = record(order.pricingSummary)
