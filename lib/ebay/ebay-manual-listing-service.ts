@@ -214,6 +214,7 @@ async function loadOpportunityIdentity(
       candidateLabel === handoffLabel &&
       text(candidatePackage.candidateId) === text(pilotCandidate.id) &&
       text(handoffPackage.candidateId) === text(pilotCandidate.id) &&
+      packageHash &&
       /^[0-9a-f]{64}$/.test(packageHash) &&
       packageHash === text(handoff.package_hash)
     ) {
